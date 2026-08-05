@@ -433,6 +433,92 @@ class Application:
     def project_context(self, *, project_id: str | None = None) -> dict[str, Any]:
         return self._project_context.build(project_id=project_id)
 
+    def submit_candidate(
+        self,
+        *,
+        project_id: str,
+        name: str,
+        source_kind: str,
+        source_ref: str,
+        expected_sha256: str = "",
+        metrics: dict[str, float],
+        primary_metric: str,
+        higher_is_better: bool,
+        validation_summary: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Resolve a durable source or register a pathless worktree nomination."""
+        if source_kind == "experiment_workspace":
+            source_experiment_id = source_ref
+        else:
+            if expected_sha256:
+                raise ValidationError("expected_sha256 applies only to workspaces")
+            expected_sha256, discovered_source = self._candidate_pointer(
+                project_id=project_id, kind=source_kind, ref=source_ref
+            )
+            source_experiment_id = discovered_source
+        return self.research.submit_candidate(
+            project_id=project_id,
+            name=name,
+            source_kind=source_kind,
+            source_ref=source_ref,
+            source_experiment_id=source_experiment_id,
+            expected_sha256=expected_sha256,
+            metrics=metrics,
+            primary_metric=primary_metric,
+            higher_is_better=higher_is_better,
+            validation_summary=validation_summary,
+            idempotency_key=idempotency_key,
+        )
+
+    def stage_candidate(
+        self,
+        *,
+        project_id: str,
+        candidate_id: str,
+        stage_kind: str,
+        stage_ref: str,
+        content_sha256: str = "",
+        manifest_sha256: str = "",
+    ) -> dict[str, Any]:
+        """Resolve and pin evaluator-captured bytes, then append the receipt."""
+        if stage_kind == "evaluator_receipt":
+            if not content_sha256 or not manifest_sha256:
+                raise ValidationError(
+                    "evaluator_receipt staging requires receipt/content/manifest hashes only"
+                )
+        else:
+            content_sha256, _ = self._candidate_pointer(
+                project_id=project_id, kind=stage_kind, ref=stage_ref
+            )
+            manifest_sha256 = ""
+        return self.research.stage_candidate(
+            project_id=project_id,
+            candidate_id=candidate_id,
+            stage_kind=stage_kind,
+            stage_ref=stage_ref,
+            content_sha256=content_sha256,
+            manifest_sha256=manifest_sha256,
+        )
+
+    def _candidate_pointer(
+        self, *, project_id: str, kind: str, ref: str
+    ) -> tuple[str, str]:
+        if kind == "artifact":
+            found = self.artifacts.get(artifact_ids=(ref,), project_id=project_id)
+            if not found or found[0].status != "complete":
+                raise ValidationError(f"complete artifact not found: {ref}")
+            item = found[0]
+            source = item.target_id if item.target_type == "experiment" else ""
+            return item.sha256, source
+        if kind != "storage_object":
+            raise ValidationError(f"unknown durable candidate source: {kind}")
+        item = self.objects.get_object(project_id=project_id, object_id=ref)["object"]
+        if item.get("status") != "available":
+            raise ValidationError(f"storage object is not available: {ref}")
+        self.objects.pin(project_id=project_id, object_id=ref)
+        return str(item["content_sha256"]), str(item.get("producing_experiment_id") or "")
+
     def project_list(
         self, *, user_id: str = "", project_id: str = ""
     ) -> dict[str, Any]:

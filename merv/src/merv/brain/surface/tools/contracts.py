@@ -224,6 +224,76 @@ class ProjectGetInput(ProjectScopedInput):
     pass
 
 
+class CandidateSubmitInput(ProjectScopedInput):
+    name: str = Field(min_length=1, max_length=200)
+    source_kind: Literal["artifact", "storage_object", "experiment_workspace"]
+    source_ref: str = Field(
+        min_length=1,
+        max_length=500,
+        description=(
+            "Artifact id, Object Storage id, or experiment id according to "
+            "source_kind. Never a filesystem path or URI."
+        ),
+    )
+    expected_sha256: str = Field(
+        default="",
+        pattern=r"^[0-9a-f]{64}$|^$",
+        description=(
+            "Optional expected digest for experiment_workspace only. The "
+            "evaluator resolves the task-defined path; callers never pass it."
+        ),
+    )
+    metrics: dict[str, float] = Field(min_length=1)
+    primary_metric: str
+    higher_is_better: bool = True
+    validation_summary: str = Field(min_length=1, max_length=4000)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def _validate_candidate(self) -> "CandidateSubmitInput":
+        if self.source_kind != "experiment_workspace" and self.expected_sha256:
+            raise ValueError("expected_sha256 applies only to experiment_workspace")
+        if self.primary_metric not in self.metrics:
+            raise ValueError("primary_metric must name a value in metrics")
+        return self
+
+
+class CandidateStageInput(ProjectScopedInput):
+    candidate_id: str
+    stage_kind: Literal["artifact", "storage_object", "evaluator_receipt"]
+    stage_ref: str = Field(
+        min_length=1,
+        max_length=500,
+        description="Artifact id, Object Storage id, or evaluator receipt id.",
+    )
+    content_sha256: str = Field(default="", pattern=r"^[0-9a-f]{64}$|^$")
+    manifest_sha256: str = Field(default="", pattern=r"^[0-9a-f]{64}$|^$")
+
+    @model_validator(mode="after")
+    def _one_pointer(self) -> "CandidateStageInput":
+        if self.stage_kind == "evaluator_receipt":
+            if not self.content_sha256 or not self.manifest_sha256:
+                raise ValueError(
+                    "evaluator_receipt requires content_sha256 and manifest_sha256"
+                )
+        elif self.content_sha256 or self.manifest_sha256:
+            raise ValueError(
+                "content/manifest hashes are resolved by artifact/storage staging"
+            )
+        return self
+
+
+class CandidatePromoteInput(ProjectScopedInput):
+    candidate_id: str
+    expected_champion_id: str = Field(
+        description=(
+            "Champion id observed from candidate.list, or the empty string "
+            "when no champion exists. Prevents stale overwrites."
+        )
+    )
+    reason: str = Field(min_length=20, max_length=2000)
+
+
 class ClaimCreateInput(ProjectScopedInput):
     statement: str
     scope: str = ""
@@ -1182,6 +1252,45 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         visibility="internal",
         input_model=ProjectGetInput,
         description="Get project metadata.",
+    ),
+    "candidate.submit": ToolContract(
+        handler_identity="application.submit_candidate",
+        input_model=CandidateSubmitInput,
+        description=(
+            "Register an immutable project candidate that already exists as "
+            "one complete Artifact/available Object Storage object, or nominate "
+            "an experiment_workspace for evaluator staging without exposing a "
+            "filesystem path. Use Object Storage for large checkpoints; never "
+            "put model bytes in Git. Safe retries reuse the same idempotency_key."
+        ),
+    ),
+    "candidate.stage": ToolContract(
+        handler_identity="application.stage_candidate",
+        input_model=CandidateStageInput,
+        description=(
+            "Attach one verified durable Artifact/Object Storage receipt to a "
+            "pending experiment_workspace candidate, or an evaluator-owned "
+            "receipt id plus immutable content/manifest hashes when heavy "
+            "Object Storage is disabled. No filesystem path or URI is accepted."
+        ),
+    ),
+    "candidate.list": ToolContract(
+        handler_identity="research.list_candidates",
+        input_model=ProjectScopedInput,
+        description=(
+            "List immutable project candidates, append-only promotion history, "
+            "and the current champion."
+        ),
+    ),
+    "candidate.promote": ToolContract(
+        handler_identity="research.promote_candidate",
+        input_model=CandidatePromoteInput,
+        description=(
+            "Promote an already-submitted candidate to current project "
+            "champion after comparing it with the existing best-known result. "
+            "Pending workspace candidates cannot be promoted; pass the "
+            "champion id you observed so stale managers cannot overwrite it."
+        ),
     ),
     "project.list": ToolContract(
         handler_identity="application.project_list",

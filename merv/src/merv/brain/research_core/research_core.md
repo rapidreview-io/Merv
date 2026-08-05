@@ -4,8 +4,9 @@
 
 `research_core` is the authoritative domain center for a research project. It
 owns projects, claims, experiments, reflection waves, reviews, lifecycle gates,
-and the transaction rules that keep those records consistent. It answers what
-research state exists and whether a state change is legal.
+project candidates/champion lineage, and the transactions that keep those
+records consistent. It answers what research state exists and whether a state
+change is legal.
 
 The workflow declarations also name the agent action, tools, template, and
 review skill for each gate. Application owns cross-module orchestration and
@@ -20,15 +21,10 @@ observations, Object Storage owns heavy bytes, and Literature owns literature.
 from implementation files. Experiment, reflection, and review services are
 private collaborators selected by `Research`, never an alternate public path.
 
-The package root also exports a small set of passive values and pure policy
-helpers that Application needs to interpret authoritative Research results.
-Adding another stateful public object requires an architectural reason.
-
 ## Files
 
-- `research.py`: public root; project and claim writes, workflow delegation,
-  canonical project snapshots, project context, membership and event facts,
-  graph refs.
+- `research.py`: public root; project, claim, and candidate writes, workflow
+  delegation, snapshots, project context, membership, events, and graph refs.
 - `experiments.py`: shared experiment-creation invariants, experiment state
   machine, gate evaluation, artifact sealing, attempt handling, MLflow run
   state, and idempotent tracking-delivery ledger.
@@ -40,8 +36,8 @@ Adding another stateful public object requires an architectural reason.
   protection used by Artifacts.
 - `experiment_workflow.py`: the complete experiment lifecycle and guidance.
 - `reflection_workflow.py`: the complete reflection lifecycle and start policy.
-- `workflow_schema.py`: passive workflow values and declaration validation.
-- Persisted workflow states and transitions live only in those declarations.
+- `workflow_schema.py`: passive workflow values and declaration validation;
+  persisted workflow states and transitions live only in those declarations.
 - `policy.py`: pure vocabulary, validation, gate evaluation, snapshot identity,
   reflection signal, and limits.
 - `evidence.py`: pure evidence selection and document/graph envelope checks.
@@ -85,16 +81,20 @@ hydrates experiment and reflection state in batches and returns gate evaluations
 with the records they govern. Focused reads may be smaller but must preserve the
 same project scope, attempt rules, and snapshot identity.
 
+Candidates point to an Artifact, Object Storage object, or pathless experiment
+workspace awaiting evaluator staging. Staging and promotions are append-only;
+promotion requires durable bytes, a reason, and compare-and-swap against the
+observed champion. Overview is bounded; `candidate.list` retains full history.
+
 All writes resolve a project through `BaseStateStore`; target lookups include
 project ownership. Events commit with their state mutations. Review snapshots
 are byte-stable identities of the target state and submitted evidence. Artifact
 sealing uses the caller's Research transaction. Reflection publication is the
 only path that materializes its reviewed change spec, and its experiments pass
 through the same creation invariants as direct experiments. Compatibility reads
-may hydrate older rows, but new writes follow the current invariants.
+may hydrate older rows; new writes follow the current invariants.
 
 ## Maintenance rule
 
-Keep domain decisions here and connectivity elsewhere. Update this guide when
-files, ownership, lifecycle behavior, public methods, or invariants change.
-Keep it a current dense map, never a migration history, and never over 100 lines.
+Keep domain decisions here and connectivity elsewhere. Keep this guide current,
+dense, free of migration history, and at most 100 lines.

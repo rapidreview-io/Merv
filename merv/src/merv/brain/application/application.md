@@ -25,6 +25,9 @@ spans them. Research remains the public owner of its event ledger reads.
   compact agent documents or the richer UI overview.
 - Dashboard, cost, timeline, graph, and figure-fact reads join facts without
   exposing module internals to Surface.
+- Candidate submission resolves and pins an Artifact/Object Storage pointer, or
+  records a pathless experiment-workspace nomination for evaluator staging;
+  Research owns the immutable candidate and champion lineage.
 - Agent-session claims prioritize independent reviews, reviewed-reflection code
   consolidation, then experiments from the latest published wave and other
   active experiments. Owners request review and exit; Merv dispatches a
@@ -64,6 +67,8 @@ spans them. Research remains the public owner of its event ledger reads.
 - Artifact sealing and Research mutations retain their existing transaction
   boundaries. MLflow and Feed effects occur after commit; Feed and automatic
   MLflow finalization failures remain advisory.
+- Large candidates stay in Object Storage. Application validates candidate
+  pointers through module roots and never queries sibling persistence tables.
 - Surface owns HTTP/MCP models, authentication, formatting, and UI-only
   projections such as `surface/experiment_figure.py`.
 

@@ -178,12 +178,19 @@ class ProjectContextTest(unittest.TestCase):
             if artifact_id in evidence_by_id
         )
 
-    def test_builds_the_five_section_macro_packet(self) -> None:
+    def test_builds_the_project_macro_packet(self) -> None:
         result = self.query.build(project_id="proj_1")
 
         self.assertEqual(
             list(result),
-            ["project", "reflection", "literature", "claims", "experiments"],
+            [
+                "project",
+                "reflection",
+                "literature",
+                "claims",
+                "candidates",
+                "experiments",
+            ],
         )
         self.assertEqual(result["claims"][0]["status"], "abandoned")
         summaries = {row["id"]: row["summary"] for row in result["experiments"]}

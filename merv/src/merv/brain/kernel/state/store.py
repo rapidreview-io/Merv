@@ -704,6 +704,29 @@ CREATE TABLE IF NOT EXISTS submissions (
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
+-- Project candidates are immutable nominations. Artifact/Object Storage
+-- sources are already durable; experiment workspaces await one staging event.
+-- The optional source experiment is provenance, not ownership, so a starter
+-- can have none. Champion changes use append-only events for full lineage.
+CREATE TABLE IF NOT EXISTS project_candidates (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  source_kind TEXT NOT NULL
+    CHECK (source_kind IN ('artifact', 'storage_object', 'experiment_workspace')),
+  source_ref TEXT NOT NULL,
+  source_experiment_id TEXT,
+  expected_sha256 TEXT NOT NULL DEFAULT '',
+  validation_json TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  created_seq INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(project_id, idempotency_key),
+  FOREIGN KEY(project_id) REFERENCES projects(id),
+  FOREIGN KEY(source_experiment_id) REFERENCES experiments(id)
+);
+
 -- Both indexes are created by migration 36, never here. SCHEMA runs before the
 -- migration ladder and its CREATE TABLE IF NOT EXISTS is a no-op on a database
 -- that already has `artifacts`, so an index naming submission_id would fail on
@@ -1193,6 +1216,15 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     # it. Indexes live in the handler, never SCHEMA: they name ladder-added
     # columns (the migration-36 crash-loop lesson).
     (44, "add_user_provider_caps", ""),
+    # Durable project champion (August 2026): immutable candidate pointers and
+    # append-only staging/promotion receipts in the existing event ledger.
+    # Candidate bytes stay in Artifacts, Object Storage, or evaluator custody.
+    (45, "add_project_candidates", ""),
+)
+
+CANDIDATE_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_project_candidates_order"
+    "  ON project_candidates(project_id, created_seq)",
 )
 
 # Migration 44's indexes — handler-only, see the migration comment.
@@ -1522,7 +1554,16 @@ class BaseStateStore:
             self._add_consolidation(conn=conn)
         elif name == "add_user_provider_caps":
             self._add_user_provider_caps(conn=conn)
+        elif name == "add_project_candidates":
+            self._add_project_candidates(conn=conn)
         else:
+            conn.execute(statement)
+
+    def _add_project_candidates(self, *, conn: Connection) -> None:
+        """Migration 45: immutable project candidates and champion history."""
+        if not self._has_table(conn=conn, table="project_candidates"):
+            conn.execute(_schema_table_ddl(table="project_candidates"))
+        for statement in CANDIDATE_INDEXES:
             conn.execute(statement)
 
     def _add_user_provider_caps(self, *, conn: Connection) -> None:

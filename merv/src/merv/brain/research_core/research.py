@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 from contextlib import closing
+import hashlib
 import json
+import math
 from typing import Any, cast
 
 from .experiment_workflow import EXPERIMENT_TERMINAL_STATUSES
@@ -34,6 +36,8 @@ from ..artifacts import Artifacts
 from ..kernel.events import StoredEvent
 from ..kernel.state.store import (
     BaseStateStore,
+    Connection,
+    next_created_seq,
     row_to_dict,
     rows_to_dicts,
 )
@@ -67,6 +71,7 @@ _GRAPH_REFS = (
     ),
     ("paper_", "paper", "paper_id", "papers", ("title", "url", "year")),
 )
+_CANDIDATE_SELECT = "SELECT * FROM project_candidates"
 
 
 class Research:
@@ -299,6 +304,460 @@ class Research:
                 (user_id,),
             ).fetchall()
         return {str(row["project_id"]) for row in rows}
+
+    # Candidates -----------------------------------------------------------
+
+    def submit_candidate(
+        self,
+        *,
+        project_id: str | None,
+        name: str,
+        primary_metric: str,
+        metrics: dict[str, float],
+        validation_summary: str,
+        idempotency_key: str,
+        source_ref: str,
+        expected_sha256: str = "",
+        source_experiment_id: str = "",
+        source_kind: str,
+        higher_is_better: bool = True,
+    ) -> dict[str, Any]:
+        """Register one immutable resolved source or pending worktree source."""
+        name = str(name or "").strip()
+        primary_metric = str(primary_metric or "").strip()
+        validation_summary = str(validation_summary or "").strip()
+        idempotency_key = str(idempotency_key or "").strip()
+        source_experiment_id = str(source_experiment_id or "").strip()
+        source_kind = str(source_kind or "").strip()
+        source_ref = str(source_ref or "").strip()
+        expected_sha256 = str(expected_sha256 or "").strip()
+        if not all((name, validation_summary, idempotency_key, source_ref)):
+            raise ValidationError(
+                "candidate source, name, validation, and idempotency key are required"
+            )
+        if source_kind not in {"artifact", "storage_object", "experiment_workspace"}:
+            raise ValidationError(f"unknown candidate source_kind: {source_kind}")
+        if source_kind == "experiment_workspace" and source_ref != source_experiment_id:
+            raise ValidationError(
+                "experiment_workspace source must be its source_experiment_id"
+            )
+        normalized_metrics = {
+            str(key).strip(): float(value) for key, value in metrics.items()
+        }
+        if not normalized_metrics or any(
+            not key or not math.isfinite(value)
+            for key, value in normalized_metrics.items()
+        ):
+            raise ValidationError(
+                "candidate metrics need nonblank names and finite values"
+            )
+        if primary_metric not in normalized_metrics:
+            raise ValidationError("primary_metric must name a value in metrics")
+        validation = {
+            "metrics": normalized_metrics,
+            "primary_metric": primary_metric,
+            "higher_is_better": bool(higher_is_better),
+            "summary": validation_summary,
+        }
+        request_digest = hashlib.sha256(
+            json.dumps(
+                [
+                    name,
+                    source_kind,
+                    source_ref,
+                    source_experiment_id,
+                    expected_sha256,
+                    validation,
+                ],
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+
+        with self.store.transaction() as conn:
+            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
+            if source_experiment_id:
+                source = conn.execute(
+                    "SELECT 1 FROM experiments WHERE id = ? AND project_id = ?",
+                    (source_experiment_id, project_id),
+                ).fetchone()
+                if source is None:
+                    raise NotFoundError(
+                        f"experiment not found in project {project_id}: "
+                        f"{source_experiment_id}"
+                    )
+            existing = conn.execute(
+                """
+                SELECT * FROM project_candidates
+                WHERE project_id = ? AND idempotency_key = ?
+                """,
+                (project_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                if str(existing["request_digest"]) != request_digest:
+                    raise ValidationError(
+                        "idempotency_key was already used for a different candidate"
+                    )
+                candidate_id = str(existing["id"])
+                idempotent = True
+            else:
+                candidate_id = new_id(prefix="cand")
+                now = now_iso()
+                conn.execute(
+                    """
+                    INSERT INTO project_candidates (
+                      id, project_id, name, source_kind, source_ref,
+                      source_experiment_id, expected_sha256, validation_json,
+                      idempotency_key, request_digest, created_at, created_seq
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        candidate_id,
+                        project_id,
+                        name,
+                        source_kind,
+                        source_ref,
+                        source_experiment_id or None,
+                        expected_sha256,
+                        json.dumps(validation, sort_keys=True, separators=(",", ":")),
+                        idempotency_key,
+                        request_digest,
+                        now,
+                        next_created_seq(conn=conn, table="project_candidates"),
+                    ),
+                )
+                self.store.record_event(
+                    conn=conn,
+                    project_id=project_id,
+                    event_type="candidate.submitted",
+                    target_type="candidate",
+                    target_id=candidate_id,
+                    payload={},
+                )
+                idempotent = False
+            return {
+                "candidate": self._candidate(
+                    conn=conn, project_id=project_id, candidate_id=candidate_id
+                ),
+                "champion_id": self._champion_id(conn=conn, project_id=project_id),
+                "idempotent": idempotent,
+            }
+
+    def stage_candidate(
+        self,
+        *,
+        project_id: str | None,
+        candidate_id: str,
+        content_sha256: str,
+        stage_kind: str,
+        stage_ref: str,
+        manifest_sha256: str = "",
+    ) -> dict[str, Any]:
+        """Append the verified durable pointer for a worktree nomination."""
+        stage_kind = str(stage_kind or "").strip()
+        stage_ref = str(stage_ref or "").strip()
+        if (
+            stage_kind not in {"artifact", "storage_object", "evaluator_receipt"}
+            or not stage_ref
+        ):
+            raise ValidationError("stage_kind and stage_ref are required")
+        if stage_kind == "evaluator_receipt" and not manifest_sha256:
+            raise ValidationError(
+                "manifest_sha256 is required for evaluator_receipt staging"
+            )
+        with self.store.transaction() as conn:
+            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
+            candidate = self._candidate(
+                conn=conn, project_id=project_id, candidate_id=candidate_id
+            )
+            if candidate["source_kind"] != "experiment_workspace":
+                raise ValidationError(
+                    "only experiment_workspace candidates require staging"
+                )
+            if candidate["receipt"]:
+                expected = {
+                    "kind": stage_kind,
+                    "ref": stage_ref,
+                    "manifest_sha256": manifest_sha256,
+                    "content_sha256": content_sha256,
+                }
+                receipt = dict(candidate["receipt"])
+                receipt.pop("staged_at", None)
+                if receipt != expected:
+                    raise ValidationError(
+                        "candidate already has a different staging receipt"
+                    )
+                return {"candidate": candidate, "idempotent": True}
+            expected_sha = str(candidate["expected_sha256"])
+            if expected_sha and expected_sha != content_sha256:
+                raise ValidationError(
+                    "staged checksum does not match the nominated workspace candidate"
+                )
+            receipt = {
+                "kind": stage_kind,
+                "ref": stage_ref,
+                "manifest_sha256": manifest_sha256,
+                "content_sha256": content_sha256,
+            }
+            event = self.store.record_event(
+                conn=conn,
+                project_id=project_id,
+                event_type="candidate.staged",
+                target_type="candidate",
+                target_id=candidate_id,
+                payload=receipt,
+            )
+            receipt["staged_at"] = event.created_at
+            return {
+                "candidate": self._candidate(
+                    conn=conn,
+                    project_id=project_id,
+                    candidate_id=candidate_id,
+                    receipt=receipt,
+                ),
+                "idempotent": False,
+            }
+
+    def list_candidates(self, *, project_id: str | None) -> dict[str, Any]:
+        with closing(self.store.connect()) as conn:
+            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
+            return self._candidate_state(conn=conn, project_id=project_id)
+
+    def promote_candidate(
+        self,
+        *,
+        project_id: str | None,
+        candidate_id: str,
+        expected_champion_id: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        reason = str(reason or "").strip()
+        if len(reason) < 20:
+            raise ValidationError(
+                "promotion reason must be at least 20 characters and explain the comparison"
+            )
+        with self.store.transaction() as conn:
+            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
+            candidate_id = str(candidate_id or "").strip()
+            expected_champion_id = str(expected_champion_id or "").strip()
+            candidate = self._candidate(
+                conn=conn, project_id=project_id, candidate_id=candidate_id
+            )
+            if not candidate["staged"]:
+                raise ValidationError(
+                    "candidate is pending evaluator staging and cannot be promoted"
+                )
+            previous_id = self._champion_id(conn=conn, project_id=project_id)
+            if previous_id != expected_champion_id:
+                raise ValidationError(
+                    "champion changed; refresh candidate.list before promoting",
+                    details={
+                        "expected_champion_id": expected_champion_id,
+                        "actual_champion_id": previous_id,
+                    },
+                )
+            promoted = previous_id != candidate_id
+            if promoted:
+                self.store.record_event(
+                    conn=conn,
+                    project_id=project_id,
+                    event_type="candidate.promoted",
+                    target_type="candidate",
+                    target_id=candidate_id,
+                    payload={"previous_candidate_id": previous_id, "reason": reason},
+                )
+            candidate.update(validated=True, is_champion=True, was_promoted=True)
+            return {
+                "champion": candidate,
+                "champion_id": candidate_id,
+                "promoted": promoted,
+            }
+
+    @classmethod
+    def _candidate(
+        cls,
+        *,
+        conn: Connection,
+        project_id: str,
+        candidate_id: str,
+        receipt: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        row = conn.execute(
+            _CANDIDATE_SELECT + " WHERE id = ? AND project_id = ?",
+            (candidate_id, project_id),
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(
+                f"candidate not found in project {project_id}: {candidate_id}"
+            )
+        if receipt is None and str(row["source_kind"]) == "experiment_workspace":
+            staged = conn.execute(
+                """
+                SELECT payload_json, created_at FROM events
+                WHERE project_id = ? AND type = 'candidate.staged'
+                  AND target_type = 'candidate' AND target_id = ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (project_id, candidate_id),
+            ).fetchone()
+            if staged is not None:
+                receipt = json.loads(str(staged["payload_json"] or "{}"))
+                receipt["staged_at"] = str(staged["created_at"])
+        view = cls._candidate_view(row, receipt=receipt)
+        promotion = conn.execute(
+            """
+            SELECT EXISTS(
+                     SELECT 1 FROM events WHERE project_id = ?
+                       AND type = 'candidate.promoted' AND target_id = ?
+                   ) AS was_promoted,
+                   COALESCE((SELECT target_id FROM events WHERE project_id = ?
+                     AND type = 'candidate.promoted' ORDER BY id DESC LIMIT 1), '')
+                     AS champion_id
+            """,
+            (project_id, candidate_id, project_id),
+        ).fetchone()
+        was_promoted = bool(promotion["was_promoted"])
+        view.update(
+            validated=was_promoted,
+            was_promoted=was_promoted,
+            is_champion=str(promotion["champion_id"]) == candidate_id,
+        )
+        return view
+
+    @staticmethod
+    def _champion_id(*, conn: Connection, project_id: str) -> str:
+        row = conn.execute(
+            """
+            SELECT target_id AS candidate_id FROM events
+            WHERE project_id = ? AND type = 'candidate.promoted'
+              AND target_type = 'candidate' ORDER BY id DESC LIMIT 1
+            """,
+            (project_id,),
+        ).fetchone()
+        return str(row["candidate_id"]) if row is not None else ""
+
+    @classmethod
+    def _candidate_state(
+        cls, *, conn: Connection, project_id: str
+    ) -> dict[str, Any]:
+        rows = conn.execute(
+            _CANDIDATE_SELECT
+            + " WHERE project_id = ? ORDER BY created_seq DESC",
+            (project_id,),
+        ).fetchall()
+        receipts, promotions = cls._candidate_history(
+            conn=conn, project_id=project_id
+        )
+        candidates = [
+            cls._candidate_view(row, receipt=receipts.get(str(row["id"])))
+            for row in rows
+        ]
+        by_id = {str(item["id"]): item for item in candidates}
+        champion_id = (
+            str(promotions[0]["candidate_id"]) if promotions else ""
+        )
+        promoted_ids = {str(item["candidate_id"]) for item in promotions}
+        for candidate in candidates:
+            candidate_id = str(candidate["id"])
+            candidate["is_champion"] = candidate_id == champion_id
+            candidate["was_promoted"] = candidate_id in promoted_ids
+            candidate["validated"] = candidate["was_promoted"]
+        return {
+            "champion": by_id.get(champion_id),
+            "champion_id": champion_id,
+            "candidates": candidates,
+            "promotions": promotions,
+        }
+
+    @staticmethod
+    def _candidate_view(
+        row: Any, *, receipt: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        data = row_to_dict(row=row) or {}
+        validation = json.loads(str(data.get("validation_json") or "{}"))
+        workspace = data.get("source_kind") == "experiment_workspace"
+        staged = not workspace or receipt is not None
+        durable = receipt or (
+            {
+                "kind": data.get("source_kind"),
+                "ref": data.get("source_ref"),
+                "manifest_sha256": "",
+                "content_sha256": data.get("expected_sha256"),
+                "staged_at": data.get("created_at"),
+            }
+            if not workspace
+            else None
+        )
+        return {
+            "id": data.get("id"),
+            "name": data.get("name"),
+            "source_kind": data.get("source_kind"),
+            "source_ref": data.get("source_ref"),
+            "source_experiment_id": data.get("source_experiment_id") or "",
+            "expected_sha256": data.get("expected_sha256") or "",
+            "staged": staged,
+            "receipt": durable,
+            "metrics": validation.get("metrics", {}),
+            "primary_metric": validation.get("primary_metric"),
+            "higher_is_better": bool(validation.get("higher_is_better", True)),
+            "validation_summary": validation.get("summary", ""),
+            "validated": False,
+            "was_promoted": False,
+            "is_champion": False,
+            "created_at": data.get("created_at"),
+        }
+
+    @classmethod
+    def _candidate_context(
+        cls, *, conn: Connection, project_id: str
+    ) -> dict[str, Any]:
+        state = cls._candidate_state(conn=conn, project_id=project_id)
+        recent = state["candidates"][:3]
+        return {
+            "champion": state["champion"],
+            "champion_id": state["champion_id"],
+            "latest": recent[0] if recent else None,
+            "recent": recent,
+            "count": len(state["candidates"]),
+            "pending_staging_count": sum(
+                not candidate["staged"] for candidate in state["candidates"]
+            ),
+        }
+
+    @staticmethod
+    def _candidate_history(
+        *, conn: Connection, project_id: str
+    ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+        rows = conn.execute(
+            """
+            SELECT id, type, target_id, payload_json, created_at FROM events
+            WHERE project_id = ? AND target_type = 'candidate'
+              AND type IN ('candidate.staged', 'candidate.promoted')
+            ORDER BY id DESC
+            """,
+            (project_id,),
+        ).fetchall()
+        receipts: dict[str, dict[str, Any]] = {}
+        promotions: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+            candidate_id = str(row["target_id"])
+            if row["type"] == "candidate.staged":
+                payload["staged_at"] = str(row["created_at"])
+                receipts.setdefault(candidate_id, payload)
+            else:
+                promotions.append(
+                    {
+                        "event_id": int(row["id"]),
+                        "candidate_id": candidate_id,
+                        "previous_candidate_id": payload.get(
+                            "previous_candidate_id", ""
+                        ),
+                        "reason": payload.get("reason", ""),
+                        "created_at": str(row["created_at"]),
+                    }
+                )
+        return receipts, promotions
 
     # Claims ---------------------------------------------------------------
 
@@ -986,6 +1445,7 @@ class Research:
                 "SELECT COUNT(*) AS n FROM papers WHERE project_id = ?",
                 (project_id,),
             ).fetchone()
+            candidates = self._candidate_context(conn=conn, project_id=project_id)
         return {
             "project": project,
             "claims": claims,
@@ -994,6 +1454,7 @@ class Research:
             "open_reflection": open_wave,
             "literature_summary": literature_summary,
             "paper_count": int(count["n"]) if count else 0,
+            "candidates": candidates,
         }
 
     def resolve_graph_refs(

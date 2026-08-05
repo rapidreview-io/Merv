@@ -55,6 +55,25 @@ There is no automatic synchronization between the checkout, a sandbox, and
 Merv. Pull remote outputs into the experiment folder before submitting them.
 Use durable object storage for large binary outputs.
 
+## Maintain the project champion
+
+The ordinary project manager, not an experiment worker, owns candidate
+selection. Whenever experiment output looks promising against the current
+champion, the manager must immediately call `candidate.submit`; do not wait for
+the campaign deadline. Use `source_kind=experiment_workspace` when the external
+evaluator still needs to capture task-defined output from that experiment—the
+caller sets `source_ref` to the experiment id, never a filesystem path. The
+evaluator will append the verified staging receipt through `candidate.stage`.
+
+Before promotion, call `candidate.list`, compare the staged candidate against
+the untouched champion on the project-level objective and meaningful shift or
+robustness checks, then call `candidate.promote` with the observed champion id
+(or `""` when none) and a substantive reason. Refresh and reconsider if the CAS
+fails. A pending workspace nomination is visible but cannot become champion.
+Keep submitting later challengers as they arrive; promotion never ends research.
+Put small candidate files in Artifacts and large model/checkpoint bytes in
+Object Storage—never Git.
+
 ## Author the experiment record
 
 Use the bundled templates only when creating their corresponding documents:

@@ -91,6 +91,7 @@ class ProjectContextQuery:
             ),
             "literature": self._literature(facts),
             "claims": [dict(claim) for claim in facts["claims"]],
+            "candidates": facts.get("candidates", {}),
             "experiments": [
                 self._experiment(
                     experiment=row,

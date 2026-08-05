@@ -236,7 +236,14 @@ class WorkflowSlimTest(unittest.TestCase):
         self.assertIsNone(slim["experiment"])
         self.assertEqual(
             set(slim["context"]),
-            {"project", "reflection", "literature", "claims", "experiments"},
+            {
+                "project",
+                "reflection",
+                "literature",
+                "claims",
+                "candidates",
+                "experiments",
+            },
         )
         self.assertEqual(slim["workflow"]["current_gate"], "project_setup")
         claim = slim["context"]["claims"][0]

@@ -12,6 +12,9 @@ FROZEN_DURABLE_EVENT_TYPES = frozenset(
     {
         "artifact.pinned",
         "artifact.submitted",
+        "candidate.promoted",
+        "candidate.staged",
+        "candidate.submitted",
         "claim.created",
         "claim.updated",
         "experiment.created",

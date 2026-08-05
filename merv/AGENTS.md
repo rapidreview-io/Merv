@@ -38,6 +38,11 @@ There is no linking step and no `connect` action. Use
   provider; choose from `sandbox.options` when hardware selection is needed.
 - For quantitative work, retain compact machine-readable result files and
   figures under the experiment folder, then submit them as result evidence.
+- A project manager must register each newly promising result with
+  `candidate.submit` immediately, then promote only a durably staged candidate
+  after refreshing `candidate.list`, validating it, and comparing it with the
+  champion.
+  Large candidate bytes belong in Object Storage, never Git.
 
 ## Review boundary
 

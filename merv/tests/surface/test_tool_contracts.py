@@ -41,6 +41,10 @@ BASE_PUBLIC_TOOLS = frozenset(
     {
         "artifact.find",
         "artifact.submit",
+        "candidate.list",
+        "candidate.promote",
+        "candidate.stage",
+        "candidate.submit",
         "claim.create",
         "claim.update",
         "consolidation.get",
@@ -100,6 +104,10 @@ TRACKING_PUBLIC_TOOLS = frozenset({"mlflow.context", "mlflow.finalize_run"})
 TOOL_INPUT_SCHEMA_SHA256 = {
     "artifact.find": "ac17e7ab19d57565b569c8fac1b0d3cb7558d6707ba134bf4148262b9e7361e2",
     "artifact.submit": "6a0d7b13ad955492a130b31655449efa534ed3cf3316c50053bfa70278da9b2e",
+    "candidate.list": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
+    "candidate.promote": "873ba38c2e42f140ab8eb691f6d2c2fb8cf30ddc22038dba00038b99536ef04c",
+    "candidate.stage": "dfdd7ad6a3dd42aac1ac793eaf6ec841f1f7c9b96f1f505743567f888ed90145",
+    "candidate.submit": "ee0a52dd32956eca55ce18da531a5db2b35bf59c41f0e589570a9d28c0b9aac1",
     "claim.create": "657e35c9cd860d4eae6e1d6403d77644389ea966471a56470f07b8a995995232",
     "claim.list": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
     "claim.update": "55db160bd01130666f1a7a5720f57544e83de4227582249c88d7b265d68eb227",
