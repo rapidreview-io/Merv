@@ -104,10 +104,12 @@ def create_fastapi_app(
     # Registered last so CORS decorates middleware short-circuits as well.
     install_cors(http, allowed_origins=allowed_origins, surface=surface)
     install_error_handlers(http)
+    # Owner-minted keys carry no audience: the audience column exists to
+    # confine OAuth-issued keys to /mcp, and stamping the resource URI here
+    # 403'd directly minted mk_ keys off every REST route in hosted deploys.
     install_auth_routes(
         http,
         verifier=auth,
-        owner_key_audience=oauth_resource_uri,
         tracking_enabled=api.application.tracking_enabled,
     )
     oauth.install_routes(

@@ -9,6 +9,7 @@ halt without special casing.
 
 from __future__ import annotations
 
+import logging
 from contextlib import closing
 from datetime import UTC, datetime
 from typing import Any
@@ -21,6 +22,8 @@ from ..kernel.utils import now_iso, parse_iso
 from .lifecycle import SandboxLifecycle
 from .quotas import QuotaService, _next_utc_midnight, _row_effective_price
 from .storage import SandboxStorage
+
+LOGGER = logging.getLogger(__name__)
 
 WARN_RATIO = 0.8
 DEFAULT_GRACE_SECONDS = 3600.0
@@ -72,6 +75,11 @@ class BudgetEnforcer:
                     user_id=user_id, provider=provider, rows=rows, now=now_dt
                 )
             except Exception:  # noqa: BLE001 — one payer never aborts the pass
+                LOGGER.exception(
+                    "budget enforcement failed for user %s on provider %s",
+                    user_id,
+                    provider,
+                )
                 continue
 
     def _enforce_group(
@@ -96,24 +104,39 @@ class BudgetEnforcer:
         # Fail-closed: an active row whose price cannot be established is
         # unbounded unknown billing — treated as an exhausted cap, so it
         # halts acquisition and enters the termination ladder rather than
-        # idling at "$0" (plan finding 9).
-        unpriced = any(self._row_price(row=row) is None for row in rows)
+        # idling at "$0" (plan finding 9). Only the offending rows escalate:
+        # admission is already blocked fleet-wide by the inf commitment, and
+        # terminating priced under-cap siblings would destroy their work
+        # without adding money safety.
+        prices = {
+            str(row.get("sandbox_uid") or ""): self._row_price(row=row)
+            for row in rows
+        }
+        unpriced_rows = [
+            row for row in rows if prices[str(row.get("sandbox_uid") or "")] is None
+        ]
         payload_base = {
             "user_id": user_id,
             "provider": provider,
             "spent": spent,
             "limit": cap,
             "resets_at": _next_utc_midnight(now).isoformat(),
-            "unpriced": unpriced,
+            "unpriced": bool(unpriced_rows),
         }
-        if unpriced or spent >= cap:
+        if spent >= cap:
             for row in rows:
                 self._escalate(row=row, now=now, payload=payload_base)
-        elif spent >= WARN_RATIO * cap:
-            for row in rows:
+            return
+        for row in unpriced_rows:
+            self._escalate(row=row, now=now, payload=payload_base)
+        priced_rows = [
+            row for row in rows if prices[str(row.get("sandbox_uid") or "")] is not None
+        ]
+        if spent >= WARN_RATIO * cap:
+            for row in priced_rows:
                 self._warn(row=row, payload=payload_base)
         else:
-            for row in rows:
+            for row in priced_rows:
                 self._clear(row=row)
 
     def _row_price(self, *, row: dict[str, Any]) -> float | None:

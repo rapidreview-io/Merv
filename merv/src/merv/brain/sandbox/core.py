@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import shlex
 import threading
@@ -60,6 +61,8 @@ from .scheduler import SandboxScheduler
 from .heartbeat import SandboxActivityPolicy, SandboxHeartbeatMonitor, usage_point
 from .sandbox_paths import DEFAULT_DATA_DIR, remote_experiment_dir
 from .storage import SandboxStorage
+
+LOGGER = logging.getLogger(__name__)
 
 
 _DEFAULT_PULL_OUTPUTS = (
@@ -345,31 +348,44 @@ class SandboxEngine:
         expiry_enabled: bool,
         idle_threshold_seconds: float,
     ) -> None:
-        """Run one safety-ordered sweep without letting one row kill the timer."""
+        """Run one safety-ordered sweep without letting one pass kill the timer.
+
+        Isolation stays per pass but is never silent: several passes ARE the
+        money safety (budget caps, expiry reaping), so a persistent failure
+        must reach the logs instead of becoming a permanent no-op.
+        """
         now = datetime.now(tz=UTC)
-        with suppress(Exception):
-            if expiry_enabled:
-                self._lifecycle.reap_expired(now=now)
+
+        def guarded(pass_name: str, run: Callable[[], object]) -> None:
+            try:
+                run()
+            except Exception:
+                LOGGER.exception("sandbox maintenance pass %s failed", pass_name)
+
+        if expiry_enabled:
+            guarded("reap_expired", lambda: self._lifecycle.reap_expired(now=now))
         # Detached work appears in receipts before it appears in gauges.
-        with suppress(Exception):
-            self._observer.observe_live()
-        with suppress(Exception):
-            self._heartbeat.reap_idle(
-                now=now,
-                threshold_seconds=idle_threshold_seconds,
+        guarded("observe_live", self._observer.observe_live)
+        guarded(
+            "reap_idle",
+            lambda: self._heartbeat.reap_idle(
+                now=now, threshold_seconds=idle_threshold_seconds
+            ),
+        )
+        if expiry_enabled:
+            guarded(
+                "reap_stale_provisions",
+                lambda: self._provisioner.reap_stale_provisions(
+                    now=now, deadline_seconds=stale_deadline_seconds
+                ),
             )
-        with suppress(Exception):
-            if expiry_enabled:
-                self._provisioner.reap_stale_provisions(
-                    now=now,
-                    deadline_seconds=stale_deadline_seconds,
-                )
         # Deliberately NOT gated by expiry_enabled: user-cap money safety
         # must not switch off with the expiry reaper env flags.
-        with suppress(Exception):
-            self._budget.enforce(now=now)
-        with suppress(Exception):
-            self._lifecycle.retry_cleanup_pending(now=now)
+        guarded("budget_enforce", lambda: self._budget.enforce(now=now))
+        guarded(
+            "retry_cleanup_pending",
+            lambda: self._lifecycle.retry_cleanup_pending(now=now),
+        )
 
     def _deliver_secrets_once(self, *, row: dict[str, Any]) -> None:
         uid = str(row.get("sandbox_uid") or "")
@@ -908,15 +924,20 @@ class SandboxEngine:
                 # Unknown liveness is reused; clearing it could orphan a live VM.
                 and (self._lifecycle.liveness(row=existing) is not False)
             )
-            # Never clean beneath an in-flight local provision.
+            # Never clean beneath an in-flight local provision. An additional
+            # request provisions a freshly minted uid, so the sibling's live
+            # job must not stand in for it — that would skip admission and
+            # the reservation for a box the ledger could never attribute.
             job_live = bool(
-                existing
+                not additional
+                and existing
                 and self._provisioner.job_is_live(
                     sandbox_uid=str(existing.get("sandbox_uid") or ""),
                 )
             )
             if (
-                existing
+                not additional
+                and existing
                 and existing.get("status") == "provisioning"
                 and not job_live
                 and self._provisioning_is_fresh(row=existing)

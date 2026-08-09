@@ -130,6 +130,27 @@ def exercise_offline_driver(case: TestCase, fixture: OfflineDriverFixture) -> No
     case.assertIn("connecting", [phase for phase, _ in phases])
     case.assertTrue(backend.is_alive(sandbox_id=provisioned.sandbox_id))
 
+    # Price tri-state (models.ProvisionedSandbox): an option the catalog does
+    # not price must provision as None so storage records price_known=0 — a
+    # coerced "known $0.00/hr" bills capped users nothing forever.
+    requested_type = str(fixture.request.instance_type or "")
+    if requested_type:
+        options = (backend.hardware_catalog() or {}).get("options") or []
+        option = next(
+            (
+                entry
+                for entry in options
+                if str(entry.get("instance_type") or "") == requested_type
+            ),
+            None,
+        )
+        if option is not None and option.get("price_usd_per_hour") is None:
+            case.assertIsNone(
+                provisioned.price_usd_per_hour,
+                "unpriced catalog option must stay price None (price_known=0), "
+                "not a known $0.00/hr",
+            )
+
     if fixture.move_endpoint is not None:
         fixture.move_endpoint(provisioned.sandbox_id, "moved.sandbox.test", 2222)
     refreshed = backend.refresh_ssh_endpoint(sandbox_id=provisioned.sandbox_id)

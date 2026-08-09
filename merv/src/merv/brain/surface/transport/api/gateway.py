@@ -814,16 +814,13 @@ def install_auth_routes(
     http: FastAPI,
     *,
     verifier: Any | None,
-    owner_key_audience: str = "",
     tracking_enabled: bool = False,
 ) -> None:
     if verifier is None:
         return
     if getattr(verifier, "project_keys", None) is not None:
         http.include_router(
-            project_keys.build_router(
-                keys=verifier.project_keys, audience=owner_key_audience
-            )
+            project_keys.build_router(keys=verifier.project_keys)
         )
 
     if tracking_enabled:

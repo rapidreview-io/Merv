@@ -160,6 +160,9 @@ class GcpAcquireTest(unittest.TestCase):
         self.assertEqual(provisioned.ssh_host, "35.238.10.20")  # NAT, not networkIP
         self.assertEqual(provisioned.region, "us-central1-a")
         self.assertEqual(provisioned.gpu, "L4")
+        # GCE quotes no price: the tri-state None must survive to storage as
+        # price_known=0, never a coerced "known" $0.00/hr the caps skip.
+        self.assertIsNone(provisioned.price_usd_per_hour)
         self.assertEqual(len(client.firewalls_created), 1)
         body = client.instances_created[0]
         metadata = {i["key"]: i["value"] for i in body["metadata"]["items"]}

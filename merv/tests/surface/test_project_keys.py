@@ -143,7 +143,7 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         )
         self.assertNotEqual(row["secret_digest"], self.key)
         self.assertEqual(row["tenant_id"], "local")
-        self.assertIsNone(row["audience"])  # no MERV_OAUTH_RESOURCE_URI configured
+        self.assertIsNone(row["audience"])  # owner mints never carry an audience
 
         child = self._mint(project_id=self.project_a, parent_key_id=self.key_id)
         self.assertEqual(child["key"]["parent_key_id"], self.key_id)
@@ -176,6 +176,43 @@ class ProjectKeySurfaceTest(unittest.TestCase):
             )
         with self.assertRaises(UnauthorizedError):
             self.verifier.verify_bearer(f"Bearer {child['secret']}")
+
+    def test_owner_mint_keeps_rest_authority_when_resource_uri_configured(self) -> None:
+        # Hosted deploys set MERV_OAUTH_RESOURCE_URI; stamping that audience
+        # on owner-minted keys 403'd them off every REST route (including the
+        # agent-sessions runner). The audience column belongs to OAuth-issued
+        # keys only.
+        client = TestClient(
+            create_fastapi_app(
+                self.app,
+                surface_policy=HttpSurfacePolicy.for_surface(
+                    restrict_cors=True, hosted_control=True
+                ),
+                auth=self.verifier,
+                oauth_resource_uri="https://brain.example/mcp",
+            ),
+            raise_server_exceptions=False,
+        )
+        minted = client.post(
+            f"/api/projects/{self.project_a}/keys",
+            json={},
+            headers=_bearer(self.jwt_a),
+        )
+        self.assertEqual(minted.status_code, 201, minted.text)
+        key_id = minted.json()["key"]["id"]
+        with self.app.store.connect() as conn:
+            row = conn.execute(
+                "SELECT audience FROM project_api_keys WHERE id = ?", (key_id,)
+            ).fetchone()
+        self.assertIsNone(row["audience"])
+        listed = client.get(
+            "/api/projects", headers=_bearer(minted.json()["secret"])
+        )
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertEqual(
+            {project["id"] for project in listed.json()["projects"]},
+            {self.project_a},
+        )
 
     def test_minted_record_has_no_profile_and_create_rejects_profile_kwarg(self) -> None:
         result = self.keys.create(project_id=self.project_a, owner_user_id=USER_A)

@@ -2,9 +2,9 @@
 
 Every route requires a Supabase browser session (``client_id`` starts with
 ``jwt:``): a project (``mk_``) key or an ``rr_sk_`` key cannot mint, list, or
-revoke keys. Owner-minted keys carry the canonical ``/mcp`` audience when the
-deployment configures one; unset leaves them un-audienced (Phase A has no
-audience enforcement yet).
+revoke keys. Owner-minted keys carry NO audience: the audience column confines
+OAuth-issued keys to ``/mcp``, and stamping it here would revoke a directly
+minted key's REST authority (agent-sessions claim/attach/release rides it).
 """
 
 from __future__ import annotations
@@ -16,9 +16,10 @@ from ...identity import HumanSessionRequiredError, is_human_session
 from ...project_keys import PROJECT_GRANT, ProjectKeyControl
 from .shared import JsonBody
 
-# The only optional fields a JWT owner may supply when minting a key; audience
-# is server-set. Anything else (e.g. a de-profiled ``profile``) is a 400 rather
-# than a silently-ignored 201.
+# The only optional fields a JWT owner may supply when minting a key; the
+# audience stays server-controlled (never stamped on owner mints). Anything
+# else (e.g. a de-profiled ``profile``) is a 400 rather than a
+# silently-ignored 201.
 _CREATE_KEY_FIELDS = frozenset(
     {
         "expires_at",
@@ -33,9 +34,8 @@ _CREATE_KEY_FIELDS = frozenset(
 )
 
 
-def build_router(*, keys: ProjectKeyControl, audience: str = "") -> APIRouter:
+def build_router(*, keys: ProjectKeyControl) -> APIRouter:
     router = APIRouter()
-    owner_key_audience = (audience or "").strip() or None
 
     @router.post("/api/projects/{project_id}/keys", status_code=201)
     def create_project_key(
@@ -54,7 +54,6 @@ def build_router(*, keys: ProjectKeyControl, audience: str = "") -> APIRouter:
             parent_key_id=payload.get("parent_key_id"),
             sandbox_seconds_ceiling=payload.get("sandbox_seconds_ceiling"),
             blob_bytes_ceiling=payload.get("blob_bytes_ceiling"),
-            audience=owner_key_audience,
             grant_scope=payload.get("grant_scope") or PROJECT_GRANT,
         )
 

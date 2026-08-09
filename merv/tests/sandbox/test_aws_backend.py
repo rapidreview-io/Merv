@@ -164,6 +164,9 @@ class AwsAcquireTest(unittest.TestCase):
         self.assertEqual(provisioned.ssh_user, "ubuntu")
         self.assertEqual(provisioned.region, "us-east-1")
         self.assertEqual(provisioned.gpu, "A10G")
+        # EC2 quotes no price: the tri-state None must survive to storage as
+        # price_known=0, never a coerced "known" $0.00/hr the caps skip.
+        self.assertIsNone(provisioned.price_usd_per_hour)
         # The create key is the management key; the caller key arrives via the
         # SSH-pushed bootstrap (EC2 user_data is too small for it).
         self.assertEqual(client.keys_imported[0]["public_key"], "ssh-ed25519 BBBB mgmt")

@@ -470,9 +470,11 @@ class TensorDockSandboxBackend(VmSshSandboxBackend):
                 memory=shape["ram_gb"] * 1024,
                 instance_type=instance_type,
                 region=location_id,
-                # Live rate once reported; the synthesized estimate otherwise.
+                # Live rate once reported; the synthesized estimate otherwise;
+                # both unknown stays None so the ledger records price_known=0
+                # instead of a "known" $0.00/hr.
                 price_usd_per_hour=_float_or_zero(instance.get("rateHourly"))
-                or float(option.get("price_usd_per_hour") or 0.0),
+                or _float_or_none(option.get("price_usd_per_hour")),
             )
         except Exception:
             if instance_id:

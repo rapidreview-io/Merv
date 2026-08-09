@@ -647,8 +647,10 @@ class SandboxStorage:
             "region": provisioned.region or (request.region or ""),
             # The legacy column is a NOT NULL floor; the nullable quoted
             # column preserves unknown (None) so it never reads as $0.
-            "price_usd_per_hour": float(provisioned.price_usd_per_hour or 0.0),
-            "quoted_price_usd_per_hour": provisioned.price_usd_per_hour,
+            # Both are finalized inside the transaction, where an adapter
+            # that lost its quote falls back to the admission-stamped one.
+            "price_usd_per_hour": 0.0,
+            "quoted_price_usd_per_hour": None,
             "ssh_host": provisioned.ssh_host,
             "ssh_port": provisioned.ssh_port,
             "ssh_user": provisioned.ssh_user,
@@ -667,6 +669,23 @@ class SandboxStorage:
         }
         generation_id = new_id(prefix="sbg")
         with self.store.transaction() as conn:
+            effective_price = provisioned.price_usd_per_hour
+            if effective_price is None:
+                # Adapter lost its quote at provision time: keep the
+                # admission-validated stamp rather than degrading a priced
+                # reservation to NULL (which would halt the payer's fleet).
+                stamped = conn.execute(
+                    "SELECT quoted_price_usd_per_hour FROM sandboxes "
+                    "WHERE sandbox_uid = ?",
+                    (sandbox_uid,),
+                ).fetchone()
+                if (
+                    stamped is not None
+                    and stamped["quoted_price_usd_per_hour"] is not None
+                ):
+                    effective_price = float(stamped["quoted_price_usd_per_hour"])
+            payload["price_usd_per_hour"] = float(effective_price or 0.0)
+            payload["quoted_price_usd_per_hour"] = effective_price
             assignments = ", ".join(f"{column} = ?" for column in payload)
             updated = self._guarded_update(
                 conn=conn,
@@ -693,8 +712,8 @@ class SandboxStorage:
             # price_known = (final price is not None): an allowed unknown-price
             # completion stores the floor 0 with price_known=0, distinguishable
             # from genuine $0 and still subject to the exhausted sentinel.
-            price = float(provisioned.price_usd_per_hour or 0.0)
-            price_known = 1 if provisioned.price_usd_per_hour is not None else 0
+            price = float(effective_price or 0.0)
+            price_known = 1 if effective_price is not None else 0
             open_gen = conn.execute(
                 "SELECT id FROM sandbox_generations "
                 "WHERE sandbox_uid = ? AND ended_at IS NULL "

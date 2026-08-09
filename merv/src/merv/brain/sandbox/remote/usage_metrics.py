@@ -56,11 +56,18 @@ if [ -r /proc/net/dev ]; then
 fi
 ssh_sessions() {
   if command -v ss >/dev/null 2>&1; then
-    ss -Htn state established 'sport = :22' 2>/dev/null | wc -l | awk '{print $1}'
-    return
+    n=$(ss -Htn state established 'sport = :22' 2>/dev/null | wc -l | awk '{print $1}')
+  else
+    n=$(awk 'NR>1{split($2,a,":"); if(tolower(a[2])=="0016" && $4=="01") c++}
+         END{print c+0}' /proc/net/tcp /proc/net/tcp6 2>/dev/null)
   fi
-  awk 'NR>1{split($2,a,":"); if(tolower(a[2])=="0016" && $4=="01") c++}
-       END{print c+0}' /proc/net/tcp /proc/net/tcp6 2>/dev/null
+  # This probe arrives over SSH itself: subtract our own session, or the
+  # gauge reads >=1 forever and idle reaping can never fire.
+  case "${n:-}" in
+    ''|*[!0-9]*) ;;
+    *) [ -n "${SSH_CONNECTION:-}" ] && [ "$n" -gt 0 ] && n=$((n-1)) ;;
+  esac
+  printf '%s\n' "${n:-}"
 }
 ssh_established=$(ssh_sessions || true)
 if [ -n "${ssh_established:-}" ]; then

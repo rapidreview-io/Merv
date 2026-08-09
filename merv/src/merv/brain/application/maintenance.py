@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from ..kernel.ports.blob_store import ExpiringBlobStore
 from ..kernel.ports.sandbox_lifecycle import (
@@ -62,11 +62,15 @@ class CleanupReport:
         default_factory=lambda: dict(SKIPPED_PRUNE)
     )
     agent_sessions_expired: int = 0
+    # Count-reporting sweeps that raised instead: name -> error. A failed
+    # sweep must degrade to its report line, never abort the pass — the
+    # money-safety re-ask (cleanup_pending) always gets its turn.
+    sweep_errors: dict[str, str] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
         """Whether every subsystem that reports an outcome reported success."""
-        return all(
+        return not self.sweep_errors and all(
             bool(outcome.get("ok"))
             for outcome in (
                 self.cleanup_pending,
@@ -90,6 +94,7 @@ class CleanupReport:
             "tool_calls_pruned": dict(self.tool_calls_pruned),
             "oauth_clients_pruned": dict(self.oauth_clients_pruned),
             "agent_sessions_expired": self.agent_sessions_expired,
+            "sweep_errors": dict(self.sweep_errors),
         }
 
 
@@ -119,17 +124,36 @@ class CleanupService:
 
     def run_all(self, *, now: datetime | None = None) -> CleanupReport:
         now_dt = now or datetime.now(tz=UTC)
+        errors: dict[str, str] = {}
+
+        def counted(name: str, run: Callable[[], int]) -> int:
+            # The count-returning sweeps get the same isolation the dict
+            # sweeps build in: one provider or DB failure must not cancel
+            # the money-safety re-ask below (SAN-05).
+            try:
+                return int(run())
+            except Exception as exc:  # noqa: BLE001 -- degrade to the report
+                errors[name] = str(exc)[:200]
+                return 0
+
         return CleanupReport(
-            orphan_vms_reaped=self.sweep_orphan_vms(now=now_dt),
+            orphan_vms_reaped=counted(
+                "orphan_vms", lambda: self.sweep_orphan_vms(now=now_dt)
+            ),
             blobs_swept=self.sweep_expired_blobs(now=now_dt),
             storage_objects_swept=self.sweep_expired_storage(now=now_dt),
-            stale_provisions_reaped=self.sweep_stale_provisions(now=now_dt),
+            stale_provisions_reaped=counted(
+                "stale_provisions", lambda: self.sweep_stale_provisions(now=now_dt)
+            ),
             # After the reaps, so a row parked this pass is retried next pass
             # rather than immediately re-asked.
             cleanup_pending=self.retry_cleanup_pending(now=now_dt),
             tool_calls_pruned=self.prune_tool_calls(now=now_dt),
             oauth_clients_pruned=self.prune_oauth_clients(now=now_dt),
-            agent_sessions_expired=self.reconcile_agent_sessions(now=now_dt),
+            agent_sessions_expired=counted(
+                "agent_sessions", lambda: self.reconcile_agent_sessions(now=now_dt)
+            ),
+            sweep_errors=errors,
         )
 
     def sweep_orphan_vms(self, *, now: datetime | None = None) -> int:

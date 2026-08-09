@@ -29,6 +29,7 @@ from .base import (
     SshRunner,
     VmSshSandboxBackend,
     _first_env,
+    _float_or_none,
     _int_or_zero,
     _norm,
     _positive_int,
@@ -556,7 +557,9 @@ class AwsSandboxBackend(VmSshSandboxBackend):
                 memory=(int(option.get("memory_gib") or 0) * 1024) or None,
                 instance_type=instance_type,
                 region=self.client.config.region,
-                price_usd_per_hour=float(option.get("price_usd_per_hour") or 0.0),
+                # Tri-state: an unpriced catalog option must stay None so the
+                # ledger records price_known=0 instead of a "known" $0.00/hr.
+                price_usd_per_hour=_float_or_none(option.get("price_usd_per_hour")),
             )
         except Exception:
             if instance_id:

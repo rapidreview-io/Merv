@@ -252,9 +252,30 @@ class CleanupSweepTest(unittest.TestCase):
             "tool_calls_pruned": skipped,
             "oauth_clients_pruned": skipped,
             "agent_sessions_expired": 0,
+            "sweep_errors": {},
         })
 
     # ---- tool-call ledger retention ----
+
+    def test_a_failing_count_sweep_degrades_without_cancelling_the_pass(self) -> None:
+        # A provider or DB failure in a count-returning sweep must not cancel
+        # the pass: the money-safety re-ask (SAN-05) and the later prunes all
+        # still get their turn, and the failure lands in the report.
+        with patch.object(
+            self.cleanup, "retry_cleanup_pending", wraps=self.cleanup.retry_cleanup_pending
+        ) as reask:
+            with patch.object(
+                self.app.sandboxes,
+                "reap_stale_provisions",
+                side_effect=RuntimeError("provider 500"),
+            ):
+                report = self.cleanup.run_all(now=datetime.now(tz=UTC))
+        self.assertTrue(reask.called)
+        self.assertFalse(report.ok)
+        self.assertEqual(report.stale_provisions_reaped, 0)
+        self.assertEqual(
+            report.as_dict()["sweep_errors"], {"stale_provisions": "provider 500"}
+        )
 
     def test_prune_deletes_expired_ledger_rows_through_the_pass(self) -> None:
         cleanup = CleanupService(

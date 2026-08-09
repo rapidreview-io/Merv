@@ -349,8 +349,10 @@ class VoltageParkSandboxBackend(VmSshSandboxBackend):
                 memory=(int(option.get("memory_gib") or 0) * 1024) or None,
                 instance_type=config_id,
                 region=str((option.get("regions") or [""])[0]),
+                # Live rate when reported; both unknown stays None so the
+                # ledger records price_known=0 instead of a "known" $0.00/hr.
                 price_usd_per_hour=_vm_hourly_rate(vm)
-                or float(option.get("price_usd_per_hour") or 0.0),
+                or _float_or_none(option.get("price_usd_per_hour")),
             )
         except Exception:
             if vm_id:

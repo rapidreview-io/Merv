@@ -20,6 +20,7 @@ from tests.support.brain import DEFAULT_PUBLIC_KEY, TestBrain
 from tests.support.sandbox_backend import FakeSandboxBackend
 from merv.brain.kernel.utils import PermissionDeniedError
 from merv.brain.sandbox.budget import BudgetEnforcer
+from merv.brain.sandbox.models import ProvisionedSandbox, SandboxRequest
 from merv.brain.sandbox.quotas import AdmissionRequest, QuotaService
 
 NOON = datetime(2026, 8, 3, 12, 0, 0, tzinfo=UTC)
@@ -765,6 +766,175 @@ class BudgetSweepTest(_CapTestBase):
         )
         self.enforcer.enforce(now=NOON)
         self.assertEqual(self._budget_state("u-dark")[0], "over_budget")
+
+    def test_unpriced_row_escalates_alone_under_the_cap(self) -> None:
+        # One unpriced row must not put priced, far-under-cap siblings on the
+        # termination ladder: admission is already halted fleet-wide by the
+        # inf commitment, and reaping them would destroy real work.
+        self._set_cap(limit=50.0)
+        self.backend.alive["sb-priced"] = True
+        self.backend.alive["sb-dark"] = True
+        self._seed_sandbox(
+            uid="u-priced",
+            status="running",
+            user_id="user-a",
+            quoted_price=1.0,
+            expires_at=NOON + timedelta(hours=1),
+            sandbox_id="sb-priced",
+        )
+        self._seed_generation(
+            user_id="user-a",
+            price=1.0,
+            started=NOON - timedelta(minutes=18),  # $0.30 of $50
+            ended=None,
+            sandbox_uid="u-priced",
+        )
+        self._seed_sandbox(
+            uid="u-dark",
+            status="running",
+            user_id="user-a",
+            quoted_price=None,
+            expires_at=NOON + timedelta(hours=1),
+            sandbox_id="sb-dark",
+        )
+        self.enforcer.enforce(now=NOON)
+        self.assertEqual(self._budget_state("u-dark")[0], "over_budget")
+        self.assertEqual(self._budget_state("u-priced")[0], "")
+        # Past grace, only the unpriced row is terminated.
+        with self.store.transaction() as conn:
+            conn.execute(
+                "UPDATE sandboxes SET over_budget_at = ? "
+                "WHERE sandbox_uid = 'u-dark'",
+                (_iso(NOON - timedelta(hours=2)),),
+            )
+        self.enforcer.enforce(now=NOON)
+        with self.store.transaction() as conn:
+            statuses = {
+                row["sandbox_uid"]: row["status"]
+                for row in conn.execute(
+                    "SELECT sandbox_uid, status FROM sandboxes "
+                    "WHERE sandbox_uid IN ('u-dark', 'u-priced')"
+                ).fetchall()
+            }
+        self.assertEqual(statuses["u-dark"], "terminated")
+        self.assertEqual(statuses["u-priced"], "running")
+        self.assertNotIn("sb-priced", self.backend.terminated)
+
+    def test_exhausted_cap_still_escalates_the_whole_group(self) -> None:
+        # Genuine cap exhaustion keeps the fleet-wide ladder, priced or not.
+        self._set_cap(limit=5.0)
+        self._seed_sandbox(
+            uid="u-one",
+            status="running",
+            user_id="user-a",
+            quoted_price=1.0,
+            expires_at=NOON + timedelta(hours=1),
+            sandbox_id="sb-one",
+        )
+        self._seed_sandbox(
+            uid="u-two",
+            status="running",
+            user_id="user-a",
+            quoted_price=1.0,
+            expires_at=NOON + timedelta(hours=1),
+            sandbox_id="sb-two",
+        )
+        self._seed_generation(
+            user_id="user-a",
+            price=1.0,
+            started=NOON - timedelta(hours=6),  # $6 ≥ $5 cap
+            ended=None,
+            sandbox_uid="u-one",
+        )
+        self.enforcer.enforce(now=NOON)
+        self.assertEqual(self._budget_state("u-one")[0], "over_budget")
+        self.assertEqual(self._budget_state("u-two")[0], "over_budget")
+
+    def test_completion_without_a_price_keeps_the_admission_stamp(self) -> None:
+        # An adapter that loses its quote at provision time must not degrade
+        # the admission-validated stamp to NULL (unpriced would halt the
+        # payer's fleet) — nor to a "known" $0.
+        self._seed_sandbox(
+            uid="u-stamp",
+            status="provisioning",
+            user_id="user-a",
+            quoted_price=2.5,
+        )
+        generation_id = self.app.sandbox_storage.complete_provision(
+            experiment_id="exp_seed",
+            sandbox_uid="u-stamp",
+            project_id=self.project_id,
+            provisioned=ProvisionedSandbox(
+                sandbox_id="sb-stamp",
+                ssh_host="h.example",
+                ssh_port=22,
+                ssh_user="root",
+                workdir="/w",
+                volume_name="",
+                price_usd_per_hour=None,
+            ),
+            request=SandboxRequest(
+                experiment_id="exp_seed",
+                project_id=self.project_id,
+                public_key=DEFAULT_PUBLIC_KEY,
+            ),
+            provider="fake",
+        )
+        self.assertIsNotNone(generation_id)
+        with self.store.transaction() as conn:
+            row = conn.execute(
+                "SELECT quoted_price_usd_per_hour, price_usd_per_hour "
+                "FROM sandboxes WHERE sandbox_uid = 'u-stamp'"
+            ).fetchone()
+            gen = conn.execute(
+                "SELECT price_usd_per_hour, price_known FROM sandbox_generations "
+                "WHERE sandbox_uid = 'u-stamp'"
+            ).fetchone()
+        self.assertAlmostEqual(float(row["quoted_price_usd_per_hour"]), 2.5)
+        self.assertAlmostEqual(float(row["price_usd_per_hour"]), 2.5)
+        self.assertAlmostEqual(float(gen["price_usd_per_hour"]), 2.5)
+        self.assertEqual(int(gen["price_known"]), 1)
+
+    def test_completion_with_no_price_anywhere_stays_unknown(self) -> None:
+        # No adapter quote and no admission stamp: the floor 0 is recorded
+        # with price_known=0 so the exhausted sentinel still fires.
+        self._seed_sandbox(
+            uid="u-dark-boot",
+            status="provisioning",
+            user_id="user-a",
+            quoted_price=None,
+        )
+        self.app.sandbox_storage.complete_provision(
+            experiment_id="exp_seed",
+            sandbox_uid="u-dark-boot",
+            project_id=self.project_id,
+            provisioned=ProvisionedSandbox(
+                sandbox_id="sb-dark-boot",
+                ssh_host="h.example",
+                ssh_port=22,
+                ssh_user="root",
+                workdir="/w",
+                volume_name="",
+                price_usd_per_hour=None,
+            ),
+            request=SandboxRequest(
+                experiment_id="exp_seed",
+                project_id=self.project_id,
+                public_key=DEFAULT_PUBLIC_KEY,
+            ),
+            provider="fake",
+        )
+        with self.store.transaction() as conn:
+            row = conn.execute(
+                "SELECT quoted_price_usd_per_hour FROM sandboxes "
+                "WHERE sandbox_uid = 'u-dark-boot'"
+            ).fetchone()
+            gen = conn.execute(
+                "SELECT price_known FROM sandbox_generations "
+                "WHERE sandbox_uid = 'u-dark-boot'"
+            ).fetchone()
+        self.assertIsNone(row["quoted_price_usd_per_hour"])
+        self.assertEqual(int(gen["price_known"]), 0)
 
     def test_no_cap_no_states(self) -> None:
         self._seed_sandbox(

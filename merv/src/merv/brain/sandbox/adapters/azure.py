@@ -606,7 +606,9 @@ class AzureSandboxBackend(VmSshSandboxBackend):
                 memory=(int(option.get("memory_gib") or 0) * 1024) or None,
                 instance_type=vm_size,
                 region=location,
-                price_usd_per_hour=float(option.get("price_usd_per_hour") or 0.0),
+                # Tri-state: an unpriced catalog option must stay None so the
+                # ledger records price_known=0 instead of a "known" $0.00/hr.
+                price_usd_per_hour=_float_or_none(option.get("price_usd_per_hour")),
             )
         except Exception:
             if group_created:

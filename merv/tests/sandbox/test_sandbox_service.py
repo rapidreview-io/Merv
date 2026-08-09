@@ -1739,6 +1739,48 @@ class SandboxEngineTest(unittest.TestCase):
         self.assertEqual(final["status"], "running")
         self.assertEqual(len(self.backend.acquired), 1)
 
+    def test_additional_request_during_provisioning_reserves_its_own_row(self) -> None:
+        # The sibling's live provisioning job must not stand in for an
+        # additional request: the fresh uid gets its own admission +
+        # reservation + job. The old path skipped all three and surfaced a
+        # NotFoundError while an unrecorded worker thread kept provisioning.
+        self.app.sandboxes.request_wait_seconds = 0.05
+        self.backend.gate = threading.Event()
+        self.addCleanup(self.backend.gate.set)
+        exp_id = self._experiment()
+        first = self.call(
+            "sandbox.request", project_id=self.project_id, experiment_id=exp_id
+        )
+        self.assertEqual(first["status"], "provisioning")
+        second = self.call(
+            "sandbox.request",
+            project_id=self.project_id,
+            experiment_id=exp_id,
+            additional=True,
+        )
+        self.assertEqual(second["status"], "provisioning")
+        self.assertNotEqual(first["sandbox_uid"], second["sandbox_uid"])
+        # Both uids are durably reserved: the reservation is the transactional
+        # half of admission, and a skipped one left no second row at all.
+        rows = self.app.sandbox_storage.list_for_experiment(experiment_id=exp_id)
+        self.assertEqual(
+            {row["sandbox_uid"] for row in rows},
+            {first["sandbox_uid"], second["sandbox_uid"]},
+        )
+        deadline = time.time() + 5
+        while len(self.backend.acquired) < 2 and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertEqual(len(self.backend.acquired), 2)
+        self.backend.gate.set()
+        self.assertEqual(
+            self._await_sandbox_status(first["sandbox_uid"], "running")["status"],
+            "running",
+        )
+        self.assertEqual(
+            self._await_sandbox_status(second["sandbox_uid"], "running")["status"],
+            "running",
+        )
+
     def test_provisioning_failure_marks_failed_and_cleans_up(self) -> None:
         self.app.sandboxes.request_wait_seconds = 2.0
         self.backend.fail_after_create = True
