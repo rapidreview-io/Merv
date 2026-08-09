@@ -148,7 +148,7 @@ export default function Sidebar({ onRefresh, onHide }) {
       {/* Utility row: org wordmark left, collapse control top-right
           (reference grammar). */}
       <div className="sidebar-util">
-        <span className="sidebar-wordmark">rapidreview</span>
+        <a className="sidebar-wordmark" href="https://rapidreview.io">rapidreview</a>
         {onHide && (
           <button
             type="button"
@@ -184,6 +184,9 @@ export default function Sidebar({ onRefresh, onHide }) {
         <NavLink to={px('/experiments')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
           <span>Experiments</span>
           <span className="sidebar-link-count">{stats.experiments ?? home?.experiments?.length ?? 0}</span>
+        </NavLink>
+        <NavLink to={px('/reflection')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
+          Reflection
         </NavLink>
         <NavLink to={px('/litreview')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
           Lit Review
