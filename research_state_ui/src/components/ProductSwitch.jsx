@@ -1,4 +1,4 @@
-// ProductSwitch — the segmented Merv | Map tabs at the top of the sidebar;
+// ProductSwitch — the segmented Merv | Nisa tabs at the top of the sidebar;
 // the app's only brand mark. Each product is its own SPA under one origin,
 // so crossing over is a plain full-page anchor, never a router link.
 
@@ -41,13 +41,13 @@ function IconConstellation() {
 }
 
 // Dev runs the products on separate ports; production mounts both on one
-// origin (rapidreview.io/map + /merv), so the cross-link is a same-origin path.
+// origin (rapidreview.io/nisa + /merv), so the cross-link is a same-origin path.
 const IS_DEV_HOST = /^(localhost|127\.)/.test(window.location.hostname);
-const MAP_HREF = IS_DEV_HOST ? 'http://localhost:4000/map/' : '/map';
+const MAP_HREF = IS_DEV_HOST ? 'http://localhost:4000/nisa/' : '/nisa';
 
-// Map sits left, Merv right.
+// Nisa sits left, Merv right.
 const PRODUCTS = [
-  { id: 'map', label: 'Map', href: MAP_HREF, Icon: IconConstellation },
+  { id: 'map', label: 'Nisa', href: MAP_HREF, Icon: IconConstellation },
   { id: 'merv', label: 'Merv', href: '/', Icon: IconFlask },
 ];
 
