@@ -76,7 +76,7 @@ class Artifacts:
 
         self._sweep_expired()
         with self._store.transaction() as tx:
-            target = self._resolve_target(tx=tx, target=target)
+            target = self._resolve_target(tx=tx, target=target, for_submission=True)
             project_id = str(target.project_id)
             artifact_id = new_id(prefix="art")
             token = secrets.token_urlsafe(24)
@@ -697,6 +697,7 @@ class Artifacts:
                     project_id=str(row["project_id"]),
                     attempt_index=int(row["attempt_index"]),
                 ),
+                for_submission=True,
             )
         except (NotFoundError, ValidationError) as exc:
             reason = getattr(exc, "message", None) or str(exc)
@@ -719,6 +720,7 @@ class Artifacts:
         *,
         tx: Connection,
         target: ArtifactTarget,
+        for_submission: bool = False,
     ) -> ArtifactTarget:
         project_id = self._store.require_project_id(
             conn=tx, project_id=target.project_id
@@ -731,6 +733,7 @@ class Artifacts:
                 project_id,
                 target.attempt_index,
             ),
+            for_submission=for_submission,
         )
 
     def _replace_slot(self, *, tx: Connection, row: Row) -> None:

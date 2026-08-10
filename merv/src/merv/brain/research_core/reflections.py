@@ -13,7 +13,7 @@ design.
 
 from __future__ import annotations
 
-from contextlib import closing
+from contextlib import closing, suppress
 from datetime import UTC, datetime, timedelta
 import json
 from typing import Any
@@ -43,9 +43,11 @@ from .experiment_workflow import EXPERIMENT_TERMINAL_STATUSES
 from .reflection_workflow import REFLECTION_WORKFLOW
 from ..artifacts import MAX_SUBMITTED_TEXT_BYTES, ArtifactTarget, Artifacts
 from .policy import (
+    ACTIVE_EXPERIMENT_CAP,
     GateEvaluation,
     GateItem,
     RequirementEvaluation,
+    active_experiment_cap_would_exceed_message,
     covered_terminal_ids,
     evaluate_artifact_requirement,
     evaluate_review_gate,
@@ -1680,17 +1682,75 @@ class ReflectionService:
             ).fetchone()
             if advance is None:
                 raise NotFoundError(f"central advance not found: {advance_id}")
-            if str(advance["runner_id"]) != str(runner_id or "").strip():
-                raise ValidationError("central advance belongs to another runner")
-            if str(advance["status"]) == "bound":
+            caller_runner = str(runner_id or "").strip()
+            if str(advance["runner_id"]) != caller_runner:
+                # The CAS itself is never transferable, but the publish retry
+                # of an already-durable bound receipt is: after the owner's
+                # lease any project runner may complete it (no Git work
+                # remains, mirroring prepare_advance's intent-lease recovery).
+                bound_at = parse_iso(advance["bound_at"])
+                takeover = (
+                    str(advance["status"]) == "bound"
+                    and bound_at is not None
+                    and bound_at
+                    + timedelta(seconds=ADVANCE_OWNER_LEASE_SECONDS)
+                    <= datetime.now(UTC)
+                )
+                if not takeover:
+                    raise ValidationError(
+                        "central advance belongs to another runner"
+                    )
+            reflection_id = str(advance["reflection_id"])
+            wave_status = str(
+                conn.execute(
+                    "SELECT status FROM reflections WHERE id = ?",
+                    (reflection_id,),
+                ).fetchone()["status"]
+            )
+            if (
+                wave_status in REFLECTION_WORKFLOW.terminal_statuses
+                and wave_status != REFLECTION_WORKFLOW.success_status
+            ):
+                # The wave closed while the receipt was in flight (abandon is
+                # legal until a receipt is bound): never bind or publish into
+                # a terminal wave — record the orphaned CAS for the operator.
+                conn.execute(
+                    """
+                    UPDATE reflection_advances
+                    SET status = 'stale', observed_sha = ?, error = ?,
+                        ancestry_json = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        observed_sha,
+                        f"wave {wave_status} before settle — central advance orphaned",
+                        ancestry_json,
+                        advance_id,
+                    ),
+                )
+                self.store.record_event(
+                    conn=conn,
+                    project_id=project_id,
+                    event_type="reflection.central_advance_stale",
+                    target_type="reflection",
+                    target_id=reflection_id,
+                    payload={
+                        "advance_id": advance_id,
+                        "expected_sha": str(advance["expected_sha"]),
+                        "observed_sha": observed_sha,
+                        "reason": f"wave {wave_status} before settle",
+                    },
+                )
                 return self.get_state(
-                    reflection_id=str(advance["reflection_id"]),
+                    reflection_id=reflection_id,
                     conn=conn,
                     include_content=True,
                 )
-            expected = str(advance["expected_sha"])
-            target = str(advance["target_sha"])
-            if observed_sha == target:
+            if str(advance["status"]) == "bound":
+                # Already bound: fall through to the publish attempt below so
+                # a settle retried after a blocked publish can complete it.
+                pass
+            elif observed_sha == str(advance["target_sha"]):
                 source_kinds = {
                     str(row["experiment_id"]): str(row["integration_kind"])
                     for row in conn.execute(
@@ -1735,18 +1795,7 @@ class ReflectionService:
                         advance_id,
                     ),
                 )
-                reflection, gate = self.get_state_with_gate(
-                    reflection_id=str(advance["reflection_id"]),
-                    project_id=project_id,
-                    conn=conn,
-                )
-                return self._transition_in_tx(
-                    conn=conn,
-                    reflection=reflection,
-                    gate=gate,
-                    transition="publish",
-                )
-            if observed_sha == expected:
+            elif observed_sha == str(advance["expected_sha"]):
                 conn.execute(
                     """
                     UPDATE reflection_advances
@@ -1767,37 +1816,104 @@ class ReflectionService:
                     conn=conn,
                     include_content=True,
                 )
-            conn.execute(
-                """
-                UPDATE reflection_advances
-                SET status = 'stale', observed_sha = ?, error = ?,
-                    ancestry_json = ?
-                WHERE id = ?
-                """,
-                (
-                    observed_sha,
-                    str(error or "central moved")[:1000],
-                    ancestry_json,
-                    advance_id,
-                ),
-            )
-            self.store.record_event(
-                conn=conn,
-                project_id=project_id,
-                event_type="reflection.central_advance_stale",
-                target_type="reflection",
-                target_id=str(advance["reflection_id"]),
-                payload={
-                    "advance_id": advance_id,
-                    "expected_sha": expected,
-                    "observed_sha": observed_sha,
-                },
-            )
-            return self.get_state(
-                reflection_id=str(advance["reflection_id"]),
-                conn=conn,
-                include_content=True,
-            )
+            else:
+                conn.execute(
+                    """
+                    UPDATE reflection_advances
+                    SET status = 'stale', observed_sha = ?, error = ?,
+                        ancestry_json = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        observed_sha,
+                        str(error or "central moved")[:1000],
+                        ancestry_json,
+                        advance_id,
+                    ),
+                )
+                self.store.record_event(
+                    conn=conn,
+                    project_id=project_id,
+                    event_type="reflection.central_advance_stale",
+                    target_type="reflection",
+                    target_id=str(advance["reflection_id"]),
+                    payload={
+                        "advance_id": advance_id,
+                        "expected_sha": str(advance["expected_sha"]),
+                        "observed_sha": observed_sha,
+                    },
+                )
+                return self.get_state(
+                    reflection_id=str(advance["reflection_id"]),
+                    conn=conn,
+                    include_content=True,
+                )
+        # The bound receipt is durable before publish is attempted: the Git
+        # ref already moved, so a publish failure must mark the advance, not
+        # unwind the record of an irreversible external fact.
+        return self._publish_bound_advance(
+            advance_id=advance_id,
+            reflection_id=reflection_id,
+            project_id=project_id,
+        )
+
+    def _publish_bound_advance(
+        self, *, advance_id: str, reflection_id: str, project_id: str
+    ) -> dict[str, Any]:
+        """Publish a bound central advance in its own transaction.
+
+        A blocked publish records its error on the advance and leaves the
+        wave in consolidating with the receipt intact; retrying the settle
+        re-enters here, so the wave completes once the blocker clears
+        instead of wedging.
+        """
+        try:
+            with self.store.transaction() as conn:
+                # Cleared first so success leaves no stale diagnostic; a
+                # failed publish rolls this back along with the transition.
+                conn.execute(
+                    "UPDATE reflection_advances SET error = '' WHERE id = ?",
+                    (advance_id,),
+                )
+                reflection, gate = self.get_state_with_gate(
+                    reflection_id=reflection_id,
+                    project_id=project_id,
+                    conn=conn,
+                )
+                if str(reflection.get("status")) == REFLECTION_WORKFLOW.success_status:
+                    # A retried settle after a completed publish is idempotent.
+                    return self.get_state(
+                        reflection_id=reflection_id,
+                        conn=conn,
+                        include_content=True,
+                    )
+                return self._transition_in_tx(
+                    conn=conn,
+                    reflection=reflection,
+                    gate=gate,
+                    transition="publish",
+                )
+        except Exception as exc:
+            with suppress(Exception):
+                with self.store.transaction() as conn:
+                    row = conn.execute(
+                        "SELECT status FROM reflections WHERE id = ?",
+                        (reflection_id,),
+                    ).fetchone()
+                    if (
+                        row is None
+                        or str(row["status"]) != REFLECTION_WORKFLOW.success_status
+                    ):
+                        # An ambiguous COMMIT ack can raise after publication
+                        # landed; never let the diagnostic outlive a success.
+                        conn.execute(
+                            "UPDATE reflection_advances SET error = ? WHERE id = ?",
+                            (
+                                f"publish blocked after bind: {str(exc)[:900]}",
+                                advance_id,
+                            ),
+                        )
+            raise
 
     def transition(
         self,
@@ -1832,6 +1948,31 @@ class ReflectionService:
         step = REFLECTION_WORKFLOW.transition(transition)
         if step is None:
             raise WorkflowError(f"unknown reflection transition: {transition}")
+        if (
+            next_status in REFLECTION_WORKFLOW.terminal_statuses
+            and next_status != REFLECTION_WORKFLOW.success_status
+        ):
+            # A bound receipt means central already advanced: the only legal
+            # exit is publish (the runner retries settle), so a terminal exit
+            # here would strand the reviewed belief-state update forever.
+            bound = conn.execute(
+                "SELECT id FROM reflection_advances "
+                "WHERE reflection_id = ? AND status = 'bound' LIMIT 1",
+                (reflection_id,),
+            ).fetchone()
+            if bound is not None:
+                raise WorkflowError(
+                    "central has already advanced for this wave (bound receipt "
+                    f"{bound['id']}); publication completes via the runner's "
+                    "settle retry — the wave cannot be abandoned once bound"
+                )
+            # Cancel open intents so a settle that raced this exit records an
+            # orphaned CAS instead of binding into a terminal wave.
+            conn.execute(
+                "UPDATE reflection_advances SET status = 'stale', error = ? "
+                "WHERE reflection_id = ? AND status = 'intended'",
+                ("wave abandoned before settle", reflection_id),
+            )
         now = now_iso()
         # Same seal as the experiment FSM: freeze this round's lens docs
         # so a re-run of the fan-out cannot delete what was reviewed.
@@ -1868,6 +2009,19 @@ class ReflectionService:
                 "UPDATE reflections SET status = ?, updated_at = ? WHERE id = ?",
                 (next_status, now, reflection_id),
             )
+        if transition in ("submit_reflection_artifacts", "begin_consolidation"):
+            # submit_reflection_artifacts shares the transaction that
+            # world-validated the spec; begin_consolidation re-pins so a spec
+            # revised and re-reviewed during reflection_review (review
+            # freshness guarantees the newest spec IS the reviewed one) is
+            # the one publication materializes.
+            self._reserve_wave_names(conn=conn, reflection=reflection)
+        elif next_status not in ("reflection_review", "consolidating"):
+            # Publish materialized the names; abandon and early exits release.
+            conn.execute(
+                "DELETE FROM reflection_reserved_names WHERE reflection_id = ?",
+                (reflection_id,),
+            )
         self.store.record_event(
             conn=conn,
             project_id=reflection["project_id"],
@@ -1881,6 +2035,63 @@ class ReflectionService:
             conn=conn,
             include_content=True,
         )
+
+    def _reserve_wave_names(self, *, conn, reflection: dict[str, Any]) -> None:
+        """Pin the validated spec and reserve its experiment names.
+
+        The reservation rows carry the validated artifact's id, so publish
+        materializes exactly the spec whose names were reserved — a change
+        spec submitted later never drifts into publication. A tool create
+        taking a reserved name mid-wave gets an actionable error at create
+        time instead of blocking an already-bound publish (see
+        ExperimentService._reject_reserved_wave_name).
+        """
+        document = self._submitted_role_document(
+            reflection=reflection, roles=("change_spec",), what="change spec"
+        )
+        if document is None:
+            raise WorkflowError(
+                "a change spec artifact must be submitted before reflection review"
+            )
+        spec = self._parse_change_spec(
+            conn=conn,
+            project_id=str(reflection["project_id"]),
+            text=document.text,
+            path=document.path,
+            enforce_world=False,
+        )
+        names = {
+            str(proposal.get("name") or "").strip().lower()
+            for proposal in (spec.get("decision") or {}).get("experiments") or []
+        }
+        reflection_id = str(reflection["id"])
+        project_id = str(reflection["project_id"])
+        conn.execute(
+            "DELETE FROM reflection_reserved_names WHERE reflection_id = ?",
+            (reflection_id,),
+        )
+        active_count = len(
+            self._non_terminal_experiments(conn=conn, project_id=project_id)
+        )
+        if active_count + len(names) > ACTIVE_EXPERIMENT_CAP:
+            raise WorkflowError(
+                active_experiment_cap_would_exceed_message(
+                    active_count=active_count, proposed_count=len(names)
+                )
+            )
+        for name in sorted(name for name in names if name):
+            # Availability recheck keeps this safe from any caller, not just
+            # the gate that world-validated the spec this same transaction.
+            if self._experiment_name_exists(conn=conn, project_id=project_id, name=name):
+                raise WorkflowError(
+                    f"experiment name already exists in project: {name}"
+                )
+            conn.execute(
+                "INSERT INTO reflection_reserved_names "
+                "(reflection_id, project_id, name_lower, artifact_id) "
+                "VALUES (?, ?, ?, ?)",
+                (reflection_id, project_id, name, document.artifact_id),
+            )
 
     def _run_validator(self, *, conn, reflection: dict[str, Any], name: str) -> None:
         if name == "graph":
@@ -1950,27 +2161,55 @@ class ReflectionService:
             path=document.path,
         )
 
-    def _current_change_spec(
+    def _pinned_change_spec(
         self, *, conn, reflection: dict[str, Any]
     ) -> dict[str, Any]:
-        document = self._submitted_role_document(
-            reflection=reflection,
-            roles=("change_spec",),
-            what="change spec",
-        )
-        if document is None:
-            raise WorkflowError(
-                "a change spec artifact must be submitted before publish"
+        """The spec pinned when its names were validated and reserved.
+
+        Publish reads the artifact id stored on the wave's reservation rows,
+        never the latest submission — a spec submitted after validation
+        cannot drift into publication. enforce_world=False: availability was
+        checked and reserved in the pinning transaction, and by publish the
+        Git advance is already bound, so a mutable-world recheck could only
+        wedge the wave.
+        """
+        row = conn.execute(
+            "SELECT artifact_id FROM reflection_reserved_names "
+            "WHERE reflection_id = ? AND artifact_id != '' LIMIT 1",
+            (str(reflection["id"]),),
+        ).fetchone()
+        if row is not None:
+            document = self._read_document(
+                artifact_id=str(row["artifact_id"]), what="change spec"
             )
+        else:
+            # Upgrade path: a wave already consolidating when the pin shipped
+            # has no reservation rows; fall back to the current sealed spec
+            # (the pre-pin behavior) so its bound publish cannot wedge. New
+            # waves always pin at submit_reflection_artifacts.
+            document = self._submitted_role_document(
+                reflection=reflection, roles=("change_spec",), what="change spec"
+            )
+            if document is None:
+                raise WorkflowError(
+                    "a change spec artifact must be submitted before publish"
+                )
         return self._parse_change_spec(
             conn=conn,
             project_id=str(reflection["project_id"]),
             text=document.text,
             path=document.path,
+            enforce_world=False,
         )
 
     def _parse_change_spec(
-        self, *, conn, project_id: str, text: str, path: str
+        self,
+        *,
+        conn,
+        project_id: str,
+        text: str,
+        path: str,
+        enforce_world: bool = True,
     ) -> dict[str, Any]:
         return parse_change_spec(
             text=text,
@@ -1978,11 +2217,23 @@ class ReflectionService:
             claim_exists=lambda claim_id: self._claim_exists(
                 conn=conn, project_id=project_id, claim_id=claim_id
             ),
-            experiment_name_taken=lambda name: self._experiment_name_exists(
-                conn=conn, project_id=project_id, name=name
+            experiment_name_taken=(
+                (
+                    lambda name: self._experiment_name_exists(
+                        conn=conn, project_id=project_id, name=name
+                    )
+                )
+                if enforce_world
+                else None
             ),
-            non_terminal_experiments=lambda: self._non_terminal_experiments(
-                conn=conn, project_id=project_id
+            non_terminal_experiments=(
+                (
+                    lambda: self._non_terminal_experiments(
+                        conn=conn, project_id=project_id
+                    )
+                )
+                if enforce_world
+                else None
             ),
         )
 
@@ -2023,7 +2274,7 @@ class ReflectionService:
         """
         project_id = str(reflection["project_id"])
         reflection_id = str(reflection["id"])
-        spec = self._current_change_spec(conn=conn, reflection=reflection)
+        spec = self._pinned_change_spec(conn=conn, reflection=reflection)
         key_to_claim_id = self._materialize_claim_changes(
             conn=conn,
             project_id=project_id,
@@ -2278,6 +2529,13 @@ class ReflectionService:
             route=route,
         )
         attempt_index = int(row["attempt_index"]) + int(route.attempt == "new")
+        if route.to_status not in ("reflection_review", "consolidating"):
+            # The wave leaves the reserved window; the next
+            # submit_reflection_artifacts re-validates and re-pins the spec.
+            conn.execute(
+                "DELETE FROM reflection_reserved_names WHERE reflection_id = ?",
+                (reflection_id,),
+            )
         conn.execute(
             """
             UPDATE reflections

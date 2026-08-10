@@ -1497,6 +1497,20 @@ class AgentRunner:
         reflection_id = str(pending.get("reflection_id") or "")
         if not reflection_id:
             raise RunnerError("pending consolidation has no reflection id")
+        if str(pending.get("advance_status") or "") == "bound":
+            # The central ref already moved; a prior settle bound the receipt
+            # but its publish was blocked. No Git work remains — retry the
+            # settle so the brain can complete the publish.
+            self.client.settle_advance(
+                project_id=self.project_id,
+                advance_id=str(pending.get("advance_id") or ""),
+                runner_id=self.ledger.runner_id,
+                observed_sha=str(pending.get("observed_sha") or ""),
+                proposal_parents=[],
+                diffstat={},
+                ancestry={},
+            )
+            return True
         advance = self.client.prepare_advance(
             project_id=self.project_id,
             reflection_id=reflection_id,

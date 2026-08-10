@@ -37,7 +37,9 @@ _CLOSED_EXPERIMENT_STATUSES = EXPERIMENT_TERMINAL_STATUSES
 class AssociationTargets:
     """Resolve Research targets and their current artifact attempt."""
 
-    def resolve(self, *, tx, target: ArtifactTarget) -> ArtifactTarget:
+    def resolve(
+        self, *, tx, target: ArtifactTarget, for_submission: bool = False
+    ) -> ArtifactTarget:
         kind, target_id = target.target_type, target.target_id
         if kind == "attempt":
             # Standalone attempt targets have no Research-owned row to resolve.
@@ -65,6 +67,18 @@ class AssociationTargets:
             raise ValidationError(
                 f"reflection {target_id} is {row['status']} — the wave is "
                 "frozen and no longer accepts artifact submissions"
+            )
+        if (
+            for_submission
+            and kind == "reflection"
+            and str(row["status"]) == "consolidating"
+        ):
+            # A new artifact would reset review freshness and block an
+            # already-bound publish at its gate — the wedge, not a guard.
+            raise ValidationError(
+                f"reflection {target_id} is consolidating — its reviewed "
+                "artifacts are frozen while the wave publishes; a "
+                "consolidation-review rejection is the only path to revise"
             )
         if (
             kind == "experiment"

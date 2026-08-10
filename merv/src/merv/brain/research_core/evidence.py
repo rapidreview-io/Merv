@@ -721,7 +721,14 @@ def decision_problems(
                 "state why this experiment can run independently of the rest"
             )
         refs = claim_refs(proposal)
+        seen_refs: set[str] = set()
         for ref in refs:
+            if ref in seen_refs:
+                # Caught here so the agent gets a domain error at review time;
+                # the materialization write also dedupes (defense in depth).
+                problems.append(f"{label} lists a duplicate claim reference: {ref}")
+                continue
+            seen_refs.add(ref)
             if ref in claim_keys:
                 continue
             if claim_exists is not None and not claim_exists(ref):

@@ -322,7 +322,9 @@ REFLECTION_WORKFLOW = Workflow(
                     "a passing consolidation review and a durable runner receipt "
                     "binding the exact proposal SHA to central"
                 ),
-                action="publish_reflection",
+                # Publish rides the runner's settle call (retried when a bound
+                # receipt's publish was blocked) — there is no agent tool.
+                action="wait_for_runner_publish",
                 tools=(),
                 effects=("materialize_change_spec", "pin_project_graph"),
             ),

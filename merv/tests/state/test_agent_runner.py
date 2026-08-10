@@ -978,6 +978,7 @@ class _FakeClient:
         self.remote_sessions: list[dict[str, object]] = []
         self.pending: dict[str, object] | None = None
         self.advance: dict[str, object] | None = None
+        self.prepared: list[dict[str, object]] = []
         self.settled: list[dict[str, object]] = []
 
     def claim(self, **kwargs):
@@ -1008,6 +1009,7 @@ class _FakeClient:
         return self.pending
 
     def prepare_advance(self, **kwargs):
+        self.prepared.append(kwargs)
         return self.advance
 
     def settle_advance(self, **kwargs):
@@ -1121,6 +1123,34 @@ class AgentRunnerTest(unittest.TestCase):
         self.assertEqual(receipt["advance_id"], "adv_1")
         self.assertEqual(receipt["observed_sha"], "2" * 40)
         self.assertEqual(receipt["ancestry"], {"exp_1": False})
+
+    def test_bound_pending_advance_retries_settle_without_git_work(self) -> None:
+        # A bound receipt whose publish was blocked: the Git CAS is done, so
+        # the runner must go straight to settle — no prepare, no Git.
+        client = _FakeClient(Claim("unused", "exp_1", "proj_1"))
+        client.pending = {
+            "reflection_id": "ref_1",
+            "advance_status": "bound",
+            "advance_id": "adv_9",
+            "observed_sha": "2" * 40,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = AgentRunner(
+                project_id="proj_1",
+                platforms=(),
+                client=client,
+                ledger=SessionLedger(root / "sessions.json"),
+                workspaces=_FakeWorkspaces(root),
+                log_dir=root / "logs",
+                runner_secret=b"r" * 32,
+            )
+            self.assertTrue(runner.advance_ready())
+        self.assertEqual(client.prepared, [])
+        self.assertEqual(len(client.settled), 1)
+        receipt = client.settled[0]
+        self.assertEqual(receipt["advance_id"], "adv_9")
+        self.assertEqual(receipt["observed_sha"], "2" * 40)
 
     def test_launch_is_reserved_first_and_secret_reaches_only_child_env(self) -> None:
         claim = Claim("ags_1", "exp_1", "proj_1")

@@ -34,6 +34,7 @@ class ArtifactTargets(Protocol):
         *,
         tx: Connection,
         target: ArtifactTarget,
+        for_submission: bool = False,
     ) -> ArtifactTarget: ...
 
     def is_protected(

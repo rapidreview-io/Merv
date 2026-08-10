@@ -1020,11 +1020,22 @@ class Application:
             and item.get("satisfied")
             for item in (state.get("gate_checklist") or {}).get("items", [])
         )
-        if (
-            not proposal
-            or not review_passed
-            or advance.get("status") in {"bound", "stale", "failed"}
-        ):
+        if not proposal or not review_passed:
+            return None
+        if advance.get("status") == "bound":
+            # A durable receipt whose publish was blocked: the Git CAS is
+            # done, so the only remaining work is a settle retry — hand the
+            # recorded receipt back so the runner (or, after the owner
+            # lease, a replacement) can complete the publish.
+            return {
+                "reflection_id": state["id"],
+                "proposal_id": proposal["id"],
+                "revision": proposal["revision"],
+                "advance_status": "bound",
+                "advance_id": advance.get("id"),
+                "observed_sha": advance.get("observed_sha") or "",
+            }
+        if advance.get("status") in {"stale", "failed"}:
             return None
         return {
             "reflection_id": state["id"],

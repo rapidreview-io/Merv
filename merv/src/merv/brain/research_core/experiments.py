@@ -159,18 +159,28 @@ class ExperimentService:
         proposal_key: str = "",
         parallelism: str = "",
     ) -> dict[str, Any]:
+        # Order-preserving dedupe: distinct refs (a create key and a literal
+        # claim id) can resolve to one claim, and experiment_claims has a
+        # composite primary key — a duplicate insert would abort the caller's
+        # whole transaction (reflection publish included).
         tested_claim_ids = (
             [tested_claim_ids]
             if isinstance(tested_claim_ids, str)
-            else list(tested_claim_ids or [])
+            else list(dict.fromkeys(tested_claim_ids or []))
         )
         name = validate_experiment_name(name)
         if not intent.strip():
             raise ValidationError("intent is required")
-        self._reject_active_experiment_cap(conn=conn, project_id=project_id)
         if not source_reflection_id:
+            # Reflection-sourced creates were counted against the cap when the
+            # change spec passed reflection review; re-checking here could only
+            # wedge an already-bound publish over a mid-wave tool create.
+            self._reject_active_experiment_cap(conn=conn, project_id=project_id)
             self._reject_reflection_blocked_experiment_create(
                 conn=conn, project_id=project_id
+            )
+            self._reject_reserved_wave_name(
+                conn=conn, project_id=project_id, name=name
             )
         duplicate = conn.execute(
             "SELECT id FROM experiments WHERE project_id = ? AND lower(name) = lower(?)",
@@ -245,10 +255,43 @@ class ExperimentService:
         return int(row["count"] if row is not None else 0)
 
     def _reject_active_experiment_cap(self, *, conn, project_id: str) -> None:
+        # Reserved wave names hold their cap slots: the wave passed the cap
+        # check when its spec was validated, so tool creates must not consume
+        # the slots its publish will materialize into.
         active_count = self._active_experiment_count(conn=conn, project_id=project_id)
-        if active_count >= ACTIVE_EXPERIMENT_CAP:
+        reserved_count = int(
+            conn.execute(
+                "SELECT COUNT(*) AS count FROM reflection_reserved_names "
+                "WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()["count"]
+        )
+        if active_count + reserved_count >= ACTIVE_EXPERIMENT_CAP:
             raise WorkflowError(
-                active_experiment_cap_reached_message(active_count=active_count)
+                active_experiment_cap_reached_message(
+                    active_count=active_count, reserved_count=reserved_count
+                )
+            )
+
+    def _reject_reserved_wave_name(
+        self, *, conn, project_id: str, name: str
+    ) -> None:
+        """Refuse names an in-flight wave's validated spec will materialize.
+
+        Taking one mid-wave would block the wave's already-bound publish at
+        materialization; the reservation makes the race an actionable error
+        for the creator instead.
+        """
+        row = conn.execute(
+            "SELECT reflection_id FROM reflection_reserved_names "
+            "WHERE project_id = ? AND name_lower = lower(?) LIMIT 1",
+            (project_id, name),
+        ).fetchone()
+        if row is not None:
+            raise WorkflowError(
+                f"experiment name {name!r} is reserved by reflection wave "
+                f"{row['reflection_id']} — it will be created when the wave "
+                "publishes; choose a different name"
             )
 
     def _reject_reflection_blocked_experiment_create(

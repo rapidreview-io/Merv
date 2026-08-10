@@ -68,10 +68,17 @@ ACTIVE_EXPERIMENT_CAP = 7
 AGENT_DISPATCH_SETTING = "agent_dispatch"
 
 
-def active_experiment_cap_reached_message(*, active_count: int) -> str:
+def active_experiment_cap_reached_message(
+    *, active_count: int, reserved_count: int = 0
+) -> str:
+    reserved = (
+        f" and {reserved_count} reserved by an in-flight reflection wave"
+        if reserved_count
+        else ""
+    )
     return (
         "active experiment cap reached: "
-        f"project has {active_count} active experiments; "
+        f"project has {active_count} active experiments{reserved}; "
         "finish one before creating another."
     )
 

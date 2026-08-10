@@ -112,6 +112,29 @@ class ExperimentWorkflowTest(ResearchCase):
         )
         self.assertGreater(sealed, 0)
 
+    def test_reflection_sourced_create_dedupes_tested_claims(self) -> None:
+        # Two refs (a change-spec key and a literal id) can resolve to one
+        # claim at materialization; experiment_claims' composite primary key
+        # would abort the whole publish transaction on the duplicate insert.
+        claim = self.call(
+            "claim.create", project_id=self.project_id, statement="One claim."
+        )
+        with self.app.store.transaction() as conn:
+            created = self.app.experiments._create_in_transaction(
+                conn=conn,
+                project_id=self.project_id,
+                name="dedupe-test",
+                intent="Materialize with duplicate refs.",
+                tested_claim_ids=[claim["id"], claim["id"]],
+                source_reflection_id="rfl_defensive",
+            )
+        with self.app.store.connect() as conn:
+            linked = conn.execute(
+                "SELECT COUNT(*) AS n FROM experiment_claims WHERE experiment_id = ?",
+                (created["id"],),
+            ).fetchone()["n"]
+        self.assertEqual(int(linked), 1)
+
     def test_review_returns_follow_declared_attempt_policy(self) -> None:
         planned = self.create_experiment("design-rejection")
         self.submit(

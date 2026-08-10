@@ -222,6 +222,11 @@ TABLE_OWNERS = {
     "reflections": RESEARCH_CORE,
     "reflection_claim_changes": RESEARCH_CORE,
     "reflection_experiments": RESEARCH_CORE,
+    # Written by the wave lifecycle (spec validation reserves and pins,
+    # publish or abandon releases); read by the tool create path to refuse
+    # name races and by the cap check to hold the wave's slots.
+    "reflection_reserved_names": RESEARCH_CORE,
+    "project_candidates": RESEARCH_CORE,
     "litreview_sections": RESEARCH_CORE,
     "papers": RESEARCH_CORE,
     "paper_links": RESEARCH_CORE,

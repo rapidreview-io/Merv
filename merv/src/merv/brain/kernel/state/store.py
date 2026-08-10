@@ -538,6 +538,18 @@ CREATE TABLE IF NOT EXISTS reflection_advances (
   FOREIGN KEY(proposal_id) REFERENCES consolidation_proposals(id)
 );
 
+CREATE TABLE IF NOT EXISTS reflection_reserved_names (
+  reflection_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  name_lower TEXT NOT NULL,
+  artifact_id TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (reflection_id, name_lower),
+  FOREIGN KEY(reflection_id) REFERENCES reflections(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reserved_names_project
+  ON reflection_reserved_names(project_id, name_lower);
+
 CREATE TABLE IF NOT EXISTS sandboxes (
   sandbox_uid TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
