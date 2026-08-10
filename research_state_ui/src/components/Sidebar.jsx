@@ -11,10 +11,10 @@ import SandboxRetentionIndicator from './SandboxRetentionIndicator';
 import { getAuthEmail, isAuthEnabled, onAuthChange, signOut } from '../auth';
 
 // Account/settings chip: the sidebar's bottommost row, always present.
-// Opens an upward menu carrying the UI settings (refresh, surface, theme,
-// backdrop) plus sign-out when a hosted session exists; on localhost the
-// account slot says so instead of hiding.
-function AccountFoot({ onRefresh }) {
+// Opens an upward menu carrying the UI settings (surface, theme, backdrop)
+// plus sign-out when a hosted session exists; on localhost the account slot
+// says so instead of hiding.
+function AccountFoot() {
   const { mode: themeMode, theme, setMode: setThemeMode } = useTheme();
   const backdropOn = useBackdrop();
   const [email, setEmail] = useState(getAuthEmail());
@@ -46,9 +46,6 @@ function AccountFoot({ onRefresh }) {
           >
             Settings
           </NavLink>
-          <button type="button" className="account-menu-item" onClick={() => { setOpen(false); onRefresh?.(); }}>
-            Refresh now
-          </button>
           <button type="button" className="account-menu-item" onClick={() => setSurfaceOverride('mobile')}>
             Switch to mobile
           </button>
@@ -125,7 +122,7 @@ export function IconSidebar(props) {
   );
 }
 
-export default function Sidebar({ onRefresh, onHide }) {
+export default function Sidebar({ onHide }) {
   const home = useProjectStore(s => s.home);
   const stats = useProjectStore(selectStats);
   const lastSyncedAt = useProjectStore(s => s.lastSyncedAt);
@@ -228,7 +225,7 @@ export default function Sidebar({ onRefresh, onHide }) {
           <span>ui {pollLabel} · updated {fmtUpdatedAgo(lastSyncedAt)}</span>
         </div>
         {lastSyncError && <div className="error-message" style={{ fontSize: 11 }}>{lastSyncError}</div>}
-        <AccountFoot onRefresh={onRefresh} />
+        <AccountFoot />
       </div>
     </aside>
   );

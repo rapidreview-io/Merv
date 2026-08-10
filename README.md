@@ -47,7 +47,7 @@ stay on the user's machine. Agents send explicit project ids, typed metadata,
 and selected submitted bytes; the brain never opens the checkout directly.
 Brain management keys remain separate operational credentials.
 
-## Set up
+## Hosted setup
 
 ### Codex
 

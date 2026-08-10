@@ -216,7 +216,7 @@ export default function App() {
     <>
       <AppBackdrop />
       <div className={'shell' + (sidebarOpen ? '' : ' shell--nosb')}>
-        <Sidebar onRefresh={refreshHome} onHide={toggleSidebar} />
+        <Sidebar onHide={toggleSidebar} />
         {!sidebarOpen && (
           <button
             type="button"
