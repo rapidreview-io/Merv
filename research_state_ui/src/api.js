@@ -22,6 +22,13 @@ const BASE = (
 // ignores it). Kept in lockstep with the merv package version.
 export const CLIENT_VERSION = '0.0014';
 
+// The MCP endpoint agents dial — the same brain that serves this UI's API
+// (UI_API.md). With no configured base (dev proxy / co-hosted production)
+// that is this origin.
+export function mcpEndpoint() {
+  return `${BASE || window.location.origin}/mcp`;
+}
+
 // Bearer token for the hosted control plane. Dormant in local mode: with no
 // token configured no Authorization header is sent, and the local backend
 // (auth=None) serves every request as the implicit local principal. The live

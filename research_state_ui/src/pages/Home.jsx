@@ -15,12 +15,14 @@ import FSMStrip from '../components/FSMStrip';
 import SandboxTable from '../components/SandboxTable';
 import ComputeSpend from '../components/ComputeSpend';
 import ActiveExperimentPager from '../components/ActiveExperimentPager';
+import ConnectAgentPanel from '../components/ConnectAgentPanel';
 import ProjectReflectionPanel from '../components/ProjectReflectionPanel';
 import { expName } from '../utils/experiment';
 
 export default function Home() {
   const px = useProjectHref();
   const project = useProjectStore(selectProject);
+  const home = useProjectStore((s) => s.home);
   const stats = useProjectStore(selectStats);
   const activeExperiments = useProjectStore(selectActiveExperiments);
   const claims = useProjectStore(selectClaims);
@@ -61,6 +63,17 @@ export default function Home() {
   const activeExp = activeExperiments[safeIdx] || null;
   const workflow = activeExp?.workflow || null;
 
+  // First run: the home snapshot has loaded and no agent has ever done
+  // anything here — no claims, experiments, or artifacts, and no events
+  // beyond the project's own metadata (every project is born with
+  // project.created). Until then the connect guide leads the page; the first
+  // recorded research event retires it for good.
+  const firstRun = !!home
+    && (stats.claims ?? 0) === 0
+    && (stats.experiments ?? 0) === 0
+    && (stats.artifacts ?? 0) === 0
+    && events.every((e) => typeof e.type === 'string' && e.type.startsWith('project.'));
+
   return (
     <div className="page-stage">
       {/* The project name is always in the sidebar's project chip — repeating it
@@ -71,6 +84,8 @@ export default function Home() {
           <p className="page-summary page-summary--lead">{project.summary}</p>
         </header>
       )}
+
+      {firstRun && <ConnectAgentPanel project={project} />}
 
       {workflow && (
         <section className="section">

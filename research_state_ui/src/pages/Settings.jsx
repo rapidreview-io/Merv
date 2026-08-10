@@ -2,13 +2,16 @@ import { useSearchParams } from 'react-router-dom';
 import { useProjectStore } from '../store/useProjectStore';
 import { isAuthEnabled } from '../auth';
 import AgentPlatforms from '../components/AgentPlatforms';
+import { ConnectAgentSettings } from '../components/ConnectAgentPanel';
 import HuggingFaceToken from '../components/HuggingFaceToken';
 import McpKeys from '../components/McpKeys';
 import ProviderConfig from '../components/ProviderConfig';
 
-// Each tab owns one setup surface. `scope` is the honest reach of the panel:
-// three are per-project, the Hugging Face token is per-account.
+// Each tab owns one setup surface. `scope` is the honest reach of the panel.
+// Connect-an-agent leads: it is the top of the funnel and the tab a first
+// visit should land on; the Hugging Face token is the one per-account panel.
 const TABS = [
+  { id: 'connect', label: 'Connect an agent', scope: 'This machine + your agent' },
   { id: 'keys', label: 'MCP keys', scope: 'This project' },
   { id: 'auto', label: 'Auto running', scope: 'This project + a runner machine' },
   { id: 'compute', label: 'Compute', scope: 'This project' },
@@ -72,6 +75,7 @@ export default function Settings() {
         aria-labelledby={`settings-tab-${active}`}
         className="settings-panel"
       >
+        {active === 'connect' && <ConnectAgentSettings projectId={projectId} />}
         {active === 'keys' && <McpKeys projectId={projectId} hosted={hosted} />}
         {active === 'auto' && <AgentPlatforms projectId={projectId} />}
         {active === 'compute' && <ProviderConfig projectId={projectId} />}
