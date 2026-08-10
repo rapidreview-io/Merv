@@ -4489,6 +4489,28 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   animation: log-pulse 1.4s ease-in-out infinite;
 }
 
+/* Reflection list: same console dialect, its own column recipe (counts are
+   narrow, the R<n> title takes the slack). */
+.expt--refl { --expt-cols: minmax(240px, 1fr) 126px 76px 76px 84px 90px; }
+
+/* Reflection spotlight: the report/plan treatment with a tab per lens. The
+   tab strip IS the section title, so it drops to the header's text scale. */
+.rfls-tabs { flex-wrap: wrap; }
+.rfls-tabs .fig-title-tab { font-size: var(--text-sm); }
+.rfls-tab-slot { display: inline-flex; align-items: baseline; gap: 8px; }
+.rfls-tab--pending { opacity: .45; }
+.rfls-charter { margin: 0 0 12px; font-size: var(--text-sm); color: var(--muted); }
+/* (no header coverage line: that fact lives in the process graph) */
+
+/* Reflection detail: consumed/produced experiments as link rows. */
+.rfl-lineage { display: flex; flex-direction: column; gap: 2px; }
+.rfl-lineage-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: 6px;
+  color: var(--text); text-decoration: none; font-size: var(--text-sm);
+}
+.rfl-lineage-item:hover { background: var(--hover); }
+
 /* Experiment naming: form hint under the name field. */
 .form-hint {
   margin-top: 5px;
@@ -6219,3 +6241,234 @@ textarea.sbxpw-input { font-family: var(--mono, ui-monospace, monospace); font-s
   letter-spacing: 0.04em;
   color: var(--muted);
 }
+
+/* ---- Project braid (reflection route) --------------------------------- */
+/* Waves as epochs on a spine, experiments as strands. Static SVG; pan is
+   plain horizontal scroll, right-anchored so "now" is the landing view. */
+.braid-scroll { overflow-x: auto; padding-bottom: 2px; }
+.braid-svg { display: block; }
+.braid-strandgrp { cursor: pointer; }
+.braid-strand { fill: none; stroke-width: 2; opacity: 0.82; }
+.braid-strandgrp:hover .braid-strand { opacity: 1; stroke-width: 2.5; }
+.braid-strand--done { stroke: var(--supports); }
+.braid-strand--failed { stroke: var(--refutes); }
+.braid-strand--abandoned { stroke: var(--line-strong); }
+.braid-strand--queued { stroke: var(--steel); }
+.braid-strand--live { stroke: var(--active); }
+.braid-att--done { fill: var(--supports); }
+.braid-att--failed { fill: var(--refutes); }
+.braid-att--abandoned { fill: var(--line-strong); }
+.braid-att--queued { fill: var(--steel); }
+.braid-att--live { fill: var(--active); }
+.braid-epoch { cursor: pointer; }
+.braid-epoch:focus-visible { outline: none; }
+.braid-epoch:focus-visible .braid-epoch-dot,
+.braid-epoch:focus-visible .braid-box { stroke: var(--active); stroke-width: 2; }
+/* Epoch dot tints mirror .refl-wave-dot--{status} so the two histories agree. */
+.braid-epoch-dot--reflecting, .braid-epoch-dot--synthesizing { fill: var(--active); }
+.braid-epoch-dot--reflection_review, .braid-epoch-dot--consolidating { fill: var(--qualifies); }
+.braid-epoch-dot--published { fill: var(--supports); }
+.braid-epoch-dot--abandoned { fill: var(--refutes); }
+.braid-ring { fill: none; stroke: var(--active); stroke-width: 1.5; }
+.braid-box { fill: var(--bg-elev); stroke: var(--line-strong); }
+.braid-box--selected { stroke: var(--active); }
+.braid-t { font-size: 12px; fill: var(--text); }
+.braid-t--strong { font-weight: 600; }
+.braid-ts { font-size: var(--text-xs); fill: var(--muted); }
+.braid-anat { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.braid-anat--missing { stroke: var(--line-strong); stroke-dasharray: 4 4; }
+.braid-arrhead { stroke: var(--muted); }
+.braid-synth { fill: var(--steel); }
+.braid-gate--pending { fill: var(--line-strong); }
+.braid-gate--wait { fill: var(--qualifies); }
+.braid-gate--pass { fill: var(--supports); }
+.braid-gate--fail { fill: var(--refutes); }
+.braid-central { fill: var(--line-strong); }
+.braid-central--bound { fill: var(--supports); }
+.braid-return { stroke: var(--muted); stroke-dasharray: 5 4; fill: none; stroke-width: 1.5; }
+.braid-ghost { fill: none; stroke: var(--line-strong); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.braid-debt--warn { fill: var(--qualifies); }
+.braid-debt--blocked { fill: var(--refutes); }
+@keyframes braid-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.braid-live-dot { fill: var(--active); animation: braid-pulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .braid-live-dot { animation: none; } }
+.braid-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--text-xs); color: var(--muted); margin: 6px 0 16px; }
+.braid-legend i { display: inline-block; width: 14px; border-top: 2px solid var(--muted); vertical-align: middle; margin-right: 5px; }
+.braid-legend .braid-key--done { border-color: var(--supports); }
+.braid-legend .braid-key--live { border-color: var(--active); }
+.braid-legend .braid-key--queued { border-color: var(--steel); }
+.braid-legend .braid-key--failed { border-color: var(--refutes); }
+.braid-legend .braid-key--abandoned { border-color: var(--line-strong); }
+.braid-end-dot--queued { fill: var(--steel); }
+
+/* ---- WaveFlow: project progression as a react-flow canvas ----
+   Frameless: the canvas is transparent so the page (and backdrop) run
+   through it — its extent reads from the faint dot field, which fades out
+   toward the edges instead of hitting a border. */
+.wflow {
+  position: relative; overflow: hidden; margin-bottom: 14px;
+  /* A hairline frame gives the canvas a knowable extent without boxing the
+     airiness in — background stays transparent, dots still fade out. */
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+}
+.wflow--expanded {
+  position: fixed; inset: 18px; z-index: 81;
+  height: auto; margin-bottom: 0;
+  background: var(--bg);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .45);
+}
+.wflow .react-flow { background: transparent; }
+.wflow .react-flow__background {
+  -webkit-mask-image: radial-gradient(ellipse 92% 88% at 50% 50%, #000 45%, transparent 97%);
+  mask-image: radial-gradient(ellipse 92% 88% at 50% 50%, #000 45%, transparent 97%);
+}
+.wflow .react-flow__background circle { fill: rgba(var(--steel-rgb), .22); }
+.wflow .react-flow__edge-path { stroke: var(--line-strong); stroke-width: 1.4; }
+.wflow .react-flow__arrowhead * { fill: var(--line-strong); }
+.wflow .wflow-edge--pending .react-flow__edge-path {
+  stroke: var(--active); stroke-dasharray: 5 5;
+}
+/* Experiment nodes ARE fig-nodes (same classes as the figure graph inside an
+   experiment) — only canvas-specific sizing and accents live here.
+   Height is FIXED to match the layout's EXP_H: auto-sized cards put node
+   centers a few px off the lane and every smoothstep edge grows a jog. */
+.wflow-fig {
+  width: 190px; height: 70px;
+  box-sizing: border-box; cursor: pointer; overflow: hidden;
+}
+.wflow-fig .fig-node-label { -webkit-line-clamp: 1; }
+.fig-node--experiment { border-left-color: var(--line-strong); }
+.fig-node--experiment.fig-st--open { border-left-color: var(--active); }
+/* Live border: running experiments breathe (paired with their animated
+   marching-dash edge into the open wave). Selection ring wins while selected. */
+.wflow-fig.fig-st--open:not(.fig-node--selected) {
+  animation: wflow-live-border 2.2s ease-in-out infinite;
+}
+@keyframes wflow-live-border {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--active-rgb), .3); }
+  50% { box-shadow: 0 0 0 6px rgba(var(--active-rgb), 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wflow-fig.fig-st--open:not(.fig-node--selected) { animation: none; }
+}
+/* Failed is PASSIVE here: it's history, not a call to action — warm color
+   stays reserved for live work. (Scoped: the figure keeps its own red.) */
+.wflow-fig.fig-st--failed {
+  border-color: var(--line); border-left-color: var(--line-strong);
+  background: var(--bg-elev); opacity: .7;
+}
+.wflow-chip--failed { color: var(--muted); border-color: var(--line-strong); }
+.wflow-expand {
+  position: absolute; top: 8px; right: 10px; z-index: 31;
+  transition: right .2s cubic-bezier(.2, .8, .25, 1);
+}
+.wflow--panel-open .wflow-expand { right: calc(var(--wflow-drawer-w) + 10px); }
+.wflow-refl {
+  width: 48px; height: 148px; box-sizing: border-box; position: relative;
+  display: flex; align-items: center; justify-content: center;
+  border: 1.5px solid var(--steel); border-radius: 24px;
+  background: rgba(var(--steel-rgb), .06); cursor: pointer;
+}
+.wflow-refl-label { font-size: 13px; font-weight: 700; color: var(--steel); }
+.wflow-refl--open {
+  border-style: dashed; border-color: var(--active);
+  background: rgba(var(--active-rgb), .05);
+}
+.wflow-refl--open .wflow-refl-label { color: var(--active); }
+.wflow-refl--ghost {
+  border-style: dashed; border-color: var(--line-strong); background: none;
+}
+.wflow-refl--ghost .wflow-refl-label { color: var(--faint); font-weight: 500; }
+/* Origin: project creation — quiet and solid, history rather than work. */
+.wflow-refl--origin { border-color: var(--line-strong); background: var(--bg-elev); }
+.wflow-refl--origin .wflow-refl-label { color: var(--muted); font-size: 14px; }
+.wflow-refl--selected { box-shadow: 0 0 0 3px rgba(var(--steel-rgb), .25); }
+.wflow-refl-sub {
+  position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  margin-top: 6px; font-size: 10px; color: var(--faint); white-space: nowrap;
+}
+.wflow-legend {
+  position: absolute; right: 96px; top: 12px; z-index: 31;
+  display: flex; gap: 6px; pointer-events: none;
+  opacity: .55; transition: opacity .15s ease, right .2s cubic-bezier(.2, .8, .25, 1);
+}
+.wflow:hover .wflow-legend { opacity: 1; }
+.wflow--panel-open .wflow-legend { right: calc(var(--wflow-drawer-w) + 96px); }
+.wflow-chip--refl { color: var(--steel); border-color: rgba(var(--steel-rgb), .35); background: rgba(var(--steel-rgb), .07); }
+.wflow-chip--pending { color: var(--active); border-color: rgba(var(--active-rgb), .35); border-style: dashed; }
+
+/* ---- WaveFlow sidebar: a drawer INSIDE the graph container — its height is
+   the graph's height, clipped by the container's rounded corners. Slides in
+   fast; the GRAPH SHIFTS aside via transform — the canvas is never resized,
+   so react-flow never re-lays-out. The clicked node is kept in view by a
+   viewport pan in the component. ---- */
+.wflow { --wflow-drawer-w: clamp(360px, 42%, 560px); }
+.wflow-canvas { position: relative; min-width: 0; height: 100%; }
+.wflow-shift { height: 100%; transition: transform .2s cubic-bezier(.2, .8, .25, 1); }
+.wflow--panel-open .wflow-shift {
+  transform: translateX(calc(var(--wflow-drawer-w) * -0.45));
+}
+.wflow-drawer {
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 30;
+  width: var(--wflow-drawer-w);
+  display: flex;
+  background: var(--bg-elev);
+  border-left: 1px solid var(--line-soft);
+  transform: translateX(103%);
+  transition: transform .2s cubic-bezier(.2, .8, .25, 1);
+  pointer-events: none;
+}
+.wflow-drawer--open { transform: translateX(0); pointer-events: auto; }
+@media (prefers-reduced-motion: reduce) {
+  .wflow-shift, .wflow-drawer { transition: none; }
+}
+.wflow-panel { flex: 1; min-width: 0; min-height: 0; display: flex; }
+/* Independent scroll: the panel body scrolls by itself and never hands the
+   wheel to the page underneath. */
+.wflow-panel .fig-panel {
+  max-height: none; flex: 1; overflow-y: auto;
+  overscroll-behavior: contain;
+  border-left: none; background: transparent;
+  padding: 16px 18px;
+}
+/* Same selection recipe as the figure graph, for the pill nodes. */
+.wflow-node--selected {
+  border-color: var(--active) !important;
+  box-shadow: 0 0 0 2px rgba(var(--active-rgb), .18);
+}
+.wflow-open-btn {
+  display: block; width: 100%; box-sizing: border-box;
+  margin: 10px 0 12px; padding: 11px 12px;
+  font-size: 13px; font-weight: 650; text-align: center;
+  color: var(--text); background: rgba(var(--steel-rgb), .12);
+  border: 1.5px solid var(--steel); border-radius: 9px; cursor: pointer;
+}
+.wflow-open-btn:hover { background: rgba(var(--steel-rgb), .22); }
+.wflow-panel-pills { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.wflow-chip-quiet { font-size: 11px; color: var(--faint); }
+.wflow-panel-prose { font-size: 12.5px; line-height: 1.5; color: var(--text); margin: 4px 0 10px; }
+.wflow-panel-eyebrow { margin: 14px 0 6px; }
+.wflow-revision { font-size: 12px; color: var(--qualifies); margin: 4px 0 8px; }
+.wflow-pending-note { color: var(--active); }
+.wflow-meta-row {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-size: 12px; padding: 3px 0;
+}
+.wflow-meta-key { color: var(--faint); }
+.wflow-meta-val { color: var(--text); text-align: right; }
+.wflow-panel-item {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  padding: 5px 8px; margin: 2px 0; box-sizing: border-box;
+  font-size: 12px; text-align: left; color: var(--text);
+  background: none; border: 1px solid transparent; border-radius: 7px; cursor: pointer;
+}
+.wflow-panel-item:hover { background: rgba(var(--steel-rgb), .08); border-color: var(--line-soft); }
+.wflow-item-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.wflow-item-dot--done      { background: var(--supports); }
+.wflow-item-dot--failed    { background: var(--muted); }
+.wflow-item-dot--live      { background: var(--active); }
+.wflow-item-dot--queued    { background: var(--steel); }
+.wflow-item-dot--abandoned { background: var(--line-strong); }
+.wflow-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wflow-item-sub { margin-left: auto; flex: none; font-size: 10.5px; color: var(--faint); }

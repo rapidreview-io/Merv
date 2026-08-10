@@ -28,6 +28,8 @@ import ClaimDetail from './pages/ClaimDetail';
 import LitReview from './pages/LitReview';
 import Experiments from './pages/Experiments';
 import ExperimentDetail from './pages/ExperimentDetail';
+import Reflection from './pages/Reflection';
+import ReflectionDetail from './pages/ReflectionDetail';
 import Artifacts from './pages/Artifacts';
 import Storage from './pages/Storage';
 import Reviews from './pages/Reviews';
@@ -241,6 +243,8 @@ export default function App() {
             <Route path="litreview" element={<LitReview />} />
             <Route path="experiments" element={<Experiments />} />
             <Route path="experiments/:experimentId" element={<ExperimentDetail />} />
+            <Route path="reflection" element={<Reflection />} />
+            <Route path="reflection/:reflectionId" element={<ReflectionDetail />} />
             <Route path="artifacts" element={<Artifacts />} />
             <Route path="artifacts/:artifactId" element={<Artifacts />} />
             <Route path="storage" element={<Storage />} />
