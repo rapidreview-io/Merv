@@ -629,7 +629,7 @@ export default function WaveFlow({
     }
     const estW = typeof window !== 'undefined' ? Math.max(560, window.innerWidth - 420) : 1000;
     const zoom = Math.min(1, (estW * 0.86) / (maxX - minX));
-    const need = Math.max(340, Math.round((maxY - minY) * zoom * 1.25 + 60));
+    const need = Math.max(420, Math.round((maxY - minY) * zoom * 1.25 + 60));
     return `min(${need}px, ${typeof height === 'number' ? `${height}px` : height})`;
   }, [nodes, height]);
 
