@@ -477,8 +477,13 @@ export default function WaveFlow({
     const W = el.clientWidth;
     const H = el.clientHeight;
     const zoom = Math.min(maxZoom, (W * 0.86) / (maxX - minX), (H * 0.8) / (maxY - minY));
+    // A braid much narrower than the canvas anchors LEFT (a young project
+    // reads from its origin, not from the middle of a wide emptiness); snug
+    // fits stay centered.
+    const dispW = (maxX - minX) * zoom;
+    const x = (W - dispW > W * 0.3 ? 56 : (W - dispW) / 2) - minX * zoom;
     rf.setViewport({
-      x: (W - (maxX - minX) * zoom) / 2 - minX * zoom,
+      x,
       y: (H - (maxY - minY) * zoom) / 2 - minY * zoom,
       zoom,
     }, { duration: 0 });
