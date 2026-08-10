@@ -146,9 +146,59 @@ export function buildFlowModel(braid, signal, expMeta = {}) {
     if (!cols.has(c)) cols.set(c, []);
     cols.get(c).push(s);
   }
+  // Dead work folds into a stack: within a column, failed/abandoned strands
+  // sharing provenance (same spawn + same cover target) collapse into ONE
+  // compact group node when there are 2+, so a wave with many casualties
+  // doesn't stretch the column. Live/queued/complete work always stays
+  // individual; the stack sinks to the bottom of the fan.
+  const DEAD = new Set(['failed', 'abandoned']);
+  const groupOf = new Map();
+  const groups = [];
+  const rowsOf = new Map();
   for (const [c, list] of cols) {
-    list.forEach((s, k) => {
-      const cy = SPINE + (k - (list.length - 1) / 2) * ROW;
+    const rows = list.filter(s => !DEAD.has(s.tone));
+    const byKey = new Map();
+    for (const s of list.filter(s => DEAD.has(s.tone))) {
+      const key = `${s.spawnIdx}|${s.coverIdx}`;
+      if (!byKey.has(key)) byKey.set(key, []);
+      byKey.get(key).push(s);
+    }
+    for (const members of byKey.values()) {
+      if (members.length < 2) { rows.push(...members); continue; }
+      const g = {
+        id: `g:${c}:${members[0].id}`,
+        col: c,
+        members,
+        spawnIdx: members[0].spawnIdx,
+        coverIdx: members[0].coverIdx,
+      };
+      groups.push(g);
+      members.forEach(m => groupOf.set(m.id, g.id));
+      rows.push(g);
+    }
+    rowsOf.set(c, rows);
+  }
+  for (const [c, rows] of rowsOf) {
+    rows.forEach((r, k) => {
+      const cy = SPINE + (k - (rows.length - 1) / 2) * ROW;
+      if (r.members) {
+        const nF = r.members.filter(m => m.tone === 'failed').length;
+        const nA = r.members.length - nF;
+        nodes.push({
+          id: r.id,
+          type: 'wexpg',
+          position: { x: expX(c), y: cy - EXP_H / 2 },
+          data: {
+            ids: r.members.map(m => m.id),
+            count: r.members.length,
+            label: [nF && `${nF} failed`, nA && `${nA} abandoned`]
+              .filter(Boolean).join(' · '),
+            sub: r.members.map(m => m.name).join(', '),
+          },
+        });
+        return;
+      }
+      const s = r;
       const meta = expMeta[s.id] || {};
       nodes.push({
         id: `e:${s.id}`,
@@ -180,6 +230,7 @@ export function buildFlowModel(braid, signal, expMeta = {}) {
   // waves but no seeds, it feeds R1 directly so the stream stays connected.
   const seeds = strands.filter(s => colOf(s) === -1);
   for (const s of seeds) {
+    if (groupOf.has(s.id)) continue;
     edges.push({
       id: `og:${s.id}`,
       source: 'w:origin',
@@ -187,6 +238,17 @@ export function buildFlowModel(braid, signal, expMeta = {}) {
       ...EDGE,
       className: 'wflow-edge',
     });
+  }
+  for (const g of groups) {
+    if (g.col === -1 && g.spawnIdx < 0) {
+      edges.push({
+        id: `og:${g.id}`,
+        source: 'w:origin',
+        target: g.id,
+        ...EDGE,
+        className: 'wflow-edge',
+      });
+    }
   }
   if (!seeds.length && epochs.length) {
     edges.push({
@@ -198,6 +260,7 @@ export function buildFlowModel(braid, signal, expMeta = {}) {
     });
   }
   for (const s of strands) {
+    if (groupOf.has(s.id)) continue;
     if (s.spawnIdx >= 0) {
       edges.push({
         id: `sp:${s.id}`,
@@ -224,6 +287,38 @@ export function buildFlowModel(braid, signal, expMeta = {}) {
           target,
           ...EDGE,
           animated: s.tone === 'live',
+          className: 'wflow-edge wflow-edge--pending',
+        });
+      }
+    }
+  }
+  // A stack carries one edge per relationship its members share.
+  for (const g of groups) {
+    if (g.spawnIdx >= 0) {
+      edges.push({
+        id: `sp:${g.id}`,
+        source: `w:${epochs[g.spawnIdx].id}`,
+        target: g.id,
+        ...EDGE,
+        className: 'wflow-edge',
+      });
+    }
+    if (g.coverIdx >= 0) {
+      edges.push({
+        id: `cv:${g.id}`,
+        source: g.id,
+        target: `w:${epochs[g.coverIdx].id}`,
+        ...EDGE,
+        className: 'wflow-edge',
+      });
+    } else {
+      const target = openIdx >= 0 ? `w:${epochs[openIdx].id}` : ghostId;
+      if (target) {
+        edges.push({
+          id: `pd:${g.id}`,
+          source: g.id,
+          target,
+          ...EDGE,
           className: 'wflow-edge wflow-edge--pending',
         });
       }
@@ -262,6 +357,33 @@ function ExpNode({ data }) {
   );
 }
 
+// A stack of set-aside work: one passive card standing in for N dead
+// experiments. Clicking it lists the members in the drawer.
+function ExpGroupNode({ id, data }) {
+  const { sel } = useContext(FlowCtx);
+  const selected = (sel?.kind === 'group' && sel.id === id)
+    || (sel?.kind === 'exp' && data.ids.includes(sel.id));
+  return (
+    <div
+      className={[
+        'fig-node', 'wflow-fig', 'fig-node--experiment', 'wflow-fig--group',
+        'fig-st--failed',
+        selected ? 'fig-node--selected' : '',
+      ].filter(Boolean).join(' ')}
+      title={data.sub}
+    >
+      <Handle type="target" position={Position.Left} className="fig-handle" />
+      <div className="fig-node-head">
+        <span className="fig-node-glyph" aria-hidden="true">⧉</span>
+        <span className="fig-node-type">{data.count} experiments</span>
+      </div>
+      <div className="fig-node-label">{data.label}</div>
+      <div className="fig-node-sub">{data.sub}</div>
+      <Handle type="source" position={Position.Right} className="fig-handle" />
+    </div>
+  );
+}
+
 function ReflNode({ data }) {
   const { sel } = useContext(FlowCtx);
   const selected = data.origin
@@ -285,7 +407,7 @@ function ReflNode({ data }) {
   );
 }
 
-const nodeTypes = { wexp: ExpNode, wrefl: ReflNode };
+const nodeTypes = { wexp: ExpNode, wexpg: ExpGroupNode, wrefl: ReflNode };
 
 export default function WaveFlow({
   waves, experiments, signal, project, onSelect, height = 420,
@@ -342,8 +464,8 @@ export default function WaveFlow({
     if (!rf || !el || !ns.length) return;
     let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
     for (const n of ns) {
-      const w = n.type === 'wexp' ? EXP_W : REFL_W;
-      const h = n.type === 'wexp' ? EXP_H : REFL_H;
+      const w = n.type === 'wrefl' ? REFL_W : EXP_W;
+      const h = n.type === 'wrefl' ? REFL_H : EXP_H;
       minX = Math.min(minX, n.position.x);
       minY = Math.min(minY, n.position.y);
       maxX = Math.max(maxX, n.position.x + w);
@@ -365,15 +487,20 @@ export default function WaveFlow({
     const drawer = drawerRef.current;
     if (!s || !rf || !wrap || !drawer) return;
     const id = s.kind === 'exp' ? `e:${s.id}`
-      : s.kind === 'wave' ? `w:${s.id}`
-        : s.kind === 'origin' ? 'w:origin' : 'w:next';
-    const node = nodesRef.current.find(n => n.id === id);
+      : s.kind === 'group' ? s.id
+        : s.kind === 'wave' ? `w:${s.id}`
+          : s.kind === 'origin' ? 'w:origin' : 'w:next';
+    let node = nodesRef.current.find(n => n.id === id);
+    // A dead experiment may live inside a stack — focus the stack instead.
+    if (!node && s.kind === 'exp') {
+      node = nodesRef.current.find(n => n.type === 'wexpg' && n.data.ids.includes(s.id));
+    }
     if (!node) return;
     const { x: vx, y: vy, zoom } = rf.getViewport();
     const W = wrap.clientWidth;
     const D = drawer.offsetWidth;
     const shift = D * SHIFT_RATIO;
-    const nodeW = node.type === 'wexp' ? EXP_W : REFL_W;
+    const nodeW = node.type === 'wrefl' ? REFL_W : EXP_W;
     const cx = (node.position.x + nodeW / 2) * zoom + vx;
     const margin = 30;
     const lo = shift + margin + nodeW / 2;
@@ -476,6 +603,28 @@ export default function WaveFlow({
 
   const ctx = useMemo(() => ({ sel }), [sel]);
 
+  // Adaptive height: the `height` prop is a CEILING, not the size. fitCanvas
+  // caps zoom at 1 and fits wide braids by WIDTH, so a short (or wide-but-
+  // flat) braid displays far shorter than the container — leaving Home a tall
+  // empty box. Estimate the displayed height at the zoom the fit will pick
+  // and shrink the container to it (floor 340px so the frame never collapses).
+  const cssHeight = useMemo(() => {
+    if (!nodes.length) return height;
+    let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
+    for (const n of nodes) {
+      const w = n.type === 'wrefl' ? REFL_W : EXP_W;
+      const h = n.type === 'wrefl' ? REFL_H : EXP_H;
+      minX = Math.min(minX, n.position.x);
+      maxX = Math.max(maxX, n.position.x + w);
+      minY = Math.min(minY, n.position.y);
+      maxY = Math.max(maxY, n.position.y + h);
+    }
+    const estW = typeof window !== 'undefined' ? Math.max(560, window.innerWidth - 420) : 1000;
+    const zoom = Math.min(1, (estW * 0.86) / (maxX - minX));
+    const need = Math.max(340, Math.round((maxY - minY) * zoom * 1.25 + 60));
+    return `min(${need}px, ${typeof height === 'number' ? `${height}px` : height})`;
+  }, [nodes, height]);
+
   if (!nodes.length) return null;
   return (
     <FlowCtx.Provider value={ctx}>
@@ -484,7 +633,7 @@ export default function WaveFlow({
       )}
       <div
         className={`wflow${sel ? ' wflow--panel-open' : ''}${expanded ? ' wflow--expanded' : ''}`}
-        style={{ height: expanded ? undefined : height }}
+        style={{ height: expanded ? undefined : cssHeight }}
       >
         {/* The graph shifts aside for the drawer — a pure transform, so the
             canvas never resizes and react-flow never re-lays-out. */}
@@ -498,6 +647,7 @@ export default function WaveFlow({
               onNodeClick={(event, node) => {
                 event.stopPropagation();
                 if (node.type === 'wexp') setSel({ kind: 'exp', id: node.data.expId });
+                else if (node.type === 'wexpg') setSel({ kind: 'group', id: node.id, ids: node.data.ids });
                 else if (node.data.origin) setSel({ kind: 'origin' });
                 else if (node.data.ghost) setSel({ kind: 'ghost' });
                 else setSel({ kind: 'wave', id: node.data.waveId });

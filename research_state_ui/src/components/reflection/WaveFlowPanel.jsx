@@ -154,6 +154,20 @@ function seedStrands({ epochs, strands }) {
   return strands.filter(s => colOf(s) === -1);
 }
 
+// A stack of dead experiments: list the members; picking one opens its full
+// panel (the canvas keeps highlighting the stack that holds it).
+function GroupPanel({ ids, strands, onClose, onSelectNode }) {
+  const members = strands.filter(s => ids.includes(s.id));
+  return (
+    <DetailPanelShell typeLabel="set aside" title={`${members.length} experiments`} onClose={onClose}>
+      <div className="fig-panel-meta">
+        Failed and abandoned work, stacked to keep the column short.
+      </div>
+      {members.map(s => <StrandItem key={s.id} strand={s} onSelectNode={onSelectNode} />)}
+    </DetailPanelShell>
+  );
+}
+
 function OriginPanel({ project, braid, onClose, onSelectNode }) {
   const seeds = seedStrands(braid);
   return (
@@ -198,7 +212,16 @@ export default function WaveFlowPanel({
   if (!sel) return null;
   const { epochs, strands } = braid;
   let body = null;
-  if (sel.kind === 'origin') {
+  if (sel.kind === 'group') {
+    body = (
+      <GroupPanel
+        ids={sel.ids || []}
+        strands={strands}
+        onClose={onClose}
+        onSelectNode={onSelectNode}
+      />
+    );
+  } else if (sel.kind === 'origin') {
     body = (
       <OriginPanel
         project={project}

@@ -6380,6 +6380,11 @@ textarea.sbxpw-input { font-family: var(--mono, ui-monospace, monospace); font-s
   border-style: dashed; border-color: var(--line-strong); background: none;
 }
 .wflow-refl--ghost .wflow-refl-label { color: var(--faint); font-weight: 500; }
+/* Dead-work stack: one passive card standing in for N failed/abandoned
+   experiments; the offset outline reads as cards behind it. */
+.wflow-fig.wflow-fig--group {
+  box-shadow: 3px 3px 0 -1px var(--bg), 3px 3px 0 0 var(--line-strong);
+}
 /* Origin: project creation — quiet and solid, history rather than work. */
 .wflow-refl--origin { border-color: var(--line-strong); background: var(--bg-elev); }
 .wflow-refl--origin .wflow-refl-label { color: var(--muted); font-size: 14px; }
