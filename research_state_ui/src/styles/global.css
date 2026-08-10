@@ -1430,9 +1430,9 @@ html { scroll-behavior: smooth; }
    brief is short vs. long. The card has its own max-height + scroll so a
    long brief stays bounded, and short briefs leave honest empty space
    beneath the card. */
-.section--focused-exp {
-  min-height: 480px;
-}
+/* The focused-exp section takes only the height its card needs — no reserved
+   min-height (it used to hold 480px, leaving a void above the project graph;
+   the bounded card's max-height already keeps pager jumps modest). */
 .active-exp-card--bounded {
   max-height: 420px;
   overflow-y: auto;

@@ -73,7 +73,7 @@ export default function Home() {
       )}
 
       {workflow && (
-        <section className="section section--focused-exp">
+        <section className="section">
           <div className="cluster--between" style={{ marginBottom: 12 }}>
             <div className="section-title" style={{ marginBottom: 0 }}>Focused experiment</div>
             <ActiveExperimentPager
