@@ -28,16 +28,19 @@ import WaveFlowPanel from './WaveFlowPanel';
 const EXP_W = 190;
 const EXP_H = 70;
 const ROW = 132;
-const STEP = 340;
+const STEP = 420;
 const REFL_W = 48;
 const REFL_H = 148;
 const X0 = 40;
 const SPINE = 200;
+// Breathing room on BOTH sides of a wave pill: whatever the step leaves after
+// a card and a pill, split evenly.
+const REFL_GAP = (STEP - EXP_W - REFL_W) / 2;
 // Fraction of the drawer width the canvas shifts by — must match the CSS
 // `.wflow--panel-open .wflow-shift` translate.
 const SHIFT_RATIO = 0.45;
 const expX = (c) => X0 + (c + 1) * STEP;
-const reflX = (i) => X0 + i * STEP + EXP_W + 56;
+const reflX = (i) => X0 + i * STEP + EXP_W + REFL_GAP;
 
 const statusWord = (s) => String(s || '').replace(/_/g, ' ') || '—';
 
