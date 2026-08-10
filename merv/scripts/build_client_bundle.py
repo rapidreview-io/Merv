@@ -10,8 +10,9 @@ client needs into an output directory that the marketplace/publish pipeline
 serves, while the repository stays full for self-hosters.
 
 The real ``skills/``/``agents/``/``src`` are the single source of truth; nothing
-is duplicated in git. Run this in the release/publish pipeline (or locally to
-verify), then point the marketplace ``source`` at the output directory.
+is duplicated in the source branch. The release workflow runs this builder and
+force-publishes its output to the generated ``merv-client`` branch, which is the
+small, auto-updating source used by Gemini CLI.
 
     python3 scripts/build_client_bundle.py            # -> dist/plugin/
     python3 scripts/build_client_bundle.py --out /tmp/merv-slim

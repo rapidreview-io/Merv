@@ -10,14 +10,15 @@ the active deployment.
 The brain is the authority for durable research state and workflow policy. Every
 agent client — local Claude Code, cloud Codex, Replit, browser-driven — connects
 the same way: directly to the brain's stateless `POST /mcp` HTTP endpoint,
-authenticated by a scoped bearer credential. The
-committed config files (`.mcp.json`, `.mcp.codex.json`, `mcp.json`) use
-`type:"http"`, `url:"https://experiments.rapidreview.io/mcp"`, and
-`headers.Authorization:"Bearer ${MERV_MCP_KEY}"`; the key is read from the
-`MERV_MCP_KEY` env var and is never inlined into a committed file.
+authenticated by a scoped bearer credential. The committed config files
+(`.mcp.json`, `.mcp.codex.json`, `mcp.json`) are URL-only so interactive clients
+can discover and complete Merv OAuth without a manually minted key. Headless
+clients that cannot run OAuth pass a static scoped key from `MERV_MCP_KEY`; the
+key is never inlined into a committed file.
 
-A key is scoped either to one project or to its owner's whole account. Either
-way the caller names the project per call; ids come from
+An OAuth session can reach the projects available to its user; a static key is
+scoped either to one project or to its owner's whole account. In either case the
+caller names the project per call; ids come from
 `project(action="list")`. The tool's actions are `list`, `current`, `create`,
 and `overview`.
 The gateway does not inject or hide

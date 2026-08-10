@@ -6,21 +6,23 @@ provisioning — lives in the client-neutral brain service (localhost
 `merv-http`, or the hosted brain). Every client — local Claude Code, cloud
 Codex, Cursor, Gemini CLI, OpenCode, Kilo, Hermes Agent, OpenHands, and
 Replit Agent — connects directly to the brain's `POST /mcp` endpoint. Bundled clients
-authenticate with a project-scoped key sent as `Authorization: Bearer <key>`
-from `MERV_MCP_KEY`; browser-configured clients may instead use the hosted
-OAuth flow or a pasted key. A key is scoped to one project or to the owner's
-whole account. Agents start with `project(action="list")`; a project-scoped
-key may also use `project(action="current")`. They pass the selected id
-explicitly, and the gateway rejects ids outside the credential's scope. Agents
-never send a checkout root. Each client gets a thin adapter on top of the same
-`bin/`, `skills/`, and `agents/` content:
+for Codex, Claude Code, Cursor, and Gemini CLI default to native MCP OAuth. Their
+manifests contain the URL and no credential header; the client discovers Merv's
+DCR + PKCE flow and refreshes tokens without exposing a key to the user. Static
+`MERV_MCP_KEY` authentication remains for headless clients and the agent runner.
+Either grant can cover one project or the owner's whole account. Agents start
+with `project(action="list")`; a project-scoped grant may also use
+`project(action="current")`. They pass the selected id explicitly, and the
+gateway rejects ids outside the credential's scope. Agents never send a checkout
+root. Each client gets a thin adapter on top of the same `bin/`, `skills/`, and
+`agents/` content:
 
 | Client | Adapter | MCP registration | Skills | Reviewer subagents |
 |---|---|---|---|---|
-| Claude Code | `.claude-plugin/plugin.json` + `.mcp.json` | http server → `<base>/mcp`, `Authorization: Bearer ${MERV_MCP_KEY}` | `skills/` auto-discovered | `agents/` auto-discovered (`merv:` namespace) |
-| Codex | `.codex-plugin/plugin.json` + `.mcp.codex.json` | http server → `<base>/mcp` (same header) | `skills/` via manifest | spawned via review skills |
-| Cursor | `.cursor-plugin/plugin.json` + `mcp.json` | http server → `<base>/mcp` (same header) | `skills/` auto-discovered (Agent Skills standard) | `agents/` auto-discovered |
-| Gemini CLI | `gemini-extension.json` + `GEMINI.md` | http server → `<base>/mcp` (same header) | `skills/` auto-discovered (Agent Skills standard) | `agents/` auto-discovered |
+| Claude Code | `.claude-plugin/plugin.json` + `.mcp.json` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered | `agents/` auto-discovered (`merv:` namespace) |
+| Codex | `.codex-plugin/plugin.json` (inline MCP entry) | URL-only http server → `<base>/mcp`; native OAuth | `skills/` via manifest | spawned via review skills |
+| Cursor | `.cursor-plugin/plugin.json` + `mcp.json` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered (Agent Skills standard) | `agents/` auto-discovered |
+| Gemini CLI | `gemini-extension.json` + `GEMINI.md` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered (Agent Skills standard) | `agents/` auto-discovered |
 | OpenCode | `clients/opencode/` (installer + agents + config example) | `opencode.json` `mcp` block → `<base>/mcp` (same header) | symlinked into `~/.config/opencode/skills/` | symlinked into `~/.config/opencode/agents/` |
 | Kilo | `clients/kilo/` (installer + config example) | `kilo.jsonc` `mcp` block → `<base>/mcp` (same header) | symlinked into `~/.kilo/skills/`; also reads repo `.agents/skills/` | shared OpenCode wrappers symlinked into `~/.config/kilo/agent/` |
 | Hermes Agent | `clients/hermes/` (installer + guide) | `config.yaml` `mcp_servers` entry → `<base>/mcp` (bearer header or OAuth) | `skills.external_dirs`, or POSIX installer symlinks | `delegate_task` with the handoff prompt |
@@ -31,16 +33,16 @@ Shared invariants across all clients:
 
 - The project comes from the credential and the call, never from a checkout
   path. An agent passes `project_id` explicitly on every project-scoped call.
-  Where it learns that id depends on the key's scope: an account-scoped key
+  Where it learns that id depends on the grant's scope: an account-scoped grant
   calls `project(action="list")` and picks from the result (ids with names,
-  summaries, and creation dates); a project-scoped key learns its one project
+  summaries, and creation dates); a project-scoped grant learns its one project
   via `project current` and may pass no other. Agents never send a repo root,
   and no client needs to point Merv at a project directory.
-- One credential is enough for every project you belong to, on every platform.
-  Mint an account-scoped key once (or approve "All my projects" at OAuth
-  consent) and the same credential serves local Codex and Codex cloud, Claude
-  Code and claude.ai. OAuth access tokens last an hour and refresh silently on
-  a rolling 30-day window, so a client that stays in use never re-consents.
+- One OAuth grant is enough for every project you belong to in a platform.
+  Approve **All my projects** at consent. OAuth access tokens last an hour and
+  refresh silently on a rolling 30-day window, so a client that stays in use
+  never re-consents. Tokens are stored by each platform and are not copied
+  between platforms.
 - The MCP connection is plain HTTP, so a client needs no local Merv runtime to
   reach the brain — just an HTTP MCP server entry. The brain is the single
   source of truth for tool schemas (`contracts.py` TOOL_MANIFEST, served via
@@ -67,15 +69,11 @@ Shared invariants across all clients:
   those wrappers unchanged.
 - The committed manifests pin every bundled client to the hosted brain
   `https://experiments.rapidreview.io/mcp`, so out of the box each client dials
-  the hosted brain and runs no local brain. Run `merv-client env` to print the
-  ready-to-paste `.mcp.json` http snippet and `merv-client configure` to write
-  machine config. For a local deployment, point the `url` at
-  `http://127.0.0.1:8787/mcp` and start `bin/merv-http`. Export `MERV_MCP_KEY`
-  in your shell before launching a client and keep it out of version control —
-  the key is never inlined into a committed manifest, and it is
-  bearer-equivalent to full access to everything it is scoped to. OpenHands cannot
-  ship the MCP connection in a repository, and Replit connections are
-  account-scoped; configure those once through their documented setup surface.
+  the hosted brain and runs no local brain. They intentionally contain no
+  `headers` block, allowing a 401 to start native OAuth discovery. For a local
+  deployment, point the `url` at `http://127.0.0.1:8787/mcp` and start
+  `bin/merv-http`; local mode is auth-free. `merv-client env` remains the
+  static-key config generator for runners and other headless surfaces.
 
 ## Long runs (merv_run) per client
 
@@ -160,8 +158,8 @@ The exit code is the state, in both modes:
 
 The plugin root (`merv/`) doubles as the monorepo — it carries the full backend
 (`src/merv/brain`) and the test suite (`tests/`) that a thin HTTP-MCP client
-never runs. Claude Code copies a plugin's whole `source` tree on install (there
-is no `.claudeignore`), so clients should install a *slim* bundle instead.
+never runs. The generated *slim* bundle keeps distribution independent from
+the backend and test tree.
 
 [`scripts/build_client_bundle.py`](../scripts/build_client_bundle.py) assembles
 that bundle (skills, agents, manifests, `.mcp.json`, `bin/merv-client` and
@@ -175,15 +173,13 @@ or a new skill/agent is left out.
 python3 scripts/build_client_bundle.py --out dist/plugin   # gitignored
 ```
 
-To publish: run the build in the release pipeline and commit/push the output to
-a **git-retrievable** location, then point the marketplace entry's `source` at
-it. Claude Code only fetches `marketplace.json` from a plain URL marketplace, so
-a relative `"source": "./dist/plugin"` requires either a git-cloned marketplace
-(the plugin path resolves within the clone) or an explicit `git-subdir` source
-pointing at the built subdirectory/ref — a direct-URL marketplace cannot serve a
-relative path. The Cursor and self-host paths already build or clone directly.
-The hosted `rapidreview.io` marketplace manifest is a separate deploy artifact —
-repoint its `source` when the pipeline serves the built bundle.
+The repository workflow builds and force-publishes this output to the dedicated
+generated `merv-client` branch after every update to `main`. Gemini installs
+that branch and tracks its HEAD with `--auto-update`; nobody edits the generated
+branch by hand. Codex, Claude Code, and Cursor consume their marketplace
+manifests from `main`, whose entries resolve the canonical `merv/` source tree.
+Release changes that alter skills or manifests therefore reach every
+provider-independent distribution source without waiting for a provider review.
 
 ## Verify a connection
 
@@ -251,42 +247,82 @@ The session ids are supplied by the clients, so this is workflow-level
 separation rather than cryptographic proof of separate execution. See
 [REVIEW_IDENTITY.md](REVIEW_IDENTITY.md).
 
+## Use with Claude Code
+
+The repository is its own third-party marketplace. Install the plugin and sign
+in through the namespaced plugin MCP server:
+
+```bash
+claude plugin marketplace add NGXT-Inc/Merv
+claude plugin install merv@rapidreview
+claude mcp login plugin:merv:merv
+```
+
+Claude stores and refreshes the OAuth tokens. In `/plugin` → **Marketplaces** →
+**RapidReview**, select **Enable auto-update** once; Claude deliberately leaves
+third-party marketplace auto-update off by default. Without that toggle, update
+manually with `claude plugin marketplace update rapidreview` and
+`claude plugin update merv@rapidreview`.
+
+Claude namespaces a plugin-provided server as `plugin:merv:merv`, which is why
+the login command uses that full name. The `/mcp` screen provides the same
+browser sign-in without needing to remember it.
+
 ## Use with Codex
 
-Codex reads the same marketplace manifest as Claude Code, so the full plugin —
-skills plus the MCP server registration from
-[.codex-plugin/plugin.json](../.codex-plugin/plugin.json) /
-[.mcp.codex.json](../.mcp.codex.json) — installs in two commands:
+Codex uses the repository marketplace at `.agents/plugins/marketplace.json`.
+The plugin bundles its skills and URL-only HTTP MCP registration:
 
 ```bash
 codex plugin marketplace add NGXT-Inc/Merv
 codex plugin add merv@rapidreview
+codex mcp login merv
 ```
 
-All bundled `merv:` skills are then discoverable in Codex sessions (verified with
-`codex exec`). The plugin registers the hosted `/mcp` endpoint, but Codex does
-not carry the manifest's `Authorization` header wiring — the server shows as
-"Not logged in" until auth is added per machine, either the key route:
+All bundled `merv:` skills are then discoverable. Codex stores and refreshes the
+OAuth tokens; there is no separate `codex mcp add` and no `MERV_MCP_KEY` for an
+interactive user.
+
+Codex currently documents explicit refresh rather than automatic updates for a
+Git repository marketplace:
 
 ```bash
-codex mcp add merv --url https://experiments.rapidreview.io/mcp \
-  --bearer-token-env-var MERV_MCP_KEY
+codex plugin marketplace upgrade rapidreview
+codex plugin add merv@rapidreview
 ```
 
-or the browser OAuth flow: `codex mcp login merv`. The `codex mcp add` line
-alone is also a valid MCP-only setup (no skills). Headless `codex exec` runs
-need `default_tools_approval_mode="approve"` on the server entry or tool calls
-die on the approval prompt; headless cloud tasks must expose `MERV_MCP_KEY` to
-the task environment.
+For headless `codex exec`, add an MCP-only server with
+`--bearer-token-env-var MERV_MCP_KEY`. The bundled Codex config sets
+`default_tools_approval_mode="approve"` so non-interactive tool calls do not die
+on an approval prompt.
 
 ## Use with Cursor
 
 The plugin ships a Cursor plugin bundle: [.cursor-plugin/plugin.json](../.cursor-plugin/plugin.json)
 plus [mcp.json](../mcp.json) at plugin root; `skills/` and `agents/` are
-auto-discovered from the same locations all other clients use.
+auto-discovered from the same locations all other clients use. The repository
+also exposes `.cursor-plugin/marketplace.json`, so no clone or bundle build is
+needed for an ordinary install:
 
-Build the slim client bundle straight into Cursor's local-plugin directory,
-then enable it in Cursor:
+```bash
+cursor-agent plugin marketplace add https://github.com/NGXT-Inc/Merv
+cursor-agent
+```
+
+Inside Cursor Agent, open `/plugin`, choose the **rapidreview** marketplace,
+install **merv** at user scope, and then select **Connect** for Merv in
+**Customize**. Cursor receives the URL-only MCP config and runs its OAuth flow;
+the user never supplies a key.
+
+Cursor does not currently expose a non-interactive `plugin install` command.
+For an individual custom marketplace it also does not document an automatic
+update guarantee. Teams and Enterprise admins can import this repository as a
+team marketplace, enable **Auto Refresh**, and set Merv to Default On or
+Required. That is the only provider-independent Cursor path with native
+automatic distribution today.
+
+For local development, build the slim bundle into Cursor's local-plugin
+directory and enable it in Customize:
 
 ```bash
 python3 /path/to/merv/scripts/build_client_bundle.py --out ~/.cursor/plugins/local/merv
@@ -302,27 +338,22 @@ is copied as a real directory rather than symlinked.
 Two Cursor-specific notes:
 
 1. **MCP server.** Cursor registers Merv as an HTTP MCP server. The bundled
-   [mcp.json](../mcp.json) points at the hosted brain and carries the project
-   key from the environment:
+   [mcp.json](../mcp.json) contains only the hosted URL:
 
 ```json
 {
   "mcpServers": {
     "merv": {
       "type": "http",
-      "url": "https://experiments.rapidreview.io/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MERV_MCP_KEY}"
-      }
+      "url": "https://experiments.rapidreview.io/mcp"
     }
   }
 }
 ```
 
-   Export `MERV_MCP_KEY` in your environment before launching Cursor; never
-   inline the key into `mcp.json`. To point one workspace at a different brain
-   (e.g. a local `http://127.0.0.1:8787/mcp` deployment), edit the `url` in the
-   project's `.cursor/mcp.json`.
+   The initial 401 starts OAuth. To point one workspace at a different brain
+   (for example local `http://127.0.0.1:8787/mcp`), edit the `url` in the
+   project's `.cursor/mcp.json`; local mode does not require authentication.
 
 2. **Tool ceiling.** Cursor's approximately 40-tool limit applies across all
    active MCP servers. Merv's catalog nearly fills it when optional Storage is
@@ -338,25 +369,28 @@ Cursor's MCP settings may show a naming warning for dotted tools such as
 
 The plugin ships a Gemini CLI extension: [gemini-extension.json](../gemini-extension.json)
 bundles the MCP server (an HTTP server pointed at the brain's `/mcp` endpoint,
-carrying the project key from `MERV_MCP_KEY`) and loads
-[GEMINI.md](../GEMINI.md) as always-on context. `skills/` and `agents/` are
-auto-discovered from the extension directory.
+with OAuth discovered from the initial 401) and loads [GEMINI.md](../GEMINI.md)
+as always-on context. `skills/` and `agents/` are auto-discovered from the
+extension directory.
 
-Install from a local checkout (or link for development):
+Install the generated slim client branch with automatic updates:
 
 ```bash
-gemini extensions install /path/to/merv
-# or, during development:
-gemini extensions link /path/to/merv
+gemini extensions install https://github.com/NGXT-Inc/Merv \
+  --ref merv-client --auto-update
 ```
 
-Notes:
+Then start Gemini and run `/mcp auth merv`. Gemini discovers the authorization
+and token endpoints, opens a browser, stores the tokens, and refreshes them.
+`--auto-update` tracks the generated branch's HEAD, which the repository workflow
+rebuilds after every `main` update.
 
-- Reviewer subagents can be given genuinely separate MCP sessions on Gemini:
-  an agent's inline `mcpServers` frontmatter opens its own connection to the
-  brain. The shared agent files do not use this (they stay client-common); the
-  capability + producer-session checks are the load-bearing independence
-  mechanism regardless.
+For development, use `gemini extensions link /path/to/merv`. Reviewer subagents
+can be given genuinely separate MCP sessions on Gemini: an agent's inline
+`mcpServers` frontmatter opens its own connection to the brain. The shared agent
+files do not use this (they stay client-common); the capability +
+producer-session checks remain the load-bearing independence mechanism.
+
 
 ## Use with OpenCode
 
@@ -395,9 +429,11 @@ It has no declarative plugin bundle, so the adapter is an installer:
 ```
 
 It symlinks the canonical skills into `~/.kilo/skills/`, the shared
-reviewer-agent wrappers into `~/.config/kilo/agent/`, and prints the
-`kilo.jsonc` `mcp` block to add (see
-[clients/kilo/kilo.jsonc.example](../clients/kilo/kilo.jsonc.example)).
+reviewer-agent wrappers into `~/.config/kilo/agent/`, and registers the MCP
+server: a missing global `~/.config/kilo/kilo.jsonc` is written outright
+(see [clients/kilo/kilo.jsonc.example](../clients/kilo/kilo.jsonc.example));
+an existing one is never edited in place — the `mcp` block to merge is
+printed instead.
 
 Notes:
 

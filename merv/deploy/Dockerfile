@@ -32,6 +32,7 @@ WORKDIR /app
 # (pyproject [project.optional-dependencies]).
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY deploy/db_preflight.py ./deploy/db_preflight.py
 RUN pip install ".[control,gcp]"
 
 # Run as a non-root user (the control plane never needs root; it holds no user

@@ -1,0 +1,43 @@
+# Docker uses this file (Dockerfile.dockerignore) because the build context is
+# the merv/ root while the selected Dockerfile lives in deploy/. Keep the older
+# deploy/.dockerignore too for tools that use deploy/ itself as their context.
+
+# Secrets / local config — never send them in the build context.
+.env
+.env.*
+*.env
+*.env.*
+**/.env
+**/.env.*
+**/credentials.json
+**/.research_plugin/
+**/.merv/
+
+# Python build and cache churn.
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# VCS and editor state.
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# Out of scope for the control image.
+research_state_ui/
+tests/
+
+# Local databases, blobs, and logs.
+*.sqlite
+*.sqlite-*
+blobs/
+activity.jsonl

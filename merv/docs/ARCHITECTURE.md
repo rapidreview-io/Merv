@@ -32,7 +32,7 @@ There is one topology for both hosted and local deployments:
 flowchart LR
   User["Researcher"] --> Client["Agent client"]
   Client --> Skills["Plugin skills and reviewer roles"]
-  Client -->|HTTP MCP + project key| Brain["Brain service"]
+  Client -->|HTTP MCP + OAuth or scoped key| Brain["Brain service"]
   Browser["Merv UI"] -->|HTTP API and SSE| Brain
   Brain --> State["SQLite or Postgres"]
   Brain --> Blobs["Local or S3-compatible stores"]
@@ -64,6 +64,11 @@ graph:
 | `local` | `http://127.0.0.1:8787` | SQLite and local-directory blobs | Loopback development; auth off by default |
 | `control` | Operator-provided HTTPS URL | Postgres and S3-compatible stores | Supabase-backed end-user auth; TLS and network controls |
 
+`Postgres` here is provider-neutral: the same adapter supports ordinary
+PostgreSQL and hosted or self-hosted Supabase PostgreSQL through `MERV_DB_URL`.
+The Merv record database is isolated from the Supabase project used for
+end-user authentication, and Supabase Storage is not part of this topology.
+
 The control surface requires Supabase-backed end-user authentication
 (`SupabaseVerifier` in `surface/auth.py`, attached per-request in
 `transport/api/app.py`, with a membership gate that 404s foreign projects).
@@ -79,15 +84,18 @@ unaffected. CORS and the client-version floor are still not authentication.
 
 ### Agent client connection
 
-Every client connects directly to the brain's `/mcp` endpoint over HTTP,
-authenticated by a project-scoped key (`Authorization: Bearer <key>`). The
-committed `.mcp.json` uses `type:"http"` and reads the key from the
-`MERV_MCP_KEY` environment variable — the key is never inlined, because it is
-bearer-equivalent to full access to everything it is scoped to. There is no local
-proxy and no local data plane: one wire protocol serves a local agent, a cloud
-agent, and a browser-driven agent identically.
+Every client connects directly to the brain's `/mcp` endpoint over HTTP. Codex,
+Claude Code, Cursor, and Gemini CLI use the endpoint's OAuth discovery and keep
+their resulting access tokens in their native credential stores. The committed
+manifests are therefore URL-only and contain no Merv key. Headless automation,
+the standalone runner, and clients without remote-MCP OAuth use a scoped static
+key through `MERV_MCP_KEY`; that key is never inlined because it is
+bearer-equivalent to everything in its scope. There is no local proxy and no
+local data plane: one wire protocol serves a local agent, a cloud agent, and a
+browser-driven agent identically.
 
-The key is scoped to one project or to its owner's whole account, immutably.
+An authenticated session is scoped to the projects reachable by its user. A
+static key is scoped to one project or to its owner's whole account, immutably.
 The gateway does not inject a project:
 it requires the agent to pass `project_id` on project-scoped tools and enforces
 that it equals the key-bound project — a mismatched `project_id` is rejected and

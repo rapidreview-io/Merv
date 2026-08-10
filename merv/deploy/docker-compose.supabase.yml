@@ -1,0 +1,132 @@
+# Self-hosted Supabase Postgres + Studio overlay for Merv.
+#
+# This is deliberately a database/dashboard deployment, not a second auth or
+# storage plane. Merv authentication continues to use the SUPABASE_* variables
+# from the production auth project. Artifacts continue to use MinIO from the
+# base Compose file.
+#
+# Studio and Postgres bind to server loopback by default. On a remote host, use
+# an SSH tunnel from your laptop rather than publishing the unauthenticated
+# Studio port:
+#
+#   ssh -L 55433:127.0.0.1:55433 -L 55432:127.0.0.1:55432 USER@HOST
+#
+# Then open http://127.0.0.1:55433.
+
+services:
+  supabase-db:
+    image: supabase/postgres:${MERV_DB_SUPABASE_POSTGRES_VERSION:-17.6.1.136}
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: 5432
+      POSTGRES_PORT: 5432
+      PGPASSWORD: ${MERV_DB_SUPABASE_ADMIN_PASSWORD:?set MERV_DB_SUPABASE_ADMIN_PASSWORD}
+      POSTGRES_PASSWORD: ${MERV_DB_SUPABASE_ADMIN_PASSWORD:?set MERV_DB_SUPABASE_ADMIN_PASSWORD}
+      PGDATABASE: postgres
+      POSTGRES_DB: postgres
+      JWT_SECRET: ${MERV_DB_SUPABASE_JWT_SECRET:?set MERV_DB_SUPABASE_JWT_SECRET}
+      JWT_EXP: 3600
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - log_min_messages=fatal
+    ports:
+      - "127.0.0.1:${MERV_DB_SUPABASE_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - supabase_pgdata:/var/lib/postgresql/data
+      - supabase_db_config:/etc/postgresql-custom
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  supabase-db-bootstrap:
+    image: postgres:17-alpine
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${MERV_DB_SUPABASE_ADMIN_PASSWORD:?set MERV_DB_SUPABASE_ADMIN_PASSWORD}
+      MERV_DB_SUPABASE_APP_PASSWORD: ${MERV_DB_SUPABASE_APP_PASSWORD:?set MERV_DB_SUPABASE_APP_PASSWORD}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        psql -h supabase-db -U postgres -d postgres
+        --set=ON_ERROR_STOP=1
+        --set=merv_password="$$MERV_DB_SUPABASE_APP_PASSWORD"
+        --file=/bootstrap/bootstrap.sql &&
+        PGPASSWORD="$$MERV_DB_SUPABASE_APP_PASSWORD"
+        psql -h supabase-db -U merv_app -d postgres
+        --set=ON_ERROR_STOP=1
+        --file=/bootstrap/app-default-privileges.sql
+    volumes:
+      - ./supabase/bootstrap.sql:/bootstrap/bootstrap.sql:ro
+      - ./supabase/app-default-privileges.sql:/bootstrap/app-default-privileges.sql:ro
+
+  supabase-meta:
+    image: supabase/postgres-meta:${MERV_DB_SUPABASE_META_VERSION:-v0.96.6}
+    restart: unless-stopped
+    depends_on:
+      supabase-db-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: supabase-db
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: postgres
+      PG_META_DB_USER: postgres
+      PG_META_DB_PASSWORD: ${MERV_DB_SUPABASE_ADMIN_PASSWORD:?set MERV_DB_SUPABASE_ADMIN_PASSWORD}
+      CRYPTO_KEY: ${MERV_DB_SUPABASE_META_CRYPTO_KEY:?set MERV_DB_SUPABASE_META_CRYPTO_KEY}
+  supabase-studio:
+    image: supabase/studio:${MERV_DB_SUPABASE_STUDIO_VERSION:-2026.08.03-sha-022b374}
+    restart: unless-stopped
+    depends_on:
+      supabase-meta:
+        condition: service_started
+    environment:
+      HOSTNAME: 0.0.0.0
+      STUDIO_PG_META_URL: http://supabase-meta:8080
+      POSTGRES_HOST: supabase-db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${MERV_DB_SUPABASE_ADMIN_PASSWORD:?set MERV_DB_SUPABASE_ADMIN_PASSWORD}
+      POSTGRES_USER_READ_WRITE: postgres
+      PG_META_CRYPTO_KEY: ${MERV_DB_SUPABASE_META_CRYPTO_KEY:?set MERV_DB_SUPABASE_META_CRYPTO_KEY}
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_MAX_ROWS: 1000
+      PGRST_DB_EXTRA_SEARCH_PATH: public
+      DEFAULT_ORGANIZATION_NAME: Merv
+      DEFAULT_PROJECT_NAME: Merv Database
+      SUPABASE_URL: http://127.0.0.1:${MERV_DB_SUPABASE_STUDIO_PORT:-55433}
+      SUPABASE_PUBLIC_URL: http://127.0.0.1:${MERV_DB_SUPABASE_STUDIO_PORT:-55433}
+      SUPABASE_ANON_KEY: ${MERV_DB_SUPABASE_ANON_KEY:-db-dashboard-not-used-by-merv-auth}
+      SUPABASE_SERVICE_KEY: ${MERV_DB_SUPABASE_SERVICE_KEY:-db-dashboard-not-used-by-merv-auth}
+      AUTH_JWT_SECRET: ${MERV_DB_SUPABASE_JWT_SECRET:?set MERV_DB_SUPABASE_JWT_SECRET}
+      ENABLED_FEATURES_LOGS_ALL: "false"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "fetch('http://localhost:3000/api/platform/profile')
+          .then((r) => {if (r.status !== 200) throw new Error(r.status)})"
+      interval: 5s
+      timeout: 10s
+      retries: 6
+      start_period: 20s
+    ports:
+      - "127.0.0.1:${MERV_DB_SUPABASE_STUDIO_PORT:-55433}:3000"
+
+  control:
+    depends_on:
+      supabase-db-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      MERV_DB_URL: postgresql://merv_app:${MERV_DB_SUPABASE_APP_PASSWORD:?set MERV_DB_SUPABASE_APP_PASSWORD}@supabase-db:5432/postgres
+
+volumes:
+  supabase_pgdata:
+  supabase_db_config:

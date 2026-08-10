@@ -80,10 +80,12 @@ at the local brain:
   --control-url http://127.0.0.1:8787
 ```
 
-`merv-client env` then prints the `.mcp.json` HTTP snippet: a `type:"http"`
-entry whose `url` is `http://127.0.0.1:8787/mcp` and whose
-`headers.Authorization` references `MERV_MCP_KEY`. Local auth ignores the
-header; hosted deployments require a real scoped credential.
+`merv-client env` then prints a `type:"http"` entry whose `url` is
+`http://127.0.0.1:8787/mcp` and whose `headers.Authorization` references
+`MERV_MCP_KEY`. Local auth ignores that placeholder. For hosted interactive
+use, skip this headless config generator: install the shipped URL-only manifest
+and complete OAuth in the client. Reserve `MERV_MCP_KEY` for automation and
+clients without remote-MCP OAuth.
 
 ## Register the plugin
 

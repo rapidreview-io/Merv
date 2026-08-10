@@ -1,0 +1,47 @@
+name: Publish client bundle
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-merv-client
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build slim multi-client bundle
+        run: python3 merv/scripts/build_client_bundle.py --out "$RUNNER_TEMP/merv-client"
+
+      - name: Verify client manifests and bundle
+        working-directory: merv
+        env:
+          PYTHONPATH: src
+        run: python3 -m unittest tests.surface.test_client_manifests tests.surface.test_client_bundle
+
+      - name: Publish generated merv-client branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          publish_dir="$RUNNER_TEMP/merv-client-publish"
+          mkdir -p "$publish_dir"
+          cp -R "$RUNNER_TEMP/merv-client/." "$publish_dir/"
+          cd "$publish_dir"
+          git init
+          git checkout -b merv-client
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          git commit -m "Publish Merv client bundle from ${GITHUB_SHA}"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin merv-client

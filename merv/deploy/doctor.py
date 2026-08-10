@@ -47,6 +47,7 @@ class Doctor:
         timeout: float,
         url_rewrite: list[tuple[str, str]],
         skip_storage: bool,
+        bearer_token: str,
     ) -> None:
         self.control_url = control_url.rstrip("/")
         self.project_id = project_id
@@ -54,6 +55,7 @@ class Doctor:
         self.timeout = timeout
         self.url_rewrite = url_rewrite
         self.skip_storage = skip_storage
+        self.bearer_token = bearer_token
         self.checks: list[Check] = []
 
     def run(self) -> int:
@@ -180,6 +182,8 @@ class Doctor:
     ) -> dict[str, Any]:
         data = json.dumps(body).encode("utf-8") if body is not None else None
         headers = {"Accept": "application/json"}
+        if self.bearer_token:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
         if data is not None:
             headers["Content-Type"] = "application/json"
         raw = self._raw_request(method, self._rewrite_url(url), data=data, headers=headers)
@@ -277,6 +281,16 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("RP_DOCTOR_SKIP_STORAGE", "").lower() in {"1", "true", "yes"},
         help="Skip object-storage upload/download smoke.",
     )
+    parser.add_argument(
+        "--bearer-token",
+        default=os.environ.get(
+            "RP_DOCTOR_BEARER_TOKEN", os.environ.get("MERV_MCP_KEY", "")
+        ),
+        help=(
+            "Bearer credential for authenticated control routes. Defaults to "
+            "RP_DOCTOR_BEARER_TOKEN, then MERV_MCP_KEY."
+        ),
+    )
     args = parser.parse_args(argv)
     rewrites = _parse_rewrites(
         [os.environ.get("RP_DOCTOR_URL_REWRITE", ""), *args.url_rewrite]
@@ -288,6 +302,7 @@ def main(argv: list[str] | None = None) -> int:
         timeout=args.timeout,
         url_rewrite=rewrites,
         skip_storage=args.skip_storage,
+        bearer_token=args.bearer_token,
     ).run()
 
 

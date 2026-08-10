@@ -5,7 +5,9 @@
 
 # Secrets / local config — NEVER in an image.
 .env
+.env.*
 *.env
+*.env.*
 !deploy/.env.example
 **/credentials.json
 **/.research_plugin/

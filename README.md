@@ -31,7 +31,7 @@ After a set of experiments is complete, the plugin drives a project-wide reflect
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/system-architecture-dark.svg">
-  <img alt="System architecture: agent platforms connect directly to the brain over HTTP MCP with a bearer key; the brain owns durable records and workflow gates and provisions cloud sandboxes; agents run SSH commands and pull retained outputs themselves. The frontend supervises the brain." src="assets/system-architecture-light.svg">
+  <img alt="System architecture: agent platforms connect directly to the brain over authenticated HTTP MCP; the brain owns durable records and workflow gates and provisions cloud sandboxes; agents run SSH commands and pull retained outputs themselves. The frontend supervises the brain." src="assets/system-architecture-light.svg">
 </picture>
 
 Merv has three main pieces:
@@ -49,77 +49,52 @@ Brain management keys remain separate operational credentials.
 
 ## Set up
 
-Connect any agent platform to the **hosted brain** in two steps: mint a key,
-then register the endpoint. No proxy, no daemon, no `pip` install. One key
-covers every project you belong to, on every platform — local and cloud alike —
-so this is a one-time setup, not a per-project one. Running your own brain
-instead? See [Self-hosting](#self-hosting).
-
-### 1. Mint a key
-
-At [rapidreview.io/merv](https://rapidreview.io/merv): sign in, open or create
-a project, and mint a key (shown once). Leave the scope on **All my projects**
-so one key covers everything you belong to. Export it where the agent runs:
-
-```bash
-export MERV_MCP_KEY=mk_...
-```
-
-A key is bearer-equivalent to full access to everything it is scoped to — treat
-it like a password. It never expires, and it follows your project membership as
-that changes, so there is nothing to rotate when you join or leave a project.
-
-Browser platforms (claude.ai, Replit) use OAuth instead: approve **All my
-projects** at the consent screen and the platform refreshes itself from then
-on. Revoke either kind any time from a project's **MCP keys** page.
-
-### 2. Connect your platform
-
-**Claude Code** — then restart:
-
-```bash
-claude plugin marketplace add https://rapidreview.io/marketplace.json
-claude plugin install merv@rapidreview
-```
-
-**Codex CLI** — plugin (skills + reviewers), then wire the key:
+### Codex
 
 ```bash
 codex plugin marketplace add NGXT-Inc/Merv
 codex plugin add merv@rapidreview
-codex mcp add merv --url https://experiments.rapidreview.io/mcp --bearer-token-env-var MERV_MCP_KEY
+codex mcp login merv
 ```
 
-**OpenHands** (CLI):
+Update with `codex plugin marketplace upgrade rapidreview`, then `codex plugin add merv@rapidreview`.
+
+### Claude Code
 
 ```bash
-openhands mcp add merv --transport http --header "Authorization: Bearer $MERV_MCP_KEY" https://experiments.rapidreview.io/mcp
+claude plugin marketplace add NGXT-Inc/Merv
+claude plugin install merv@rapidreview
+claude mcp login plugin:merv:merv
 ```
 
-**Gemini CLI** — from a checkout: `gemini extensions install /path/to/merv`.
+Enable automatic updates once under `/plugin` → **Marketplaces** → **RapidReview**.
 
-**OpenCode** — from a checkout: run `merv/clients/opencode/install.sh`, then add the `opencode.json` block it prints.
-
-**Replit** / **claude.ai** — add a custom MCP server at `https://experiments.rapidreview.io/mcp` and approve the OAuth sign-in.
-
-**Cursor** — no local-plugin registry, so build the client bundle straight into
-Cursor's local-plugin dir, then enable **merv** on Cursor's Customize page:
+### Gemini CLI
 
 ```bash
-git clone https://github.com/NGXT-Inc/Merv.git ~/Merv
-python3 ~/Merv/merv/scripts/build_client_bundle.py --out ~/.cursor/plugins/local/merv
+gemini extensions install https://github.com/NGXT-Inc/Merv --ref merv-client --auto-update
 ```
 
-Re-run the same command (after `git -C ~/Merv pull`) to update.
+Start Gemini and run `/mcp auth merv`. The extension updates automatically.
 
-Full per-platform notes: [CLIENTS.md](merv/docs/CLIENTS.md).
+### Cursor
 
-### 3. First run
+```bash
+cursor-agent plugin marketplace add https://github.com/NGXT-Inc/Merv
+cursor-agent
+```
 
-Ask the agent to call `project(action="list")` — it comes back with the
-projects you can work in, by name — then `workflow.status_and_next(project_id)`
-for the one you mean. Switching projects later is just a different id in the
-call; there is no reconnecting. Follow along at
+In `/plugin`, install **merv** from **rapidreview**. Then select **Connect** for
+Merv in **Customize**. Team marketplaces can enable **Auto Refresh**.
+
+Headless runners and CI use `MERV_MCP_KEY`. See
+[Authentication](merv/docs/AUTH.md#when-a-static-key-is-still-required) and
+[client details](merv/docs/CLIENTS.md).
+
+### First run
+
+Ask the agent to call `project(action="list")`, then
+`workflow.status_and_next(project_id)`. Follow along at
 [rapidreview.io/merv](https://rapidreview.io/merv).
 
 ## Self-hosting

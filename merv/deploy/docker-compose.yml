@@ -1,31 +1,21 @@
-# Local full-stack bring-up of the hosted Merv brain.
+# Database-neutral bring-up of the hosted Merv brain.
 #
-# Wires the control plane to Postgres (the record store) and MinIO (the S3-shape
-# blob store) so the whole cloud topology runs on a laptop. This is the
-# REFERENCE stack for development and testing — NOT a managed deploy (no TLS, no
-# managed Postgres, no secret store, no cleanup scheduler; see deploy/README.md).
+# This base owns Merv, MinIO, and the management key. Add exactly one database
+# overlay for a laptop deployment:
 #
-#   docker compose -f deploy/docker-compose.yml up --build
+#   docker compose -f deploy/docker-compose.yml \
+#     -f deploy/docker-compose.postgres.yml up --build
+#
+#   docker compose -f deploy/docker-compose.yml \
+#     -f deploy/docker-compose.supabase.yml up --build
+#
+# Or set MERV_DB_URL and use this file alone for an externally hosted Postgres
+# or Supabase database. Authentication still uses the separate SUPABASE_* auth
+# project, and artifact bytes still use MinIO.
 #
 # Then point an HTTP MCP client at http://localhost:8787/mcp.
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: rp
-      POSTGRES_PASSWORD: rp_dev_password
-      POSTGRES_DB: research_plugin
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rp -d research_plugin"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -89,8 +79,6 @@ services:
     env_file:
       - ${MERV_PROVIDER_ENV_FILE:-${RESEARCH_PLUGIN_PROVIDER_ENV_FILE:-/dev/null}}
     depends_on:
-      postgres:
-        condition: service_healthy
       createbucket:
         condition: service_completed_successfully
       mgmtkey:
@@ -116,8 +104,9 @@ services:
       SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
       SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-}
       SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
-      # Record store: the Postgres dialect.
-      MERV_DB_URL: postgresql://rp:rp_dev_password@postgres:5432/research_plugin
+      # Record store: supplied by a database overlay or by the operator. An
+      # empty value fails hosted startup with a named MERV_DB_URL error.
+      MERV_DB_URL: ${MERV_DB_URL:-}
       # Submitted-byte blob store: the S3-shape bucket on MinIO. boto3
       # reads these standard AWS env vars; the endpoint URL points it at MinIO.
       MERV_BLOB_BUCKET: merv-blobs
@@ -148,6 +137,5 @@ services:
       - mgmtkey:/run/secrets/research_plugin_mgmt_key:ro
 
 volumes:
-  pgdata:
   miniodata:
   mgmtkey:

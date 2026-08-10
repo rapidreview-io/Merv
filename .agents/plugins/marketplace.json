@@ -1,0 +1,20 @@
+{
+  "name": "rapidreview",
+  "interface": {
+    "displayName": "RapidReview"
+  },
+  "plugins": [
+    {
+      "name": "merv",
+      "source": {
+        "source": "local",
+        "path": "./merv"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

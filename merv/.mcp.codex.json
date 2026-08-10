@@ -3,9 +3,6 @@
     "merv": {
       "type": "http",
       "url": "https://experiments.rapidreview.io/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MERV_MCP_KEY}"
-      },
       "default_tools_approval_mode": "approve"
     }
   }

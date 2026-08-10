@@ -31,8 +31,9 @@ dispatched by prefix (RapidReview's contract, reimplemented in
 
   Either way the key is external, so it can never create projects or touch
   operator diagnostics. OAuth (DCR + PKCE) mints audience-confined `mk_`
-  access tokens (+ `mrt_` refresh) for cloud platforms (Codex, Replit); the
-  consent screen chooses the scope, and every rotation inherits it.
+  access tokens (+ `mrt_` refresh) for interactive MCP clients, including
+  Codex, Claude Code, Cursor, Gemini CLI, and Replit; the consent screen chooses
+  the scope, and every rotation inherits it.
 
 Enforcement lives in the `attach_principal` middleware
 (`src/merv/brain/surface/transport/api/app.py`): OPTIONS, `/health`, `/api/meta`, and
@@ -62,29 +63,45 @@ Any member can manage members (two-trusted-users model; no roles).
   supabase_anon_key}`; the AuthGate then shows sign-in (email/password or
   Google). Nothing is baked into the bundle; local backends advertise
   `required: false` and the UI never loads supabase-js.
-- **MCP clients** (local Claude Code, cloud Codex, Replit, browser-driven):
-  every agent connects directly to the brain's `POST /mcp` endpoint. Sign in
-  at [rapidreview.io/merv](https://rapidreview.io/merv), open a project's
-  **MCP keys**, mint a key (scope **All my projects** unless you deliberately
-  want it confined), and export it as `MERV_MCP_KEY`. The committed `.mcp.json` uses `type: "http"`,
-  `url: "https://experiments.rapidreview.io/mcp"`, and
-  `headers.Authorization: "Bearer ${MERV_MCP_KEY}"` — the key is read from the
-  env var and is **never** inlined into a committed file (it is
-  bearer-equivalent to full access to everything it is scoped to, so export it in
-  your shell and keep any local key file `.gitignore`d). `merv-client
-  configure` writes the machine config and `merv-client env` prints that
-  `.mcp.json` snippet; see the
-  [hosted client quickstart](HOSTED_CLIENT_QUICKSTART.md) for the full
-  walkthrough. The agent passes `project_id` explicitly on every call: an
-  account-scoped key discovers the ids with `project(action="list")`, and a
-  project-scoped key may only pass its one bound project. Project membership
-  controls authorization in both cases.
+- **Interactive MCP clients** (Codex, Claude Code, Cursor, Gemini CLI, Replit):
+  every agent connects directly to the brain's `POST /mcp` endpoint. The
+  committed manifests contain the URL and no credential header. A 401 response
+  leads the client through RFC 9728/8414 discovery, dynamic client registration,
+  PKCE browser consent, secure token storage, and refresh. The user never sees
+  or mints the underlying `mk_` access token.
+- **Headless MCP clients and the Merv agent runner** use an explicitly minted
+  `mk_` key through `MERV_MCP_KEY`. `merv-client configure` writes machine
+  settings and `merv-client env` prints the header-based config for those
+  non-interactive surfaces. Never inline a key into a committed file.
+
+In either path the agent passes `project_id` explicitly. An account-scoped
+grant discovers ids with `project(action="list")`; a project-scoped grant may
+only pass its bound project. Project membership remains the authorization
+boundary.
+
+## When a static key is still required
+
+Use browser OAuth by default. Mint a static `mk_` key only when there is no
+interactive browser/redirect loop or when a long-running parent process must
+mint narrower child sessions:
+
+- `merv-agent-runner`, which holds the parent credential and gives each child a
+  short-lived `MERV_AGENT_SESSION_KEY`;
+- CI jobs, unattended services, containers, and remote SSH sessions that cannot
+  complete a localhost OAuth callback;
+- a client that does not implement MCP OAuth discovery, DCR, PKCE, and refresh;
+- direct scripts such as `curl` or the full `mcp_conformance.py` keyed probe.
+
+At [rapidreview.io/merv](https://rapidreview.io/merv), open a project, create a
+key, choose **All my projects** unless deliberate project confinement is needed,
+and expose it to the process as `MERV_MCP_KEY`. Treat it as a password and keep
+it out of shell history, logs, and version control.
 ## Hosted configuration
 
 Set `SUPABASE_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_KEY`,
 `SUPABASE_ANON_KEY`, and `MERV_REQUIRE_AUTH=1`. Existing databases must contain
-one `project_members` row for each authorized user/project pair. Users then
-sign in through the UI or mint a scoped key and export it as `MERV_MCP_KEY`.
+one `project_members` row for each authorized user/project pair. Interactive
+users then sign in through MCP OAuth; headless callers mint a scoped key.
 
 Keep Supabase secrets and service credentials in managed secret storage. Rotate
 them through the Supabase and deployment runbooks, not through application

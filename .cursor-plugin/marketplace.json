@@ -1,0 +1,28 @@
+{
+  "name": "rapidreview",
+  "owner": {
+    "name": "RapidReview"
+  },
+  "metadata": {
+    "description": "Research workflow plugins: durable project state, typed artifact submission, reviews, and cloud sandboxes.",
+    "version": "0.1.4"
+  },
+  "plugins": [
+    {
+      "name": "merv",
+      "source": "merv",
+      "description": "Lean research-state workflow with hosted MCP research state, typed artifacts, reviews, and cloud SSH sandboxes.",
+      "version": "0.1.4",
+      "category": "productivity",
+      "author": {
+        "name": "RapidReview"
+      },
+      "keywords": [
+        "research",
+        "ml",
+        "mcp",
+        "experiments"
+      ]
+    }
+  ]
+}

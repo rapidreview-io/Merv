@@ -5,10 +5,7 @@
   "contextFileName": "GEMINI.md",
   "mcpServers": {
     "merv": {
-      "httpUrl": "https://experiments.rapidreview.io/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MERV_MCP_KEY}"
-      }
+      "httpUrl": "https://experiments.rapidreview.io/mcp"
     }
   }
 }

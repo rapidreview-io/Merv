@@ -3,94 +3,66 @@
 Set up a machine that runs agents against the hosted brain while keeping repo
 access and caller SSH keys local.
 
-## Install
+## Interactive setup: OAuth, no Merv key
+
+Agent clients connect directly to the hosted brain over HTTP. There is no local
+proxy, Python package, or repository clone. Install one platform integration:
+
+```bash
+# Codex
+codex plugin marketplace add NGXT-Inc/Merv
+codex plugin add merv@rapidreview
+codex mcp login merv
+
+# Claude Code
+claude plugin marketplace add NGXT-Inc/Merv
+claude plugin install merv@rapidreview
+claude mcp login plugin:merv:merv
+
+# Gemini CLI; then run /mcp auth merv in Gemini
+gemini extensions install https://github.com/NGXT-Inc/Merv \
+  --ref merv-client --auto-update
+
+# Cursor; then install merv from rapidreview in /plugin and Connect in Customize
+cursor-agent plugin marketplace add https://github.com/NGXT-Inc/Merv
+```
+
+The bundled MCP entry contains only
+`https://experiments.rapidreview.io/mcp`. The client receives a 401, discovers
+Merv's OAuth endpoints, opens the browser, stores the token, and refreshes it.
+The user never sees or mints the underlying credential.
+
+Enable RapidReview marketplace auto-update once in Claude's `/plugin` screen.
+Gemini's `--auto-update` flag is sufficient. Codex repository marketplaces
+currently use `codex plugin marketplace upgrade rapidreview` followed by
+`codex plugin add merv@rapidreview`. Cursor has no non-interactive plugin install
+command and no documented automatic-update guarantee for an individual custom
+marketplace; its team marketplace supports Auto Refresh.
+
+## Headless setup: static key
+
+Clone the repository only for self-hosting, client development, or the
+non-interactive agent runner:
 
 ```bash
 git clone https://github.com/NGXT-Inc/Merv.git ~/Merv
 ```
 
-Agent clients connect directly to the hosted brain over HTTP, so there is no
-local proxy process to run. Cloning the repo provides the `merv-client`
-onboarding CLI used below. `merv-client`, `merv-http`, the brain, and backend
-tests run on Python 3.11+; a project environment is needed only for those
-surfaces when 3.11+ is not already available. Sandbox SSH and explicit output
-pulls use the system OpenSSH client and `rsync`.
-
-## Authenticate with a key
-
-Each agent client authenticates to the hosted brain with an `mk_` key. Agents
-never send a checkout path and the brain never receives one: the project comes
-from the credential and the call.
-
-Pick a scope when you mint it:
-
-- **All my projects** (recommended) — one key for every project you belong to,
-  on every machine and platform. The agent calls `project(action="list")` and
-  passes the `project_id` it wants on each call.
-- **One project** — the key is locked to a single project. The agent learns the
-  id with `project(action="current")` and may pass no other.
-
-Mint one in the UI:
-
-1. Open [rapidreview.io/merv](https://rapidreview.io/merv) and sign in.
-2. Open any project you belong to (an account-scoped key is simply listed here).
-3. Create a key, choose its scope, and copy it when shown.
-
-A key is bearer-equivalent to full access to everything it is scoped to, so
-treat it like a password. Export it as `MERV_MCP_KEY` rather than storing it in a shared
-config, and keep it out of shell history:
+The runner and CI cannot rely on a browser callback, so they still use a scoped
+`mk_` key. Create one at [rapidreview.io/merv](https://rapidreview.io/merv),
+prefer **All my projects** unless deliberate project confinement is needed, and
+export it without placing it in shell history:
 
 ```bash
-printf 'Paste the project key: '
+printf 'Paste the Merv key: '
 IFS= read -r -s MERV_MCP_KEY
 printf '\n'
 export MERV_MCP_KEY
 ```
 
-Add the `export` to your shell profile (or a `.env` you keep out of git) so
-agent sessions inherit it. Never inline the key into a committed config file,
-and keep any file that holds it listed in `.gitignore`.
-
-Restart the agent session after changing the key so the MCP connection reloads
-it.
-
-## Connect a client
-
-Every agent client — local Claude Code, cloud Codex, Replit, browser-driven —
-connects the same way: directly to the brain's `POST /mcp` endpoint with the key
-sent as `Authorization: Bearer ${MERV_MCP_KEY}`. Register the plugin in the
-client using [CLIENTS.md](CLIENTS.md), then print the ready-to-paste http
-snippet for this machine:
-
-```bash
-~/Merv/merv/bin/merv-client env
-```
-
-It emits the committed-config shape used by `.mcp.json` (and its
-`.mcp.codex.json` / `mcp.json` siblings):
-
-```json
-{
-  "mcpServers": {
-    "merv": {
-      "type": "http",
-      "url": "https://experiments.rapidreview.io/mcp",
-      "headers": { "Authorization": "Bearer ${MERV_MCP_KEY}" }
-    }
-  }
-}
-```
-
-The key stays in the `MERV_MCP_KEY` env var and is never written into the file,
-so the config is safe to commit while the key is not. Start an agent session
-from any checkout: the project comes from the credential and the call, so the
-same config works from every folder and the checkout path never leaves the
-machine.
-
-The snippet points at the hosted brain by default. To target another brain — a
-localhost dev brain at `http://127.0.0.1:8787/mcp`, or a self-hosted control
-plane — set it once in the machine config so `merv-client env` emits the
-matching `url` (or edit the `url` in the snippet directly):
+Treat the key as a password. Keep it out of shared config, logs, and version
+control. `~/Merv/merv/bin/merv-client env` prints the header-based MCP snippet
+for a headless client. To point the runner at a self-hosted brain:
 
 ```bash
 ~/Merv/merv/bin/merv-client configure \
@@ -113,9 +85,10 @@ $CLI agents      # print the configured local platforms
 $CLI workspace --repository /path/to/repo --strategy git_worktree
 ```
 
-The older `login`, `link`, `links`, `route`, and `unlink` subcommands are gone:
-a project-scoped key now carries both authentication and the project binding, so
-there is nothing to log in to, link, or unlink.
+The older `merv-client login`, `link`, `links`, `route`, and `unlink`
+subcommands are gone. Interactive sign-in belongs to the platform's native MCP
+OAuth command; headless project reach comes from the static grant plus explicit
+`project_id` arguments.
 
 Agent-platform settings live beside `control_url` in the private
 `~/.merv/client.json`. Commands are stored as argv arrays and are never run

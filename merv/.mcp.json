@@ -2,10 +2,7 @@
   "mcpServers": {
     "merv": {
       "type": "http",
-      "url": "https://experiments.rapidreview.io/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MERV_MCP_KEY}"
-      }
+      "url": "https://experiments.rapidreview.io/mcp"
     }
   }
 }

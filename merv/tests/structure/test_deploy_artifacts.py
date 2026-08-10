@@ -21,11 +21,16 @@ class DeployArtifactsTest(unittest.TestCase):
     def test_deploy_dir_has_the_expected_files(self) -> None:
         for name in (
             "Dockerfile",
+            "Dockerfile.dockerignore",
             "docker-compose.yml",
+            "docker-compose.postgres.yml",
+            "docker-compose.supabase.yml",
+            "db_preflight.py",
             "doctor.py",
             "README.md",
             ".dockerignore",
             ".env.example",
+            "supabase.env.example",
         ):
             with self.subTest(file=name):
                 self.assertTrue((DEPLOY / name).is_file(), f"missing deploy/{name}")
@@ -43,6 +48,7 @@ class DeployArtifactsTest(unittest.TestCase):
         self.assertIn("COPY src ./src", text)
         # Runs the control console-script entrypoint, not a raw module.
         self.assertIn("merv-control", text)
+        self.assertIn("deploy/db_preflight.py", text)
         # Non-root user.
         self.assertIn("USER ", text)
         self.assertIn("useradd", text)
@@ -72,14 +78,13 @@ class DeployArtifactsTest(unittest.TestCase):
         self.assertIn("boto3", control_extra)
         self.assertNotIn("mlflow", control_extra)
 
-    def test_compose_wires_control_postgres_object_store_and_management_key(self) -> None:
+    def test_compose_base_wires_control_object_store_and_management_key(self) -> None:
         text = (DEPLOY / "docker-compose.yml").read_text(encoding="utf-8")
-        # The three legs of the reference stack.
-        for service in ("control:", "postgres:", "minio:", "mgmtkey:"):
+        # Database-neutral base: application + object store + management key.
+        for service in ("control:", "minio:", "mgmtkey:"):
             self.assertIn(service, text)
-        # Control points at the Postgres dialect and the blob bucket (§3.4).
+        self.assertNotIn("  postgres:\n", text)
         self.assertIn("MERV_DB_URL", text)
-        self.assertIn("postgresql://", text)
         self.assertIn("MERV_BLOB_BUCKET", text)
         self.assertIn("MERV_MGMT_KEY_PATH", text)
         self.assertIn("MERV_REQUIRE_SANDBOX_BACKEND", text)
@@ -98,6 +103,36 @@ class DeployArtifactsTest(unittest.TestCase):
         # Builds from the deploy Dockerfile.
         self.assertIn("dockerfile: deploy/Dockerfile", text)
         self.assertNotIn("mlflow", text.lower())
+
+    def test_database_overlays_are_hot_swappable_and_isolated(self) -> None:
+        postgres = (DEPLOY / "docker-compose.postgres.yml").read_text(encoding="utf-8")
+        supabase = (DEPLOY / "docker-compose.supabase.yml").read_text(encoding="utf-8")
+
+        self.assertIn("  postgres:", postgres)
+        self.assertIn("postgres:16-alpine", postgres)
+        self.assertIn("MERV_DB_URL: postgresql://", postgres)
+
+        for service in ("supabase-db:", "supabase-meta:", "supabase-studio:"):
+            self.assertIn(service, supabase)
+        self.assertIn("MERV_DB_URL: postgresql://merv_app:", supabase)
+        self.assertIn("127.0.0.1:${MERV_DB_SUPABASE_STUDIO_PORT", supabase)
+        self.assertIn("127.0.0.1:${MERV_DB_SUPABASE_POSTGRES_PORT", supabase)
+        self.assertNotIn("supabase-storage:", supabase)
+        self.assertNotIn("supabase-auth:", supabase)
+
+        bootstrap = (DEPLOY / "supabase" / "bootstrap.sql").read_text(encoding="utf-8")
+        hosted = (DEPLOY / "supabase" / "hosted-bootstrap.sql").read_text(
+            encoding="utf-8"
+        )
+        for sql in (bootstrap, hosted):
+            self.assertIn("merv_app", sql)
+            self.assertIn("SCHEMA public", sql)
+            self.assertIn("NOBYPASSRLS", sql)
+        defaults = (DEPLOY / "supabase" / "app-default-privileges.sql").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("ALTER DEFAULT PRIVILEGES", defaults)
+        self.assertIn("authenticated", defaults)
 
     def test_compose_does_not_override_provider_env_file_with_empty_secrets(self) -> None:
         text = (DEPLOY / "docker-compose.yml").read_text(encoding="utf-8")
@@ -144,9 +179,23 @@ class DeployArtifactsTest(unittest.TestCase):
             "storage.put_object",
             "storage.complete_upload",
             "RP_DOCTOR_URL_REWRITE",
+            "RP_DOCTOR_BEARER_TOKEN",
+            "Authorization",
         ):
             self.assertIn(token, text)
         self.assertNotIn("mlflow", text.lower())
+
+    def test_database_preflight_checks_merv_postgres_requirements(self) -> None:
+        text = (DEPLOY / "db_preflight.py").read_text(encoding="utf-8")
+        for token in (
+            "MERV_DB_URL",
+            "6543",
+            "public",
+            "pg_try_advisory_lock",
+            "CREATE TABLE",
+            "--require-tls",
+        ):
+            self.assertIn(token, text)
 
     def test_no_real_secrets_committed(self) -> None:
         # .env.example must only carry placeholders, never a filled-in token.
@@ -159,11 +208,14 @@ class DeployArtifactsTest(unittest.TestCase):
             re.search(r"\bhf_[A-Za-z0-9]{8,}", text),
             "deploy/.env.example appears to contain a real HF token",
         )
-        # .dockerignore excludes secret files + the UI from the build context.
-        ignore = (DEPLOY / ".dockerignore").read_text(encoding="utf-8")
-        self.assertIn(".env", ignore)
-        self.assertIn("credentials.json", ignore)
-        self.assertIn("research_state_ui/", ignore)
+        # Dockerfile.dockerignore is the file Docker actually uses when the
+        # context is merv/ and the Dockerfile is deploy/Dockerfile.
+        for name in (".dockerignore", "Dockerfile.dockerignore"):
+            ignore = (DEPLOY / name).read_text(encoding="utf-8")
+            self.assertIn(".env", ignore)
+            self.assertIn(".env.*", ignore)
+            self.assertIn("credentials.json", ignore)
+            self.assertIn("research_state_ui/", ignore)
 
 
 if __name__ == "__main__":

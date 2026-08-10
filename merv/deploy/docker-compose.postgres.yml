@@ -1,0 +1,29 @@
+# Ordinary PostgreSQL database overlay for the Merv reference stack.
+# Use together with deploy/docker-compose.yml.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rp
+      POSTGRES_PASSWORD: ${MERV_POSTGRES_PASSWORD:-rp_dev_password}
+      POSTGRES_DB: research_plugin
+    ports:
+      - "127.0.0.1:${MERV_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rp -d research_plugin"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  control:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MERV_DB_URL: postgresql://rp:${MERV_POSTGRES_PASSWORD:-rp_dev_password}@postgres:5432/research_plugin
+
+volumes:
+  pgdata:

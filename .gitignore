@@ -20,7 +20,12 @@ merv/serving.txt
 logs/
 
 # Root-local development and agent workspace files.
-/.agents/
+# Publish the Codex marketplace manifest; keep every other root-local agent
+# artifact ignored.
+/.agents/*
+!/.agents/plugins/
+/.agents/plugins/*
+!/.agents/plugins/marketplace.json
 /.claude/
 # Publish the marketplace manifest (needed for `claude plugin marketplace add`);
 # ignore any other local artifacts the plugin CLI drops in this dir.

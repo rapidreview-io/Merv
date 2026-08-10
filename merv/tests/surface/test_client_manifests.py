@@ -1,4 +1,4 @@
-"""Shipped client adapters all use the same bearer-authenticated HTTP MCP."""
+"""Shipped interactive adapters all use the same OAuth-discovered HTTP MCP."""
 
 from __future__ import annotations
 
@@ -12,37 +12,33 @@ from tests.paths import PLUGIN_ROOT
 
 
 HOSTED_MCP_URL = "https://experiments.rapidreview.io/mcp"
-AUTHORIZATION = "Bearer ${MERV_MCP_KEY}"
 
 
 class HttpMcpManifestTest(unittest.TestCase):
-    def test_generic_codex_and_cursor_manifests_match(self) -> None:
+    def test_generic_codex_and_cursor_manifests_are_oauth_first(self) -> None:
         for name in (".mcp.json", ".mcp.codex.json", "mcp.json"):
             with self.subTest(manifest=name):
                 config = json.loads((PLUGIN_ROOT / name).read_text())
                 server = config["mcpServers"]["merv"]
                 self.assertEqual(server["type"], "http")
                 self.assertEqual(server["url"], HOSTED_MCP_URL)
-                self.assertEqual(
-                    server["headers"]["Authorization"],
-                    AUTHORIZATION,
-                )
+                self.assertNotIn("headers", server)
                 serialized = json.dumps(server)
+                self.assertNotIn("MERV_MCP_KEY", serialized)
                 self.assertNotIn("mk_", serialized)
                 self.assertNotIn("merv-mcp", serialized)
 
-    def test_gemini_uses_the_same_http_endpoint_and_key(self) -> None:
+    def test_gemini_uses_the_same_oauth_first_http_endpoint(self) -> None:
         manifest = json.loads((PLUGIN_ROOT / "gemini-extension.json").read_text())
         self.assertEqual(manifest["name"], "merv")
         self.assertEqual(manifest["version"], BACKEND_VERSION)
         server = manifest["mcpServers"]["merv"]
         self.assertEqual(server["httpUrl"], HOSTED_MCP_URL)
-        self.assertEqual(server["headers"]["Authorization"], AUTHORIZATION)
+        self.assertNotIn("headers", server)
 
     def test_kilo_example_uses_environment_key_indirection(self) -> None:
-        config = json.loads(
-            (PLUGIN_ROOT / "clients" / "kilo" / "kilo.jsonc.example").read_text()
-        )
+        example = (PLUGIN_ROOT / "clients" / "kilo" / "kilo.jsonc.example").read_text()
+        config = json.loads(example)
         server = config["mcp"]["merv"]
         self.assertEqual(server["type"], "remote")
         self.assertEqual(server["url"], HOSTED_MCP_URL)
@@ -50,6 +46,9 @@ class HttpMcpManifestTest(unittest.TestCase):
             server["headers"]["Authorization"],
             "Bearer {env:MERV_MCP_KEY}",
         )
+        # The installer writes this block verbatim when no config exists yet.
+        installer = (PLUGIN_ROOT / "clients" / "kilo" / "install.sh").read_text()
+        self.assertIn(example.strip(), installer)
 
     def test_opencode_example_uses_environment_key_indirection(self) -> None:
         config = json.loads(
@@ -81,7 +80,45 @@ class HttpMcpManifestTest(unittest.TestCase):
         self.assertEqual(cursor["version"], plugin_version)
         self.assertEqual(codex["version"].split("+", 1)[0], plugin_version)
         self.assertEqual(codex["name"], "merv")
-        self.assertEqual(codex["mcpServers"], "./.mcp.codex.json")
+        codex_server = codex["mcpServers"]["merv"]
+        self.assertEqual(codex_server["type"], "http")
+        self.assertEqual(codex_server["url"], HOSTED_MCP_URL)
+        self.assertEqual(codex_server["default_tools_approval_mode"], "approve")
+        self.assertNotIn("headers", codex_server)
+
+    def test_repository_marketplaces_publish_the_same_plugin(self) -> None:
+        repo_root = PLUGIN_ROOT.parent
+        claude = json.loads(
+            (repo_root / ".claude-plugin" / "marketplace.json").read_text()
+        )
+        cursor = json.loads(
+            (repo_root / ".cursor-plugin" / "marketplace.json").read_text()
+        )
+        codex = json.loads(
+            (repo_root / ".agents" / "plugins" / "marketplace.json").read_text()
+        )
+
+        for marketplace in (claude, cursor, codex):
+            self.assertEqual(marketplace["name"], "rapidreview")
+            self.assertEqual(marketplace["plugins"][0]["name"], "merv")
+
+        self.assertEqual(claude["plugins"][0]["source"], "./merv")
+        self.assertEqual(cursor["plugins"][0]["source"], "merv")
+        self.assertEqual(
+            codex["plugins"][0]["source"],
+            {"source": "local", "path": "./merv"},
+        )
+        self.assertEqual(
+            codex["plugins"][0]["policy"],
+            {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+        )
+
+        release_version = claude["plugins"][0]["version"]
+        self.assertEqual(cursor["plugins"][0]["version"], release_version)
+        packaged_version = json.loads(
+            (PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text()
+        )["version"]
+        self.assertEqual(release_version, packaged_version)
 
     def test_release_version_lockstep(self) -> None:
         # One release number everywhere: a UI or package left behind produces

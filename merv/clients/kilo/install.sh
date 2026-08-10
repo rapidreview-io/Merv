@@ -28,12 +28,11 @@ for agent_file in "$PLUGIN_DIR"/clients/opencode/agents/*.md; do
   echo "agent   $name -> $AGENT_DIR/$name"
 done
 
-cat <<EOF
-
-Done. Register the MCP server in your research repo's .kilo/kilo.jsonc
-(or globally in ${XDG_CONFIG_HOME:-$HOME/.config}/kilo/kilo.jsonc):
-
-{
+# Register the MCP server. A missing global config is written outright; an
+# existing one is never edited in place (jsonc may carry comments), so the
+# block to merge is printed instead.
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/kilo/kilo.jsonc"
+MCP_BLOCK='{
   "mcp": {
     "merv": {
       "type": "remote",
@@ -44,8 +43,22 @@ Done. Register the MCP server in your research repo's .kilo/kilo.jsonc
       }
     }
   }
-}
+}'
 
-Export MERV_MCP_KEY before starting Kilo. For a local deployment, replace
-the URL with http://127.0.0.1:8787/mcp and start $PLUGIN_DIR/bin/merv-http first.
+if [ ! -e "$CONFIG_FILE" ]; then
+  printf '%s\n' "$MCP_BLOCK" > "$CONFIG_FILE"
+  echo "config  wrote $CONFIG_FILE"
+elif grep -q '"merv"' "$CONFIG_FILE"; then
+  echo "config  $CONFIG_FILE already registers merv; left unchanged"
+else
+  printf '\n%s exists but has no merv entry. Merge this into it:\n\n%s\n' \
+    "$CONFIG_FILE" "$MCP_BLOCK"
+fi
+
+cat <<'EOF'
+
+Done. Export MERV_MCP_KEY before starting Kilo (add it to your shell
+profile), and launch VS Code from that shell so the extension inherits it.
+For a local deployment, change the url to http://127.0.0.1:8787/mcp and
+start bin/merv-http first.
 EOF

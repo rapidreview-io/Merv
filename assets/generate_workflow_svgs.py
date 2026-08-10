@@ -220,7 +220,7 @@ def system(s):
         sbox(s["infra"], 608, 340, 200, 56, "Cloud sandboxes", "Lambda · Thunder · Modal"),
         sbox(s["infra"], 828, 340, 140, 56, "Data services", "DB · blobs"),
         link(s, "M 128 140 L 128 192", "", 0, 0),
-        link(s, "M 524 112 C 572 112, 572 228, 602 228", "HTTP MCP · project key", 566, 170, "start"),
+        link(s, "M 524 112 C 572 112, 572 228, 602 228", "HTTP MCP · OAuth", 566, 170, "start"),
         link(s, "M 776 140 L 776 192", "", 0, 0),
         link(s, "M 284 140 C 284 328, 430 350, 600 350", "SSH commands", 348, 317, "start"),
         link(s, "M 400 140 C 400 382, 500 382, 600 382", "rsync pulls", 428, 348, "end"),
@@ -230,7 +230,7 @@ def system(s):
     ]
     return svg(s, "".join(parts),
                "System architecture: agent platforms on your machine connect directly to "
-               "the brain over HTTP MCP with a project-scoped key; the brain owns "
+               "the brain over authenticated HTTP MCP; the brain owns "
                "research records, workflow gates, data stores, and sandbox "
                "providers. The UI supervises the brain. The agent runs SSH commands on "
                "cloud sandboxes, pulls retained outputs itself with rsync, and moves "

@@ -6,40 +6,62 @@ for machine learning research: claims, experiments, submitted artifacts, review
 gates, reflection waves, and sandboxed execution. A brain running locally or
 as a hosted service owns durable research state; every agent client connects
 directly to the brain's `POST /mcp` HTTP endpoint, authenticated by a
-project-scoped key. The brain never receives the checkout root or reads it
-directly; gated documents are explicitly uploaded as size-capped artifacts.
+short-lived OAuth access token or, for headless automation, a scoped static
+key. The brain never receives the checkout root or reads it directly; gated
+documents are explicitly uploaded as size-capped artifacts.
 
 ## Get started
+
+Interactive users do not need this repository, Python, or a Merv key. Install
+the plugin or extension and complete browser OAuth:
+
+```bash
+# Codex
+codex plugin marketplace add NGXT-Inc/Merv
+codex plugin add merv@rapidreview
+codex mcp login merv
+
+# Claude Code
+claude plugin marketplace add NGXT-Inc/Merv
+claude plugin install merv@rapidreview
+claude mcp login plugin:merv:merv
+
+# Gemini CLI (then run /mcp auth merv inside Gemini)
+gemini extensions install https://github.com/NGXT-Inc/Merv \
+  --ref merv-client --auto-update
+
+# Cursor (then install merv from rapidreview in /plugin and Connect in Customize)
+cursor-agent plugin marketplace add https://github.com/NGXT-Inc/Merv
+```
+
+Claude users should enable auto-update for the RapidReview marketplace once in
+`/plugin`; Gemini's install flag enables it immediately. Codex custom
+marketplaces update with `codex plugin marketplace upgrade rapidreview`
+followed by `codex plugin add merv@rapidreview`. Cursor's individual custom
+marketplace currently requires an interactive install and has no documented
+automatic-update guarantee.
+
+Clone the repository only for self-hosting, client development, or the local
+agent runner:
 
 ```bash
 git clone https://github.com/NGXT-Inc/Merv.git ~/Merv
 ```
 
-That is the whole install — every agent client connects directly to the brain's
-`/mcp` HTTP endpoint, so nothing runs on your machine to broker it and there are
-no pip packages. Sandbox SSH and agent-run output pulls use the system OpenSSH
-client and `rsync`, and tokenized artifact/storage transfers use `curl`. The
-`merv-client` CLI, `merv-http`, the brain, and backend tests run on Python 3.11+.
-Then:
-
-1. Register the plugin in your client — per-client steps in
-   [docs/CLIENTS.md](docs/CLIENTS.md).
-2. For the hosted brain, export your project key as `MERV_MCP_KEY` — see
-   [docs/HOSTED_CLIENT_QUICKSTART.md](docs/HOSTED_CLIENT_QUICKSTART.md).
-3. Open your research repo and start a session:
+Every client connects directly to the brain's `/mcp` HTTP endpoint, so nothing
+runs on the machine to broker it. Open a research repository and start a
+session:
 
 ```text
 Use Merv. Start with project(action="list"), pick the project, then
 workflow.status_and_next(project_id).
 ```
 
-Each client connects straight to the hosted brain's `/mcp` endpoint. The committed
-`.mcp.json` uses `type: "http"` and sends your key as `Authorization: Bearer
-${MERV_MCP_KEY}`, so export `MERV_MCP_KEY` and keep it out of version control — a
-key is bearer-equivalent to full access to everything it is scoped to, so never inline
-it into a committed file. That key binds a single immutable project; the brain
-scopes every call to it, with no per-folder linking or terminal setup. Details:
-[docs/HOSTED_CLIENT_QUICKSTART.md](docs/HOSTED_CLIENT_QUICKSTART.md).
+The committed platform manifests contain only the hosted URL. The client's MCP
+OAuth implementation discovers Merv's authorization endpoints, opens the
+browser, stores the resulting token, and refreshes it automatically. Static
+keys are documented separately for headless runners and CI in
+[docs/AUTH.md](docs/AUTH.md#when-a-static-key-is-still-required).
 
 ### Hermes Agent
 
@@ -173,4 +195,5 @@ off cloud providers.
 - [src/merv/brain/object_storage/object_storage.md](src/merv/brain/object_storage/object_storage.md) - durable heavy-object storage
 - [docs/UI_API.md](docs/UI_API.md) - frontend HTTP API
 - [docs/CONTROL_PLANE_OPERATIONS.md](docs/CONTROL_PLANE_OPERATIONS.md) - hosted operations and security boundary
-- [deploy/README.md](deploy/README.md) - reference control-plane deploy
+- [deploy/README.md](deploy/README.md) - ordinary PostgreSQL or Supabase
+  PostgreSQL deployment, dashboard access, and database cutover runbook
