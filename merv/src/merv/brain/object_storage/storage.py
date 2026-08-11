@@ -4,12 +4,17 @@
 from __future__ import annotations
 
 import base64
+import json
 import secrets
 from contextlib import closing
 from datetime import datetime
 from typing import Any, TypedDict, cast
 
-from merv.shared.storage_guidance import storage_guidance
+from merv.shared.storage_guidance import (
+    DEFAULT_STORAGE_MAX_UPLOAD_BYTES,
+    STORAGE_MAX_UPLOAD_BYTES_SETTING,
+    storage_guidance,
+)
 
 from ..kernel.ports.blob_store import validate_blob_keys
 from ..kernel.state.store import (
@@ -33,10 +38,10 @@ from .provider import CompletedPart, ObjectProvider
 STORAGE_KINDS = {"dataset", "model", "other"}
 STORAGE_STATUSES = {"uploading", "completing", "available", "expired", "deleted"}
 STORAGE_DEFAULT_TTL_SECONDS = 60 * 24 * 3600
-PRESIGN_TTL_SECONDS = 3600
-# S3's hard single-PUT limit; the submit command does not orchestrate multipart.
+PRESIGN_TTL_SECONDS = 24 * 3600
+# S3's hard single-PUT limit; larger submissions use multipart transfer.
 SINGLE_PUT_MAX_BYTES = 5 * 1024 * 1024 * 1024
-DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024 * 1024
+DEFAULT_MAX_UPLOAD_BYTES = DEFAULT_STORAGE_MAX_UPLOAD_BYTES
 # Leave time to finalize after the presigned PUT expires.
 COMPLETION_TOKEN_TTL_SECONDS = PRESIGN_TTL_SECONDS + 3600
 _LOCAL_API_BASE = "http://127.0.0.1:8787"
@@ -94,6 +99,21 @@ def storage_submit_command(
         f"curl -sf -X POST {_shell_quote(f'{base}/api/storage/u/{token}/complete')}"
     )
     return f"{put} && {complete}"
+
+
+def storage_multipart_submit_command(*, base_url: str, path: str, token: str) -> str:
+    """Build the client-assisted multipart upload command.
+
+    The one-time URL contains no presigned provider credentials. ``merv-client``
+    fetches fresh part URLs from it, streams the parts concurrently, and posts
+    the returned ETags back to its ``/complete`` child route.
+    """
+    base = (base_url or _LOCAL_API_BASE).rstrip("/")
+    target_url = f"{base}/api/storage/u/{token}"
+    return (
+        f"merv-client storage-upload --path {_shell_quote(path)} "
+        f"--target-url {_shell_quote(target_url)}"
+    )
 
 
 def storage_fetch_command(*, path: str, presigned_url: str, sha256: str) -> str:
@@ -364,7 +384,9 @@ class ObjectStorage:
         """Register an object and return its direct-upload command."""
         if not str(path).strip():
             raise ValidationError("path is required (the local file to upload)")
-        self._enforce_upload_size(size_bytes=int(size_bytes))
+        self._enforce_upload_size(
+            project_id=project_id, size_bytes=int(size_bytes)
+        )
         content_type = content_type or "application/octet-stream"
         registered = self.put_object(
             project_id=project_id,
@@ -389,27 +411,24 @@ class ObjectStorage:
                 "idempotent": bool(registered.get("idempotent")),
                 "run": "",
             }
-        if "url" not in upload:
-            # A custom provider threshold can force multipart below the size cap.
-            raise ValidationError(
-                "this object needs a multipart upload, unsupported by the v1 "
-                "token-curl command — reduce the file below the single-PUT "
-                "ceiling or configure the store for single-PUT",
-                details={"size_bytes": int(size_bytes)},
-            )
         token = self._mint_completion_token(
             project_id=str(obj["project_id"]),
             object_id=str(obj["id"]),
             upload_id=str(upload["upload_id"]),
         )
-        run = storage_submit_command(
-            base_url=base_url,
-            path=str(path),
-            presigned_url=str(upload["url"]),
-            checksum_b64=_checksum_sha256_b64(sha256),
-            content_type=str(upload.get("content_type") or content_type),
-            token=token,
-        )
+        if "parts" in upload:
+            run = storage_multipart_submit_command(
+                base_url=base_url, path=str(path), token=token
+            )
+        else:
+            run = storage_submit_command(
+                base_url=base_url,
+                path=str(path),
+                presigned_url=str(upload["url"]),
+                checksum_b64=_checksum_sha256_b64(sha256),
+                content_type=str(upload.get("content_type") or content_type),
+                token=token,
+            )
         return {
             "object": obj,
             "upload_id": str(upload["upload_id"]),
@@ -478,22 +497,25 @@ class ObjectStorage:
             compact=compact,
         )
 
-    def complete_via_token(self, *, token: str) -> dict[str, Any]:
+    def upload_target_via_token(self, *, token: str) -> dict[str, Any]:
+        """Return fresh provider URLs for a pending token-backed upload."""
+        row = self._completion_token_row(token=token)
+        return {
+            "upload": self._provider_required.resume_upload(
+                upload_id=str(row["upload_id"]), expires_in=PRESIGN_TTL_SECONDS
+            )
+        }
+
+    def complete_via_token(
+        self, *, token: str, parts: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         """Finalize through an expiring token consumed only after success."""
-        self._sweep_completion_tokens()
-        with closing(self.store.connect()) as conn:
-            row = conn.execute(
-                """
-                SELECT project_id, upload_id
-                FROM storage_completion_tokens
-                WHERE token = ? AND status = 'pending' AND expires_at > ?
-                """,
-                (token, now_iso()),
-            ).fetchone()
-        if row is None:
-            raise NotFoundError("unknown, used, or expired storage completion token")
+        row = self._completion_token_row(token=token)
+        completed_parts = self._canonical_completed_parts(parts)
         completed = self.complete_upload(
-            project_id=str(row["project_id"]), upload_id=str(row["upload_id"])
+            project_id=str(row["project_id"]),
+            upload_id=str(row["upload_id"]),
+            parts=cast(list[CompletedPart] | None, completed_parts),
         )
         with self.store.transaction() as conn:
             conn.execute(
@@ -955,22 +977,94 @@ class ObjectStorage:
             },
         )
 
-    def _enforce_upload_size(self, *, size_bytes: int) -> None:
+    def effective_max_upload_bytes(self, *, project_id: str | None) -> int:
+        """Resolve the project's limit, bounded by the server-side ceiling."""
+        with closing(self.store.connect()) as conn:
+            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
+            row = conn.execute(
+                "SELECT settings_json FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(f"project not found: {project_id}")
+        try:
+            settings = json.loads(str(row["settings_json"] or "{}"))
+        except (TypeError, ValueError):
+            settings = {}
+        configured = (
+            settings.get(STORAGE_MAX_UPLOAD_BYTES_SETTING)
+            if isinstance(settings, dict)
+            else None
+        )
+        project_limit = (
+            int(configured)
+            if isinstance(configured, int)
+            and not isinstance(configured, bool)
+            and configured > 0
+            else DEFAULT_MAX_UPLOAD_BYTES
+        )
+        return min(project_limit, self.max_upload_bytes)
+
+    def _enforce_upload_size(
+        self, *, project_id: str | None, size_bytes: int
+    ) -> None:
         if size_bytes < 0:
             raise ValidationError("size_bytes must be non-negative")
-        if size_bytes > self.max_upload_bytes:
+        effective_limit = self.effective_max_upload_bytes(project_id=project_id)
+        if size_bytes > effective_limit:
             raise ValidationError(
                 f"upload is {size_bytes} bytes; the maximum is "
-                f"{self.max_upload_bytes} bytes on this backend",
-                details={"size_bytes": size_bytes, "max_bytes": self.max_upload_bytes},
+                f"{effective_limit} bytes for this project",
+                details={
+                    "size_bytes": size_bytes,
+                    "max_bytes": effective_limit,
+                    "server_max_bytes": self.max_upload_bytes,
+                },
             )
-        if size_bytes > SINGLE_PUT_MAX_BYTES:
-            raise ValidationError(
-                f"upload is {size_bytes} bytes; single-PUT storage submission "
-                f"supports up to {SINGLE_PUT_MAX_BYTES} bytes — multipart uploads "
-                "for larger objects are unsupported in v1",
-                details={"size_bytes": size_bytes, "max_bytes": SINGLE_PUT_MAX_BYTES},
-            )
+
+    def _completion_token_row(self, *, token: str) -> Row:
+        self._sweep_completion_tokens()
+        with closing(self.store.connect()) as conn:
+            row = conn.execute(
+                """
+                SELECT project_id, upload_id
+                FROM storage_completion_tokens
+                WHERE token = ? AND status = 'pending' AND expires_at > ?
+                """,
+                (token, now_iso()),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("unknown, used, or expired storage completion token")
+        return row
+
+    @staticmethod
+    def _canonical_completed_parts(
+        parts: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]] | None:
+        if parts is None:
+            return None
+        if not isinstance(parts, list):
+            raise ValidationError("parts must be a list")
+        canonical: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for part in parts:
+            if not isinstance(part, dict):
+                raise ValidationError("each completed part must be an object")
+            raw_number = part.get("part_number", part.get("PartNumber"))
+            etag = str(part.get("etag", part.get("ETag", ""))).strip()
+            try:
+                part_number = int(raw_number)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(
+                    "each completed part needs an integer part_number"
+                ) from exc
+            if part_number < 1 or part_number in seen or not etag:
+                raise ValidationError(
+                    "completed parts need unique positive part_number and etag"
+                )
+            seen.add(part_number)
+            canonical.append({"part_number": part_number, "etag": etag})
+        canonical.sort(key=lambda item: int(item["part_number"]))
+        return canonical
 
     def _mint_completion_token(
         self, *, project_id: str, object_id: str, upload_id: str
@@ -1053,5 +1147,6 @@ __all__ = [
     "STORAGE_KINDS",
     "ObjectStorage",
     "storage_fetch_command",
+    "storage_multipart_submit_command",
     "storage_submit_command",
 ]

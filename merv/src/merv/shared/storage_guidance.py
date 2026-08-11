@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+GIB = 1024 * 1024 * 1024
+DEFAULT_STORAGE_MAX_UPLOAD_BYTES = 50 * GIB
+STORAGE_MAX_UPLOAD_BYTES_SETTING = "storage_max_upload_bytes"
+
 STORAGE_RULE_OF_THUMB = (
     "Use storage for files that are too large or noisy for the repo or "
     "artifact submission, or expensive to regenerate: checkpoints/models, "

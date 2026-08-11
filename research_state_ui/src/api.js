@@ -183,7 +183,8 @@ export const api = {
   }),
   patchProject: (pid, patch) => request(`/api/projects/${encodeURIComponent(pid)}`, { method: 'PATCH', body: patch }),
   // { id, name, summary, status, created_at, settings } — settings holds the
-  // per-project policy knobs (agent_dispatch, require_verified_reviews, hidden).
+  // per-project policy knobs (agent_dispatch, require_verified_reviews,
+  // storage_max_upload_bytes, hidden).
   getProject: (pid) => request(`/api/projects/${encodeURIComponent(pid)}`),
   listProjectMembers: (pid) =>
     request(`/api/projects/${encodeURIComponent(pid)}/members`),

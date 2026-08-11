@@ -352,6 +352,12 @@ class S3CompatibleObjectProviderTest(ObjectProviderContractMixin, unittest.TestC
             content_type="application/octet-stream",
             expires_in=300,
         )
+        resumed = store.resume_upload(upload_id=target["upload_id"], expires_in=300)
+        self.assertEqual(
+            [part["part_number"] for part in resumed["parts"]],
+            [part["part_number"] for part in target["parts"]],
+        )
+        target = resumed
         completed_parts = []
         # urllib trips on a 5 MiB PUT to MinIO (no Expect: 100-continue); httpx
         # (botocore's own HTTP client) rides the presigned part seam cleanly.

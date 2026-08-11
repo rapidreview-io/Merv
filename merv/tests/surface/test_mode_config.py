@@ -569,6 +569,8 @@ class VersionHandshakeTest(unittest.TestCase):
         self.assertTrue(body["capabilities"]["hosted_control"])
         self.assertTrue(body["capabilities"]["mcp"])
         self.assertTrue(body["capabilities"]["token_uploads"])
+        self.assertFalse(body["capabilities"]["storage"])
+        self.assertIsNone(body["capabilities"]["storage_max_upload_bytes"])
 
         local = self.local_client.get("/api/meta")
         self.assertEqual(local.status_code, 200, local.text)

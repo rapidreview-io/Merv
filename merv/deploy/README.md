@@ -237,6 +237,10 @@ explicit development `repo_root`, startup requires:
 Heavy object storage is optional. Enable it with
 `MERV_STORAGE_PROVIDER` and the storage bucket/credentials. This is
 separate from the submitted-byte blob store, which hosted startup requires.
+`MERV_STORAGE_MAX_UPLOAD_BYTES` is the deployment-wide per-object ceiling and
+defaults to 50 GiB. Each project can override `storage_max_upload_bytes` within
+that ceiling from its Storage settings; objects above S3's 5 GiB single-PUT
+boundary are uploaded automatically as multipart transfers.
 
 Set `MERV_REQUIRE_SANDBOX_BACKEND=1` to reject startup
 when the selected provider is unhealthy. Provider credentials and the brain

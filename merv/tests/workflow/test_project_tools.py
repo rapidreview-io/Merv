@@ -93,6 +93,24 @@ class ProjectToolTest(unittest.TestCase):
         restored = {p["id"] for p in self.call("project.list")["projects"]}
         self.assertIn(stash["id"], restored)
 
+    def test_storage_upload_limit_round_trips_in_project_settings(self) -> None:
+        project = self.call("project", action="create", name="Storage Policy")
+        updated = self.call(
+            "project.update",
+            project_id=project["id"],
+            storage_max_upload_bytes=7 * 1024 * 1024 * 1024,
+        )
+        self.assertEqual(
+            updated["settings"]["storage_max_upload_bytes"],
+            7 * 1024 * 1024 * 1024,
+        )
+        self.assertEqual(
+            self.call("project.get", project_id=project["id"])["settings"][
+                "storage_max_upload_bytes"
+            ],
+            7 * 1024 * 1024 * 1024,
+        )
+
     def test_action_create_requires_name(self) -> None:
         with self.assertRaises(ValidationError) as ctx:
             self.call("project", action="create")

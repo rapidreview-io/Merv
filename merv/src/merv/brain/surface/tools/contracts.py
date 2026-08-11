@@ -218,6 +218,15 @@ class ProjectUpdateInput(ProjectScopedInput):
             "leave unchanged."
         ),
     )
+    storage_max_upload_bytes: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Project Object Storage policy: maximum bytes accepted by "
+            "storage.submit. The server-wide maximum remains an upper bound. "
+            "Omit to leave unchanged."
+        ),
+    )
 
 
 class ProjectGetInput(ProjectScopedInput):
@@ -1245,7 +1254,10 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         handler_identity="research.update_project",
         visibility="internal",
         input_model=ProjectUpdateInput,
-        description="Update a project name, summary, policy knobs, or hidden state.",
+        description=(
+            "Update a project name, summary, review/agent/storage policy knobs, "
+            "or hidden state."
+        ),
     ),
     "project.get": ToolContract(
         handler_identity="research.get_project",

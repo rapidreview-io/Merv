@@ -7,6 +7,7 @@ import HuggingFaceToken from '../components/HuggingFaceToken';
 import McpKeys from '../components/McpKeys';
 import ProjectPeople from '../components/ProjectPeople';
 import ProviderConfig from '../components/ProviderConfig';
+import StorageSettings from '../components/StorageSettings';
 
 // Each tab owns one setup surface. `scope` is the honest reach of the panel.
 // Connect-an-agent leads: it is the top of the funnel and the tab a first
@@ -17,6 +18,7 @@ const TABS = [
   { id: 'keys', label: 'MCP keys', scope: 'This project' },
   { id: 'auto', label: 'Auto running', scope: 'This project + a runner machine' },
   { id: 'compute', label: 'Compute', scope: 'This project' },
+  { id: 'storage', label: 'Storage', scope: 'This project', needsStorage: true },
   { id: 'huggingface', label: 'Hugging Face', scope: 'Your account' },
 ];
 
@@ -30,9 +32,13 @@ const TABS = [
 export default function Settings() {
   const projectId = useProjectStore((s) => s.projectId);
   const directory = useProjectStore((s) => s.serverMeta?.capabilities?.project_member_directory === true);
+  const storage = useProjectStore((s) => s.serverMeta?.capabilities?.storage === true);
+  const storageMaxBytes = useProjectStore((s) => s.serverMeta?.capabilities?.storage_max_upload_bytes);
   const hosted = isAuthEnabled();
   const [params, setParams] = useSearchParams();
-  const tabs = TABS.filter((tab) => !tab.needsDirectory || directory);
+  const tabs = TABS.filter((tab) => (
+    (!tab.needsDirectory || directory) && (!tab.needsStorage || storage)
+  ));
 
   const requested = params.get('tab');
   const active = tabs.some((tab) => tab.id === requested) ? requested : tabs[0].id;
@@ -84,6 +90,9 @@ export default function Settings() {
         {active === 'keys' && <McpKeys projectId={projectId} hosted={hosted} />}
         {active === 'auto' && <AgentPlatforms projectId={projectId} />}
         {active === 'compute' && <ProviderConfig projectId={projectId} />}
+        {active === 'storage' && (
+          <StorageSettings projectId={projectId} serverMaxBytes={storageMaxBytes} />
+        )}
         {active === 'huggingface' && <HuggingFaceToken hosted={hosted} />}
       </div>
     </div>

@@ -17,6 +17,7 @@ _UPLOAD_PREFIX = ".uploads/"
 # Keep normal submissions on the single-PUT path; lower values exercise multipart.
 DEFAULT_MULTIPART_THRESHOLD_BYTES = 5 * 1024 * 1024 * 1024
 DEFAULT_MULTIPART_PART_BYTES = 64 * 1024 * 1024
+DEFAULT_MULTIPART_MAX_PARTS = 10000
 
 
 class S3CompatibleObjectStore:
@@ -64,7 +65,6 @@ class S3CompatibleObjectStore:
         validate_blob_keys(namespace=namespace, sha256=sha256)
         upload_id = new_id(prefix="upload")
         key = self._key(namespace=namespace, sha256=sha256)
-        checksum = _sha256_b64(sha256)
         sidecar = {
             "upload_id": upload_id,
             "namespace": namespace,
@@ -88,7 +88,29 @@ class S3CompatibleObjectStore:
                 }
             )
             self._put_sidecar(upload_id=upload_id, sidecar=sidecar)
-            part_count = max(1, math.ceil(int(size_bytes) / part_size))
+            return self._target(sidecar=sidecar, expires_in=expires_in)
+        sidecar["mode"] = "single"
+        self._put_sidecar(upload_id=upload_id, sidecar=sidecar)
+        return self._target(sidecar=sidecar, expires_in=expires_in)
+
+    def resume_upload(self, *, upload_id: str, expires_in: int) -> UploadTarget:
+        """Mint fresh URLs from the durable provider sidecar."""
+        return self._target(
+            sidecar=self._get_sidecar(upload_id=upload_id),
+            expires_in=expires_in,
+        )
+
+    def _target(self, *, sidecar: dict[str, Any], expires_in: int) -> UploadTarget:
+        upload_id = str(sidecar["upload_id"])
+        namespace = str(sidecar["namespace"])
+        sha256 = str(sidecar["sha256"])
+        size_bytes = int(sidecar["size_bytes"])
+        content_type = str(sidecar["content_type"])
+        key = self._key(namespace=namespace, sha256=sha256)
+        checksum = _sha256_b64(sha256)
+        if sidecar.get("mode") == "multipart":
+            part_size = int(sidecar["part_size"])
+            part_count = max(1, math.ceil(size_bytes / part_size))
             return {
                 "upload_id": upload_id,
                 "parts": [
@@ -99,7 +121,7 @@ class S3CompatibleObjectStore:
                             Params={
                                 "Bucket": self.bucket,
                                 "Key": key,
-                                "UploadId": s3_upload_id,
+                                "UploadId": str(sidecar["s3_upload_id"]),
                                 "PartNumber": part_number,
                             },
                             ExpiresIn=int(expires_in),
@@ -108,12 +130,10 @@ class S3CompatibleObjectStore:
                     for part_number in range(1, part_count + 1)
                 ],
                 "part_size": part_size,
-                "size_bytes": int(size_bytes),
+                "size_bytes": size_bytes,
                 "content_type": content_type,
                 "checksum_sha256": checksum,
             }
-        sidecar["mode"] = "single"
-        self._put_sidecar(upload_id=upload_id, sidecar=sidecar)
         return {
             "upload_id": upload_id,
             "url": self._s3.generate_presigned_url(
@@ -126,7 +146,7 @@ class S3CompatibleObjectStore:
                 },
                 ExpiresIn=int(expires_in),
             ),
-            "size_bytes": int(size_bytes),
+            "size_bytes": size_bytes,
             "content_type": content_type,
             "checksum_sha256": checksum,
         }
@@ -224,7 +244,10 @@ class S3CompatibleObjectStore:
         return f"{_UPLOAD_PREFIX}{upload_id}.meta"
 
     def _part_size(self, *, size_bytes: int) -> int:
-        return max(self.multipart_part_bytes, math.ceil(size_bytes / 10000))
+        return max(
+            self.multipart_part_bytes,
+            math.ceil(size_bytes / DEFAULT_MULTIPART_MAX_PARTS),
+        )
 
     def _put_sidecar(self, *, upload_id: str, sidecar: dict[str, Any]) -> None:
         self._s3.put_object(
@@ -252,6 +275,17 @@ class S3CompatibleObjectStore:
         if not parts:
             raise ValidationError(
                 f"multipart upload needs completed parts: {sidecar['upload_id']}"
+            )
+        expected_count = max(
+            1, math.ceil(int(sidecar["size_bytes"]) / int(sidecar["part_size"]))
+        )
+        part_numbers = [
+            int(part.get("PartNumber") or part.get("part_number") or 0)
+            for part in parts
+        ]
+        if part_numbers != list(range(1, expected_count + 1)):
+            raise ValidationError(
+                f"multipart upload needs ordered parts 1 through {expected_count}"
             )
         completed = []
         for part in parts:

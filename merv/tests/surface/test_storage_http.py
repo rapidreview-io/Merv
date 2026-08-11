@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import os
 import re
 import tempfile
@@ -22,6 +23,49 @@ from merv.brain.object_storage import ObjectStorage
 from merv.brain.object_storage.storage import SINGLE_PUT_MAX_BYTES
 from merv.brain.surface.transport.api import create_fastapi_app
 from merv.brain.kernel.utils import ValidationError
+
+
+class _MultipartFakeObjectStore(FakeObjectStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.targets: dict[str, dict] = {}
+        self.completed_parts: list[dict] | None = None
+
+    def presign_upload(self, **kwargs) -> dict:
+        single = super().presign_upload(**kwargs)
+        size_bytes = int(kwargs["size_bytes"])
+        part_size = (size_bytes + 1) // 2
+        target = {
+            "upload_id": single["upload_id"],
+            "parts": [
+                {"part_number": 1, "url": "https://store.test/part/1"},
+                {"part_number": 2, "url": "https://store.test/part/2"},
+            ],
+            "part_size": part_size,
+            "size_bytes": size_bytes,
+            "content_type": kwargs["content_type"],
+            "checksum_sha256": base64.b64encode(
+                bytes.fromhex(kwargs["sha256"])
+            ).decode("ascii"),
+        }
+        self.targets[str(single["upload_id"])] = target
+        return target
+
+    def resume_upload(self, *, upload_id: str, expires_in: int) -> dict:
+        _ = expires_in
+        return self.targets[upload_id]
+
+    def complete_upload(self, *, upload_id: str, parts: list[dict] | None = None):
+        from merv.brain.object_storage.provider import ObjectStat
+
+        meta = self.uploads.pop(upload_id)
+        self.completed_parts = parts
+        return ObjectStat(
+            namespace=str(meta["namespace"]),
+            sha256=str(meta["sha256"]),
+            size_bytes=int(meta["size_bytes"]),
+            content_type=str(meta["content_type"]),
+        )
 
 
 def _parse_submit_run(run: str) -> tuple[str, str]:
@@ -55,6 +99,13 @@ class StorageHttpApiTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.app.shutdown()
         self.tmp.cleanup()
+
+    def test_meta_advertises_storage_ceiling(self) -> None:
+        capabilities = self.client.get("/api/meta").json()["capabilities"]
+        self.assertTrue(capabilities["storage"])
+        self.assertEqual(
+            capabilities["storage_max_upload_bytes"], 50 * 1024 * 1024 * 1024
+        )
 
     def test_storage_routes_list_get_download_pin_renew_delete(self) -> None:
         obj = self._put_and_complete(name="datasets/train.tar", kind="dataset", data=b"data")
@@ -200,19 +251,55 @@ class StorageHttpApiTest(unittest.TestCase):
         self.assertEqual(again["object"]["id"], first["id"])
 
     def test_storage_submit_enforces_size_caps(self) -> None:
-        # Above the 5 GiB single-PUT ceiling -> explicit v1-unsupported error.
+        # The default accepts objects above S3's single-PUT ceiling and returns
+        # the token-backed multipart client command.
+        provider = _MultipartFakeObjectStore()
+        multipart = ObjectStorage(store=self.app.store, provider=provider)
+        submitted = multipart.submit(
+            project_id=self.project_id,
+            path="big.bin",
+            kind="other",
+            sha256="0" * 64,
+            size_bytes=SINGLE_PUT_MAX_BYTES + 1,
+            base_url="https://merv.test",
+        )
+        self.assertIn("merv-client storage-upload", submitted["run"])
+        token = re.search(r"/api/storage/u/([^/']+)", submitted["run"]).group(1)
+        target = multipart.upload_target_via_token(token=token)
+        self.assertEqual(len(target["upload"]["parts"]), 2)
+        completed = multipart.complete_via_token(
+            token=token,
+            parts=[
+                {"part_number": 2, "etag": '"two"'},
+                {"part_number": 1, "etag": '"one"'},
+            ],
+        )
+        self.assertEqual(completed["object"]["status"], "available")
+        self.assertEqual(
+            provider.completed_parts,
+            [
+                {"part_number": 1, "etag": '"one"'},
+                {"part_number": 2, "etag": '"two"'},
+            ],
+        )
+
+        # A project may lower the ceiling without affecting other projects.
+        self.app.call_tool(
+            "project.update",
+            {
+                "project_id": self.project_id,
+                "storage_max_upload_bytes": 1024,
+            },
+        )
         with self.assertRaises(ValidationError) as ctx:
-            self.app.call_tool(
-                "storage.submit",
-                {
-                    "project_id": self.project_id,
-                    "path": "big.bin",
-                    "kind": "other",
-                    "sha256": "0" * 64,
-                    "size_bytes": SINGLE_PUT_MAX_BYTES + 1,
-                },
+            self.app.storage.submit(
+                project_id=self.project_id,
+                path="project-over.bin",
+                kind="other",
+                sha256="0" * 64,
+                size_bytes=2048,
             )
-        self.assertIn("unsupported in v1", str(ctx.exception).lower())
+        self.assertIn("for this project", str(ctx.exception).lower())
 
         # An absolute cap (env-configured in composition) rejects before presign.
         capped = ObjectStorage(
@@ -230,6 +317,8 @@ class StorageHttpApiTest(unittest.TestCase):
 
     def test_storage_completion_token_first_404_before_object_work(self) -> None:
         # An unknown token 404s (token-first) without touching any object.
+        target = self.client.get("/api/storage/u/nonexistent-token")
+        self.assertEqual(target.status_code, 404, target.text)
         resp = self.client.post("/api/storage/u/nonexistent-token/complete")
         self.assertEqual(resp.status_code, 404, resp.text)
 

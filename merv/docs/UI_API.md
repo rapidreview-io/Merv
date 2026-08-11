@@ -53,13 +53,17 @@ GET /api/meta
   "capabilities": {
     "hosted_control": false,
     "mcp": true,
-    "token_uploads": true
+    "token_uploads": true,
+    "storage": true,
+    "storage_max_upload_bytes": 53687091200
   }
 }
 ```
 
 The `capabilities` block reports `mcp: true` and `token_uploads: true`: clients
-use `/mcp`, while byte operations return tokenized transfer commands.
+use `/mcp`, while byte operations return tokenized transfer commands. `storage`
+and `storage_max_upload_bytes` advertise the optional heavy-object backend and
+its deployment ceiling.
 `catalog_version` identifies the MCP catalog. In control mode, a request with
 `X-RP-Client-Version` explicitly below `min_proxy_version` receives
 `426 client_too_old`; a missing version header is currently tolerated.
@@ -108,6 +112,10 @@ GET   /api/projects/{project_id}/status?experiment_id={experiment_id}
 Create projects with `name` and `summary`. Do not send a repo path: projects are
 never tied to a checkout; each agent key carries an immutable scope (one
 project, or the owner's whole account).
+
+Project updates may set `storage_max_upload_bytes` to a positive byte count.
+The deployment ceiling from `/api/meta` remains authoritative; omitting the
+setting uses the 50 GiB project default.
 
 `/home` is the primary UI bootstrap. It returns `project`, `claims`, the full
 `experiments` list, `artifacts`, `reviews`, `recent_events`, `stats`, `workflow`,
@@ -283,10 +291,11 @@ POST   /api/projects/{project_id}/storage/{object_id}/renew
 DELETE /api/projects/{project_id}/storage/{object_id}
 ```
 
-The UI manages object lifecycle and requests short-lived download links. File
-upload and download execution belongs to the agent's storage tools
-(`storage.submit` / `storage.fetch`), which return a presigned curl command the
-agent runs to stream bytes directly to or from the object store.
+The UI manages object lifecycle, the per-project object-size limit, and
+short-lived download links. File upload and download execution belongs to the
+agent's storage tools (`storage.submit` / `storage.fetch`). Uploads through
+5 GiB use a presigned curl command; larger objects use the returned
+`merv-client storage-upload` command to stream presigned parts concurrently.
 
 ## Research feed
 

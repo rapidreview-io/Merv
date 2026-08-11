@@ -56,6 +56,10 @@ class ObjectProvider(Protocol):
     ) -> UploadTarget:
         ...
 
+    def resume_upload(self, *, upload_id: str, expires_in: int) -> UploadTarget:
+        """Mint a fresh transfer target for an existing pending upload."""
+        ...
+
     def complete_upload(
         self, *, upload_id: str, parts: list[CompletedPart] | None = None
     ) -> ObjectStat:

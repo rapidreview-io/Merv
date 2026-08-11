@@ -159,7 +159,7 @@ def resolve_storage_bucket(env: Mapping[str, str] | None = None) -> str | None:
 
 
 def resolve_storage_max_upload_bytes(env: Mapping[str, str] | None = None) -> int:
-    """Absolute server-side ceiling for a storage.submit upload (default 50 GB).
+    """Absolute server-side ceiling for a storage.submit upload (default 50 GiB).
     A non-integer value falls back to the default rather than failing startup."""
     from ..object_storage.storage import DEFAULT_MAX_UPLOAD_BYTES
 

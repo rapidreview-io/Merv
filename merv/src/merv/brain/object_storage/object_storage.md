@@ -30,9 +30,11 @@ for the genuine cross-module experiment projection.
 1. `submit` validates the local display path, kind, digest, and size caps, then
    registers a versioned ledger row. Existing physical content is reused only
    inside the project namespace; the same name and digest is idempotent.
-2. New content receives a provider upload target. The returned shell command
-   binds SHA-256 and content type into a presigned PUT and follows it with the
-   bodyless completion-token request. Bytes never transit the brain.
+2. New content receives a provider upload target. Up to 5 GiB, the returned
+   shell command binds SHA-256 and content type into one presigned PUT. Larger
+   objects invoke `merv-client`, which verifies the local digest, streams
+   presigned parts concurrently, and posts their ETags for completion. Provider
+   URLs are fetched through the one-time token and never enter agent context.
 3. Completion reserves the ledger row as `completing` before provider work.
    Provider identity and size must match the durable row. A retry after the
    provider succeeded but before the ledger commit re-stats the immutable
@@ -65,12 +67,12 @@ modules before those modules write bytes.
   content across projects or tenants.
 - Public MCP tool schemas, hidden maintenance tools, HTTP routes, and result
   dictionaries are compatibility boundaries. Provider targets are internal.
-- Single-PUT submission is capped by both the configured server maximum and
-  S3's 5 GiB limit. The provider's multipart capability remains available to
-  the internal register/complete path.
-- SHA-256 key validation, checksum-bound PUTs, provider head verification, and
-  completion identity checks prevent advisory caller metadata from becoming
-  authoritative.
+- `storage.submit` defaults to 50 GiB per object. A project may override
+  `storage_max_upload_bytes`; the deployment's `MERV_STORAGE_MAX_UPLOAD_BYTES`
+  remains the absolute ceiling. Objects above 5 GiB use multipart transfer.
+- SHA-256 key validation, checksum-bound single PUTs, client-side full-digest
+  verification for multipart, provider size verification, and completion
+  identity checks protect the content-addressed ledger.
 - `storage_objects`, `storage_completion_tokens`, their migrations/indexes, and
   `storage.registered/completed/deleted/expired` payloads are durable formats.
 - Provider credentials and SDK calls stay in `s3_object_store.py`. Root methods

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Body
 
 from ....kernel.utils import NotFoundError
 from ....object_storage import ObjectStorage
@@ -16,9 +16,19 @@ def build_router(*, storage: ObjectStorage | None) -> APIRouter:
             raise NotFoundError("storage is not enabled on this backend")
         return storage
 
+    @api_router.get("/api/storage/u/{token}")
+    def storage_upload_target(token: str) -> dict[str, Any]:
+        # The one-time URL is the credential. Provider URLs are minted only
+        # when the client is ready to stream a multipart upload.
+        if storage is None:
+            raise NotFoundError("storage is not enabled on this backend")
+        return storage.upload_target_via_token(token=token)
+
     @api_router.post("/api/storage/u/{token}/complete")
-    def complete_storage_upload(token: str) -> dict[str, Any]:
-        # Auth-exempt (see RequestAuthenticator) and bodyless: the one-time
+    def complete_storage_upload(
+        token: str, body: dict[str, Any] | None = Body(default=None)
+    ) -> dict[str, Any]:
+        # Auth-exempt (see RequestAuthenticator): the one-time
         # completion token minted by storage.submit is the whole credential.
         # Token-first — an unknown/expired/used token 404s before any object
         # work — and single-use. Server-side it runs the internal
@@ -26,7 +36,8 @@ def build_router(*, storage: ObjectStorage | None) -> APIRouter:
         # tool over MCP) still finalizes its direct-to-S3 upload.
         if storage is None:
             raise NotFoundError("storage is not enabled on this backend")
-        return storage.complete_via_token(token=token)
+        payload = body or {}
+        return storage.complete_via_token(token=token, parts=payload.get("parts"))
 
     @api_router.get("/api/projects/{project_id}/storage")
     def list_storage(

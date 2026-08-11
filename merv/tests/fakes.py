@@ -188,6 +188,20 @@ class FakeObjectStore:
             except FileNotFoundError:
                 pass
 
+    def resume_upload(self, *, upload_id: str, expires_in: int) -> dict:
+        from merv.brain.kernel.utils import NotFoundError
+
+        _ = expires_in
+        meta = self.uploads.get(upload_id)
+        if meta is None:
+            raise NotFoundError(f"unknown or already-consumed upload: {upload_id}")
+        return {
+            "upload_id": upload_id,
+            "url": meta["path"].resolve().as_uri(),
+            "size_bytes": int(meta["size_bytes"]),
+            "content_type": str(meta["content_type"]),
+        }
+
     def presign_download(self, *, namespace: str, sha256: str, expires_in: int) -> dict:
         import tempfile
         from pathlib import Path as _Path

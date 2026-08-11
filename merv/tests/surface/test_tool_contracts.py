@@ -129,7 +129,7 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "project": "ee6b0a43422608b1c6647bd3e6dc7b9316ff4ef4ad9e35716626bfe99ad63b59",
     "project.get": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
     "project.list": "99334726611ccf58a148b0814696bfa6fe08c1b2d027e946beccf5a74331c9aa",
-    "project.update": "55818f8adb3b5d75b86ff5b7321423928234b1729eb44134850531e2e8d5d929",
+    "project.update": "b7150f3367aa91185ee1fc988074ef2d0adf76b23a9da2bb207fe6b718dde67d",
     "reflection.create": "c8afd8f54699b4a4196102c217801e2acf254bca1783acb50db108d3bcc1cfca",
     "reflection.get": "08e0d6e280b0de7dd6e6d16621f1c5665ed2fbdc8becbad53ac93429ec840ede",
     "reflection.list": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",

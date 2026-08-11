@@ -34,6 +34,7 @@ def build_router(
     tool_calls: ToolCallTelemetry,
     research: Research,
     project_member_directory: bool = False,
+    storage_max_upload_bytes: int | None = None,
 ) -> APIRouter:
     api_router = APIRouter()
     surface = gateway.surface
@@ -55,6 +56,8 @@ def build_router(
             "mcp": True,
             "token_uploads": True,
             "project_member_directory": project_member_directory,
+            "storage": storage_max_upload_bytes is not None,
+            "storage_max_upload_bytes": storage_max_upload_bytes,
         }
         # Auth handshake: tells the UI whether to show a login and which
         # Supabase project to sign in against (public values only).

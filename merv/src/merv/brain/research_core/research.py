@@ -9,6 +9,8 @@ import json
 import math
 from typing import Any, cast
 
+from merv.shared.storage_guidance import STORAGE_MAX_UPLOAD_BYTES_SETTING
+
 from .experiment_workflow import EXPERIMENT_TERMINAL_STATUSES
 from .reflection_workflow import REFLECTION_WORKFLOW
 from .policy import (
@@ -158,6 +160,7 @@ class Research:
         require_verified_reviews: bool | None = None,
         hidden: bool | None = None,
         agent_dispatch: bool | None = None,
+        storage_max_upload_bytes: int | None = None,
     ) -> dict[str, Any]:
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
@@ -177,6 +180,16 @@ class Research:
                 settings["hidden"] = bool(hidden)
             if agent_dispatch is not None:
                 settings[AGENT_DISPATCH_SETTING] = bool(agent_dispatch)
+            if storage_max_upload_bytes is not None:
+                if isinstance(storage_max_upload_bytes, bool) or int(
+                    storage_max_upload_bytes
+                ) <= 0:
+                    raise ValidationError(
+                        "storage_max_upload_bytes must be a positive integer"
+                    )
+                settings[STORAGE_MAX_UPLOAD_BYTES_SETTING] = int(
+                    storage_max_upload_bytes
+                )
             conn.execute(
                 """
                 UPDATE projects

@@ -21,6 +21,7 @@ from merv.shared.client_config import (
     resolve_client_config_path,
     resolve_client_control_url,
 )
+from .storage_upload import StorageUploadError, upload_storage_file
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -146,6 +147,15 @@ def _parser() -> argparse.ArgumentParser:
         help="Commit-ish frozen when the runner starts (default: HEAD).",
     )
     workspace.set_defaults(func=_cmd_workspace)
+
+    storage_upload = sub.add_parser(
+        "storage-upload",
+        help="Stream a token-backed multipart Object Storage upload.",
+    )
+    storage_upload.add_argument("--path", required=True)
+    storage_upload.add_argument("--target-url", required=True)
+    storage_upload.add_argument("--workers", type=int, default=4)
+    storage_upload.set_defaults(func=_cmd_storage_upload)
     return parser
 
 
@@ -282,6 +292,21 @@ def _cmd_workspace(args: argparse.Namespace) -> int:
         base_ref=args.base_ref,
     )
     print(json.dumps(config["agent_workspace"], indent=2))
+    return 0
+
+
+def _cmd_storage_upload(args: argparse.Namespace) -> int:
+    if not 1 <= int(args.workers) <= 16:
+        raise ClientError("--workers must be between 1 and 16")
+    try:
+        result = upload_storage_file(
+            path=Path(args.path),
+            target_url=str(args.target_url),
+            workers=int(args.workers),
+        )
+    except StorageUploadError as exc:
+        raise ClientError(str(exc)) from exc
+    print(json.dumps(result, indent=2))
     return 0
 
 
