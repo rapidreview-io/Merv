@@ -17,21 +17,21 @@ the plugin or extension and complete browser OAuth:
 
 ```bash
 # Codex
-codex plugin marketplace add NGXT-Inc/Merv
+codex plugin marketplace add rapidreview-io/Merv
 codex plugin add merv@rapidreview
 codex mcp login merv
 
 # Claude Code
-claude plugin marketplace add NGXT-Inc/Merv
+claude plugin marketplace add rapidreview-io/Merv
 claude plugin install merv@rapidreview
 claude mcp login plugin:merv:merv
 
 # Gemini CLI (then run /mcp auth merv inside Gemini)
-gemini extensions install https://github.com/NGXT-Inc/Merv \
+gemini extensions install https://github.com/rapidreview-io/Merv \
   --ref merv-client --auto-update
 
 # Cursor (then install merv from rapidreview in /plugin and Connect in Customize)
-cursor-agent plugin marketplace add https://github.com/NGXT-Inc/Merv
+cursor-agent plugin marketplace add https://github.com/rapidreview-io/Merv
 ```
 
 Claude users should enable auto-update for the RapidReview marketplace once in
@@ -45,7 +45,7 @@ Clone the repository only for self-hosting, client development, or the local
 agent runner:
 
 ```bash
-git clone https://github.com/NGXT-Inc/Merv.git ~/Merv
+git clone https://github.com/rapidreview-io/Merv.git ~/Merv
 ```
 
 Every client connects directly to the brain's `/mcp` HTTP endpoint, so nothing

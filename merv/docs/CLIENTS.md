@@ -253,7 +253,7 @@ The repository is its own third-party marketplace. Install the plugin and sign
 in through the namespaced plugin MCP server:
 
 ```bash
-claude plugin marketplace add NGXT-Inc/Merv
+claude plugin marketplace add rapidreview-io/Merv
 claude plugin install merv@rapidreview
 claude mcp login plugin:merv:merv
 ```
@@ -274,7 +274,7 @@ Codex uses the repository marketplace at `.agents/plugins/marketplace.json`.
 The plugin bundles its skills and URL-only HTTP MCP registration:
 
 ```bash
-codex plugin marketplace add NGXT-Inc/Merv
+codex plugin marketplace add rapidreview-io/Merv
 codex plugin add merv@rapidreview
 codex mcp login merv
 ```
@@ -305,7 +305,7 @@ also exposes `.cursor-plugin/marketplace.json`, so no clone or bundle build is
 needed for an ordinary install:
 
 ```bash
-cursor-agent plugin marketplace add https://github.com/NGXT-Inc/Merv
+cursor-agent plugin marketplace add https://github.com/rapidreview-io/Merv
 cursor-agent
 ```
 
@@ -376,7 +376,7 @@ extension directory.
 Install the generated slim client branch with automatic updates:
 
 ```bash
-gemini extensions install https://github.com/NGXT-Inc/Merv \
+gemini extensions install https://github.com/rapidreview-io/Merv \
   --ref merv-client --auto-update
 ```
 

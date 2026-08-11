@@ -10,7 +10,7 @@
  * merv/docs/CLIENTS.md.
  */
 
-export const MERV_REPO_URL = 'https://github.com/NGXT-Inc/Merv';
+export const MERV_REPO_URL = 'https://github.com/rapidreview-io/Merv';
 export const CLIENT_DOCS_URL = `${MERV_REPO_URL}/blob/main/merv/docs/CLIENTS.md`;
 
 // Consent guidance is shared: every native client ends in the same browser
@@ -28,7 +28,7 @@ export const NATIVE_CLIENTS = [
       {
         title: 'Install the plugin',
         commands: [
-          'codex plugin marketplace add NGXT-Inc/Merv',
+          'codex plugin marketplace add rapidreview-io/Merv',
           'codex plugin add merv@rapidreview',
         ],
       },
@@ -55,7 +55,7 @@ export const NATIVE_CLIENTS = [
       {
         title: 'Install the plugin',
         commands: [
-          'claude plugin marketplace add NGXT-Inc/Merv',
+          'claude plugin marketplace add rapidreview-io/Merv',
           'claude plugin install merv@rapidreview',
         ],
       },
@@ -78,7 +78,7 @@ export const NATIVE_CLIENTS = [
       {
         title: 'Install the extension',
         commands: [
-          'gemini extensions install https://github.com/NGXT-Inc/Merv --ref merv-client --auto-update',
+          'gemini extensions install https://github.com/rapidreview-io/Merv --ref merv-client --auto-update',
         ],
         note: '--auto-update tracks the client branch, so the extension stays current on its own.',
       },
@@ -96,7 +96,7 @@ export const NATIVE_CLIENTS = [
     steps: [
       {
         title: 'Add the marketplace',
-        commands: ['cursor-agent plugin marketplace add https://github.com/NGXT-Inc/Merv'],
+        commands: ['cursor-agent plugin marketplace add https://github.com/rapidreview-io/Merv'],
       },
       {
         title: 'Install inside Cursor Agent',

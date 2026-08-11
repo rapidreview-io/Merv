@@ -52,7 +52,7 @@ Brain management keys remain separate operational credentials.
 ### Codex
 
 ```bash
-codex plugin marketplace add NGXT-Inc/Merv
+codex plugin marketplace add rapidreview-io/Merv
 codex plugin add merv@rapidreview
 codex mcp login merv
 ```
@@ -62,7 +62,7 @@ Update with `codex plugin marketplace upgrade rapidreview`, then `codex plugin a
 ### Claude Code
 
 ```bash
-claude plugin marketplace add NGXT-Inc/Merv
+claude plugin marketplace add rapidreview-io/Merv
 claude plugin install merv@rapidreview
 claude mcp login plugin:merv:merv
 ```
@@ -72,7 +72,7 @@ Enable automatic updates once under `/plugin` → **Marketplaces** → **RapidRe
 ### Gemini CLI
 
 ```bash
-gemini extensions install https://github.com/NGXT-Inc/Merv --ref merv-client --auto-update
+gemini extensions install https://github.com/rapidreview-io/Merv --ref merv-client --auto-update
 ```
 
 Start Gemini and run `/mcp auth merv`. The extension updates automatically.
@@ -80,7 +80,7 @@ Start Gemini and run `/mcp auth merv`. The extension updates automatically.
 ### Cursor
 
 ```bash
-cursor-agent plugin marketplace add https://github.com/NGXT-Inc/Merv
+cursor-agent plugin marketplace add https://github.com/rapidreview-io/Merv
 cursor-agent
 ```
 
