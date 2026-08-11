@@ -185,6 +185,16 @@ export const api = {
   // { id, name, summary, status, created_at, settings } — settings holds the
   // per-project policy knobs (agent_dispatch, require_verified_reviews, hidden).
   getProject: (pid) => request(`/api/projects/${encodeURIComponent(pid)}`),
+  listProjectMembers: (pid) =>
+    request(`/api/projects/${encodeURIComponent(pid)}/members`),
+  addProjectMember: (pid, email) =>
+    request(`/api/projects/${encodeURIComponent(pid)}/members`, {
+      method: 'POST', body: { email },
+    }),
+  removeProjectMember: (pid, userId) =>
+    request(`/api/projects/${encodeURIComponent(pid)}/members/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+    }),
   getHome: (pid, signal) => request(`/api/projects/${encodeURIComponent(pid)}/home`, { signal }),
   // Conditional variants of the three snapshot endpoints refreshHome polls.
   getHomeIfChanged: (pid, etag, signal) =>

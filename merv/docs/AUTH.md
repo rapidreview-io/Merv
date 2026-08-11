@@ -55,7 +55,22 @@ DELETE /api/projects/{id}/members/{user_id}
 GET    /api/projects/{id}/members
 ```
 
+The POST route also accepts `{"email": "person@example.com"}` when a user
+directory is configured.
+
 Any member can manage members (two-trusted-users model; no roles).
+
+The web UI can add members by email when the HTTP composition receives a user
+directory. The directory is deliberately tiny and provider-neutral: it exposes
+`find_user_by_email(email)` and `user_profiles(user_ids)`, and returns IDs from
+the same namespace as the authentication verifier. `build_control_server` uses
+the shared Supabase service-role RPCs; a self-hosted deployment with another
+identity provider passes its own directory to
+`create_fastapi_app(user_directory=...)`. With no directory, UUID-based
+membership remains available and `/api/meta` advertises
+`project_member_directory: false`. Custom authentication must return the same
+opaque IDs and use Merv's existing `Principal(client_id="jwt:...")` convention
+for signed-in people; machine credentials remain unable to change membership.
 
 ## Client setup
 
@@ -102,6 +117,9 @@ Set `SUPABASE_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_KEY`,
 `SUPABASE_ANON_KEY`, and `MERV_REQUIRE_AUTH=1`. Existing databases must contain
 one `project_members` row for each authorized user/project pair. Interactive
 users then sign in through MCP OAuth; headless callers mint a scoped key.
+Email sharing also expects the service-role-only `lookup_user_for_share` and
+`user_display_profiles` RPCs already installed in the shared authentication
+Supabase project.
 
 Keep Supabase secrets and service credentials in managed secret storage. Rotate
 them through the Supabase and deployment runbooks, not through application

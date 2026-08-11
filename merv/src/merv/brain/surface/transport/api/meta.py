@@ -33,6 +33,7 @@ def build_router(
     activity_log: ActivityTelemetry,
     tool_calls: ToolCallTelemetry,
     research: Research,
+    project_member_directory: bool = False,
 ) -> APIRouter:
     api_router = APIRouter()
     surface = gateway.surface
@@ -53,6 +54,7 @@ def build_router(
             "hosted_control": surface.hosted_control,
             "mcp": True,
             "token_uploads": True,
+            "project_member_directory": project_member_directory,
         }
         # Auth handshake: tells the UI whether to show a login and which
         # Supabase project to sign in against (public values only).

@@ -206,6 +206,46 @@ class SupabaseVerifier:
             raise UnauthorizedError("unknown API key")
         return str(rows[0]["user_id"])
 
+    def find_user_by_email(self, email: str) -> dict[str, object] | None:
+        """Resolve one account through the service-role-only auth RPC."""
+        rows = self._directory_rpc("lookup_user_for_share", {"target_email": email})
+        return rows[0] if rows else None
+
+    def user_profiles(self, user_ids: list[str]) -> dict[str, dict[str, object]]:
+        """Return display profiles keyed by the verifier's opaque user id."""
+        if not user_ids:
+            return {}
+        rows = self._directory_rpc("user_display_profiles", {"user_ids": user_ids})
+        return {
+            str(row["id"]): {
+                "user_id": str(row["id"]),
+                "email": row.get("email"),
+                "display_name": row.get("full_name"),
+                "avatar_url": row.get("avatar_url"),
+            }
+            for row in rows
+            if row.get("id")
+        }
+
+    def _directory_rpc(
+        self, function: str, payload: dict[str, object]
+    ) -> list[dict[str, object]]:
+        if not self.service_key:
+            raise UnauthorizedError("user directory is not enabled")
+        try:
+            response = self._client().post(
+                f"{self.supabase_url}/rest/v1/rpc/{function}",
+                json=payload,
+                headers={
+                    "apikey": self.service_key,
+                    "Authorization": f"Bearer {self.service_key}",
+                },
+            )
+            response.raise_for_status()
+            rows = response.json()
+        except Exception as exc:
+            raise UnauthorizedError("user directory unavailable") from exc
+        return rows if isinstance(rows, list) else []
 
     def _client(self) -> httpx.Client:
         if self._http is None:

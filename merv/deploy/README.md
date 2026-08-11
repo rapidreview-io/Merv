@@ -269,8 +269,8 @@ The reference compose stack ships with authentication required
 (`MERV_REQUIRE_AUTH=1`). A verifier is built from `SUPABASE_URL` and
 `SUPABASE_JWT_SECRET` alone — without both the brain will not start. The other
 two are optional and buy specific features: `SUPABASE_SERVICE_KEY` (the
-service-role key) enables `rr_sk_` API-key lookups, without which those keys are
-rejected as "API keys are not enabled on this deployment"; `SUPABASE_ANON_KEY`
+service-role key) enables `rr_sk_` API-key and project-member email lookups,
+without which those features are disabled; `SUPABASE_ANON_KEY`
 is published through `/api/meta` so the hosted UI can sign users in. End-user
 auth brings `project_members` tenant isolation and project-scoped `mk_` keys
 (the gateway enforces that a key can only act on its bound project). A

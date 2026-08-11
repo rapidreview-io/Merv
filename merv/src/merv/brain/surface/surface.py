@@ -358,6 +358,7 @@ def build_control_server(
         tenant_counters=app.application.tenant_counters,
         surface_policy=surface,
         auth=auth,
+        user_directory=auth if auth is not None and auth.service_key else None,
         oauth_service=oauth_service,
         ui_base_url=resolve_ui_base_url(env),
         oauth_resource_uri=oauth_resource_uri,

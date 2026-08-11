@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import tempfile
 import time
@@ -51,6 +52,33 @@ def _bearer(sub: str = USER_A, **overrides) -> dict[str, str]:
 
 
 def _postgrest_mock(request: httpx.Request) -> httpx.Response:
+    if request.url.path.endswith("/rpc/lookup_user_for_share"):
+        email = json.loads(request.content)["target_email"].lower()
+        rows = (
+            [{"id": USER_B, "email": "friend@example.com", "is_anonymous": False}]
+            if email == "friend@example.com"
+            else []
+        )
+        return httpx.Response(200, json=rows)
+    if request.url.path.endswith("/rpc/user_display_profiles"):
+        requested = set(json.loads(request.content)["user_ids"])
+        profiles = {
+            USER_A: {
+                "id": USER_A,
+                "email": "owner@example.com",
+                "full_name": "Owner",
+                "avatar_url": None,
+            },
+            USER_B: {
+                "id": USER_B,
+                "email": "friend@example.com",
+                "full_name": "Friend",
+                "avatar_url": "https://example.com/friend.png",
+            },
+        }
+        return httpx.Response(
+            200, json=[profile for uid, profile in profiles.items() if uid in requested]
+        )
     # Fake Supabase: api_keys lookups — only the known hash resolves.
     if f"eq.{KNOWN_KEY_HASH}" in str(request.url):
         return httpx.Response(200, json=[{"user_id": USER_B}])
@@ -127,6 +155,15 @@ class SupabaseVerifierTest(unittest.TestCase):
             },
         )
 
+    def test_directory_resolves_email_and_profiles(self) -> None:
+        self.assertEqual(
+            self.verifier.find_user_by_email("friend@example.com")["id"], USER_B
+        )
+        self.assertIsNone(self.verifier.find_user_by_email("missing@example.com"))
+        profiles = self.verifier.user_profiles([USER_A, USER_B])
+        self.assertEqual(profiles[USER_A]["display_name"], "Owner")
+        self.assertEqual(profiles[USER_B]["email"], "friend@example.com")
+
 
 class AuthedSurfaceTest(unittest.TestCase):
     """The hosted app shape: auth verifier + membership enforcement."""
@@ -139,6 +176,7 @@ class AuthedSurfaceTest(unittest.TestCase):
             db_path=self.repo / ".research_plugin" / "state.sqlite",
             execution_backend=FakeSandboxBackend(),
         )
+        self.verifier = _verifier()
         self.client = TestClient(
             create_fastapi_app(
                 self.app,
@@ -146,12 +184,14 @@ class AuthedSurfaceTest(unittest.TestCase):
                 surface_policy=HttpSurfacePolicy.for_surface(
                     restrict_cors=True, hosted_control=True
                 ),
-                auth=_verifier(),
+                auth=self.verifier,
+                user_directory=self.verifier,
             ),
             raise_server_exceptions=False,
         )
 
     def tearDown(self) -> None:
+        self.verifier._http.close()
         self.app.shutdown()
         self.tmp.cleanup()
 
@@ -174,6 +214,7 @@ class AuthedSurfaceTest(unittest.TestCase):
                 "supabase_anon_key": "anon-key",
             },
         )
+        self.assertTrue(meta.json()["capabilities"]["project_member_directory"])
 
     def test_missing_or_bad_credential_is_401_with_cors(self) -> None:
         response = self.client.get(
@@ -315,6 +356,58 @@ class AuthedSurfaceTest(unittest.TestCase):
             ).status_code,
             404,
         )
+
+    def test_sharing_by_email_uses_the_injected_directory(self) -> None:
+        project_id = self._create_project("Shared by email", _bearer(USER_A))
+        added = self.client.post(
+            f"/api/projects/{project_id}/members",
+            json={"email": "FRIEND@example.com"},
+            headers=_bearer(USER_A),
+        )
+        self.assertEqual(added.status_code, 201, added.text)
+        members = {member["user_id"]: member for member in added.json()["members"]}
+        self.assertEqual(members[USER_B]["display_name"], "Friend")
+        self.assertEqual(members[USER_B]["email"], "friend@example.com")
+        self.assertTrue(members[USER_A]["is_self"])
+        self.assertFalse(members[USER_B]["is_self"])
+
+        visible = self.client.get(
+            f"/api/projects/{project_id}", headers=_bearer(USER_B)
+        )
+        self.assertEqual(visible.status_code, 200, visible.text)
+        missing = self.client.post(
+            f"/api/projects/{project_id}/members",
+            json={"email": "missing@example.com"},
+            headers=_bearer(USER_A),
+        )
+        self.assertEqual(missing.status_code, 404, missing.text)
+
+    def test_email_sharing_is_optional_and_raw_user_ids_still_work(self) -> None:
+        client = TestClient(
+            create_fastapi_app(
+                self.app,
+                surface_policy=HttpSurfacePolicy.for_surface(
+                    restrict_cors=False, hosted_control=True
+                ),
+                auth=self.verifier,
+            ),
+            raise_server_exceptions=False,
+        )
+        project_id = self._create_project("Optional directory", _bearer(USER_A))
+        meta = client.get("/api/meta").json()
+        self.assertFalse(meta["capabilities"]["project_member_directory"])
+        unavailable = client.post(
+            f"/api/projects/{project_id}/members",
+            json={"email": "friend@example.com"},
+            headers=_bearer(USER_A),
+        )
+        self.assertEqual(unavailable.status_code, 503, unavailable.text)
+        raw = client.post(
+            f"/api/projects/{project_id}/members",
+            json={"user_id": USER_B},
+            headers=_bearer(USER_A),
+        )
+        self.assertEqual(raw.status_code, 201, raw.text)
 
     def test_a_machine_key_cannot_change_membership(self) -> None:
         """AUTH-01: only a human decides who belongs to a project."""
