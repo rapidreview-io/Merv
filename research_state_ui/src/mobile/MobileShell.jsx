@@ -104,7 +104,7 @@ export default function MobileShell({ children, onRefresh }) {
         </button>
       </nav>
 
-      <MoreSheet open={sheetOpen} onClose={() => setSheetOpen(false)} onRefresh={onRefresh} />
+      <MoreSheet open={sheetOpen} onClose={() => setSheetOpen(false)} />
       <ToastHost />
     </div>
   );
@@ -124,7 +124,7 @@ function ThemeButton() {
   );
 }
 
-function MoreSheet({ open, onClose, onRefresh }) {
+function MoreSheet({ open, onClose }) {
   const stats = useProjectStore(selectStats);
   const home = useProjectStore(s => s.home);
   const lastSyncError = useProjectStore(s => s.lastSyncError);
@@ -133,14 +133,9 @@ function MoreSheet({ open, onClose, onRefresh }) {
   const px = useProjectHref();
 
   const footer = (
-    <>
-      <button type="button" className="btn btn--ghost btn--sm" onClick={() => { onRefresh?.(); onClose(); }}>
-        Refresh now
-      </button>
-      <button type="button" className="btn btn--ghost btn--sm" onClick={() => setSurfaceOverride('desktop')}>
-        Use desktop layout
-      </button>
-    </>
+    <button type="button" className="btn btn--ghost btn--sm" onClick={() => setSurfaceOverride('desktop')}>
+      Use desktop layout
+    </button>
   );
 
   return (
