@@ -93,6 +93,10 @@ class ClientBundleTest(unittest.TestCase):
             "bin/merv-runs-wait",
             "clients/hermes/README.md",
             "clients/hermes/install.sh",
+            "clients/kilo/README.md",
+            "clients/kilo/build_catalog.py",
+            "clients/kilo/package.json",
+            "clients/kilo/plugin.js",
             "src/merv/client/agent_runner.py",
             "src/merv/client/cli.py",
             "src/merv/client/runs_wait.py",
@@ -157,6 +161,10 @@ class ClientBundleTest(unittest.TestCase):
             build_client_bundle.build(out)
             self.assertTrue((out / "assets" / "icon.svg").is_file())
             self.assertTrue((out / "skills").is_dir() and (out / "agents").is_dir())
+            self.assertEqual(
+                json.loads((out / "package.json").read_text())["name"],
+                "merv-kilo-plugin",
+            )
             self.assertTrue(
                 os.access(out / "clients" / "hermes" / "install.sh", os.X_OK)
             )

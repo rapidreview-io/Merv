@@ -32,6 +32,10 @@ gemini extensions install https://github.com/rapidreview-io/Merv \
 
 # Cursor (then install merv from rapidreview in /plugin and Connect in Customize)
 cursor-agent plugin marketplace add https://github.com/rapidreview-io/Merv
+
+# Kilo Code
+kilo plugin 'github:rapidreview-io/Merv#merv-client' --global
+kilo mcp auth merv
 ```
 
 Claude users should enable auto-update for the RapidReview marketplace once in
@@ -39,7 +43,8 @@ Claude users should enable auto-update for the RapidReview marketplace once in
 marketplaces update with `codex plugin marketplace upgrade rapidreview`
 followed by `codex plugin add merv@rapidreview`. Cursor's individual custom
 marketplace currently requires an interactive install and has no documented
-automatic-update guarantee.
+automatic-update guarantee. Kilo checks Merv's hosted skill catalog at each new
+session; run `/reload` to refresh the session already open.
 
 Clone the repository only for self-hosting, client development, or the local
 agent runner:

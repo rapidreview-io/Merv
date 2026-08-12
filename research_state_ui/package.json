@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && python3 ../merv/clients/kilo/build_catalog.py --out dist/.well-known/skills",
     "preview": "vite preview"
   },
   "dependencies": {

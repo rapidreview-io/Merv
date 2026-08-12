@@ -1,0 +1,20 @@
+{
+  "name": "merv-kilo-plugin",
+  "version": "0.1.4",
+  "description": "Native Kilo Code adapter for the hosted Merv research workflow.",
+  "type": "module",
+  "main": "./clients/kilo/plugin.js",
+  "exports": {
+    "./server": {
+      "import": "./clients/kilo/plugin.js"
+    }
+  },
+  "license": "UNLICENSED",
+  "author": {
+    "name": "RapidReview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rapidreview-io/Merv.git"
+  }
+}

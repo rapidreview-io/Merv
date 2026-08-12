@@ -47,6 +47,9 @@ INCLUDE = (
     "assets",
     # Hermes uses the canonical skill tree plus a thin setup guide/installer.
     "clients/hermes",
+    # Kilo installs this generated branch as a native Git-backed plugin. The
+    # adapter injects the OAuth MCP server, remote catalog, and reviewer agents.
+    "clients/kilo",
     # Skills + reviewer agents (auto-discovered by every platform)
     "skills",
     "agents",
@@ -126,6 +129,13 @@ def build(out: Path) -> int:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(MERV_ROOT / rel, dst)
         count += 1
+
+    # Kilo's native plugin installer resolves an npm-compatible Git spec and
+    # therefore expects package.json at the selected branch root. Keep its
+    # source beside the adapter; only the generated distribution gets this
+    # root-level copy.
+    shutil.copy2(MERV_ROOT / "clients" / "kilo" / "package.json", out / "package.json")
+    count += 1
     print(f"built slim bundle: {count} files -> {out}")
     return count
 

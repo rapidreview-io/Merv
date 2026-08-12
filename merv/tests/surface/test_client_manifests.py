@@ -36,19 +36,18 @@ class HttpMcpManifestTest(unittest.TestCase):
         self.assertEqual(server["httpUrl"], HOSTED_MCP_URL)
         self.assertNotIn("headers", server)
 
-    def test_kilo_example_uses_environment_key_indirection(self) -> None:
-        example = (PLUGIN_ROOT / "clients" / "kilo" / "kilo.jsonc.example").read_text()
-        config = json.loads(example)
-        server = config["mcp"]["merv"]
-        self.assertEqual(server["type"], "remote")
-        self.assertEqual(server["url"], HOSTED_MCP_URL)
-        self.assertEqual(
-            server["headers"]["Authorization"],
-            "Bearer {env:MERV_MCP_KEY}",
-        )
-        # The installer writes this block verbatim when no config exists yet.
-        installer = (PLUGIN_ROOT / "clients" / "kilo" / "install.sh").read_text()
-        self.assertIn(example.strip(), installer)
+    def test_kilo_plugin_is_oauth_first(self) -> None:
+        adapter = PLUGIN_ROOT / "clients" / "kilo"
+        package = json.loads((adapter / "package.json").read_text())
+        plugin = (adapter / "plugin.js").read_text()
+        self.assertEqual(package["name"], "merv-kilo-plugin")
+        self.assertEqual(package["version"], "0.1.4")
+        self.assertIn(HOSTED_MCP_URL, plugin)
+        self.assertIn("https://rapidreview.io/merv/.well-known/skills/", plugin)
+        self.assertIn("type: 'remote'", plugin)
+        self.assertNotIn("headers", plugin)
+        self.assertNotIn("MERV_MCP_KEY", plugin)
+        self.assertNotIn("mk_", plugin)
 
     def test_opencode_example_uses_environment_key_indirection(self) -> None:
         config = json.loads(
@@ -78,6 +77,10 @@ class HttpMcpManifestTest(unittest.TestCase):
         plugin_version = claude["version"]
         self.assertRegex(plugin_version, r"^\d+\.\d+\.\d+$")
         self.assertEqual(cursor["version"], plugin_version)
+        kilo = json.loads(
+            (PLUGIN_ROOT / "clients" / "kilo" / "package.json").read_text()
+        )
+        self.assertEqual(kilo["version"], plugin_version)
         self.assertEqual(codex["version"].split("+", 1)[0], plugin_version)
         self.assertEqual(codex["name"], "merv")
         codex_server = codex["mcpServers"]["merv"]

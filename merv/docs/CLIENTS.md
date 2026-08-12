@@ -6,7 +6,7 @@ provisioning — lives in the client-neutral brain service (localhost
 `merv-http`, or the hosted brain). Every client — local Claude Code, cloud
 Codex, Cursor, Gemini CLI, OpenCode, Kilo, Hermes Agent, OpenHands, and
 Replit Agent — connects directly to the brain's `POST /mcp` endpoint. Bundled clients
-for Codex, Claude Code, Cursor, and Gemini CLI default to native MCP OAuth. Their
+for Codex, Claude Code, Cursor, Gemini CLI, and Kilo Code default to native MCP OAuth. Their
 manifests contain the URL and no credential header; the client discovers Merv's
 DCR + PKCE flow and refreshes tokens without exposing a key to the user. Static
 `MERV_MCP_KEY` authentication remains for headless clients and the agent runner.
@@ -24,7 +24,7 @@ root. Each client gets a thin adapter on top of the same `bin/`, `skills/`, and
 | Cursor | `.cursor-plugin/plugin.json` + `mcp.json` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered (Agent Skills standard) | `agents/` auto-discovered |
 | Gemini CLI | `gemini-extension.json` + `GEMINI.md` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered (Agent Skills standard) | `agents/` auto-discovered |
 | OpenCode | `clients/opencode/` (installer + agents + config example) | `opencode.json` `mcp` block → `<base>/mcp` (same header) | symlinked into `~/.config/opencode/skills/` | symlinked into `~/.config/opencode/agents/` |
-| Kilo | `clients/kilo/` (installer + config example) | `kilo.jsonc` `mcp` block → `<base>/mcp` (same header) | symlinked into `~/.kilo/skills/`; also reads repo `.agents/skills/` | shared OpenCode wrappers symlinked into `~/.config/kilo/agent/` |
+| Kilo Code | `clients/kilo/` Git-backed native plugin | URL-only remote server → `<base>/mcp`; native OAuth | hosted `skills.urls` catalog; content-versioned refresh | plugin-injected read-only subagents that load the matching hosted skill |
 | Hermes Agent | `clients/hermes/` (installer + guide) | `config.yaml` `mcp_servers` entry → `<base>/mcp` (bearer header or OAuth) | `skills.external_dirs`, or POSIX installer symlinks | `delegate_task` with the handoff prompt |
 | OpenHands | `AGENTS.md` + `clients/openhands/README.md` | local `config.toml` / CLI, or Cloud **Settings → MCP** | root `AGENTS.md`; optional repo skill directories at `.agents/skills/<name>/SKILL.md` | none; second session/agent or inline |
 | Replit Agent | `clients/replit/README.md` | account **MCP Servers** settings → `<base>/mcp` | no Merv skills installed by the connection | none; second session/agent or inline |
@@ -65,8 +65,9 @@ Shared invariants across all clients:
   (`name`, `description`) so Claude Code, Cursor, and Gemini CLI can all load
   them. OpenCode needs `mode`/`permission` frontmatter, so it has its own thin
   agent wrappers in `clients/opencode/agents/` that load the matching review
-  skill. Kilo's agent files use the same frontmatter, so its installer links
-  those wrappers unchanged.
+  skill. Kilo's native plugin injects equivalent read-only subagents into its
+  effective configuration; their detailed instructions stay in the remotely
+  updated skills.
 - The committed manifests pin every bundled client to the hosted brain
   `https://experiments.rapidreview.io/mcp`, so out of the box each client dials
   the hosted brain and runs no local brain. They intentionally contain no
@@ -175,10 +176,12 @@ python3 scripts/build_client_bundle.py --out dist/plugin   # gitignored
 
 The repository workflow builds and force-publishes this output to the dedicated
 generated `merv-client` branch after every update to `main`. Gemini installs
-that branch and tracks its HEAD with `--auto-update`; nobody edits the generated
-branch by hand. Codex, Claude Code, and Cursor consume their marketplace
-manifests from `main`, whose entries resolve the canonical `merv/` source tree.
-Release changes that alter skills or manifests therefore reach every
+that branch and tracks its HEAD with `--auto-update`; Kilo installs the same
+branch as an npm-compatible Git plugin. Nobody edits the generated branch by
+hand. Codex, Claude Code, and Cursor consume their marketplace manifests from
+`main`, whose entries resolve the canonical `merv/` source tree. The hosted UI
+build publishes Kilo's content-versioned skill catalog directly from the same
+canonical `skills/` tree. Release changes therefore reach every
 provider-independent distribution source without waiting for a provider review.
 
 ## Verify a connection
@@ -420,40 +423,36 @@ Notes:
 
 ## Use with Kilo
 
-Kilo (the VS Code extension and the OpenCode-derived CLI) reads the Agent
-Skills standard natively and registers remote MCP servers from `kilo.jsonc`.
-It has no declarative plugin bundle, so the adapter is an installer:
+Kilo Code's CLI and VS Code extension share a plugin/configuration runtime. Its
+native plugin command accepts npm-compatible Git package specs, so the generated
+`merv-client` branch installs globally without cloning this repository:
 
 ```bash
-/path/to/merv/clients/kilo/install.sh
+kilo plugin 'github:rapidreview-io/Merv#merv-client' --global
+kilo mcp auth merv
 ```
 
-It symlinks the canonical skills into `~/.kilo/skills/`, the shared
-reviewer-agent wrappers into `~/.config/kilo/agent/`, and registers the MCP
-server: a missing global `~/.config/kilo/kilo.jsonc` is written outright
-(see [clients/kilo/kilo.jsonc.example](../clients/kilo/kilo.jsonc.example));
-an existing one is never edited in place — the `mcp` block to merge is
-printed instead.
+The plugin's configuration hook registers the URL-only hosted MCP server, adds
+Merv's hosted catalog to `skills.urls`, and supplies the four read-only reviewer
+subagents. `kilo mcp auth merv` performs native MCP discovery, DCR, PKCE browser
+consent, secure token storage, and refresh. There is no Merv key or local proxy.
 
 Notes:
 
-- The `mcp` block registers Merv as a remote HTTP MCP server (the brain's
-  `/mcp` endpoint with `Authorization: Bearer {env:MERV_MCP_KEY}`), so there
-  is no local process to spawn. A project-level `.kilo/kilo.jsonc` takes
-  precedence over the global `~/.config/kilo/kilo.jsonc`.
-- Kilo's agent files use the same `description`/`mode: subagent`/`permission`
-  frontmatter as OpenCode's, so the installer links the wrappers from
-  `clients/opencode/agents/` unchanged; they load the matching review skill
-  and submit through `review.start` / `review.submit` with their own child
-  session ids.
+- Kilo discovers remote skills at the start of every session. Each catalog
+  entry has a SHA-256 content version; when it changes, Kilo downloads the
+  complete new skill before atomically replacing its cached copy. `/reload`
+  performs the same discovery in a session that is already open. A failed
+  download leaves the previous working version in place.
+- The plugin-injected reviewer agents use `mode: subagent` and deny edits;
+  design, attempt, and reflection reviewers also deny shell execution. Each
+  wrapper loads its matching remote review skill and submits through
+  `review.start` / `review.submit` with its own child session id.
 - Kilo also loads project-level `.agents/skills/` (the open agent standard) by
   default, so a repo that vendors the Merv skills there needs no global
   install.
-- Older Kilo Code extension builds predate the unified config: they read
-  `~/.kilocode/skills/` and register MCP servers in `.kilocode/mcp.json`
-  (`mcpServers` map, `"type": "streamable-http"`). If skills or the server do
-  not appear after install, check which generation the extension is on and
-  mirror the same content there.
+- The current unified Kilo CLI is required. If `kilo plugin` is unavailable,
+  update Kilo before installing Merv.
 
 ## Use with Hermes Agent
 

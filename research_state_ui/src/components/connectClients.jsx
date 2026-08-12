@@ -1,9 +1,9 @@
 /**
  * Roster and setup content for the "Connect your agent" onboarding.
  *
- * Four clients ship a native Merv plugin with browser OAuth (README "Hosted
- * setup"): Codex, Claude Code, Gemini CLI, and Cursor. Every other client —
- * OpenCode, Kilo, Hermes Agent, OpenHands, Replit Agent, and headless
+ * Five clients ship a native Merv integration with browser OAuth (README
+ * "Hosted setup"): Codex, Claude Code, Gemini CLI, Cursor, and Kilo. Every
+ * other client — OpenCode, Hermes Agent, OpenHands, Replit Agent, and headless
  * runners/CI on MERV_MCP_KEY — is documented per client in the public repo.
  * The copy lives here, outside the wizard, so doc edits never touch flow
  * logic. Command strings must stay in lockstep with README.md and
@@ -108,11 +108,32 @@ export const NATIVE_CLIENTS = [
       },
     ],
   },
+  {
+    id: 'kilo',
+    name: 'Kilo Code',
+    maker: 'Kilo’s coding agent',
+    steps: [
+      {
+        title: 'Install the plugin globally',
+        commands: ["kilo plugin 'github:rapidreview-io/Merv#merv-client' --global"],
+        note: 'The plugin registers Merv, its remotely updated skills, and its reviewer subagents for both the CLI and VS Code extension.',
+      },
+      {
+        title: 'Sign in from the terminal',
+        commands: ['kilo mcp auth merv'],
+        note: CONSENT_NOTE,
+      },
+      {
+        title: 'Updating later',
+        commands: ['/reload'],
+        note: 'Kilo checks Merv’s skill catalog at every new session. Use /reload only when you want an update in the session already open.',
+      },
+    ],
+  },
 ];
 
 export const OTHER_CLIENT_NAMES = [
   'OpenCode',
-  'Kilo',
   'Hermes Agent',
   'OpenHands',
   'Replit Agent',
@@ -151,6 +172,9 @@ const MARKS = {
   ),
   cursor: (
     <path d="M6 4l13 6.5-5.6 1.7L11 18z" />
+  ),
+  kilo: (
+    <path d="M7 5v14M17 5L7 13M11 10l7 9" />
   ),
   other: (
     <>
