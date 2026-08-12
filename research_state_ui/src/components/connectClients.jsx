@@ -13,11 +13,7 @@
 export const MERV_REPO_URL = 'https://github.com/rapidreview-io/Merv';
 export const CLIENT_DOCS_URL = `${MERV_REPO_URL}/blob/main/merv/docs/CLIENTS.md`;
 
-// Consent guidance is shared: every native client ends in the same browser
-// OAuth flow, and "All my projects" is what makes one sign-in permanent.
-const CONSENT_NOTE =
-  'Your browser opens Merv’s consent screen. Approve All my projects — one '
-  + 'grant covers every project you belong to, and tokens refresh on their own.';
+const CONSENT_NOTE = 'Approve All my projects in the browser.';
 
 export const NATIVE_CLIENTS = [
   {
@@ -43,7 +39,7 @@ export const NATIVE_CLIENTS = [
           'codex plugin marketplace upgrade rapidreview',
           'codex plugin add merv@rapidreview',
         ],
-        note: 'Codex updates repository marketplaces explicitly — rerun these two when you want the latest.',
+        note: 'Rerun both commands to update.',
       },
     ],
   },
@@ -66,7 +62,7 @@ export const NATIVE_CLIENTS = [
       },
       {
         title: 'Once: turn on auto-update',
-        note: 'In /plugin → Marketplaces → RapidReview, select Enable auto-update. Claude leaves third-party marketplaces manual by default.',
+        note: 'In /plugin → Marketplaces → RapidReview, enable auto-update.',
       },
     ],
   },
@@ -80,12 +76,12 @@ export const NATIVE_CLIENTS = [
         commands: [
           'gemini extensions install https://github.com/rapidreview-io/Merv --ref merv-client --auto-update',
         ],
-        note: '--auto-update tracks the client branch, so the extension stays current on its own.',
+        note: 'Updates automatically.',
       },
       {
         title: 'Sign in inside Gemini',
         commands: ['/mcp auth merv'],
-        note: `Start gemini first, then run this. ${CONSENT_NOTE}`,
+        note: `Run inside Gemini. ${CONSENT_NOTE}`,
       },
     ],
   },
@@ -100,11 +96,11 @@ export const NATIVE_CLIENTS = [
       },
       {
         title: 'Install inside Cursor Agent',
-        note: 'Start cursor-agent, open /plugin, choose the rapidreview marketplace, and install merv at user scope.',
+        note: 'In /plugin, install merv from rapidreview at user scope.',
       },
       {
         title: 'Connect',
-        note: 'Select Connect for Merv under Customize — Cursor runs the browser sign-in. You never handle a key.',
+        note: 'In Customize, select Connect for Merv.',
       },
     ],
   },
@@ -116,7 +112,6 @@ export const NATIVE_CLIENTS = [
       {
         title: 'Install the plugin globally',
         commands: ["kilo plugin 'github:rapidreview-io/Merv#merv-client' --global"],
-        note: 'The plugin registers Merv, its remotely updated skills, and its reviewer subagents for both the CLI and VS Code extension.',
       },
       {
         title: 'Sign in from the terminal',
@@ -124,9 +119,9 @@ export const NATIVE_CLIENTS = [
         note: CONSENT_NOTE,
       },
       {
-        title: 'Updating later',
+        title: 'Update this session',
         commands: ['/reload'],
-        note: 'Kilo checks Merv’s skill catalog at every new session. Use /reload only when you want an update in the session already open.',
+        note: 'New sessions update automatically.',
       },
     ],
   },
@@ -157,49 +152,27 @@ export function verifyPrompt(projectName) {
   );
 }
 
-/* Client marks: neutral 24-grid stroke glyphs in the sidebar icon language
-   (fill none, currentColor, 1.8 stroke, round caps). No trademark artwork —
-   a tile plus the client's name does the identifying. */
-const MARKS = {
-  codex: (
-    <path d="M9 8l-4 4 4 4M15 8l4 4-4 4" />
-  ),
-  claude: (
-    <path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.6 6.6l2.8 2.8M14.6 14.6l2.8 2.8M17.4 6.6l-2.8 2.8M9.4 14.6l-2.8 2.8" />
-  ),
-  gemini: (
-    <path d="M12 4c.6 4.4 3.6 7.4 8 8-4.4.6-7.4 3.6-8 8-.6-4.4-3.6-7.4-8-8 4.4-.6 7.4-3.6 8-8z" />
-  ),
-  cursor: (
-    <path d="M6 4l13 6.5-5.6 1.7L11 18z" />
-  ),
-  kilo: (
-    <path d="M7 5v14M17 5L7 13M11 10l7 9" />
-  ),
-  other: (
-    <>
-      <circle cx="5" cy="12" r="1.1" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none" />
-      <circle cx="19" cy="12" r="1.1" fill="currentColor" stroke="none" />
-    </>
-  ),
+const CLIENT_ICONS = {
+  codex: 'clients/codex.svg',
+  claude: 'clients/claude.svg',
+  gemini: 'clients/gemini.svg',
+  cursor: 'clients/cursor.svg',
+  kilo: 'clients/kilo.svg',
 };
 
 export function ClientMark({ client, size = 30 }) {
+  const icon = CLIENT_ICONS[client];
   return (
     <span className="cnx-mark" style={{ width: size, height: size }} aria-hidden="true">
-      <svg
-        viewBox="0 0 24 24"
-        width={size - 12}
-        height={size - 12}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        {MARKS[client] || MARKS.other}
-      </svg>
+      {icon ? (
+        <img src={`${import.meta.env.BASE_URL}${icon}`} alt="" />
+      ) : (
+        <svg viewBox="0 0 24 24" width={size - 12} height={size - 12}>
+          <circle cx="5" cy="12" r="1.1" fill="currentColor" />
+          <circle cx="12" cy="12" r="1.1" fill="currentColor" />
+          <circle cx="19" cy="12" r="1.1" fill="currentColor" />
+        </svg>
+      )}
     </span>
   );
 }

@@ -6504,10 +6504,11 @@ textarea.sbxpw-input { font-family: var(--mono, ui-monospace, monospace); font-s
 --------------------------------------------------------------------------- */
 .cnx-mark {
   display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 8px; flex: none;
+  border-radius: 8px; flex: none; overflow: hidden;
   background: rgba(var(--faint-rgb), 0.12);
   color: var(--muted);
 }
+.cnx-mark img { display: block; width: 100%; height: 100%; object-fit: contain; }
 
 /* Client picker cards (wizard step 1 + Settings tab). */
 .cnx-grid {

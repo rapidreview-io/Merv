@@ -94,9 +94,8 @@ kilo plugin 'github:rapidreview-io/Merv#merv-client' --global
 kilo mcp auth merv
 ```
 
-Kilo checks Merv's hosted skill catalog at the start of every session. Run
-`/reload` inside an existing session to receive a published skill update
-immediately.
+Skills update when a new session starts. Run `/reload` to update the current
+session.
 
 Headless runners and CI use `MERV_MCP_KEY`. See
 [Authentication](merv/docs/AUTH.md#when-a-static-key-is-still-required) and

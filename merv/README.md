@@ -43,8 +43,8 @@ Claude users should enable auto-update for the RapidReview marketplace once in
 marketplaces update with `codex plugin marketplace upgrade rapidreview`
 followed by `codex plugin add merv@rapidreview`. Cursor's individual custom
 marketplace currently requires an interactive install and has no documented
-automatic-update guarantee. Kilo checks Merv's hosted skill catalog at each new
-session; run `/reload` to refresh the session already open.
+automatic-update guarantee. Kilo updates skills at session start; run `/reload`
+to update the current session.
 
 Clone the repository only for self-hosting, client development, or the local
 agent runner:
