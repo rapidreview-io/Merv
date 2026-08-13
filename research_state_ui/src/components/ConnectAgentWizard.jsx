@@ -183,10 +183,7 @@ export default function ConnectAgentWizard({ projectId, projectName, initialClie
               {NATIVE_CLIENTS.map((c) => (
                 <button key={c.id} type="button" className="cnx-choice" onClick={() => pick(c.id)}>
                   <ClientMark client={c.id} />
-                  <span className="cnx-choice-text">
-                    <span className="cnx-choice-title">{c.name}</span>
-                    <span className="cnx-choice-sub">{c.maker}</span>
-                  </span>
+                  <span className="cnx-choice-title">{c.name}</span>
                 </button>
               ))}
               <button

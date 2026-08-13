@@ -96,20 +96,14 @@ export function ConnectAgentSettings({ projectId }) {
     <>
       <div className="settings-panel-head">
         <p className="settings-summary">
-          Your agent talks straight to Merv over MCP — install its plugin,
-          sign in from the terminal, and its calls appear under Traffic &
-          Tool I/O. Pick a client for the guided setup; replay it any time
-          for another machine.
+          Choose a client to connect.
         </p>
       </div>
       <div className="cnx-grid cnx-grid--settings">
         {NATIVE_CLIENTS.map((c) => (
           <button key={c.id} type="button" className="cnx-choice" onClick={() => open(c.id)}>
             <ClientMark client={c.id} />
-            <span className="cnx-choice-text">
-              <span className="cnx-choice-title">{c.name}</span>
-              <span className="cnx-choice-sub">{c.maker}</span>
-            </span>
+            <span className="cnx-choice-title">{c.name}</span>
           </button>
         ))}
         <button

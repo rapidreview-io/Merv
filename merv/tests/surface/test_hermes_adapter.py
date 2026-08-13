@@ -105,6 +105,10 @@ class HermesAdapterTest(unittest.TestCase):
 
         root = PLUGIN_ROOT.parent
         command = "hermes plugins install rapidreview-io/merv-hermes-client --enable"
+        connect = (
+            "hermes mcp add merv --url "
+            "https://experiments.rapidreview.io/mcp --auth oauth"
+        )
         update = "hermes plugins update merv"
         for path in (
             root / "README.md",
@@ -113,6 +117,7 @@ class HermesAdapterTest(unittest.TestCase):
         ):
             copy = path.read_text()
             self.assertIn(command, copy, str(path))
+            self.assertIn(connect, copy, str(path))
             self.assertIn(update, copy, str(path))
 
 

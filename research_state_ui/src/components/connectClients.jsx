@@ -18,7 +18,6 @@ export const NATIVE_CLIENTS = [
   {
     id: 'codex',
     name: 'Codex',
-    maker: 'OpenAI’s coding agent',
     steps: [
       {
         title: 'Install the plugin',
@@ -45,7 +44,6 @@ export const NATIVE_CLIENTS = [
   {
     id: 'claude',
     name: 'Claude Code',
-    maker: 'Anthropic’s coding agent',
     steps: [
       {
         title: 'Install the plugin',
@@ -68,7 +66,6 @@ export const NATIVE_CLIENTS = [
   {
     id: 'gemini',
     name: 'Gemini CLI',
-    maker: 'Google’s coding agent',
     steps: [
       {
         title: 'Install the extension',
@@ -87,7 +84,6 @@ export const NATIVE_CLIENTS = [
   {
     id: 'cursor',
     name: 'Cursor',
-    maker: 'Cursor’s terminal agent',
     steps: [
       {
         title: 'Add the marketplace',
@@ -106,7 +102,6 @@ export const NATIVE_CLIENTS = [
   {
     id: 'kilo',
     name: 'Kilo Code',
-    maker: 'Kilo’s coding agent',
     steps: [
       {
         title: 'Install the plugin globally',
@@ -127,7 +122,6 @@ export const NATIVE_CLIENTS = [
   {
     id: 'hermes',
     name: 'Hermes Agent',
-    maker: 'Nous Research’s agent',
     steps: [
       {
         title: 'Install the plugin',
