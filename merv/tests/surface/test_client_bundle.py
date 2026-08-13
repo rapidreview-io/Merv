@@ -98,10 +98,14 @@ class ClientBundleTest(unittest.TestCase):
             "clients/hermes/plugin/.github/workflows/sync.yml",
             "clients/hermes/plugin/after-install.md",
             "clients/hermes/plugin/plugin.yaml",
+            "clients/copilot/README.md",
             "clients/kilo/README.md",
             "clients/kilo/build_catalog.py",
             "clients/kilo/package.json",
             "clients/kilo/plugin.js",
+            "clients/qwen/QWEN.md",
+            "clients/qwen/README.md",
+            "clients/qwen/qwen-extension.json",
             "src/merv/client/agent_runner.py",
             "src/merv/client/cli.py",
             "src/merv/client/runs_wait.py",
@@ -166,6 +170,10 @@ class ClientBundleTest(unittest.TestCase):
             build_client_bundle.build(out)
             self.assertTrue((out / "assets" / "icon.svg").is_file())
             self.assertTrue((out / "skills").is_dir() and (out / "agents").is_dir())
+            qwen = json.loads((out / "qwen-extension.json").read_text())
+            self.assertEqual(qwen["name"], "merv")
+            self.assertTrue(qwen["mcpServers"]["merv"]["oauth"]["enabled"])
+            self.assertTrue((out / qwen["contextFileName"]).is_file())
             self.assertEqual(
                 json.loads((out / "package.json").read_text())["name"],
                 "merv-kilo-plugin",

@@ -2,8 +2,9 @@
 
 Merv is a plugin for agentic coding platforms that helps agents run machine learning research as gated, reviewable experiment workflows.
 
-It is designed to work with Claude Code, Codex, Cursor, Gemini CLI, Kilo Code,
-Hermes Agent, OpenCode, OpenHands, Replit Agent, and other MCP-capable agent platforms. It includes a
+It is designed to work with Claude Code, Codex, GitHub Copilot CLI, Cursor,
+Gemini CLI, Qwen Code, Kilo Code, Hermes Agent, OpenCode, OpenHands, Replit
+Agent, and other MCP-capable agent platforms. It includes a
 frontend for humans to observe agent behavior ranging from macro research
 strategy to experiment execution specifics.
 
@@ -36,8 +37,9 @@ After a set of experiments is complete, the plugin drives a project-wide reflect
 
 Merv has three main pieces:
 
-- **Agent adapters** connect Claude Code, Codex, Cursor, Gemini CLI, Kilo Code,
-  Hermes Agent, OpenCode, OpenHands, Replit Agent, and other agentic clients to the same workflow.
+- **Agent adapters** connect Claude Code, Codex, GitHub Copilot CLI, Cursor,
+  Gemini CLI, Qwen Code, Kilo Code, Hermes Agent, OpenCode, OpenHands, Replit
+  Agent, and other agentic clients to the same workflow.
 - **Backend** owns the research state: projects, claims, experiments, artifacts, review gates, reflections, and sandbox orchestration.
 - **Frontend** gives humans a visual way to inspect the project: experiments, reviews, artifacts, logic graphs, timelines, and current progress.
 
@@ -59,6 +61,16 @@ codex mcp login merv
 
 Update with `codex plugin marketplace upgrade rapidreview`, then `codex plugin add merv@rapidreview`.
 
+### GitHub Copilot CLI
+
+```bash
+copilot plugin marketplace add rapidreview-io/Merv
+copilot plugin install merv@rapidreview
+```
+
+Start Copilot and run `/mcp auth merv`. Update with
+`copilot plugin update merv@rapidreview`.
+
 ### Claude Code
 
 ```bash
@@ -76,6 +88,15 @@ gemini extensions install https://github.com/rapidreview-io/Merv --ref merv-clie
 ```
 
 Start Gemini and run `/mcp auth merv`. The extension updates automatically.
+
+### Qwen Code
+
+```bash
+qwen extensions install rapidreview-io/Merv --ref=merv-client
+```
+
+Start Qwen, open `/mcp`, and sign in to Merv. Update with
+`qwen extensions update merv` when prompted.
 
 ### Cursor
 

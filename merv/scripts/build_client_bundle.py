@@ -50,6 +50,10 @@ INCLUDE = (
     # Kilo installs this generated branch as a native Git-backed plugin. The
     # adapter injects the OAuth MCP server, remote catalog, and reviewer agents.
     "clients/kilo",
+    # Copilot reuses the Claude-compatible marketplace; Qwen's source manifest
+    # is copied to the generated branch root below.
+    "clients/copilot",
+    "clients/qwen",
     # Skills + reviewer agents (auto-discovered by every platform)
     "skills",
     "agents",
@@ -136,6 +140,15 @@ def build(out: Path) -> int:
     # root-level copy.
     shutil.copy2(MERV_ROOT / "clients" / "kilo" / "package.json", out / "package.json")
     count += 1
+    # Qwen installs the generated branch as a native extension. Keep its source
+    # under clients/qwen in main, and expose only the required root files in the
+    # generated distribution.
+    shutil.copy2(
+        MERV_ROOT / "clients" / "qwen" / "qwen-extension.json",
+        out / "qwen-extension.json",
+    )
+    shutil.copy2(MERV_ROOT / "clients" / "qwen" / "QWEN.md", out / "QWEN.md")
+    count += 2
     print(f"built slim bundle: {count} files -> {out}")
     return count
 

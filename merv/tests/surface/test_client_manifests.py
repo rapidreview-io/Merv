@@ -36,6 +36,34 @@ class HttpMcpManifestTest(unittest.TestCase):
         self.assertEqual(server["httpUrl"], HOSTED_MCP_URL)
         self.assertNotIn("headers", server)
 
+    def test_qwen_uses_the_same_oauth_first_http_endpoint(self) -> None:
+        adapter = PLUGIN_ROOT / "clients" / "qwen"
+        manifest = json.loads((adapter / "qwen-extension.json").read_text())
+        self.assertEqual(manifest["name"], "merv")
+        plugin_version = json.loads(
+            (PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text()
+        )["version"]
+        self.assertEqual(manifest["version"], plugin_version)
+        self.assertEqual(manifest["contextFileName"], "QWEN.md")
+        self.assertTrue((adapter / manifest["contextFileName"]).is_file())
+        server = manifest["mcpServers"]["merv"]
+        self.assertEqual(server["httpUrl"], HOSTED_MCP_URL)
+        self.assertEqual(server["oauth"], {"enabled": True})
+        self.assertNotIn("headers", server)
+        serialized = json.dumps(server)
+        self.assertNotIn("MERV_MCP_KEY", serialized)
+        self.assertNotIn("mk_", serialized)
+
+    def test_copilot_reuses_the_claude_compatible_plugin(self) -> None:
+        manifest = json.loads(
+            (PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text()
+        )
+        self.assertEqual(manifest["name"], "merv")
+        self.assertTrue((PLUGIN_ROOT / ".mcp.json").is_file())
+        self.assertTrue((PLUGIN_ROOT / "skills").is_dir())
+        self.assertTrue((PLUGIN_ROOT / "agents").is_dir())
+        self.assertTrue((PLUGIN_ROOT / "clients" / "copilot" / "README.md").is_file())
+
     def test_kilo_plugin_is_oauth_first(self) -> None:
         adapter = PLUGIN_ROOT / "clients" / "kilo"
         package = json.loads((adapter / "package.json").read_text())
@@ -122,6 +150,24 @@ class HttpMcpManifestTest(unittest.TestCase):
             (PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text()
         )["version"]
         self.assertEqual(release_version, packaged_version)
+
+    def test_copilot_and_qwen_setup_copy_is_public(self) -> None:
+        root = PLUGIN_ROOT.parent
+        readme = (root / "README.md").read_text()
+        ui = (
+            root
+            / "research_state_ui"
+            / "src"
+            / "components"
+            / "connectClients.jsx"
+        ).read_text()
+        for command in (
+            "copilot plugin install merv@rapidreview",
+            "qwen extensions install rapidreview-io/Merv --ref=merv-client",
+        ):
+            with self.subTest(command=command):
+                self.assertIn(command, readme)
+                self.assertIn(command, ui)
 
     def test_release_version_lockstep(self) -> None:
         # One release number everywhere: a UI or package left behind produces

@@ -1,7 +1,7 @@
 # Merv
 
-Merv gives agentic coding clients (Claude Code, Codex, Cursor, Gemini CLI,
-OpenCode, Kilo, Hermes Agent, OpenHands, Replit Agent) a shared state machine
+Merv gives agentic coding clients (Claude Code, Codex, GitHub Copilot CLI,
+Cursor, Gemini CLI, Qwen Code, OpenCode, Kilo, Hermes Agent, OpenHands, Replit Agent) a shared state machine
 for machine learning research: claims, experiments, submitted artifacts, review
 gates, reflection waves, and sandboxed execution. A brain running locally or
 as a hosted service owns durable research state; every agent client connects
@@ -21,6 +21,10 @@ codex plugin marketplace add rapidreview-io/Merv
 codex plugin add merv@rapidreview
 codex mcp login merv
 
+# GitHub Copilot CLI (then run /mcp auth merv inside Copilot)
+copilot plugin marketplace add rapidreview-io/Merv
+copilot plugin install merv@rapidreview
+
 # Claude Code
 claude plugin marketplace add rapidreview-io/Merv
 claude plugin install merv@rapidreview
@@ -29,6 +33,9 @@ claude mcp login plugin:merv:merv
 # Gemini CLI (then run /mcp auth merv inside Gemini)
 gemini extensions install https://github.com/rapidreview-io/Merv \
   --ref merv-client --auto-update
+
+# Qwen Code (then open /mcp inside Qwen and sign in to Merv)
+qwen extensions install rapidreview-io/Merv --ref=merv-client
 
 # Cursor (then install merv from rapidreview in /plugin and Connect in Customize)
 cursor-agent plugin marketplace add https://github.com/rapidreview-io/Merv
@@ -45,7 +52,9 @@ hermes mcp add merv --url https://experiments.rapidreview.io/mcp --auth oauth
 Claude users should enable auto-update for the RapidReview marketplace once in
 `/plugin`; Gemini's install flag enables it immediately. Codex custom
 marketplaces update with `codex plugin marketplace upgrade rapidreview`
-followed by `codex plugin add merv@rapidreview`. Cursor's individual custom
+followed by `codex plugin add merv@rapidreview`. Copilot updates with
+`copilot plugin update merv@rapidreview`; Qwen prompts when its tracked branch
+changes and updates with `qwen extensions update merv`. Cursor's individual custom
 marketplace currently requires an interactive install and has no documented
 automatic-update guarantee. Kilo updates skills at session start; run `/reload`
 to update the current session. Hermes updates with

@@ -32,7 +32,8 @@ dispatched by prefix (RapidReview's contract, reimplemented in
   Either way the key is external, so it can never create projects or touch
   operator diagnostics. OAuth (DCR + PKCE) mints audience-confined `mk_`
   access tokens (+ `mrt_` refresh) for interactive MCP clients, including
-  Codex, Claude Code, Cursor, Gemini CLI, Kilo Code, and Replit; the consent screen chooses
+  Codex, Claude Code, GitHub Copilot CLI, Cursor, Gemini CLI, Qwen Code, Kilo
+  Code, and Replit; the consent screen chooses
   the scope, and every rotation inherits it.
 
 Enforcement lives in the `attach_principal` middleware
@@ -78,7 +79,8 @@ for signed-in people; machine credentials remain unable to change membership.
   supabase_anon_key}`; the AuthGate then shows sign-in (email/password or
   Google). Nothing is baked into the bundle; local backends advertise
   `required: false` and the UI never loads supabase-js.
-- **Interactive MCP clients** (Codex, Claude Code, Cursor, Gemini CLI, Kilo Code, Replit):
+- **Interactive MCP clients** (Codex, Claude Code, GitHub Copilot CLI, Cursor,
+  Gemini CLI, Qwen Code, Kilo Code, Replit):
   every agent connects directly to the brain's `POST /mcp` endpoint. The
   committed manifests contain the URL and no credential header. A 401 response
   leads the client through RFC 9728/8414 discovery, dynamic client registration,

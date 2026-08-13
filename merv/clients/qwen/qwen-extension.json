@@ -1,0 +1,13 @@
+{
+  "name": "merv",
+  "version": "0.1.4",
+  "contextFileName": "QWEN.md",
+  "mcpServers": {
+    "merv": {
+      "httpUrl": "https://experiments.rapidreview.io/mcp",
+      "oauth": {
+        "enabled": true
+      }
+    }
+  }
+}

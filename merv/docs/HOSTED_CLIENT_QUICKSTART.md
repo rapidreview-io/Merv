@@ -14,6 +14,10 @@ codex plugin marketplace add rapidreview-io/Merv
 codex plugin add merv@rapidreview
 codex mcp login merv
 
+# GitHub Copilot CLI; then run /mcp auth merv in Copilot
+copilot plugin marketplace add rapidreview-io/Merv
+copilot plugin install merv@rapidreview
+
 # Claude Code
 claude plugin marketplace add rapidreview-io/Merv
 claude plugin install merv@rapidreview
@@ -22,6 +26,9 @@ claude mcp login plugin:merv:merv
 # Gemini CLI; then run /mcp auth merv in Gemini
 gemini extensions install https://github.com/rapidreview-io/Merv \
   --ref merv-client --auto-update
+
+# Qwen Code; then open /mcp in Qwen and sign in to Merv
+qwen extensions install rapidreview-io/Merv --ref=merv-client
 
 # Cursor; then install merv from rapidreview in /plugin and Connect in Customize
 cursor-agent plugin marketplace add https://github.com/rapidreview-io/Merv
@@ -41,9 +48,11 @@ Merv's OAuth endpoints, opens the browser, stores the token, and refreshes it.
 The user never sees or mints the underlying credential.
 
 Enable RapidReview marketplace auto-update once in Claude's `/plugin` screen.
-Gemini's `--auto-update` flag is sufficient. Codex repository marketplaces
+Gemini's `--auto-update` flag is sufficient. Qwen prompts when the tracked
+branch changes and updates with `qwen extensions update merv`. Codex repository marketplaces
 currently use `codex plugin marketplace upgrade rapidreview` followed by
-`codex plugin add merv@rapidreview`. Cursor has no non-interactive plugin install
+`codex plugin add merv@rapidreview`. Copilot updates with
+`copilot plugin update merv@rapidreview`. Cursor has no non-interactive plugin install
 command and no documented automatic-update guarantee for an individual custom
 marketplace; its team marketplace supports Auto Refresh. Kilo checks the
 hosted, content-versioned Merv skill catalog when a session starts; `/reload`

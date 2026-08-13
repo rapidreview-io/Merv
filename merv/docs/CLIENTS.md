@@ -1,12 +1,14 @@
 # Client Support
 
-The plugin targets nine agentic clients from one canonical content tree.
+The plugin targets eleven agentic clients from one canonical content tree.
 Everything heavy — state, gates, capability-based reviews, sandbox
 provisioning — lives in the client-neutral brain service (localhost
 `merv-http`, or the hosted brain). Every client — local Claude Code, cloud
-Codex, Cursor, Gemini CLI, OpenCode, Kilo, Hermes Agent, OpenHands, and
+Codex, GitHub Copilot CLI, Cursor, Gemini CLI, Qwen Code, OpenCode, Kilo,
+Hermes Agent, OpenHands, and
 Replit Agent — connects directly to the brain's `POST /mcp` endpoint. Native integrations
-for Codex, Claude Code, Cursor, Gemini CLI, Kilo Code, and Hermes Agent default to MCP OAuth. Their
+for Codex, Claude Code, GitHub Copilot CLI, Cursor, Gemini CLI, Qwen Code, Kilo
+Code, and Hermes Agent default to MCP OAuth. Their
 manifests contain the URL and no credential header; the client discovers Merv's
 DCR + PKCE flow and refreshes tokens without exposing a key to the user. Static
 `MERV_MCP_KEY` authentication remains for headless clients and the agent runner.
@@ -21,8 +23,10 @@ root. Each client gets a thin adapter on top of the same `bin/`, `skills/`, and
 |---|---|---|---|---|
 | Claude Code | `.claude-plugin/plugin.json` + `.mcp.json` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered | `agents/` auto-discovered (`merv:` namespace) |
 | Codex | `.codex-plugin/plugin.json` (inline MCP entry) | URL-only http server → `<base>/mcp`; native OAuth | `skills/` via manifest | spawned via review skills |
+| GitHub Copilot CLI | Claude-compatible marketplace + `.mcp.json` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered | `agents/` auto-discovered |
 | Cursor | `.cursor-plugin/plugin.json` + `mcp.json` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered (Agent Skills standard) | `agents/` auto-discovered |
 | Gemini CLI | `gemini-extension.json` + `GEMINI.md` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered (Agent Skills standard) | `agents/` auto-discovered |
+| Qwen Code | generated `qwen-extension.json` + `QWEN.md` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered | `agents/` auto-discovered |
 | OpenCode | `clients/opencode/` (installer + agents + config example) | `opencode.json` `mcp` block → `<base>/mcp` (same header) | symlinked into `~/.config/opencode/skills/` | symlinked into `~/.config/opencode/agents/` |
 | Kilo Code | `clients/kilo/` Git-backed native plugin | URL-only remote server → `<base>/mcp`; native OAuth | hosted `skills.urls` catalog; content-versioned refresh | plugin-injected read-only subagents that load the matching hosted skill |
 | Hermes Agent | generated `rapidreview-io/merv-hermes-client` native plugin | URL-only remote server → `<base>/mcp`; native OAuth | plugin-registered `merv:` skills | `delegate_task` with the handoff prompt |
@@ -55,7 +59,8 @@ Shared invariants across all clients:
   rely on the machine's `curl`, OpenSSH client, and `rsync`.
 - Skills follow the cross-tool Agent Skills layout (`skills/<name>/SKILL.md`
   with `name` + `description` frontmatter), which Claude Code, Codex, Cursor,
-  Gemini CLI, OpenCode, and Kilo all read natively. Hermes registers the same
+  Gemini CLI, GitHub Copilot CLI, Qwen Code, OpenCode, and Kilo all read
+  natively. Hermes registers the same
   tree as namespaced native plugin skills. OpenHands loads
   repository skill directories at `.agents/skills/<name>/SKILL.md` as on-demand
   AgentSkills (keyword activation needs explicit `triggers` frontmatter, which
@@ -63,7 +68,8 @@ Shared invariants across all clients:
   into that layout when needed. Replit's account connection does not install
   Merv skills.
 - Shared agent files in `agents/` keep frontmatter to the common subset
-  (`name`, `description`) so Claude Code, Cursor, and Gemini CLI can all load
+  (`name`, `description`) so Claude Code, GitHub Copilot CLI, Cursor, Gemini
+  CLI, and Qwen Code can all load
   them. OpenCode needs `mode`/`permission` frontmatter, so it has its own thin
   agent wrappers in `clients/opencode/agents/` that load the matching review
   skill. Kilo's native plugin injects equivalent read-only subagents into its
@@ -176,11 +182,11 @@ python3 scripts/build_client_bundle.py --out dist/plugin   # gitignored
 ```
 
 The repository workflow builds and force-publishes this output to the dedicated
-generated `merv-client` branch after every update to `main`. Gemini installs
-that branch and tracks its HEAD with `--auto-update`; Kilo installs the same
-branch as an npm-compatible Git plugin. Nobody edits the generated branch by
-hand. Codex, Claude Code, and Cursor consume their marketplace manifests from
-`main`, whose entries resolve the canonical `merv/` source tree. The hosted UI
+generated `merv-client` branch after every update to `main`. Gemini and Qwen
+install that branch and track its HEAD; Kilo installs the same branch as an
+npm-compatible Git plugin. Nobody edits the generated branch by hand. Codex,
+Claude Code, GitHub Copilot CLI, and Cursor consume their marketplace manifests
+from `main`, whose entries resolve the canonical `merv/` source tree. The hosted UI
 build publishes Kilo's content-versioned skill catalog directly from the same
 canonical `skills/` tree. The generated `rapidreview-io/merv-hermes-client`
 repository polls `main` every five minutes and rebuilds itself from
@@ -302,6 +308,29 @@ For headless `codex exec`, add an MCP-only server with
 `default_tools_approval_mode="approve"` so non-interactive tool calls do not die
 on an approval prompt.
 
+## Use with GitHub Copilot CLI
+
+Copilot CLI reads the repository's existing Claude-compatible marketplace,
+plugin manifest, `skills/`, `agents/`, and `.mcp.json`, so Merv does not carry a
+second Copilot package:
+
+```bash
+copilot plugin marketplace add rapidreview-io/Merv
+copilot plugin install merv@rapidreview
+```
+
+Start Copilot and run `/mcp auth merv`. Copilot discovers Merv's authorization
+and token endpoints, opens the browser, and stores and refreshes the resulting
+tokens. Update the plugin with:
+
+```bash
+copilot plugin update merv@rapidreview
+```
+
+This OAuth path applies to the interactive Copilot CLI. GitHub's cloud coding
+agent does not currently authenticate remote MCP servers with OAuth, so that
+separate surface still needs a configured secret.
+
 ## Use with Cursor
 
 The plugin ships a Cursor plugin bundle: [.cursor-plugin/plugin.json](../.cursor-plugin/plugin.json)
@@ -396,6 +425,32 @@ can be given genuinely separate MCP sessions on Gemini: an agent's inline
 `mcpServers` frontmatter opens its own connection to the brain. The shared agent
 files do not use this (they stay client-common); the capability +
 producer-session checks remain the load-bearing independence mechanism.
+
+## Use with Qwen Code
+
+Qwen installs its native extension from the generated slim client branch, so
+the user receives the MCP connection, canonical skills, reviewer agents, and
+Qwen context without cloning the backend repository:
+
+```bash
+qwen extensions install rapidreview-io/Merv --ref=merv-client
+```
+
+Start Qwen, open `/mcp`, select Merv, and complete browser sign-in. The native
+manifest enables OAuth while leaving client credentials and endpoint metadata
+to dynamic registration and discovery. Qwen stores and refreshes the resulting
+tokens.
+
+Qwen notices when the tracked `merv-client` branch changes and prompts the user
+to update. Apply it immediately with:
+
+```bash
+qwen extensions update merv
+```
+
+The generated branch is rebuilt after every `main` update. Its root-level
+`qwen-extension.json` and `QWEN.md` are copied from `clients/qwen/`; nobody
+maintains a separate Qwen repository or edits the generated branch by hand.
 
 
 ## Use with OpenCode
