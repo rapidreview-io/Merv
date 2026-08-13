@@ -59,32 +59,34 @@ export default function SandboxRetentionIndicator() {
     ? titleFor(detailSandbox.experiment_id) || sandboxLabel(detailSandbox)
     : '';
 
+  // Retention is an alert, not permanent navigation. Keep the quiet sidebar
+  // free of an idle card and surface this block only when action may be needed.
+  if (rows.length === 0) return null;
+
   return (
     <div className="retention" aria-label="Sandbox retention status">
       <div className="retention-row retention-row--head">
         <span className="retention-title">retain</span>
-        <span className="retention-status">{rows.length === 0 ? 'idle' : `${runningCount} running`}</span>
+        <span className="retention-status">
+          {runningCount > 0 ? `${runningCount} running` : `${rows.length} provisioning`}
+        </span>
       </div>
 
-      {rows.length === 0 ? (
-        <div className="retention-row retention-row--last retention-row--faint">no active sandboxes</div>
-      ) : (
-        <div className="retention-exp-list">
-          {rows.map((r) => (
-            <button
-              key={r.key}
-              type="button"
-              className="retention-exp-row"
-              onClick={() => setDetailKey(r.key)}
-              title={`${r.title} - view retention details`}
-            >
-              <span className={r.dotClass} aria-hidden="true" />
-              <span className="retention-exp-title">{r.title}</span>
-              <span className="retention-exp-meta">{r.metaLabel}</span>
-            </button>
-          ))}
-        </div>
-      )}
+      <div className="retention-exp-list">
+        {rows.map((r) => (
+          <button
+            key={r.key}
+            type="button"
+            className="retention-exp-row"
+            onClick={() => setDetailKey(r.key)}
+            title={`${r.title} - view retention details`}
+          >
+            <span className={r.dotClass} aria-hidden="true" />
+            <span className="retention-exp-title">{r.title}</span>
+            <span className="retention-exp-meta">{r.metaLabel}</span>
+          </button>
+        ))}
+      </div>
 
       <div className="retention-row retention-row--hint">manual copy-out only</div>
 

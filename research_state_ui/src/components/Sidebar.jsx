@@ -190,11 +190,11 @@ export default function Sidebar({ onHide }) {
       </nav>
 
       <div className="sidebar-foot">
+        <SandboxRetentionIndicator />
+        {lastSyncError && <div className="error-message" style={{ fontSize: 11 }}>{lastSyncError}</div>}
         <NavLink to={px('/settings')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
           Settings
         </NavLink>
-        <SandboxRetentionIndicator />
-        {lastSyncError && <div className="error-message" style={{ fontSize: 11 }}>{lastSyncError}</div>}
         <AccountFoot />
       </div>
     </aside>

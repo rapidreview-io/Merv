@@ -873,8 +873,6 @@ html[data-theme="dark"] .product-tab--active {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.retention-row--last { color: var(--faint); }
-.retention-row--faint { color: var(--faint); font-style: italic; }
 .retention-row--hint { color: var(--faint); font-size: 10px; font-style: italic; }
 
 .retention-dot {
