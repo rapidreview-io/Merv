@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import ipaddress
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -174,7 +175,7 @@ class OAuthService:
             if not valid_redirect_uri(uri):
                 raise OAuthError(
                     "invalid_redirect_uri",
-                    "redirect_uris must be exact HTTPS URLs or HTTP localhost URLs",
+                    "redirect_uris must be exact HTTPS URLs or HTTP loopback URLs",
                 )
         if metadata.get("token_endpoint_auth_method") != "none":
             raise OAuthError(
@@ -576,7 +577,14 @@ def valid_redirect_uri(uri: str) -> bool:
         return False
     if parsed.scheme == "https":
         return True
-    return parsed.scheme == "http" and parsed.hostname == "localhost"
+    if parsed.scheme != "http":
+        return False
+    if parsed.hostname == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(parsed.hostname).is_loopback
+    except ValueError:
+        return False
 
 
 def authorization_redirect(

@@ -261,7 +261,12 @@ class OAuthSurfaceTest(unittest.TestCase):
 
     def test_dcr_accepts_only_public_strict_redirect_clients(self) -> None:
         registration = self._register(
-            redirect_uris=[REDIRECT_URI, "http://localhost:43110/callback"]
+            redirect_uris=[
+                REDIRECT_URI,
+                "http://localhost:43110/callback",
+                "http://127.0.0.1:19876/mcp/oauth/callback",
+                "http://[::1]:43110/callback",
+            ]
         )
         self.assertTrue(registration["client_id"].startswith("oauthc_"))
         self.assertNotIn("client_secret", registration)
@@ -277,7 +282,7 @@ class OAuthSurfaceTest(unittest.TestCase):
             {"redirect_uris": ["http://attacker.example/callback"]},
             {"redirect_uris": ["https://client.example/cb#fragment"]},
             {"redirect_uris": ["https://client.example\\@attacker.example/cb"]},
-            {"redirect_uris": ["http://127.0.0.1/callback"]},
+            {"redirect_uris": ["http://192.168.1.10/callback"]},
             {"token_endpoint_auth_method": "client_secret_basic"},
             {"grant_types": ["implicit"]},
             {"response_types": ["token"]},
