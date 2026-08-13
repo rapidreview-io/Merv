@@ -169,6 +169,21 @@ class HttpMcpManifestTest(unittest.TestCase):
                 self.assertIn(command, readme)
                 self.assertIn(command, ui)
 
+        client_ids = re.findall(r"^    id: '([^']+)'", ui, re.MULTILINE)
+        self.assertEqual(
+            client_ids,
+            [
+                "codex",
+                "claude",
+                "gemini",
+                "cursor",
+                "kilo",
+                "hermes",
+                "qwen",
+                "copilot",
+            ],
+        )
+
     def test_release_version_lockstep(self) -> None:
         # One release number everywhere: a UI or package left behind produces
         # a permanent false "reload this UI" compat banner against /api/meta.

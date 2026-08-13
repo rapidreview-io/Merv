@@ -2,8 +2,8 @@
  * Roster and setup content for the "Connect your agent" onboarding.
  *
  * Eight clients ship a native Merv integration with browser OAuth (README
- * "Hosted setup"): Codex, Copilot CLI, Claude Code, Gemini CLI, Qwen Code,
- * Cursor, Kilo, and Hermes.
+ * "Hosted setup"): Codex, Claude Code, Gemini CLI, Cursor, Kilo, Hermes,
+ * Qwen Code, and Copilot CLI.
  * Other clients and headless runners/CI are documented in the public repo.
  * The copy lives here, outside the wizard, so doc edits never touch flow
  * logic. Command strings must stay in lockstep with README.md and
@@ -39,28 +39,6 @@ export const NATIVE_CLIENTS = [
           'codex plugin add merv@rapidreview',
         ],
         note: 'Rerun both commands to update.',
-      },
-    ],
-  },
-  {
-    id: 'copilot',
-    name: 'Copilot CLI',
-    steps: [
-      {
-        title: 'Install the plugin',
-        commands: [
-          'copilot plugin marketplace add rapidreview-io/Merv',
-          'copilot plugin install merv@rapidreview',
-        ],
-      },
-      {
-        title: 'Sign in inside Copilot',
-        commands: ['/mcp auth merv'],
-        note: `Run inside Copilot. ${CONSENT_NOTE}`,
-      },
-      {
-        title: 'Updating later',
-        commands: ['copilot plugin update merv@rapidreview'],
       },
     ],
   },
@@ -101,26 +79,6 @@ export const NATIVE_CLIENTS = [
         title: 'Sign in inside Gemini',
         commands: ['/mcp auth merv'],
         note: `Run inside Gemini. ${CONSENT_NOTE}`,
-      },
-    ],
-  },
-  {
-    id: 'qwen',
-    name: 'Qwen Code',
-    steps: [
-      {
-        title: 'Install the extension',
-        commands: ['qwen extensions install rapidreview-io/Merv --ref=merv-client'],
-      },
-      {
-        title: 'Sign in inside Qwen',
-        commands: ['/mcp'],
-        note: `Select Merv and sign in. ${CONSENT_NOTE}`,
-      },
-      {
-        title: 'Updating later',
-        commands: ['qwen extensions update merv'],
-        note: 'Qwen prompts when an update is available.',
       },
     ],
   },
@@ -181,6 +139,48 @@ export const NATIVE_CLIENTS = [
         title: 'Updating later',
         commands: ['hermes plugins update merv'],
         note: 'Run when Merv announces an update.',
+      },
+    ],
+  },
+  {
+    id: 'qwen',
+    name: 'Qwen Code',
+    steps: [
+      {
+        title: 'Install the extension',
+        commands: ['qwen extensions install rapidreview-io/Merv --ref=merv-client'],
+      },
+      {
+        title: 'Sign in inside Qwen',
+        commands: ['/mcp'],
+        note: `Select Merv and sign in. ${CONSENT_NOTE}`,
+      },
+      {
+        title: 'Updating later',
+        commands: ['qwen extensions update merv'],
+        note: 'Qwen prompts when an update is available.',
+      },
+    ],
+  },
+  {
+    id: 'copilot',
+    name: 'Copilot CLI',
+    steps: [
+      {
+        title: 'Install the plugin',
+        commands: [
+          'copilot plugin marketplace add rapidreview-io/Merv',
+          'copilot plugin install merv@rapidreview',
+        ],
+      },
+      {
+        title: 'Sign in inside Copilot',
+        commands: ['/mcp auth merv'],
+        note: `Run inside Copilot. ${CONSENT_NOTE}`,
+      },
+      {
+        title: 'Updating later',
+        commands: ['copilot plugin update merv@rapidreview'],
       },
     ],
   },
