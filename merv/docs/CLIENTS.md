@@ -5,8 +5,8 @@ Everything heavy — state, gates, capability-based reviews, sandbox
 provisioning — lives in the client-neutral brain service (localhost
 `merv-http`, or the hosted brain). Every client — local Claude Code, cloud
 Codex, Cursor, Gemini CLI, OpenCode, Kilo, Hermes Agent, OpenHands, and
-Replit Agent — connects directly to the brain's `POST /mcp` endpoint. Bundled clients
-for Codex, Claude Code, Cursor, Gemini CLI, and Kilo Code default to native MCP OAuth. Their
+Replit Agent — connects directly to the brain's `POST /mcp` endpoint. Native integrations
+for Codex, Claude Code, Cursor, Gemini CLI, Kilo Code, and Hermes Agent default to MCP OAuth. Their
 manifests contain the URL and no credential header; the client discovers Merv's
 DCR + PKCE flow and refreshes tokens without exposing a key to the user. Static
 `MERV_MCP_KEY` authentication remains for headless clients and the agent runner.
@@ -25,7 +25,7 @@ root. Each client gets a thin adapter on top of the same `bin/`, `skills/`, and
 | Gemini CLI | `gemini-extension.json` + `GEMINI.md` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered (Agent Skills standard) | `agents/` auto-discovered |
 | OpenCode | `clients/opencode/` (installer + agents + config example) | `opencode.json` `mcp` block → `<base>/mcp` (same header) | symlinked into `~/.config/opencode/skills/` | symlinked into `~/.config/opencode/agents/` |
 | Kilo Code | `clients/kilo/` Git-backed native plugin | URL-only remote server → `<base>/mcp`; native OAuth | hosted `skills.urls` catalog; content-versioned refresh | plugin-injected read-only subagents that load the matching hosted skill |
-| Hermes Agent | `clients/hermes/` (installer + guide) | `config.yaml` `mcp_servers` entry → `<base>/mcp` (bearer header or OAuth) | `skills.external_dirs`, or POSIX installer symlinks | `delegate_task` with the handoff prompt |
+| Hermes Agent | generated `rapidreview-io/merv-hermes-client` native plugin | URL-only remote server → `<base>/mcp`; native OAuth | plugin-registered `merv:` skills | `delegate_task` with the handoff prompt |
 | OpenHands | `AGENTS.md` + `clients/openhands/README.md` | local `config.toml` / CLI, or Cloud **Settings → MCP** | root `AGENTS.md`; optional repo skill directories at `.agents/skills/<name>/SKILL.md` | none; second session/agent or inline |
 | Replit Agent | `clients/replit/README.md` | account **MCP Servers** settings → `<base>/mcp` | no Merv skills installed by the connection | none; second session/agent or inline |
 
@@ -55,7 +55,8 @@ Shared invariants across all clients:
   rely on the machine's `curl`, OpenSSH client, and `rsync`.
 - Skills follow the cross-tool Agent Skills layout (`skills/<name>/SKILL.md`
   with `name` + `description` frontmatter), which Claude Code, Codex, Cursor,
-  Gemini CLI, OpenCode, Kilo, and Hermes Agent all read natively. OpenHands loads
+  Gemini CLI, OpenCode, and Kilo all read natively. Hermes registers the same
+  tree as namespaced native plugin skills. OpenHands loads
   repository skill directories at `.agents/skills/<name>/SKILL.md` as on-demand
   AgentSkills (keyword activation needs explicit `triggers` frontmatter, which
   Merv's canonical skills do not carry); copy the relevant skill directories
@@ -181,7 +182,9 @@ branch as an npm-compatible Git plugin. Nobody edits the generated branch by
 hand. Codex, Claude Code, and Cursor consume their marketplace manifests from
 `main`, whose entries resolve the canonical `merv/` source tree. The hosted UI
 build publishes Kilo's content-versioned skill catalog directly from the same
-canonical `skills/` tree. Release changes therefore reach every
+canonical `skills/` tree. The generated `rapidreview-io/merv-hermes-client`
+repository polls `main` every five minutes and rebuilds itself from
+`clients/hermes/plugin/` plus that same canonical skill tree. Release changes therefore reach every
 provider-independent distribution source without waiting for a provider review.
 
 ## Verify a connection
@@ -456,21 +459,31 @@ Notes:
 
 ## Use with Hermes Agent
 
-Hermes reads the standard Merv skill tree and connects to remote Streamable
-HTTP MCP servers from `config.yaml`. Prefer a read-only `skills.external_dirs`
-entry pointing at Merv's canonical `skills/` directory. On POSIX systems, the
-bundled installer can instead link those skills into the normal Hermes
-location; it also prints both supported MCP authentication forms:
+Install the generated native plugin and add the hosted MCP server:
 
 ```bash
-./clients/hermes/install.sh
+hermes plugins install rapidreview-io/merv-hermes-client --enable
+hermes mcp add merv --url https://experiments.rapidreview.io/mcp --auth oauth
 ```
 
-For bearer auth, export `MERV_MCP_KEY` and use a `mcp_servers.merv` entry whose
-header is `Authorization: "Bearer ${MERV_MCP_KEY}"`. For native OAuth, set
-`auth: oauth` instead and run `hermes mcp login merv`. Hermes prefixes MCP tool
-names, so `workflow.status_and_next` appears as
-`mcp_merv_workflow_status_and_next`.
+Hermes completes OAuth in the browser and stores the connection. The plugin
+registers every canonical skill under the `merv:` namespace and tells new
+sessions how Hermes translates Merv's dotted MCP tool names; for example,
+`workflow.status_and_next` appears as
+`mcp_merv_workflow_status_and_next`. No repository clone or Merv key is needed.
+
+The generated repository syncs from Merv's `main` within about five minutes of
+a change. Hermes does not automatically pull third-party Git plugins, so run
+this when Merv announces an update:
+
+```bash
+hermes plugins update merv
+```
+
+For local development or self-hosting, the legacy
+`./clients/hermes/install.sh` path remains available. A headless profile can
+also use `MERV_MCP_KEY` in `config.yaml`; see
+[`clients/hermes/README.md`](../clients/hermes/README.md).
 
 Hermes' `delegate_task` provides the separate child context needed by review
 gates and the five-lens reflection wave. Its scripted `hermes -z` mode is also

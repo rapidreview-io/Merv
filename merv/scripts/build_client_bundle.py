@@ -45,7 +45,7 @@ INCLUDE = (
     "README.md",
     # Codex manifest declares composerIcon: ./assets/icon.svg
     "assets",
-    # Hermes uses the canonical skill tree plus a thin setup guide/installer.
+    # Hermes adapter source (native generated-plugin builder plus legacy installer).
     "clients/hermes",
     # Kilo installs this generated branch as a native Git-backed plugin. The
     # adapter injects the OAuth MCP server, remote catalog, and reviewer agents.

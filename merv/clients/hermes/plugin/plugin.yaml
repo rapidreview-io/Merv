@@ -1,0 +1,5 @@
+manifest_version: 1
+name: merv
+version: 0.1.4
+description: Native Hermes Agent adapter for the hosted Merv research workflow.
+author: RapidReview

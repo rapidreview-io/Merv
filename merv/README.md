@@ -36,6 +36,10 @@ cursor-agent plugin marketplace add https://github.com/rapidreview-io/Merv
 # Kilo Code
 kilo plugin 'github:rapidreview-io/Merv#merv-client' --global
 kilo mcp auth merv
+
+# Hermes Agent
+hermes plugins install rapidreview-io/merv-hermes-client --enable
+hermes mcp add merv --url https://experiments.rapidreview.io/mcp --auth oauth
 ```
 
 Claude users should enable auto-update for the RapidReview marketplace once in
@@ -44,7 +48,8 @@ marketplaces update with `codex plugin marketplace upgrade rapidreview`
 followed by `codex plugin add merv@rapidreview`. Cursor's individual custom
 marketplace currently requires an interactive install and has no documented
 automatic-update guarantee. Kilo updates skills at session start; run `/reload`
-to update the current session.
+to update the current session. Hermes updates with
+`hermes plugins update merv` when Merv announces an update.
 
 Clone the repository only for self-hosting, client development, or the local
 agent runner:
@@ -70,22 +75,15 @@ keys are documented separately for headless runners and CI in
 
 ### Hermes Agent
 
-Add this to `~/.hermes/config.yaml`, export `MERV_MCP_KEY`, then start `hermes`:
-
-```yaml
-skills:
-  external_dirs:
-    - ~/Merv/merv/skills
-mcp_servers:
-  merv:
-    url: https://experiments.rapidreview.io/mcp
-    headers:
-      Authorization: "Bearer ${MERV_MCP_KEY}"
+```bash
+hermes plugins install rapidreview-io/merv-hermes-client --enable
+hermes mcp add merv --url https://experiments.rapidreview.io/mcp --auth oauth
 ```
 
-For OAuth, replace `headers` with `auth: oauth`, then run
-`hermes mcp login merv`. See [docs/CLIENTS.md](docs/CLIENTS.md#use-with-hermes-agent)
-for runner and reviewer setup.
+The generated plugin installs the canonical skills. Update it with
+`hermes plugins update merv`. See
+[docs/CLIENTS.md](docs/CLIENTS.md#use-with-hermes-agent) for runner and reviewer
+setup.
 
 ## How work moves
 

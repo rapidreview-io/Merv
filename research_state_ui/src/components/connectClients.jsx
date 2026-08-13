@@ -1,10 +1,9 @@
 /**
  * Roster and setup content for the "Connect your agent" onboarding.
  *
- * Five clients ship a native Merv integration with browser OAuth (README
- * "Hosted setup"): Codex, Claude Code, Gemini CLI, Cursor, and Kilo. Every
- * other client — OpenCode, Hermes Agent, OpenHands, Replit Agent, and headless
- * runners/CI on MERV_MCP_KEY — is documented per client in the public repo.
+ * Six clients ship a native Merv integration with browser OAuth (README
+ * "Hosted setup"): Codex, Claude Code, Gemini CLI, Cursor, Kilo, and Hermes.
+ * Other clients and headless runners/CI are documented in the public repo.
  * The copy lives here, outside the wizard, so doc edits never touch flow
  * logic. Command strings must stay in lockstep with README.md and
  * merv/docs/CLIENTS.md.
@@ -125,11 +124,33 @@ export const NATIVE_CLIENTS = [
       },
     ],
   },
+  {
+    id: 'hermes',
+    name: 'Hermes Agent',
+    maker: 'Nous Research’s agent',
+    steps: [
+      {
+        title: 'Install the plugin',
+        commands: ['hermes plugins install rapidreview-io/merv-hermes-client --enable'],
+      },
+      {
+        title: 'Connect',
+        commands: [
+          'hermes mcp add merv --url https://experiments.rapidreview.io/mcp --auth oauth',
+        ],
+        note: CONSENT_NOTE,
+      },
+      {
+        title: 'Updating later',
+        commands: ['hermes plugins update merv'],
+        note: 'Run when Merv announces an update.',
+      },
+    ],
+  },
 ];
 
 export const OTHER_CLIENT_NAMES = [
   'OpenCode',
-  'Hermes Agent',
   'OpenHands',
   'Replit Agent',
 ];
@@ -158,6 +179,7 @@ const CLIENT_ICONS = {
   gemini: 'clients/gemini.svg',
   cursor: 'clients/cursor.svg',
   kilo: 'clients/kilo.svg',
+  hermes: 'clients/hermes.svg',
 };
 
 export function ClientMark({ client, size = 30 }) {

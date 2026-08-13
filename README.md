@@ -3,7 +3,7 @@
 Merv is a plugin for agentic coding platforms that helps agents run machine learning research as gated, reviewable experiment workflows.
 
 It is designed to work with Claude Code, Codex, Cursor, Gemini CLI, Kilo Code,
-OpenCode, OpenHands, Replit Agent, and other MCP-capable agent platforms. It includes a
+Hermes Agent, OpenCode, OpenHands, Replit Agent, and other MCP-capable agent platforms. It includes a
 frontend for humans to observe agent behavior ranging from macro research
 strategy to experiment execution specifics.
 
@@ -37,7 +37,7 @@ After a set of experiments is complete, the plugin drives a project-wide reflect
 Merv has three main pieces:
 
 - **Agent adapters** connect Claude Code, Codex, Cursor, Gemini CLI, Kilo Code,
-  OpenCode, OpenHands, Replit Agent, and other agentic clients to the same workflow.
+  Hermes Agent, OpenCode, OpenHands, Replit Agent, and other agentic clients to the same workflow.
 - **Backend** owns the research state: projects, claims, experiments, artifacts, review gates, reflections, and sandbox orchestration.
 - **Frontend** gives humans a visual way to inspect the project: experiments, reviews, artifacts, logic graphs, timelines, and current progress.
 
@@ -96,6 +96,15 @@ kilo mcp auth merv
 
 Skills update when a new session starts. Run `/reload` to update the current
 session.
+
+### Hermes Agent
+
+```bash
+hermes plugins install rapidreview-io/merv-hermes-client --enable
+hermes mcp add merv --url https://experiments.rapidreview.io/mcp --auth oauth
+```
+
+Update with `hermes plugins update merv` when Merv announces an update.
 
 Headless runners and CI use `MERV_MCP_KEY`. See
 [Authentication](merv/docs/AUTH.md#when-a-static-key-is-still-required) and

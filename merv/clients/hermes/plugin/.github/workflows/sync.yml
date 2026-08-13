@@ -1,0 +1,55 @@
+name: Sync from Merv
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-from-merv-main
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out generated repository
+        uses: actions/checkout@v4
+        with:
+          path: target
+
+      - name: Check out canonical Merv source
+        run: git clone --depth 1 --branch main https://github.com/rapidreview-io/Merv.git source
+
+      - name: Build generated plugin
+        run: |
+          source_revision="$(git -C source rev-parse HEAD)"
+          python3 source/merv/clients/hermes/build_bundle.py \
+            --out "$RUNNER_TEMP/merv-hermes-client" \
+            --source-revision "$source_revision"
+
+      - name: Publish changes
+        run: |
+          set -euo pipefail
+          rsync -a --delete --exclude .git/ "$RUNNER_TEMP/merv-hermes-client/" target/
+          cd target
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          if git diff --cached --quiet; then
+            last_commit="$(git log -1 --format=%ct)"
+            now="$(date +%s)"
+            if (( now - last_commit < 2592000 )); then
+              echo "Hermes client is already current."
+              exit 0
+            fi
+            git commit --allow-empty -m "Keep scheduled sync active"
+            git push origin main
+            exit 0
+          fi
+          source_revision="$(python3 -c 'import json; print(json.load(open("SOURCE.json"))["source_revision"])')"
+          git commit -m "Sync Merv ${source_revision}"
+          git push origin main

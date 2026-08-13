@@ -92,7 +92,12 @@ class ClientBundleTest(unittest.TestCase):
             "bin/merv-client",
             "bin/merv-runs-wait",
             "clients/hermes/README.md",
+            "clients/hermes/build_bundle.py",
             "clients/hermes/install.sh",
+            "clients/hermes/plugin/__init__.py",
+            "clients/hermes/plugin/.github/workflows/sync.yml",
+            "clients/hermes/plugin/after-install.md",
+            "clients/hermes/plugin/plugin.yaml",
             "clients/kilo/README.md",
             "clients/kilo/build_catalog.py",
             "clients/kilo/package.json",
@@ -188,7 +193,7 @@ class ClientBundleTest(unittest.TestCase):
                 snippet["mcpServers"]["merv"]["type"], "http", result.stdout
             )
 
-    def test_hermes_installer_is_idempotent_and_refuses_real_directories(self) -> None:
+    def test_legacy_hermes_installer_is_idempotent_and_refuses_real_directories(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             out = root / "plugin"

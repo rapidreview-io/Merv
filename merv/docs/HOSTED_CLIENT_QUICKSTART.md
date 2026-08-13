@@ -29,6 +29,10 @@ cursor-agent plugin marketplace add https://github.com/rapidreview-io/Merv
 # Kilo Code
 kilo plugin 'github:rapidreview-io/Merv#merv-client' --global
 kilo mcp auth merv
+
+# Hermes Agent
+hermes plugins install rapidreview-io/merv-hermes-client --enable
+hermes mcp add merv --url https://experiments.rapidreview.io/mcp --auth oauth
 ```
 
 The bundled MCP entry contains only
@@ -43,7 +47,8 @@ currently use `codex plugin marketplace upgrade rapidreview` followed by
 command and no documented automatic-update guarantee for an individual custom
 marketplace; its team marketplace supports Auto Refresh. Kilo checks the
 hosted, content-versioned Merv skill catalog when a session starts; `/reload`
-refreshes a session that is already running.
+refreshes a session that is already running. Hermes updates with
+`hermes plugins update merv` when Merv announces an update.
 
 ## Headless setup: static key
 
