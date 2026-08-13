@@ -734,15 +734,6 @@ html[data-theme="dark"] .product-tab--active {
   flex-direction: column;
   gap: 4px;
 }
-.sync-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-/* Foot rows share the sidebar's 24px text rail (nav-link text, the retention
-   card's inner content): dot on the rail like the card's dots… */
-.sidebar-foot .sync-indicator { padding-left: 10px; }
-/* …and ghost-button labels on it too (8px .btn--sm pad + 2 = 10). */
 .sidebar-foot-actions {
   display: flex;
   gap: 6px;

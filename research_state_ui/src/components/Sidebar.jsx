@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useProjectStore, useProjectHref, selectStats, selectSandboxes } from '../store/useProjectStore';
-import { CLIENT_VERSION } from '../api';
 import { useTheme } from '../store/useTheme';
 import { useBackdrop, setBackdrop } from '../store/useBackdrop';
 import { setSurfaceOverride } from '../store/useViewport';
@@ -10,17 +9,15 @@ import ProjectSwitcher from './ProjectSwitcher';
 import SandboxRetentionIndicator from './SandboxRetentionIndicator';
 import { getAuthEmail, isAuthEnabled, onAuthChange, signOut } from '../auth';
 
-// Account/settings chip: the sidebar's bottommost row, always present.
-// Opens an upward menu carrying the UI settings (surface, theme, backdrop)
-// plus sign-out when a hosted session exists; on localhost the account slot
-// says so instead of hiding.
+// Account chip: the sidebar's bottommost row, always present. Opens an upward
+// menu carrying personal display controls plus sign-out when a hosted session
+// exists; on localhost the account slot says so instead of hiding.
 function AccountFoot() {
   const { mode: themeMode, theme, setMode: setThemeMode } = useTheme();
   const backdropOn = useBackdrop();
   const [email, setEmail] = useState(getAuthEmail());
   const [open, setOpen] = useState(false);
   const footRef = useRef(null);
-  const px = useProjectHref();
   useEffect(() => onAuthChange(() => setEmail(getAuthEmail())), []);
   // Close on any press outside the chip/menu (same pattern as the project chip).
   useEffect(() => {
@@ -38,14 +35,6 @@ function AccountFoot() {
       {open && (
         <div className="account-menu" role="menu">
           <div className="account-menu-head">{email || (hosted ? 'Not signed in' : 'Local session')}</div>
-          <NavLink
-            to={px('/settings')}
-            className={() => 'account-menu-item'}
-            role="menuitem"
-            onClick={() => setOpen(false)}
-          >
-            Settings
-          </NavLink>
           <button type="button" className="account-menu-item" onClick={() => setSurfaceOverride('mobile')}>
             Switch to mobile
           </button>
@@ -79,16 +68,6 @@ function AccountFoot() {
       </button>
     </div>
   );
-}
-
-function fmtUpdatedAgo(ms) {
-  if (!ms) return 'never';
-  const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
-  if (s < 5) return 'just now';
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  return `${Math.floor(m / 60)}h ago`;
 }
 
 // Cycle order for the theme button: explicit choices first, then back to
@@ -125,20 +104,12 @@ export function IconSidebar(props) {
 export default function Sidebar({ onHide }) {
   const home = useProjectStore(s => s.home);
   const stats = useProjectStore(selectStats);
-  const lastSyncedAt = useProjectStore(s => s.lastSyncedAt);
-  const isPolling = useProjectStore(s => s.isPolling);
   const lastSyncError = useProjectStore(s => s.lastSyncError);
   const sandboxes = useProjectStore(selectSandboxes);
   const runningSandboxes = sandboxes.filter(s => s.status === 'running').length;
   const px = useProjectHref();
 
-  const dotClass = lastSyncError ? 'sync-dot stale' : (isPolling ? 'sync-dot' : 'sync-dot paused');
-  const pollLabel = lastSyncError ? 'stale' : (isPolling ? 'live' : 'paused');
-
   const artifactsCount = stats.artifacts ?? home?.artifacts?.length ?? 0;
-  // Live backend version from the /api/meta handshake; fall back to the UI's
-  // own build version before the first handshake lands.
-  const serverVersion = useProjectStore(s => s.serverMeta?.server_version);
 
   return (
     <aside className="sidebar">
@@ -219,11 +190,10 @@ export default function Sidebar({ onHide }) {
       </nav>
 
       <div className="sidebar-foot">
+        <NavLink to={px('/settings')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
+          Settings
+        </NavLink>
         <SandboxRetentionIndicator />
-        <div className="sync-indicator" title={`merv · v${serverVersion || CLIENT_VERSION}`}>
-          <span className={dotClass} />
-          <span>ui {pollLabel} · updated {fmtUpdatedAgo(lastSyncedAt)}</span>
-        </div>
         {lastSyncError && <div className="error-message" style={{ fontSize: 11 }}>{lastSyncError}</div>}
         <AccountFoot />
       </div>
