@@ -127,6 +127,16 @@ hermes mcp add merv --url https://experiments.rapidreview.io/mcp --auth oauth
 
 Update with `hermes plugins update merv` when Merv announces an update.
 
+### OpenCode
+
+```bash
+opencode plugin 'github:rapidreview-io/Merv#merv-client' --global
+opencode mcp auth merv
+```
+
+Skills update automatically when a session starts. Rerun the install command
+when Merv announces an adapter update.
+
 Headless runners and CI use `MERV_MCP_KEY`. See
 [Authentication](merv/docs/AUTH.md#when-a-static-key-is-still-required) and
 [client details](merv/docs/CLIENTS.md).

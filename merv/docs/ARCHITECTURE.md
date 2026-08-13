@@ -85,7 +85,7 @@ unaffected. CORS and the client-version floor are still not authentication.
 ### Agent client connection
 
 Every client connects directly to the brain's `/mcp` endpoint over HTTP. Codex,
-Claude Code, Cursor, Gemini CLI, and Kilo Code use the endpoint's OAuth discovery and keep
+Claude Code, Cursor, Gemini CLI, Kilo Code, and OpenCode use the endpoint's OAuth discovery and keep
 their resulting access tokens in their native credential stores. The committed
 manifests are therefore URL-only and contain no Merv key. Headless automation,
 the standalone runner, and clients without remote-MCP OAuth use a scoped static

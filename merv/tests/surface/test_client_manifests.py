@@ -77,17 +77,15 @@ class HttpMcpManifestTest(unittest.TestCase):
         self.assertNotIn("MERV_MCP_KEY", plugin)
         self.assertNotIn("mk_", plugin)
 
-    def test_opencode_example_uses_environment_key_indirection(self) -> None:
+    def test_opencode_example_is_oauth_first(self) -> None:
         config = json.loads(
             (PLUGIN_ROOT / "clients" / "opencode" / "opencode.json.example").read_text()
         )
         server = config["mcp"]["merv"]
         self.assertEqual(server["type"], "remote")
         self.assertEqual(server["url"], HOSTED_MCP_URL)
-        self.assertEqual(
-            server["headers"]["Authorization"],
-            "Bearer {env:MERV_MCP_KEY}",
-        )
+        self.assertTrue(server["enabled"])
+        self.assertNotIn("headers", server)
 
     def test_plugin_manifests_keep_package_identity(self) -> None:
         claude = json.loads(
@@ -151,7 +149,7 @@ class HttpMcpManifestTest(unittest.TestCase):
         )["version"]
         self.assertEqual(release_version, packaged_version)
 
-    def test_copilot_and_qwen_setup_copy_is_public(self) -> None:
+    def test_new_native_client_setup_copy_is_public(self) -> None:
         root = PLUGIN_ROOT.parent
         readme = (root / "README.md").read_text()
         ui = (
@@ -164,6 +162,7 @@ class HttpMcpManifestTest(unittest.TestCase):
         for command in (
             "copilot plugin install merv@rapidreview",
             "qwen extensions install rapidreview-io/Merv --ref=merv-client",
+            "opencode plugin 'github:rapidreview-io/Merv#merv-client' --global",
         ):
             with self.subTest(command=command):
                 self.assertIn(command, readme)
@@ -181,6 +180,7 @@ class HttpMcpManifestTest(unittest.TestCase):
                 "hermes",
                 "qwen",
                 "copilot",
+                "opencode",
             ],
         )
 

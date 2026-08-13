@@ -1,9 +1,9 @@
 /**
  * Roster and setup content for the "Connect your agent" onboarding.
  *
- * Eight clients ship a native Merv integration with browser OAuth (README
+ * Nine clients ship a native Merv integration with browser OAuth (README
  * "Hosted setup"): Codex, Claude Code, Gemini CLI, Cursor, Kilo, Hermes,
- * Qwen Code, and Copilot CLI.
+ * Qwen Code, Copilot CLI, and OpenCode.
  * Other clients and headless runners/CI are documented in the public repo.
  * The copy lives here, outside the wizard, so doc edits never touch flow
  * logic. Command strings must stay in lockstep with README.md and
@@ -184,10 +184,29 @@ export const NATIVE_CLIENTS = [
       },
     ],
   },
+  {
+    id: 'opencode',
+    name: 'OpenCode',
+    steps: [
+      {
+        title: 'Install the plugin globally',
+        commands: ["opencode plugin 'github:rapidreview-io/Merv#merv-client' --global"],
+      },
+      {
+        title: 'Sign in from the terminal',
+        commands: ['opencode mcp auth merv'],
+        note: CONSENT_NOTE,
+      },
+      {
+        title: 'Updating later',
+        commands: ["opencode plugin 'github:rapidreview-io/Merv#merv-client' --global"],
+        note: 'Skills update automatically.',
+      },
+    ],
+  },
 ];
 
 export const OTHER_CLIENT_NAMES = [
-  'OpenCode',
   'OpenHands',
   'Replit Agent',
 ];
@@ -219,6 +238,7 @@ const CLIENT_ICONS = {
   cursor: 'clients/cursor.svg',
   kilo: 'clients/kilo.svg',
   hermes: 'clients/hermes.svg',
+  opencode: 'clients/opencode.svg',
 };
 
 export function ClientMark({ client, size = 30 }) {

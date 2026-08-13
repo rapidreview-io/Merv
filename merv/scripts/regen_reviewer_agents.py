@@ -6,8 +6,8 @@ skills/<name>/SKILL.md; the shared agents/<name>.md files (loaded by Claude
 Code, Cursor, and Gemini CLI) keep their own frontmatter but carry the same
 body verbatim. Run this after editing a reviewer skill; the surface test
 tests/surface/test_reviewer_instruction_parity.py fails until the checked-in
-agent files match the render. (OpenCode's clients/opencode/agents/ stubs are
-thin delegates that load the skill at runtime and are not generated.)
+agent files match the render. OpenCode and Kilo inject thin reviewer delegates
+through their shared native config adapter instead of Markdown agent files.
 """
 
 from __future__ import annotations

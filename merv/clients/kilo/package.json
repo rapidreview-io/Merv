@@ -6,7 +6,7 @@
   "main": "./clients/kilo/plugin.js",
   "exports": {
     "./server": {
-      "import": "./clients/kilo/plugin.js"
+      "import": "./clients/opencode/plugin.js"
     }
   },
   "license": "UNLICENSED",

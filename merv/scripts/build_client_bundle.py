@@ -51,8 +51,10 @@ INCLUDE = (
     # adapter injects the OAuth MCP server, remote catalog, and reviewer agents.
     "clients/kilo",
     # Copilot reuses the Claude-compatible marketplace; Qwen's source manifest
-    # is copied to the generated branch root below.
+    # is copied to the generated branch root below. OpenCode installs the same
+    # generated branch through its native Git-backed plugin command.
     "clients/copilot",
+    "clients/opencode",
     "clients/qwen",
     # Skills + reviewer agents (auto-discovered by every platform)
     "skills",

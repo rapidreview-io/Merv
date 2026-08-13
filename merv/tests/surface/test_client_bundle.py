@@ -103,6 +103,9 @@ class ClientBundleTest(unittest.TestCase):
             "clients/kilo/build_catalog.py",
             "clients/kilo/package.json",
             "clients/kilo/plugin.js",
+            "clients/opencode/README.md",
+            "clients/opencode/opencode.json.example",
+            "clients/opencode/plugin.js",
             "clients/qwen/QWEN.md",
             "clients/qwen/README.md",
             "clients/qwen/qwen-extension.json",
@@ -178,6 +181,13 @@ class ClientBundleTest(unittest.TestCase):
                 json.loads((out / "package.json").read_text())["name"],
                 "merv-kilo-plugin",
             )
+            self.assertEqual(
+                json.loads((out / "package.json").read_text())["exports"][
+                    "./server"
+                ]["import"],
+                "./clients/opencode/plugin.js",
+            )
+            self.assertTrue((out / "clients" / "opencode" / "plugin.js").is_file())
             self.assertTrue(
                 os.access(out / "clients" / "hermes" / "install.sh", os.X_OK)
             )

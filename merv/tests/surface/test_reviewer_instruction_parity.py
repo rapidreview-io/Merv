@@ -2,9 +2,8 @@
 
 skills/<name>/SKILL.md is canonical; the shared agents/<name>.md files keep
 their own frontmatter but must carry the skill body verbatim (regenerate with
-scripts/regen_reviewer_agents.py). OpenCode's per-client stubs are not
-generated — they delegate by loading the skill at runtime — so they must at
-least name the skill they load.
+scripts/regen_reviewer_agents.py). OpenCode and Kilo inject thin reviewer
+delegates that load these skills at runtime.
 """
 
 from __future__ import annotations
@@ -36,15 +35,15 @@ class ReviewerInstructionParityTest(unittest.TestCase):
                     f"{agent_path} is stale — run scripts/regen_reviewer_agents.py",
                 )
 
-    def test_opencode_stubs_delegate_to_their_skill(self) -> None:
+    def test_native_config_reviewers_delegate_to_their_skill(self) -> None:
         regen = _load_regen_module()
+        plugin = (PLUGIN_ROOT / "clients" / "kilo" / "plugin.js").read_text()
         for name in regen.REVIEWER_NAMES:
-            stub_path = PLUGIN_ROOT / "clients" / "opencode" / "agents" / f"{name}.md"
             with self.subTest(agent=name):
                 self.assertIn(
                     f"`{name}` skill",
-                    stub_path.read_text(encoding="utf-8"),
-                    f"{stub_path} must instruct loading the {name} skill",
+                    plugin,
+                    f"native adapter must instruct loading the {name} skill",
                 )
 
     def test_reviewer_names_cover_all_shared_agents(self) -> None:

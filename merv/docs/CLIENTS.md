@@ -7,8 +7,8 @@ provisioning — lives in the client-neutral brain service (localhost
 Codex, GitHub Copilot CLI, Cursor, Gemini CLI, Qwen Code, OpenCode, Kilo,
 Hermes Agent, OpenHands, and
 Replit Agent — connects directly to the brain's `POST /mcp` endpoint. Native integrations
-for Codex, Claude Code, GitHub Copilot CLI, Cursor, Gemini CLI, Qwen Code, Kilo
-Code, and Hermes Agent default to MCP OAuth. Their
+for Codex, Claude Code, GitHub Copilot CLI, Cursor, Gemini CLI, Qwen Code,
+OpenCode, Kilo Code, and Hermes Agent default to MCP OAuth. Their
 manifests contain the URL and no credential header; the client discovers Merv's
 DCR + PKCE flow and refreshes tokens without exposing a key to the user. Static
 `MERV_MCP_KEY` authentication remains for headless clients and the agent runner.
@@ -27,7 +27,7 @@ root. Each client gets a thin adapter on top of the same `bin/`, `skills/`, and
 | Cursor | `.cursor-plugin/plugin.json` + `mcp.json` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered (Agent Skills standard) | `agents/` auto-discovered |
 | Gemini CLI | `gemini-extension.json` + `GEMINI.md` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered (Agent Skills standard) | `agents/` auto-discovered |
 | Qwen Code | generated `qwen-extension.json` + `QWEN.md` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered | `agents/` auto-discovered |
-| OpenCode | `clients/opencode/` (installer + agents + config example) | `opencode.json` `mcp` block → `<base>/mcp` (same header) | symlinked into `~/.config/opencode/skills/` | symlinked into `~/.config/opencode/agents/` |
+| OpenCode | generated Git-backed plugin + `clients/opencode/` entrypoint | URL-only remote server → `<base>/mcp`; native OAuth | hosted content-versioned catalog | plugin-injected read-only subagents |
 | Kilo Code | `clients/kilo/` Git-backed native plugin | URL-only remote server → `<base>/mcp`; native OAuth | hosted `skills.urls` catalog; content-versioned refresh | plugin-injected read-only subagents that load the matching hosted skill |
 | Hermes Agent | generated `rapidreview-io/merv-hermes-client` native plugin | URL-only remote server → `<base>/mcp`; native OAuth | plugin-registered `merv:` skills | `delegate_task` with the handoff prompt |
 | OpenHands | `AGENTS.md` + `clients/openhands/README.md` | local `config.toml` / CLI, or Cloud **Settings → MCP** | root `AGENTS.md`; optional repo skill directories at `.agents/skills/<name>/SKILL.md` | none; second session/agent or inline |
@@ -70,9 +70,7 @@ Shared invariants across all clients:
 - Shared agent files in `agents/` keep frontmatter to the common subset
   (`name`, `description`) so Claude Code, GitHub Copilot CLI, Cursor, Gemini
   CLI, and Qwen Code can all load
-  them. OpenCode needs `mode`/`permission` frontmatter, so it has its own thin
-  agent wrappers in `clients/opencode/agents/` that load the matching review
-  skill. Kilo's native plugin injects equivalent read-only subagents into its
+  them. OpenCode and Kilo inject equivalent read-only subagents into their
   effective configuration; their detailed instructions stay in the remotely
   updated skills.
 - The committed manifests pin every bundled client to the hosted brain
@@ -234,7 +232,7 @@ agent is spawned with that prompt:
 - **OpenCode**: the main agent delegates via the task tool to the installed
   subagent (or the user @-mentions it, e.g. `@experiment-design-review`).
 - **Kilo**: the main agent delegates via the task tool to the installed
-  subagent (the shared OpenCode-format wrappers, `mode: subagent`).
+  subagent injected by the native config adapter (`mode: subagent`).
 - **Hermes Agent**: pass `reviewer_handoff.spawn_prompt` unchanged to a fresh
   `delegate_task` child. Reflection lenses use `delegate_task(tasks=[...])`;
   the default concurrency of three runs five lenses in two waves.
@@ -455,29 +453,32 @@ maintains a separate Qwen repository or edits the generated branch by hand.
 
 ## Use with OpenCode
 
-OpenCode has no declarative plugin bundle, so the adapter is an installer:
+OpenCode installs the generated client branch through its native global plugin
+command:
 
 ```bash
-/path/to/merv/clients/opencode/install.sh
+opencode plugin 'github:rapidreview-io/Merv#merv-client' --global
+opencode mcp auth merv
 ```
 
-It symlinks the canonical skills into `~/.config/opencode/skills/`, the
-OpenCode reviewer agents into `~/.config/opencode/agents/`, and prints the
-`opencode.json` `mcp` block to add (see
-[clients/opencode/opencode.json.example](../clients/opencode/opencode.json.example)).
+The plugin command writes the global plugin entry. Its config hook registers
+the URL-only hosted MCP server, adds Merv's hosted skill catalog, and supplies
+the four read-only reviewer subagents. `opencode mcp auth merv` performs native
+MCP discovery, DCR, PKCE browser consent, secure token storage, and refresh.
+There is no Merv key, repository clone, or local proxy.
 
 Notes:
 
-- The `opencode.json` `mcp` block registers Merv as a remote HTTP MCP server
-  (the brain's `/mcp` endpoint with `Authorization: Bearer ${MERV_MCP_KEY}`),
-  so there is no local process to spawn.
+- OpenCode checks the hosted content-versioned skill catalog when a session
+  starts. Skill releases therefore arrive automatically. Rerun the install
+  command when Merv announces an adapter update.
 - The reviewer agents run as subagents (`mode: subagent`) with `edit`/`bash`
   denied; they load the matching review skill via OpenCode's native skill
   tool and submit through `review.start` / `review.submit`. Subagents get
   their own child session ids — pass them as `caller_session_id` for
   `verified_agent_review` status.
-- OpenCode also reads `.claude/skills/` and `CLAUDE.md` as compatibility
-  fallbacks, so repos already set up for Claude Code degrade gracefully.
+- The generated `merv-client` branch is rebuilt after every `main` update; the
+  OpenCode source entrypoint remains under `clients/opencode/` in `main`.
 
 ## Use with Kilo
 

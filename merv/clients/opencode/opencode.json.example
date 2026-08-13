@@ -4,10 +4,7 @@
     "merv": {
       "type": "remote",
       "url": "https://experiments.rapidreview.io/mcp",
-      "enabled": true,
-      "headers": {
-        "Authorization": "Bearer {env:MERV_MCP_KEY}"
-      }
+      "enabled": true
     }
   }
 }
