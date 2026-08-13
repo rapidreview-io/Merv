@@ -34,7 +34,10 @@ jobs:
       - name: Publish changes
         run: |
           set -euo pipefail
-          rsync -a --delete --exclude .git/ "$RUNNER_TEMP/merv-hermes-client/" target/
+          rsync -a --delete \
+            --exclude .git/ \
+            --exclude .github/workflows/sync.yml \
+            "$RUNNER_TEMP/merv-hermes-client/" target/
           cd target
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

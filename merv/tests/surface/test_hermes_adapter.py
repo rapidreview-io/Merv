@@ -101,6 +101,7 @@ class HermesAdapterTest(unittest.TestCase):
         self.assertIn('cron: "*/5 * * * *"', sync)
         self.assertIn("https://github.com/rapidreview-io/Merv.git", sync)
         self.assertIn("git commit --allow-empty", sync)
+        self.assertIn("--exclude .github/workflows/sync.yml", sync)
 
         root = PLUGIN_ROOT.parent
         command = "hermes plugins install rapidreview-io/merv-hermes-client --enable"
