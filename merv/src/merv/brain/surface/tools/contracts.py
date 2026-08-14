@@ -776,7 +776,7 @@ class ReviewSubmitInput(ContractModel):
         )
     )
     return_to: Literal[*REVIEW_RETURN_VALUES] = Field(
-        default="",
+        default_factory=str,
         description=(
             "Where a rejected target goes next. Omit on pass. REQUIRED on "
             "experiment-attempt-review rejections (needs_changes/fail): "
@@ -792,6 +792,9 @@ class ReviewSubmitInput(ContractModel):
             "stand but the reflection artifacts (project graph, reflection "
             "doc, and/or change spec) must be revised."
         ),
+        json_schema_extra={
+            "enum": [value for value in REVIEW_RETURN_VALUES if value]
+        },
     )
     notes: str = Field(default="", description="Free-text summary of the review.")
     findings: list[dict[str, Any]] = Field(

@@ -137,7 +137,7 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "review.request": "d1b2d4575c51f70414115f8af964675e3e43903ba16604187215e79f563abc9c",
     "review.start": "ee9057b697c95ad6cecf5208ddc8b5ba1022f503106b3f1f5c325e60f058d006",
     "review.status": "aa3d6ff8cbe93e7228d970cbe794f27024ef8f4b80e06705404818fcec05dcda",
-    "review.submit": "446e2fe1298ee38910391854e33ab9b6fc75297d80cccb182e6be12dce8f497c",
+    "review.submit": "1cad7232d9f25da6ce479fe4f8a08ba6482c9e35f92130338b855a903776eef2",
     "sandbox.attach": "ee23b4896d74fadcfec8d55f9c4b3c50316099837e0d9a45497c0d533d4e6f43",
     "sandbox.extend": "6b1c3a1ef50ccad6009f750c0bd8db5b9edcd3717c13bb76b4843a2688c2ffff",
     "sandbox.get": "cb58f835a7705c55bd6703cfe9314c9aa002b8f0e6dcffedc384c3fc36c407e9",
@@ -296,6 +296,22 @@ class ToolContractRegistryTest(unittest.TestCase):
         dispatched = set(self.app._app.tools._tools)
         available = available_tool_names(storage_enabled=False)
         self.assertEqual(dispatched, available)
+
+    def test_served_schemas_avoid_provider_rejected_constructs(self) -> None:
+        def nodes(value):
+            if isinstance(value, dict):
+                yield value
+                for child in value.values():
+                    yield from nodes(child)
+            elif isinstance(value, list):
+                for child in value:
+                    yield from nodes(child)
+
+        for tool in self.app.list_tools():
+            for node in nodes(tool["inputSchema"]):
+                self.assertNotIn("const", node, tool["name"])
+                if "enum" in node:
+                    self.assertNotIn("", node["enum"], tool["name"])
 
     def test_manifest_owns_all_routing_and_handler_metadata(self) -> None:
         self.assertIs(TOOL_CONTRACTS, TOOL_MANIFEST)

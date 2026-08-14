@@ -43,6 +43,19 @@ def _contract_error_message(*, exc: PydanticValidationError) -> str:
     return f"{loc}: {first.get('msg', 'invalid value')}"
 
 
+def _normalize_tool_schema_for_providers(value: Any) -> None:
+    """Rewrite equivalent JSON Schema constructs for narrower tool providers."""
+
+    if isinstance(value, dict):
+        if "const" in value:
+            value["enum"] = [value.pop("const")]
+        for child in value.values():
+            _normalize_tool_schema_for_providers(child)
+    elif isinstance(value, list):
+        for child in value:
+            _normalize_tool_schema_for_providers(child)
+
+
 def _assert_tool_contracts_match_handlers(
     *,
     handlers: dict[str, ToolHandler],
@@ -101,6 +114,7 @@ class ToolDispatcher:
                 continue
             schema = contract.input_model.model_json_schema()
             schema.pop("title", None)
+            _normalize_tool_schema_for_providers(schema)
             tool: dict[str, Any] = {
                 "name": name,
                 "description": contract.description,
