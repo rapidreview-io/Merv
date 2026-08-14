@@ -67,17 +67,24 @@ plugin command only when Merv announces an adapter update.
 
 ## Headless setup: static key
 
-Clone the repository only for self-hosting, client development, or the
-non-interactive agent runner:
+Install the non-interactive runner independently of the agent plugin or
+extension:
 
 ```bash
-git clone https://github.com/rapidreview-io/Merv.git ~/Merv
+curl -fsSL https://raw.githubusercontent.com/rapidreview-io/Merv/merv-runner/install.sh | sh
 ```
 
-The runner and CI cannot rely on a browser callback, so they still use a scoped
-`mk_` key. Create one at [rapidreview.io/merv](https://rapidreview.io/merv),
-prefer **All my projects** unless deliberate project confinement is needed, and
-export it without placing it in shell history:
+This verifies and installs the standalone runner under `~/.merv`, starts its
+loopback pairing service, and prints the token requested by Settings → Auto
+running. It needs Python 3.11+ and Git, but no Merv repository clone or package
+installation. Rerun the command to update it. For a remote runner, forward the
+settings port while pairing: `ssh -L 8791:127.0.0.1:8791 HOST`.
+
+The browser setup mints a project-scoped `mk_` key and writes it directly to
+the paired runner's owner-only credential file; it never appears in the copied
+command or browser storage. Manual runner setup and CI can still create one at
+[rapidreview.io/merv](https://rapidreview.io/merv) and export it without placing
+it in shell history:
 
 ```bash
 printf 'Paste the Merv key: '
@@ -101,7 +108,7 @@ The onboarding CLI configures the connection and optional local agent
 platforms:
 
 ```bash
-CLI=~/Merv/merv/bin/merv-client
+CLI=$HOME/.merv/bin/merv-client
 $CLI configure   # write machine config (e.g. which brain to target)
 $CLI env         # print the .mcp.json http snippet for this machine
 $CLI agent codex --enable --command codex --parallelism 2
@@ -122,7 +129,7 @@ through a shell. To let Merv fill a reviewed experiment wave with separate
 local sessions:
 
 ```bash
-~/Merv/merv/bin/merv-agent-runner --project proj_123
+$HOME/.merv/bin/merv-agent-runner --project proj_123
 ```
 
 Native non-interactive process adapters cover Codex, Claude Code, Gemini CLI,
@@ -154,13 +161,14 @@ To let the hosted Settings page edit the same local file, start the runner's
 loopback-only control without dispatching:
 
 ```bash
-~/Merv/merv/bin/merv-agent-runner --settings-only
+$HOME/.merv/bin/merv-agent-runner --settings-only
 ```
 
 It prints a generated pairing token, stored owner-only outside `client.json`.
 The browser keeps that token in memory and sends it to
-`http://127.0.0.1:8791`. The control accepts only paired settings reads/writes
-and redacted status; it intentionally has no HTTP start/stop operation because
-the settings contain executable argv. Actual agent launch remains the explicit
-`merv-agent-runner --project ...` command. Treat the pairing token as
-local-administrator authority and paste it only into a trusted Merv UI origin.
+`http://127.0.0.1:8791`. The control accepts only paired settings reads/writes,
+redacted status, and a write-only runner credential; it intentionally has no
+HTTP start/stop operation because the settings contain executable argv. Actual
+agent launch remains the explicit `merv-agent-runner --project ...` command.
+Treat the pairing token as local-administrator authority and paste it only into
+a trusted Merv UI origin.

@@ -60,8 +60,7 @@ automatic-update guarantee. Kilo updates skills at session start; run `/reload`
 to update the current session. Hermes updates with
 `hermes plugins update merv` when Merv announces an update.
 
-Clone the repository only for self-hosting, client development, or the local
-agent runner:
+Clone the repository only for self-hosting or client development:
 
 ```bash
 git clone https://github.com/rapidreview-io/Merv.git ~/Merv
@@ -125,12 +124,16 @@ Agent. The `command` adapter covers a custom executable that accepts its
 instruction on stdin and emits a JSONL interaction stream on stdout:
 
 ```bash
-bin/merv-client agent codex --enable --command codex --parallelism 2
-bin/merv-client agent claude --enable --command claude --model opus
-bin/merv-client agent hermes --enable --command hermes
-bin/merv-client workspace --repository "$PWD" --strategy git_worktree
-bin/merv-agent-runner --project proj_123
+curl -fsSL https://raw.githubusercontent.com/rapidreview-io/Merv/merv-runner/install.sh | sh
+$HOME/.merv/bin/merv-agent-runner --project proj_123
 ```
+
+The provider-independent installer downloads the generated runner archive,
+verifies its SHA-256 checksum, installs it under `~/.merv`, and starts the
+loopback pairing service used by Settings → Auto running. It requires Python
+3.11+ and Git, but no Merv repository clone or Merv package. Rerun the same
+command to update it. For a remote runner, forward the settings port with
+`ssh -L 8791:127.0.0.1:8791 HOST` while completing browser setup.
 
 Automatic dispatch is off by default and is a per-project setting, so a running
 runner claims nothing until the project turns it on in Settings. Turning it back
@@ -162,11 +165,12 @@ remotes and never pushes into the user's repository. Worktrees isolate Git
 changes, not same-user filesystem access; use an OS sandbox for hostile agents.
 
 The web Settings page can save this same machine file through the optional
-runner control at `http://127.0.0.1:8791`. Start it without dispatching via
-`bin/merv-agent-runner --settings-only` and paste the printed pairing token
-into Settings. Only paired GET/PUT settings and status are exposed; starting
-or stopping executable commands remains a local CLI operation. The pairing
-token can edit executable agent commands, so treat it as local-administrator
+runner control at `http://127.0.0.1:8791`. The installer starts it without
+dispatching; paste the printed pairing token
+into Settings. Only paired settings, redacted status, and a write-only runner
+credential endpoint are exposed; starting or stopping executable commands
+remains a local CLI operation. The pairing token can edit executable agent
+commands and replace the credential, so treat it as local-administrator
 authority and paste it only into a trusted Merv UI origin.
 
 Agent-authored evidence is kept in regular repo files. The brain records their

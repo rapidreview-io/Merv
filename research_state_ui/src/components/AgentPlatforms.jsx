@@ -156,7 +156,9 @@ export default function AgentPlatforms({ projectId }) {
   );
   const dirty = machineBaseline !== null && signature !== machineBaseline;
   const connected = runnerConnection === 'connected' || runnerConnection === 'applying';
-  const runCommand = `merv-agent-runner --project ${projectId || 'PROJECT_ID'}`;
+  const runnerBin = '$HOME/.merv/bin/merv-agent-runner';
+  const installCommand = 'curl -fsSL https://raw.githubusercontent.com/rapidreview-io/Merv/merv-runner/install.sh | sh';
+  const runCommand = `${runnerBin} --project ${projectId || 'PROJECT_ID'}`;
   const liveSessions = useMemo(
     () => (sessions || []).filter(
       (session) => session.status === 'offered' || session.status === 'active',
@@ -258,7 +260,7 @@ export default function AgentPlatforms({ projectId }) {
     setRunnerConnection('connecting');
     setRunnerMessage('');
     try {
-      const status = await runnerRequest({
+      let status = await runnerRequest({
         url: runnerUrl, token: pairingToken, path: '/status',
       });
       const settings = await runnerRequest({
@@ -266,6 +268,30 @@ export default function AgentPlatforms({ projectId }) {
       });
       const hydrated = draftFromSettings(settings);
       const hydratedConfig = configFromDraft(hydrated.platforms, hydrated.workspace);
+      if (
+        status?.credential_required === true
+        && status?.credential_configured === false
+      ) {
+        let minted = null;
+        try {
+          minted = await api.createProjectKey(projectId);
+          await runnerRequest({
+            url: runnerUrl,
+            token: pairingToken,
+            method: 'PUT',
+            path: '/credential',
+            body: { key: minted.secret },
+          });
+          status = { ...status, credential_configured: true };
+        } catch (error) {
+          if (minted?.key?.id) {
+            api.revokeProjectKey(projectId, minted.key.id).catch(() => {});
+          }
+          throw new Error(
+            error?.message || 'Could not provision the runner credential.',
+          );
+        }
+      }
       setPlatforms(hydrated.platforms);
       setWorkspace(hydrated.workspace);
       setMachineBaseline(configSignature(hydratedConfig));
@@ -514,9 +540,8 @@ export default function AgentPlatforms({ projectId }) {
         )}
         {!connected && (
           <p className="aru-note aru-pairing-hint">
-            <code>merv-agent-runner --settings-only</code> on that machine
-            starts the service and prints the pairing token
-            (<code>--show-pairing-token</code> reprints it).
+            Run <code>{installCommand}</code> on that machine. It installs the
+            standalone runner, starts the service, and prints the pairing token.
           </p>
         )}
 

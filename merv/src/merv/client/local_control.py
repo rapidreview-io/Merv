@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import secrets
 import threading
 import uuid
@@ -66,6 +67,7 @@ def local_control(
     token: str,
     validate: Callable[[Path], None],
     status: Callable[[], Mapping[str, Any]],
+    credential_path: Path | None = None,
     port: int = DEFAULT_PORT,
     origins: set[str] | None = None,
 ) -> ThreadingHTTPServer:
@@ -116,11 +118,21 @@ def local_control(
                 return
             if not self._authorized():
                 return
-            if self.path != "/settings":
+            if self.path not in {"/settings", "/credential"}:
                 self._json(404, {"error": "not_found"})
                 return
             try:
                 payload = self._body()
+                if self.path == "/credential":
+                    if credential_path is None:
+                        self._json(404, {"error": "not_found"})
+                        return
+                    _write_credential(
+                        credential_path,
+                        key=payload.get("key"),
+                    )
+                    self._json(200, {"ok": True, "configured": True})
+                    return
                 updated = _merge_settings(
                     config_path=config_path,
                     payload=payload,
@@ -207,6 +219,31 @@ def local_control(
         ) from exc
     server.daemon_threads = True
     return server
+
+
+def _write_credential(path: Path, *, key: object) -> None:
+    """Atomically store one project key without ever returning or logging it."""
+    secret = key if isinstance(key, str) else ""
+    if not re.fullmatch(r"mk_[A-Za-z0-9_-]{43}", secret):
+        raise LocalControlError("credential must be a Merv project key")
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(path.parent, 0o700)
+        handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(handle, (secret + "\n").encode("utf-8"))
+        finally:
+            os.close(handle)
+        os.replace(temporary, path)
+        path.chmod(0o600)
+    except OSError as exc:
+        raise LocalControlError(f"cannot write runner credential: {path}") from exc
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def start_in_background(server: ThreadingHTTPServer) -> threading.Thread:

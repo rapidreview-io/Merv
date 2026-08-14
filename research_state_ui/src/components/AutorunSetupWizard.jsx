@@ -64,8 +64,9 @@ export default function AutorunSetupWizard({
   const applyRun = useRef(0);
   const step = steps[Math.min(stepIndex, steps.length - 1)];
 
-  const settingsCommand = 'merv-agent-runner --settings-only';
-  const runCommand = `merv-agent-runner --project ${projectId || 'PROJECT_ID'}`;
+  const settingsCommand = 'curl -fsSL https://raw.githubusercontent.com/rapidreview-io/Merv/merv-runner/install.sh | sh';
+  const runnerBin = '$HOME/.merv/bin/merv-agent-runner';
+  const runCommand = `${runnerBin} --project ${projectId || 'PROJECT_ID'}`;
   const available = runnerStatus?.available_commands;
   const enabledPlatforms = platforms.filter(
     (platform) => platform.present !== false && platform.enabled,
@@ -196,10 +197,11 @@ export default function AutorunSetupWizard({
 
         {step === 'service' && (
           <div className="sbxpw-body">
-            <p className="sbxpw-lead">Start the settings service on the runner machine</p>
+            <p className="sbxpw-lead">Install the runner</p>
             <p className="sbxpw-help">
-              Open a terminal on the machine that will run your agents — this
-              one, or any machine you can reach at {runnerUrl} — and run:
+              Open a terminal on the machine that will run your agents and run
+              this one command. It installs only the standalone Merv runner and
+              starts its pairing service:
             </p>
             <CommandRow
               command={settingsCommand}
@@ -207,7 +209,8 @@ export default function AutorunSetupWizard({
               onCopy={() => copy('service', settingsCommand)}
             />
             <p className="aruw-command-note">
-              It prints a pairing token for the next step and keeps running.
+              Requires Python 3.11+ and Git. For a remote machine, forward its
+              loopback port with <code>ssh -L 8791:127.0.0.1:8791 HOST</code>.
             </p>
             <div className="aruw-poll" role="status">
               <span className="sbxpw-spinner" aria-hidden="true" />
@@ -240,9 +243,9 @@ export default function AutorunSetupWizard({
               Don’t have the token? Run this on that machine to print it again:
             </p>
             <CommandRow
-              command="merv-agent-runner --show-pairing-token"
+              command={`${runnerBin} --show-pairing-token`}
               copied={copied === 'token'}
-              onCopy={() => copy('token', 'merv-agent-runner --show-pairing-token')}
+              onCopy={() => copy('token', `${runnerBin} --show-pairing-token`)}
             />
           </div>
         )}

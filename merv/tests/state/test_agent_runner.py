@@ -39,6 +39,7 @@ from merv.client.agent_runner import (
     _child_environment,
     _detected_commands,
     _local_status,
+    _runner_key,
     _run_runner,
     _safe_control_url,
     _session_key,
@@ -1749,6 +1750,7 @@ class LocalControlTest(unittest.TestCase):
             server = local_control(
                 config_path=config_path,
                 token="pairing-secret",
+                credential_path=root / "agent-runner.key",
                 validate=lambda path: (
                     load_platforms(path),
                     load_workspace_settings(path),
@@ -1773,6 +1775,53 @@ class LocalControlTest(unittest.TestCase):
                 with self.assertRaises(urllib.error.HTTPError) as unauthorized:
                     urllib.request.urlopen(f"{base}/settings")
                 self.assertEqual(unauthorized.exception.code, 401)
+
+                credential = "mk_" + ("x" * 43)
+                unpaired_credential = urllib.request.Request(
+                    f"{base}/credential",
+                    data=json.dumps({"key": credential}).encode(),
+                    method="PUT",
+                    headers={"Content-Type": "application/json"},
+                )
+                with self.assertRaises(urllib.error.HTTPError) as unauthorized:
+                    urllib.request.urlopen(unpaired_credential)
+                self.assertEqual(unauthorized.exception.code, 401)
+
+                invalid_credential = urllib.request.Request(
+                    f"{base}/credential",
+                    data=json.dumps({"key": "not-a-key"}).encode(),
+                    method="PUT",
+                    headers={
+                        "Authorization": "Bearer pairing-secret",
+                        "Content-Type": "application/json",
+                        "Origin": "https://experiments.rapidreview.io",
+                    },
+                )
+                with self.assertRaises(urllib.error.HTTPError) as invalid:
+                    urllib.request.urlopen(invalid_credential)
+                self.assertEqual(invalid.exception.code, 400)
+
+                credential_request = urllib.request.Request(
+                    f"{base}/credential",
+                    data=json.dumps({"key": credential}).encode(),
+                    method="PUT",
+                    headers={
+                        "Authorization": "Bearer pairing-secret",
+                        "Content-Type": "application/json",
+                        "Origin": "https://experiments.rapidreview.io",
+                    },
+                )
+                with urllib.request.urlopen(credential_request) as response:
+                    self.assertEqual(
+                        json.load(response), {"configured": True, "ok": True}
+                    )
+                credential_path = root / "agent-runner.key"
+                with patch.dict(
+                    os.environ,
+                    {"MERV_MCP_KEY": "", "RESEARCH_PLUGIN_MCP_KEY": ""},
+                ):
+                    self.assertEqual(_runner_key(config_path), credential)
+                self.assertEqual(credential_path.stat().st_mode & 0o777, 0o600)
 
                 payload = json.dumps(
                     {

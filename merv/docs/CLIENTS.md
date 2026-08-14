@@ -191,6 +191,15 @@ repository polls `main` every five minutes and rebuilds itself from
 `clients/hermes/plugin/` plus that same canonical skill tree. Release changes therefore reach every
 provider-independent distribution source without waiting for a provider review.
 
+### Standalone auto-run distribution
+
+Auto-run is not installed from a provider plugin.
+`scripts/build_runner_bundle.py` creates one backend-free zipapp from the
+machine-local client closure. The `Publish runner bundle` workflow publishes
+the archive, checksum, and `runner/install.sh` to the generated `merv-runner`
+branch after every `main` update. The Settings wizard installs or updates it
+with one provider-neutral command; its launchers live under `~/.merv/bin`.
+
 ## Verify a connection
 
 Every platform reaches the brain over the same Streamable-HTTP MCP wire, so one

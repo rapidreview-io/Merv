@@ -1969,7 +1969,12 @@ def _child_environment(
             "MERV_AGENT_SESSION_ID": session_id,
         }
     )
-    bundle_bin = Path(__file__).resolve().parents[3] / "bin"
+    standalone_bin = str(source.get("MERV_RUNNER_BIN_DIR") or "").strip()
+    bundle_bin = (
+        Path(standalone_bin).expanduser()
+        if standalone_bin
+        else Path(__file__).resolve().parents[3] / "bin"
+    )
     if (bundle_bin / "merv-client").is_file():
         inherited_path = environment.get("PATH", "")
         environment["PATH"] = (
@@ -2178,6 +2183,37 @@ def _runtime_paths(config_path: Path) -> tuple[Path, Path]:
     return state_dir / "agent-sessions.json", state_dir / "agent-traces"
 
 
+def _credential_path(config_path: Path) -> Path:
+    return config_path.parent / "agent-runner.key"
+
+
+def _stored_runner_key(config_path: Path) -> str | None:
+    path = _credential_path(config_path)
+    try:
+        secret = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise RunnerError(f"cannot read runner credential: {path}") from exc
+    if not re.fullmatch(r"mk_[A-Za-z0-9_-]{43}", secret):
+        raise RunnerError(f"runner credential is malformed: {path}")
+    path.chmod(0o600)
+    return secret
+
+
+def _runner_key(config_path: Path) -> str | None:
+    return dual_env_value(MCP_KEY_ENV_VAR) or _stored_runner_key(config_path)
+
+
+def _has_runner_credential(config_path: Path) -> bool:
+    if dual_env_value(MCP_KEY_ENV_VAR):
+        return True
+    try:
+        return _stored_runner_key(config_path) is not None
+    except RunnerError:
+        return False
+
+
 def _validate_settings(config_path: Path) -> None:
     load_platforms(config_path)
     load_workspace_settings(config_path)
@@ -2250,6 +2286,10 @@ def _local_status(
     }
     if config_path is not None:
         status["available_commands"] = _detected_commands(config_path)
+        status["credential_configured"] = _has_runner_credential(config_path)
+        status["credential_required"] = not _is_loopback_url(
+            resolve_client_control_url(config_path=config_path)
+        )
     return status
 
 
@@ -2349,6 +2389,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 config_path=config_path,
                 token=token,
                 validate=_validate_settings,
+                credential_path=_credential_path(config_path),
                 status=lambda: _local_status(
                     project_id=None,
                     runner_active=False,
@@ -2372,7 +2413,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "no enabled agent platforms; configure one with merv-client agent"
             )
         control_url = resolve_client_control_url(config_path=config_path)
-        runner_key = dual_env_value(MCP_KEY_ENV_VAR)
+        runner_key = _runner_key(config_path)
         if not runner_key and not _is_loopback_url(control_url):
             raise RunnerError(f"{MCP_KEY_ENV_VAR} is required")
         ledger_path, trace_dir = _runtime_paths(config_path)
@@ -2399,6 +2440,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     config_path=config_path,
                     token=token,
                     validate=_validate_settings,
+                    credential_path=_credential_path(config_path),
                     status=lambda: _local_status(
                         project_id=args.project,
                         runner_active=True,
