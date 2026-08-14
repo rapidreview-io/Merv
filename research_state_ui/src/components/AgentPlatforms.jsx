@@ -14,6 +14,7 @@ import {
   configFromDraft,
   configSignature,
   defaultPlatforms,
+  workspaceWithRepository,
   draftFromSettings,
   nextCustomId,
   normalizeLocalPlatforms,
@@ -45,7 +46,9 @@ function readWorkspace() {
         root: saved.strategy === 'existing'
           ? ''
           : (typeof saved.root === 'string' ? saved.root : ''),
-        base_ref: typeof saved.base_ref === 'string' ? saved.base_ref : 'HEAD',
+        base_ref: typeof saved.base_ref === 'string' && saved.base_ref.trim()
+          ? saved.base_ref
+          : DEFAULT_WORKSPACE.base_ref,
         strategy: 'git_worktree',
       }
       : { ...DEFAULT_WORKSPACE };
@@ -205,6 +208,10 @@ export default function AgentPlatforms({ projectId }) {
     setPlatforms(defaultPlatforms());
     setWorkspace({ ...DEFAULT_WORKSPACE });
     setExpanded('');
+  }
+
+  function updateRepository(repository) {
+    setWorkspace((current) => workspaceWithRepository(current, repository));
   }
 
   async function toggleDispatch(next) {
@@ -724,10 +731,7 @@ export default function AgentPlatforms({ projectId }) {
                 className="auth-input mono"
                 value={workspace.repository}
                 placeholder="/absolute/path/to/repository"
-                onChange={(event) => setWorkspace((current) => ({
-                  ...current,
-                  repository: event.target.value,
-                }))}
+                onChange={(event) => updateRepository(event.target.value)}
               />
               {validation.workspace.repository && (
                 <small className="field-error">{validation.workspace.repository}</small>
@@ -850,7 +854,10 @@ export default function AgentPlatforms({ projectId }) {
           workspace={workspace}
           validation={validation}
           onUpdatePlatform={update}
-          onWorkspace={(patch) => setWorkspace((current) => ({ ...current, ...patch }))}
+          onWorkspace={(patch) => {
+            if (Object.hasOwn(patch, 'repository')) updateRepository(patch.repository);
+            else setWorkspace((current) => ({ ...current, ...patch }));
+          }}
           onConnect={connectRunner}
           onApply={applyRunnerSettings}
           onRunnerLive={setRunnerStatus}

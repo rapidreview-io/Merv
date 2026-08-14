@@ -40,8 +40,32 @@ export const DEFAULT_WORKSPACE = {
   strategy: 'git_worktree',
   repository: '',
   root: '',
-  base_ref: 'HEAD',
+  base_ref: 'main',
 };
+
+export function defaultWorktreeRoot(repository) {
+  const value = String(repository || '').trim();
+  if (!value) return '';
+
+  // Keep Merv's generated repository and worktrees beside the source checkout.
+  // Putting them inside the checkout would make the source repository dirty.
+  const withoutTrailingSeparators = value.replace(/[\\/]+$/, '');
+  if (!withoutTrailingSeparators) return '/merv-worktrees';
+  if (/^[A-Za-z]:$/.test(withoutTrailingSeparators)) {
+    return `${withoutTrailingSeparators}\\merv-worktrees`;
+  }
+  return `${withoutTrailingSeparators}-worktrees`;
+}
+
+export function workspaceWithRepository(workspace, repository) {
+  const currentDefault = defaultWorktreeRoot(workspace.repository);
+  const rootWasAutomatic = !workspace.root.trim() || workspace.root.trim() === currentDefault;
+  return {
+    ...workspace,
+    repository,
+    root: rootWasAutomatic ? defaultWorktreeRoot(repository) : workspace.root,
+  };
+}
 
 export function capabilitiesFor(adapter) {
   return ADAPTER_CAPABILITIES[adapter] || { model: false, effort: false };
@@ -130,7 +154,9 @@ export function draftFromSettings(settings) {
       ...DEFAULT_WORKSPACE,
       repository: typeof rawWorkspace.repository === 'string' ? rawWorkspace.repository : '',
       root: typeof rawWorkspace.root === 'string' ? rawWorkspace.root : '',
-      base_ref: typeof rawWorkspace.base_ref === 'string' ? rawWorkspace.base_ref : '',
+      base_ref: typeof rawWorkspace.base_ref === 'string' && rawWorkspace.base_ref.trim()
+        ? rawWorkspace.base_ref
+        : DEFAULT_WORKSPACE.base_ref,
     }
     : { ...DEFAULT_WORKSPACE };
   return { platforms, workspace };
