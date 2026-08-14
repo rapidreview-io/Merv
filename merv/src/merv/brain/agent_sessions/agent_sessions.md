@@ -72,11 +72,20 @@ managed agents cannot push its private central ref into the user's repository.
 
 Settings and `~/.merv/client.json` select named platforms, models, effort, and
 parallelism. Native process adapters cover Codex, Claude Code, Gemini CLI,
-Cursor Agent, OpenCode, Aider, GitHub Copilot CLI, Qwen Code, and Hermes Agent.
-A shell-free stdin command adapter covers other local agents. Codex and Claude
-Code receive an isolated, session-scoped MCP configuration. Other adapters use
-the shell-safe `merv-client call` bridge; it reads the session secret from the
-environment, never argv. Hermes receives an explicit adapter note to ignore
-ambient native Merv MCP configuration in runner-owned sessions. One runner
-machine owns a project's experiment branches and central repository; agent
-platforms share that runner.
+Cursor Agent, OpenCode, GitHub Copilot CLI, Qwen Code, and Hermes Agent. A
+shell-free stdin command adapter covers custom local agents that emit JSONL on
+stdout. Codex and Claude Code receive an isolated, session-scoped MCP
+configuration. Other adapters use the shell-safe `merv-client call` bridge; it
+reads the session secret from the environment, never argv. Hermes receives an
+explicit adapter note to ignore ambient native Merv MCP configuration in
+runner-owned sessions. One runner machine owns a project's experiment branches
+and central repository; agent platforms share that runner.
+
+Every claimed session writes only to the executor machine under
+`~/.merv/agent-traces/<agent-session-id>/`. The immutable `metadata.json`
+associates exactly one work item with exactly one sanitized harness/model setup.
+Provider events go to `trace.jsonl`, while diagnostics go to `stderr.log` so
+they cannot corrupt the structured stream. Hermes creates the same trace file
+through its session export after the process stops. Interactive sessions do not
+use this path. Aider is not an auto-run adapter because it cannot provide a
+complete structured interaction trace.

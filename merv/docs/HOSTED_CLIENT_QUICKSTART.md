@@ -126,14 +126,20 @@ local sessions:
 ```
 
 Native non-interactive process adapters cover Codex, Claude Code, Gemini CLI,
-Cursor Agent, OpenCode, Aider, GitHub Copilot CLI, Qwen Code, and Hermes Agent.
-A named platform using the `command` adapter can launch another coding agent as
-long as it reads the Merv instruction from standard input. The runner removes
-its own Merv credentials before launch; each child receives only
-`MERV_AGENT_SESSION_KEY`. Codex and Claude Code receive an isolated MCP
-configuration for that credential. Hermes and the other agents use
+Cursor Agent, OpenCode, GitHub Copilot CLI, Qwen Code, and Hermes Agent. A named
+platform using the `command` adapter can launch another coding agent as long as
+it reads the Merv instruction from standard input and emits JSONL interactions
+on stdout. The runner removes its own Merv credentials before launch; each
+child receives only `MERV_AGENT_SESSION_KEY`. Codex and Claude Code receive an
+isolated MCP configuration for that credential. Hermes and the other agents use
 `merv-client call TOOL --arguments JSON`; this bridge reads the same key from
 the environment and calls Merv's MCP-shaped endpoint without a shell.
+
+Auto-run recordings stay on the executor at
+`~/.merv/agent-traces/<agent-session-id>/`: `metadata.json` binds the work item
+to its harness/model setup, `trace.jsonl` is the native provider event stream,
+and `stderr.log` holds diagnostics. Aider is intentionally unsupported for
+auto-run because it cannot emit the required complete structured trace.
 
 The runner requires Git worktrees. It initializes a Merv-owned bare repository
 and central ref, gives each experiment a persistent branch under

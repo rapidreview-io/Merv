@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -15,7 +17,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from merv.client.agent_runner import (
-    AiderHost,
     AgentRunner,
     AgentSessionsClient,
     Claim,
@@ -45,6 +46,7 @@ from merv.client.agent_runner import (
     load_workspace_settings,
 )
 from merv.client.cli import (
+    ClientError,
     configure_agent,
     configure_client,
     configure_workspace,
@@ -120,7 +122,6 @@ class AgentConfigurationTest(unittest.TestCase):
                 "gemini",
                 "cursor",
                 "opencode",
-                "aider",
                 "copilot",
                 "qwen",
                 "hermes",
@@ -136,7 +137,6 @@ class AgentConfigurationTest(unittest.TestCase):
                         "gemini",
                         "cursor",
                         "opencode",
-                        "aider",
                         "copilot",
                         "qwen",
                         "hermes",
@@ -150,7 +150,6 @@ class AgentConfigurationTest(unittest.TestCase):
                         "gemini",
                         "cursor",
                         "opencode",
-                        "aider",
                         "copilot",
                         "qwen",
                         "hermes",
@@ -204,6 +203,26 @@ class AgentConfigurationTest(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(RunnerError, "between 1 and 32"):
+                load_platforms(path)
+
+    def test_aider_is_not_available_for_auto_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "client.json"
+            with self.assertRaisesRegex(
+                ClientError,
+                "Aider is not supported for auto-run",
+            ):
+                configure_agent(config_path=path, platform="aider")
+
+            path.write_text(
+                '{"agent_platforms":{"aider":{"adapter":"command",'
+                '"command":["aider"]}}}',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                RunnerError,
+                "Aider is not supported for auto-run",
+            ):
                 load_platforms(path)
 
     def test_status_reports_which_agent_executables_this_machine_has(self) -> None:
@@ -345,6 +364,7 @@ class AgentHostTest(unittest.TestCase):
                 "exec",
                 "--ignore-user-config",
                 "--full-auto",
+                "--json",
                 "-c",
                 "sandbox_workspace_write.network_access=true",
                 "--model",
@@ -385,6 +405,10 @@ class AgentHostTest(unittest.TestCase):
                 "--print",
                 "--permission-mode",
                 "auto",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--forward-subagent-text",
                 "--model",
                 "opus",
                 "--effort",
@@ -403,13 +427,22 @@ class AgentHostTest(unittest.TestCase):
                 "--permission-mode",
                 "acceptEdits",
                 "--print",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--forward-subagent-text",
             ],
         )
         instruction = "Run the assigned experiment."
         native = {
             "gemini": (
                 GeminiHost(),
-                ["gemini", "--approval-mode=yolo", "--output-format", "text"],
+                [
+                    "gemini",
+                    "--approval-mode=yolo",
+                    "--output-format",
+                    "stream-json",
+                ],
                 None,
             ),
             "cursor": (
@@ -419,19 +452,14 @@ class AgentHostTest(unittest.TestCase):
                     "--print",
                     "--force",
                     "--output-format",
-                    "text",
+                    "stream-json",
                 ],
                 [instruction],
             ),
             "opencode": (
                 OpenCodeHost(),
-                ["opencode", "run", "--auto"],
+                ["opencode", "run", "--auto", "--format", "json"],
                 [instruction],
-            ),
-            "aider": (
-                AiderHost(),
-                ["aider", "--yes-always"],
-                ["--message", instruction],
             ),
             "copilot": (
                 CopilotHost(),
@@ -439,13 +467,22 @@ class AgentHostTest(unittest.TestCase):
                     "copilot",
                     "--autopilot",
                     "--yolo",
-                    "--output-format=text",
+                    "--no-ask-user",
+                    "--output-format=json",
                 ],
                 ["--prompt", instruction],
             ),
             "qwen": (
                 QwenHost(),
-                ["qwen", "--approval-mode", "yolo", "--output-format", "text"],
+                [
+                    "qwen",
+                    "--approval-mode",
+                    "yolo",
+                    "--input-format",
+                    "text",
+                    "--output-format",
+                    "stream-json",
+                ],
                 None,
             ),
             "hermes": (
@@ -536,10 +573,95 @@ class AgentHostTest(unittest.TestCase):
                     platform=platform,
                     instruction="work",
                     child_env={"PATH": "/bin"},
-                    log_path=root / "agent.log",
+                    stdout_path=root / "stdout.log",
+                    stderr_path=root / "stderr.log",
                     cwd=root,
                 )
             killpg.assert_called_once_with(41, signal.SIGKILL)
+
+    def test_command_host_keeps_json_stdout_separate_from_stderr(self) -> None:
+        script = (
+            "import json, sys; prompt = sys.stdin.read(); "
+            "print(json.dumps({'type':'message','prompt':prompt})); "
+            "print('provider warning', file=sys.stderr)"
+        )
+        platform = Platform(
+            "custom",
+            "command",
+            (sys.executable, "-c", script),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stdout_path = root / "trace.jsonl"
+            stderr_path = root / "stderr.log"
+            host = CommandHost()
+            with patch(
+                "merv.client.agent_runner._process_marker",
+                return_value="birth-marker",
+            ):
+                session = host.spawn(
+                    platform=platform,
+                    instruction="assigned work",
+                    child_env=dict(os.environ),
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                    cwd=root,
+                )
+            host._processes[session.pid].wait(timeout=5)
+
+            stdout = stdout_path.read_text(encoding="utf-8")
+            stderr = stderr_path.read_text(encoding="utf-8")
+            self.assertEqual(json.loads(stdout)["type"], "message")
+            self.assertIn("assigned work", stdout)
+            self.assertNotIn("provider warning", stdout)
+            self.assertEqual(stderr, "provider warning\n")
+            self.assertEqual(stdout_path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(stderr_path.stat().st_mode & 0o777, 0o600)
+
+    def test_hermes_exports_the_completed_session_as_jsonl(self) -> None:
+        platform = Platform("hermes", "hermes", ("hermes",))
+        with tempfile.TemporaryDirectory() as tmp:
+            trace_dir = Path(tmp)
+            (trace_dir / "hermes-usage.json").write_text(
+                '{"session_id":"session-123"}\n',
+                encoding="utf-8",
+            )
+
+            def export(command, **kwargs):
+                destination = Path(command[3])
+                destination.write_text(
+                    '{"session_id":"session-123","messages":[]}\n',
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with patch(
+                "merv.client.agent_runner.subprocess.run",
+                side_effect=export,
+            ) as run:
+                HermesHost().finalize_trace(
+                    platform=platform,
+                    trace_dir=trace_dir,
+                )
+
+            self.assertEqual(
+                json.loads((trace_dir / "trace.jsonl").read_text(encoding="utf-8"))[
+                    "session_id"
+                ],
+                "session-123",
+            )
+            self.assertEqual((trace_dir / "trace.jsonl").stat().st_mode & 0o777, 0o600)
+            self.assertEqual(
+                run.call_args.args[0],
+                [
+                    "hermes",
+                    "sessions",
+                    "export",
+                    str(trace_dir / "trace.jsonl.tmp"),
+                    "--session-id",
+                    "session-123",
+                ],
+            )
 
     def test_credentials_are_refused_over_nonlocal_http(self) -> None:
         self.assertEqual(
@@ -882,6 +1004,7 @@ class _CapturingClient(AgentSessionsClient):
                 "experiment_id": "exp_1",
                 "status": "offered",
                 "instruction": "do the experiment",
+                "attempt_index": 3,
             }
         }
 
@@ -905,6 +1028,7 @@ class AgentSessionProtocolTest(unittest.TestCase):
                 experiment_id="exp_1",
                 project_id="proj_1",
                 instruction="do the experiment",
+                attempt_index=3,
             ),
         )
         self.assertEqual(
@@ -950,6 +1074,10 @@ class AgentSessionProtocolTest(unittest.TestCase):
 
 
 class _FakeHost:
+    trace_format = "jsonl"
+    stdout_filename = "trace.jsonl"
+    trace_filename = "trace.jsonl"
+
     def __init__(self):
         self.spawns: list[dict[str, object]] = []
         self.stopped: list[HostSession] = []
@@ -963,6 +1091,9 @@ class _FakeHost:
 
     def stop(self, session):
         self.stopped.append(session)
+
+    def finalize_trace(self, *, platform, trace_dir):
+        return None
 
 
 class _FakeClient:
@@ -1112,7 +1243,7 @@ class AgentRunnerTest(unittest.TestCase):
                 client=client,
                 ledger=ledger,
                 workspaces=_FakeWorkspaces(root),
-                log_dir=root / "logs",
+                trace_dir=root / "traces",
                 runner_secret=b"r" * 32,
             )
 
@@ -1142,7 +1273,7 @@ class AgentRunnerTest(unittest.TestCase):
                 client=client,
                 ledger=SessionLedger(root / "sessions.json"),
                 workspaces=_FakeWorkspaces(root),
-                log_dir=root / "logs",
+                trace_dir=root / "traces",
                 runner_secret=b"r" * 32,
             )
             self.assertTrue(runner.advance_ready())
@@ -1153,10 +1284,24 @@ class AgentRunnerTest(unittest.TestCase):
         self.assertEqual(receipt["observed_sha"], "2" * 40)
 
     def test_launch_is_reserved_first_and_secret_reaches_only_child_env(self) -> None:
-        claim = Claim("ags_1", "exp_1", "proj_1")
+        claim = Claim(
+            "ags_1",
+            "exp_1",
+            "proj_1",
+            source_sha="a" * 40,
+            instruction="Execute the assigned work with the supplied context.",
+            attempt_index=2,
+        )
         client = _FakeClient(claim)
         host = _FakeHost()
-        platform = Platform("custom", "command", ("agent",), parallelism=1)
+        platform = Platform(
+            "custom",
+            "command",
+            ("agent", "--api-key", "provider-secret"),
+            model="model-1",
+            effort="high",
+            parallelism=1,
+        )
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ledger = SessionLedger(root / "sessions.json")
@@ -1166,7 +1311,7 @@ class AgentRunnerTest(unittest.TestCase):
                 client=client,
                 ledger=ledger,
                 workspaces=_FakeWorkspaces(root),
-                log_dir=root / "logs",
+                trace_dir=root / "traces",
                 runner_secret=b"r" * 32,
                 environment={
                     "PATH": "/bin",
@@ -1207,6 +1352,36 @@ class AgentRunnerTest(unittest.TestCase):
                 [("ags_1", "pid:41", "merv/ags_1")],
             )
             self.assertTrue(ledger.sessions["ags_1"].launch_attempted)
+            trace_dir = root / "traces" / "ags_1"
+            metadata = json.loads(
+                (trace_dir / "metadata.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(metadata["merv_agent_session_id"], "ags_1")
+            self.assertEqual(
+                metadata["work_item"]["instruction"], launch["instruction"]
+            )
+            self.assertEqual(metadata["work_item"]["experiment_id"], "exp_1")
+            self.assertEqual(metadata["work_item"]["attempt_index"], 2)
+            self.assertEqual(metadata["work_item"]["source_sha"], "a" * 40)
+            self.assertEqual(metadata["agent_setup"]["harness"], "command")
+            self.assertEqual(metadata["agent_setup"]["model"], "model-1")
+            self.assertEqual(metadata["agent_setup"]["effort"], "high")
+            self.assertEqual(metadata["agent_setup"]["trace_file"], "trace.jsonl")
+            self.assertEqual(
+                metadata["agent_setup"]["command"],
+                ["agent", "--api-key", "<redacted>"],
+            )
+            self.assertNotIn("provider-secret", json.dumps(metadata))
+            self.assertEqual(launch["stdout_path"], trace_dir / "trace.jsonl")
+            self.assertEqual(launch["stderr_path"], trace_dir / "stderr.log")
+            self.assertEqual(
+                launch["child_env"]["MERV_AGENT_TRACE_DIR"], str(trace_dir)
+            )
+            self.assertEqual(trace_dir.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(
+                (trace_dir / "metadata.json").stat().st_mode & 0o777,
+                0o600,
+            )
 
             # Even if the remote claim is replayed after the process stops,
             # the durable launch record makes a second spawn impossible.
@@ -1236,7 +1411,7 @@ class AgentRunnerTest(unittest.TestCase):
                 client=client,
                 ledger=ledger,
                 workspaces=_FakeWorkspaces(root),
-                log_dir=root / "logs",
+                trace_dir=root / "traces",
                 runner_secret=b"r" * 32,
             )
             with (
@@ -1281,7 +1456,7 @@ class AgentRunnerTest(unittest.TestCase):
                 client=client,
                 ledger=SessionLedger(root / "sessions.json"),
                 workspaces=_FakeWorkspaces(root),
-                log_dir=root / "logs",
+                trace_dir=root / "traces",
                 runner_secret=b"r" * 32,
             )
             with (
@@ -1317,7 +1492,7 @@ class AgentRunnerTest(unittest.TestCase):
                 client=client,
                 ledger=ledger,
                 workspaces=_FakeWorkspaces(root),
-                log_dir=root / "logs",
+                trace_dir=root / "traces",
                 runner_secret=b"r" * 32,
             )
 
@@ -1370,7 +1545,7 @@ class AgentRunnerTest(unittest.TestCase):
                 client=client,
                 ledger=ledger,
                 workspaces=workspaces,
-                log_dir=root / "logs",
+                trace_dir=root / "traces",
                 runner_secret=b"r" * 32,
             )
 
@@ -1409,7 +1584,7 @@ class AgentRunnerTest(unittest.TestCase):
                 client=client,
                 ledger=ledger,
                 workspaces=workspaces,
-                log_dir=root / "logs",
+                trace_dir=root / "traces",
                 runner_secret=b"r" * 32,
             )
 
@@ -1440,7 +1615,7 @@ class AgentRunnerTest(unittest.TestCase):
                 client=client,
                 ledger=ledger,
                 workspaces=_FakeWorkspaces(root),
-                log_dir=root / "logs",
+                trace_dir=root / "traces",
                 runner_secret=b"r" * 32,
             )
 
@@ -1476,7 +1651,7 @@ class AgentRunnerTest(unittest.TestCase):
                 client=client,
                 ledger=ledger,
                 workspaces=_FakeWorkspaces(root),
-                log_dir=root / "logs",
+                trace_dir=root / "traces",
                 runner_secret=b"r" * 32,
             )
 
@@ -1527,7 +1702,7 @@ class AgentRunnerTest(unittest.TestCase):
                 client=client,
                 ledger=ledger,
                 workspaces=_FakeWorkspaces(root),
-                log_dir=root / "logs",
+                trace_dir=root / "traces",
                 runner_secret=b"r" * 32,
             )
 

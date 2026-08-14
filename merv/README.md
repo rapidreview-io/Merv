@@ -120,9 +120,9 @@ flowchart LR
 Merv can dispatch a reviewed experiment wave into separate local coding-agent
 sessions. Configure any number of named platforms in the private machine file
 `~/.merv/client.json`. Native process adapters cover Codex, Claude Code, Gemini
-CLI, Cursor Agent, OpenCode, Aider, GitHub Copilot CLI, Qwen Code, and Hermes
-Agent. The `command` adapter covers any other executable that accepts its
-instruction on stdin:
+CLI, Cursor Agent, OpenCode, GitHub Copilot CLI, Qwen Code, and Hermes
+Agent. The `command` adapter covers a custom executable that accepts its
+instruction on stdin and emits a JSONL interaction stream on stdout:
 
 ```bash
 bin/merv-client agent codex --enable --command codex --parallelism 2
@@ -146,6 +146,13 @@ The runner holds the ordinary project/account key. Each child gets a separate,
 short-lived session key only through `MERV_AGENT_SESSION_KEY`; the key never
 appears in the child prompt, argv, settings, or logs. Merv owns assignment,
 leases, and recovery while each platform supplies only the local process.
+For every auto-run session, the runner creates
+`~/.merv/agent-traces/<merv-agent-session-id>/`. `metadata.json` contains
+exactly one immutable work-item snapshot and one sanitized harness/model setup;
+`trace.jsonl` contains the provider's native event stream, and `stderr.log`
+keeps diagnostics separate so they cannot corrupt the JSONL. Hermes writes the
+same `trace.jsonl` through its post-run session export. These files stay on the
+client machine and are never created for interactive, non-auto-run sessions.
 The runner initializes a Merv-owned bare repository and central ref, then keeps
 one persistent branch/worktree per experiment. Reflection approval dispatches a
 separate consolidator and code reviewer; the runner alone advances central

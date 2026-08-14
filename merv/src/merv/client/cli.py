@@ -85,7 +85,7 @@ def _parser() -> argparse.ArgumentParser:
         "platform",
         help=(
             "Local platform name: codex, claude, gemini, cursor, opencode, "
-            "aider, copilot, qwen, hermes, or a custom name"
+            "copilot, qwen, hermes, or a custom name"
         ),
     )
     agent.add_argument(
@@ -96,7 +96,6 @@ def _parser() -> argparse.ArgumentParser:
             "gemini",
             "cursor",
             "opencode",
-            "aider",
             "copilot",
             "qwen",
             "hermes",
@@ -334,6 +333,11 @@ def configure_agent(
     name = platform.strip()
     if not name:
         raise ClientError("platform is required")
+    if name.lower() == "aider":
+        raise ClientError(
+            "Aider is not supported for auto-run because it cannot emit a "
+            "complete JSONL interaction trace"
+        )
     if parallelism is not None and not 1 <= parallelism <= 32:
         raise ClientError("parallelism must be between 1 and 32")
     if command is not None and (not command or not all(str(item) for item in command)):
@@ -358,7 +362,6 @@ def configure_agent(
                 "gemini",
                 "cursor",
                 "opencode",
-                "aider",
                 "copilot",
                 "qwen",
                 "hermes",

@@ -88,6 +88,7 @@ class Claim:
     instruction: str | None = None
     kind: str = "experiment"
     review_request_id: str | None = None
+    attempt_index: int = 0
 
     def __post_init__(self) -> None:
         if not self.target_id:
@@ -123,8 +124,21 @@ class WorkspaceSettings:
     base_ref: str = "HEAD"
 
 
+@dataclass(frozen=True)
+class TraceFiles:
+    """Private machine-local files for one auto-run agent session."""
+
+    directory: Path
+    stdout: Path
+    stderr: Path
+
+
 class AgentHost(Protocol):
     """The only platform-specific process boundary."""
+
+    trace_format: str
+    stdout_filename: str
+    trace_filename: str | None
 
     def spawn(
         self,
@@ -132,7 +146,8 @@ class AgentHost(Protocol):
         platform: Platform,
         instruction: str,
         child_env: Mapping[str, str],
-        log_path: Path,
+        stdout_path: Path,
+        stderr_path: Path,
         cwd: Path,
     ) -> HostSession: ...
 
@@ -140,9 +155,15 @@ class AgentHost(Protocol):
 
     def stop(self, session: HostSession) -> None: ...
 
+    def finalize_trace(self, *, platform: Platform, trace_dir: Path) -> None: ...
+
 
 class CommandHost:
     """A shell-free host for a command that accepts its instruction on stdin."""
+
+    trace_format = "jsonl"
+    stdout_filename = "trace.jsonl"
+    trace_filename: str | None = "trace.jsonl"
 
     def __init__(self) -> None:
         self._processes: dict[int, subprocess.Popen[bytes]] = {}
@@ -162,13 +183,18 @@ class CommandHost:
         """Add adapter-specific guidance before choosing stdin or argv."""
         return instruction
 
+    def finalize_trace(self, *, platform: Platform, trace_dir: Path) -> None:
+        """Finish provider-specific capture after the child stops."""
+        return None
+
     def spawn(
         self,
         *,
         platform: Platform,
         instruction: str,
         child_env: Mapping[str, str],
-        log_path: Path,
+        stdout_path: Path,
+        stderr_path: Path,
         cwd: Path,
     ) -> HostSession:
         command = self.command_for(platform)
@@ -181,19 +207,33 @@ class CommandHost:
             command.extend(instruction_arguments)
         if not command:
             raise RunnerError(f"{platform.name}: command is required")
-        log_path.parent.mkdir(parents=True, exist_ok=True)
+        stdout_path.parent.mkdir(parents=True, exist_ok=True)
+        stderr_path.parent.mkdir(parents=True, exist_ok=True)
         environment = dict(child_env)
         if platform.model:
             environment["MERV_AGENT_MODEL"] = platform.model
         if platform.effort:
             environment["MERV_AGENT_EFFORT"] = platform.effort
-        descriptor = os.open(
-            log_path,
+        stdout_descriptor = os.open(
+            stdout_path,
             os.O_WRONLY | os.O_APPEND | os.O_CREAT,
             0o600,
         )
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "ab", buffering=0) as output:
+        try:
+            stderr_descriptor = os.open(
+                stderr_path,
+                os.O_WRONLY | os.O_APPEND | os.O_CREAT,
+                0o600,
+            )
+        except Exception:
+            os.close(stdout_descriptor)
+            raise
+        os.fchmod(stdout_descriptor, 0o600)
+        os.fchmod(stderr_descriptor, 0o600)
+        with (
+            os.fdopen(stdout_descriptor, "ab", buffering=0) as output,
+            os.fdopen(stderr_descriptor, "ab", buffering=0) as errors,
+        ):
             process: subprocess.Popen[bytes] | None = None
             try:
                 process = subprocess.Popen(
@@ -204,7 +244,7 @@ class CommandHost:
                         else subprocess.DEVNULL
                     ),
                     stdout=output,
-                    stderr=subprocess.STDOUT,
+                    stderr=errors,
                     env=environment,
                     cwd=cwd,
                     start_new_session=True,
@@ -288,12 +328,17 @@ class CommandHost:
 class CodexHost(CommandHost):
     """Native non-interactive Codex invocation."""
 
+    trace_format = "jsonl"
+    stdout_filename = "trace.jsonl"
+    trace_filename = "trace.jsonl"
+
     def command_for(self, platform: Platform) -> list[str]:
         command = [
             *platform.command,
             "exec",
             "--ignore-user-config",
             "--full-auto",
+            "--json",
             "-c",
             "sandbox_workspace_write.network_access=true",
         ]
@@ -318,10 +363,22 @@ class CodexHost(CommandHost):
 class ClaudeHost(CommandHost):
     """Native non-interactive Claude Code invocation."""
 
+    trace_format = "jsonl"
+    stdout_filename = "trace.jsonl"
+    trace_filename = "trace.jsonl"
+
     def command_for(self, platform: Platform) -> list[str]:
         command = [*platform.command, "--print"]
         if not _has_option(command, "--permission-mode"):
             command.extend(("--permission-mode", "auto"))
+        command.extend(
+            (
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--forward-subagent-text",
+            )
+        )
         if platform.model:
             command.extend(("--model", platform.model))
         if platform.effort:
@@ -351,12 +408,16 @@ class ClaudeHost(CommandHost):
 class GeminiHost(CommandHost):
     """Native Gemini CLI headless invocation."""
 
+    trace_format = "jsonl"
+    stdout_filename = "trace.jsonl"
+    trace_filename = "trace.jsonl"
+
     def command_for(self, platform: Platform) -> list[str]:
         command = [
             *platform.command,
             "--approval-mode=yolo",
             "--output-format",
-            "text",
+            "stream-json",
         ]
         if platform.model:
             command.extend(("--model", platform.model))
@@ -366,13 +427,17 @@ class GeminiHost(CommandHost):
 class CursorHost(CommandHost):
     """Native Cursor Agent headless invocation."""
 
+    trace_format = "jsonl"
+    stdout_filename = "trace.jsonl"
+    trace_filename = "trace.jsonl"
+
     def command_for(self, platform: Platform) -> list[str]:
         command = [
             *platform.command,
             "--print",
             "--force",
             "--output-format",
-            "text",
+            "stream-json",
         ]
         if platform.model:
             command.extend(("--model", platform.model))
@@ -385,8 +450,12 @@ class CursorHost(CommandHost):
 class OpenCodeHost(CommandHost):
     """Native OpenCode non-interactive invocation."""
 
+    trace_format = "jsonl"
+    stdout_filename = "trace.jsonl"
+    trace_filename = "trace.jsonl"
+
     def command_for(self, platform: Platform) -> list[str]:
-        command = [*platform.command, "run", "--auto"]
+        command = [*platform.command, "run", "--auto", "--format", "json"]
         if platform.model:
             command.extend(("--model", platform.model))
         if platform.effort:
@@ -397,30 +466,20 @@ class OpenCodeHost(CommandHost):
         return [instruction]
 
 
-class AiderHost(CommandHost):
-    """Native Aider single-message invocation."""
-
-    def command_for(self, platform: Platform) -> list[str]:
-        command = [*platform.command, "--yes-always"]
-        if platform.model:
-            command.extend(("--model", platform.model))
-        if platform.effort:
-            command.extend(("--reasoning-effort", platform.effort))
-        return command
-
-    def instruction_arguments(self, instruction: str) -> list[str]:
-        return ["--message", instruction]
-
-
 class CopilotHost(CommandHost):
     """Native GitHub Copilot CLI autonomous invocation."""
+
+    trace_format = "jsonl"
+    stdout_filename = "trace.jsonl"
+    trace_filename = "trace.jsonl"
 
     def command_for(self, platform: Platform) -> list[str]:
         command = [
             *platform.command,
             "--autopilot",
             "--yolo",
-            "--output-format=text",
+            "--no-ask-user",
+            "--output-format=json",
         ]
         if platform.model:
             command.extend(("--model", platform.model))
@@ -433,13 +492,19 @@ class CopilotHost(CommandHost):
 class QwenHost(CommandHost):
     """Native Qwen Code headless invocation."""
 
+    trace_format = "jsonl"
+    stdout_filename = "trace.jsonl"
+    trace_filename = "trace.jsonl"
+
     def command_for(self, platform: Platform) -> list[str]:
         command = [
             *platform.command,
             "--approval-mode",
             "yolo",
-            "--output-format",
+            "--input-format",
             "text",
+            "--output-format",
+            "stream-json",
         ]
         if platform.model:
             command.extend(("--model", platform.model))
@@ -454,6 +519,10 @@ class HermesHost(CommandHost):
     while preserving the user's normal Hermes model and skill configuration.
     """
 
+    trace_format = "jsonl-export"
+    stdout_filename = "stdout.log"
+    trace_filename = "trace.jsonl"
+
     def command_for(self, platform: Platform) -> list[str]:
         command = list(platform.command)
         if platform.model:
@@ -465,6 +534,14 @@ class HermesHost(CommandHost):
         # non-interactive tool approvals.
         return ["-z", instruction]
 
+    def session_arguments(self, child_env: Mapping[str, str]) -> list[str]:
+        trace_dir = child_env.get("MERV_AGENT_TRACE_DIR")
+        return (
+            ["--usage-file", str(Path(trace_dir) / "hermes-usage.json")]
+            if trace_dir
+            else []
+        )
+
     def prepare_instruction(self, instruction: str) -> str:
         return (
             instruction
@@ -475,6 +552,47 @@ class HermesHost(CommandHost):
             "credential to merv-client.\n"
         )
 
+    def finalize_trace(self, *, platform: Platform, trace_dir: Path) -> None:
+        usage_path = trace_dir / "hermes-usage.json"
+        if not usage_path.is_file():
+            raise RunnerError("Hermes did not write its usage report")
+        os.chmod(usage_path, 0o600)
+        try:
+            usage = json.loads(usage_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RunnerError("Hermes wrote an unreadable usage report") from exc
+        session = usage.get("session") if isinstance(usage, dict) else None
+        session_id = str(
+            (usage.get("session_id") if isinstance(usage, dict) else "")
+            or (session.get("id") if isinstance(session, dict) else "")
+            or ""
+        ).strip()
+        if not session_id:
+            raise RunnerError("Hermes usage report has no session id")
+        destination = trace_dir / "trace.jsonl"
+        temporary = trace_dir / "trace.jsonl.tmp"
+        result = subprocess.run(
+            [
+                *platform.command,
+                "sessions",
+                "export",
+                str(temporary),
+                "--session-id",
+                session_id,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        if result.returncode:
+            message = result.stderr.strip() or result.stdout.strip() or "export failed"
+            raise RunnerError(f"Hermes trace export failed: {message}")
+        if not temporary.is_file():
+            raise RunnerError("Hermes trace export produced no file")
+        os.chmod(temporary, 0o600)
+        temporary.replace(destination)
+
 
 HOSTS: dict[str, AgentHost] = {
     "codex": CodexHost(),
@@ -482,7 +600,6 @@ HOSTS: dict[str, AgentHost] = {
     "gemini": GeminiHost(),
     "cursor": CursorHost(),
     "opencode": OpenCodeHost(),
-    "aider": AiderHost(),
     "copilot": CopilotHost(),
     "qwen": QwenHost(),
     "hermes": HermesHost(),
@@ -515,6 +632,8 @@ class LocalSession:
     started_at: float | None = None
     kind: str = "experiment"
     review_request_id: str | None = None
+    attempt_index: int = 0
+    trace_dir: str | None = None
 
     def host_session(self) -> HostSession | None:
         if not self.host_ref or not self.pid:
@@ -615,6 +734,7 @@ class SessionLedger:
             adapter=platform.adapter,
             kind=claim.kind,
             review_request_id=claim.review_request_id,
+            attempt_index=claim.attempt_index,
         )
         self.sessions[claim.session_id] = session
         self.pending_claims.pop(platform.name, None)
@@ -1157,6 +1277,7 @@ class AgentSessionsClient:
                 review_request_id=_optional_text(
                     session.get("review_request_id") or result.get("review_request_id")
                 ),
+                attempt_index=int(session.get("attempt_index") or 0),
             )
         except KeyError as exc:
             raise RunnerError(
@@ -1349,7 +1470,7 @@ class AgentRunner:
         client: AgentSessionsClient,
         ledger: SessionLedger,
         workspaces: WorkspaceManager,
-        log_dir: Path,
+        trace_dir: Path,
         runner_secret: bytes,
         environment: Mapping[str, str] | None = None,
     ):
@@ -1358,7 +1479,7 @@ class AgentRunner:
         self.client = client
         self.ledger = ledger
         self.workspaces = workspaces
-        self.log_dir = log_dir
+        self.trace_dir = trace_dir
         if len(runner_secret) < 32:
             raise RunnerError("runner secret is missing or too short")
         self.runner_secret = runner_secret
@@ -1408,6 +1529,7 @@ class AgentRunner:
         host = HOSTS[adapter]
         if remote_status and remote_status not in {"offered", "active"}:
             host.stop(host_session)
+            self._finalize_trace(session=session, host=host)
             workspace = self._capture_after_stop(session)
             self.client.release(
                 session_id=session.session_id,
@@ -1423,6 +1545,7 @@ class AgentRunner:
 
         state = host.inspect(host_session)
         if state == "stopped":
+            self._finalize_trace(session=session, host=host)
             workspace = self._capture_after_stop(session)
             reason = (
                 "host_process_crash_loop"
@@ -1587,6 +1710,22 @@ class AgentRunner:
             )
             return None
 
+    def _finalize_trace(self, *, session: LocalSession, host: AgentHost) -> None:
+        if not session.trace_dir:
+            return
+        finalize = getattr(host, "finalize_trace", None)
+        if not callable(finalize):
+            return
+        try:
+            finalize(
+                platform=self._platform(session.platform),
+                trace_dir=Path(session.trace_dir),
+            )
+        except Exception as exc:  # noqa: BLE001 -- trace failure cannot wedge work
+            message = f"trace finalization failed: {exc}"
+            _append_private_text(Path(session.trace_dir) / "stderr.log", message + "\n")
+            print(f"{session.session_id}: {message}", file=sys.stderr)
+
     @staticmethod
     def _remember_workspace(session: LocalSession, workspace: Workspace) -> None:
         session.base_sha = workspace.base_sha
@@ -1656,17 +1795,29 @@ class AgentRunner:
                 f"{workspace.branch or 'detached'} at {workspace.head_sha}; "
                 f"base {workspace.base_sha}.\n"
             )
+            trace_files = _prepare_trace(
+                root=self.trace_dir,
+                claim=claim,
+                platform=platform,
+                host=host,
+                instruction=instruction,
+                workspace=workspace,
+            )
+            session.trace_dir = str(trace_files.directory)
+            child_environment = _child_environment(
+                self.environment,
+                session_key=session_key,
+                control_url=self.client.control_url,
+                session_id=claim.session_id,
+            )
+            child_environment["MERV_AGENT_TRACE_DIR"] = str(trace_files.directory)
             self.ledger.save()
             host_session = host.spawn(
                 platform=platform,
                 instruction=instruction,
-                child_env=_child_environment(
-                    self.environment,
-                    session_key=session_key,
-                    control_url=self.client.control_url,
-                    session_id=claim.session_id,
-                ),
-                log_path=self.log_dir / f"{claim.session_id}.log",
+                child_env=child_environment,
+                stdout_path=trace_files.stdout,
+                stderr_path=trace_files.stderr,
                 cwd=workspace.path,
             )
         except Exception:
@@ -1735,6 +1886,11 @@ def load_platforms(config_path: Path) -> tuple[Platform, ...]:
     for name, raw in configured.items():
         if not isinstance(raw, dict) or not raw.get("enabled", True):
             continue
+        if str(name).lower() == "aider":
+            raise RunnerError(
+                "Aider is not supported for auto-run because it cannot emit a "
+                "complete JSONL interaction trace"
+            )
         adapter = str(raw.get("adapter") or name)
         if adapter not in HOSTS:
             raise RunnerError(
@@ -1824,6 +1980,119 @@ def _child_environment(
     return environment
 
 
+def _prepare_trace(
+    *,
+    root: Path,
+    claim: Claim,
+    platform: Platform,
+    host: AgentHost,
+    instruction: str,
+    workspace: Workspace,
+) -> TraceFiles:
+    """Create the private recording envelope for one claimed auto-run session."""
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(root, 0o700)
+    directory = root / _safe_name(claim.session_id)
+    try:
+        directory.mkdir(mode=0o700)
+    except FileExistsError as exc:
+        raise RunnerError(
+            f"trace directory already exists for session {claim.session_id}"
+        ) from exc
+    stdout_filename = str(getattr(host, "stdout_filename", "trace.jsonl"))
+    trace_filename = getattr(host, "trace_filename", "trace.jsonl")
+    command_for = getattr(host, "command_for", None)
+    harness_command = (
+        command_for(platform) if callable(command_for) else list(platform.command)
+    )
+    metadata = {
+        "schema_version": 1,
+        "merv_agent_session_id": claim.session_id,
+        "work_item": {
+            "project_id": claim.project_id,
+            "experiment_id": claim.experiment_id,
+            "kind": claim.kind,
+            "target_type": claim.target_type,
+            "target_id": claim.target_id,
+            "attempt_index": claim.attempt_index,
+            "review_request_id": claim.review_request_id,
+            "source_sha": claim.source_sha,
+            "instruction": instruction,
+            "workspace": {
+                "path": str(workspace.path),
+                "branch": workspace.branch,
+                "base_sha": workspace.base_sha,
+                "head_sha": workspace.head_sha,
+            },
+        },
+        "agent_setup": {
+            "platform": platform.name,
+            "harness": platform.adapter,
+            "command": _sanitized_command(harness_command),
+            "model": platform.model,
+            "effort": platform.effort,
+            "trace_format": str(getattr(host, "trace_format", "jsonl")),
+            "trace_file": str(trace_filename) if trace_filename else None,
+            "stdout_file": stdout_filename,
+            "stderr_file": "stderr.log",
+        },
+    }
+    _write_private_json(directory / "metadata.json", metadata)
+    return TraceFiles(
+        directory=directory,
+        stdout=directory / stdout_filename,
+        stderr=directory / "stderr.log",
+    )
+
+
+def _sanitized_command(command: Sequence[str]) -> list[str]:
+    """Keep harness configuration useful without persisting obvious secrets."""
+    sensitive = re.compile(
+        r"(?i)(?:api[-_]?key|token|secret|password|credential|authorization)"
+    )
+    result: list[str] = []
+    redact_next = False
+    for argument in command:
+        if redact_next:
+            result.append("<redacted>")
+            redact_next = False
+            continue
+        if "=" in argument:
+            name, _ = argument.split("=", 1)
+            if sensitive.search(name):
+                result.append(f"{name}=<redacted>")
+                continue
+        if sensitive.search(argument):
+            result.append(argument if argument.startswith("-") else "<redacted>")
+            redact_next = argument.startswith("-")
+            continue
+        result.append(argument)
+    return result
+
+
+def _write_private_json(path: Path, payload: Mapping[str, Any]) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        output.write(json.dumps(dict(payload), indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
+def _append_private_text(path: Path, value: str) -> None:
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_APPEND | os.O_CREAT,
+        0o600,
+    )
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, "a", encoding="utf-8") as output:
+        output.write(value)
+
+
 def _session_key(*, runner_secret: bytes, idempotency_key: str) -> str:
     """Re-create a claim credential after a lost response without storing it."""
     digest = hmac.new(
@@ -1906,7 +2175,7 @@ def _safe_name(value: str) -> str:
 
 def _runtime_paths(config_path: Path) -> tuple[Path, Path]:
     state_dir = config_path.parent
-    return state_dir / "agent-sessions.json", state_dir / "agent-logs"
+    return state_dir / "agent-sessions.json", state_dir / "agent-traces"
 
 
 def _validate_settings(config_path: Path) -> None:
@@ -1922,7 +2191,6 @@ DEFAULT_PLATFORM_EXECUTABLES: dict[str, str] = {
     "gemini": "gemini",
     "cursor": "cursor-agent",
     "opencode": "opencode",
-    "aider": "aider",
     "copilot": "copilot",
     "qwen": "qwen",
     "hermes": "hermes",
@@ -2107,7 +2375,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         runner_key = dual_env_value(MCP_KEY_ENV_VAR)
         if not runner_key and not _is_loopback_url(control_url):
             raise RunnerError(f"{MCP_KEY_ENV_VAR} is required")
-        ledger_path, log_dir = _runtime_paths(config_path)
+        ledger_path, trace_dir = _runtime_paths(config_path)
         ledger = SessionLedger(ledger_path)
         runner_secret, _ = private_token(config_path.parent / "agent-runner.secret")
         workspace_settings = load_workspace_settings(config_path)
@@ -2120,7 +2388,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             ledger=ledger,
             workspaces=WorkspaceManager(workspace_settings),
-            log_dir=log_dir,
+            trace_dir=trace_dir,
             runner_secret=runner_secret.encode("utf-8"),
         )
         lock = RunnerLock(config_path.parent / "agent-runner.lock")
