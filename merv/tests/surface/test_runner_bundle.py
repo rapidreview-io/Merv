@@ -23,6 +23,13 @@ _spec.loader.exec_module(build_runner_bundle)
 
 
 class RunnerBundleTest(unittest.TestCase):
+    def test_installer_defaults_to_the_rapidreview_distribution(self) -> None:
+        installer = (PLUGIN_ROOT / "runner" / "install.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("https://rapidreview.io/merv/runner", installer)
+        self.assertNotIn("githubusercontent.com", installer)
+
     def test_manifest_is_the_small_machine_local_closure(self) -> None:
         manifest = build_runner_bundle.manifest()
         self.assertIn("merv/client/agent_runner.py", manifest)

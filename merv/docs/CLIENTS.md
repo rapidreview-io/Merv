@@ -195,10 +195,10 @@ provider-independent distribution source without waiting for a provider review.
 
 Auto-run is not installed from a provider plugin.
 `scripts/build_runner_bundle.py` creates one backend-free zipapp from the
-machine-local client closure. The `Publish runner bundle` workflow publishes
-the archive, checksum, and `runner/install.sh` to the generated `merv-runner`
-branch after every `main` update. The Settings wizard installs or updates it
-with one provider-neutral command; its launchers live under `~/.merv/bin`.
+machine-local client closure. The production UI build publishes the archive,
+checksum, and `runner/install.sh` under `rapidreview.io/merv/runner/` after
+every `main` update. The Settings wizard installs or updates it with one
+provider-neutral command; its launchers live under `~/.merv/bin`.
 
 ## Verify a connection
 

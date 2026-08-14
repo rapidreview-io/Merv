@@ -71,7 +71,7 @@ Install the non-interactive runner independently of the agent plugin or
 extension:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rapidreview-io/Merv/merv-runner/install.sh | sh
+curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh
 ```
 
 This verifies and installs the standalone runner under `~/.merv`, starts its

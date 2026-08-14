@@ -157,7 +157,7 @@ export default function AgentPlatforms({ projectId }) {
   const dirty = machineBaseline !== null && signature !== machineBaseline;
   const connected = runnerConnection === 'connected' || runnerConnection === 'applying';
   const runnerBin = '$HOME/.merv/bin/merv-agent-runner';
-  const installCommand = 'curl -fsSL https://raw.githubusercontent.com/rapidreview-io/Merv/merv-runner/install.sh | sh';
+  const installCommand = 'curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh';
   const runCommand = `${runnerBin} --project ${projectId || 'PROJECT_ID'}`;
   const liveSessions = useMemo(
     () => (sessions || []).filter(

@@ -5,6 +5,7 @@
   "outputDirectory": "dist",
   "rewrites": [
     { "source": "/merv/.well-known/skills/:path*", "destination": "/.well-known/skills/:path*" },
+    { "source": "/merv/runner/:path*", "destination": "/runner/:path*" },
     { "source": "/merv/:path(.*\\.(?:js|mjs|css|png|jpe?g|svg|gif|ico|webp|webmanifest|json|xml|txt|woff2?|ttf|map|pdf|wasm))", "destination": "/:path" },
     { "source": "/merv/:path*", "destination": "/index.html" }
   ],
@@ -13,6 +14,13 @@
       "source": "/merv/.well-known/skills/:path*",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/merv/runner/:path*",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" }
       ]
     }
   ],

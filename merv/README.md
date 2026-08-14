@@ -124,7 +124,7 @@ Agent. The `command` adapter covers a custom executable that accepts its
 instruction on stdin and emits a JSONL interaction stream on stdout:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rapidreview-io/Merv/merv-runner/install.sh | sh
+curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh
 $HOME/.merv/bin/merv-agent-runner --project proj_123
 ```
 

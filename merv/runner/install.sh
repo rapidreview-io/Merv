@@ -2,7 +2,7 @@
 # Install the standalone Merv auto-run client, then start its pairing service.
 set -eu
 
-BASE_URL="${MERV_RUNNER_BASE_URL:-https://raw.githubusercontent.com/rapidreview-io/Merv/merv-runner}"
+BASE_URL="${MERV_RUNNER_BASE_URL:-https://rapidreview.io/merv/runner}"
 RUNNER_HOME="${MERV_RUNNER_HOME:-$HOME/.merv/runner}"
 BIN_DIR="${MERV_RUNNER_BIN_DIR:-$HOME/.merv/bin}"
 ARCHIVE="$RUNNER_HOME/merv-runner.pyz"

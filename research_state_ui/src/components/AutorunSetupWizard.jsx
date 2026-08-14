@@ -64,7 +64,7 @@ export default function AutorunSetupWizard({
   const applyRun = useRef(0);
   const step = steps[Math.min(stepIndex, steps.length - 1)];
 
-  const settingsCommand = 'curl -fsSL https://raw.githubusercontent.com/rapidreview-io/Merv/merv-runner/install.sh | sh';
+  const settingsCommand = 'curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh';
   const runnerBin = '$HOME/.merv/bin/merv-agent-runner';
   const runCommand = `${runnerBin} --project ${projectId || 'PROJECT_ID'}`;
   const available = runnerStatus?.available_commands;
