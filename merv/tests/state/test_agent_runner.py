@@ -248,7 +248,13 @@ class AgentConfigurationTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with patch.dict("os.environ", {"PATH": str(bin_dir)}):
+            with (
+                patch.dict("os.environ", {"PATH": str(bin_dir)}),
+                patch("merv.client.agent_runner.socket.gethostname", return_value="lab-mac"),
+                patch("merv.client.agent_runner.platform.system", return_value="Darwin"),
+                patch("merv.client.agent_runner.platform.release", return_value="25.0.0"),
+                patch("merv.client.agent_runner.platform.machine", return_value="arm64"),
+            ):
                 detected = _detected_commands(config_path)
                 status = _local_status(
                     project_id=None,
@@ -261,6 +267,23 @@ class AgentConfigurationTest(unittest.TestCase):
             self.assertFalse(detected["codex"])
             self.assertIn("cursor-agent", detected)
             self.assertEqual(status["available_commands"], detected)
+            self.assertEqual(
+                status["machine"],
+                {
+                    "hostname": "lab-mac",
+                    "system": "Darwin",
+                    "release": "25.0.0",
+                    "architecture": "arm64",
+                    "runner_id": None,
+                },
+            )
+            ledger = SessionLedger(Path(tmp) / "sessions.json")
+            identified = _local_status(
+                project_id="proj_1",
+                runner_active=True,
+                ledger=ledger,
+            )
+            self.assertEqual(identified["machine"]["runner_id"], ledger.runner_id)
             without = _local_status(
                 project_id=None, runner_active=False, ledger=None
             )

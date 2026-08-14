@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import AutorunSetupWizard from './AutorunSetupWizard';
 import Switch from './Switch';
+import { runnerPresentation } from './runnerPresentation';
 import {
   connectFailureMessage,
   ensureRunnerTransport,
@@ -88,6 +89,7 @@ export default function AgentPlatforms({ projectId }) {
   const [runnerConnection, setRunnerConnection] = useState('idle');
   const [runnerMessage, setRunnerMessage] = useState('');
   const [runnerStatus, setRunnerStatus] = useState(null);
+  const [runnerLastSeen, setRunnerLastSeen] = useState(null);
   const [machineBaseline, setMachineBaseline] = useState(null);
   const [restartNeeded, setRestartNeeded] = useState(false);
   const [dispatch, setDispatch] = useState(null);
@@ -96,6 +98,7 @@ export default function AgentPlatforms({ projectId }) {
   const [halting, setHalting] = useState(false);
   const [showHaltPrompt, setShowHaltPrompt] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
   // Unpaired, the guided setup is the page; manual pairing is an explicit
   // opt-in so a fresh project is not greeted with raw fields and a draft.
   const [manualOpen, setManualOpen] = useState(false);
@@ -139,6 +142,35 @@ export default function AgentPlatforms({ projectId }) {
   }, [projectId]);
 
   useEffect(() => {
+    if (!pairingToken.trim() || machineBaseline === null) return undefined;
+    let disposed = false;
+    async function probe() {
+      try {
+        const status = await runnerRequest({
+          url: runnerUrl, token: pairingToken, path: '/status',
+        });
+        if (disposed) return;
+        setRunnerStatus(status);
+        setRunnerLastSeen(Date.now());
+        setRunnerConnection((current) => (
+          current === 'applying' ? current : 'connected'
+        ));
+      } catch {
+        if (!disposed) {
+          setRunnerConnection((current) => (
+            current === 'applying' ? current : 'unreachable'
+          ));
+        }
+      }
+    }
+    const timer = setInterval(probe, 5_000);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [runnerUrl, pairingToken, machineBaseline]);
+
+  useEffect(() => {
     if (!projectId) return undefined;
     let disposed = false;
     api.getProject(projectId)
@@ -163,6 +195,7 @@ export default function AgentPlatforms({ projectId }) {
   );
   const dirty = machineBaseline !== null && signature !== machineBaseline;
   const connected = runnerConnection === 'connected' || runnerConnection === 'applying';
+  const paired = machineBaseline !== null;
   const runnerBin = '$HOME/.merv/bin/merv-agent-runner';
   const installCommand = 'curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh';
   const runCommand = `${runnerBin} --project ${projectId || 'PROJECT_ID'}`;
@@ -175,6 +208,7 @@ export default function AgentPlatforms({ projectId }) {
   const enabledPlatforms = platforms.filter(
     (platform) => platform.present !== false && platform.enabled,
   );
+  const configuredPlatforms = platforms.filter((platform) => platform.present !== false);
   const capacity = enabledPlatforms.reduce(
     (total, platform) => total + (Number(platform.parallelism) || 0),
     0,
@@ -247,6 +281,7 @@ export default function AgentPlatforms({ projectId }) {
   function invalidateConnection() {
     setRunnerConnection('idle');
     setRunnerStatus(null);
+    setRunnerLastSeen(null);
     setMachineBaseline(null);
     setRestartNeeded(false);
     setRunnerMessage('');
@@ -308,15 +343,22 @@ export default function AgentPlatforms({ projectId }) {
       setWorkspace(hydrated.workspace);
       setMachineBaseline(configSignature(hydratedConfig));
       setRunnerStatus(status);
+      setRunnerLastSeen(Date.now());
       setRestartNeeded(false);
       setRunnerConnection('connected');
       setRunnerMessage('');
       return { ok: true, status };
     } catch (error) {
       const message = connectFailureMessage(error);
-      setRunnerConnection('idle');
-      setRunnerStatus(null);
-      setMachineBaseline(null);
+      if (machineBaseline === null) {
+        setRunnerConnection('idle');
+        setRunnerStatus(null);
+        setRunnerLastSeen(null);
+      } else {
+        // Preserve the last known identity so the status card can say which
+        // machine went offline instead of collapsing back to "not connected".
+        setRunnerConnection('unreachable');
+      }
       setRunnerMessage(message);
       return { ok: false, error: message };
     }
@@ -353,37 +395,105 @@ export default function AgentPlatforms({ projectId }) {
     }
   }
 
-  const machineState = connected
-    ? (runnerStatus?.runner_active
-      ? `Runner active · ${runnerStatus.project_id || 'project unknown'}`
-      : 'Paired · runner stopped')
-    : (runnerConnection === 'connecting' ? 'Connecting…' : 'Not paired');
+  const runnerView = runnerPresentation({
+    connection: runnerConnection,
+    status: runnerStatus,
+    projectId,
+  });
+  const lastChecked = runnerLastSeen
+    ? new Date(runnerLastSeen).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : '';
 
   return (
     <>
-      <section className="aru-scope" aria-label="Project dispatch">
-        <ScopeHead title="Automatic dispatch" tag="This project" />
-        <div className="aru-card aru-dispatch">
-          <Switch
-            checked={dispatch === true}
-            disabled={dispatch === null || dispatchBusy || !projectId}
-            onChange={toggleDispatch}
-            label="Automatic dispatch"
-          />
-          <div>
-            <strong>
-              {dispatch === null
-                ? 'Loading…'
-                : dispatch
-                  ? 'Runners may claim this project’s work'
-                  : 'Nothing is dispatched'}
-            </strong>
-            <p>
-              While this is on, any runner started for this project claims its
-              experiments, reviews, and consolidations as soon as they appear.
-              Turning it off stops new claims only; running sessions finish
-              unless you stop them.
-            </p>
+      <section className="aru-scope" aria-label="Auto-run status">
+        <ScopeHead title="Auto-run" tag="This project" />
+        <div className="aru-card aru-overview">
+          <div className="aru-machine">
+            <span className={`aru-live-dot aru-live-dot--${runnerView.tone}`} aria-hidden="true" />
+            <div className="aru-machine-name">
+              <strong>{runnerView.machineName}</strong>
+              <span>
+                {runnerView.machineDetails
+                  || (connected && !runnerStatus?.machine ? 'Update runner to show machine identity' : 'Runner machine')}
+                {lastChecked && ` · checked ${lastChecked}`}
+              </span>
+            </div>
+            <span className={`aru-status aru-status--${runnerView.tone}`}>
+              {runnerView.state}
+            </span>
+            {runnerView.project && (
+              <span className={`aru-status aru-status--${runnerView.projectMatches ? 'quiet' : 'warning'}`}>
+                {runnerView.project}
+              </span>
+            )}
+          </div>
+          <div className="aru-overview-actions">
+            {paired ? (
+              <>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  disabled={runnerConnection === 'connecting' || runnerConnection === 'applying'}
+                  onClick={connectRunner}
+                >
+                  Refresh
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => setConfigOpen((open) => !open)}
+                >
+                  Settings
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="btn btn--primary btn--sm"
+                  onClick={() => setWizardOpen(true)}
+                >
+                  Set up runner
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => {
+                    setManualOpen(true);
+                    setConfigOpen(true);
+                  }}
+                >
+                  Pair manually
+                </button>
+              </>
+            )}
+          </div>
+          <div className="aru-facts">
+            <div className="aru-dispatch-control">
+              <Switch
+                checked={dispatch === true}
+                disabled={dispatch === null || dispatchBusy || !projectId}
+                onChange={toggleDispatch}
+                label="Automatic dispatch"
+              />
+              <span>
+                <strong>Dispatch</strong>
+                <small>{dispatch === null ? 'Loading' : dispatch ? 'On' : 'Off'}</small>
+              </span>
+            </div>
+            <span className="aru-fact">
+              <strong>{liveSessions.length}</strong>
+              <small>running</small>
+            </span>
+            <span className="aru-fact">
+              <strong>{capacity}</strong>
+              <small>{capacity === 1 ? 'slot' : 'slots'}</small>
+            </span>
+            <span className="aru-fact aru-fact--wide">
+              <strong>{enabledPlatforms.map((platform) => platform.name).join(', ') || 'No agents'}</strong>
+              <small>enabled</small>
+            </span>
           </div>
         </div>
 
@@ -421,97 +531,68 @@ export default function AgentPlatforms({ projectId }) {
           <p className="aru-error" role="alert">{dispatchError}</p>
         )}
 
-        <div className="aru-workers">
-          <div className="aru-workers-head">
-            <span className="aru-label">Workers</span>
-            {liveSessions.length > 0 && !showHaltPrompt && (
-              <button
-                type="button"
-                className="btn btn--ghost btn--sm"
-                onClick={haltSessions}
-                disabled={halting}
-              >
-                {halting ? 'Stopping…' : `Stop ${liveSessions.length} running`}
-              </button>
-            )}
-          </div>
-          {sessionError ? (
-            <span className="aru-note">{sessionError}</span>
-          ) : sessions === null ? (
-            <span className="aru-note">Loading…</span>
-          ) : sessions.length === 0 ? (
-            <span className="aru-note">
-              No agent sessions yet. Sessions appear here once a runner claims work.
-            </span>
-          ) : (
-            <div className="aru-worker-list">
-              {sessions.slice(0, 8).map((session) => (
-                <div className="aru-worker-row" key={session.id}>
-                  <span>
-                    <strong>{session.platform}</strong>
-                    <small className="mono">{session.experiment_id}</small>
-                    {session.workspace_ref && (
-                      <small className="mono">{session.workspace_ref}</small>
-                    )}
-                  </span>
-                  <span className={`mcpk-state mcpk-state--${session.status}`}>
-                    {session.status}
-                  </span>
-                </div>
-              ))}
+        {(sessionError || (sessions && sessions.length > 0)) && (
+          <div className="aru-workers">
+            <div className="aru-workers-head">
+              <span className="aru-label">Recent sessions</span>
+              {liveSessions.length > 0 && !showHaltPrompt && (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={haltSessions}
+                  disabled={halting}
+                >
+                  {halting ? 'Stopping…' : `Stop ${liveSessions.length}`}
+                </button>
+              )}
             </div>
-          )}
-        </div>
-      </section>
-
-      <section className="aru-scope" aria-label="Runner machine">
-        <ScopeHead title="Runner machine" tag="Applies to one paired machine">
-          {connected ? (
-            <button
-              type="button"
-              className="btn btn--ghost btn--sm"
-              onClick={() => setWizardOpen(true)}
-            >
-              Setup guide
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="btn btn--ghost btn--sm"
-              onClick={() => setManualOpen((open) => !open)}
-            >
-              {manualOpen ? 'Hide manual setup' : 'Manual setup'}
-            </button>
-          )}
-          <span className={`aru-conn aru-conn--${connected ? 'ok' : 'off'}`}>
-            {machineState}
-          </span>
-        </ScopeHead>
-        <p className="settings-summary">
-          Agents, models, and the workspace live in <code>~/.merv/client.json</code>
-          {' '}on the machine that runs them. Enabled agents run unattended with
-          your machine account’s filesystem and network permissions; worktrees
-          isolate Git changes, not operating-system access.
-        </p>
-
-        {!connected && (
-          <div className="aru-setup-cta">
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={() => setWizardOpen(true)}
-            >
-              Set up auto running
-            </button>
-            <span className="aru-note">
-              The guided setup starts the settings service on that machine,
-              pairs it, picks agents, and brings the runner up — each step
-              verified before the next.
-            </span>
+            {sessionError ? (
+              <span className="aru-note">{sessionError}</span>
+            ) : (
+              <div className="aru-worker-list">
+                {sessions.slice(0, 8).map((session) => (
+                  <div className="aru-worker-row" key={session.id}>
+                    <span>
+                      <strong>{session.platform}</strong>
+                      <small className="mono">{session.experiment_id}</small>
+                    </span>
+                    <span className={`mcpk-state mcpk-state--${session.status}`}>
+                      {session.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
-        {(connected || manualOpen) && (<>
+        <details
+          className="aru-settings"
+          open={configOpen}
+          onToggle={(event) => setConfigOpen(event.currentTarget.open)}
+        >
+          <summary>
+            <span>
+              <strong>Runner settings</strong>
+              <small>
+                {enabledPlatforms.length} {enabledPlatforms.length === 1 ? 'agent' : 'agents'}
+                {' · '}{workspace.repository || 'No repository'}
+              </small>
+            </span>
+            <span className="aru-settings-action">{configOpen ? 'Close' : 'Open'}</span>
+          </summary>
+          <div className="aru-settings-body">
+            <div className="aru-settings-head">
+              <span>Machine connection</span>
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={() => setWizardOpen(true)}
+              >
+                Setup guide
+              </button>
+            </div>
+        {(paired || manualOpen) && (<>
         <div className="aru-card aru-pairing">
           <label>
             <span>Local runner URL</span>
@@ -564,7 +645,7 @@ export default function AgentPlatforms({ projectId }) {
               <span className="aru-note">
                 {enabledPlatforms.length === 0
                   ? 'None enabled'
-                  : `${enabledPlatforms.length} enabled · up to ${capacity} parallel ${capacity === 1 ? 'session' : 'sessions'}`}
+                  : `${enabledPlatforms.length} enabled · ${capacity} ${capacity === 1 ? 'slot' : 'slots'}`}
               </span>
             </div>
             <div className="page-actions">
@@ -580,7 +661,7 @@ export default function AgentPlatforms({ projectId }) {
           </div>
 
           <div className="aru-platform-list">
-            {platforms.map((platform) => {
+            {configuredPlatforms.map((platform) => {
               const capabilities = capabilitiesFor(platform.adapter);
               const errors = validation.platforms[platform.id] || {};
               const hasErrors = Object.keys(errors).length > 0;
@@ -718,10 +799,6 @@ export default function AgentPlatforms({ projectId }) {
           <div className="aru-subhead">
             <div>
               <span className="aru-label">Workspace</span>
-              <span className="aru-note">
-                Every experiment gets a persistent Git worktree, so parallel
-                agents never share a checkout.
-              </span>
             </div>
           </div>
           <div className="aru-workspace-fields">
@@ -788,7 +865,9 @@ export default function AgentPlatforms({ projectId }) {
                 : (restartNeeded
                   ? 'Saved. The active runner still uses its old settings — restart it.'
                   : 'Machine settings are current.'))
-              : 'Not paired — this draft lives only in your browser until you apply it or merge it manually.'}
+              : (runnerConnection === 'unreachable'
+                ? 'Runner offline. Changes are kept in this browser.'
+                : 'Pair the runner to apply changes.')}
           </span>
           <button
             type="button"
@@ -801,14 +880,10 @@ export default function AgentPlatforms({ projectId }) {
         </div>
 
         <details className="aru-manual">
-          <summary>Manual fallback · copy the draft as JSON</summary>
+          <summary>JSON fallback</summary>
           <div className="aru-manual-head">
             <p>
-              If the loopback service is unavailable, merge this draft into
-              <code> ~/.merv/client.json</code> on the runner machine. Only
-              <code> agent_workspace</code> and <code>agent_platforms</code> are
-              written; other configuration is preserved. Each command line is one
-              exact argument; shell expansion is never used.
+              Merge into <code>~/.merv/client.json</code> on the runner machine.
             </p>
             <button
               type="button"
@@ -826,10 +901,6 @@ export default function AgentPlatforms({ projectId }) {
           <div className="aru-subhead">
             <div>
               <span className="aru-label">Start claiming</span>
-              <span className="aru-note">
-                Run this on the configured machine and keep it running.
-                {dispatch === false && ' Automatic dispatch is off, so it will idle until you turn dispatch on above.'}
-              </span>
             </div>
           </div>
           <div className="aru-command">
@@ -840,6 +911,8 @@ export default function AgentPlatforms({ projectId }) {
           </div>
         </div>
         </>)}
+          </div>
+        </details>
       </section>
 
       {wizardOpen && (

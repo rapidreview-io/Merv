@@ -19,9 +19,11 @@ import hashlib
 import hmac
 import json
 import os
+import platform
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -2282,6 +2284,13 @@ def _local_status(
     status: dict[str, Any] = {
         "runner_active": runner_active,
         "project_id": project_id,
+        "machine": {
+            "hostname": socket.gethostname(),
+            "system": platform.system(),
+            "release": platform.release(),
+            "architecture": platform.machine(),
+            "runner_id": ledger.runner_id if ledger is not None else None,
+        },
         "sessions": sessions,
     }
     if config_path is not None:
