@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Switch from './Switch';
-import { runnerRequest } from './runnerClient';
+import { connectRunnerBridge, runnerRequest } from './runnerClient';
 
 /**
  * AutorunSetupWizard — the guided first-run flow for auto running.
@@ -59,9 +59,13 @@ export default function AutorunSetupWizard({
   const [stepIndex, setStepIndex] = useState(0);
   const [pairBusy, setPairBusy] = useState(false);
   const [pairError, setPairError] = useState('');
+  const [serviceBlocked, setServiceBlocked] = useState(false);
+  const [serviceBusy, setServiceBusy] = useState(false);
+  const [serviceError, setServiceError] = useState('');
   const [applyState, setApplyState] = useState({ phase: 'idle' });
   const [copied, setCopied] = useState('');
   const applyRun = useRef(0);
+  const serviceAdvanced = useRef(false);
   const step = steps[Math.min(stepIndex, steps.length - 1)];
 
   const settingsCommand = 'curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh';
@@ -79,6 +83,11 @@ export default function AutorunSetupWizard({
 
   const next = () => setStepIndex((i) => Math.min(i + 1, steps.length - 1));
   const back = () => setStepIndex((i) => Math.max(i - 1, 0));
+  const advanceService = () => {
+    if (serviceAdvanced.current) return;
+    serviceAdvanced.current = true;
+    next();
+  };
 
   async function copy(label, value) {
     try {
@@ -97,9 +106,9 @@ export default function AutorunSetupWizard({
     async function probe() {
       try {
         const health = await runnerRequest({ url: runnerUrl, token: '', path: '/health' });
-        if (!disposed && health?.ok) next();
+        if (!disposed && health?.ok) advanceService();
       } catch {
-        // Not up yet — keep polling.
+        if (!disposed) setServiceBlocked(true);
       }
     }
     probe();
@@ -110,6 +119,21 @@ export default function AutorunSetupWizard({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, runnerUrl]);
+
+  async function connectService() {
+    setServiceBusy(true);
+    setServiceError('');
+    try {
+      await connectRunnerBridge(runnerUrl);
+      const health = await runnerRequest({ url: runnerUrl, token: '', path: '/health' });
+      if (!health?.ok) throw new Error('The local runner did not report healthy.');
+      advanceService();
+    } catch (error) {
+      setServiceError(error?.message || 'Could not open the local runner connection.');
+    } finally {
+      setServiceBusy(false);
+    }
+  }
 
   // ---- apply step: save to the machine as soon as the step opens ----
   useEffect(() => {
@@ -212,10 +236,28 @@ export default function AutorunSetupWizard({
               Requires Python 3.11+ and Git. For a remote machine, forward its
               loopback port with <code>ssh -L 8791:127.0.0.1:8791 HOST</code>.
             </p>
-            <div className="aruw-poll" role="status">
-              <span className="sbxpw-spinner" aria-hidden="true" />
-              Waiting for the service at {runnerUrl}…
-            </div>
+            {serviceBlocked ? (
+              <div className="aruw-poll" role="status">
+                <button
+                  type="button"
+                  className="sbxp-save"
+                  disabled={serviceBusy}
+                  onClick={connectService}
+                >
+                  {serviceBusy ? 'Connecting…' : 'Connect to the runner'}
+                </button>
+                <span>
+                  Safari and some secured browsers require this one click to
+                  open the runner’s local connection.
+                </span>
+              </div>
+            ) : (
+              <div className="aruw-poll" role="status">
+                <span className="sbxpw-spinner" aria-hidden="true" />
+                Waiting for the service at {runnerUrl}…
+              </div>
+            )}
+            {serviceError && <p className="sbxpw-fail-detail">{serviceError}</p>}
           </div>
         )}
 

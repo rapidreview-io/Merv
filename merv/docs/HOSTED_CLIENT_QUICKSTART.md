@@ -78,7 +78,10 @@ This verifies and installs the standalone runner under `~/.merv`, starts its
 loopback pairing service, and prints the token requested by Settings → Auto
 running. It needs Python 3.11+ and Git, but no Merv repository clone or package
 installation. Rerun the command to update it. For a remote runner, forward the
-settings port while pairing: `ssh -L 8791:127.0.0.1:8791 HOST`.
+settings port while pairing: `ssh -L 8791:127.0.0.1:8791 HOST`. Safari shows a
+**Connect to the runner** button because it cannot call an HTTP loopback service
+directly from the HTTPS app; that button opens a small local bridge window to
+keep open during setup.
 
 The browser setup mints a project-scoped `mk_` key and writes it directly to
 the paired runner's owner-only credential file; it never appears in the copied

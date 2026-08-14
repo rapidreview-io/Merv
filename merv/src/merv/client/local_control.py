@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 
 DEFAULT_PORT = 8791
@@ -26,6 +27,74 @@ DEFAULT_UI_ORIGINS = {
     "http://localhost:3000",
     "http://localhost:5173",
 }
+
+_BRIDGE_PAGE = r"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Merv runner connection</title>
+  <style nonce="__NONCE__">
+    :root { color-scheme: light dark; font: 15px system-ui, sans-serif; }
+    body { margin: 0; padding: 28px; line-height: 1.45; }
+    h1 { font-size: 19px; margin: 0 0 10px; }
+    p { margin: 0; opacity: .72; }
+  </style>
+</head>
+<body>
+  <h1>Connected to the Merv runner</h1>
+  <p>Keep this small window open while you finish setup in RapidReview.</p>
+  <script nonce="__NONCE__">
+    const uiOrigin = __UI_ORIGIN__;
+    const bridgeSource = "merv-runner-bridge-v1";
+    const allowed = new Set(["/health", "/settings", "/status", "/credential"]);
+
+    window.addEventListener("message", async (event) => {
+      if (event.source !== window.opener || event.origin !== uiOrigin) return;
+      const message = event.data;
+      if (!message || message.source !== "merv-runner-ui-v1"
+          || message.type !== "request" || typeof message.id !== "string"
+          || !allowed.has(message.path)
+          || !["GET", "PUT"].includes(message.method)) return;
+      try {
+        const headers = {};
+        if (message.token) headers.Authorization = `Bearer ${message.token}`;
+        if (message.body !== undefined) headers["Content-Type"] = "application/json";
+        const response = await fetch(message.path, {
+          method: message.method,
+          credentials: "omit",
+          headers,
+          ...(message.body !== undefined ? { body: JSON.stringify(message.body) } : {}),
+        });
+        const payload = await response.json().catch(() => null);
+        window.opener.postMessage({
+          source: bridgeSource,
+          type: "response",
+          id: message.id,
+          ok: response.ok,
+          status: response.status,
+          payload,
+        }, uiOrigin);
+      } catch (error) {
+        window.opener.postMessage({
+          source: bridgeSource,
+          type: "response",
+          id: message.id,
+          ok: false,
+          status: 0,
+          payload: { error: error?.message || "runner request failed" },
+        }, uiOrigin);
+      }
+    });
+
+    if (window.opener) {
+      window.opener.postMessage({ source: bridgeSource, type: "ready" }, uiOrigin);
+      window.opener.focus();
+    }
+  </script>
+</body>
+</html>
+"""
 
 
 class LocalControlError(Exception):
@@ -98,6 +167,14 @@ def local_control(
         def do_GET(self) -> None:
             if not self._safe_host():
                 self._json(403, {"error": "forbidden"})
+                return
+            target = urlsplit(self.path)
+            if target.path == "/bridge":
+                requested = parse_qs(target.query).get("origin", [""])[0]
+                if requested not in allowed_origins:
+                    self._json(403, {"error": "origin_not_allowed"})
+                    return
+                self._bridge(requested)
                 return
             if self.path == "/health":
                 self._json(200, {"ok": True, "service": "merv-agent-runner"})
@@ -182,7 +259,34 @@ def local_control(
 
         def _origin_allowed(self) -> bool:
             origin = self.headers.get("Origin")
-            return not origin or origin in allowed_origins
+            local_origins = {
+                f"http://127.0.0.1:{self.server.server_port}",
+                f"http://localhost:{self.server.server_port}",
+            }
+            return not origin or origin in allowed_origins or origin in local_origins
+
+        def _bridge(self, ui_origin: str) -> None:
+            nonce = secrets.token_urlsafe(18)
+            body = (
+                _BRIDGE_PAGE.replace("__NONCE__", nonce)
+                .replace("__UI_ORIGIN__", json.dumps(ui_origin))
+                .encode("utf-8")
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'none'; connect-src 'self'; "
+                f"script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
+                "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            )
+            self.end_headers()
+            self.wfile.write(body)
 
         def _cors(self) -> None:
             origin = self.headers.get("Origin")

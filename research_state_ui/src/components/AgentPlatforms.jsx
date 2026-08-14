@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import AutorunSetupWizard from './AutorunSetupWizard';
 import Switch from './Switch';
-import { connectFailureMessage, runnerRequest } from './runnerClient';
+import {
+  connectFailureMessage,
+  ensureRunnerTransport,
+  runnerRequest,
+} from './runnerClient';
 import {
   ADAPTERS,
   DEFAULT_WORKSPACE,
@@ -260,6 +264,7 @@ export default function AgentPlatforms({ projectId }) {
     setRunnerConnection('connecting');
     setRunnerMessage('');
     try {
+      await ensureRunnerTransport(runnerUrl);
       let status = await runnerRequest({
         url: runnerUrl, token: pairingToken, path: '/status',
       });

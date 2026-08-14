@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -1772,6 +1773,27 @@ class LocalControlTest(unittest.TestCase):
                         {"ok": True, "service": "merv-agent-runner"},
                     )
 
+                bridge_origin = "https://experiments.rapidreview.io"
+                bridge_url = (
+                    f"{base}/bridge?origin="
+                    f"{urllib.parse.quote(bridge_origin, safe='')}"
+                )
+                with urllib.request.urlopen(bridge_url) as response:
+                    bridge = response.read().decode()
+                    self.assertIn("merv-runner-bridge-v1", bridge)
+                    self.assertIn(json.dumps(bridge_origin), bridge)
+                    self.assertNotIn("pairing-secret", bridge)
+                    self.assertIn(
+                        "default-src 'none'",
+                        response.headers["Content-Security-Policy"],
+                    )
+                    self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+                with self.assertRaises(urllib.error.HTTPError) as bad_bridge:
+                    urllib.request.urlopen(
+                        f"{base}/bridge?origin=https%3A%2F%2Fevil.example"
+                    )
+                self.assertEqual(bad_bridge.exception.code, 403)
+
                 with self.assertRaises(urllib.error.HTTPError) as unauthorized:
                     urllib.request.urlopen(f"{base}/settings")
                 self.assertEqual(unauthorized.exception.code, 401)
@@ -1794,7 +1816,7 @@ class LocalControlTest(unittest.TestCase):
                     headers={
                         "Authorization": "Bearer pairing-secret",
                         "Content-Type": "application/json",
-                        "Origin": "https://experiments.rapidreview.io",
+                        "Origin": base,
                     },
                 )
                 with self.assertRaises(urllib.error.HTTPError) as invalid:
