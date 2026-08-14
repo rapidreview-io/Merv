@@ -3,8 +3,10 @@ import test from 'node:test';
 
 import {
   DEFAULT_WORKSPACE,
+  PLATFORM_PRESETS,
   defaultWorktreeRoot,
   draftFromSettings,
+  normalizeLocalPlatforms,
   workspaceWithRepository,
 } from './agentPlatformConfig.js';
 
@@ -38,4 +40,19 @@ test('the automatic root follows repository edits but a custom root is preserved
 
 test('windows repository paths get a windows sibling root', () => {
   assert.equal(defaultWorktreeRoot('C:\\projects\\repo\\'), 'C:\\projects\\repo-worktrees');
+});
+
+test('aider is absent from auto-run presets and old drafts', () => {
+  assert.equal(PLATFORM_PRESETS.some((platform) => platform.id === 'aider'), false);
+  assert.equal(
+    normalizeLocalPlatforms([{ id: 'aider', adapter: 'aider', command: ['aider'] }])
+      .some((platform) => platform.id === 'aider'),
+    false,
+  );
+  assert.equal(
+    draftFromSettings({
+      agent_platforms: { aider: { adapter: 'aider', command: ['aider'] } },
+    }).platforms.some((platform) => platform.id === 'aider'),
+    false,
+  );
 });

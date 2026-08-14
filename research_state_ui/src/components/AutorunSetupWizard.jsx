@@ -9,9 +9,9 @@ import { connectRunnerBridge, runnerRequest } from './runnerClient';
  * The setup crosses two surfaces (this browser and a terminal on the runner
  * machine), so the wizard verifies each hop instead of trusting a checklist:
  * it polls /health until the settings service exists, pairs against it,
- * edits the same draft the panel owns, applies it, then polls /status until
- * a runner reports itself live for this project. Dispatch is the final
- * step so the flow ends where claiming actually begins.
+ * edits the same draft the panel owns, applies it, asks the settings process
+ * to become the runner, then verifies that project is live. Dispatch is the
+ * final step so the flow ends where claiming actually begins.
  */
 
 const POLL_MS = 2000;
@@ -41,6 +41,7 @@ export default function AutorunSetupWizard({
   onWorkspace,
   onConnect,
   onApply,
+  onStart,
   onRunnerLive,
   dispatch,
   dispatchBusy,
@@ -63,8 +64,11 @@ export default function AutorunSetupWizard({
   const [serviceBusy, setServiceBusy] = useState(false);
   const [serviceError, setServiceError] = useState('');
   const [applyState, setApplyState] = useState({ phase: 'idle' });
+  const [startState, setStartState] = useState({ phase: 'idle' });
+  const [startAttempt, setStartAttempt] = useState(0);
   const [copied, setCopied] = useState('');
   const applyRun = useRef(0);
+  const startRequested = useRef(false);
   const serviceAdvanced = useRef(false);
   const step = steps[Math.min(stepIndex, steps.length - 1)];
 
@@ -145,7 +149,7 @@ export default function AutorunSetupWizard({
       const result = await onApply();
       if (disposed || run !== applyRun.current) return;
       if (result.ok) {
-        setApplyState({ phase: 'ok' });
+        setApplyState({ phase: 'ok', restartRequired: result.restartRequired === true });
         next();
       } else {
         setApplyState({ phase: 'failed', detail: result.error });
@@ -155,7 +159,26 @@ export default function AutorunSetupWizard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
 
-  // ---- run step: wait for a live runner reporting this project ----
+  // ---- run step: hand settings-only mode to the runner, then verify it ----
+  useEffect(() => {
+    if (step !== 'run' || startRequested.current) return undefined;
+    startRequested.current = true;
+    if (applyState.restartRequired) {
+      setStartState({ phase: 'restart' });
+      return undefined;
+    }
+    (async () => {
+      setStartState({ phase: 'starting' });
+      const result = await onStart();
+      setStartState(result.ok
+        ? { phase: 'waiting' }
+        : { phase: 'failed', detail: result.error });
+    })();
+    return undefined;
+    // startAttempt deliberately re-arms this one-shot request after Retry.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, startAttempt]);
+
   useEffect(() => {
     if (step !== 'run') return undefined;
     let disposed = false;
@@ -173,8 +196,8 @@ export default function AutorunSetupWizard({
           next();
         }
       } catch {
-        // The service is briefly down between stopping --settings-only and
-        // starting the runner; keep polling through it.
+        // The same process briefly closes the settings socket while it
+        // switches into runner mode. Keep polling through that handoff.
       }
     }
     probe();
@@ -193,6 +216,11 @@ export default function AutorunSetupWizard({
     setPairBusy(false);
     if (result.ok) next();
     else setPairError(result.error || 'Could not connect to the local runner.');
+  }
+
+  function retryStart() {
+    startRequested.current = false;
+    setStartAttempt((attempt) => attempt + 1);
   }
 
   const stepNumber = Math.min(stepIndex, steps.length - 1) + 1;
@@ -223,9 +251,8 @@ export default function AutorunSetupWizard({
           <div className="sbxpw-body">
             <p className="sbxpw-lead">Install the runner</p>
             <p className="sbxpw-help">
-              Open a terminal on the machine that will run your agents and run
-              this one command. It installs only the standalone Merv runner and
-              starts its pairing service:
+              Run this on the machine that will run your agents. Setup continues
+              when Merv connects.
             </p>
             <CommandRow
               command={settingsCommand}
@@ -233,8 +260,8 @@ export default function AutorunSetupWizard({
               onCopy={() => copy('service', settingsCommand)}
             />
             <p className="aruw-command-note">
-              Requires Python 3.11+ and Git. For a remote machine, forward its
-              loopback port with <code>ssh -L 8791:127.0.0.1:8791 HOST</code>.
+              Requires Python 3.11+ and Git. Remote machine? Use{' '}
+              <code>ssh -L 8791:127.0.0.1:8791 HOST</code>.
             </p>
             {serviceBlocked ? (
               <div className="aruw-poll" role="status">
@@ -247,14 +274,13 @@ export default function AutorunSetupWizard({
                   {serviceBusy ? 'Connecting…' : 'Connect to the runner'}
                 </button>
                 <span>
-                  Safari and some secured browsers require this one click to
-                  open the runner’s local connection.
+                  Your browser needs permission to connect to this machine.
                 </span>
               </div>
             ) : (
               <div className="aruw-poll" role="status">
                 <span className="sbxpw-spinner" aria-hidden="true" />
-                Waiting for the service at {runnerUrl}…
+                Waiting for the runner…
               </div>
             )}
             {serviceError && <p className="sbxpw-fail-detail">{serviceError}</p>}
@@ -263,11 +289,9 @@ export default function AutorunSetupWizard({
 
         {step === 'pair' && (
           <div className="sbxpw-body">
-            <p className="sbxpw-lead">Pair with the runner machine</p>
+            <p className="sbxpw-lead">Pair the runner</p>
             <p className="sbxpw-help">
-              A settings service is running at {runnerUrl}. Pairing needs the
-              token it printed in its terminal when it started — paste that
-              token here. It stays in this tab.
+              Paste the pairing token shown in the terminal. It stays in this tab.
             </p>
             <input
               className="sbxpw-input"
@@ -282,7 +306,7 @@ export default function AutorunSetupWizard({
             />
             {pairError && <p className="sbxpw-fail-detail">{pairError}</p>}
             <p className="aruw-command-note">
-              Don’t have the token? Run this on that machine to print it again:
+              Need the token again?
             </p>
             <CommandRow
               command={`${runnerBin} --show-pairing-token`}
@@ -294,11 +318,11 @@ export default function AutorunSetupWizard({
 
         {step === 'agents' && (
           <div className="sbxpw-body">
-            <p className="sbxpw-lead">Choose which agents run experiments</p>
+            <p className="sbxpw-lead">Choose agents</p>
             <p className="sbxpw-help">
               {available
-                ? 'Checked against the paired machine’s PATH. You can adjust commands, models, and effort on the panel afterwards.'
-                : 'You can adjust commands, models, and effort on the panel afterwards.'}
+                ? 'Availability is checked on the runner machine.'
+                : 'Select at least one agent.'}
             </p>
             <div className="aruw-agents">
               {platforms.filter((platform) => !platform.custom).map((platform) => {
@@ -334,9 +358,8 @@ export default function AutorunSetupWizard({
             {missingEnabled.length > 0 && (
               <p className="aruw-warn">
                 {missingEnabled.map((platform) => platform.name).join(', ')}
-                {missingEnabled.length === 1 ? ' is' : ' are'} not on that
-                machine’s PATH — the runner will fail to launch{' '}
-                {missingEnabled.length === 1 ? 'it' : 'them'} until installed.
+                {missingEnabled.length === 1 ? ' is' : ' are'} not installed on
+                this machine.
               </p>
             )}
           </div>
@@ -344,10 +367,9 @@ export default function AutorunSetupWizard({
 
         {step === 'workspace' && (
           <div className="sbxpw-body">
-            <p className="sbxpw-lead">Point at the repository agents work on</p>
+            <p className="sbxpw-lead">Choose the repository</p>
             <p className="sbxpw-help">
-              Paths are on the runner machine. Every experiment gets its own
-              persistent Git worktree under the worktree root.
+              Use paths on the runner machine. Each job gets its own Git worktree.
             </p>
             <div className="aruw-fields">
               <label>
@@ -394,9 +416,9 @@ export default function AutorunSetupWizard({
             {applyState.phase !== 'failed' ? (
               <>
                 <span className="sbxpw-spinner" aria-hidden="true" />
-                <p className="sbxpw-lead">Saving to the runner machine…</p>
+                <p className="sbxpw-lead">Saving settings</p>
                 <p className="sbxpw-help">
-                  Writing agents and workspace into ~/.merv/client.json there.
+                  Writing agents and repository to <code>~/.merv/client.json</code>.
                 </p>
               </>
             ) : (
@@ -409,36 +431,44 @@ export default function AutorunSetupWizard({
         )}
 
         {step === 'run' && (
-          <div className="sbxpw-body">
-            <p className="sbxpw-lead">Start the runner</p>
-            <p className="sbxpw-help">
-              In the runner terminal, stop the settings service (Ctrl-C), then
-              start the runner and keep it running:
-            </p>
-            <CommandRow
-              command={runCommand}
-              copied={copied === 'run'}
-              onCopy={() => copy('run', runCommand)}
-            />
-            <div className="aruw-poll" role="status">
-              <span className="sbxpw-spinner" aria-hidden="true" />
-              Waiting for a runner reporting {projectId || 'this project'}…
-            </div>
+          <div className="sbxpw-body sbxpw-body--center">
+            {startState.phase === 'failed' ? (
+              <>
+                <p className="sbxpw-fail">Could not start the runner</p>
+                <p className="sbxpw-fail-detail">{startState.detail}</p>
+              </>
+            ) : startState.phase === 'restart' ? (
+              <>
+                <p className="sbxpw-lead">Restart the runner</p>
+                <p className="sbxpw-help">Settings are saved. Restart the active runner to use them.</p>
+                <CommandRow
+                  command={runCommand}
+                  copied={copied === 'run'}
+                  onCopy={() => copy('run', runCommand)}
+                />
+              </>
+            ) : (
+              <>
+                <span className="sbxpw-spinner" aria-hidden="true" />
+                <p className="sbxpw-lead">Starting the runner</p>
+                <p className="sbxpw-help">
+                  {startState.phase === 'waiting'
+                    ? 'The runner is starting for this project.'
+                    : 'Switching the terminal from setup to auto-run.'}
+                </p>
+              </>
+            )}
           </div>
         )}
 
         {step === 'done' && (
           <div className="sbxpw-body sbxpw-body--center">
             <span className="sbxpw-check" aria-hidden="true">✓</span>
-            <p className="sbxpw-lead">
-              {runnerStatus?.runner_active
-                ? 'The runner is live on this machine'
-                : 'The runner machine is configured'}
-            </p>
+            <p className="sbxpw-lead">Runner is live</p>
             <div className="sbxpw-finish-row">
               {dispatch === true ? (
                 <span className="sbxpw-enabled-note">
-                  Automatic dispatch is on — new work will be claimed.
+                  Dispatch is on. New work will start automatically.
                 </span>
               ) : (
                 <button
@@ -453,7 +483,7 @@ export default function AutorunSetupWizard({
             </div>
             {dispatch === false && (
               <p className="sbxpw-help">
-                Until dispatch is on, the runner idles and claims nothing.
+                Turn on dispatch to start new work automatically.
               </p>
             )}
           </div>
@@ -497,9 +527,9 @@ export default function AutorunSetupWizard({
               Save & apply
             </button>
           )}
-          {step === 'run' && (
-            <button type="button" className="sbxpw-btn" onClick={next}>
-              Skip — I’ll start it later
+          {step === 'run' && startState.phase === 'failed' && (
+            <button type="button" className="sbxpw-btn sbxpw-btn--primary" onClick={retryStart}>
+              Retry
             </button>
           )}
           {step === 'done' && (

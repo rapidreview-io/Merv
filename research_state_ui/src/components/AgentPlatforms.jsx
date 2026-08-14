@@ -380,19 +380,46 @@ export default function AgentPlatforms({ projectId }) {
       });
       const hydrated = draftFromSettings(response);
       const hydratedConfig = configFromDraft(hydrated.platforms, hydrated.workspace);
+      const needsRestart = Boolean(response?.restart_required && runnerStatus?.runner_active);
       setPlatforms(hydrated.platforms);
       setWorkspace(hydrated.workspace);
       setMachineBaseline(configSignature(hydratedConfig));
-      setRestartNeeded(Boolean(response?.restart_required && runnerStatus?.runner_active));
+      setRestartNeeded(needsRestart);
       setRunnerConnection('connected');
       setRunnerMessage('Saved to the runner machine.');
-      return { ok: true };
+      return { ok: true, restartRequired: needsRestart };
     } catch (error) {
       const message = error?.message || 'Could not save runner settings.';
       setRunnerConnection('connected');
       setRunnerMessage(message);
       return { ok: false, error: message };
     }
+  }
+
+  async function startConfiguredRunner() {
+    try {
+      const response = await runnerRequest({
+        url: runnerUrl,
+        token: pairingToken,
+        method: 'POST',
+        path: '/start',
+        body: { project_id: projectId },
+      });
+      setRunnerConnection('connecting');
+      setRunnerMessage('');
+      return { ok: true, response };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error?.message || 'Could not start the runner.',
+      };
+    }
+  }
+
+  function markRunnerLive(status) {
+    setRunnerStatus(status);
+    setRunnerLastSeen(Date.now());
+    setRunnerConnection('connected');
   }
 
   const runnerView = runnerPresentation({
@@ -933,7 +960,8 @@ export default function AgentPlatforms({ projectId }) {
           }}
           onConnect={connectRunner}
           onApply={applyRunnerSettings}
-          onRunnerLive={setRunnerStatus}
+          onStart={startConfiguredRunner}
+          onRunnerLive={markRunnerLive}
           dispatch={dispatch}
           dispatchBusy={dispatchBusy}
           onDispatch={toggleDispatch}

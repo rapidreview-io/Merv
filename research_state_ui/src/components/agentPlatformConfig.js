@@ -4,7 +4,6 @@ const ADAPTER_CAPABILITIES = {
   gemini: { model: true, effort: false },
   cursor: { model: true, effort: false },
   opencode: { model: true, effort: true },
-  aider: { model: true, effort: true },
   copilot: { model: true, effort: false },
   qwen: { model: true, effort: false },
   hermes: { model: true, effort: false },
@@ -19,7 +18,6 @@ export const PLATFORM_PRESETS = [
   ['gemini', 'Gemini CLI', 'gemini', '', '', 1, false],
   ['cursor', 'Cursor Agent', 'cursor-agent', '', '', 1, false],
   ['opencode', 'OpenCode', 'opencode', '', '', 1, false],
-  ['aider', 'Aider', 'aider', '', '', 1, false],
   ['copilot', 'GitHub Copilot CLI', 'copilot', '', '', 1, false],
   ['qwen', 'Qwen Code', 'qwen', '', '', 1, false],
   ['hermes', 'Hermes Agent', 'hermes', '', '', 1, false],
@@ -110,11 +108,21 @@ function configuredPlatform(id, raw, preset = null) {
   };
 }
 
+function supportedPlatform(id, raw) {
+  return String(id || '').toLowerCase() !== 'aider'
+    && String(raw?.adapter || '').toLowerCase() !== 'aider';
+}
+
 export function normalizeLocalPlatforms(saved) {
   if (!Array.isArray(saved) || !saved.length) return defaultPlatforms();
   const presets = new Map(PLATFORM_PRESETS.map((item) => [item.id, item]));
   const normalized = saved
-    .filter((item) => item && typeof item.id === 'string' && item.id)
+    .filter((item) => (
+      item
+      && typeof item.id === 'string'
+      && item.id
+      && supportedPlatform(item.id, item)
+    ))
     .map((item) => ({
       ...configuredPlatform(item.id, item, presets.get(item.id)),
       present: item.present !== false,
@@ -145,7 +153,9 @@ export function draftFromSettings(settings) {
       }
   ));
   for (const [id, raw] of Object.entries(values)) {
-    if (!presets.has(id)) platforms.push(configuredPlatform(id, raw));
+    if (!presets.has(id) && supportedPlatform(id, raw)) {
+      platforms.push(configuredPlatform(id, raw));
+    }
   }
 
   const rawWorkspace = settings?.agent_workspace;

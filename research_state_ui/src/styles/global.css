@@ -6183,6 +6183,11 @@ a.spend-row-name:hover { color: var(--active); }
   text-align: center;
   gap: 6px;
 }
+.sbxpw-body--center .aru-command {
+  width: min(100%, 680px);
+  box-sizing: border-box;
+  text-align: left;
+}
 .sbxpw-lead { font-size: 17px; font-weight: 600; margin: 0 0 10px; }
 .sbxpw-help {
   font-size: 14px;

@@ -8,6 +8,8 @@ const RUNNER_ERRORS = {
   pairing_token_required: 'The runner rejected this pairing token.',
   origin_not_allowed: 'The runner does not allow this site; set MERV_AGENT_UI_ORIGINS on that machine.',
   forbidden: 'The runner refused the request.',
+  runner_cannot_start: 'This runner is already active for another project.',
+  runner_starting: 'The runner is already starting.',
 };
 
 const BRIDGE_SOURCE = 'merv-runner-bridge-v1';

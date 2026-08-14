@@ -2394,6 +2394,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.settings_only:
             ledger_path, _ = _runtime_paths(config_path)
             settings_ledger = SessionLedger(ledger_path)
+            handoff_projects: list[str] = []
+            server_ref: dict[str, Any] = {}
+
+            def start_runner(project_id: str) -> None:
+                handoff_projects.append(project_id)
+                server_ref["server"].shutdown()
+
             server = local_control(
                 config_path=config_path,
                 token=token,
@@ -2405,15 +2412,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                     ledger=settings_ledger,
                     config_path=config_path,
                 ),
+                start=start_runner,
                 port=args.settings_port,
             )
+            server_ref["server"] = server
             print(f"local settings: http://127.0.0.1:{args.settings_port}")
             print(f"pairing token: {token}")
             try:
                 server.serve_forever()
             finally:
                 server.server_close()
-            return 0
+            if not handoff_projects:
+                return 0
+            args.project = handoff_projects[0]
+            args.settings_only = False
+            print(f"starting runner for project: {args.project}")
         if not args.project:
             raise RunnerError("--project is required unless --settings-only is used")
         platforms = load_platforms(config_path)

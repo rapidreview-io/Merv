@@ -47,7 +47,7 @@ _BRIDGE_PAGE = r"""<!doctype html>
   <script nonce="__NONCE__">
     const uiOrigin = __UI_ORIGIN__;
     const bridgeSource = "merv-runner-bridge-v1";
-    const allowed = new Set(["/health", "/settings", "/status", "/credential"]);
+    const allowed = new Set(["/health", "/settings", "/status", "/credential", "/start"]);
 
     window.addEventListener("message", async (event) => {
       if (event.source !== window.opener || event.origin !== uiOrigin) return;
@@ -55,7 +55,7 @@ _BRIDGE_PAGE = r"""<!doctype html>
       if (!message || message.source !== "merv-runner-ui-v1"
           || message.type !== "request" || typeof message.id !== "string"
           || !allowed.has(message.path)
-          || !["GET", "PUT"].includes(message.method)) return;
+          || !["GET", "PUT", "POST"].includes(message.method)) return;
       try {
         const headers = {};
         if (message.token) headers.Authorization = `Bearer ${message.token}`;
@@ -136,6 +136,7 @@ def local_control(
     token: str,
     validate: Callable[[Path], None],
     status: Callable[[], Mapping[str, Any]],
+    start: Callable[[str], None] | None = None,
     credential_path: Path | None = None,
     port: int = DEFAULT_PORT,
     origins: set[str] | None = None,
@@ -152,7 +153,7 @@ def local_control(
                 return
             self.send_response(204)
             self._cors()
-            self.send_header("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, PUT, POST, OPTIONS")
             self.send_header(
                 "Access-Control-Allow-Headers", "Authorization, Content-Type"
             )
@@ -222,6 +223,58 @@ def local_control(
                 200,
                 {**_public_settings(updated), "restart_required": True},
             )
+
+        def do_POST(self) -> None:
+            if not self._safe_host():
+                self._json(403, {"error": "forbidden"})
+                return
+            if not self._authorized():
+                return
+            if self.path != "/start":
+                self._json(404, {"error": "not_found"})
+                return
+            try:
+                payload = self._body()
+                project_id = _start_project_id(payload.get("project_id"))
+                current = dict(status())
+                if start is None:
+                    if (
+                        current.get("runner_active") is True
+                        and str(current.get("project_id") or "") == project_id
+                    ):
+                        self._json(
+                            200,
+                            {"ok": True, "state": "running", "project_id": project_id},
+                        )
+                    else:
+                        self._json(409, {"error": "runner_cannot_start"})
+                    return
+                try:
+                    validate(config_path)
+                except Exception as exc:
+                    raise LocalControlError(
+                        str(exc) or "runner settings are invalid"
+                    ) from exc
+            except (LocalControlError, ValueError) as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            with start_lock:
+                if start_state["requested"]:
+                    self._json(409, {"error": "runner_starting"})
+                    return
+                start_state["requested"] = True
+            self._json(
+                202,
+                {"ok": True, "state": "starting", "project_id": project_id},
+            )
+            # Let the response reach the browser before the settings service
+            # closes its socket and hands this process to the actual runner.
+            threading.Thread(
+                target=start,
+                args=(project_id,),
+                name="merv-runner-handoff",
+                daemon=True,
+            ).start()
 
         def _body(self) -> dict[str, Any]:
             try:
@@ -315,6 +368,8 @@ def local_control(
         def log_message(self, format: str, *args: object) -> None:
             return
 
+    start_lock = threading.Lock()
+    start_state = {"requested": False}
     try:
         server = ThreadingHTTPServer(("127.0.0.1", int(port)), Handler)
     except OSError as exc:
@@ -323,6 +378,13 @@ def local_control(
         ) from exc
     server.daemon_threads = True
     return server
+
+
+def _start_project_id(value: object) -> str:
+    project_id = value if isinstance(value, str) else ""
+    if not re.fullmatch(r"proj_[A-Za-z0-9][A-Za-z0-9_-]{0,127}", project_id):
+        raise LocalControlError("project_id must be a valid Merv project id")
+    return project_id
 
 
 def _write_credential(path: Path, *, key: object) -> None:

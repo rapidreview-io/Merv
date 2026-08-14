@@ -46,6 +46,7 @@ from merv.client.agent_runner import (
     _session_key,
     load_platforms,
     load_workspace_settings,
+    main as runner_main,
 )
 from merv.client.cli import (
     ClientError,
@@ -63,6 +64,62 @@ from merv.client.local_control import (
 
 
 class AgentConfigurationTest(unittest.TestCase):
+    def test_settings_service_hands_the_same_process_to_the_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            config_path = root / "client.json"
+            configure_client(
+                config_path=config_path,
+                control_url="http://127.0.0.1:8787",
+            )
+            configure_agent(config_path=config_path, platform="codex")
+            configure_workspace(
+                config_path=config_path,
+                strategy="git_worktree",
+                repository=str(root / "repository"),
+                root=str(root / "worktrees"),
+                base_ref="main",
+            )
+
+            calls: list[dict[str, object]] = []
+
+            class FakeServer:
+                def __init__(self, start=None) -> None:
+                    self.start = start
+
+                def serve_forever(self) -> None:
+                    self.start("proj_123")
+
+                def shutdown(self) -> None:
+                    return
+
+                def server_close(self) -> None:
+                    return
+
+            def fake_local_control(**kwargs):
+                calls.append(kwargs)
+                return FakeServer(kwargs.get("start"))
+
+            with (
+                patch(
+                    "merv.client.agent_runner.local_control",
+                    side_effect=fake_local_control,
+                ),
+                patch("merv.client.agent_runner.start_in_background"),
+                patch("merv.client.agent_runner._run_runner") as run,
+                redirect_stdout(io.StringIO()),
+            ):
+                result = runner_main(
+                    ["--settings-only", "--config", str(config_path)]
+                )
+
+            self.assertEqual(result, 0)
+            self.assertEqual(len(calls), 2)
+            self.assertIsNotNone(calls[0]["start"])
+            self.assertIsNone(calls[1].get("start"))
+            launched = run.call_args.args[0]
+            self.assertEqual(launched.project_id, "proj_123")
+
     def test_agent_command_updates_machine_settings_without_losing_server(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "client.json"
@@ -1763,10 +1820,11 @@ class LocalControlTest(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(runner_path.stat().st_mode & 0o777, 0o600)
 
-    def test_paired_loopback_settings_merge_without_a_launch_route(self) -> None:
+    def test_paired_loopback_settings_and_runner_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             config_path = root / "client.json"
+            started: list[str] = []
             configure_client(
                 config_path=config_path,
                 control_url="https://merv.test",
@@ -1784,6 +1842,7 @@ class LocalControlTest(unittest.TestCase):
                     "project_id": None,
                     "sessions": [],
                 },
+                start=started.append,
                 port=0,
                 origins={"https://experiments.rapidreview.io"},
             )
@@ -1804,6 +1863,8 @@ class LocalControlTest(unittest.TestCase):
                 with urllib.request.urlopen(bridge_url) as response:
                     bridge = response.read().decode()
                     self.assertIn("merv-runner-bridge-v1", bridge)
+                    self.assertIn('"/start"', bridge)
+                    self.assertIn('"POST"', bridge)
                     self.assertIn(json.dumps(bridge_origin), bridge)
                     self.assertNotIn("pairing-secret", bridge)
                     self.assertIn(
@@ -1819,6 +1880,16 @@ class LocalControlTest(unittest.TestCase):
 
                 with self.assertRaises(urllib.error.HTTPError) as unauthorized:
                     urllib.request.urlopen(f"{base}/settings")
+                self.assertEqual(unauthorized.exception.code, 401)
+
+                unpaired_start = urllib.request.Request(
+                    f"{base}/start",
+                    data=json.dumps({"project_id": "proj_123"}).encode(),
+                    method="POST",
+                    headers={"Content-Type": "application/json"},
+                )
+                with self.assertRaises(urllib.error.HTTPError) as unauthorized:
+                    urllib.request.urlopen(unpaired_start)
                 self.assertEqual(unauthorized.exception.code, 401)
 
                 credential = "mk_" + ("x" * 43)
@@ -1910,15 +1981,48 @@ class LocalControlTest(unittest.TestCase):
                 self.assertEqual(stored["agent_platforms"]["codex"]["parallelism"], 2)
                 self.assertFalse(stored["features"]["sandbox"])
 
+                invalid_start = urllib.request.Request(
+                    f"{base}/start",
+                    data=json.dumps({"project_id": "not-a-project"}).encode(),
+                    method="POST",
+                    headers={
+                        "Authorization": "Bearer pairing-secret",
+                        "Content-Type": "application/json",
+                        "Origin": "https://experiments.rapidreview.io",
+                    },
+                )
+                with self.assertRaises(urllib.error.HTTPError) as invalid:
+                    urllib.request.urlopen(invalid_start)
+                self.assertEqual(invalid.exception.code, 400)
+
                 start = urllib.request.Request(
                     f"{base}/start",
-                    data=b"{}",
+                    data=json.dumps({"project_id": "proj_123"}).encode(),
                     method="POST",
-                    headers={"Authorization": "Bearer pairing-secret"},
+                    headers={
+                        "Authorization": "Bearer pairing-secret",
+                        "Content-Type": "application/json",
+                        "Origin": "https://experiments.rapidreview.io",
+                    },
                 )
-                with self.assertRaises(urllib.error.HTTPError) as absent:
+                with urllib.request.urlopen(start) as response:
+                    self.assertEqual(response.status, 202)
+                    self.assertEqual(
+                        json.load(response),
+                        {
+                            "ok": True,
+                            "project_id": "proj_123",
+                            "state": "starting",
+                        },
+                    )
+                deadline = time.monotonic() + 1
+                while not started and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertEqual(started, ["proj_123"])
+
+                with self.assertRaises(urllib.error.HTTPError) as duplicate:
                     urllib.request.urlopen(start)
-                self.assertEqual(absent.exception.code, 501)
+                self.assertEqual(duplicate.exception.code, 409)
             finally:
                 server.shutdown()
                 server.server_close()
