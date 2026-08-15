@@ -425,6 +425,27 @@ def usage_point(
     }
 
 
+def gpu_inventory(*, metrics: dict[str, Any]) -> dict[str, Any] | None:
+    """What cards the sampler saw: ``{count, vram_mib, name}`` or None.
+
+    The row only keeps the short GPU label picked at provision ("A100"), which
+    says nothing about how many cards or how much memory each has; nvidia-smi
+    does. ``vram_mib`` is per card (the largest, on a mixed box) and stays None
+    when the sampler could not read it — a blank is honest, a zero is a lie.
+    """
+    gpus = metrics.get("gpus")
+    cards = [gpu for gpu in gpus if isinstance(gpu, dict)] if isinstance(gpus, list) else []
+    if not cards:
+        return None
+    totals = [total for total in (_int(gpu.get("mem_total_mib")) for gpu in cards) if total]
+    names = [str(gpu.get("name") or "").strip() for gpu in cards]
+    return {
+        "count": len(cards),
+        "vram_mib": max(totals) if totals else None,
+        "name": next((name for name in names if name), ""),
+    }
+
+
 def append_usage_point(*, series: Any, point: dict[str, Any]) -> list[dict[str, Any]]:
     """Append one point to a bounded ring, tolerating a malformed prior blob."""
     prior = [item for item in series if isinstance(item, dict)] if isinstance(series, list) else []

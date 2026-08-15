@@ -21,20 +21,31 @@ const LABELS = {
   aws: 'AWS',
   gcp: 'GC',
   azure: 'AZ',
+  // No shipped mark: monogram only.
+  modal: 'MD',
+  local: 'LC',
+  fake: 'FK',
 };
 
-export default function ProviderIcon({ provider, size = 30 }) {
+// `inset` is the tile's total padding around the mark: 8 for the 30px setup
+// tiles, 4 for the 16px inline marks on the fleet table's rows.
+export default function ProviderIcon({ provider, size = 30, inset = 8 }) {
   const [broken, setBroken] = useState(false);
   const src = `${import.meta.env.BASE_URL}providers/${provider}.png`;
+  const small = size <= 20;
   return (
-    <span className="sbxp-icon" style={{ width: size, height: size }} aria-hidden="true">
+    <span
+      className={`sbxp-icon${small ? ' sbxp-icon--sm' : ''}`}
+      style={{ width: size, height: size }}
+      aria-hidden="true"
+    >
       {broken ? (
         <span className="sbxp-icon-fallback">{LABELS[provider] || '?'}</span>
       ) : (
         <img
           src={src}
-          width={size - 8}
-          height={size - 8}
+          width={size - inset}
+          height={size - inset}
           alt=""
           onError={() => setBroken(true)}
         />

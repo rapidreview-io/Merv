@@ -3395,8 +3395,16 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   animation: log-pulse 1.4s ease-in-out infinite;
 }
 .sbxt-scroll { overflow-x: auto; margin-top: 4px; }
+/* One column template for the head, every identity line and every liveness
+   line: chevron · status · experiment · hardware · uptime · expires · links.
+   The liveness line spans across it (the last command under Status+Experiment,
+   gauges from Hardware to the edge), so both lines of a row read as one table
+   rather than a table with captions. */
 .sbxt {
-  --sbxt-cols: 22px 108px minmax(190px, 1.5fr) minmax(132px, 1fr) 66px 80px minmax(150px, 1.1fr) minmax(92px, auto);
+  /* Hardware is pinned to the width of its longest honest line ("8× H100 ·
+     80 GB VRAM · 208 cpu · 1800 GiB RAM") so it never ellipsizes; the time
+     columns get room to breathe; Experiment takes whatever is left. */
+  --sbxt-cols: 18px 100px minmax(200px, 1fr) 320px 76px 84px 48px;
   min-width: 840px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -3404,7 +3412,8 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   background: var(--bg-elev);
 }
 .sbxt-head,
-.sbxt-row {
+.sbxt-row,
+.sbxt-live {
   display: grid;
   grid-template-columns: var(--sbxt-cols);
   align-items: center;
@@ -3415,7 +3424,7 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .sbxt-head { height: 30px; }
 
 .sbxt-row {
-  min-height: 44px;
+  min-height: 46px;
   font-size: var(--text-sm);
   text-align: left;
 }
@@ -3423,7 +3432,7 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .sbxt-rowhead {
   border-bottom: 1px solid var(--line-soft);
   cursor: pointer;
-  padding-bottom: 2px;
+  padding-bottom: 3px;
 }
 .sbxt-rowgroup:last-child .sbxt-rowhead { border-bottom: none; }
 @media (hover: hover) {
@@ -3432,59 +3441,7 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .sbxt-rowgroup.open .sbxt-rowhead { background: var(--bg-soft); }
 .sbxt-rowhead:focus-visible { outline: 2px solid var(--active); outline-offset: -2px; }
 
-/* =====================================================================
-   Row liveness — the overview tier. Reads from the heartbeat sweep the
-   control plane already runs, so a whole fleet stays legible without
-   attaching a terminal to anything.
-   ===================================================================== */
-/* Fixed gauge track so utilization lines up down the table: a CPU-only box
-   leaves its GPU slot empty rather than stretching two bars across the row. */
-.sbxt-live {
-  display: grid;
-  grid-template-columns: auto minmax(80px, 1fr) 316px;
-  align-items: center;
-  gap: 12px;
-  padding: 0 14px 8px 46px;
-  font-size: var(--text-xs);
-  color: var(--muted);
-}
-.sbxt-live-state { font-weight: 500; white-space: nowrap; }
-.sbxt-live-what { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.sbxt-live-cmd {
-  color: var(--text); flex: 0 1 auto; min-width: 0;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.sbxt-live-detail {
-  flex: none; white-space: nowrap; font-variant-numeric: tabular-nums;
-}
-.sbxt-live-gauges {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) 46px;
-  align-items: center;
-  gap: 12px;
-}
-.sbxt-live-trend { grid-column: 4; display: block; height: 18px; line-height: 0; }
-
-/* Tone is behavioural, not lifecycle: a running box can be working, idle, or
-   sitting on a failure, and those are three different things to a watcher. */
-.sbxt-live--work { color: var(--supports); }
-.sbxt-live--fail { color: var(--refutes); }
-.sbxt-live--idle { color: var(--qualifies); }
-.sbxt-live--quiet { color: var(--muted); }
-
-.sbxt-gauge { display: grid; grid-template-columns: 1fr auto; gap: 0 6px; min-width: 0; }
-.sbxt-gauge-label { color: var(--muted); font-size: 10px; letter-spacing: .04em; }
-.sbxt-gauge-val {
-  color: var(--muted); font-size: 10px; text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-.sbxt-gauge-track {
-  grid-column: 1 / -1;
-  height: 3px; border-radius: 2px; background: var(--line); overflow: hidden;
-}
-.sbxt-gauge-fill { display: block; height: 3px; border-radius: 2px; background: currentColor; }
-
-
+/* ---- Identity line ------------------------------------------------- */
 .sbxt-status { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
 .sbxt-status-label { font-size: var(--text-xs); text-transform: capitalize; color: var(--text); }
 .sbxt-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
@@ -3497,21 +3454,43 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .sbxt-exp-title {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   color: var(--text);
+  font-weight: 500;
 }
 
-.sbxt-hw,
-.sbxt-ep {
+/* Hardware: provider mark, then the machine in one line with the GPU phrase
+   leading in the text colour ("A100 · 80 GB VRAM" · 30 cpu · 200 GiB RAM),
+   SKU and region beneath in the faint voice. */
+.sbxt-hw { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sbxt-hw-spec { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.sbxt-hw-provider { flex: none; display: inline-flex; }
+.sbxt-hw-text {
   font-size: var(--text-xs);
   color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.sbxt-hw-gpu { color: var(--text); font-weight: 600; }
+.sbxt-hw-sep { color: var(--faint); }
+/* Indented past the mark so both lines share a left edge. */
+.sbxt-hw-sku {
+  padding-left: 24px;
+  font-size: 10.5px; color: var(--faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 16px provider mark for inline use (see ProviderIcon inset). */
+.sbxp-icon--sm { border-radius: 4px; }
+.sbxp-icon--sm img { border-radius: 2px; }
+.sbxp-icon--sm .sbxp-icon-fallback { font-size: 7px; letter-spacing: 0; }
+
+/* Uptime / expires: the numbers a watcher acts on, so they read in the text
+   colour at the row's own size, not as a footnote beside the hardware. */
 .sbxt-num {
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   text-align: right;
-  color: var(--muted);
+  color: var(--text);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.sbxt-none { color: var(--faint); }
 .sbxt-warn { color: var(--qualifies); }
 .sbxt-warn--hot { color: var(--refutes); font-weight: 600; }
 
@@ -3520,12 +3499,108 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .sbxt-link:hover { text-decoration: underline; }
 .sbxt-link--muted { color: var(--muted); }
 
+/* =====================================================================
+   Liveness line — the overview tier. Reads from the heartbeat sweep the
+   control plane already runs, so a whole fleet stays legible without
+   attaching a terminal to anything. Same grid as the identity line.
+   ===================================================================== */
+.sbxt-live {
+  margin-top: -2px;
+  padding-bottom: 9px;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+/* The last command spans Status + Experiment: "$ gist …" then its clock
+   ("running · 8m", "exit 0 · 3h ago") pinned to the span's right edge, so the
+   clocks line up down the table whatever the command's length. */
+.sbxt-live-cmdline {
+  grid-column: 2 / 4;
+  display: flex; align-items: baseline; gap: 6px; min-width: 0;
+}
+.sbxt-live-prompt { flex: none; font-family: var(--font-mono); color: var(--faint); }
+.sbxt-live-cmd {
+  color: var(--text); flex: 0 1 auto; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sbxt-live-note {
+  flex: 0 1 auto; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sbxt-live-state + .sbxt-live-note::before { content: '·'; margin-right: 6px; color: var(--faint); }
+.sbxt-live-state {
+  flex: none;
+  font-weight: 500; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* After a command, the clock sits at the span's right edge; alone (no
+   command yet, provisioning) it leads the line like any other text. */
+.sbxt-live-state--end { margin-left: auto; padding-left: 10px; }
+/* Four fixed slots — CPU · RAM · GPU · VRAM — spanning from the Hardware
+   column to the row's edge. Slots are positional (each gauge sets its own
+   grid-column), so a CPU-only box leaves GPU/VRAM blank and the same metric
+   lines up down the whole fleet. */
+.sbxt-live-gauges {
+  grid-column: 4 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: end;
+  gap: 14px;
+}
+
+/* Tone is behavioural, not lifecycle: a running box can be working, idle, or
+   sitting on a failure, and those are three different things to a watcher. */
+.sbxt-live--work { color: var(--supports); }
+.sbxt-live--fail { color: var(--refutes); }
+.sbxt-live--idle { color: var(--qualifies); }
+.sbxt-live--quiet { color: var(--muted); }
+
+.sbxt-gauge { display: grid; grid-template-columns: 1fr auto; gap: 2px 6px; min-width: 0; }
+.sbxt-gauge-label {
+  color: var(--muted); font-size: 10px; font-weight: 500; letter-spacing: .05em;
+  line-height: 1.2;
+}
+.sbxt-gauge-val {
+  color: var(--text); font-size: var(--text-xs); text-align: right; line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.sbxt-gauge-track {
+  grid-column: 1 / -1;
+  height: 4px; border-radius: 2px; background: var(--line); overflow: hidden;
+}
+.sbxt-gauge-fill { display: block; height: 4px; border-radius: 2px; background: currentColor; }
+
+/* ---- Drawer ---------------------------------------------------------- */
 .sbxt-drawer {
   border-bottom: 1px solid var(--line-soft);
   background: var(--bg);
-  padding: 2px 14px 14px;
+  padding: 0 14px 14px;
 }
 .sbxt-rowgroup:last-child .sbxt-drawer { border-bottom: none; }
+/* First line of the drawer: the experiment this box serves (the link — the
+   row above only toggles). */
+.sbxt-drawer-bar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 12px 4px 0;
+  font-size: var(--text-xs);
+}
+.sbxt-drawer-exp { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.sbxt-drawer-key {
+  color: var(--faint); font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .07em; flex: none;
+}
+.sbxt-drawer-link,
+.sbxt-drawer-title {
+  font-size: var(--text-sm); font-weight: 500; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sbxt-drawer-link {
+  color: var(--active); text-decoration: none;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.sbxt-drawer-link:hover { text-decoration: underline; }
+.sbxt-drawer-arrow { font-weight: 400; }
+/* The terminal panel brings its own frame; sit it flush under the bar. */
+.sbxt-drawer .sbx { margin-top: 10px; margin-bottom: 0; }
 
 /* Sandbox cards (expandable rows on the Sandboxes index) */
 

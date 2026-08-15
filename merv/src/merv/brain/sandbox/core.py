@@ -58,7 +58,12 @@ from .models import (
     public_phase,
 )
 from .scheduler import SandboxScheduler
-from .heartbeat import SandboxActivityPolicy, SandboxHeartbeatMonitor, usage_point
+from .heartbeat import (
+    SandboxActivityPolicy,
+    SandboxHeartbeatMonitor,
+    gpu_inventory,
+    usage_point,
+)
 from .sandbox_paths import DEFAULT_DATA_DIR, remote_experiment_dir
 from .storage import SandboxStorage
 
@@ -675,6 +680,10 @@ class SandboxEngine:
         `latest` is derived from the stored sample rather than the ring's tail
         so rows written before the ring existed still render their bars — the
         sparkline simply stays empty until the sweep has filled it.
+
+        `gpus` is the card inventory the sampler saw (count, per-card VRAM,
+        model name): the row only stores the short GPU label chosen at
+        provision, so this is where the fleet table learns "1× A100 80 GB".
         """
         record = self._storage.heartbeat_snapshot(row=row)
         if not isinstance(record, dict):
@@ -694,6 +703,7 @@ class SandboxEngine:
                 if isinstance(metrics, dict)
                 else None
             ),
+            "gpus": gpu_inventory(metrics=metrics) if isinstance(metrics, dict) else None,
             "series": (
                 [point for point in series if isinstance(point, dict)]
                 if isinstance(series, list)

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import StatusPill from './StatusPill';
 import TerminalLog from './TerminalLog';
+import { hardwareLabel, providerLabel } from '../utils/fleet';
 
 /**
  * SandboxTerminal — a window into a cloud sandbox.
@@ -291,14 +292,20 @@ function SandboxMeta({ sandbox }) {
         <span className="sbx-meta-key">id</span>
         <span className="mono">{sandbox.sandbox_id}</span>
       </div>
-      {(sandbox.gpu || sandbox.cpu || sandbox.memory) && (
+      {(sandbox.provider || sandbox.region || sandbox.instance_type) && (
         <div className="sbx-meta-row">
-          <span className="sbx-meta-key">resources</span>
+          <span className="sbx-meta-key">provider</span>
           <span className="mono">
-            {[sandbox.gpu && `gpu ${sandbox.gpu}`, sandbox.cpu && `${sandbox.cpu} cpu`, sandbox.memory && `${sandbox.memory} MiB`]
+            {[providerLabel(sandbox.provider), sandbox.region, sandbox.instance_type]
               .filter(Boolean)
               .join(' · ')}
           </span>
+        </div>
+      )}
+      {(sandbox.gpu || sandbox.cpu || sandbox.memory) && (
+        <div className="sbx-meta-row">
+          <span className="sbx-meta-key">resources</span>
+          <span className="mono">{hardwareLabel(sandbox)}</span>
         </div>
       )}
       {host && port && (

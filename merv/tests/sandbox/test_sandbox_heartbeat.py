@@ -786,6 +786,40 @@ class FleetLivenessProjectionTest(SandboxHeartbeatMonitorTest):
         self.assertEqual(heartbeat["latest"]["gpu"], 42.0)
         self.assertEqual(heartbeat["latest"]["cpu"], 50.0)
 
+    def test_the_row_learns_its_card_inventory_from_the_sample(self) -> None:
+        # The row stores only the short label chosen at provision ("A100");
+        # how many cards and how much memory each has comes from nvidia-smi.
+        now = datetime(2026, 1, 1, 2, 0, tzinfo=UTC)
+        exp_id = self._experiment("inventory")
+        created = self._request(exp_id)
+        sandbox_uid = str(created["sandbox_uid"])
+        metrics = _sample(cpu=1.0, gpu=42)
+        metrics["gpus"] = [
+            {"index": 0, "name": "NVIDIA A100-SXM4-80GB", "util_pct": 42, "mem_used_mib": 1000, "mem_total_mib": 81920},
+            {"index": 1, "name": "NVIDIA A100-SXM4-80GB", "util_pct": 7, "mem_used_mib": 500, "mem_total_mib": 81920},
+        ]
+        self._seed_heartbeat(
+            exp_id=exp_id, sandbox_uid=sandbox_uid, sampled_at=now, idle_since=now, metrics=metrics
+        )
+        heartbeat = self._fleet_row(sandbox_uid)["heartbeat"]
+        self.assertEqual(
+            heartbeat["gpus"],
+            {"count": 2, "vram_mib": 81920, "name": "NVIDIA A100-SXM4-80GB"},
+        )
+
+        # A sample whose card memory the sampler could not read keeps the count
+        # and says nothing about VRAM rather than claiming zero.
+        blind = self._experiment("blind")
+        created = self._request(blind)
+        sandbox_uid = str(created["sandbox_uid"])
+        self._seed_heartbeat(
+            exp_id=blind, sandbox_uid=sandbox_uid, sampled_at=now, idle_since=now, metrics=_sample()
+        )
+        self.assertEqual(
+            self._fleet_row(sandbox_uid)["heartbeat"]["gpus"],
+            {"count": 1, "vram_mib": None, "name": ""},
+        )
+
     def test_a_terminated_row_drops_stale_usage_but_keeps_its_last_command(
         self,
     ) -> None:

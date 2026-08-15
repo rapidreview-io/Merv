@@ -12,7 +12,9 @@ import Sparkline from '../components/Sparkline';
 import { expName } from '../utils/experiment';
 import { fmtDuration } from '../utils/format';
 import { PARACHUTE_CHIPS, latestParachute } from '../utils/parachute';
-import { fleetActivity, usageBars, usageTrend } from '../utils/fleet';
+import {
+  commandGist, fleetActivity, hardwareLabel, providerLabel, usageBars, usageLead, usageTrend,
+} from '../utils/fleet';
 
 const sandboxRowId = (s) => s.sandbox_uid || s.sandbox_id || s.experiment_id;
 const primaryExperimentId = (s) => (
@@ -99,11 +101,8 @@ function SandboxCard({ sandbox: s, experiment, experimentId, parachute, open, on
   const now = Date.now();
   const up = live && s.requested_at ? now - Date.parse(s.requested_at) : null;
   const left = live && s.expires_at ? Date.parse(s.expires_at) - now : null;
-  const hardware = [
-    s.gpu,
-    s.cpu && `${s.cpu} cpu`,
-    s.memory && `${Math.round(s.memory / 1024)} GiB`,
-  ].filter(Boolean).join(' · ');
+  const hardware = hardwareLabel(s);
+  const provider = [providerLabel(s.provider), s.region].filter(Boolean).join(' · ');
   const endpoint = s.ssh_host && s.ssh_port ? `${s.ssh_user || 'root'}@${s.ssh_host}:${s.ssh_port}` : null;
   const expRunning = experiment && experiment.status === 'running';
   const activity = fleetActivity(s, now);
@@ -133,8 +132,9 @@ function SandboxCard({ sandbox: s, experiment, experimentId, parachute, open, on
       </div>
       <div className="mcard-meta">
         {hardware && <span className="mono">{hardware}</span>}
+        {provider && <span>{provider}</span>}
         {up != null && <span>up {fmtDuration(up)}</span>}
-        {left != null && <span>expires in {left <= 0 ? 'soon' : fmtDuration(left)}</span>}
+        {left != null && <span>expires in {fmtDuration(Math.max(0, left))}</span>}
         {s.sandbox_id && <span><ObjId id={s.sandbox_id} /></span>}
       </div>
       {endpoint && <div className="mcard-meta"><span className="mono">{endpoint}</span></div>}
@@ -192,7 +192,7 @@ function MobileLiveStrip({ activity, sandbox }) {
   const heartbeat = sandbox.heartbeat || null;
   const command = sandbox.last_command?.command || '';
   const bars = usageBars(heartbeat?.latest);
-  const lead = bars[0];
+  const lead = usageLead(bars);
   const trend = usageTrend(heartbeat?.series, lead?.key);
 
   return (
@@ -201,7 +201,7 @@ function MobileLiveStrip({ activity, sandbox }) {
         <span className="msbx-live-state">{activity.label}</span>
         {activity.detail && <span className="msbx-live-detail">{activity.detail}</span>}
       </div>
-      {command && <div className="msbx-live-cmd mono">{command}</div>}
+      {command && <div className="msbx-live-cmd mono" title={command}>{commandGist(command)}</div>}
       {bars.length > 0 && (
         <div className="msbx-live-gauges">
           {bars.map(bar => (
