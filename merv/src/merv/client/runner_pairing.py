@@ -224,7 +224,7 @@ def pair(
     minutes = max(int((state.expires_at - now()) // 60), 0)
     print(
         f"Pair this machine: enter  {format_user_code(state.user_code)}  in "
-        f"Settings → Auto running (expires in {minutes} min).",
+        f"Auto-run → Pair a machine (expires in {minutes} min).",
         file=output,
     )
     while True:

@@ -35,6 +35,7 @@ import Storage from './pages/Storage';
 import Reviews from './pages/Reviews';
 import Events from './pages/Events';
 import Sandboxes from './pages/Sandboxes';
+import AutoRun from './pages/AutoRun';
 import Debug from './pages/Debug';
 import Settings from './pages/Settings';
 
@@ -201,6 +202,7 @@ export default function App() {
             <Route path="reviews" element={<MobileReviews />} />
             <Route path="events" element={<Events />} />
             <Route path="sandboxes" element={<SandboxCardList />} />
+            <Route path="auto-run" element={<AutoRun />} />
             <Route path="settings" element={<Settings />} />
             <Route path="activity" element={<Debug />} />
             <Route path="debug" element={<DebugRedirect />} />
@@ -252,6 +254,7 @@ export default function App() {
             <Route path="reviews" element={<Reviews />} />
             <Route path="events" element={<Events />} />
             <Route path="sandboxes" element={<Sandboxes />} />
+            <Route path="auto-run" element={<AutoRun />} />
             <Route path="settings" element={<Settings />} />
             <Route path="activity" element={<Debug />} />
             <Route path="debug" element={<DebugRedirect />} />

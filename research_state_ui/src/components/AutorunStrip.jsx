@@ -6,8 +6,9 @@ import { useAutorunStatus } from '../store/useAutorunStatus';
  * AutorunStrip — one line on Home saying what auto-run is doing right now.
  *
  * Shown only once auto-run is a thing for this project (a runner has ever
- * paired, or dispatch is on). Reads the shared ambient status; the full page
- * lives under Settings → Auto running.
+ * paired, or dispatch is on). Reads the shared ambient status and links to
+ * the Auto-run page. Same light grammar as the sidebar: the pulsing dot only
+ * while a runner is live; otherwise the words carry it.
  */
 export default function AutorunStrip({ project }) {
   const px = useProjectHref();
@@ -29,8 +30,8 @@ export default function AutorunStrip({ project }) {
   }
 
   return (
-    <Link to={px('/settings?tab=auto')} className="autorun-strip" aria-label="Auto-run status">
-      <span className={`aru-live-dot aru-live-dot--${status.running > 0 || status.liveRunnerCount > 0 ? 'live' : status.tone}`} aria-hidden="true" />
+    <Link to={px('/auto-run')} className="autorun-strip" aria-label="Auto-run status">
+      {status.liveRunnerCount > 0 && <span className="sidebar-live-dot" aria-hidden="true" />}
       <span className="autorun-strip-title">Auto-run</span>
       <span className="autorun-strip-detail">{detail}</span>
       <span className="autorun-strip-open">Open →</span>

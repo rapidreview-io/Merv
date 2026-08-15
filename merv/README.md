@@ -125,7 +125,7 @@ instruction on stdin and emits a JSONL interaction stream on stdout:
 
 ```bash
 # Guided: installs, prints an 8-character pairing code, dispatches once an
-# owner approves it in Settings → Auto running.
+# owner approves it on the Auto-run page.
 curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh
 
 # Headless: install without pairing, export MERV_MCP_KEY, name the project.
@@ -136,7 +136,7 @@ $HOME/.merv/bin/merv-agent-runner --project proj_123
 The provider-independent installer downloads the generated runner archive,
 verifies its SHA-256 checksum, installs it under `~/.merv`, and starts the
 runner. An unpaired runner generates its own `mk_` key, sends only its digest,
-and prints a code; approving that code in Settings → Auto running registers
+and prints a code; approving that code on the Auto-run page registers
 the key for the project. It requires Python 3.11+ and Git, but no Merv
 repository clone or Merv package, and works identically on a remote machine
 because the browser never addresses it. Rerun the same command to update it;
@@ -173,7 +173,8 @@ consolidation worktrees remain recoverable. The private bare clone has no
 remotes and never pushes into the user's repository. Worktrees isolate Git
 changes, not same-user filesystem access; use an OS sandbox for hostile agents.
 
-Settings → Auto running edits a paired runner's tuning through the brain:
+The Auto-run page (each machine's drawer) edits a paired runner's tuning
+through the brain:
 which native platforms are enabled, their model, effort, and parallelism, and
 the repository, worktree root, and base ref. The runner reports its non-secret
 inventory on every heartbeat and pulls the desired settings back on the same

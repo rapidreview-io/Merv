@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Link, useLocation } from 'react-router-dom';
 import { useProjectStore, useProjectHref, selectStats, selectSandboxes } from '../store/useProjectStore';
+import { useAutorunStatus } from '../store/useAutorunStatus';
 import { useTheme } from '../store/useTheme';
 import ProjectSwitcher from '../components/ProjectSwitcher';
 import { setSurfaceOverride } from '../store/useViewport';
@@ -131,6 +132,8 @@ function MoreSheet({ open, onClose }) {
   const sandboxes = useProjectStore(selectSandboxes);
   const runningSandboxes = sandboxes.filter(s => s.status === 'running').length;
   const px = useProjectHref();
+  const projectId = useProjectStore(s => s.projectId);
+  const autorun = useAutorunStatus(projectId);
 
   const footer = (
     <button type="button" className="btn btn--ghost btn--sm" onClick={() => setSurfaceOverride('desktop')}>
@@ -150,6 +153,7 @@ function MoreSheet({ open, onClose }) {
       <SheetLink to={px('/artifacts')} label="Artifacts" count={stats.artifacts ?? 0} />
       <SheetLink to={px('/storage')} label="Storage" />
       <SheetLink to={px('/sandboxes')} label="Sandboxes" count={runningSandboxes ? `${runningSandboxes} running` : null} />
+      <SheetLink to={px('/auto-run')} label="Auto-run" count={autorun.liveRunnerCount ? `${autorun.liveRunnerCount} live` : null} />
       <SheetLink to={px('/settings')} label="Settings" />
       <SheetLink to="/projects" label="Projects" />
 

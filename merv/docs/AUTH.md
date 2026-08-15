@@ -93,7 +93,7 @@ for signed-in people; machine credentials remain unable to change membership.
   `~/.merv/agent-runner.key` first and falls back to `MERV_MCP_KEY` only when no
   paired credential exists. Pairing writes that file: the runner generates the
   key itself, presents only its sha256 digest with a short device code, and an
-  owner's approval in Settings → Auto running registers the digest as a
+  owner's approval on the Auto-run page registers the digest as a
   project-scoped key labelled `auto-run · <hostname>` — the plaintext never
   leaves the machine and is never shown. Never inline a key into a committed
   file.

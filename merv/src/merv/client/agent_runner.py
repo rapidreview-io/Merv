@@ -3372,10 +3372,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not any(item.enabled for item in platforms):
                 # A paired machine with nothing enabled yet is the normal
                 # first-run state: heartbeat, report inventory, claim nothing,
-                # and pick up agents as soon as Settings saves them.
+                # and pick up agents as soon as the Auto-run page saves them.
                 print(
                     "no agents enabled yet; this machine will heartbeat and "
-                    "start claiming once Settings → Auto running enables one"
+                    "start claiming once the Auto-run page enables one"
                 )
             runner_secret, _ = private_token(config_path.parent / "agent-runner.secret")
             workspace_settings = load_workspace_settings(config_path)

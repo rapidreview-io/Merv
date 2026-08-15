@@ -10,7 +10,7 @@ import { NATIVE_CLIENTS, OTHER_CLIENT_NAMES, CLIENT_DOCS_URL, ClientMark } from 
  * - ConnectAgentPanel: the first-run hero on Home. A brand-new project is an
  *   empty page with zero counts and nothing telling the user the next move is
  *   in a terminal, not here — so until something has happened, the guide is
- *   the page (the same call AgentPlatforms makes for its unpaired state).
+ *   the page (the same call the Auto-run page makes for its no-machine state).
  * - ConnectAgentSettings: the Settings tab. Permanent home for replays —
  *   another client, another machine — plus the headless/CI pointer.
  */

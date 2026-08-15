@@ -180,11 +180,10 @@ export default function Sidebar({ onHide }) {
             </span>
           )}
         </NavLink>
-        {/* Auto-run lives under Settings, but its live state belongs in the
-            nav — same grammar as Sandboxes: the pulsing light plus how many
-            runners are live right now. No live runner, no light. */}
+        {/* Auto-run: same grammar as Sandboxes — the pulsing light plus how
+            many runners are live right now. No live runner, no light. */}
         <NavLink
-          to={px('/settings?tab=auto')}
+          to={px('/auto-run')}
           className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}
           title={autorun.liveRunnerCount > 0
             ? `${autorun.liveRunnerCount} live runner${autorun.liveRunnerCount === 1 ? '' : 's'} · ${autorun.running} running`

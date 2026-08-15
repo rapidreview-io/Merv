@@ -32,7 +32,7 @@ function tsMs(ts) {
 
 function CommandRow({ id, text, copied, onCopy }) {
   return (
-    <div className="aru-command">
+    <div className="arun-command">
       <code className="mono">{text}</code>
       <button type="button" className="btn btn--ghost btn--sm" onClick={() => onCopy(id, text)}>
         {copied === id ? 'Copied' : 'Copy'}
@@ -255,7 +255,7 @@ export default function ConnectAgentWizard({ projectId, projectName, initialClie
             {watchError ? (
               <p className="cnx-watch-note">{watchError}</p>
             ) : (
-              <div className="aruw-poll" role="status">
+              <div className="cnx-poll" role="status">
                 <span className="sbxpw-spinner" aria-hidden="true" />
                 Listening for the first call…
               </div>

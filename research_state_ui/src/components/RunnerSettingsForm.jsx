@@ -4,11 +4,11 @@ import { capabilitiesFor, readinessFor } from './agentPlatformConfig';
 /**
  * RunnerSettingsForm — the one form for a paired runner's brain-held tuning.
  *
- * Used by the setup wizard and by the Runner settings drawer so the fields
- * exist once. It edits a draft ({platforms, custom, workspace} from
- * agentPlatformConfig.draftFromRunner) and reports edits upward; saving is
- * the caller's job. Custom command-adapter agents configured on the machine
- * are listed read-only: their executable argv is machine-local by design.
+ * Lives in the machine drawer on the Auto-run page. It edits a draft
+ * ({platforms, custom, workspace} from agentPlatformConfig.draftFromRunner)
+ * and reports edits upward; saving is the caller's job. Custom command-adapter
+ * agents configured on the machine are listed read-only: their executable
+ * argv is machine-local by design.
  */
 export default function RunnerSettingsForm({
   platforms,
@@ -20,7 +20,6 @@ export default function RunnerSettingsForm({
   onUpdatePlatform,
   onRepository,
   onWorkspace,
-  compact = false,
 }) {
   const readiness = Object.fromEntries(platforms.map((platform) => [
     platform.id,
@@ -33,10 +32,15 @@ export default function RunnerSettingsForm({
     platform.enabled && readiness[platform.id].tone === 'warn'
   ));
   const skills = harness?.skills || null;
+  // Agents the machine does not have and the owner has not enabled are one
+  // faint line, not a card each: they cannot run here until installed, and
+  // the runner re-probes on every heartbeat, so they surface by themselves.
+  const shown = platforms.filter((platform) => platform.enabled || readiness[platform.id].tone !== 'missing');
+  const absent = platforms.filter((platform) => !platform.enabled && readiness[platform.id].tone === 'missing');
   return (
-    <div className={compact ? 'aruw-form aruw-form--compact' : 'aruw-form'}>
+    <div className="arf">
       {(skills || harness?.error) && (
-        <p className={`aruw-skills${harness?.error || skills?.error ? ' aruw-skills--warn' : ''}`}>
+        <p className={`arf-skills${harness?.error || skills?.error ? ' arf-skills--warn' : ''}`}>
           {harness?.error
             ? `Harness check failed on the machine: ${harness.error}`
             : skills?.error
@@ -44,20 +48,20 @@ export default function RunnerSettingsForm({
               : `Merv skills: ${Number(skills.count) || 0} installed on the machine${skills.digest ? ` · ${String(skills.digest).slice(0, 8)}` : ''}`}
         </p>
       )}
-      <div className="aruw-agents">
-        {platforms.map((platform) => {
+      <div className="arf-agents">
+        {shown.map((platform) => {
           const ready = readiness[platform.id];
           const capabilities = capabilitiesFor(platform.id);
           const errors = validation?.platforms?.[platform.id] || {};
           return (
-            <div className="aruw-agent" key={platform.id}>
-              <div className="aruw-agent-head">
+            <div className="arf-agent" key={platform.id}>
+              <div className="arf-agent-head">
                 <Switch
                   checked={platform.enabled}
                   onChange={(value) => onUpdatePlatform(platform.id, { enabled: value })}
                   label={`Enable ${platform.name}`}
                 />
-                <span className="aruw-agent-name">
+                <span className="arf-agent-name">
                   <strong>{platform.name}</strong>
                   <small className="mono">
                     {platform.executable}
@@ -66,13 +70,13 @@ export default function RunnerSettingsForm({
                 </span>
                 {ready.tag && (
                   <span
-                    className={`aruw-tag aruw-tag--${ready.tone}`}
+                    className={`arf-tag arf-tag--${ready.tone}`}
                     title={ready.problems.length ? ready.problems.join('\n') : undefined}
                   >
                     {ready.tag}
                   </span>
                 )}
-                <label className="aruw-par">
+                <label className="arf-par">
                   <span aria-hidden="true">×</span>
                   <input
                     type="number"
@@ -86,12 +90,12 @@ export default function RunnerSettingsForm({
               </div>
               {errors.parallelism && <small className="field-error">{errors.parallelism}</small>}
               {ready.problems.length > 0 && (
-                <ul className="aruw-problems">
+                <ul className="arf-problems">
                   {ready.problems.map((problem) => <li key={problem}>{problem}</li>)}
                 </ul>
               )}
               {platform.enabled && (capabilities.model || capabilities.effort) && (
-                <div className="aruw-agent-tuning">
+                <div className="arf-agent-tuning">
                   {capabilities.model && (
                     <label>
                       <span>Model</span>
@@ -110,10 +114,10 @@ export default function RunnerSettingsForm({
                         value={platform.effort}
                         placeholder="Platform default"
                         spellCheck={false}
-                        list={`aruw-effort-${platform.id}`}
+                        list={`arf-effort-${platform.id}`}
                         onChange={(e) => onUpdatePlatform(platform.id, { effort: e.target.value })}
                       />
-                      <datalist id={`aruw-effort-${platform.id}`}>
+                      <datalist id={`arf-effort-${platform.id}`}>
                         <option value="low" />
                         <option value="medium" />
                         <option value="high" />
@@ -126,11 +130,16 @@ export default function RunnerSettingsForm({
             </div>
           );
         })}
+        {absent.length > 0 && (
+          <p className="arf-absent">
+            Not on this machine: {absent.map((platform) => platform.name).join(', ')}.
+          </p>
+        )}
         {custom.map((agent) => (
-          <div className="aruw-agent aruw-agent--readonly" key={`custom-${agent.id}`}>
-            <div className="aruw-agent-head">
-              <span className={`aru-live-dot aru-live-dot--${agent.enabled ? 'live' : 'off'}`} aria-hidden="true" />
-              <span className="aruw-agent-name">
+          <div className="arf-agent arf-agent--readonly" key={`custom-${agent.id}`}>
+            <div className="arf-agent-head">
+              <span className={`arm-dot arm-dot--${agent.enabled ? 'running' : 'off'}`} aria-hidden="true" />
+              <span className="arf-agent-name">
                 <strong>{agent.name}</strong>
                 <small className="mono">custom {agent.harness} agent · ×{agent.parallelism} · configured on the machine</small>
               </span>
@@ -139,14 +148,14 @@ export default function RunnerSettingsForm({
         ))}
       </div>
       {missingEnabled.length > 0 && (
-        <p className="aruw-warn">
+        <p className="arf-warn">
           {missingEnabled.map((platform) => platform.name).join(', ')}
           {missingEnabled.length === 1 ? ' is' : ' are'} not installed on
           the runner machine.
         </p>
       )}
       {notReadyEnabled.length > 0 && (
-        <p className="aruw-warn">
+        <p className="arf-warn">
           {notReadyEnabled.map((platform) => platform.name).join(', ')}
           {notReadyEnabled.length === 1 ? ' is' : ' are'} installed but not
           ready for Merv yet — see the problems listed above; the runner
@@ -154,8 +163,8 @@ export default function RunnerSettingsForm({
         </p>
       )}
 
-      <div className="aruw-workspace">
-        <p className="sbxpw-help">
+      <div className="arf-workspace">
+        <p className="arf-help">
           Paths on the runner machine. Each job gets its own Git worktree.
         </p>
         <label>

@@ -216,6 +216,9 @@ html[data-surface="mobile"] .page-header { margin-bottom: 14px; }
    vertical noise on a compact phone. Drop it, and flatten the oversized --lg
    header rhythm to the mobile base. Desktop keeps both. */
 html[data-surface="mobile"] .page-summary { display: none; }
+/* Auto-run's summary is state, not explainer: it is the one line that says
+   whether work is moving. Keep it. */
+html[data-surface="mobile"] .page-summary.arun-headline { display: block; font-size: var(--text-sm); }
 html[data-surface="mobile"] .page-header--lg {
   margin-bottom: 14px;
   padding-bottom: 0;

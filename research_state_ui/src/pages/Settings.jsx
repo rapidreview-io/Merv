@@ -1,7 +1,6 @@
-import { useSearchParams } from 'react-router-dom';
-import { useProjectStore } from '../store/useProjectStore';
+import { Navigate, useSearchParams } from 'react-router-dom';
+import { projectPath, useProjectStore } from '../store/useProjectStore';
 import { isAuthEnabled } from '../auth';
-import AgentPlatforms from '../components/AgentPlatforms';
 import { ConnectAgentSettings } from '../components/ConnectAgentPanel';
 import HuggingFaceToken from '../components/HuggingFaceToken';
 import McpKeys from '../components/McpKeys';
@@ -16,7 +15,6 @@ const TABS = [
   { id: 'connect', label: 'Connect an agent', scope: 'This machine + your agent' },
   { id: 'people', label: 'People', scope: 'This project', needsDirectory: true },
   { id: 'keys', label: 'MCP keys', scope: 'This project' },
-  { id: 'auto', label: 'Auto running', scope: '' },
   { id: 'compute', label: 'Compute', scope: 'This project' },
   { id: 'storage', label: 'Storage', scope: 'This project', needsStorage: true },
   { id: 'huggingface', label: 'Hugging Face', scope: 'Your account' },
@@ -41,6 +39,10 @@ export default function Settings() {
   ));
 
   const requested = params.get('tab');
+  // Auto-run grew into its own page; honor the old deep link.
+  if (requested === 'auto') {
+    return <Navigate to={projectPath(projectId, '/auto-run')} replace />;
+  }
   const active = tabs.some((tab) => tab.id === requested) ? requested : tabs[0].id;
   const current = tabs.find((tab) => tab.id === active);
 
@@ -54,12 +56,9 @@ export default function Settings() {
     <div className="page-stage">
       <div className="page-header">
         <h1 className="page-title">Settings</h1>
-        {active !== 'auto' && (
-          <p className="page-summary page-summary--lead">
-            Connect clients, run agents automatically, and manage the credentials
-            Merv uses on your behalf.
-          </p>
-        )}
+        <p className="page-summary page-summary--lead">
+          Connect clients and manage the credentials Merv uses on your behalf.
+        </p>
         <div className="settings-tabs">
           <div className="settings-tab-row" role="tablist" aria-label="Settings sections">
             {tabs.map((tab) => (
@@ -90,7 +89,6 @@ export default function Settings() {
         {active === 'connect' && <ConnectAgentSettings projectId={projectId} />}
         {active === 'people' && <ProjectPeople projectId={projectId} />}
         {active === 'keys' && <McpKeys projectId={projectId} hosted={hosted} />}
-        {active === 'auto' && <AgentPlatforms projectId={projectId} />}
         {active === 'compute' && <ProviderConfig projectId={projectId} />}
         {active === 'storage' && (
           <StorageSettings projectId={projectId} serverMaxBytes={storageMaxBytes} />

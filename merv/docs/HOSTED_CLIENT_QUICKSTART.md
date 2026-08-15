@@ -78,8 +78,8 @@ curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh
 This verifies and installs the standalone runner under `~/.merv`, then starts
 it. On a machine that is not paired yet the runner generates its own `mk_` key
 locally, sends only the key's digest to the brain, and prints an 8-character
-code such as `7Q2K-M4B9`. Enter that code in Settings → Auto running (**Set up
-runner** / **Pair another runner**); approving it registers the digest as a
+code such as `7Q2K-M4B9`. Enter that code on the Auto-run page (the empty state,
+or **Pair a machine** under Machines); approving it registers the digest as a
 project key labelled `auto-run · <hostname>` and the runner starts dispatching
 for that project on its next poll — no browser ever addresses the machine, no
 port forwarding, nothing to paste from the terminal but the code. It needs
@@ -95,7 +95,7 @@ the runner with a re-pair instruction instead of re-enrolling silently.
 Once paired, everything else happens in the brain: the runner heartbeats its
 non-secret inventory (which agents it has and whether their executables
 resolve, workspace paths, local session counts, the settings version it has
-applied), and Settings → Auto running saves the tuning an owner wants
+applied), and the Auto-run page's machine drawer saves the tuning an owner wants
 (enabled/model/effort/parallelism per native platform, repository, worktree
 root, base ref). The runner pulls that on its next heartbeat and applies it in
 place; disabled platforms drain instead of vanishing under live sessions and a
