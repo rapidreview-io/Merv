@@ -5,6 +5,7 @@ import '@xyflow/react/dist/style.css';
 import { MeasureSync } from '../ExperimentFigure';
 import { PanelResizer } from '../DetailPanelShell';
 import GraphExpandButton from '../GraphExpandButton';
+import GraphDrawer from '../GraphDrawer';
 import { usePanelWidth } from '../../store/usePanelWidth';
 import { useProjectHref } from '../../store/useProjectStore';
 import { fmtSpan } from '../../utils/format';
@@ -434,11 +435,6 @@ export default function WaveFlow({
   const [expanded, setExpanded] = useState(false);
   // The drawer reads the same shared width as every other graph sidebar.
   const { width: panelWidth } = usePanelWidth();
-  // Hold the last selection through the drawer's slide-out so its content
-  // doesn't vanish mid-animation.
-  const heldRef = useRef(null);
-  if (sel) heldRef.current = sel;
-  const shown = sel || heldRef.current;
   // Identity discipline: rebuild braid/node objects only when the underlying
   // facts change, not on every poll tick or store-array replacement.
   const braidJson = useMemo(
@@ -534,21 +530,10 @@ export default function WaveFlow({
     const t = setTimeout(() => fitCanvas(expanded ? 1.15 : 1), 120);
     return () => clearTimeout(t);
   }, [expanded, fitCanvas]);
-  // Hidden documents never advance the animation timeline (background tabs,
-  // headless previews — the MeasureSync problem, transition edition), which
-  // would leave the drawer frozen off-screen forever. Nobody can see a hidden
-  // page animate, so snap its transitions straight to their end state.
-  const drawerRef = useRef(null);
+  // The canvas wrapper fitCanvas measures. (The drawer's own hidden-document
+  // problem — a transition that never advances in a background tab — is the
+  // shared GraphDrawer's business now: it resolves its duration to 0 there.)
   const shiftRef = useRef(null);
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (!document.hidden) return;
-      [drawerRef.current, shiftRef.current].forEach(el => {
-        el?.getAnimations().forEach(a => { try { a.finish(); } catch { /* infinite anims */ } });
-      });
-    }, 30);
-    return () => clearTimeout(t);
-  }, [sel]);
   // Nothing pans the camera on select, and nothing restores it on close: the
   // drawer covers the graph rather than displacing it, so there is no
   // displacement to undo. Both used to animate the viewport on every open and
@@ -623,8 +608,8 @@ export default function WaveFlow({
           className="wflow"
           style={{ height: expanded ? undefined : cssHeight, '--fig-panel-w': `${panelWidth}px` }}
         >
-        {/* The graph shifts aside for the drawer — a pure transform, so the
-            canvas never resizes and react-flow never re-lays-out. */}
+        {/* The canvas wrapper: never resized, never moved — the drawer covers
+            it, so react-flow never re-lays-out. */}
         <div className="wflow-shift" ref={shiftRef}>
           <div className="wflow-canvas">
             <ReactFlow
@@ -664,12 +649,12 @@ export default function WaveFlow({
           </div>
         </div>
         {sel && <PanelResizer />}
-        {/* Full-viewport-height drawer, the experiment-UI sidebar experience:
-            slides in over the page; content held through the slide-out. */}
-        <div className={`wflow-drawer${sel ? ' wflow-drawer--open' : ''}`} aria-hidden={!sel} ref={drawerRef}>
-          {shown && (
+        {/* The shared drawer: slides in over the canvas, holds its content
+            through the slide-out — the same one every graph sidebar rides. */}
+        <GraphDrawer open={!!sel}>
+          {sel && (
             <WaveFlowPanel
-              sel={shown}
+              sel={sel}
               braid={braid}
               waves={waves}
               experiments={experiments}
@@ -681,7 +666,7 @@ export default function WaveFlow({
               onSelectNode={setSel}
             />
           )}
-        </div>
+        </GraphDrawer>
         </div>
       </div>
     </FlowCtx.Provider>

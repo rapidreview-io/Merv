@@ -7,6 +7,8 @@ import { PANEL_MIN, usePanelWidth } from '../store/usePanelWidth';
  * Every graph sidebar in the app wears this — the experiment figure, the logic
  * graph, the wave process figure, and the project braid's five panel bodies.
  * The bodies keep their separate data models; only the chrome is shared.
+ * It rides inside GraphDrawer, which owns the docking and the slide; this is
+ * the scroll body within it.
  *
  * The header is sticky so the close button is reachable no matter how far the
  * body has scrolled: these panels render real file content and run long, and

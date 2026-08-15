@@ -252,20 +252,16 @@ html[data-theme="dark"] { --xmap-leader: rgba(255, 255, 255, 0.14); }
 .xmap-legend-word { color: var(--muted); }
 
 /* ── Detail panel ─────────────────────────────────────────────────────── */
-/* Width comes from the shared usePanelWidth store, the same one the other four
-   graph sidebars read, and is draggable here too (see PanelResizer). */
+/* The panel is the scroll body inside the shared .graph-drawer (GraphDrawer,
+   global.css), which owns the geometry — docked at the shared --fig-panel-w,
+   draggable via PanelResizer — and the slide in and out. It used to position
+   itself and pop into place. */
 .xmap-panel {
-  position: absolute;
-  top: 0; right: 0; bottom: 0;
-  width: var(--fig-panel-w, 380px);
-  background: var(--bg-elev);
-  border-left: 1px solid var(--line);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  z-index: 6;
-}
-@media (max-width: 900px) {
-  .xmap-panel { left: 0; width: auto; border-left: none; }
 }
 .xmap-panel-head {
   display: flex;

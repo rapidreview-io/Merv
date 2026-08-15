@@ -656,5 +656,5 @@ export default function WaveFlowPanel({
       />
     );
   }
-  return <div className="wflow-panel">{body}</div>;
+  return body;
 }

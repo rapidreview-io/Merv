@@ -6,6 +6,7 @@ import '@xyflow/react/dist/style.css';
 import { MeasureSync } from '../ExperimentFigure';
 import DetailPanelShell, { PanelResizer } from '../DetailPanelShell';
 import GraphExpandButton from '../GraphExpandButton';
+import GraphDrawer from '../GraphDrawer';
 import StatusPill from '../StatusPill';
 import { layoutFigure, FIG_NODE_W } from '../../utils/figureLayout';
 import { readableViewport, visibleWidth } from '../../utils/graphCamera';
@@ -232,19 +233,21 @@ export default function WaveFigure({
           <div className="fig-canvas-hint" aria-hidden="true">drag to pan · pinch to zoom</div>
         </div>
         {selected && <PanelResizer />}
-        {selected && (
-          <DetailPanelShell
-            typeLabel={selected.type.replace(/_/g, ' ')}
-            title={selected.label}
-            status={selected.status ? <StatusPill value={String(selected.status)} /> : null}
-            onClose={() => setSelectedId(null)}
-          >
-            {selected.sublabel && <div className="fig-panel-notes">{selected.sublabel}</div>}
-            {selected.type === 'review' && selected.status === 'needs_changes' && !selected.sublabel && (
-              <div className="fig-panel-meta">Rejected this attempt; the revision reason was not recorded.</div>
-            )}
-          </DetailPanelShell>
-        )}
+        <GraphDrawer open={!!selected}>
+          {selected && (
+            <DetailPanelShell
+              typeLabel={selected.type.replace(/_/g, ' ')}
+              title={selected.label}
+              status={selected.status ? <StatusPill value={String(selected.status)} /> : null}
+              onClose={() => setSelectedId(null)}
+            >
+              {selected.sublabel && <div className="fig-panel-notes">{selected.sublabel}</div>}
+              {selected.type === 'review' && selected.status === 'needs_changes' && !selected.sublabel && (
+                <div className="fig-panel-meta">Rejected this attempt; the revision reason was not recorded.</div>
+              )}
+            </DetailPanelShell>
+          )}
+        </GraphDrawer>
       </div>
     </section>
   );

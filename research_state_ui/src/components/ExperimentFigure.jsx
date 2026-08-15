@@ -6,6 +6,7 @@ import { api } from '../api';
 import StatusPill from './StatusPill';
 import DetailPanelShell, { PanelResizer } from './DetailPanelShell';
 import GraphExpandButton from './GraphExpandButton';
+import GraphDrawer from './GraphDrawer';
 import ArtifactContentView from './ArtifactContentView';
 import { visibleWidth } from '../utils/graphCamera';
 import { layoutFigure, figureBounds, FIG_NODE_W } from '../utils/figureLayout';
@@ -513,13 +514,15 @@ export default function ExperimentFigure({
           <div className="fig-canvas-hint" aria-hidden="true">drag to pan · pinch to zoom</div>
         </div>
         {selected && <PanelResizer />}
-        {selected && (
-          <FigurePanel
-            projectId={projectId}
-            node={selected}
-            onClose={() => setSelectedId(null)}
-          />
-        )}
+        <GraphDrawer open={!!selected}>
+          {selected && (
+            <FigurePanel
+              projectId={projectId}
+              node={selected}
+              onClose={() => setSelectedId(null)}
+            />
+          )}
+        </GraphDrawer>
       </div>
     </section>
   );

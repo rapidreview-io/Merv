@@ -7,6 +7,7 @@ import '@xyflow/react/dist/style.css';
 import { MeasureSync } from '../components/ExperimentFigure';
 import { PanelResizer } from '../components/DetailPanelShell';
 import GraphExpandButton from '../components/GraphExpandButton';
+import GraphDrawer from '../components/GraphDrawer';
 import { panExtentFor } from '../utils/graphCamera';
 import { motionMs } from '../utils/motion';
 import { usePanelWidth } from '../store/usePanelWidth';
@@ -413,17 +414,19 @@ function MapCanvas({ model, wrapRef, size, initialViewport, onCollapse }) {
       <AxisStrip ticks={layout.ticks} nowX={layout.nowX} />
       <Legend hasAbandoned={cards.some((c) => c.status === 'abandoned')} />
       {sel && <PanelResizer />}
-      {sel && (
-        <MapPanel
-          sel={sel}
-          cards={cards}
-          objects={objects}
-          citedBy={citedBy}
-          onClose={() => setSel(null)}
-          onTransport={transportTo}
-          onSelectObject={selectObject}
-        />
-      )}
+      <GraphDrawer open={!!sel}>
+        {sel && (
+          <MapPanel
+            sel={sel}
+            cards={cards}
+            objects={objects}
+            citedBy={citedBy}
+            onClose={() => setSel(null)}
+            onTransport={transportTo}
+            onSelectObject={selectObject}
+          />
+        )}
+      </GraphDrawer>
     </MapCtx.Provider>
   );
 }

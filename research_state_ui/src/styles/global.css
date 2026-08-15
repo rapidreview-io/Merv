@@ -3827,15 +3827,16 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .fig-chip.fig-st--failed  { color: var(--refutes);   border-color: rgba(var(--refutes-rgb), .35);   background: rgba(var(--refutes-rgb), .07); }
 .fig-chip.fig-st--faded   { color: var(--faint); }
 
-/* The sidebar OVERLAYS the canvas on every graph (see .fig-panel) rather than
-   taking a grid track, so the canvas never resizes and react-flow never
+/* The sidebar OVERLAYS the canvas on every graph (see .graph-drawer) rather
+   than taking a grid track, so the canvas never resizes and react-flow never
    re-lays-out when a node is opened. Framing does NOT compensate for the
    covered gutter — re-framing on open would move the graph under the reader.
    See visibleWidth() in utils/graphCamera.js.
 
    This is also the frame: a hairline and a radius around canvas + sidebar
    together, matching .wflow. It sits here rather than on .fig-canvas so the
-   sidebar is clipped to the same rounded corners. */
+   sidebar is clipped to the same rounded corners — and its overflow:hidden is
+   what the drawer slides in from behind. */
 .fig-body {
   display: grid; grid-template-columns: 1fr; position: relative;
   border: 1px solid var(--line-soft);
@@ -4047,19 +4048,39 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .fig-node.fig-st--faded  { opacity: .55; }
 .fig-node--claim.fig-st--open { border-color: rgba(var(--mcp-rgb), .45); background: rgba(var(--mcp-rgb), .04); }
 
-/* Detail panel */
-/* Docked as an OVERLAY, not a grid track: the canvas keeps its full size when
-   a node opens, so react-flow never re-lays-out and the graph never jumps.
-   Same recipe as the map's .xmap-panel, at the shared --fig-panel-w. */
-.fig-panel {
+/* ---- The drawer every graph sidebar rides in (GraphDrawer) ----
+   Docked as an OVERLAY over the canvas's right edge, not a grid track: the
+   canvas keeps its full size when a node opens, so react-flow never re-lays-
+   out and the graph never jumps. It SLIDES: in from the edge on open, back
+   out on close, over the canvas wrapper's overflow:hidden so it enters at
+   the frame. The component holds the panel's content through the slide-out
+   and sets the duration inline (0 under reduced motion / hidden documents).
+   Same drawer, same slide, same width for all five graphs — this is the
+   project graph's drawer, promoted; the other four used to pop in. */
+.graph-drawer {
   position: absolute;
   top: 0; right: 0; bottom: 0;
+  z-index: 6;
   width: var(--fig-panel-w, 380px);
-  border-left: 1px solid var(--line);
+  display: flex;
   background: var(--bg-elev);
+  border-left: 1px solid var(--line);
+  transform: translateX(103%);
+  transition: transform 200ms cubic-bezier(.2, .8, .25, 1);
+  pointer-events: none;
+}
+.graph-drawer--open { transform: none; pointer-events: auto; }
+@media (prefers-reduced-motion: reduce) {
+  .graph-drawer { transition: none; }
+}
+/* Detail panel: the scroll body inside the drawer. Independent scroll — the
+   body scrolls by itself and never hands the wheel to the page underneath. */
+.fig-panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  z-index: 6;
 }
 /* Sticky so the close button is reachable at any scroll depth — these panels
    render real file content and run long. */
@@ -4116,7 +4137,7 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
    outright — at this width a 300px-minimum panel beside a graph leaves neither
    of them usable. The close button is sticky, so the way out is always in view. */
 @media (max-width: 900px) {
-  .fig-panel { left: 0; width: auto; border-left: none; }
+  .graph-drawer { left: 0; width: auto; border-left: none; }
   /* Full-bleed, not side-by-side: a vertical drag handle makes no sense. */
   .fig-resizer { display: none; }
 }
@@ -6889,46 +6910,15 @@ textarea.sbxpw-input { font-family: var(--mono, ui-monospace, monospace); font-s
 .wflow-chip--refl { color: var(--steel); border-color: rgba(var(--steel-rgb), .35); background: rgba(var(--steel-rgb), .07); }
 .wflow-chip--pending { color: var(--active); border-color: rgba(var(--active-rgb), .35); border-style: dashed; }
 
-/* ---- WaveFlow sidebar: a drawer INSIDE the graph container — its height is
-   the graph's height, clipped by the container's rounded corners. Slides in
-   fast; the GRAPH SHIFTS aside via transform — the canvas is never resized,
-   so react-flow never re-lays-out. The clicked node is kept in view by a
-   viewport pan in the component. ---- */
-/* Width comes from the shared usePanelWidth store (--fig-panel-w, set inline),
-   the same one the four other graph sidebars read — this used to carry its own
-   `clamp(360px, 42%, 560px)` and could not be resized at all. */
+/* ---- WaveFlow sidebar: the shared .graph-drawer (GraphDrawer), inside the
+   graph container — its height is the graph's height, clipped by the
+   container's rounded corners. The slide it has always had is now the slide
+   every graph has. ---- */
 .wflow-canvas { position: relative; min-width: 0; height: 100%; }
 /* The canvas does NOT move when the drawer opens — the drawer covers it. It
    used to slide 45% of the drawer width aside, which is motion the reader
    never asked for and a nausea risk for anyone sensitive to it. */
 .wflow-shift { height: 100%; }
-.wflow-drawer {
-  position: absolute; top: 0; right: 0; bottom: 0; z-index: 6;
-  width: var(--fig-panel-w, 380px);
-  display: flex;
-  background: var(--bg-elev);
-  border-left: 1px solid var(--line);
-  transform: translateX(103%);
-  transition: transform .2s cubic-bezier(.2, .8, .25, 1);
-  pointer-events: none;
-}
-.wflow-drawer--open { transform: translateX(0); pointer-events: auto; }
-@media (prefers-reduced-motion: reduce) {
-  .wflow-drawer { transition: none; }
-}
-.wflow-panel { flex: 1; min-width: 0; min-height: 0; display: flex; }
-/* The drawer owns the geometry (and the slide); the panel inside owns only the
-   shared chrome — sticky head, close button, body rhythm. Independent scroll:
-   the body scrolls by itself and never hands the wheel to the page underneath. */
-.wflow-panel .fig-panel {
-  position: static; width: auto;
-  flex: 1; overflow-y: auto;
-  overscroll-behavior: contain;
-  border-left: none; background: transparent;
-}
-@media (max-width: 900px) {
-  .wflow-drawer { left: 0; width: auto; }
-}
 /* Same selection recipe as the figure graph, for the pill nodes: one neutral
    outline, so selecting never shifts layout, never restyles the pill's own
    steel/orange border, and never needs !important to outrank it. */

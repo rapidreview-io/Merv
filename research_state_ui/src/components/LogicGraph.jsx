@@ -5,6 +5,7 @@ import { api } from '../api';
 import { MeasureSync } from './ExperimentFigure';
 import DetailPanelShell, { PanelResizer } from './DetailPanelShell';
 import GraphExpandButton from './GraphExpandButton';
+import GraphDrawer from './GraphDrawer';
 import StatusPill from './StatusPill';
 import EntityChip from './EntityChip';
 import { seedFromRefIndex } from '../utils/entityResolve';
@@ -364,13 +365,15 @@ export default function LogicGraph({
           <div className="fig-canvas-hint" aria-hidden="true">drag to pan · pinch to zoom</div>
         </div>
         {selected && <PanelResizer />}
-        {selected && (
-          <LogicPanel
-            node={selected}
-            refIndex={payload?.ref_index}
-            onClose={() => setSelectedId(null)}
-          />
-        )}
+        <GraphDrawer open={!!selected}>
+          {selected && (
+            <LogicPanel
+              node={selected}
+              refIndex={payload?.ref_index}
+              onClose={() => setSelectedId(null)}
+            />
+          )}
+        </GraphDrawer>
       </div>
       )}
     </section>
