@@ -220,13 +220,13 @@ const VIEW_PAD = 28;
 const CURRENT_AT = 0.78; // current card's right edge, as a fraction of canvas width
 const SPINE_AT = 0.5;    // backbone row, as a fraction of canvas height, when the graph is taller than the canvas
 
-function frameFigure(inst, canvasEl, laid, currentId, { expanded, reserved = 0, backboneY = null }) {
+function frameFigure(inst, canvasEl, laid, currentId, { expanded, backboneY = null }) {
   if (!inst || !laid?.length) return;
   const b = figureBounds(laid);
-  // The detail sidebar overlays the canvas rather than shrinking it, so frame
-  // against the width still visible beside it — otherwise the current beat
-  // lands underneath the panel.
-  const cw = visibleWidth(canvasEl, reserved);
+  // Framing never accounts for the sidebar: it covers the canvas rather than
+  // shrinking it, and re-framing when it opens would move the graph under the
+  // reader — the motion this deliberately avoids.
+  const cw = visibleWidth(canvasEl);
   const ch = canvasEl?.clientHeight || 400;
   const fitZoom = Math.min((cw - VIEW_PAD * 2) / b.width, (ch - VIEW_PAD * 2) / b.height);
   if (fitZoom >= FIT_FLOOR) {
@@ -386,11 +386,9 @@ export default function ExperimentFigure({
   const { nodes, edges, laid, backboneY, currentId } = useMemo(() => toFlow(figure), [figure]);
 
   // Frame the view: readable zoom, current beat in sight (see frameFigure).
-  // `reserved` is the gutter the overlaying sidebar covers when one is open.
-  const reserved = selectedId ? panelWidth : 0;
   const frame = useCallback(() => {
-    frameFigure(rfRef.current, canvasRef.current, laid, currentId, { expanded, reserved, backboneY });
-  }, [laid, currentId, expanded, reserved, backboneY]);
+    frameFigure(rfRef.current, canvasRef.current, laid, currentId, { expanded, backboneY });
+  }, [laid, currentId, expanded, backboneY]);
 
   // Re-frame when the topology grows (new nodes), not on every poll tick.
   // Plain timer + no animation duration: animated moves ride rAF, which is

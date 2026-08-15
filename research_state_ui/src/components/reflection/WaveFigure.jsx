@@ -130,9 +130,6 @@ export default function WaveFigure({
   // 1x, never below a legible floor, anchor the start at the left. Expanded
   // has room, so it keeps plain fit-everything.
   const canvasRef = useRef(null);
-  // The sidebar overlays the canvas, so framing aims at the width still
-  // visible beside it rather than the element's full width.
-  const reserved = selectedId ? panelWidth : 0;
   const applyView = useCallback(() => {
     const inst = rfRef.current;
     if (!inst) return;
@@ -144,11 +141,11 @@ export default function WaveFigure({
       xs: nodes.map(n => n.position.x),
       ys: nodes.map(n => n.position.y),
       nodeW: FIG_NODE_W,
-      cw: visibleWidth(canvasRef.current, reserved),
+      cw: visibleWidth(canvasRef.current),
       ch: canvasRef.current?.clientHeight || 400,
     });
     if (vp) inst.setViewport(vp, { duration: motionMs(200) });
-  }, [expanded, nodes, reserved]);
+  }, [expanded, nodes]);
   useEffect(() => {
     const t = setTimeout(applyView, 350);
     return () => clearTimeout(t);

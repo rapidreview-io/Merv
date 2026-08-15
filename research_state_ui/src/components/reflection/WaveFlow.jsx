@@ -5,7 +5,6 @@ import '@xyflow/react/dist/style.css';
 import { MeasureSync } from '../ExperimentFigure';
 import { PanelResizer } from '../DetailPanelShell';
 import GraphExpandButton from '../GraphExpandButton';
-import { motionMs } from '../../utils/motion';
 import { usePanelWidth } from '../../store/usePanelWidth';
 import { useProjectHref } from '../../store/useProjectStore';
 import { buildBraid } from './braidModel.js';
@@ -40,9 +39,6 @@ const SPINE = 200;
 // Breathing room on BOTH sides of a wave pill: whatever the step leaves after
 // a card and a pill, split evenly.
 const REFL_GAP = (STEP - EXP_W - REFL_W) / 2;
-// Fraction of the drawer width the canvas shifts by — must match the CSS
-// `.wflow--panel-open .wflow-shift` translate.
-const SHIFT_RATIO = 0.45;
 const expX = (c) => X0 + (c + 1) * STEP;
 const reflX = (i) => X0 + i * STEP + EXP_W + REFL_GAP;
 
@@ -495,51 +491,14 @@ export default function WaveFlow({
       zoom,
     }, { duration: 0 });
   }, []);
-  const ensureSelVisible = useCallback(() => {
-    const s = selRef.current;
-    const rf = rfRef.current;
-    const wrap = shiftRef.current;
-    const drawer = drawerRef.current;
-    if (!s || !rf || !wrap || !drawer) return;
-    const id = s.kind === 'exp' ? `e:${s.id}`
-      : s.kind === 'group' ? s.id
-        : s.kind === 'wave' ? `w:${s.id}`
-          : s.kind === 'origin' ? 'w:origin' : 'w:next';
-    let node = nodesRef.current.find(n => n.id === id);
-    // A dead experiment may live inside a stack — focus the stack instead.
-    if (!node && s.kind === 'exp') {
-      node = nodesRef.current.find(n => n.type === 'wexpg' && n.data.ids.includes(s.id));
-    }
-    if (!node) return;
-    const { x: vx, y: vy, zoom } = rf.getViewport();
-    const W = wrap.clientWidth;
-    const D = drawer.offsetWidth;
-    const shift = D * SHIFT_RATIO;
-    const nodeW = node.type === 'wrefl' ? REFL_W : EXP_W;
-    const cx = (node.position.x + nodeW / 2) * zoom + vx;
-    const margin = 30;
-    const lo = shift + margin + nodeW / 2;
-    const hi = W - D + shift - margin - nodeW / 2;
-    if (cx >= lo && cx <= hi) return;
-    // Minimal pan: just bring the node inside the band's nearest edge —
-    // no dramatic recentering.
-    const targetCx = cx < lo ? lo : hi;
-    rf.setViewport(
-      { x: vx + (targetCx - cx), y: vy, zoom },
-      { duration: motionMs(250) },
-    );
-  }, []);
 
   useEffect(() => {
     // 350ms lands after MeasureSync's second pass (same timing as Figure).
-    const t = setTimeout(() => {
-      fitCanvas(1);
-      ensureSelVisible();
-    }, 350);
+    const t = setTimeout(() => fitCanvas(1), 350);
     return () => clearTimeout(t);
-  }, [topologyKey, fitCanvas, ensureSelVisible]);
-  // The drawer never resizes the canvas — the graph SHIFTS aside (pure
-  // transform, no react-flow re-layout) — so there is no refit on open/close.
+  }, [topologyKey, fitCanvas]);
+  // The drawer neither resizes nor moves the canvas — it simply covers it —
+  // so opening or closing it changes the camera not at all.
   // Escape peels one layer at a time: drawer first, then fullscreen.
   useEffect(() => {
     if (!sel && !expanded) return undefined;
@@ -560,12 +519,9 @@ export default function WaveFlow({
     return () => { document.body.style.overflow = prev; };
   }, [expanded]);
   useEffect(() => {
-    const t = setTimeout(() => {
-      fitCanvas(expanded ? 1.15 : 1);
-      ensureSelVisible();
-    }, 120);
+    const t = setTimeout(() => fitCanvas(expanded ? 1.15 : 1), 120);
     return () => clearTimeout(t);
-  }, [expanded, fitCanvas, ensureSelVisible]);
+  }, [expanded, fitCanvas]);
   // Hidden documents never advance the animation timeline (background tabs,
   // headless previews — the MeasureSync problem, transition edition), which
   // would leave the drawer frozen off-screen forever. Nobody can see a hidden
@@ -581,29 +537,10 @@ export default function WaveFlow({
     }, 30);
     return () => clearTimeout(t);
   }, [sel]);
-  // Focus on select: once as the drawer opens, and again late — a measure
-  // pass or container resize can re-fit the canvas and undo the first pan.
-  useEffect(() => {
-    if (!sel) return undefined;
-    const t1 = setTimeout(ensureSelVisible, 60);
-    const t2 = setTimeout(ensureSelVisible, 600);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [sel, ensureSelVisible]);
-  // Save the viewport when the drawer opens; restore it when the drawer
-  // closes, so closing puts the graph back exactly where it was. Selection
-  // hops while open don't re-save — the anchor is the pre-open state.
-  const savedVpRef = useRef(null);
-  const wasOpenRef = useRef(false);
-  useEffect(() => {
-    const isOpen = Boolean(sel);
-    if (isOpen && !wasOpenRef.current) {
-      savedVpRef.current = rfRef.current?.getViewport() || null;
-    } else if (!isOpen && wasOpenRef.current && savedVpRef.current) {
-      rfRef.current?.setViewport(savedVpRef.current, { duration: motionMs(250) });
-      savedVpRef.current = null;
-    }
-    wasOpenRef.current = isOpen;
-  }, [sel]);
+  // Nothing pans the camera on select, and nothing restores it on close: the
+  // drawer covers the graph rather than displacing it, so there is no
+  // displacement to undo. Both used to animate the viewport on every open and
+  // every close.
 
   const openExp = useCallback(
     (id) => navigate(px(`/experiments/${id}`)),
@@ -671,7 +608,7 @@ export default function WaveFlow({
           </div>
         </div>
         <div
-          className={`wflow${sel ? ' wflow--panel-open' : ''}`}
+          className="wflow"
           style={{ height: expanded ? undefined : cssHeight, '--fig-panel-w': `${panelWidth}px` }}
         >
         {/* The graph shifts aside for the drawer — a pure transform, so the
@@ -692,11 +629,6 @@ export default function WaveFlow({
                 else setSel({ kind: 'wave', id: node.data.waveId });
               }}
               onPaneClick={() => setSel(null)}
-              // Programmatic moves (a late fit, a resize refit) can undo the
-              // focus pan — re-ensure after any move that has no user event.
-              // Converges: once the node is in the visible band, ensure is a
-              // no-op. User drags (event present) are never fought.
-              onMoveEnd={(event) => { if (!event && selRef.current) ensureSelVisible(); }}
               fitView
               proOptions={{ hideAttribution: true }}
               nodesDraggable={false}

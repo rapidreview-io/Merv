@@ -11,14 +11,17 @@
  */
 
 /**
- * Usable canvas width. The sidebar docks as an overlay on every graph, so the
- * canvas element keeps its full width while the right `panelW` pixels of it
- * are covered — framing math has to aim at what is left, or it centres the
- * graph underneath the panel.
+ * Canvas width for framing, with a sane fallback before the element measures.
+ *
+ * Deliberately ignores the detail sidebar. The sidebar docks as an overlay, so
+ * the canvas keeps its full width and the sidebar simply covers part of it —
+ * and framing must NOT compensate for that. Reserving the covered gutter would
+ * re-frame the graph every time the sidebar opened or closed, moving the whole
+ * canvas under the reader for no reason they asked for. Motion nobody
+ * requested is a nausea risk; a graph partly behind a panel is not.
  */
-export function visibleWidth(el, panelW = 0) {
-  const cw = el?.clientWidth || 1000;
-  return Math.max(280, cw - (panelW || 0));
+export function visibleWidth(el) {
+  return Math.max(280, el?.clientWidth || 1000);
 }
 
 /**

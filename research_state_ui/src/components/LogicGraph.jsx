@@ -230,9 +230,6 @@ export default function LogicGraph({
   // has room, so it keeps the plain fit-everything behavior (up to 1.6×).
   const useReadable = readableFit && !expanded;
 
-  // The sidebar overlays the canvas, so framing aims at the width still
-  // visible beside it — otherwise the story centres underneath the panel.
-  const reserved = selectedId ? panelWidth : 0;
   const applyView = useCallback(() => {
     const inst = rfRef.current;
     if (!inst) return;
@@ -244,11 +241,11 @@ export default function LogicGraph({
       xs: nodes.map(n => n.position.x),
       ys: nodes.map(n => n.position.y),
       nodeW: FIG_NODE_W,
-      cw: visibleWidth(canvasRef.current, reserved),
+      cw: visibleWidth(canvasRef.current),
       ch: canvasRef.current?.clientHeight || 400,
     });
     if (vp) inst.setViewport(vp, { duration: motionMs(200) });
-  }, [useReadable, expanded, nodes, reserved]);
+  }, [useReadable, expanded, nodes]);
 
   useEffect(() => {
     const t = setTimeout(applyView, 350);

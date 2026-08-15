@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { isScrollLocked } from './useScrollLock';
 
 const THRESHOLD = 70; // px of pull needed to trigger a refresh
 const MAX = 110;      // clamp on indicator travel
@@ -24,6 +25,11 @@ export function usePullToRefresh(onRefresh) {
 
   useEffect(() => {
     const onStart = (e) => {
+      // A sheet or fullscreen overlay is open: the body is position:fixed, so
+      // window.scrollY reads 0 wherever the page really is. Without this the
+      // pull gate is permanently armed and any drag — including one inside the
+      // sheet — pushes the whole shell, and the graph behind it, down.
+      if (isScrollLocked()) { armed.current = false; return; }
       if (window.scrollY > 0 || refreshingRef.current) { armed.current = false; return; }
       startY.current = e.touches[0].clientY;
       armed.current = true;
@@ -31,7 +37,7 @@ export function usePullToRefresh(onRefresh) {
     const onMove = (e) => {
       if (!armed.current || startY.current == null) return;
       const dy = e.touches[0].clientY - startY.current;
-      if (dy <= 0 || window.scrollY > 0) { setDist(0); return; }
+      if (dy <= 0 || window.scrollY > 0 || isScrollLocked()) { setDist(0); return; }
       const d = dy < THRESHOLD ? dy : THRESHOLD + (dy - THRESHOLD) * 0.35;
       setDist(Math.min(MAX, d));
     };
