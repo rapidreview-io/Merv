@@ -54,7 +54,7 @@ function waitingReason({ dispatch, runners, running, now }) {
 export default function AutorunJobs({ projectId, sessions, queue, tab, now, dispatch, runners, onStop }) {
   const [expanded, setExpanded] = useState('');
   const [stopping, setStopping] = useState('');
-  const [stopError, setStopError] = useState('');
+  const [stopError, setStopError] = useState({ id: '', message: '' });
 
   const rows = useMemo(() => {
     const all = (sessions || []).slice().sort((a, b) => {
@@ -76,11 +76,11 @@ export default function AutorunJobs({ projectId, sessions, queue, tab, now, disp
 
   async function stop(sessionId) {
     setStopping(sessionId);
-    setStopError('');
+    setStopError({ id: '', message: '' });
     try {
       await onStop(sessionId);
     } catch (err) {
-      setStopError(err?.message || 'Could not stop that job.');
+      setStopError({ id: sessionId, message: err?.message || 'Could not stop that job.' });
     } finally {
       setStopping('');
     }
@@ -118,7 +118,7 @@ export default function AutorunJobs({ projectId, sessions, queue, tab, now, disp
             onToggle={() => setExpanded(expanded === session.id ? '' : session.id)}
             onStop={() => stop(session.id)}
             stopping={stopping === session.id}
-            stopError={stopping === '' && expanded === session.id ? stopError : ''}
+            stopError={stopError.id === session.id ? stopError.message : ''}
           />
         ))}
         {waiting.map((item) => (
