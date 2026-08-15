@@ -153,7 +153,7 @@ function MoreSheet({ open, onClose }) {
       <SheetLink to={px('/artifacts')} label="Artifacts" count={stats.artifacts ?? 0} />
       <SheetLink to={px('/storage')} label="Storage" />
       <SheetLink to={px('/sandboxes')} label="Sandboxes" count={runningSandboxes ? `${runningSandboxes} running` : null} />
-      <SheetLink to={px('/auto-run')} label="Auto-run" count={autorun.liveRunnerCount ? `${autorun.liveRunnerCount} live` : null} />
+      <SheetLink to={px('/auto-run')} label="Auto-run" count={autorun.running ? `${autorun.running} running` : null} />
       <SheetLink to={px('/settings')} label="Settings" />
       <SheetLink to="/projects" label="Projects" />
 

@@ -181,21 +181,17 @@ export default function Sidebar({ onHide }) {
           )}
         </NavLink>
         {/* Auto-run: same grammar as Sandboxes — the pulsing light plus how
-            many runners are live right now. No live runner, no light. */}
+            many jobs are running right now. A connected-but-idle machine
+            shows nothing; the page says the rest. */}
         <NavLink
           to={px('/auto-run')}
           className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}
-          title={autorun.liveRunnerCount > 0
-            ? `${autorun.liveRunnerCount} live runner${autorun.liveRunnerCount === 1 ? '' : 's'} · ${autorun.running} running`
-            : 'Auto-run'}
+          title={autorun.running > 0 ? `${autorun.running} running` : 'Auto-run'}
         >
           <span>Auto-run</span>
-          {autorun.liveRunnerCount > 0 && (
-            <span
-              className="sidebar-link-count sidebar-link-count--live"
-              title={`${autorun.liveRunnerCount} live runner${autorun.liveRunnerCount === 1 ? '' : 's'}`}
-            >
-              <span className="sidebar-live-dot" />{autorun.liveRunnerCount}
+          {autorun.running > 0 && (
+            <span className="sidebar-link-count sidebar-link-count--live" title={`${autorun.running} running`}>
+              <span className="sidebar-live-dot" />{autorun.running}
             </span>
           )}
         </NavLink>
