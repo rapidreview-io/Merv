@@ -168,7 +168,9 @@ function layoutTimeline(rawNodes, edges, ids) {
     }
     x += FIG_NODE_W + BEAT_GAP_X;
   }
-  return { nodes, edges };
+  // `backboneY` lets the viewport center on the middle band rather than on
+  // whichever card happens to be current (often a verdict on the row below).
+  return { nodes, edges, backboneY };
 }
 
 function layoutLegacy(rawNodes, edges) {

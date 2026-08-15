@@ -169,7 +169,7 @@ function toFlow(figure) {
   const current = spine.find(n => n.current)
     || spine.slice().sort((a, b) => b.x - a.x || a.y - b.y)[0]
     || null;
-  return { nodes, edges, laid: laid.nodes, currentId: current ? current.id : null };
+  return { nodes, edges, laid: laid.nodes, backboneY: laid.backboneY, currentId: current ? current.id : null };
 }
 
 // Readable framing. Fit everything only when that keeps cards legible;
@@ -179,9 +179,9 @@ const FIT_FLOOR = 0.7;
 const READABLE_ZOOM = 0.85;
 const VIEW_PAD = 28;
 const CURRENT_AT = 0.78; // current card's right edge, as a fraction of canvas width
-const SPINE_AT = 0.58;   // spine row, as a fraction of canvas height, when the graph is taller than the canvas
+const SPINE_AT = 0.5;    // backbone row, as a fraction of canvas height, when the graph is taller than the canvas
 
-function frameFigure(inst, canvasEl, laid, currentId, { expanded, reserved = 0 }) {
+function frameFigure(inst, canvasEl, laid, currentId, { expanded, reserved = 0, backboneY = null }) {
   if (!inst || !laid?.length) return;
   const b = figureBounds(laid);
   // The detail sidebar overlays the canvas rather than shrinking it, so frame
@@ -207,13 +207,13 @@ function frameFigure(inst, canvasEl, laid, currentId, { expanded, reserved = 0 }
     // beat is fine (a finished experiment simply ends there).
     x = Math.min(VIEW_PAD - b.minX * zoom, x);
   }
-  // Vertically: everything, centered, when it fits; otherwise keep the spine
-  // row in view — the current beat's handle row sits a little below the
-  // middle, since evidence stacks up above the spine and execution hangs
-  // below it more rarely.
+  // Vertically: everything, centered, when it fits; otherwise put the
+  // backbone row mid-canvas — evidence above it, verdicts and execution below
+  // — falling back to the current card's row when the layout has no backbone.
+  const rowY = Number.isFinite(backboneY) ? backboneY : cur.y;
   const y = gH <= ch - VIEW_PAD * 2
     ? (ch - gH) / 2 - b.minY * zoom
-    : SPINE_AT * ch - (cur.y + HANDLE_TOP) * zoom;
+    : SPINE_AT * ch - (rowY + HANDLE_TOP) * zoom;
   inst.setViewport({ x, y, zoom }, { duration: 0 });
 }
 
@@ -344,14 +344,14 @@ export default function ExperimentFigure({
   });
 
   const figure = useMemo(() => (figureJson ? JSON.parse(figureJson) : null), [figureJson]);
-  const { nodes, edges, laid, currentId } = useMemo(() => toFlow(figure), [figure]);
+  const { nodes, edges, laid, backboneY, currentId } = useMemo(() => toFlow(figure), [figure]);
 
   // Frame the view: readable zoom, current beat in sight (see frameFigure).
   // `reserved` is the gutter the overlaying sidebar covers when one is open.
   const reserved = selectedId ? panelWidth : 0;
   const frame = useCallback(() => {
-    frameFigure(rfRef.current, canvasRef.current, laid, currentId, { expanded, reserved });
-  }, [laid, currentId, expanded, reserved]);
+    frameFigure(rfRef.current, canvasRef.current, laid, currentId, { expanded, reserved, backboneY });
+  }, [laid, currentId, expanded, reserved, backboneY]);
 
   // Re-frame when the topology grows (new nodes), not on every poll tick.
   // Plain timer + no animation duration: animated moves ride rAF, which is
