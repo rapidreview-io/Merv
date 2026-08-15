@@ -3806,15 +3806,17 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .fig-chip--edge-then { border-style: solid; border-color: var(--line-strong); }
 .fig-chip--edge-revised { color: var(--qualifies); border-color: rgba(var(--qualifies-rgb), .6); }
 
-/* The sidebar OVERLAYS the canvas on every graph (see .fig-panel) rather than
-   taking a grid track, so the canvas never resizes and react-flow never
-   re-lays-out when a node is opened. Framing math reserves the covered gutter
-   instead — see visibleWidth() in utils/graphCamera.js. */
 .fig-body { display: grid; grid-template-columns: 1fr; position: relative; }
+/* Wider detail column than the old 320px: the panel now renders real file
+   content (markdown / code / pdf), so it earns the extra room. The width is a
+   drag-controlled custom property (--fig-panel-w, set inline from usePanelWidth)
+   with a sensible default; minmax(0,1fr) keeps the canvas from collapsing as
+   the panel grows. */
+.fig-body--split { grid-template-columns: minmax(0, 1fr) var(--fig-panel-w, clamp(340px, 34%, 460px)); }
 
 /* Drag handle straddling the canvas/panel seam. A wide invisible hit area with
    a hairline that lights up on hover/drag; its position rides the same
-   --fig-panel-w the panel does, so it always sits on the boundary. */
+   --fig-panel-w the grid does, so it always sits on the boundary. */
 .fig-resizer {
   position: absolute;
   top: 0;
@@ -3823,7 +3825,7 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   width: 11px;
   transform: translateX(50%);
   cursor: col-resize;
-  z-index: 7;
+  z-index: 5;
   touch-action: none;
 }
 .fig-resizer::after {
