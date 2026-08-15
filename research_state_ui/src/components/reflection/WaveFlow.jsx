@@ -3,6 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { ReactFlow, Background, Handle, Position } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { MeasureSync } from '../ExperimentFigure';
+import { PanelResizer } from '../DetailPanelShell';
+import GraphExpandButton from '../GraphExpandButton';
+import { motionMs } from '../../utils/motion';
+import { usePanelWidth } from '../../store/usePanelWidth';
 import { useProjectHref } from '../../store/useProjectStore';
 import { buildBraid } from './braidModel.js';
 import WaveFlowPanel from './WaveFlowPanel';
@@ -414,11 +418,14 @@ const nodeTypes = { wexp: ExpNode, wexpg: ExpGroupNode, wrefl: ReflNode };
 
 export default function WaveFlow({
   waves, experiments, signal, project, onSelect, height = 420,
+  title = 'Project graph',
 }) {
   const px = useProjectHref();
   const navigate = useNavigate();
   const [sel, setSel] = useState(null); // {kind: 'exp'|'wave'|'ghost', id?}
   const [expanded, setExpanded] = useState(false);
+  // The drawer reads the same shared width as every other graph sidebar.
+  const { width: panelWidth } = usePanelWidth();
   // Hold the last selection through the drawer's slide-out so its content
   // doesn't vanish mid-animation.
   const heldRef = useRef(null);
@@ -519,7 +526,7 @@ export default function WaveFlow({
     const targetCx = cx < lo ? lo : hi;
     rf.setViewport(
       { x: vx + (targetCx - cx), y: vy, zoom },
-      { duration: document.hidden ? 0 : 250 },
+      { duration: motionMs(250) },
     );
   }, []);
 
@@ -592,7 +599,7 @@ export default function WaveFlow({
     if (isOpen && !wasOpenRef.current) {
       savedVpRef.current = rfRef.current?.getViewport() || null;
     } else if (!isOpen && wasOpenRef.current && savedVpRef.current) {
-      rfRef.current?.setViewport(savedVpRef.current, { duration: document.hidden ? 0 : 250 });
+      rfRef.current?.setViewport(savedVpRef.current, { duration: motionMs(250) });
       savedVpRef.current = null;
     }
     wasOpenRef.current = isOpen;
@@ -639,9 +646,29 @@ export default function WaveFlow({
       {expanded && (
         <div className="fig-backdrop" onClick={() => setExpanded(false)} aria-hidden="true" />
       )}
+      {/* Same header row as every other graph: name on the left, legend and the
+          Expand control on the right. This slot used to have no title at all,
+          and its Expand button floated over the canvas. */}
+      <div className="fig-head">
+        <div className="fig-title">{title}</div>
+        <div className="fig-head-right">
+          <div className="wflow-legend" aria-hidden="true">
+            <span className="fig-chip fig-st--done">done</span>
+            <span className="fig-chip fig-st--open">running</span>
+            <span className="fig-chip wflow-chip--failed">failed</span>
+            <span className="fig-chip wflow-chip--refl">reflection</span>
+            <span className="fig-chip wflow-chip--pending">not yet consolidated</span>
+          </div>
+          <GraphExpandButton
+            expanded={expanded}
+            onToggle={() => setExpanded(v => !v)}
+            label="project graph"
+          />
+        </div>
+      </div>
       <div
         className={`wflow${sel ? ' wflow--panel-open' : ''}${expanded ? ' wflow--expanded' : ''}`}
-        style={{ height: expanded ? undefined : cssHeight }}
+        style={{ height: expanded ? undefined : cssHeight, '--fig-panel-w': `${panelWidth}px` }}
       >
         {/* The graph shifts aside for the drawer — a pure transform, so the
             canvas never resizes and react-flow never re-lays-out. */}
@@ -683,21 +710,7 @@ export default function WaveFlow({
             </ReactFlow>
           </div>
         </div>
-        <div className="wflow-legend">
-          <span className="fig-chip fig-st--done">done</span>
-          <span className="fig-chip fig-st--open">running</span>
-          <span className="fig-chip wflow-chip--failed">failed</span>
-          <span className="fig-chip wflow-chip--refl">reflection</span>
-          <span className="fig-chip wflow-chip--pending">not yet consolidated</span>
-        </div>
-        <button
-          type="button"
-          className="fig-expand-btn wflow-expand"
-          onClick={() => setExpanded(v => !v)}
-          aria-label={expanded ? 'Exit fullscreen' : 'Fullscreen graph'}
-        >
-          {expanded ? '✕ Close' : '⤢ Expand'}
-        </button>
+        {sel && <PanelResizer />}
         {/* Full-viewport-height drawer, the experiment-UI sidebar experience:
             slides in over the page; content held through the slide-out. */}
         <div className={`wflow-drawer${sel ? ' wflow-drawer--open' : ''}`} aria-hidden={!sel} ref={drawerRef}>

@@ -4,6 +4,7 @@ import { useProjectStore, selectExperiments, selectClaims, useProjectHref } from
 import ExperimentMap from '../expmap/ExperimentMap';
 import { api } from '../api';
 import ObjId from '../components/ObjId';
+import GraphExpandButton from '../components/GraphExpandButton';
 import StatusPill from '../components/StatusPill';
 import { expName } from '../utils/experiment';
 import { fmtDayTime, fmtDuration } from '../utils/format';
@@ -47,6 +48,9 @@ export default function Experiments() {
   const [showForm, setShowForm] = useState(false);
   const [sortKey, setSortKey] = useState('created');
   const [sortDir, setSortDir] = useState('desc');
+  // The map expands like every other graph. Escape leaves it — the map's own
+  // Escape handler takes precedence while the detail sidebar is open.
+  const [mapExpanded, setMapExpanded] = useState(false);
   // View state lives in the URL (?view=map) like ?focus=, but replaces
   // instead of pushing: a mode toggle shouldn't stack history entries.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -108,6 +112,13 @@ export default function Experiments() {
             </span>
           </div>
           <div className="page-actions">
+            {view === 'map' && (
+              <GraphExpandButton
+                expanded={mapExpanded}
+                onToggle={() => setMapExpanded(v => !v)}
+                label="map"
+              />
+            )}
             <button className="btn btn--primary" onClick={() => setShowForm(v => !v)}>
               {showForm ? 'Cancel' : 'New experiment'}
             </button>
@@ -125,7 +136,7 @@ export default function Experiments() {
       )}
 
       {view === 'map' ? (
-        <ExperimentMap />
+        <ExperimentMap expanded={mapExpanded} onCollapse={() => setMapExpanded(false)} />
       ) : rows.length === 0 ? (
         <div className="empty-state">
           <h2>No experiments yet</h2>

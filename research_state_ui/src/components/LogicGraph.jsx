@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlow, Background, Controls, Handle, Position, MarkerType } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api } from '../api';
 import { MeasureSync } from './ExperimentFigure';
-import DetailPanelShell from './DetailPanelShell';
+import DetailPanelShell, { PanelResizer } from './DetailPanelShell';
+import GraphExpandButton from './GraphExpandButton';
+import StatusPill from './StatusPill';
 import EntityChip from './EntityChip';
 import { seedFromRefIndex } from '../utils/entityResolve';
 import { layoutFigure, FIG_NODE_W } from '../utils/figureLayout';
 import { TERMINAL_STATUSES } from '../utils/experiment';
+import { readableViewport, visibleWidth } from '../utils/graphCamera';
+import { motionMs } from '../utils/motion';
 import { usePanelWidth } from '../store/usePanelWidth';
 import { useStreamAwarePoll } from '../store/useEventStream';
 
@@ -35,7 +39,19 @@ function kindColorMap(graph) {
   return colors;
 }
 
-function LogicNode({ data, selected }) {
+/**
+ * Selection reaches the nodes through context rather than node data, so
+ * selecting never recreates node objects (react-flow keys its measured handle
+ * bounds to node identity — the ExperimentFigure gotcha). It carries the
+ * selecting callback too: react-flow's own Enter/Space handler talks to its
+ * internal store and never calls our onNodeClick, so keyboard activation has
+ * to be the node's own business.
+ */
+const LogicCtx = createContext({ selectedId: null, select: () => {} });
+
+function LogicNode({ data }) {
+  const { selectedId, select } = useContext(LogicCtx);
+  const selected = selectedId === data.id;
   return (
     <div
       className={[
@@ -44,6 +60,12 @@ function LogicNode({ data, selected }) {
         selected ? 'fig-node--selected' : '',
       ].filter(Boolean).join(' ')}
       style={{ width: FIG_NODE_W, borderLeftColor: data.color }}
+      role="button"
+      tabIndex={0}
+      aria-label={data.kind ? `${data.label} — ${data.kind}` : data.label}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(data.id); }
+      }}
     >
       <Handle type="target" position={Position.Left} className="fig-handle" />
       {/* Color (left accent) carries the kind; the kind label and detail text
@@ -114,8 +136,14 @@ function NodeRef({ refString, resolution }) {
 function LogicPanel({ node, refIndex, onClose }) {
   const refs = Array.isArray(node.refs) ? node.refs.filter(r => typeof r === 'string' && r) : [];
   return (
-    <DetailPanelShell typeLabel={node.kind || 'node'} title={node.label} onClose={onClose}>
-      {node.status ? <div className="fig-panel-meta">status: {String(node.status)}</div> : null}
+    <DetailPanelShell
+      typeLabel={node.kind || 'node'}
+      title={node.label}
+      // Status belongs in the header beside the identity, as it is on the map —
+      // it used to be a line of mono body text reading "status: dead_end".
+      status={node.status ? <StatusPill value={String(node.status)} /> : null}
+      onClose={onClose}
+    >
       {node.detail ? <div className="fig-panel-notes">{node.detail}</div> : null}
       {refs.length > 0 && (
         <div className="lgr-refs">
@@ -166,7 +194,7 @@ export default function LogicGraph({
   const [selectedId, setSelectedId] = useState(null);
   const rfRef = useRef(null);
   const canvasRef = useRef(null);
-  const { width: panelWidth, startResize } = usePanelWidth();
+  const { width: panelWidth } = usePanelWidth();
 
   const fetchGraph = useCallback(async () => {
     try {
@@ -202,6 +230,9 @@ export default function LogicGraph({
   // has room, so it keeps the plain fit-everything behavior (up to 1.6×).
   const useReadable = readableFit && !expanded;
 
+  // The sidebar overlays the canvas, so framing aims at the width still
+  // visible beside it — otherwise the story centres underneath the panel.
+  const reserved = selectedId ? panelWidth : 0;
   const applyView = useCallback(() => {
     const inst = rfRef.current;
     if (!inst) return;
@@ -209,25 +240,15 @@ export default function LogicGraph({
       inst.fitView({ padding: 0.18, maxZoom: expanded ? 1.6 : 1 });
       return;
     }
-    const xs = nodes.map(n => n.position.x);
-    const ys = nodes.map(n => n.position.y);
-    if (!xs.length) return;
-    const cw = canvasRef.current?.clientWidth || 1000;
-    const ch = canvasRef.current?.clientHeight || 400;
-    const minX = Math.min(...xs);
-    const minY = Math.min(...ys);
-    const gW = Math.max(1, Math.max(...xs) + FIG_NODE_W - minX);
-    const gH = Math.max(1, Math.max(...ys) + 72 - minY);
-    const pad = 28;
-    // Fill the tighter dimension (height, for a wide ribbon), but never zoom
-    // out below a legible floor or in past 1×. Anchor the start at the left
-    // and center vertically; the rest of the story is a pan away.
-    const zoom = Math.min(1, Math.max(0.8, Math.max((cw - pad * 2) / gW, (ch - pad * 2) / gH)));
-    inst.setViewport(
-      { x: pad - minX * zoom, y: (ch - gH * zoom) / 2 - minY * zoom, zoom },
-      { duration: 200 },
-    );
-  }, [useReadable, expanded, nodes]);
+    const vp = readableViewport({
+      xs: nodes.map(n => n.position.x),
+      ys: nodes.map(n => n.position.y),
+      nodeW: FIG_NODE_W,
+      cw: visibleWidth(canvasRef.current, reserved),
+      ch: canvasRef.current?.clientHeight || 400,
+    });
+    if (vp) inst.setViewport(vp, { duration: motionMs(200) });
+  }, [useReadable, expanded, nodes, reserved]);
 
   useEffect(() => {
     const t = setTimeout(applyView, 350);
@@ -252,11 +273,30 @@ export default function LogicGraph({
   const available = hasStory || broken || needsResubmit;
   useEffect(() => { onAvailability?.(available); }, [available, onAvailability]);
 
-  // Refit after the canvas resizes between inline and expanded modes.
+  // Refit after the canvas resizes between inline and expanded modes, and
+  // after the sidebar opens or closes (it overlays, so the visible width, not
+  // the element width, is what changed).
   useEffect(() => {
     const t = setTimeout(applyView, 120);
     return () => clearTimeout(t);
   }, [expanded, applyView]);
+
+  // Escape closes the sidebar. Registered only while something is selected, so
+  // the graph slot's own Escape handler still gets the keystroke when the
+  // sidebar is shut and only fullscreen is left to peel.
+  useEffect(() => {
+    if (!selectedId) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      setSelectedId(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [selectedId]);
+
+  const select = useCallback((id) => setSelectedId(id), []);
+  const logicCtx = useMemo(() => ({ selectedId, select }), [selectedId, select]);
 
   if (!available || !active) return null;
 
@@ -272,16 +312,7 @@ export default function LogicGraph({
         </div>
         <div className="fig-head-right">
           <span className="lgr-badge">{(graph?.nodes || []).length} / {maxNodes} nodes</span>
-          {onToggleExpand && (
-            <button
-              type="button"
-              className="fig-expand-btn"
-              onClick={onToggleExpand}
-              aria-label={expanded ? 'Collapse graph' : 'Expand graph'}
-            >
-              {expanded ? '✕ Close' : '⤢ Expand'}
-            </button>
-          )}
+          <GraphExpandButton expanded={expanded} onToggle={onToggleExpand} label="logic graph" />
         </div>
       </div>
       {problems.length > 0 && !needsResubmit && (
@@ -295,10 +326,11 @@ export default function LogicGraph({
       )}
       {hasStory && (
       <div
-        className={`fig-body${selected ? ' fig-body--split' : ''}`}
+        className="fig-body"
         style={{ '--fig-panel-w': `${panelWidth}px` }}
       >
         <div className="fig-canvas" ref={canvasRef}>
+          <LogicCtx.Provider value={logicCtx}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -313,6 +345,12 @@ export default function LogicGraph({
             proOptions={{ hideAttribution: true }}
             nodesDraggable={false}
             nodesConnectable={false}
+            // The node paints its own ring from our selectedId; leaving
+            // react-flow's selection on as well gave the graph two selection
+            // states that drifted apart — closing the panel left a ringed node
+            // with nothing open, and Enter ringed a node without opening it.
+            nodesFocusable={false}
+            elementsSelectable={false}
             edgesFocusable={false}
             zoomOnDoubleClick={false}
             zoomOnScroll={expanded}
@@ -325,17 +363,10 @@ export default function LogicGraph({
             <Background gap={22} size={1.1} />
             <Controls showInteractive={false} position="bottom-right" />
           </ReactFlow>
-          <div className="fig-canvas-hint">drag to pan · pinch to zoom</div>
+          </LogicCtx.Provider>
+          <div className="fig-canvas-hint" aria-hidden="true">drag to pan · pinch to zoom</div>
         </div>
-        {selected && (
-          <div
-            className="fig-resizer"
-            onPointerDown={startResize}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Drag to resize panel"
-          />
-        )}
+        {selected && <PanelResizer />}
         {selected && (
           <LogicPanel
             node={selected}

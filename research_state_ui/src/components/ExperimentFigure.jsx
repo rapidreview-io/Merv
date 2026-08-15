@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ReactFlow, Background, Controls, Handle, Position, MarkerType, useStoreApi } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api } from '../api';
 import StatusPill from './StatusPill';
-import DetailPanelShell from './DetailPanelShell';
+import DetailPanelShell, { PanelResizer } from './DetailPanelShell';
+import GraphExpandButton from './GraphExpandButton';
 import ArtifactContentView from './ArtifactContentView';
+import { visibleWidth } from '../utils/graphCamera';
 import { layoutFigure, figureBounds, FIG_NODE_W } from '../utils/figureLayout';
 import { TERMINAL_STATUSES } from '../utils/experiment';
 import { usePanelWidth } from '../store/usePanelWidth';
@@ -57,7 +59,14 @@ const ATTACHMENT_EDGES = new Set(['produced', 'ran_on']);
 // cards of slightly different heights still sit on one straight line.
 const HANDLE_TOP = 38;
 
-function FigureNode({ data, selected }) {
+// Which node's detail is open (and how to open one). Read by the card so it
+// can ring itself without recreating node objects (react-flow keys its handle
+// measurements to node identity) and without a second, drifting selection
+// state in react-flow's own store.
+const SelectedContext = createContext(null);
+
+function FigureNode({ data }) {
+  const { selectedId, select } = useContext(SelectedContext);
   return (
     <div
       className={[
@@ -66,9 +75,18 @@ function FigureNode({ data, selected }) {
         `fig-st--${data.statusClass}`,
         data.anchor ? 'fig-node--satellite' : '',
         data.current ? 'fig-node--current' : '',
-        selected ? 'fig-node--selected' : '',
+        selectedId === data.id ? 'fig-node--selected' : '',
       ].filter(Boolean).join(' ')}
       style={{ width: FIG_NODE_W }}
+      // react-flow's own Enter/Space handler drives its internal store and
+      // never reaches our onNodeClick, so keyboard activation is the card's
+      // own business — without this the whole canvas is mouse-only.
+      role="button"
+      tabIndex={0}
+      aria-label={`${data.label} — ${String(data.status || data.type).replace(/_/g, ' ')}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(data.id); }
+      }}
     >
       <Handle type="target" position={Position.Left} className="fig-handle" style={{ top: HANDLE_TOP }} />
       <div className="fig-node-head">
@@ -163,10 +181,13 @@ const VIEW_PAD = 28;
 const CURRENT_AT = 0.78; // current card's right edge, as a fraction of canvas width
 const SPINE_AT = 0.58;   // spine row, as a fraction of canvas height, when the graph is taller than the canvas
 
-function frameFigure(inst, canvasEl, laid, currentId, { expanded }) {
+function frameFigure(inst, canvasEl, laid, currentId, { expanded, reserved = 0 }) {
   if (!inst || !laid?.length) return;
   const b = figureBounds(laid);
-  const cw = canvasEl?.clientWidth || 1000;
+  // The detail sidebar overlays the canvas rather than shrinking it, so frame
+  // against the width still visible beside it — otherwise the current beat
+  // lands underneath the panel.
+  const cw = visibleWidth(canvasEl, reserved);
   const ch = canvasEl?.clientHeight || 400;
   const fitZoom = Math.min((cw - VIEW_PAD * 2) / b.width, (ch - VIEW_PAD * 2) / b.height);
   if (fitZoom >= FIT_FLOOR) {
@@ -206,11 +227,11 @@ function FigurePanel({ projectId, node, onClose }) {
     <DetailPanelShell
       typeLabel={node.qualifier ? `${typeLabel} · ${node.qualifier}` : typeLabel}
       title={node.label}
+      status={node.status && node.status !== 'none'
+        ? <StatusPill value={String(node.status)} />
+        : null}
       onClose={onClose}
     >
-      {node.status && node.status !== 'none' && (
-        <div style={{ margin: '6px 0' }}><StatusPill value={String(node.status)} /></div>
-      )}
 
       {ref.kind === 'artifact' && ref.id && (
         <>
@@ -299,7 +320,9 @@ export default function ExperimentFigure({
   const [selectedId, setSelectedId] = useState(null);
   const rfRef = useRef(null);
   const canvasRef = useRef(null);
-  const { width: panelWidth, startResize } = usePanelWidth();
+  const { width: panelWidth } = usePanelWidth();
+  const select = useCallback((id) => setSelectedId(id), []);
+  const selCtx = useMemo(() => ({ selectedId, select }), [selectedId, select]);
 
   const fetchFigure = useCallback(async () => {
     try {
@@ -324,9 +347,11 @@ export default function ExperimentFigure({
   const { nodes, edges, laid, currentId } = useMemo(() => toFlow(figure), [figure]);
 
   // Frame the view: readable zoom, current beat in sight (see frameFigure).
+  // `reserved` is the gutter the overlaying sidebar covers when one is open.
+  const reserved = selectedId ? panelWidth : 0;
   const frame = useCallback(() => {
-    frameFigure(rfRef.current, canvasRef.current, laid, currentId, { expanded });
-  }, [laid, currentId, expanded]);
+    frameFigure(rfRef.current, canvasRef.current, laid, currentId, { expanded, reserved });
+  }, [laid, currentId, expanded, reserved]);
 
   // Re-frame when the topology grows (new nodes), not on every poll tick.
   // Plain timer + no animation duration: animated moves ride rAF, which is
@@ -351,6 +376,19 @@ export default function ExperimentFigure({
     const t = setTimeout(frame, 120);
     return () => clearTimeout(t);
   }, [expanded, frame]);
+
+  // Escape closes the sidebar first; the graph slot's handler then gets the
+  // next Escape to leave fullscreen. Capture phase so this runs before it.
+  useEffect(() => {
+    if (!selectedId) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      setSelectedId(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [selectedId]);
 
   // …and whenever the canvas itself changes size (page layout settling after
   // data arrives, sidebar toggles, window resizes): the framing depends on the
@@ -382,7 +420,7 @@ export default function ExperimentFigure({
           <span className="fig-title-hint">derived from experiment state</span>
         </div>
         <div className="fig-head-right">
-          <div className="fig-legend">
+          <div className="fig-legend" aria-hidden="true">
             <span className="fig-chip fig-st--done">done</span>
             <span className="fig-chip fig-st--open">in motion</span>
             <span className="fig-chip fig-st--revise">needs changes</span>
@@ -392,20 +430,11 @@ export default function ExperimentFigure({
             <span className="fig-chip fig-chip--edge fig-chip--edge-then">→ next</span>
             <span className="fig-chip fig-chip--edge fig-chip--edge-revised">⇢ sent back</span>
           </div>
-          {onToggleExpand && (
-            <button
-              type="button"
-              className="fig-expand-btn"
-              onClick={onToggleExpand}
-              aria-label={expanded ? 'Collapse graph' : 'Expand graph'}
-            >
-              {expanded ? '✕ Close' : '⤢ Expand'}
-            </button>
-          )}
+          <GraphExpandButton expanded={expanded} onToggle={onToggleExpand} label="figure" />
         </div>
       </div>
       <div
-        className={`fig-body${selected ? ' fig-body--split' : ''}`}
+        className="fig-body"
         style={{ '--fig-panel-w': `${panelWidth}px` }}
       >
         {/* Inline, the page owns the wheel: plain scrolling over the canvas
@@ -414,6 +443,7 @@ export default function ExperimentFigure({
             the +/- controls. Expanded, page scroll is locked, so the wheel
             zooms the canvas instead. */}
         <div className="fig-canvas" ref={canvasRef}>
+          <SelectedContext.Provider value={selCtx}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -423,12 +453,16 @@ export default function ExperimentFigure({
               // Non-draggable nodes get no d3-drag click suppression, so the
               // click would bubble to the pane and immediately deselect.
               event.stopPropagation();
-              setSelectedId(node.id);
+              select(node.id);
             }}
             onPaneClick={() => setSelectedId(null)}
             proOptions={{ hideAttribution: true }}
             nodesDraggable={false}
             nodesConnectable={false}
+            // The card paints its own ring from selectedId; react-flow's own
+            // selection would be a second state that drifts from it.
+            nodesFocusable={false}
+            elementsSelectable={false}
             edgesFocusable={false}
             zoomOnDoubleClick={false}
             zoomOnScroll={expanded}
@@ -441,17 +475,10 @@ export default function ExperimentFigure({
             <Background gap={22} size={1.1} />
             <Controls showInteractive={false} position="bottom-right" />
           </ReactFlow>
-          <div className="fig-canvas-hint">drag to pan · pinch to zoom</div>
+          </SelectedContext.Provider>
+          <div className="fig-canvas-hint" aria-hidden="true">drag to pan · pinch to zoom</div>
         </div>
-        {selected && (
-          <div
-            className="fig-resizer"
-            onPointerDown={startResize}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Drag to resize panel"
-          />
-        )}
+        {selected && <PanelResizer />}
         {selected && (
           <FigurePanel
             projectId={projectId}
