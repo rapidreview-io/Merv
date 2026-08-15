@@ -271,7 +271,13 @@ function RecordChips({ current, all }) {
             {ROLE_LABEL[a.role] || String(a.role || 'file').replace(/_/g, ' ')}
           </Link>
         ))}
-        {earlier > 0 && <span className="wflow-chip wflow-chip--quiet">+{earlier} from earlier attempts</span>}
+        {/* Superseded submissions — from earlier attempts or an earlier
+            pass of this one — are counted, not listed. */}
+        {earlier > 0 && (
+          <span className="wflow-chip wflow-chip--quiet">
+            +{earlier} earlier {earlier === 1 ? 'version' : 'versions'}
+          </span>
+        )}
       </div>
     </>
   );
