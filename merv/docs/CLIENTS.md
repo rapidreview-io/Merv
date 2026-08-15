@@ -198,7 +198,9 @@ Auto-run is not installed from a provider plugin.
 machine-local client closure. The production UI build publishes the archive,
 checksum, and `runner/install.sh` under `rapidreview.io/merv/runner/` after
 every `main` update. The Settings wizard installs or updates it with one
-provider-neutral command; its launchers live under `~/.merv/bin`.
+provider-neutral command and pairs the machine by device code — the runner
+generates its own key, the owner approves the printed code, and settings then
+travel through the brain; its launchers live under `~/.merv/bin`.
 
 ## Verify a connection
 

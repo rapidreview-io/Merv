@@ -34,6 +34,12 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
   together because there is one implementation and rotations must be atomic.
 - `transport/api/agent_sessions.py` and gateway policy: runner control plus
   MCP-only, experiment-scoped, default-deny authority for local agent workers.
+- `runner_pairing.py` plus `transport/api/runner_pairing.py`: device-code
+  pairing of an auto-run machine — the runner presents only its key digest, an
+  owner approves the printed code, and the digest is registered as a labelled
+  project key in the same transaction (`ProjectKeys.register_digest`). The two
+  runner-facing routes are the only unauthenticated ones besides `/health`; it
+  is mounted exactly where owner key management is (hosted auth).
 - `oauth.py`, `oauth_store.py`, and `transport/api/oauth.py`: OAuth policy,
   race-safe persistence, and protocol routes. Persistence stays separate because
   both halves are substantial and transactional behavior must remain explicit.

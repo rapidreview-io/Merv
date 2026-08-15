@@ -124,16 +124,23 @@ Agent. The `command` adapter covers a custom executable that accepts its
 instruction on stdin and emits a JSONL interaction stream on stdout:
 
 ```bash
+# Guided: installs, prints an 8-character pairing code, dispatches once an
+# owner approves it in Settings → Auto running.
 curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh
+
+# Headless: install without pairing, export MERV_MCP_KEY, name the project.
+curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh -s -- --install-only
 $HOME/.merv/bin/merv-agent-runner --project proj_123
 ```
 
 The provider-independent installer downloads the generated runner archive,
 verifies its SHA-256 checksum, installs it under `~/.merv`, and starts the
-loopback pairing service used by Settings → Auto running. It requires Python
-3.11+ and Git, but no Merv repository clone or Merv package. Rerun the same
-command to update it. For a remote runner, forward the settings port with
-`ssh -L 8791:127.0.0.1:8791 HOST` while completing browser setup.
+runner. An unpaired runner generates its own `mk_` key, sends only its digest,
+and prints a code; approving that code in Settings → Auto running registers
+the key for the project. It requires Python 3.11+ and Git, but no Merv
+repository clone or Merv package, and works identically on a remote machine
+because the browser never addresses it. Rerun the same command to update it;
+`merv-agent-runner pair` re-pairs an installed machine.
 
 Automatic dispatch is off by default and is a per-project setting, so a running
 runner claims nothing until the project turns it on in Settings. Turning it back
@@ -164,15 +171,14 @@ consolidation worktrees remain recoverable. The private bare clone has no
 remotes and never pushes into the user's repository. Worktrees isolate Git
 changes, not same-user filesystem access; use an OS sandbox for hostile agents.
 
-The web Settings page can save this same machine file through the optional
-runner control at `http://127.0.0.1:8791`. The installer starts it without
-dispatching; paste the printed pairing token
-into Settings. The paired UI saves the dedicated runner credential and can hand
-the setup process directly into polling mode. If no local service is reachable,
-the UI shows the exact install or start command for the runner machine. The
-pairing token can edit executable agent commands and replace the credential, so
-treat it as local-administrator authority and paste it only into a trusted Merv
-UI origin.
+Settings → Auto running edits a paired runner's tuning through the brain:
+which native platforms are enabled, their model, effort, and parallelism, and
+the repository, worktree root, and base ref. The runner reports its non-secret
+inventory on every heartbeat and pulls the desired settings back on the same
+call, applying them in place; the page shows *Settings pending* until the
+machine reports the version applied. Executable commands and custom
+`command`-adapter agents stay in `client.json` on the machine (`merv-client
+agent`); the brain neither stores nor sends argv.
 
 Agent-authored evidence is kept in regular repo files. The brain records their
 relative paths and versions and pins selected submitted bytes for gates and

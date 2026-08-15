@@ -87,9 +87,16 @@ for signed-in people; machine credentials remain unable to change membership.
   PKCE browser consent, secure token storage, and refresh. The user never sees
   or mints the underlying `mk_` access token.
 - **Headless MCP clients and the Merv agent runner** use an explicitly minted
-  `mk_` key through `MERV_MCP_KEY`. `merv-client configure` writes machine
-  settings and `merv-client env` prints the header-based config for those
-  non-interactive surfaces. Never inline a key into a committed file.
+  `mk_` key. Headless clients receive it through `MERV_MCP_KEY`;
+  `merv-client configure` writes machine settings and `merv-client env` prints
+  the header-based config for those non-interactive surfaces. The runner reads
+  `~/.merv/agent-runner.key` first and falls back to `MERV_MCP_KEY` only when no
+  paired credential exists. Pairing writes that file: the runner generates the
+  key itself, presents only its sha256 digest with a short device code, and an
+  owner's approval in Settings → Auto running registers the digest as a
+  project-scoped key labelled `auto-run · <hostname>` — the plaintext never
+  leaves the machine and is never shown. Never inline a key into a committed
+  file.
 
 In either path the agent passes `project_id` explicitly. An account-scoped
 grant discovers ids with `project(action="list")`; a project-scoped grant may

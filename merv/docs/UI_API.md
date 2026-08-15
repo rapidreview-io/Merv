@@ -297,6 +297,66 @@ agent's storage tools (`storage.submit` / `storage.fetch`). Uploads through
 5 GiB use a presigned curl command; larger objects use the returned
 `merv-client storage-upload` command to stream presigned parts concurrently.
 
+## Auto-run
+
+```http
+GET   /api/projects/{project_id}/agent-sessions
+POST  /api/projects/{project_id}/agent-sessions/halt
+POST  /api/projects/{project_id}/agent-sessions/{session_id}/halt
+POST  /api/projects/{project_id}/agent-runners/pairings/approve   {"user_code": "7Q2KM4B9"}
+PUT   /api/projects/{project_id}/agent-runners/settings           {"runner_ref": …, "settings": {…}}
+PATCH /api/projects/{project_id}                                  {"agent_dispatch": true|false}
+```
+
+`GET …/agent-sessions` is the only live view of auto-run. It returns
+`sessions` (up to 250 rows, live first, then newest) and `runners`: every
+machine that has heartbeated for the project, most recently seen first
+(`runner` keeps the single most-recent row for one release). A runner row is
+non-secret — `machine`, `platforms` (each with `enabled` and `managed`; a
+`managed: false` entry is a CLI-only custom agent the brain may show but never
+edit), `capacity`, `last_seen_at`, `live` (heartbeat at most 45 s old),
+`desired_settings`, `desired_version`, `applied_version`, `settings_pending`,
+`inventory` (workspace paths, `available_commands`, `local_sessions`,
+`pending.reason`, `settings_error`, `runner_version`) — and carries an opaque
+`runner_ref` the browser uses to address settings. Runner identity itself is
+private to the runner and the brain. Each session row carries its immutable
+`assignment`, non-secret `agent_setup`, aggregate `telemetry`, `status`
+(`offered`, `active`, `released`, `expired`), and `close_reason`. Raw agent
+traces never reach the brain; they stay on the runner machine under
+`~/.merv/agent-traces/`.
+
+Pairing approval is owner-only (a Supabase browser session), exactly like
+minting a key: the runner has already generated its own `mk_` key and sent only
+the digest, so approving the 8-character code it printed registers that digest
+as a project key labelled `auto-run · <hostname>` and returns the non-secret key
+record, the machine, and the `runner_ref` to watch for. Misses count against
+the approving principal (10 in 10 min → 429); the code is single-use and
+expires in 10 min. A loopback brain has no auth, needs no runner credential,
+and does not mount this route.
+
+`PUT …/agent-runners/settings` stores what the owner wants a paired runner to
+apply. The schema is closed and validated on both sides: `platforms.<native
+adapter>.{enabled, model, effort, parallelism}` and `workspace.{repository,
+root, base_ref}` — never `command`, never `adapter`. The runner pulls it on its
+next heartbeat and reports the version it applied; `settings_pending` and
+`inventory.pending.reason` are how the page says so honestly.
+
+Automatic dispatch is a per-project setting, off by default. Turning it off
+stops new claims only; `…/agent-sessions/halt` closes every live session and
+`…/agent-sessions/{session_id}/halt` closes one, so each runner stops its own
+child processes on its next reconcile.
+
+The runner's own control plane — `POST /api/agent-runners/pairing` and
+`POST /api/agent-runners/pairing/token` (unauthenticated by construction: the
+runner has no credential yet and polls with the 256-bit device code it alone
+holds), `POST /api/agent-sessions/claim`, `/{session_id}/attach`,
+`/{session_id}/release`, `/{session_id}/heartbeat`,
+`POST /api/projects/{project_id}/agent-runners/heartbeat` (whose reply carries
+the caller's own row and desired settings), and the
+`/consolidation/prepare|pending|settle` trio — is not a browser API. Runner
+executable commands and custom agents are never stored in the brain; they live
+in `~/.merv/client.json` on the machine (`merv-client agent`).
+
 ## Research feed
 
 ```http

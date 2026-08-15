@@ -65,29 +65,50 @@ refreshes a session that is already running. Hermes updates with
 the hosted, content-versioned skill catalog when a session starts; rerun its
 plugin command only when Merv announces an adapter update.
 
-## Headless setup: static key
+## Auto-run runner: pair with a code
 
 Install the non-interactive runner independently of the agent plugin or
-extension:
+extension, on whichever machine should run your agents — the laptop in front
+of you, a remote box over SSH, it makes no difference:
 
 ```bash
 curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh
 ```
 
-This verifies and installs the standalone runner under `~/.merv`, starts its
-loopback pairing service, and prints the token requested by Settings → Auto
-running. It needs Python 3.11+ and Git, but no Merv repository clone or package
-installation. Rerun the command to update it. For a remote runner, forward the
-settings port while pairing: `ssh -L 8791:127.0.0.1:8791 HOST`. Safari shows a
-**Connect to the runner** button because it cannot call an HTTP loopback service
-directly from the HTTPS app; that button opens a small local bridge window to
-keep open during setup.
+This verifies and installs the standalone runner under `~/.merv`, then starts
+it. On a machine that is not paired yet the runner generates its own `mk_` key
+locally, sends only the key's digest to the brain, and prints an 8-character
+code such as `7Q2K-M4B9`. Enter that code in Settings → Auto running (**Set up
+runner** / **Pair another runner**); approving it registers the digest as a
+project key labelled `auto-run · <hostname>` and the runner starts dispatching
+for that project on its next poll — no browser ever addresses the machine, no
+port forwarding, nothing to paste from the terminal but the code. It needs
+Python 3.11+ and Git, but no Merv repository clone or package installation.
+Rerun the command to update it; `merv-agent-runner pair` starts a fresh
+pairing on an already-installed machine.
 
-The browser setup mints a project-scoped `mk_` key and writes it directly to
-the paired runner's owner-only credential file; it never appears in the copied
-command or browser storage. Manual runner setup and CI can still create one at
-[rapidreview.io/merv](https://rapidreview.io/merv) and export it without placing
-it in shell history:
+The plaintext key never leaves the machine and never appears in the browser.
+Until approval it lives only in an owner-only pairing file; a restart resumes
+an unfinished exchange, an expired code is discarded, and a revoked key stops
+the runner with a re-pair instruction instead of re-enrolling silently.
+
+Once paired, everything else happens in the brain: the runner heartbeats its
+non-secret inventory (which agents it has and whether their executables
+resolve, workspace paths, local session counts, the settings version it has
+applied), and Settings → Auto running saves the tuning an owner wants
+(enabled/model/effort/parallelism per native platform, repository, worktree
+root, base ref). The runner pulls that on its next heartbeat and applies it in
+place; disabled platforms drain instead of vanishing under live sessions and a
+workspace change waits for an idle cycle, so the page can honestly show
+*Settings pending* until it is really in effect. Executable argv and custom
+`command`-adapter agents are never held by the brain: edit those on the
+machine with `merv-client agent`. A freshly paired machine with no agents yet
+is a valid state — it heartbeats and starts claiming as soon as one is enabled.
+
+For CI or scripted installs that must not pair interactively, pass
+`--install-only` (`curl -fsSL … | sh -s -- --install-only`), create a project
+key at [rapidreview.io/merv](https://rapidreview.io/merv), export it without
+placing it in shell history, and start the runner with an explicit `--project`:
 
 ```bash
 printf 'Paste the Merv key: '
@@ -128,8 +149,8 @@ OAuth command; headless project reach comes from the static grant plus explicit
 
 Agent-platform settings live beside `control_url` in the private
 `~/.merv/client.json`. Commands are stored as argv arrays and are never run
-through a shell. To let Merv fill a reviewed experiment wave with separate
-local sessions:
+through a shell. A paired machine dispatches with plain `merv-agent-runner`;
+the headless key path names the project explicitly:
 
 ```bash
 $HOME/.merv/bin/merv-agent-runner --project proj_123
@@ -160,18 +181,20 @@ remote, so Merv never pushes to the user's repository. Worktrees prevent Git
 collisions; same-user agents can still read one another's files, so use
 containers, VMs, or separate OS identities for hostile-agent containment.
 
-To let the hosted Settings page edit the same local file, start the runner's
-loopback-only control without dispatching:
+What the brain holds and what stays on the machine:
 
-```bash
-$HOME/.merv/bin/merv-agent-runner --settings-only
-```
+- **Brain (`agent_runners` row per paired machine):** the runner's non-secret
+  heartbeat inventory, the owner's desired tuning (`enabled`, `model`,
+  `effort`, `parallelism` per native platform; `repository`, `root`,
+  `base_ref`), and the desired/applied version pair the page uses to show
+  *Settings pending* honestly. The schema is closed: a payload carrying
+  `command`, `adapter`, or any unknown key is rejected whole, on both sides.
+- **Machine (`~/.merv/`):** `client.json` (including executable argv and any
+  custom `command`-adapter agents), `agent-runner.key` (the paired credential,
+  preferred over an inherited `MERV_MCP_KEY` so a shell variable for another
+  project cannot silently override it), `agent-runner.secret`,
+  `agent-sessions.json`, and the traces.
 
-It prints a generated pairing token, stored owner-only outside `client.json`.
-The browser keeps that token in memory and sends it to
-`http://127.0.0.1:8791`. The control accepts only paired settings reads/writes,
-redacted status, and a write-only runner credential; it intentionally has no
-HTTP start/stop operation because the settings contain executable argv. Actual
-agent launch remains the explicit `merv-agent-runner --project ...` command.
-Treat the pairing token as local-administrator authority and paste it only into
-a trusted Merv UI origin.
+`merv-agent-runner` reads the paired project from `client.json`; `--project`
+remains as an override for the headless key path and for a loopback brain,
+which has no auth and therefore no pairing.
