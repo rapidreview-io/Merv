@@ -37,4 +37,8 @@ test('a user-stopped session is presented as stopped', () => {
     sessionOutcome({ status: 'released', close_reason: 'dispatch_halted' }),
     { label: 'Stopped', tone: 'quiet' },
   );
+  assert.deepEqual(
+    sessionOutcome({ status: 'expired', close_reason: 'halted_by_user' }),
+    { label: 'Stopped', tone: 'quiet' },
+  );
 });

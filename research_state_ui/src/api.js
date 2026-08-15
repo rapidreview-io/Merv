@@ -220,14 +220,36 @@ export const api = {
   revokeProjectKey: (pid, keyId) =>
     request(`/api/projects/${encodeURIComponent(pid)}/keys/${encodeURIComponent(keyId)}/revoke`, { method: 'POST' }),
 
-  // Coding-agent sessions. Machine-local platform settings stay in
-  // ~/.merv/client.json; this read shows only agents that have claimed work.
+  // Coding-agent sessions and runner presence. → { sessions, runners, runner }
+  // Each runner row is non-secret: machine, platforms inventory, capacity,
+  // live, desired/applied settings versions, and an opaque runner_ref the
+  // browser uses to address settings. Runner identity itself stays private.
   listAgentSessions: (pid) =>
     request(`/api/projects/${encodeURIComponent(pid)}/agent-sessions`),
   // Close every live session now. Disabling dispatch only stops new claims;
   // this is the separate stop for work already running. → { halted, sessions }
   haltAgentSessions: (pid) =>
     request(`/api/projects/${encodeURIComponent(pid)}/agent-sessions/halt`, { method: 'POST' }),
+  // Close one live session; its runner stops the child on its next poll.
+  haltAgentSession: (pid, sessionId) =>
+    request(
+      `/api/projects/${encodeURIComponent(pid)}/agent-sessions/${encodeURIComponent(sessionId)}/halt`,
+      { method: 'POST' },
+    ),
+  // Device-code pairing: the runner prints an 8-character code; an owner
+  // approves it here. → { key, runner_ref, machine }. Hosted auth only —
+  // a loopback brain needs no runner credential and has no route (404).
+  approveRunnerPairing: (pid, userCode) =>
+    request(`/api/projects/${encodeURIComponent(pid)}/agent-runners/pairings/approve`, {
+      method: 'POST', body: { user_code: userCode },
+    }),
+  // Owner-side runner tuning (closed schema: enabled/model/effort/parallelism
+  // per native platform, workspace paths). The runner pulls it on its next
+  // heartbeat and reports applied_version. → { runner }
+  putRunnerSettings: (pid, runnerRef, settings) =>
+    request(`/api/projects/${encodeURIComponent(pid)}/agent-runners/settings`, {
+      method: 'PUT', body: { runner_ref: runnerRef, settings },
+    }),
 
   // Claims
   createClaim: (pid, { statement, scope, confidence }) =>

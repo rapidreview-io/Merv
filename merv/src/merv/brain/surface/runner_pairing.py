@@ -38,6 +38,7 @@ from ..kernel.utils import (
     new_id,
     parse_iso,
 )
+from ..agent_sessions import runner_ref
 from .project_keys import PROJECT_GRANT, ProjectKeys, public_key_record
 
 # Crockford base32 minus I, L, O, U: unambiguous when read aloud or typed.
@@ -315,9 +316,12 @@ class RunnerPairings:
             """,
             (project_id, record.id, owner_user_id, format_iso(now), row["id"]),
         )
+        canonical = f"key:{record.id}/{row['runner_id']}"
         return {
             "key": public_key_record(record),
-            "runner_id": f"key:{record.id}/{row['runner_id']}",
+            # The browser never sees runner identity; it watches for this
+            # opaque ref to appear live in the runner listing.
+            "runner_ref": runner_ref(project_id=project_id, runner_id=canonical),
             "machine": machine,
         }
 

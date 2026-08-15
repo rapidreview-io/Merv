@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import AutorunSetupWizard from './AutorunSetupWizard';
+import RunnerSettingsForm from './RunnerSettingsForm';
 import Switch from './Switch';
 import { runnerPresentation } from './runnerPresentation';
 import {
@@ -16,70 +17,28 @@ import {
   sessionOutcome,
 } from './agentSessionPresentation';
 import {
-  connectFailureMessage,
-  ensureRunnerTransport,
-  runnerRequest,
-} from './runnerClient';
-import {
-  ADAPTERS,
-  DEFAULT_WORKSPACE,
-  capabilitiesFor,
-  configFromDraft,
-  configSignature,
-  defaultPlatforms,
-  workspaceWithRepository,
-  draftFromSettings,
-  nextCustomId,
-  normalizeLocalPlatforms,
+  draftFromRunner,
+  draftSignature,
+  settingsFromDraft,
   validateDraft,
+  workspaceWithRepository,
 } from './agentPlatformConfig';
 
-const DRAFT_KEY = 'rsui:agentPlatforms';
-const WORKSPACE_KEY = 'rsui:agentWorkspace';
-const LOCAL_RUNNER_URL = 'http://127.0.0.1:8791';
+/**
+ * AgentPlatforms — the Auto-run panel (Settings → Auto running).
+ *
+ * Everything here comes from the brain: runner presence and inventory arrive
+ * on the runner's heartbeat, settings are saved to the brain and pulled by
+ * the runner on its next poll, and jobs are the brain's session rows. The
+ * browser never dials the runner machine, so this works the same for a
+ * laptop, a remote box, or a phone.
+ */
 
-function readDraft() {
-  if (typeof localStorage === 'undefined') return defaultPlatforms();
-  try {
-    const saved = JSON.parse(localStorage.getItem(DRAFT_KEY));
-    return normalizeLocalPlatforms(saved);
-  } catch {
-    return defaultPlatforms();
-  }
-}
+const INSTALL_COMMAND = 'curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh';
+const RUNNER_COMMAND = '$HOME/.merv/bin/merv-agent-runner';
+const SESSIONS_POLL_MS = 10_000;
 
-function readWorkspace() {
-  if (typeof localStorage === 'undefined') return DEFAULT_WORKSPACE;
-  try {
-    const saved = JSON.parse(localStorage.getItem(WORKSPACE_KEY));
-    return saved && typeof saved === 'object'
-      ? {
-        ...DEFAULT_WORKSPACE,
-        repository: typeof saved.repository === 'string' ? saved.repository : '',
-        root: saved.strategy === 'existing'
-          ? ''
-          : (typeof saved.root === 'string' ? saved.root : ''),
-        base_ref: typeof saved.base_ref === 'string' && saved.base_ref.trim()
-          ? saved.base_ref
-          : DEFAULT_WORKSPACE.base_ref,
-        strategy: 'git_worktree',
-      }
-      : { ...DEFAULT_WORKSPACE };
-  } catch {
-    return { ...DEFAULT_WORKSPACE };
-  }
-}
-
-function platformSummary(platform) {
-  return [
-    platform.command[0] || 'no command',
-    platform.model,
-    platform.effort,
-    `×${platform.parallelism}`,
-  ].filter(Boolean).join(' · ');
-}
-
-function JobCard({ session, projectId, now, open, onToggle }) {
+function JobCard({ session, projectId, now, open, onToggle, onStop, stopping }) {
   const assignment = assignmentFor(session);
   const packet = friendlyPacket(session);
   const destination = sessionDestination(projectId, session);
@@ -87,6 +46,7 @@ function JobCard({ session, projectId, now, open, onToggle }) {
   const tokens = formatTokens(session?.telemetry?.total_tokens);
   const tools = Number(session?.telemetry?.tool_calls || 0);
   const attempt = Number(packet.attempt || session?.attempt_index || 0);
+  const live = isLiveSession(session);
 
   return (
     <article className={[
@@ -124,121 +84,104 @@ function JobCard({ session, projectId, now, open, onToggle }) {
             <span>
               {sessionAgent(session)}
               {tools > 0 && ` · ${tools} ${tools === 1 ? 'tool call' : 'tool calls'}`}
+              {session?.agent_setup?.machine && ` · on ${session.agent_setup.machine}`}
             </span>
-            {destination && (
-              <Link className="btn btn--primary btn--sm" to={destination.to}>
-                {destination.label}
-              </Link>
-            )}
+            <span className="page-actions">
+              {live && onStop && (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  disabled={stopping}
+                  onClick={onStop}
+                >
+                  {stopping ? 'Stopping…' : 'Stop this job'}
+                </button>
+              )}
+              {destination && (
+                <Link className="btn btn--primary btn--sm" to={destination.to}>
+                  {destination.label}
+                </Link>
+              )}
+            </span>
           </div>
           <div className="aru-packet">
             <span className="aru-label">Assignment</span>
             <pre><code>{JSON.stringify(packet, null, 2)}</code></pre>
           </div>
+          {session?.id && session?.agent_setup?.machine && (
+            <p className="aru-note">
+              Trace on {session.agent_setup.machine}: <code>~/.merv/agent-traces/{session.id}/</code>
+            </p>
+          )}
         </div>
       )}
     </article>
   );
 }
 
+function RunnerCard({ runner, selected, onSelect, now }) {
+  const view = runnerPresentation(runner, now);
+  const enabled = (runner.platforms || []).filter((item) => item.enabled !== false).map((item) => item.name);
+  return (
+    <button
+      type="button"
+      className={`aru-runner${selected ? ' aru-runner--selected' : ''}`}
+      onClick={onSelect}
+      aria-pressed={selected}
+    >
+      <span className={`aru-live-dot aru-live-dot--${view.tone}`} aria-hidden="true" />
+      <span className="aru-runner-name">
+        <strong>{view.machineName}</strong>
+        <small>{[view.machineDetails, enabled.join(', ') || 'no agents'].filter(Boolean).join(' · ')}</small>
+      </span>
+      <span className={`aru-status aru-status--${view.tone}`}>{view.state}</span>
+    </button>
+  );
+}
+
 export default function AgentPlatforms({ projectId }) {
-  const [platforms, setPlatforms] = useState(readDraft);
-  const [workspace, setWorkspace] = useState(readWorkspace);
-  const [copied, setCopied] = useState('');
-  const [expanded, setExpanded] = useState('');
   const [sessions, setSessions] = useState(null);
-  const [runnerPresence, setRunnerPresence] = useState(null);
+  const [runners, setRunners] = useState([]);
   const [sessionError, setSessionError] = useState('');
-  const [runnerUrl, setRunnerUrl] = useState(LOCAL_RUNNER_URL);
-  const [pairingToken, setPairingToken] = useState('');
-  const [runnerConnection, setRunnerConnection] = useState('idle');
-  const [runnerMessage, setRunnerMessage] = useState('');
-  const [runnerStatus, setRunnerStatus] = useState(null);
-  const [, setRunnerLastSeen] = useState(null);
-  const [machineBaseline, setMachineBaseline] = useState(null);
-  const [restartNeeded, setRestartNeeded] = useState(false);
+  const [selectedRef, setSelectedRef] = useState('');
+  const [draft, setDraft] = useState(() => draftFromRunner(null));
+  const [draftBase, setDraftBase] = useState('');
+  const [draftFor, setDraftFor] = useState('');
+  const [saveState, setSaveState] = useState({ busy: false, error: '', savedVersion: 0, applied: false });
   const [dispatch, setDispatch] = useState(null);
   const [dispatchBusy, setDispatchBusy] = useState(false);
   const [dispatchError, setDispatchError] = useState('');
   const [halting, setHalting] = useState(false);
+  const [stoppingId, setStoppingId] = useState('');
   const [showHaltPrompt, setShowHaltPrompt] = useState(false);
   const [expandedSession, setExpandedSession] = useState('');
   const [clock, setClock] = useState(Date.now());
-  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false); // false | 'guide' | 'pair'
   const [configOpen, setConfigOpen] = useState(false);
-  const [startBusy, setStartBusy] = useState(false);
+  const [copied, setCopied] = useState('');
   const settingsRef = useRef(null);
-  // Unpaired, the guided setup is the page; manual pairing is an explicit
-  // opt-in so a fresh project is not greeted with raw fields and a draft.
-  const [manualOpen, setManualOpen] = useState(false);
 
-  useEffect(() => {
+  const refresh = useCallback(async () => {
+    if (!projectId) return;
     try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify(platforms));
+      const response = await api.listAgentSessions(projectId);
+      setSessions(response?.sessions || []);
+      const rows = Array.isArray(response?.runners)
+        ? response.runners
+        : (response?.runner ? [response.runner] : []);
+      setRunners(rows);
+      setSessionError('');
     } catch {
-      // A private browser may disable storage; the in-memory draft still works.
+      setSessionError('Session status is unavailable.');
     }
-  }, [platforms]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(WORKSPACE_KEY, JSON.stringify(workspace));
-    } catch {
-      // The visible draft remains usable when browser storage is disabled.
-    }
-  }, [workspace]);
-
-  useEffect(() => {
-    if (!projectId) return undefined;
-    let disposed = false;
-    async function load() {
-      try {
-        const response = await api.listAgentSessions(projectId);
-        if (!disposed) {
-          setSessions(response?.sessions || []);
-          setRunnerPresence(response?.runner || null);
-          setSessionError('');
-        }
-      } catch {
-        if (!disposed) setSessionError('Session status is unavailable.');
-      }
-    }
-    load();
-    const timer = setInterval(load, 10_000);
-    return () => {
-      disposed = true;
-      clearInterval(timer);
-    };
   }, [projectId]);
 
   useEffect(() => {
-    if (!pairingToken.trim() || machineBaseline === null) return undefined;
-    let disposed = false;
-    async function probe() {
-      try {
-        const status = await runnerRequest({
-          url: runnerUrl, token: pairingToken, path: '/status',
-        });
-        if (disposed) return;
-        setRunnerStatus(status);
-        setRunnerLastSeen(Date.now());
-        setRunnerConnection((current) => (
-          current === 'applying' ? current : 'connected'
-        ));
-      } catch {
-        if (!disposed) {
-          setRunnerConnection((current) => (
-            current === 'applying' ? current : 'unreachable'
-          ));
-        }
-      }
-    }
-    const timer = setInterval(probe, 5_000);
-    return () => {
-      disposed = true;
-      clearInterval(timer);
-    };
-  }, [runnerUrl, pairingToken, machineBaseline]);
+    if (!projectId) return undefined;
+    refresh();
+    const timer = setInterval(refresh, SESSIONS_POLL_MS);
+    return () => clearInterval(timer);
+  }, [projectId, refresh]);
 
   useEffect(() => {
     if (!projectId) return undefined;
@@ -253,31 +196,52 @@ export default function AgentPlatforms({ projectId }) {
     return () => { disposed = true; };
   }, [projectId]);
 
-  const draftConfig = useMemo(
-    () => configFromDraft(platforms, workspace),
-    [platforms, workspace],
+  // Default the selected runner to the most recently seen one.
+  useEffect(() => {
+    if (!runners.length) return;
+    if (!selectedRef || !runners.some((runner) => runner.runner_ref === selectedRef)) {
+      setSelectedRef(runners[0].runner_ref);
+    }
+  }, [runners, selectedRef]);
+
+  const selected = useMemo(
+    () => runners.find((runner) => runner.runner_ref === selectedRef) || null,
+    [runners, selectedRef],
   );
-  const config = useMemo(() => JSON.stringify(draftConfig, null, 2), [draftConfig]);
-  const signature = useMemo(() => configSignature(draftConfig), [draftConfig]);
+
+  // Seed the form from the selected runner's row; re-seed when the runner
+  // changes or when the machine reports a newer view and the form is clean.
+  useEffect(() => {
+    if (!selected) return;
+    const seeded = draftFromRunner(selected);
+    const seededSignature = draftSignature(seeded.platforms, seeded.workspace);
+    const currentSignature = draftSignature(draft.platforms, draft.workspace);
+    const clean = draftFor === selected.runner_ref && currentSignature === draftBase;
+    if (draftFor !== selected.runner_ref || clean) {
+      setDraft(seeded);
+      setDraftBase(seededSignature);
+      setDraftFor(selected.runner_ref);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.runner_ref, selected?.desired_version, selected?.last_seen_at]);
+
+  useEffect(() => {
+    if (!selected || !saveState.savedVersion) return;
+    if (Number(selected.applied_version || 0) >= saveState.savedVersion && !saveState.applied) {
+      setSaveState((current) => ({ ...current, applied: true }));
+    }
+  }, [selected, saveState.savedVersion, saveState.applied]);
+
   const validation = useMemo(
-    () => validateDraft(platforms, workspace),
-    [platforms, workspace],
+    () => validateDraft(draft.platforms, draft.workspace),
+    [draft],
   );
-  const dirty = machineBaseline !== null && signature !== machineBaseline;
-  const connected = runnerConnection === 'connected' || runnerConnection === 'applying';
-  const paired = machineBaseline !== null;
-  const runnerBin = '$HOME/.merv/bin/merv-agent-runner';
-  const installCommand = 'curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh';
-  const runCommand = `${runnerBin} --project ${projectId || 'PROJECT_ID'}`;
-  const liveSessions = useMemo(
-    () => (sessions || []).filter(isLiveSession),
-    [sessions],
-  );
+  const dirty = draftSignature(draft.platforms, draft.workspace) !== draftBase;
+  const liveSessions = useMemo(() => (sessions || []).filter(isLiveSession), [sessions]);
   const recentSessions = useMemo(
     () => (sessions || []).filter((session) => !isLiveSession(session)).slice(0, 6),
     [sessions],
   );
-
   const liveSessionCount = liveSessions.length;
 
   useEffect(() => {
@@ -287,67 +251,67 @@ export default function AgentPlatforms({ projectId }) {
     return () => clearInterval(timer);
   }, [liveSessionCount]);
 
-  useEffect(() => {
-    setExpandedSession('');
-  }, [projectId]);
-  const enabledPlatforms = platforms.filter(
-    (platform) => platform.present !== false && platform.enabled,
-  );
-  const configuredPlatforms = platforms.filter((platform) => platform.present !== false);
-  const capacity = enabledPlatforms.reduce(
-    (total, platform) => total + (Number(platform.parallelism) || 0),
-    0,
-  );
-  const sessionMachine = liveSessions.find((session) => (
-    session?.agent_setup?.machine
-    && Date.now() - Date.parse(session?.last_activity_at || session?.activated_at || '') < 45_000
-  ));
-  const effectivePresence = runnerPresence || (sessionMachine ? {
-    live: true,
-    machine: { hostname: sessionMachine.agent_setup.machine },
-    platforms: liveSessions.map((session) => ({ name: session.agent_setup?.platform || session.platform })),
-    capacity,
-  } : null);
-  const observedCapacity = Number(effectivePresence?.capacity);
-  const shownCapacity = Number.isFinite(observedCapacity) && observedCapacity > 0
-    ? observedCapacity
-    : capacity;
-  const observedPlatforms = Array.isArray(effectivePresence?.platforms)
-    ? [...new Set(effectivePresence.platforms.map((item) => item?.name).filter(Boolean))]
-    : [];
+  useEffect(() => { setExpandedSession(''); }, [projectId]);
 
-  function update(id, patch) {
-    setPlatforms((current) => current.map((platform) => (
-      platform.id === id ? { ...platform, ...patch, present: true } : platform
-    )));
-  }
+  const liveRunners = runners.filter((runner) => runnerPresentation(runner, clock).live);
+  const capacity = liveRunners.reduce((total, runner) => total + (Number(runner.capacity) || 0), 0);
+  const enabledNames = [...new Set(
+    liveRunners.flatMap((runner) => (runner.platforms || [])
+      .filter((item) => item.enabled !== false)
+      .map((item) => item.name)),
+  )];
+  const view = runnerPresentation(selected, clock);
+  const anyRunner = runners.length > 0;
 
-  function addCommandAgent() {
-    const id = nextCustomId(platforms);
-    setPlatforms((current) => [...current, {
-      id,
-      name: id,
-      adapter: 'command',
-      command: [],
-      model: '',
-      effort: '',
-      parallelism: 1,
-      enabled: false,
-      present: true,
-      custom: true,
-      commandWasString: false,
-    }]);
-    setExpanded(id);
-  }
-
-  function resetDraft() {
-    setPlatforms(defaultPlatforms());
-    setWorkspace({ ...DEFAULT_WORKSPACE });
-    setExpanded('');
+  function updatePlatform(id, patch) {
+    setDraft((current) => ({
+      ...current,
+      platforms: current.platforms.map((platform) => (
+        platform.id === id ? { ...platform, ...patch } : platform
+      )),
+    }));
   }
 
   function updateRepository(repository) {
-    setWorkspace((current) => workspaceWithRepository(current, repository));
+    setDraft((current) => ({ ...current, workspace: workspaceWithRepository(current.workspace, repository) }));
+  }
+
+  function updateWorkspace(patch) {
+    setDraft((current) => ({ ...current, workspace: { ...current.workspace, ...patch } }));
+  }
+
+  async function saveSettings() {
+    if (!selected) return false;
+    if (!validation.valid) {
+      setSaveState((current) => ({ ...current, error: 'Fix the highlighted fields first.' }));
+      return false;
+    }
+    setSaveState({ busy: true, error: '', savedVersion: 0, applied: false });
+    try {
+      const response = await api.putRunnerSettings(
+        projectId,
+        selected.runner_ref,
+        settingsFromDraft(draft.platforms, draft.workspace),
+      );
+      const row = response?.runner || null;
+      const version = Number(row?.desired_version || 0);
+      setDraftBase(draftSignature(draft.platforms, draft.workspace));
+      setSaveState({ busy: false, error: '', savedVersion: version, applied: false });
+      if (row) {
+        setRunners((current) => current.map((runner) => (
+          runner.runner_ref === row.runner_ref ? { ...runner, ...row } : runner
+        )));
+      }
+      return true;
+    } catch (error) {
+      setSaveState({
+        busy: false,
+        error: error?.message || 'Could not save runner settings.',
+        savedVersion: 0,
+        applied: false,
+      });
+      return false;
+    }
   }
 
   async function toggleDispatch(next) {
@@ -380,13 +344,22 @@ export default function AgentPlatforms({ projectId }) {
     }
   }
 
-  function invalidateConnection() {
-    setRunnerConnection('idle');
-    setRunnerStatus(null);
-    setRunnerLastSeen(null);
-    setMachineBaseline(null);
-    setRestartNeeded(false);
-    setRunnerMessage('');
+  async function haltOne(sessionId) {
+    setStoppingId(sessionId);
+    setDispatchError('');
+    try {
+      const response = await api.haltAgentSession(projectId, sessionId);
+      const updated = response?.session;
+      if (updated) {
+        setSessions((current) => (current || []).map((session) => (
+          session.id === updated.id ? updated : session
+        )));
+      }
+    } catch (err) {
+      setDispatchError(err?.message || 'Could not stop that session.');
+    } finally {
+      setStoppingId('');
+    }
   }
 
   async function copy(label, value) {
@@ -399,176 +372,23 @@ export default function AgentPlatforms({ projectId }) {
     }
   }
 
-  async function connectRunner() {
-    if (!pairingToken.trim()) {
-      const error = 'Enter the pairing token printed by the local runner.';
-      setRunnerMessage(error);
-      return { ok: false, error };
-    }
-    setRunnerConnection('connecting');
-    setRunnerMessage('');
-    try {
-      await ensureRunnerTransport(runnerUrl);
-      let status = await runnerRequest({
-        url: runnerUrl, token: pairingToken, path: '/status',
-      });
-      const settings = await runnerRequest({
-        url: runnerUrl, token: pairingToken, path: '/settings',
-      });
-      const hydrated = draftFromSettings(settings);
-      const hydratedConfig = configFromDraft(hydrated.platforms, hydrated.workspace);
-      if (
-        status?.credential_required === true
-        && status?.credential_configured === false
-      ) {
-        let minted = null;
-        try {
-          minted = await api.createProjectKey(projectId);
-          await runnerRequest({
-            url: runnerUrl,
-            token: pairingToken,
-            method: 'PUT',
-            path: '/credential',
-            body: { key: minted.secret },
-          });
-          status = { ...status, credential_configured: true };
-        } catch (error) {
-          if (minted?.key?.id) {
-            api.revokeProjectKey(projectId, minted.key.id).catch(() => {});
-          }
-          throw new Error(
-            error?.message || 'Could not provision the runner credential.',
-          );
-        }
-      }
-      setPlatforms(hydrated.platforms);
-      setWorkspace(hydrated.workspace);
-      setMachineBaseline(configSignature(hydratedConfig));
-      setRunnerStatus(status);
-      setRunnerLastSeen(Date.now());
-      setRestartNeeded(false);
-      setRunnerConnection('connected');
-      setRunnerMessage('');
-      return { ok: true, status };
-    } catch (error) {
-      const message = connectFailureMessage(error);
-      if (machineBaseline === null) {
-        setRunnerConnection('idle');
-        setRunnerStatus(null);
-        setRunnerLastSeen(null);
-      } else {
-        // Preserve the last known identity so the status card can say which
-        // machine went offline instead of collapsing back to "not connected".
-        setRunnerConnection('unreachable');
-      }
-      setRunnerMessage(message);
-      return { ok: false, error: message };
-    }
-  }
-
-  async function applyRunnerSettings() {
-    if (!connected || machineBaseline === null) {
-      return { ok: false, error: 'Pair the runner machine first.' };
-    }
-    if (!validation.valid) {
-      return { ok: false, error: 'Fix the highlighted fields first.' };
-    }
-    if (!dirty) return { ok: true, skipped: true };
-    setRunnerConnection('applying');
-    setRunnerMessage('');
-    try {
-      const response = await runnerRequest({
-        url: runnerUrl, token: pairingToken, method: 'PUT', body: draftConfig,
-      });
-      const hydrated = draftFromSettings(response);
-      const hydratedConfig = configFromDraft(hydrated.platforms, hydrated.workspace);
-      const needsRestart = Boolean(response?.restart_required && runnerStatus?.runner_active);
-      setPlatforms(hydrated.platforms);
-      setWorkspace(hydrated.workspace);
-      setMachineBaseline(configSignature(hydratedConfig));
-      setRestartNeeded(needsRestart);
-      setRunnerConnection('connected');
-      setRunnerMessage('Saved to the runner machine.');
-      return { ok: true, restartRequired: needsRestart };
-    } catch (error) {
-      const message = error?.message || 'Could not save runner settings.';
-      setRunnerConnection('connected');
-      setRunnerMessage(message);
-      return { ok: false, error: message };
-    }
-  }
-
-  async function startConfiguredRunner() {
-    try {
-      const response = await runnerRequest({
-        url: runnerUrl,
-        token: pairingToken,
-        method: 'POST',
-        path: '/start',
-        body: { project_id: projectId },
-      });
-      setRunnerConnection('connecting');
-      setRunnerMessage('');
-      return { ok: true, response };
-    } catch (error) {
-      return {
-        ok: false,
-        error: error?.message || 'Could not start the runner.',
-      };
-    }
-  }
-
-  async function startRunnerFromPage() {
-    if (!connected) {
-      setRunnerMessage('Start the runner from its terminal using the command below.');
-      return;
-    }
-    setStartBusy(true);
-    setRunnerMessage('');
-    const result = await startConfiguredRunner();
-    if (!result.ok) {
-      setRunnerMessage(result.error || 'Could not start the runner. Use the terminal command below.');
-    }
-    setStartBusy(false);
-  }
-
-  function markRunnerLive(status) {
-    setRunnerStatus(status);
-    setRunnerLastSeen(Date.now());
-    setRunnerConnection('connected');
-  }
-
-  function showAgentSettings({ manual = false } = {}) {
-    if (manual) setManualOpen(true);
+  function showAgentSettings() {
     setConfigOpen(true);
     window.requestAnimationFrame(() => {
       settingsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }
 
-  const runnerView = runnerPresentation({
-    connection: runnerConnection,
-    status: runnerStatus,
-    projectId,
-  });
-  const observedMachine = effectivePresence?.machine || {};
-  const runnerKnown = paired || Boolean(effectivePresence);
-  const machineName = effectivePresence
-    ? (observedMachine.hostname || 'Runner')
-    : runnerView.machineName;
-  const machineDetails = effectivePresence
-    ? [
-      observedMachine.system === 'Darwin' ? 'macOS' : observedMachine.system,
-      observedMachine.architecture,
-    ].filter(Boolean).join(' · ')
-    : runnerView.machineDetails;
-  const machineTone = effectivePresence
-    ? (effectivePresence.live ? 'live' : 'error')
-    : runnerView.tone;
-  const machineState = effectivePresence
-    ? (effectivePresence.live ? 'Live' : 'Offline')
-    : runnerView.state;
-  const runnerLive = Boolean(effectivePresence?.live || runnerView.active);
+  const settingsNote = (() => {
+    if (!selected) return 'Pair a runner to edit its settings.';
+    if (saveState.busy) return 'Saving…';
+    if (dirty) return `Unsaved changes for ${view.machineName}.`;
+    if (view.settings) return view.settings;
+    if (saveState.savedVersion && saveState.applied) return `Applied on ${view.machineName}.`;
+    if (saveState.savedVersion) return `Saved. ${view.machineName} applies it on its next poll.`;
+    return `Settings on ${view.machineName} are current.`;
+  })();
+
   return (
     <>
       <section className="aru-scope" aria-label="Auto-run status">
@@ -577,81 +397,33 @@ export default function AgentPlatforms({ projectId }) {
         </header>
         <div className="aru-card aru-overview">
           <div className="aru-machine">
-            <span className={`aru-live-dot aru-live-dot--${machineTone}`} aria-hidden="true" />
+            <span className={`aru-live-dot aru-live-dot--${view.tone}`} aria-hidden="true" />
             <div className="aru-machine-name">
-              <strong>{runnerKnown ? machineName : 'Connect a runner'}</strong>
-              {runnerKnown && machineDetails && <span>{machineDetails}</span>}
+              <strong>{anyRunner ? view.machineName : 'Connect a runner'}</strong>
+              {anyRunner && view.machineDetails && <span>{view.machineDetails}</span>}
             </div>
-            {runnerKnown && (
-              <span className={`aru-status aru-status--${machineTone}`}>
-                {machineState}
+            {anyRunner && (
+              <span className={`aru-status aru-status--${view.tone}`}>
+                {view.state}
               </span>
             )}
           </div>
           <div className="aru-overview-actions">
-            {paired ? (
-              <>
-                {runnerLive ? (
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--sm"
-                    disabled={runnerConnection === 'connecting' || runnerConnection === 'applying'}
-                    onClick={connectRunner}
-                  >
-                    Refresh
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn btn--primary btn--sm"
-                    disabled={startBusy || runnerConnection === 'connecting' || runnerConnection === 'applying'}
-                    onClick={startRunnerFromPage}
-                  >
-                    {startBusy || runnerConnection === 'connecting' ? 'Starting…' : 'Start runner'}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--sm"
-                  onClick={() => showAgentSettings()}
-                >
-                  Agent settings
-                </button>
-              </>
-            ) : effectivePresence ? (
-              <>
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--sm"
-                  onClick={() => showAgentSettings({ manual: true })}
-                >
-                  Agent settings
-                </button>
-                <button
-                  type="button"
-                  className={`btn ${effectivePresence.live ? 'btn--ghost' : 'btn--primary'} btn--sm`}
-                  onClick={() => setWizardOpen(true)}
-                >
-                  {effectivePresence.live ? 'Setup guide' : 'Start runner'}
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className="btn btn--primary btn--sm"
-                  onClick={() => setWizardOpen(true)}
-                >
-                  Set up runner
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--sm"
-                  onClick={() => showAgentSettings({ manual: true })}
-                >
-                  Agent settings
-                </button>
-              </>
+            <button
+              type="button"
+              className={`btn ${anyRunner ? 'btn--ghost' : 'btn--primary'} btn--sm`}
+              onClick={() => setWizardOpen('pair')}
+            >
+              {anyRunner ? 'Pair another runner' : 'Set up runner'}
+            </button>
+            {anyRunner && (
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={showAgentSettings}
+              >
+                Agent settings
+              </button>
             )}
           </div>
           <div className="aru-facts">
@@ -672,41 +444,51 @@ export default function AgentPlatforms({ projectId }) {
               <small>running</small>
             </span>
             <span className="aru-fact">
-              <strong>{shownCapacity}</strong>
-              <small>{shownCapacity === 1 ? 'slot' : 'slots'}</small>
+              <strong>{capacity}</strong>
+              <small>{capacity === 1 ? 'slot' : 'slots'}</small>
             </span>
             <span className="aru-fact aru-fact--wide">
-              <strong>
-                {observedPlatforms.join(', ')
-                  || enabledPlatforms.map((platform) => platform.name).join(', ')
-                  || 'No agents'}
-              </strong>
+              <strong>{enabledNames.join(', ') || 'No agents'}</strong>
               <small>enabled</small>
             </span>
           </div>
+          {runners.length > 1 && (
+            <div className="aru-runner-list" role="list" aria-label="Runner machines">
+              {runners.map((runner) => (
+                <RunnerCard
+                  key={runner.runner_ref}
+                  runner={runner}
+                  now={clock}
+                  selected={runner.runner_ref === selectedRef}
+                  onSelect={() => setSelectedRef(runner.runner_ref)}
+                />
+              ))}
+            </div>
+          )}
+          {view.settings && anyRunner && (
+            <p className={`aru-pairing-status aru-pairing-status--${view.settingsTone}`} role="status">
+              {view.settings}
+            </p>
+          )}
         </div>
 
-        {runnerKnown && !runnerLive && (
+        {anyRunner && !view.live && (
           <div className="aru-start-panel" role="status">
             <span>
-              <strong>Runner stopped</strong>
-              <small>Terminal fallback</small>
+              <strong>{view.state === 'Stale' ? 'Runner not responding' : 'Runner offline'}</strong>
+              <small>Start it on {view.machineName}</small>
             </span>
             <div className="aru-command">
-              <code className="mono">{runCommand}</code>
+              <code className="mono">{RUNNER_COMMAND}</code>
               <button
                 type="button"
                 className="btn btn--ghost btn--sm"
-                onClick={() => copy('start-runner', runCommand)}
+                onClick={() => copy('start-runner', RUNNER_COMMAND)}
               >
                 {copied === 'start-runner' ? 'Copied' : 'Copy'}
               </button>
             </div>
           </div>
-        )}
-
-        {runnerMessage && !configOpen && (
-          <p className="aru-pairing-status" role="status">{runnerMessage}</p>
         )}
 
         {showHaltPrompt && liveSessions.length > 0 && (
@@ -748,7 +530,7 @@ export default function AgentPlatforms({ projectId }) {
                   onClick={haltSessions}
                   disabled={halting}
                 >
-                  {halting ? 'Stopping…' : 'Stop'}
+                  {halting ? 'Stopping…' : liveSessions.length === 1 ? 'Stop' : 'Stop all'}
                 </button>
               )}
             </div>
@@ -766,6 +548,8 @@ export default function AgentPlatforms({ projectId }) {
                     onToggle={() => setExpandedSession((current) => (
                       current === session.id ? '' : session.id
                     ))}
+                    onStop={() => haltOne(session.id)}
+                    stopping={stoppingId === session.id}
                   />
                 ))}
               </div>
@@ -805,342 +589,93 @@ export default function AgentPlatforms({ projectId }) {
             <span>
               <strong>Runner settings</strong>
               <small>
-                {enabledPlatforms.length} {enabledPlatforms.length === 1 ? 'agent' : 'agents'}
-                {' · '}{workspace.repository || 'No repository'}
+                {selected
+                  ? `${view.machineName} · ${draft.platforms.filter((item) => item.enabled).length} ${draft.platforms.filter((item) => item.enabled).length === 1 ? 'agent' : 'agents'} · ${draft.workspace.repository || 'No repository'}`
+                  : 'No runner paired yet'}
               </small>
             </span>
             <span className="aru-settings-action">{configOpen ? 'Close' : 'Open'}</span>
           </summary>
           <div className="aru-settings-body">
-            <div className="aru-settings-head">
-              <span>Machine connection</span>
-              <button
-                type="button"
-                className="btn btn--ghost btn--sm"
-                onClick={() => setWizardOpen(true)}
-              >
-                Setup guide
-              </button>
-            </div>
-        {(paired || manualOpen) && (<>
-        <div className="aru-card aru-pairing">
-          <label>
-            <span>Local runner URL</span>
-            <input
-              className="auth-input mono"
-              value={runnerUrl}
-              onChange={(event) => {
-                setRunnerUrl(event.target.value);
-                invalidateConnection();
-              }}
-            />
-          </label>
-          <label>
-            <span>Pairing token</span>
-            <input
-              className="auth-input mono"
-              type="password"
-              autoComplete="off"
-              value={pairingToken}
-              placeholder="Paste from the runner terminal"
-              onChange={(event) => {
-                setPairingToken(event.target.value);
-                invalidateConnection();
-              }}
-            />
-          </label>
-          <button
-            type="button"
-            className="btn btn--ghost"
-            disabled={runnerConnection === 'connecting' || runnerConnection === 'applying'}
-            onClick={connectRunner}
-          >
-            {runnerConnection === 'connecting' ? 'Connecting…' : connected ? 'Reload' : 'Connect'}
-          </button>
-        </div>
-        {runnerMessage && (
-          <p className="aru-pairing-status" role="status">{runnerMessage}</p>
-        )}
-        {!connected && (
-          <p className="aru-note aru-pairing-hint">
-            Run <code>{installCommand}</code> on that machine. It installs the
-            standalone runner, starts the service, and prints the pairing token.
-          </p>
-        )}
-
-        <div className="aru-subsection">
-          <div className="aru-subhead">
-            <div>
-              <span className="aru-label">Agents</span>
-              <span className="aru-note">
-                {enabledPlatforms.length === 0
-                  ? 'None enabled'
-                  : `${enabledPlatforms.length} enabled · ${capacity} ${capacity === 1 ? 'slot' : 'slots'}`}
-              </span>
-            </div>
-            <div className="page-actions">
-              {!connected && (
-                <button type="button" className="btn btn--ghost btn--sm" onClick={resetDraft}>
-                  Reset draft
-                </button>
-              )}
-              <button type="button" className="btn btn--ghost btn--sm" onClick={addCommandAgent}>
-                Add custom agent
-              </button>
-            </div>
-          </div>
-
-          <div className="aru-platform-list">
-            {configuredPlatforms.map((platform) => {
-              const capabilities = capabilitiesFor(platform.adapter);
-              const errors = validation.platforms[platform.id] || {};
-              const hasErrors = Object.keys(errors).length > 0;
-              const open = expanded === platform.id;
-              return (
-                <article
-                  className={`aru-platform${platform.enabled ? '' : ' aru-platform--off'}`}
-                  key={platform.id}
-                >
-                  <div className="aru-platform-row">
-                    <Switch
-                      checked={platform.enabled}
-                      onChange={(next) => update(platform.id, { enabled: next })}
-                      label={`Enable ${platform.name}`}
-                    />
-                    <button
-                      type="button"
-                      className="aru-platform-name"
-                      aria-expanded={open}
-                      onClick={() => setExpanded(open ? '' : platform.id)}
-                    >
-                      <strong>{platform.name}</strong>
-                      <small>
-                        {platform.custom
-                          ? `${platform.adapter} adapter · ${platform.id}`
-                          : 'Native adapter'}
-                      </small>
-                    </button>
-                    <span className="aru-platform-summary mono">
-                      {platformSummary(platform)}
-                    </span>
-                    {hasErrors && (
-                      <span className="aru-flag">needs attention</span>
-                    )}
-                    <button
-                      type="button"
-                      className="btn btn--ghost btn--sm"
-                      aria-expanded={open}
-                      onClick={() => setExpanded(open ? '' : platform.id)}
-                    >
-                      {open ? 'Close' : 'Edit'}
-                    </button>
+            {selected ? (
+              <>
+                <div className="aru-settings-head">
+                  <span>
+                    Settings for <strong>{view.machineName}</strong>
+                    {runners.length > 1 && ' — pick another machine above'}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--sm"
+                    onClick={() => setWizardOpen('guide')}
+                  >
+                    Setup guide
+                  </button>
+                </div>
+                <RunnerSettingsForm
+                  platforms={draft.platforms}
+                  custom={draft.custom}
+                  workspace={draft.workspace}
+                  validation={validation}
+                  availableCommands={selected.inventory?.available_commands || null}
+                  onUpdatePlatform={updatePlatform}
+                  onRepository={updateRepository}
+                  onWorkspace={updateWorkspace}
+                />
+                {!validation.valid && (
+                  <div className="aru-validation" role="alert">
+                    <strong>Fix these before saving.</strong>
+                    <ul>
+                      {[...new Set(validation.messages)].map((message) => (
+                        <li key={message}>{message}</li>
+                      ))}
+                    </ul>
                   </div>
+                )}
+                {saveState.error && <p className="aru-error" role="alert">{saveState.error}</p>}
+                <div className="aru-apply">
+                  <span className="aru-note">{settingsNote}</span>
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    disabled={saveState.busy || !dirty || !validation.valid}
+                    onClick={saveSettings}
+                  >
+                    {saveState.busy ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="aru-note aru-pairing-hint">
+                Run <code>{INSTALL_COMMAND}</code> on the machine that will run
+                your agents, then approve the code it prints with{' '}
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => setWizardOpen('pair')}>Set up runner</button>.
+              </p>
+            )}
 
-                  {open && (
-                    <div className="aru-platform-fields">
-                      {(platform.custom || errors.adapter) && (
-                        <label>
-                          <span>Adapter</span>
-                          <select
-                            className="auth-input"
-                            value={platform.adapter}
-                            onChange={(event) => update(platform.id, { adapter: event.target.value })}
-                          >
-                            {ADAPTERS.map((adapter) => (
-                              <option key={adapter} value={adapter}>{adapter}</option>
-                            ))}
-                          </select>
-                          {errors.adapter && <small className="field-error">{errors.adapter}</small>}
-                        </label>
-                      )}
-                      <label className="aru-command-field">
-                        <span>Command arguments · one per line</span>
-                        <textarea
-                          className="auth-input mono"
-                          rows="2"
-                          value={platform.command.join('\n')}
-                          placeholder={'agent-executable\n--optional-flag'}
-                          onChange={(event) => update(platform.id, {
-                            command: event.target.value ? event.target.value.split('\n') : [],
-                            commandWasString: false,
-                          })}
-                        />
-                        {errors.command && <small className="field-error">{errors.command}</small>}
-                      </label>
-                      {capabilities.model && (
-                        <label>
-                          <span>Model</span>
-                          <input
-                            className="auth-input"
-                            value={platform.model}
-                            placeholder="Platform default"
-                            onChange={(event) => update(platform.id, { model: event.target.value })}
-                          />
-                        </label>
-                      )}
-                      {capabilities.effort && (
-                        <label>
-                          <span>Effort</span>
-                          <input
-                            className="auth-input"
-                            value={platform.effort}
-                            placeholder="Platform default"
-                            onChange={(event) => update(platform.id, { effort: event.target.value })}
-                          />
-                        </label>
-                      )}
-                      <label>
-                        <span>Parallel experiments</span>
-                        <input
-                          className="auth-input"
-                          type="number"
-                          min="1"
-                          max="32"
-                          value={platform.parallelism}
-                          onChange={(event) => update(platform.id, { parallelism: event.target.value })}
-                        />
-                        {errors.parallelism && (
-                          <small className="field-error">{errors.parallelism}</small>
-                        )}
-                      </label>
-                      {platform.custom && (
-                        <div className="aru-platform-remove">
-                          <button
-                            type="button"
-                            className="btn btn--ghost btn--sm"
-                            onClick={() => {
-                              setPlatforms((current) => current.filter((item) => item.id !== platform.id));
-                              setExpanded('');
-                            }}
-                          >
-                            Remove agent
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="aru-subsection">
-          <div className="aru-subhead">
-            <div>
-              <span className="aru-label">Workspace</span>
-            </div>
-          </div>
-          <div className="aru-workspace-fields">
-            <label>
-              <span>Repository</span>
-              <input
-                className="auth-input mono"
-                value={workspace.repository}
-                placeholder="/absolute/path/to/repository"
-                onChange={(event) => updateRepository(event.target.value)}
-              />
-              {validation.workspace.repository && (
-                <small className="field-error">{validation.workspace.repository}</small>
-              )}
-            </label>
-            <label>
-              <span>Worktree root</span>
-              <input
-                className="auth-input mono"
-                value={workspace.root}
-                placeholder="/absolute/path/to/worktrees"
-                onChange={(event) => setWorkspace((current) => ({
-                  ...current,
-                  root: event.target.value,
-                }))}
-              />
-              {validation.workspace.root && (
-                <small className="field-error">{validation.workspace.root}</small>
-              )}
-            </label>
-            <label>
-              <span>Base ref</span>
-              <input
-                className="auth-input mono"
-                value={workspace.base_ref}
-                onChange={(event) => setWorkspace((current) => ({
-                  ...current,
-                  base_ref: event.target.value,
-                }))}
-              />
-              {validation.workspace.base_ref && (
-                <small className="field-error">{validation.workspace.base_ref}</small>
-              )}
-            </label>
-          </div>
-        </div>
-
-        {!validation.valid && (
-          <div className="aru-validation" role="alert">
-            <strong>Fix the draft before applying or copying it.</strong>
-            <ul>
-              {[...new Set(validation.messages)].map((message) => (
-                <li key={message}>{message}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div className="aru-apply">
-          <span className="aru-note">
-            {connected
-              ? (dirty
-                ? 'Unsaved changes for the paired machine.'
-                : (restartNeeded
-                  ? 'Saved. The active runner still uses its old settings — restart it.'
-                  : 'Machine settings are current.'))
-              : (runnerConnection === 'unreachable'
-                ? 'Runner offline. Changes are kept in this browser.'
-                : 'Pair the runner to apply changes.')}
-          </span>
-          <button
-            type="button"
-            className="btn btn--primary"
-            disabled={!connected || machineBaseline === null || !dirty || !validation.valid}
-            onClick={applyRunnerSettings}
-          >
-            {runnerConnection === 'applying' ? 'Applying…' : 'Apply to machine'}
-          </button>
-        </div>
-
-        <details className="aru-manual">
-          <summary>JSON fallback</summary>
-          <div className="aru-manual-head">
-            <p>
-              Merge into <code>~/.merv/client.json</code> on the runner machine.
-            </p>
-            <button
-              type="button"
-              className="btn btn--sm"
-              disabled={!validation.valid}
-              onClick={() => copy('config', config)}
-            >
-              {copied === 'config' ? 'Copied' : 'Copy config'}
-            </button>
-          </div>
-          <pre className="aru-config mono"><code>{config}</code></pre>
-        </details>
-
-        <div className="aru-subsection">
-          <div className="aru-subhead">
-            <div>
-              <span className="aru-label">Start claiming</span>
-            </div>
-          </div>
-          <div className="aru-command">
-            <code className="mono">{runCommand}</code>
-            <button type="button" className="btn btn--ghost btn--sm" onClick={() => copy('run', runCommand)}>
-              {copied === 'run' ? 'Copied' : 'Copy'}
-            </button>
-          </div>
-        </div>
-        </>)}
+            <details className="aru-manual">
+              <summary>Manual &amp; headless setup</summary>
+              <div className="aru-manual-head">
+                <p>
+                  Install without pairing, export a project key as{' '}
+                  <code>MERV_MCP_KEY</code>, then start the runner for this project.
+                  Executable commands and custom agents are edited on the machine
+                  with <code>merv-client agent</code>.
+                </p>
+              </div>
+              <div className="aru-command">
+                <code className="mono">{INSTALL_COMMAND} -s -- --install-only</code>
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => copy('install-only', `${INSTALL_COMMAND} -s -- --install-only`)}>
+                  {copied === 'install-only' ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+              <div className="aru-command">
+                <code className="mono">{RUNNER_COMMAND} --project {projectId || 'PROJECT_ID'}</code>
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => copy('run', `${RUNNER_COMMAND} --project ${projectId || 'PROJECT_ID'}`)}>
+                  {copied === 'run' ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </details>
           </div>
         </details>
       </section>
@@ -1148,23 +683,18 @@ export default function AgentPlatforms({ projectId }) {
       {wizardOpen && (
         <AutorunSetupWizard
           projectId={projectId}
-          runnerUrl={runnerUrl}
-          pairingToken={pairingToken}
-          onPairingToken={setPairingToken}
-          startConnected={connected}
-          runnerStatus={runnerStatus}
-          platforms={platforms}
-          workspace={workspace}
+          forcePair={wizardOpen === 'pair'}
+          runners={runners}
+          selectedRef={selectedRef}
+          onSelectRunner={setSelectedRef}
+          onRefreshRunners={refresh}
+          draft={draft}
           validation={validation}
-          onUpdatePlatform={update}
-          onWorkspace={(patch) => {
-            if (Object.hasOwn(patch, 'repository')) updateRepository(patch.repository);
-            else setWorkspace((current) => ({ ...current, ...patch }));
-          }}
-          onConnect={connectRunner}
-          onApply={applyRunnerSettings}
-          onStart={startConfiguredRunner}
-          onRunnerLive={markRunnerLive}
+          onUpdatePlatform={updatePlatform}
+          onRepository={updateRepository}
+          onWorkspace={updateWorkspace}
+          onSave={saveSettings}
+          saveState={saveState}
           dispatch={dispatch}
           dispatchBusy={dispatchBusy}
           onDispatch={toggleDispatch}

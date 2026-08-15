@@ -3,50 +3,80 @@ import test from 'node:test';
 
 import { runnerPresentation } from './runnerPresentation.js';
 
-const machine = {
-  hostname: 'Gurals-MBP.local',
-  system: 'Darwin',
-  architecture: 'arm64',
-  runner_id: '0123456789abcdef0123456789abcdef',
-};
+const NOW = Date.parse('2026-08-15T12:00:00Z');
+const machine = { hostname: 'lucia.local', system: 'Darwin', architecture: 'arm64' };
 
-test('a reachable active runner on this project is live and identified', () => {
-  assert.deepEqual(
-    runnerPresentation({
-      connection: 'connected',
-      projectId: 'proj_here',
-      status: { runner_active: true, project_id: 'proj_here', machine },
-    }),
-    {
-      active: true,
-      machineName: 'Gurals-MBP.local',
-      machineDetails: 'macOS · arm64',
-      project: '',
-      projectMatches: true,
-      reachable: true,
-      state: 'Live',
-      tone: 'live',
-    },
+function row(overrides = {}) {
+  return {
+    runner_ref: 'ref-24-chars-000000000000',
+    machine,
+    last_seen_at: new Date(NOW - 5_000).toISOString(),
+    live: true,
+    desired_version: 0,
+    applied_version: 0,
+    inventory: {},
+    ...overrides,
+  };
+}
+
+test('a runner seen within 45s is live and identified by its machine', () => {
+  const view = runnerPresentation(row(), NOW);
+  assert.equal(view.state, 'Live');
+  assert.equal(view.tone, 'live');
+  assert.equal(view.machineName, 'lucia.local');
+  assert.equal(view.machineDetails, 'macOS · arm64');
+  assert.equal(view.settings, '');
+});
+
+test('a runner unseen for a few minutes is stale, then offline', () => {
+  const stale = runnerPresentation(
+    row({ live: false, last_seen_at: new Date(NOW - 120_000).toISOString() }),
+    NOW,
   );
+  assert.equal(stale.state, 'Stale');
+  assert.equal(stale.tone, 'warning');
+  const offline = runnerPresentation(
+    row({ live: false, last_seen_at: new Date(NOW - 10 * 60_000).toISOString() }),
+    NOW,
+  );
+  assert.equal(offline.state, 'Offline');
+  assert.equal(offline.tone, 'error');
 });
 
-test('an active runner for another project is not presented as ready', () => {
-  const result = runnerPresentation({
-    connection: 'connected',
-    projectId: 'proj_here',
-    status: { runner_active: true, project_id: 'proj_somewhere_else', machine },
-  });
-  assert.equal(result.state, 'Wrong project');
-  assert.equal(result.tone, 'warning');
-  assert.equal(result.projectMatches, false);
+test('no runner at all reads as not connected', () => {
+  const view = runnerPresentation(null, NOW);
+  assert.equal(view.state, 'Not connected');
+  assert.equal(view.tone, 'off');
+  assert.equal(view.machineName, 'Runner');
 });
 
-test('a lost loopback connection is offline even if its last status was active', () => {
-  const result = runnerPresentation({
-    connection: 'unreachable',
-    projectId: 'proj_here',
-    status: { runner_active: true, project_id: 'proj_here', machine },
-  });
-  assert.equal(result.state, 'Offline');
-  assert.equal(result.active, false);
+test('settings pending and rejected badges come from versions and inventory', () => {
+  const pending = runnerPresentation(row({ desired_version: 3, applied_version: 2 }), NOW);
+  assert.equal(pending.settings, 'Settings pending');
+  assert.equal(pending.settingsTone, 'warning');
+  const waiting = runnerPresentation(
+    row({
+      desired_version: 3,
+      applied_version: 2,
+      inventory: { pending: { reason: 'workspace change waits for 2 running jobs' } },
+    }),
+    NOW,
+  );
+  assert.equal(waiting.settings, 'Settings pending — workspace change waits for 2 running jobs');
+  const offlinePending = runnerPresentation(
+    row({
+      desired_version: 1,
+      applied_version: 0,
+      live: false,
+      last_seen_at: new Date(NOW - 10 * 60_000).toISOString(),
+    }),
+    NOW,
+  );
+  assert.equal(offlinePending.settings, 'Settings pending — applies when the runner reconnects');
+  const rejected = runnerPresentation(
+    row({ desired_version: 3, applied_version: 3, inventory: { settings_error: 'codex: unsupported platform field(s): command' } }),
+    NOW,
+  );
+  assert.equal(rejected.settings, 'Settings rejected: codex: unsupported platform field(s): command');
+  assert.equal(rejected.settingsTone, 'error');
 });

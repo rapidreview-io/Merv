@@ -5,7 +5,7 @@ export function sessionOutcome(session) {
   if (reason === 'lease_expired' && !session?.activated_at) {
     return { label: 'Not started', tone: 'quiet' };
   }
-  if (reason === 'dispatch_halted' || reason === 'runner_released') {
+  if (reason === 'dispatch_halted' || reason === 'runner_released' || reason === 'halted_by_user') {
     return { label: 'Stopped', tone: 'quiet' };
   }
   if (reason === 'workspace_failed') return { label: 'Workspace failed', tone: 'error' };

@@ -1,21 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import Switch from './Switch';
-import { capabilitiesFor } from './agentPlatformConfig';
-import { connectRunnerBridge, runnerRequest } from './runnerClient';
+import { api } from '../api';
+import RunnerSettingsForm from './RunnerSettingsForm';
+import { runnerPresentation } from './runnerPresentation';
 
 /**
  * AutorunSetupWizard — the guided first-run flow for auto running.
  *
- * The setup crosses two surfaces (this browser and a terminal on the runner
- * machine), so the wizard verifies each hop instead of trusting a checklist:
- * it polls /health until the settings service exists, pairs against it,
- * edits the same draft the panel owns, applies it, asks the settings process
- * to become the runner, then verifies that project is live. Dispatch is the
- * final step so the flow ends where claiming actually begins.
+ * Three steps, all through the brain: (1) install the runner and approve the
+ * code it prints, then wait for that machine's first heartbeat; (2) choose
+ * agents and the repository, saved as brain-held tuning the runner pulls on
+ * its next poll; (3) turn on dispatch. The browser never addresses the
+ * runner machine, so this works for a remote box, over SSH, and on a phone.
  */
 
-const POLL_MS = 2000;
+const POLL_MS = 3000;
+const INSTALL_COMMAND = 'curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh';
+const RUNNER_COMMAND = '$HOME/.merv/bin/merv-agent-runner';
 
 function CommandRow({ command, copied, onCopy }) {
   return (
@@ -28,71 +29,91 @@ function CommandRow({ command, copied, onCopy }) {
   );
 }
 
+function normalizeCode(value) {
+  return String(value || '').toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 8);
+}
+
+function formatCode(value) {
+  const code = normalizeCode(value);
+  return code.length > 4 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+}
+
 export default function AutorunSetupWizard({
   projectId,
-  runnerUrl,
-  pairingToken,
-  onPairingToken,
-  startConnected,
-  runnerStatus,
-  platforms,
-  workspace,
+  forcePair = false,
+  runners,
+  selectedRef,
+  onSelectRunner,
+  onRefreshRunners,
+  draft,
   validation,
   onUpdatePlatform,
+  onRepository,
   onWorkspace,
-  onConnect,
-  onApply,
-  onStart,
-  onRunnerLive,
+  onSave,
+  saveState,
   dispatch,
   dispatchBusy,
   onDispatch,
   onClose,
 }) {
-  // Capture the entry state once: pairing succeeds mid-flow, and the step
-  // list must not rebuild under the current index when it does.
-  const [enteredConnected] = useState(startConnected);
+  // Capture the entry state once: a runner going live mid-flow must not
+  // rebuild the step list under the current index. "Pair another runner"
+  // always starts at the pairing step even when one machine is already live.
+  const [enteredWithRunner] = useState(() => (
+    !forcePair && (runners || []).some((runner) => runner.live)
+  ));
   const steps = useMemo(
-    () => (enteredConnected
-      ? ['agents', 'workspace', 'apply', 'run', 'done']
-      : ['service', 'pair', 'agents', 'workspace', 'apply', 'run', 'done']),
-    [enteredConnected],
+    () => (enteredWithRunner ? ['agents', 'done'] : ['pair', 'agents', 'done']),
+    [enteredWithRunner],
   );
   const [stepIndex, setStepIndex] = useState(0);
-  const [pairBusy, setPairBusy] = useState(false);
-  const [pairError, setPairError] = useState('');
-  const [serviceBlocked, setServiceBlocked] = useState(false);
-  const [serviceBusy, setServiceBusy] = useState(false);
-  const [serviceError, setServiceError] = useState('');
-  const [applyState, setApplyState] = useState({ phase: 'idle' });
-  const [startState, setStartState] = useState({ phase: 'idle' });
-  const [startAttempt, setStartAttempt] = useState(0);
   const [copied, setCopied] = useState('');
-  const applyRun = useRef(0);
-  const startRequested = useRef(false);
-  const serviceAdvanced = useRef(false);
+  const [code, setCode] = useState('');
+  const [approveBusy, setApproveBusy] = useState(false);
+  const [approveError, setApproveError] = useState('');
+  const [approved, setApproved] = useState(null); // { runner_ref, machine }
+  const [localBrain, setLocalBrain] = useState(false);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const dialogRef = useRef(null);
+  const previouslyFocused = useRef(null);
+
   const step = steps[Math.min(stepIndex, steps.length - 1)];
+  const stepNumber = Math.min(stepIndex, steps.length - 1) + 1;
 
-  const settingsCommand = 'curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh';
-  const runnerBin = '$HOME/.merv/bin/merv-agent-runner';
-  const runCommand = `${runnerBin} --project ${projectId || 'PROJECT_ID'}`;
-  const available = runnerStatus?.available_commands;
-  const enabledPlatforms = platforms.filter(
-    (platform) => platform.present !== false && platform.enabled,
+  // Escape closes; focus returns to where the wizard was opened from.
+  useEffect(() => {
+    previouslyFocused.current = document.activeElement;
+    function onKey(event) {
+      if (event.key === 'Escape') closeRef.current?.();
+    }
+    document.addEventListener('keydown', onKey);
+    dialogRef.current?.focus();
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      previouslyFocused.current?.focus?.();
+    };
+  }, []);
+
+  const approvedRunner = useMemo(
+    () => (approved ? (runners || []).find((runner) => runner.runner_ref === approved.runner_ref) : null),
+    [approved, runners],
   );
-  const missingEnabled = available
-    ? enabledPlatforms.filter(
-      (platform) => available[platform.command[0]] === false,
-    )
-    : [];
 
-  const next = () => setStepIndex((i) => Math.min(i + 1, steps.length - 1));
-  const back = () => setStepIndex((i) => Math.max(i - 1, 0));
-  const advanceService = () => {
-    if (serviceAdvanced.current) return;
-    serviceAdvanced.current = true;
-    next();
-  };
+  // After approval, watch for that machine's first heartbeat.
+  useEffect(() => {
+    if (step !== 'pair' || !approved || approvedRunner?.live) return undefined;
+    const timer = setInterval(() => onRefreshRunners?.(), POLL_MS);
+    return () => clearInterval(timer);
+  }, [step, approved, approvedRunner?.live, onRefreshRunners]);
+
+  useEffect(() => {
+    if (step === 'pair' && approvedRunner?.live) {
+      onSelectRunner?.(approvedRunner.runner_ref);
+      setStepIndex((current) => current + 1);
+    }
+  }, [step, approvedRunner?.live, approvedRunner?.runner_ref, onSelectRunner]);
 
   async function copy(label, value) {
     try {
@@ -104,136 +125,52 @@ export default function AutorunSetupWizard({
     }
   }
 
-  // ---- service step: advance the moment the loopback service answers ----
-  useEffect(() => {
-    if (step !== 'service') return undefined;
-    let disposed = false;
-    async function probe() {
-      try {
-        const health = await runnerRequest({ url: runnerUrl, token: '', path: '/health' });
-        if (!disposed && health?.ok) advanceService();
-      } catch {
-        if (!disposed) setServiceBlocked(true);
-      }
+  async function approve() {
+    const normalized = normalizeCode(code);
+    if (normalized.length !== 8) {
+      setApproveError('Enter the 8-character code shown by the runner.');
+      return;
     }
-    probe();
-    const timer = setInterval(probe, POLL_MS);
-    return () => {
-      disposed = true;
-      clearInterval(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, runnerUrl]);
-
-  async function connectService() {
-    setServiceBusy(true);
-    setServiceError('');
+    setApproveBusy(true);
+    setApproveError('');
     try {
-      await connectRunnerBridge(runnerUrl);
-      const health = await runnerRequest({ url: runnerUrl, token: '', path: '/health' });
-      if (!health?.ok) throw new Error('The local runner did not report healthy.');
-      advanceService();
+      const result = await api.approveRunnerPairing(projectId, normalized);
+      setApproved({ runner_ref: result?.runner_ref || '', machine: result?.machine || {} });
+      onRefreshRunners?.();
     } catch (error) {
-      setServiceError(error?.message || 'Could not open the local runner connection.');
-    } finally {
-      setServiceBusy(false);
-    }
-  }
-
-  // ---- apply step: save to the machine as soon as the step opens ----
-  useEffect(() => {
-    if (step !== 'apply') return undefined;
-    const run = ++applyRun.current;
-    let disposed = false;
-    (async () => {
-      setApplyState({ phase: 'running' });
-      const result = await onApply();
-      if (disposed || run !== applyRun.current) return;
-      if (result.ok) {
-        setApplyState({ phase: 'ok', restartRequired: result.restartRequired === true });
-        next();
+      const status = Number(error?.status || 0);
+      const errorCode = String(error?.data?.error_code || '');
+      if (status === 404 && errorCode === 'not_found') {
+        setApproveError('No runner is waiting with that code. Check the terminal and try again.');
+      } else if (status === 404) {
+        // The pairing routes exist only where owner key management exists;
+        // a loopback brain has no auth and needs no runner credential.
+        setLocalBrain(true);
+      } else if (status === 429) {
+        setApproveError('Too many wrong codes. Wait ten minutes, then try again.');
+      } else if (status === 403) {
+        setApproveError('Only a signed-in project owner can approve a runner.');
       } else {
-        setApplyState({ phase: 'failed', detail: result.error });
+        setApproveError(error?.message || 'Could not approve the pairing.');
       }
-    })();
-    return () => { disposed = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step]);
-
-  // ---- run step: hand settings-only mode to the runner, then verify it ----
-  useEffect(() => {
-    if (step !== 'run' || startRequested.current) return undefined;
-    startRequested.current = true;
-    if (applyState.restartRequired) {
-      setStartState({ phase: 'restart' });
-      return undefined;
+    } finally {
+      setApproveBusy(false);
     }
-    (async () => {
-      setStartState({ phase: 'starting' });
-      const result = await onStart();
-      setStartState(result.ok
-        ? { phase: 'waiting' }
-        : { phase: 'failed', detail: result.error });
-    })();
-    return undefined;
-    // startAttempt deliberately re-arms this one-shot request after Retry.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, startAttempt]);
-
-  useEffect(() => {
-    if (step !== 'run') return undefined;
-    let disposed = false;
-    async function probe() {
-      try {
-        const status = await runnerRequest({
-          url: runnerUrl, token: pairingToken, path: '/status',
-        });
-        if (
-          !disposed
-          && status?.runner_active
-          && String(status.project_id || '') === String(projectId || '')
-        ) {
-          onRunnerLive(status);
-          next();
-        }
-      } catch {
-        // The same process briefly closes the settings socket while it
-        // switches into runner mode. Keep polling through that handoff.
-      }
-    }
-    probe();
-    const timer = setInterval(probe, POLL_MS);
-    return () => {
-      disposed = true;
-      clearInterval(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, runnerUrl, pairingToken, projectId]);
-
-  async function pair() {
-    setPairBusy(true);
-    setPairError('');
-    const result = await onConnect();
-    setPairBusy(false);
-    if (result.ok) next();
-    else setPairError(result.error || 'Could not connect to the local runner.');
   }
 
-  function retryStart() {
-    startRequested.current = false;
-    setStartAttempt((attempt) => attempt + 1);
-  }
-
-  const stepNumber = Math.min(stepIndex, steps.length - 1) + 1;
+  const selected = (runners || []).find((runner) => runner.runner_ref === selectedRef) || null;
+  const selectedView = runnerPresentation(selected);
+  const enabledCount = draft.platforms.filter((platform) => platform.enabled).length;
 
   return createPortal(
-    <div className="retention-modal-overlay" onMouseDown={onClose}>
+    <div className="retention-modal-overlay">
       <div
         className="retention-modal sbxpw"
         role="dialog"
         aria-modal="true"
         aria-label="Set up auto running"
-        onMouseDown={(e) => e.stopPropagation()}
+        tabIndex={-1}
+        ref={dialogRef}
       >
         <div className="retention-modal-head">
           <div className="retention-modal-head-main">
@@ -248,331 +185,144 @@ export default function AutorunSetupWizard({
           <span className="sbxpw-count">Step {stepNumber} of {steps.length}</span>
         </div>
 
-        {step === 'service' && (
-          <div className="sbxpw-body">
-            <p className="sbxpw-lead">Install the runner</p>
-            <p className="sbxpw-help">
-              Run this on the machine that will run your agents. Setup continues
-              when Merv connects.
-            </p>
-            <CommandRow
-              command={settingsCommand}
-              copied={copied === 'service'}
-              onCopy={() => copy('service', settingsCommand)}
-            />
-            <p className="aruw-command-note">
-              Requires Python 3.11+ and Git. Remote machine? Use{' '}
-              <code>ssh -L 8791:127.0.0.1:8791 HOST</code>.
-            </p>
-            {serviceBlocked ? (
-              <div className="aruw-poll" role="status">
-                <button
-                  type="button"
-                  className="sbxp-save"
-                  disabled={serviceBusy}
-                  onClick={connectService}
-                >
-                  {serviceBusy ? 'Connecting…' : 'Connect to the runner'}
-                </button>
-                <span>
-                  Your browser needs permission to connect to this machine.
-                </span>
-              </div>
-            ) : (
-              <div className="aruw-poll" role="status">
-                <span className="sbxpw-spinner" aria-hidden="true" />
-                Waiting for the runner…
-              </div>
-            )}
-            {serviceError && <p className="sbxpw-fail-detail">{serviceError}</p>}
-          </div>
-        )}
-
         {step === 'pair' && (
           <div className="sbxpw-body">
-            <p className="sbxpw-lead">Pair the runner</p>
+            <p className="sbxpw-lead">Install &amp; pair the runner</p>
             <p className="sbxpw-help">
-              Paste the pairing token shown in the terminal. It stays in this tab.
-            </p>
-            <input
-              className="sbxpw-input"
-              type="password"
-              autoFocus
-              autoComplete="off"
-              spellCheck={false}
-              value={pairingToken}
-              placeholder="Paste from the runner terminal"
-              onChange={(e) => onPairingToken(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && pairingToken.trim()) pair(); }}
-            />
-            {pairError && <p className="sbxpw-fail-detail">{pairError}</p>}
-            <p className="aruw-command-note">
-              Need the token again?
+              Run this on the machine that will run your agents — local, remote,
+              or over SSH. It prints a short code.
             </p>
             <CommandRow
-              command={`${runnerBin} --show-pairing-token`}
-              copied={copied === 'token'}
-              onCopy={() => copy('token', `${runnerBin} --show-pairing-token`)}
+              command={INSTALL_COMMAND}
+              copied={copied === 'install'}
+              onCopy={() => copy('install', INSTALL_COMMAND)}
             />
+            <p className="aruw-command-note">
+              Requires Python 3.11+ and Git. Already installed? Run{' '}
+              <code>{RUNNER_COMMAND} pair</code>.
+            </p>
+            {localBrain ? (
+              <div className="aruw-poll" role="status">
+                <span>
+                  This brain runs locally and needs no pairing. Start the runner
+                  with <code>{RUNNER_COMMAND} --project {projectId}</code>.
+                </span>
+              </div>
+            ) : approved ? (
+              <div className="aruw-poll" role="status">
+                <span className="sbxpw-spinner" aria-hidden="true" />
+                Approved — waiting for {approved.machine?.hostname || 'the runner'}…
+              </div>
+            ) : (
+              <>
+                <label className="aruw-code">
+                  <span>Pairing code</span>
+                  <input
+                    className="sbxpw-input mono"
+                    autoFocus
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="XXXX-XXXX"
+                    value={formatCode(code)}
+                    onChange={(e) => { setCode(e.target.value); setApproveError(''); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') approve(); }}
+                    aria-label="Pairing code"
+                  />
+                </label>
+                {approveError && <p className="sbxpw-fail-detail" role="alert">{approveError}</p>}
+              </>
+            )}
           </div>
         )}
 
         {step === 'agents' && (
           <div className="sbxpw-body">
-            <p className="sbxpw-lead">Choose agents</p>
+            <p className="sbxpw-lead">Agents &amp; repository</p>
             <p className="sbxpw-help">
-              {available
-                ? 'Availability is checked on the runner machine.'
-                : 'Select at least one agent.'}
+              {selected
+                ? `Settings for ${selectedView.machineName}. Availability is checked on that machine.`
+                : 'Pair a runner first.'}
             </p>
-            <div className="aruw-agents">
-              {platforms.filter((platform) => !platform.custom).map((platform) => {
-                const found = available ? available[platform.command[0]] : undefined;
-                const capabilities = capabilitiesFor(platform.adapter);
-                return (
-                  <div className="aruw-agent" key={platform.id}>
-                    <div className="aruw-agent-head">
-                      <Switch
-                        checked={platform.enabled}
-                        onChange={(value) => onUpdatePlatform(platform.id, { enabled: value })}
-                        label={`Enable ${platform.name}`}
-                      />
-                      <span className="aruw-agent-name">
-                        <strong>{platform.name}</strong>
-                        <small className="mono">{platform.command[0] || 'no command'}</small>
-                      </span>
-                      {found === true && <span className="aruw-tag aruw-tag--ok">installed</span>}
-                      {found === false && <span className="aruw-tag aruw-tag--missing">not found</span>}
-                      <label className="aruw-par">
-                        <span aria-hidden="true">×</span>
-                        <input
-                          type="number"
-                          min="1"
-                          max="32"
-                          aria-label={`${platform.name} parallel experiments`}
-                          value={platform.parallelism}
-                          onChange={(e) => onUpdatePlatform(platform.id, { parallelism: e.target.value })}
-                        />
-                      </label>
-                    </div>
-                    {platform.enabled && (capabilities.model || capabilities.effort) && (
-                      <div className="aruw-agent-tuning">
-                        {capabilities.model && (
-                          <label>
-                            <span>Model</span>
-                            <input
-                              value={platform.model}
-                              placeholder="Platform default"
-                              spellCheck={false}
-                              onChange={(e) => onUpdatePlatform(platform.id, { model: e.target.value })}
-                            />
-                          </label>
-                        )}
-                        {capabilities.effort && (
-                          <label>
-                            <span>Effort</span>
-                            <input
-                              value={platform.effort}
-                              placeholder="Platform default"
-                              spellCheck={false}
-                              list={`aruw-effort-${platform.id}`}
-                              onChange={(e) => onUpdatePlatform(platform.id, { effort: e.target.value })}
-                            />
-                            <datalist id={`aruw-effort-${platform.id}`}>
-                              <option value="low" />
-                              <option value="medium" />
-                              <option value="high" />
-                              <option value="xhigh" />
-                            </datalist>
-                          </label>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            {missingEnabled.length > 0 && (
-              <p className="aruw-warn">
-                {missingEnabled.map((platform) => platform.name).join(', ')}
-                {missingEnabled.length === 1 ? ' is' : ' are'} not installed on
-                this machine.
-              </p>
-            )}
-          </div>
-        )}
-
-        {step === 'workspace' && (
-          <div className="sbxpw-body">
-            <p className="sbxpw-lead">Choose the repository</p>
-            <p className="sbxpw-help">
-              Use paths on the runner machine. Each job gets its own Git worktree.
-            </p>
-            <div className="aruw-fields">
-              <label>
-                <span>Repository</span>
-                <input
-                  className="sbxpw-input mono"
-                  value={workspace.repository}
-                  placeholder="/absolute/path/to/repository"
-                  onChange={(e) => onWorkspace({ repository: e.target.value })}
-                />
-                {validation.workspace.repository && (
-                  <small className="field-error">{validation.workspace.repository}</small>
-                )}
-              </label>
-              <label>
-                <span>Worktree root</span>
-                <input
-                  className="sbxpw-input mono"
-                  value={workspace.root}
-                  placeholder="/absolute/path/to/worktrees"
-                  onChange={(e) => onWorkspace({ root: e.target.value })}
-                />
-                {validation.workspace.root && (
-                  <small className="field-error">{validation.workspace.root}</small>
-                )}
-              </label>
-              <label>
-                <span>Base ref</span>
-                <input
-                  className="sbxpw-input mono"
-                  value={workspace.base_ref}
-                  onChange={(e) => onWorkspace({ base_ref: e.target.value })}
-                />
-                {validation.workspace.base_ref && (
-                  <small className="field-error">{validation.workspace.base_ref}</small>
-                )}
-              </label>
-            </div>
-          </div>
-        )}
-
-        {step === 'apply' && (
-          <div className="sbxpw-body sbxpw-body--center">
-            {applyState.phase !== 'failed' ? (
-              <>
-                <span className="sbxpw-spinner" aria-hidden="true" />
-                <p className="sbxpw-lead">Saving settings</p>
-                <p className="sbxpw-help">
-                  Writing agents and repository to <code>~/.merv/client.json</code>.
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="sbxpw-fail">Could not save</p>
-                <p className="sbxpw-fail-detail">{applyState.detail}</p>
-              </>
-            )}
-          </div>
-        )}
-
-        {step === 'run' && (
-          <div className="sbxpw-body sbxpw-body--center">
-            {startState.phase === 'failed' ? (
-              <>
-                <p className="sbxpw-fail">Could not start the runner</p>
-                <p className="sbxpw-fail-detail">{startState.detail}</p>
-                <p className="sbxpw-help">Run this on the runner machine, then retry.</p>
-                <CommandRow
-                  command={runCommand}
-                  copied={copied === 'run'}
-                  onCopy={() => copy('run', runCommand)}
-                />
-              </>
-            ) : startState.phase === 'restart' ? (
-              <>
-                <p className="sbxpw-lead">Restart the runner</p>
-                <p className="sbxpw-help">Settings are saved. Restart the active runner to use them.</p>
-                <CommandRow
-                  command={runCommand}
-                  copied={copied === 'run'}
-                  onCopy={() => copy('run', runCommand)}
-                />
-              </>
-            ) : (
-              <>
-                <span className="sbxpw-spinner" aria-hidden="true" />
-                <p className="sbxpw-lead">Starting the runner</p>
-                <p className="sbxpw-help">
-                  {startState.phase === 'waiting'
-                    ? 'The runner is starting for this project.'
-                    : 'Switching the terminal from setup to auto-run.'}
-                </p>
-              </>
-            )}
+            <RunnerSettingsForm
+              platforms={draft.platforms}
+              custom={draft.custom}
+              workspace={draft.workspace}
+              validation={validation}
+              availableCommands={selected?.inventory?.available_commands || null}
+              onUpdatePlatform={onUpdatePlatform}
+              onRepository={onRepository}
+              onWorkspace={onWorkspace}
+              compact
+            />
+            {saveState.error && <p className="sbxpw-fail-detail" role="alert">{saveState.error}</p>}
           </div>
         )}
 
         {step === 'done' && (
-          <div className="sbxpw-body sbxpw-body--center">
-            <span className="sbxpw-check" aria-hidden="true">✓</span>
-            <p className="sbxpw-lead">Runner is live</p>
-            <div className="sbxpw-finish-row">
-              {dispatch === true ? (
-                <span className="sbxpw-enabled-note">
-                  Dispatch is on. New work will start automatically.
-                </span>
-              ) : (
+          <div className="sbxpw-body">
+            <p className="sbxpw-lead">
+              {saveState.applied ? '✓ Settings applied' : '✓ Settings saved'}
+            </p>
+            <p className="sbxpw-help">
+              {saveState.applied
+                ? `${selectedView.machineName} is running your settings.`
+                : `${selectedView.machineName} will apply them on its next poll.`}
+            </p>
+            {dispatch === true ? (
+              <p className="aruw-done-note">Dispatch is on. New work will start automatically.</p>
+            ) : (
+              <>
                 <button
                   type="button"
                   className="sbxp-save"
-                  disabled={dispatchBusy || dispatch === null}
+                  disabled={dispatch === null || dispatchBusy}
                   onClick={() => onDispatch(true)}
                 >
                   {dispatchBusy ? 'Turning on…' : 'Turn on automatic dispatch'}
                 </button>
-              )}
-            </div>
-            {dispatch === false && (
-              <p className="sbxpw-help">
-                Turn on dispatch to start new work automatically.
-              </p>
+                {dispatch === false && (
+                  <p className="aruw-done-note">Turn on dispatch to start new work automatically.</p>
+                )}
+              </>
             )}
           </div>
         )}
 
         <div className="sbxpw-nav">
-          {(step === 'agents' || step === 'workspace') && stepIndex > 0 && (
-            <button type="button" className="sbxpw-btn" onClick={back}>Back</button>
-          )}
-          {step === 'apply' && applyState.phase === 'failed' && (
-            <button type="button" className="sbxpw-btn" onClick={back}>Back — fix a value</button>
+          {step === 'agents' && stepIndex > 0 && (
+            <button type="button" className="sbxpw-btn" onClick={() => setStepIndex((i) => i - 1)}>Back</button>
           )}
           <span className="sbxpw-nav-spacer" />
-          {step === 'pair' && (
+          {step === 'pair' && !approved && !localBrain && (
             <button
               type="button"
               className="sbxpw-btn sbxpw-btn--primary"
-              disabled={pairBusy || !pairingToken.trim()}
-              onClick={pair}
+              disabled={approveBusy || normalizeCode(code).length !== 8}
+              onClick={approve}
             >
-              {pairBusy ? 'Connecting…' : 'Connect'}
+              {approveBusy ? 'Approving…' : 'Approve'}
+            </button>
+          )}
+          {step === 'pair' && localBrain && (
+            <button
+              type="button"
+              className="sbxpw-btn sbxpw-btn--primary"
+              onClick={() => { onRefreshRunners?.(); setStepIndex((i) => i + 1); }}
+            >
+              Continue
             </button>
           )}
           {step === 'agents' && (
             <button
               type="button"
               className="sbxpw-btn sbxpw-btn--primary"
-              disabled={enabledPlatforms.length === 0}
-              onClick={next}
+              disabled={!selected || !validation.valid || enabledCount === 0 || saveState.busy}
+              onClick={async () => {
+                const ok = await onSave();
+                if (ok) setStepIndex((i) => i + 1);
+              }}
             >
-              Next
-            </button>
-          )}
-          {step === 'workspace' && (
-            <button
-              type="button"
-              className="sbxpw-btn sbxpw-btn--primary"
-              disabled={!validation.valid}
-              onClick={next}
-            >
-              Save & apply
-            </button>
-          )}
-          {step === 'run' && startState.phase === 'failed' && (
-            <button type="button" className="sbxpw-btn sbxpw-btn--primary" onClick={retryStart}>
-              Retry
+              {saveState.busy ? 'Saving…' : 'Save'}
             </button>
           )}
           {step === 'done' && (

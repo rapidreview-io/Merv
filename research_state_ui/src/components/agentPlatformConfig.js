@@ -1,3 +1,11 @@
+// The Auto-run settings form model. A draft is what the owner is editing for
+// one paired runner: per native platform, the four tuning fields the brain may
+// hold (enabled, model, effort, parallelism), plus the workspace paths. It is
+// seeded from that runner's row — the owner's last saved settings when there
+// are any, otherwise what the machine reported it has — and saved back through
+// the brain, which the runner pulls on its next heartbeat. Executable commands
+// and custom command-adapter agents are machine-local and never appear here.
+
 const ADAPTER_CAPABILITIES = {
   codex: { model: true, effort: true },
   claude: { model: true, effort: true },
@@ -7,10 +15,9 @@ const ADAPTER_CAPABILITIES = {
   copilot: { model: true, effort: false },
   qwen: { model: true, effort: false },
   hermes: { model: true, effort: false },
-  command: { model: true, effort: true },
 };
 
-export const ADAPTERS = Object.keys(ADAPTER_CAPABILITIES);
+export const NATIVE_ADAPTERS = Object.keys(ADAPTER_CAPABILITIES);
 
 export const PLATFORM_PRESETS = [
   ['codex', 'Codex', 'codex', 'gpt-5.6-sol', 'high', 2, true],
@@ -24,18 +31,14 @@ export const PLATFORM_PRESETS = [
 ].map(([id, name, executable, model, effort, parallelism, enabled]) => ({
   id,
   name,
-  adapter: id,
-  command: [executable],
+  executable,
   model,
   effort,
   parallelism,
   enabled,
-  present: true,
-  custom: false,
 }));
 
 export const DEFAULT_WORKSPACE = {
-  strategy: 'git_worktree',
   repository: '',
   root: '',
   base_ref: 'main',
@@ -70,136 +73,90 @@ export function capabilitiesFor(adapter) {
 }
 
 export function defaultPlatforms() {
-  return PLATFORM_PRESETS.map((platform) => ({
-    ...platform,
-    command: [...platform.command],
-  }));
+  return PLATFORM_PRESETS.map((platform) => ({ ...platform }));
 }
 
-function commandValue(value, fallback = []) {
-  if (Array.isArray(value)) return value.map((item) => String(item));
-  if (typeof value === 'string' && value) return [value];
-  return [...fallback];
+function text(value) {
+  return typeof value === 'string' ? value : '';
 }
 
-function configuredPlatform(id, raw, preset = null) {
-  const commandWasString = typeof raw?.command === 'string'
-    && /\s/.test(raw.command.trim());
-  const hasCommand = raw && Object.hasOwn(raw, 'command');
-  return {
-    id,
-    name: typeof raw?.name === 'string' && raw.name
-      ? raw.name
-      : (preset?.name || id),
-    adapter: typeof raw?.adapter === 'string'
-      ? raw.adapter
-      : (preset?.adapter || id),
-    command: commandValue(
-      hasCommand ? raw.command : undefined,
-      hasCommand ? [] : (preset?.command || [id]),
-    ),
-    model: typeof raw?.model === 'string' ? raw.model : '',
-    effort: typeof raw?.effort === 'string' ? raw.effort : '',
-    parallelism: raw?.parallelism ?? 1,
-    enabled: raw?.enabled !== false,
-    present: true,
-    custom: !preset,
-    commandWasString,
-  };
+function parallelismValue(value, fallback) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 32 ? parsed : fallback;
 }
 
-function supportedPlatform(id, raw) {
-  return String(id || '').toLowerCase() !== 'aider'
-    && String(raw?.adapter || '').toLowerCase() !== 'aider';
-}
-
-export function normalizeLocalPlatforms(saved) {
-  if (!Array.isArray(saved) || !saved.length) return defaultPlatforms();
-  const presets = new Map(PLATFORM_PRESETS.map((item) => [item.id, item]));
-  const normalized = saved
-    .filter((item) => (
-      item
-      && typeof item.id === 'string'
-      && item.id
-      && supportedPlatform(item.id, item)
-    ))
+// Seed a draft for one runner row. Precedence per platform: the owner's saved
+// desired settings, then the machine's reported inventory, then the preset.
+export function draftFromRunner(runner) {
+  const desiredPlatforms = runner?.desired_settings?.platforms || {};
+  const reported = new Map(
+    (Array.isArray(runner?.platforms) ? runner.platforms : [])
+      .filter((item) => item && typeof item.name === 'string')
+      .map((item) => [item.name, item]),
+  );
+  const platforms = PLATFORM_PRESETS.map((preset) => {
+    const saved = desiredPlatforms[preset.id];
+    const seen = reported.get(preset.id);
+    const source = saved || seen || null;
+    return {
+      ...preset,
+      enabled: source && typeof source.enabled === 'boolean'
+        ? source.enabled
+        : (seen ? seen.enabled !== false : false),
+      model: source ? text(source.model) : preset.model,
+      effort: source ? text(source.effort) : preset.effort,
+      parallelism: parallelismValue(source?.parallelism, preset.parallelism),
+      // Present on the machine already (any state) vs. never configured there.
+      configured: Boolean(seen),
+    };
+  });
+  const custom = [...reported.values()]
+    .filter((item) => item.managed === false)
     .map((item) => ({
-      ...configuredPlatform(item.id, item, presets.get(item.id)),
-      present: item.present !== false,
+      id: item.name,
+      name: item.name,
+      harness: item.harness || 'command',
+      enabled: item.enabled !== false,
+      parallelism: parallelismValue(item.parallelism, 1),
     }));
-  const ids = new Set(normalized.map((item) => item.id));
-  return [
-    ...normalized,
-    ...PLATFORM_PRESETS
-      .filter((item) => !ids.has(item.id))
-      .map((item) => ({ ...item, command: [...item.command] })),
-  ];
+
+  const desiredWorkspace = runner?.desired_settings?.workspace || null;
+  const reportedWorkspace = runner?.inventory?.workspace || null;
+  const source = desiredWorkspace || reportedWorkspace || {};
+  const workspace = {
+    ...DEFAULT_WORKSPACE,
+    repository: text(source.repository),
+    root: text(source.root),
+    base_ref: text(source.base_ref).trim() || DEFAULT_WORKSPACE.base_ref,
+  };
+  return { platforms, custom, workspace };
 }
 
-export function draftFromSettings(settings) {
-  const configured = settings?.agent_platforms;
-  const values = configured && typeof configured === 'object' && !Array.isArray(configured)
-    ? configured
-    : {};
-  const presets = new Map(PLATFORM_PRESETS.map((item) => [item.id, item]));
-  const platforms = PLATFORM_PRESETS.map((preset) => (
-    Object.hasOwn(values, preset.id)
-      ? configuredPlatform(preset.id, values[preset.id], preset)
-      : {
-        ...preset,
-        command: [...preset.command],
-        enabled: false,
-        present: false,
-      }
-  ));
-  for (const [id, raw] of Object.entries(values)) {
-    if (!presets.has(id) && supportedPlatform(id, raw)) {
-      platforms.push(configuredPlatform(id, raw));
-    }
-  }
-
-  const rawWorkspace = settings?.agent_workspace;
-  const workspace = rawWorkspace && typeof rawWorkspace === 'object'
-    ? {
-      ...DEFAULT_WORKSPACE,
-      repository: typeof rawWorkspace.repository === 'string' ? rawWorkspace.repository : '',
-      root: typeof rawWorkspace.root === 'string' ? rawWorkspace.root : '',
-      base_ref: typeof rawWorkspace.base_ref === 'string' && rawWorkspace.base_ref.trim()
-        ? rawWorkspace.base_ref
-        : DEFAULT_WORKSPACE.base_ref,
-    }
-    : { ...DEFAULT_WORKSPACE };
-  return { platforms, workspace };
-}
-
-export function configFromDraft(platforms, workspace) {
+// The closed-schema payload PUT to the brain. Always the full native set the
+// form knows about, so a toggle off is an explicit enabled:false, not an
+// omission; the runner treats absence as "no change".
+export function settingsFromDraft(platforms, workspace) {
   return {
-    agent_workspace: {
-      strategy: 'git_worktree',
+    platforms: Object.fromEntries(platforms.map((platform) => [
+      platform.id,
+      {
+        enabled: Boolean(platform.enabled),
+        model: platform.model.trim(),
+        effort: platform.effort.trim(),
+        parallelism: Number(platform.parallelism),
+      },
+    ])),
+    workspace: {
       repository: workspace.repository.trim(),
       root: workspace.root.trim(),
       base_ref: workspace.base_ref.trim(),
     },
-    agent_platforms: Object.fromEntries(
-      platforms
-        .filter((platform) => platform.present !== false)
-        .map((platform) => [
-          platform.id,
-          {
-            adapter: platform.adapter.trim(),
-            enabled: platform.enabled,
-            command: [...platform.command],
-            model: platform.model.trim() || null,
-            effort: platform.effort.trim() || null,
-            parallelism: Number(platform.parallelism),
-          },
-        ]),
-    ),
   };
 }
 
 function absolutePath(value) {
   return value.startsWith('/')
+    || value.startsWith('~')
     || /^[A-Za-z]:[\\/]/.test(value)
     || value.startsWith('\\\\');
 }
@@ -215,25 +172,11 @@ export function validateDraft(platforms, workspace) {
   if (!workspace.base_ref.trim()) workspaceErrors.base_ref = 'Base ref is required.';
 
   const platformErrors = {};
-  for (const platform of platforms.filter((item) => item.present !== false || item.enabled)) {
+  for (const platform of platforms) {
     const errors = {};
-    if (!ADAPTERS.includes(platform.adapter.trim())) {
-      errors.adapter = `Choose one of: ${ADAPTERS.join(', ')}.`;
-    }
     const parallelism = Number(platform.parallelism);
     if (!Number.isInteger(parallelism) || parallelism < 1 || parallelism > 32) {
       errors.parallelism = 'Parallelism must be an integer from 1 to 32.';
-    }
-    if (platform.enabled) {
-      if (
-        !Array.isArray(platform.command)
-        || !platform.command.length
-        || platform.command.some((argument) => typeof argument !== 'string' || !argument.trim())
-      ) {
-        errors.command = 'Enabled agents need one non-empty command argument per line.';
-      } else if (platform.commandWasString) {
-        errors.command = 'This older command draft is ambiguous. Re-enter one argument per line.';
-      }
     }
     if (Object.keys(errors).length) platformErrors[platform.id] = errors;
   }
@@ -250,13 +193,6 @@ export function validateDraft(platforms, workspace) {
   };
 }
 
-export function configSignature(config) {
-  return JSON.stringify(config);
-}
-
-export function nextCustomId(platforms) {
-  let n = 1;
-  const used = new Set(platforms.map((platform) => platform.id));
-  while (used.has(`agent-${n}`)) n += 1;
-  return `agent-${n}`;
+export function draftSignature(platforms, workspace) {
+  return JSON.stringify(settingsFromDraft(platforms, workspace));
 }

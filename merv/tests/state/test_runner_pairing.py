@@ -72,7 +72,8 @@ class RunnerPairingTest(unittest.TestCase):
         self.assertEqual(approved["key"]["label"], "auto-run · lucia.local")
         self.assertEqual(approved["machine"]["hostname"], "lucia.local")
         key_id = approved["key"]["id"]
-        self.assertEqual(approved["runner_id"], f"key:{key_id}/runner-uuid")
+        self.assertNotIn("runner_id", approved)  # identity stays private
+        self.assertEqual(len(approved["runner_ref"]), 24)
         # The plaintext key the runner generated now authenticates.
         record = self.keys.verify_secret(secret=key)
         self.assertIsNotNone(record)
