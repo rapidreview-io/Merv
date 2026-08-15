@@ -51,9 +51,44 @@ function statusClass(node) {
 }
 
 // Attachment edges that are shown as placement, not lines: an execution-lane
-// file or the sandbox simply sits below the beat it trails. Evidence edges
+// file or the sandbox simply sits next to the beat it trails. Evidence edges
 // (`feeds`) ARE drawn — files lead into the marker they were submitted with.
 const ATTACHMENT_EDGES = new Set(['produced', 'ran_on']);
+
+/**
+ * The server states two facts per step: round j+1 followed round j (marker →
+ * marker `then`) and the verdict on round j led to round j+1 (review → marker).
+ * With reviews sitting on the middle row between the two markers, the direct
+ * line would run behind the review card, so it is drawn only when no verdict
+ * connects the pair — the marker → review → marker path carries the line.
+ */
+function drawnEdges(nodes, edges) {
+  const type = new Map(nodes.map(n => [n.id, n.type]));
+  const out = new Map();
+  for (const e of edges) {
+    if (!out.has(e.from)) out.set(e.from, []);
+    out.get(e.from).push(e.to);
+  }
+  const viaReview = (from, to) => {
+    const seen = new Set();
+    const stack = [from];
+    while (stack.length) {
+      const id = stack.pop();
+      for (const next of out.get(id) || []) {
+        if (type.get(next) !== 'review' || seen.has(next)) continue;
+        if ((out.get(next) || []).includes(to)) return true;
+        seen.add(next);
+        stack.push(next);
+      }
+    }
+    return false;
+  };
+  return edges.filter(e => {
+    if (ATTACHMENT_EDGES.has(e.type)) return false;
+    if (e.type !== 'then' || type.get(e.from) === 'review' || type.get(e.to) === 'review') return true;
+    return !viaReview(e.from, e.to);
+  });
+}
 
 // Where the spine passes through every card: a fixed offset from the top, so
 // cards of slightly different heights still sit on one straight line.
@@ -149,8 +184,7 @@ function toFlow(figure) {
     draggable: false,
     connectable: false,
   }));
-  const edges = laid.edges
-    .filter(e => !ATTACHMENT_EDGES.has(e.type))
+  const edges = drawnEdges(laid.nodes, laid.edges)
     .map(e => ({
       id: e.id,
       source: e.from,

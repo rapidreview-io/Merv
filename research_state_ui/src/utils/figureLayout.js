@@ -6,21 +6,24 @@
  * TIMELINE — the derived experiment figure. One uniform row grid, read left
  * to right in time:
  *
- *   marker columns   an attempt / submission (or the conclusion) is always the
- *                    ONLY card in its column and always sits on the middle row,
- *                    so the markers form one straight backbone;
- *   regular columns  everything else — the verdict on the round before, the
- *                    files prepared for the round after, sandbox, claims —
- *                    pooled into the single column between two markers and
- *                    stacked on the same row pitch, centered on the backbone
- *                    row (straddling it, never on it, so the backbone stays a
- *                    clear channel). No lanes: a file and a review are laid
- *                    out the same way, in type order, top to bottom.
+ *   beat columns     the middle row is an alternating chain of work and
+ *                    decision: attempt / submission, the review that judged
+ *                    it, the next attempt / submission, its review, … and the
+ *                    conclusion. Each beat is always the ONLY card in its
+ *                    column and always sits on the row, so a verdict is
+ *                    strictly after the round it graded and strictly before
+ *                    anything of the round it caused;
+ *   regular columns  everything else — files prepared for the next round,
+ *                    execution output trailing a beat, sandbox, claims —
+ *                    pooled into the single column between two beats and
+ *                    stacked on the same row pitch, centered on the row
+ *                    (straddling it, never on it, so the row stays a clear
+ *                    channel). No lanes: cards go in type order, top to bottom.
  *
- * Spine nodes (markers, reviews, gates, claims) are ranked by longest path over
- * spine-only edges, which orders the columns. Satellites never take part in
- * ranking: evidence joins the regular column just before the marker it fed,
- * execution output joins the column just after the beat it trails.
+ * Spine nodes (beats and claims) are ranked by longest path over spine-only
+ * edges, which orders the columns. Satellites never take part in ranking:
+ * evidence joins the regular column just before the marker it fed, execution
+ * output joins the column just after the beat it trails.
  *
  * LEGACY — every other small DAG (agent-authored logic graphs, reflection
  * waves, mobile outlines): longest-path layering gives the reading order and a
@@ -48,8 +51,10 @@ const ROW_PITCH = FIG_NODE_H + GAP_Y;
 
 // Vertical order within a column: inputs above, verdicts/outputs below.
 const TYPE_ORDER = { artifact: 0, artifact_group: 1, attempt: 2, submission: 3, sandbox: 4, review: 5, conclusion: 6, claim: 7 };
-// Backbone markers: the beats that own a column and sit on the middle row.
-const MARKER_TYPES = new Set(['attempt', 'submission', 'conclusion']);
+// Beats: the nodes that own a column and sit on the middle row. Reviews (and
+// open review gates, which share the type) are beats too — the verdict is what
+// sends a round back or lets it move on, so it belongs on the line.
+const MARKER_TYPES = new Set(['attempt', 'submission', 'review', 'conclusion']);
 
 /** Longest-path ranks (Kahn's order; cycle-safe: leftovers keep rank 0),
  * followed by a right-pack of pure sources next to their earliest consumer. */
@@ -89,8 +94,8 @@ function layoutTimeline(rawNodes, edges, ids) {
   const rank = rankNodes(spineNodes, spineEdges);
   const isMarker = (n) => MARKER_TYPES.has(n.type);
 
-  // Column keys: a marker owns its rank outright; other spine nodes at that
-  // rank share one regular column, placed just after the marker if they
+  // Column keys: a beat owns its rank outright; other spine nodes (claims) at
+  // that rank share one regular column, placed just after the beat if they
   // (unusually) tie with one. Keys only need to sort, so halves are fine.
   const keyOf = new Map();
   const markerRanks = new Set(spineNodes.filter(isMarker).map(n => rank.get(n.id)));
@@ -115,11 +120,12 @@ function layoutTimeline(rawNodes, edges, ids) {
     return (a + b) / 2;
   };
 
-  // Satellites join the regular column in the gap next to their anchor:
+  // Satellites join the regular column in the gap next to their anchor beat:
   // evidence goes just BEFORE the marker it fed (prepared, then submitted),
-  // execution output just AFTER the beat it trails. Anchored on a non-marker
-  // (a verdict), it simply shares that column. Tolerate a satellite anchored
-  // on another satellite by walking up (bounded) to the spine.
+  // execution output just AFTER the beat it trails — so the files for round
+  // j+1 and the output trailing verdict j share the column between them.
+  // Anchored on a non-beat, it simply shares that column. Tolerate a
+  // satellite anchored on another satellite by walking up (bounded).
   const byId = new Map(rawNodes.map(n => [n.id, n]));
   const spineAnchor = (n) => {
     let cur = n;
@@ -166,8 +172,8 @@ function layoutTimeline(rawNodes, edges, ids) {
   let x = 0;
   for (const [k, col] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
     if (sortedMarkers.includes(k)) {
-      // Markers: exactly one per column, on the row. (Two markers can only
-      // tie on rank in malformed data; stack them rather than lose one.)
+      // Beats: exactly one per column, on the row. (Two beats can only tie
+      // on rank in malformed data; stack them rather than lose one.)
       let y = backboneY;
       for (const n of col) { nodes.push({ ...n, x, y }); y += ROW_PITCH; }
     } else {
