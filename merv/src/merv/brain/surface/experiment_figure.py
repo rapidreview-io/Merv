@@ -16,9 +16,11 @@ The document is a timeline. Its spine is the temporal sequence of *beats*:
 
 Every attempt marker and result-submission marker is followed by the review
 that judged it, and a rejecting review is what leads to the next round — so
-round j+1 always sits strictly after round j *and* its verdict. Everything else
-is a satellite that names the beat it belongs to (`anchor`) and which side of
-the spine it lives on (`lane`):
+round j+1 always sits strictly after round j *and* its verdict. Consecutive
+markers are also linked directly (`then`), so the markers form one straight
+backbone and the verdicts hang off it as the loop that explains each step.
+Everything else is a satellite that names the beat it belongs to (`anchor`)
+and which side of the spine it lives on (`lane`):
 
   * ``lane: "evidence"``  — what a beat put up for review: the proposal (plan &
     friends) feeding an attempt marker, the results feeding a submission
@@ -30,8 +32,8 @@ the spine it lives on (`lane`):
 Edge vocabulary:
 
   reviewed_by  marker → the review that graded it
-  then         plain succession on the spine (approval → next round, re-review,
-               marker → next marker when no verdict links them, → open gate)
+  then         plain succession on the spine: marker → next marker (the
+               backbone), approval → next round, re-review, → open gate
   revised_to   a rejecting verdict → the round it caused
   feeds        evidence artifact → the marker it was submitted with
   produced     attempt → execution-lane artifact     (attachment; placement)
@@ -364,17 +366,21 @@ def build_experiment_figure(
         elif verdict in _REJECTIONS:
             node["status"], node["sublabel"] = "returned", "sent back"
 
-    # ---- spine succession: each round follows the verdict of the last ----
-    # A rejection is what caused the next round, so the arrow leaves the
-    # review, not the marker; without a verdict (legacy rows, abandoned
-    # gates) the markers link directly.
+    # ---- spine succession ----
+    # Two facts per step. The backbone: round j+1 followed round j (marker →
+    # marker, plain `then`) — this is the straight line the reader follows.
+    # The verdict path: the review that closed round j leads to round j+1 —
+    # a rejection earns the dashed revision arrow, an approval plain
+    # succession. When a round has no verdict the two coincide.
     for previous, following in zip(spine, spine[1:]):
+        add_edge(previous, following, "then")
         source, verdict = tail_of(previous)
-        add_edge(
-            source,
-            following,
-            "revised_to" if verdict in _REJECTIONS else "then",
-        )
+        if source != previous:
+            add_edge(
+                source,
+                following,
+                "revised_to" if verdict in _REJECTIONS else "then",
+            )
 
     # ---- artifacts, one node per (artifact, attempt) association ----
     # Where an artifact sits is decided by what sealed it: a result seal makes

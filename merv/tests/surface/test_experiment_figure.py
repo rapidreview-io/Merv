@@ -117,21 +117,21 @@ class ExperimentFigureTimelineTest(unittest.TestCase):
         self.edges = {(e["from"], e["to"]): e["type"] for e in self.figure["edges"]}
 
     def test_verdicts_are_spine_beats_between_rounds(self) -> None:
-        # attempt → its review → next round; no redundant marker→marker link.
+        # attempt → its review → next round, AND the straight backbone link.
         self.assertEqual(self.edges[("attempt:1", "review:rv_d1")], "reviewed_by")
         self.assertEqual(self.edges[("review:rv_d1", "attempt:2")], "revised_to")
-        self.assertNotIn(("attempt:1", "attempt:2"), self.edges)
+        self.assertEqual(self.edges[("attempt:1", "attempt:2")], "then")
         self.assertEqual(self.edges[("review:rv_d2", "attempt:3")], "revised_to")
         # Approval leads on to the first result round.
         self.assertEqual(self.edges[("attempt:3", "review:rv_d3")], "reviewed_by")
         self.assertEqual(self.edges[("review:rv_d3", "submission:3.1")], "then")
-        self.assertNotIn(("attempt:3", "submission:3.1"), self.edges)
+        self.assertEqual(self.edges[("attempt:3", "submission:3.1")], "then")
         # Each rejected round is what leads to the next; the last passes on to
         # the conclusion.
         for j in (1, 2, 3):
             self.assertEqual(self.edges[(f"submission:3.{j}", f"review:rv_3{j}")], "reviewed_by")
             self.assertEqual(self.edges[(f"review:rv_3{j}", f"submission:3.{j + 1}")], "revised_to")
-            self.assertNotIn((f"submission:3.{j}", f"submission:3.{j + 1}"), self.edges)
+            self.assertEqual(self.edges[(f"submission:3.{j}", f"submission:3.{j + 1}")], "then")
         self.assertEqual(self.edges[("submission:3.4", "review:rv_34")], "reviewed_by")
         # A round wears its verdict: sent back → returned, accepted → done.
         for j in (1, 2, 3):

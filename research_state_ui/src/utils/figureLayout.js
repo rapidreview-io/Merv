@@ -3,16 +3,22 @@
  *
  * Two modes, picked from the data:
  *
- * TIMELINE — when nodes carry `anchor` (the derived experiment figure). The
- * spine (attempt markers, submission markers, reviews, conclusion, claims) is
- * ranked by longest path over spine-only edges and pinned to ONE horizontal
- * row, so the reader follows a single line: marker → verdict → next round →
- * verdict → … Satellites (artifacts, artifact groups, sandbox) never take part
- * in ranking. Evidence (`lane: 'evidence'`) is what was prepared and then
- * submitted with a marker, so it LEADS INTO the marker: a sub-column just
- * left of the marker, stacked above the spine row (the spine arrow passes
- * beneath) with the drawn `feeds` arrows converging on the marker. Execution
- * output (`lane: 'execution'`) hangs below the beat it trails.
+ * TIMELINE — when nodes carry `anchor` (the derived experiment figure). Three
+ * bands around one straight backbone:
+ *
+ *   evidence   files (spread out) in a sub-column just BEFORE the marker they
+ *              were submitted with, stacked above the backbone, `feeds`
+ *              arrows converging on the marker — prepared, then submitted;
+ *   backbone   attempt / submission markers (and conclusion, claims) on ONE
+ *              middle row, linked marker → marker: the line the reader follows;
+ *   verdicts   reviews on the row below, each in its own temporal column
+ *              between the round it graded and the round it led to — the
+ *              loop that explains each backbone step (dashed amber = sent back);
+ *   execution  sandbox and unsealed files hang below the beat they trail.
+ *
+ * Spine nodes (backbone + verdicts) are ranked by longest path over spine-only
+ * edges, so a verdict still takes its own column between two markers.
+ * Satellites never take part in ranking; each sits by its anchor.
  *
  * LEGACY — every other small DAG (agent-authored logic graphs, reflection
  * waves, mobile outlines): longest-path layering gives the reading order and a
@@ -37,10 +43,13 @@ const BEAT_GAP_X = 56;
 // Generous vertical separation between stacked/branching spine nodes: tight
 // rows make the diagonal edges hard to follow, so give them room.
 const GAP_Y = 80;
-// Satellites hug their beat: a small gap between them, a slightly larger one
-// off the spine so the spine row still reads as a line.
-const SAT_GAP = 10;
-const LANE_GAP = 26;
+// Timeline bands. ROW_GAP separates the backbone from the verdict row (and any
+// stacked backbone nodes); satellites are spread with SAT_GAP and start
+// LANE_GAP off the card they hang from, so a stack reads as distinct cards
+// rather than a slab.
+const ROW_GAP = 80;
+const SAT_GAP = 36;
+const LANE_GAP = 44;
 // Evidence sits closer to its marker than beats sit to each other, so the
 // pair (files ↘ marker) reads as one unit.
 const EVIDENCE_GAP_X = 40;
@@ -96,30 +105,33 @@ function layoutTimeline(rawNodes, edges, ids) {
 
   const columns = new Map();
   const col = (r) => {
-    if (!columns.has(r)) columns.set(r, { spine: [], evidence: [], below: [] });
+    if (!columns.has(r)) columns.set(r, { backbone: [], verdicts: [], evidence: [], below: [] });
     return columns.get(r);
   };
-  for (const n of spineNodes) col(rank.get(n.id)).spine.push(n);
+  for (const n of spineNodes) {
+    (n.type === 'review' ? col(rank.get(n.id)).verdicts : col(rank.get(n.id)).backbone).push(n);
+  }
   for (const n of satellites) {
     (n.lane === 'execution' ? col(rankOf(n)).below : col(rankOf(n)).evidence).push(n);
   }
 
-  // Cards are top-aligned on the spine row (their edge handles sit at a fixed
-  // offset from the top). The row must clear the tallest evidence stack, which
-  // sits above the row so the spine arrow into the marker passes beneath it.
+  // Cards are top-aligned on their row (edge handles sit at a fixed offset
+  // from the top). The backbone row must clear the tallest evidence stack.
   const sum = (arr, f) => arr.reduce((acc, n) => acc + f(n), 0);
   const stackH = (arr) => (arr.length ? sum(arr, heightOf) + (arr.length - 1) * SAT_GAP + LANE_GAP : 0);
-  let spineY = 0;
-  for (const c of columns.values()) spineY = Math.max(spineY, stackH(c.evidence));
+  let backboneY = 0;
+  for (const c of columns.values()) backboneY = Math.max(backboneY, stackH(c.evidence));
+  const verdictY = backboneY + FIG_CARD_H + ROW_GAP;
 
   // Columns are laid out left to right; a beat with evidence reserves a
   // sub-column just before it for the files that led into it.
   const nodes = [];
+  const placed = new Map(); // id → { x, y, h } for anchoring the execution lane
   let x = 0;
   for (const [, c] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
     if (c.evidence.length) {
-      // Evidence stacks upward, most load-bearing file nearest the spine.
-      let y = spineY - LANE_GAP;
+      // Evidence stacks upward, most load-bearing file nearest the backbone.
+      let y = backboneY - LANE_GAP;
       for (const n of c.evidence) {
         y -= heightOf(n);
         nodes.push({ ...n, x, y });
@@ -127,18 +139,32 @@ function layoutTimeline(rawNodes, edges, ids) {
       }
       x += FIG_NODE_W + EVIDENCE_GAP_X;
     }
-    // Spine nodes: one sits on the row; several stack down from it (in input order).
-    let y = spineY;
-    for (const n of c.spine) {
+    // Backbone: one card on the row; several (claims) stack down from it.
+    let y = backboneY;
+    for (const n of c.backbone) {
       nodes.push({ ...n, x, y });
-      y += heightOf(n) + GAP_Y;
+      placed.set(n.id, { x, y, h: heightOf(n) });
+      y += heightOf(n) + ROW_GAP;
     }
-    const blockBottom = c.spine.length ? y - GAP_Y : spineY;
-    // Execution stacks downward from the spine block.
-    y = blockBottom + LANE_GAP;
-    for (const n of c.below) {
+    // Verdicts: the row below the backbone (a re-review stacks further down).
+    y = verdictY;
+    for (const n of c.verdicts) {
       nodes.push({ ...n, x, y });
-      y += heightOf(n) + SAT_GAP;
+      placed.set(n.id, { x, y, h: heightOf(n) });
+      y += heightOf(n) + ROW_GAP;
+    }
+    // Execution hangs below whichever card it trails: a marker (so it lands on
+    // the verdict row of the marker's own column, which is otherwise empty) or
+    // a verdict (so it lands one row further down).
+    for (const n of c.below) {
+      let cur = n;
+      for (let hops = 0; hops < 4 && cur && satIds.has(cur.id); hops += 1) cur = byId.get(cur.anchor);
+      const at = (cur && placed.get(cur.id)) || { x, y: backboneY, h: FIG_CARD_H };
+      const start = at.y + at.h + ROW_GAP;
+      const key = `${at.x}:${start}`;
+      const stackY = placed.get(key)?.y ?? start;
+      nodes.push({ ...n, x: at.x, y: stackY });
+      placed.set(key, { x: at.x, y: stackY + heightOf(n) + SAT_GAP, h: 0 });
     }
     x += FIG_NODE_W + BEAT_GAP_X;
   }

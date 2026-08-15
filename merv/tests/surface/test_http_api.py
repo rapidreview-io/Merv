@@ -1377,12 +1377,12 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.assertEqual(len(review_nodes), 1)
         self.assertEqual(review_nodes[0]["group"], "attempt:1")
         self.assertEqual(review_nodes[0]["qualifier"], "attempt 1")
-        # The verdict is the beat between the rounds: attempt 1 → review →
-        # attempt 2, with no redundant marker-to-marker arrow.
+        # The verdict is the beat between the rounds (attempt 1 → review →
+        # attempt 2, dashed) and the backbone links the markers directly.
         self.assertIn(f"attempt:1->{review_nodes[0]['id']}:reviewed_by", edge_ids)
         self.assertIn(f"{review_nodes[0]['id']}->attempt:2:revised_to", edge_ids)
+        self.assertIn("attempt:1->attempt:2:then", edge_ids)
         self.assertNotIn("attempt:1->attempt:2:revised_to", edge_ids)
-        self.assertNotIn("attempt:1->attempt:2:then", edge_ids)
 
         # Sandbox liveness and the conclusion both surface as derived nodes.
         with self.app.store.transaction() as conn:

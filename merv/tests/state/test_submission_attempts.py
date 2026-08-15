@@ -375,8 +375,9 @@ class SubmissionAttemptFlowTest(unittest.TestCase):
             "revised_to",
             "round 2 must follow round 1's verdict, not hang off the attempt",
         )
-        self.assertNotIn(("submission:1.1", "submission:1.2"), edges)
-        self.assertNotIn(("attempt:1", "submission:1.1"), edges)
+        # …and the straight backbone links the markers directly as well.
+        self.assertEqual(edges[("submission:1.1", "submission:1.2")], "then")
+        self.assertEqual(edges[("attempt:1", "submission:1.1")], "then")
         # Each round's report is evidence anchored on that round.
         reports = [
             n for n in figure["nodes"]
