@@ -37,25 +37,34 @@ export function agentStages({ entry = null, readiness, enabled = true, now = Dat
   const stages = [];
   const missing = readiness?.tone === 'missing';
 
-  // 1. Installed
-  if (missing) {
-    stages.push({ key: 'installed', label: 'Installed', state: 'fail', detail: readiness.problems?.[0] || 'not found on this machine' });
-  } else if (entry?.executable || readiness?.tone === 'ok' || readiness?.tone === 'warn') {
-    const bits = [entry?.version ? `v${String(entry.version).replace(/^v/i, '')}` : '', entry?.executable || ''].filter(Boolean);
+  // 1. Installed — the executable resolved on the machine, or the runner
+  // said why not ("'gemini' is not on PATH"). Only presence proves it.
+  const staticProblems = Array.isArray(entry?.problems) ? entry.problems.filter(Boolean) : [];
+  const notInstalled = missing || (entry && !entry.executable);
+  if (notInstalled) {
+    stages.push({ key: 'installed', label: 'Installed', state: 'fail', detail: staticProblems[0] || readiness?.problems?.[0] || 'not found on this machine' });
+  } else if (entry?.executable) {
+    const bits = [entry.version ? `v${String(entry.version).replace(/^v/i, '')}` : '', entry.executable].filter(Boolean);
     stages.push({ key: 'installed', label: 'Installed', state: 'ok', detail: bits.join(' · ') });
+  } else if (readiness?.tone === 'ok') {
+    stages.push({ key: 'installed', label: 'Installed', state: 'ok', detail: 'found on the machine' });
   } else {
     stages.push({ key: 'installed', label: 'Installed', state: 'unknown', detail: 'the machine has not reported yet' });
   }
 
-  // 2. Signed in to the provider
+  // 2. Signed in to the provider. A passed test call is the strongest proof
+  // (credentials may live where no signal is looked for, e.g. a keychain).
   const auth = entry?.auth || null;
+  const smokeOk = entry?.smoke?.status === 'ok';
   if (auth?.status === 'failed') {
     stages.push({ key: 'auth', label: 'Signed in', state: 'fail', detail: auth.line || 'the provider refused', hint: auth.detail || '' });
+  } else if (smokeOk) {
+    stages.push({ key: 'auth', label: 'Signed in', state: 'ok', detail: auth?.status === 'present' && auth.via ? `proven by the test call · signal: ${auth.via}` : 'proven by the test call' });
   } else if (auth?.status === 'present') {
     stages.push({ key: 'auth', label: 'Signed in', state: 'ok', detail: auth.via ? `signal: ${auth.via}` : AUTH_STATUS_LABEL.present });
   } else if (auth?.status === 'n/a') {
     stages.push({ key: 'auth', label: 'Signed in', state: 'ok', detail: 'not needed for a custom command' });
-  } else if (missing) {
+  } else if (notInstalled) {
     stages.push({ key: 'auth', label: 'Signed in', state: 'pending', detail: '' });
   } else {
     stages.push({ key: 'auth', label: 'Signed in', state: 'unknown', detail: 'no sign-in signal found — the test call will tell' });
@@ -66,8 +75,7 @@ export function agentStages({ entry = null, readiness, enabled = true, now = Dat
 
   // 3. Merv skills / MCP — judged from the machine's own static probe
   // (entry.problems), never from sign-in evidence, which has its own rung.
-  const staticProblems = Array.isArray(entry?.problems) ? entry.problems.filter(Boolean) : [];
-  if (missing) {
+  if (notInstalled) {
     stages.push({ key: 'skills', label: 'Merv skills', state: 'pending', detail: '' });
   } else if (entry && entry.ok === false && staticProblems.length) {
     stages.push({ key: 'skills', label: 'Merv skills', state: 'fail', detail: staticProblems[0] });
@@ -90,7 +98,7 @@ export function agentStages({ entry = null, readiness, enabled = true, now = Dat
     stages.push({ key: 'smoke', label: 'Test call', state: 'ok', detail: `passed ${ago(smoke.at, now)}${secs}` });
   } else if (smoke?.status === 'failed') {
     stages.push({ key: 'smoke', label: 'Test call', state: 'fail', detail: `failed ${ago(smoke.at, now)}`, hint: smoke.detail || '' });
-  } else if (missing || !enabled) {
+  } else if (notInstalled || !enabled) {
     stages.push({ key: 'smoke', label: 'Test call', state: 'pending', detail: enabled ? '' : 'enable the agent to test it' });
   } else {
     stages.push({ key: 'smoke', label: 'Test call', state: 'unknown', detail: 'not run yet' });

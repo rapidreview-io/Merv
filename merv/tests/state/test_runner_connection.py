@@ -691,3 +691,42 @@ class RunnerTestCallTest(unittest.TestCase):
         self.assertEqual(runner._note_stop_evidence(session, host=_FakeHost(exit_code=0), rapid=False), "host_process_stopped")
         # A healthy turn clears the evidence; what remains is the static signal, never "failed".
         self.assertNotEqual(runner.harness_readiness()["platforms"]["codex"].get("auth", {}).get("status"), "failed")
+
+    def test_the_test_call_speaks_each_harness_language_and_never_leaks_a_key(self) -> None:
+        # A non-native harness gets the merv-client bridge, and a loopback brain
+        # a placeholder credential — the bridge insists on a value, the local
+        # gateway ignores it.
+        configure_client(config_path=self.config, control_url="http://127.0.0.1:8787")
+        configure_agent(config_path=self.config, platform="gemini", parallelism=1)
+        host = _FakeHost(stderr="Error: Incorrect API key provided: sk-abcdefghijklmnop1234. Please sign in.\n", exit_code=1)
+        client = _FakeSettingsClient()
+        client.control_url = "http://127.0.0.1:8787"
+        with patch("merv.client.agent_runner.HOSTS", {"codex": _FakeHost(), "gemini": host}), redirect_stdout(io.StringIO()):
+            runner = self._runner(client)
+            runner._smoke_queue = [("gemini", "", "first run")]
+            runner.advance_smoke()
+            runner.advance_smoke()
+        spawned = host.spawned[0]
+        self.assertIn("merv-client call project", spawned["instruction"])
+        self.assertEqual(spawned["env"]["MERV_AGENT_SESSION_KEY"], "local-smoke")
+        smoke = runner.harness_readiness()["platforms"]["gemini"]["smoke"]
+        self.assertEqual(smoke["status"], "failed")
+        self.assertNotIn("sk-abcdefghijklmnop1234", smoke["detail"])
+        self.assertIn("<redacted>", smoke["detail"])
+        self.assertNotIn("sk-abcdefghijklmnop1234", json.dumps(runner.harness_readiness()))
+
+    def test_only_a_rapid_stop_without_commits_is_judged_by_its_stderr(self) -> None:
+        with patch("merv.client.agent_runner.HOSTS", {"codex": _FakeHost()}), redirect_stdout(io.StringIO()):
+            runner = self._runner()
+        trace_dir = self.root / "traces" / "ags_2"
+        trace_dir.mkdir(parents=True)
+        (trace_dir / "stderr.log").write_text("warning: 429 rate limit hit once, retried\n")
+        long_turn = LocalSession(
+            session_id="ags_2", experiment_id="exp_1", project_id="proj_1", platform="codex",
+            launch_attempted=True, adapter="codex", host_ref="pid:1:x", pid=1, trace_dir=str(trace_dir),
+            base_sha="a" * 40, head_sha="b" * 40,
+        )
+        # Committed work, long run: a turn, whatever stderr muttered.
+        self.assertEqual(runner._note_stop_evidence(long_turn, host=_FakeHost(exit_code=0), rapid=False), "host_process_stopped")
+        self.assertEqual(runner._note_stop_evidence(long_turn, host=_FakeHost(exit_code=1), rapid=True), "host_process_stopped")
+        self.assertNotIn("quota", runner.harness_readiness()["platforms"]["codex"])

@@ -63,3 +63,20 @@ test('a disabled agent explains why the test call is parked', () => {
   assert.equal(stages.smoke.state, 'pending');
   assert.equal(stages.smoke.detail, 'enable the agent to test it');
 });
+
+test('the runner reporting no executable is an install failure, whatever the tag says', () => {
+  const entry = { adapter: 'gemini', executable: '', version: '', ok: false, problems: ["'gemini' is not on PATH"], auth: { status: 'unknown' } };
+  const stages = byKey(agentStages({ entry, readiness: { tag: 'not ready', tone: 'warn', details: [], problems: ["'gemini' is not on PATH"] }, now: NOW }));
+  assert.equal(stages.installed.state, 'fail');
+  assert.equal(stages.installed.detail, "'gemini' is not on PATH");
+  assert.equal(stages.skills.state, 'pending');
+  assert.equal(stages.smoke.state, 'pending');
+});
+
+test('a passed test call proves sign-in even when no signal was found', () => {
+  const entry = { executable: '/x/claude', version: '1', merv_mcp: 'native', skills: 'mounted', auth: { status: 'unknown' }, smoke: { status: 'ok', at: '2026-08-15T11:59:00Z', duration_ms: 3000 } };
+  const stages = byKey(agentStages({ entry, readiness: ready, now: NOW }));
+  assert.equal(stages.auth.state, 'ok');
+  assert.equal(stages.auth.detail, 'proven by the test call');
+  assert.equal(stagesSummary(Object.values(stages)), 'ok');
+});

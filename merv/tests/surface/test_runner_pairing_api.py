@@ -162,7 +162,7 @@ class RunnerPairingApiTest(unittest.TestCase):
                 "machine": {"hostname": "lucia.local", "system": "Darwin", "architecture": "arm64"},
                 "platforms": [],
                 "capacity": 0,
-                "inventory": {"available_commands": {"claude": True}},
+                "inventory": {"available_commands": {"claude": True}, "runner_version": "2026.08.16"},
                 "applied_version": 0,
             },
             headers=_bearer(key),
@@ -205,7 +205,8 @@ class RunnerPairingApiTest(unittest.TestCase):
         # Next heartbeat carries the desired settings; reporting applied clears pending.
         pulled = self.client.post(
             f"/api/projects/{self.project_id}/agent-runners/heartbeat",
-            json={"runner_id": "runner-uuid", "machine": {}, "platforms": [], "capacity": 2, "applied_version": 1},
+            json={"runner_id": "runner-uuid", "machine": {}, "platforms": [], "capacity": 2, "applied_version": 1,
+                  "inventory": {"runner_version": "2026.08.16"}},
             headers=_bearer(key),
         )
         self.assertEqual(pulled.status_code, 200, pulled.text)
@@ -240,11 +241,27 @@ class RunnerPairingApiTest(unittest.TestCase):
             headers=_bearer(self.owner_jwt),
         )
         self.assertEqual(bad_probe.status_code, 400, bad_probe.text)
+        # A runner that predates the probe would reject the whole document:
+        # the brain refuses to hand it one.
+        old_runner = self.client.post(
+            f"/api/projects/{self.project_id}/agent-runners/heartbeat",
+            json={"runner_id": "runner-uuid", "machine": {}, "platforms": [], "capacity": 2, "applied_version": 2,
+                  "inventory": {"runner_version": "2026.08.15"}},
+            headers=_bearer(key),
+        )
+        self.assertEqual(old_runner.status_code, 200, old_runner.text)
+        too_old = self.client.put(
+            f"/api/projects/{self.project_id}/agent-runners/settings",
+            json={"runner_ref": runner_ref, "settings": {"probe": {"platform": "claude", "nonce": "t2"}}},
+            headers=_bearer(self.owner_jwt),
+        )
+        self.assertEqual(too_old.status_code, 400, too_old.text)
+        self.assertIn("too old", too_old.json()["detail"])
         reported = self.client.post(
             f"/api/projects/{self.project_id}/agent-runners/heartbeat",
             json={
                 "runner_id": "runner-uuid", "machine": {}, "platforms": [], "capacity": 2, "applied_version": 2,
-                "inventory": {"harness": {"platforms": {"claude": {
+                "inventory": {"runner_version": "2026.08.16", "harness": {"platforms": {"claude": {
                     "adapter": "claude", "ok": True,
                     "auth": {"status": "present", "via": "~/.claude/.credentials.json", "secret": "never"},
                     "smoke": {"status": "ok", "at": "2026-08-15T12:00:00Z", "duration_ms": 4100, "nonce": "t1abc", "why": "requested"},

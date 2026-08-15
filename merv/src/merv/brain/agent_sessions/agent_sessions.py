@@ -28,6 +28,8 @@ ACTIVE_LEASE_SECONDS = 4 * 60 * 60
 DEFAULT_HARD_DEADLINE_SECONDS = 24 * 60 * 60
 MAX_HARD_DEADLINE_SECONDS = 7 * 24 * 60 * 60
 FAILURE_BACKOFF_SECONDS = 5 * 60
+# Runners from this build understand the one-shot ``probe`` (test call).
+PROBE_MIN_RUNNER_VERSION = "2026.08.16"
 FAILURE_REASONS = (
     "workspace_failed",
     "launch_failed",
@@ -594,8 +596,8 @@ class AgentSessions:
                 (
                     row
                     for row in tx.execute(
-                        "SELECT runner_id, desired_settings_json FROM agent_runners "
-                        "WHERE project_id = ?",
+                        "SELECT runner_id, desired_settings_json, inventory_json "
+                        "FROM agent_runners WHERE project_id = ?",
                         (project_id,),
                     ).fetchall()
                     if runner_ref_matches(
@@ -607,6 +609,17 @@ class AgentSessions:
             if match is None:
                 raise NotFoundError("runner not found")
             runner_id = str(match["runner_id"])
+            if "probe" in desired:
+                # An older runner rejects the whole document on an unknown key
+                # and could then apply nothing until upgraded; refuse up front.
+                inventory = _json_column(match["inventory_json"])
+                version = str(inventory.get("runner_version") or "")
+                if version < PROBE_MIN_RUNNER_VERSION:
+                    raise ValidationError(
+                        "this machine's runner is too old to run a test call; "
+                        "rerun the installer on it to update",
+                        details={"field": "settings", "runner_version": version},
+                    )
             # Fold into what is already desired: a PUT that carries only a
             # probe (Test) must not erase platform or workspace wishes a
             # machine has not pulled yet. Platform entries replace by name,

@@ -25,6 +25,9 @@ import { fmtAgo } from '../utils/format';
  */
 
 const DOT_BY_TONE = { live: 'running', warning: 'stale', error: 'off', off: 'off' };
+// Runners from this build understand the one-shot probe (Test); an older one
+// would reject the whole settings document, so Test is not offered to it.
+const PROBE_MIN_RUNNER_VERSION = '2026.08.16';
 const rank = (view) => (view.live ? 0 : view.tone === 'warning' ? 1 : 2);
 
 export default function AutorunMachines({ projectId, runners, sessions, dispatch, now, onRunner, onRefresh }) {
@@ -265,7 +268,7 @@ function MachineDrawer({ projectId, runner, view, onRunner, now }) {
         onUpdatePlatform={updatePlatform}
         onRepository={updateRepository}
         onWorkspace={updateWorkspace}
-        onTest={view.live ? testAgent : null}
+        onTest={view.live && String(runner.inventory?.runner_version || '') >= PROBE_MIN_RUNNER_VERSION ? testAgent : null}
         testing={testing}
         now={now}
       />

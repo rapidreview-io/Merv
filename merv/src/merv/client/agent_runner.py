@@ -79,11 +79,21 @@ CRASH_LOOP_WINDOW_SECONDS = 2 * 60.0
 SMOKE_TIMEOUT_SECONDS = 150.0
 SMOKE_STATE_KEY = "agent_smoke"
 SMOKE_NONCE_KEY = "agent_smoke_probe_nonce"
-SMOKE_INSTRUCTION = (
+SMOKE_INSTRUCTION_MCP = (
     "This is a Merv connection test, not a task. Call the Merv MCP tool named "
     "'project' with action 'current' and reply with exactly the project id it "
-    "returns and nothing else. Do not create, modify, or run anything."
+    "returns and nothing else. Do not create, modify, or run anything else."
 )
+SMOKE_INSTRUCTION_CLI = (
+    "This is a Merv connection test, not a task. Run this shell command exactly: "
+    "merv-client call project --arguments '{\"action\": \"current\"}' — then "
+    "reply with exactly the project id from its output and nothing else. Do not "
+    "create, modify, or run anything else."
+)
+# A loopback brain has no credential to hand a child; the bridge still wants
+# a non-empty value, and the local gateway ignores it.
+SMOKE_LOOPBACK_TOKEN = "local-smoke"
+SMOKE_MIN_RUNNER_VERSION = "2026.08.16"
 # client.json key that remembers which brain-held settings version this
 # machine last applied, so a restart does not re-report "pending".
 SETTINGS_VERSION_KEY = "desired_settings_version"
@@ -1877,6 +1887,12 @@ class AgentRunner:
         platforms = report.get("platforms")
         if isinstance(platforms, dict):
             for name, entry in platforms.items():
+                # The sign-in signal is a file/variable check: recompute it every
+                # time so a login done while the daemon runs shows on the next
+                # heartbeat. Evidence of a refusal outranks it until cleared.
+                entry["auth"] = harness_kit.auth_signal(
+                    str(entry.get("adapter") or ""), self.environment
+                )
                 flags = self._harness_flags.get(name) or {}
                 if flags.get("auth"):
                     entry["auth"] = dict(flags["auth"])
@@ -1994,32 +2010,48 @@ class AgentRunner:
         platform = self._platform(platform_name)
         host = HOSTS[platform.adapter]
         root = self.trace_dir.parent / "agent-smoke" / _safe_name(platform.name)
+        _kill_stale_smoke(root)
         shutil.rmtree(root, ignore_errors=True)
         root.mkdir(parents=True, exist_ok=True)
         os.chmod(root, 0o700)
+        # Some harnesses refuse to run outside a Git repository (codex exec
+        # does); the scratch dir is a throwaway repo.
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            subprocess.run(
+                ["git", "init", "-q", str(root)],
+                check=False, timeout=20, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
         stdout_path = root / host.stdout_filename
         stderr_path = root / "stderr.log"
         # The child gets this machine's own Merv credential for the length of
         # one fixed instruction; a session credential does not exist for a
         # test, and the runner key is what any interactive agent on this
-        # machine already holds.
+        # machine already holds. A loopback brain has none; it ignores the
+        # bearer, but the merv-client bridge insists on a value.
         environment = _child_environment(
             self.environment,
-            session_key=str(getattr(self.client, "runner_key", "") or ""),
+            session_key=str(getattr(self.client, "runner_key", "") or "") or SMOKE_LOOPBACK_TOKEN,
             control_url=self.client.control_url,
             session_id="smoke",
         )
         environment["MERV_AGENT_TRACE_DIR"] = str(root)
         if self.skills is not None:
             environment["MERV_SKILLS_DIR"] = str(self.skills.root)
+        instruction = (
+            SMOKE_INSTRUCTION_MCP
+            if platform.adapter in harness_kit.NATIVE_MCP_ADAPTERS
+            else SMOKE_INSTRUCTION_CLI
+        )
         host_session = host.spawn(
             platform=platform,
-            instruction=SMOKE_INSTRUCTION,
+            instruction=instruction,
             child_env=environment,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             cwd=root,
         )
+        with contextlib.suppress(OSError):
+            (root / "smoke.pid").write_text(str(host_session.pid))
         print(f"{platform.name}: test call started ({why or 'requested'})")
         return _ActiveSmoke(
             platform=platform,
@@ -2067,7 +2099,7 @@ class AgentRunner:
             elif timed_out:
                 result["detail"] = f"no answer within {int(SMOKE_TIMEOUT_SECONDS)} s"
             elif exit_code not in (0, None):
-                last = _last_line(stderr_text)
+                last = harness_kit.redact_secrets(_last_line(stderr_text))
                 result["detail"] = f"exited with code {exit_code}" + (f": {last}" if last else "")
             elif not answered:
                 result["detail"] = "the agent ran but did not answer with the project id (is the Merv MCP server reachable from it?)"
@@ -2085,9 +2117,20 @@ class AgentRunner:
         it is reported as ``host_process_failed`` and the evidence lands on
         the machine's readiness so the page can say what to do.
         """
-        if not session.trace_dir:
+        exit_code = getattr(host, "exit_code", lambda _s: None)(session.host_session())
+        no_commits = session.head_sha == session.base_sha
+        if not (rapid and no_commits):
+            # A turn that ran for a while, or committed work, is a turn: a
+            # stray 429 or a transient login line in its stderr does not make
+            # it a failure. A clean exit clears stale evidence for the platform.
+            if exit_code in (0, None):
+                self._harness_flags.pop(session.platform, None)
             return "host_process_stopped"
-        stderr_text = _read_tail(Path(session.trace_dir) / "stderr.log", limit=16 * 1024)
+        stderr_text = (
+            _read_tail(Path(session.trace_dir) / "stderr.log", limit=16 * 1024)
+            if session.trace_dir
+            else ""
+        )
         adapter = session.adapter or ""
         try:
             adapter = adapter or self._platform(session.platform).adapter
@@ -2102,12 +2145,8 @@ class AgentRunner:
                 "at": _iso(time.time()),
             }
             return "host_process_failed"
-        exit_code = getattr(host, "exit_code", lambda _s: None)(session.host_session())
-        if rapid and exit_code not in (0, None) and session.head_sha == session.base_sha:
+        if exit_code not in (0, None):
             return "host_process_failed"
-        if not rapid or exit_code == 0:
-            # A healthy turn clears stale evidence for this platform.
-            self._harness_flags.pop(session.platform, None)
         return "host_process_stopped"
 
     # -- the cycle ---------------------------------------------------------
@@ -2833,6 +2872,18 @@ def _iso(timestamp: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp))
 
 
+def _kill_stale_smoke(root: Path) -> None:
+    """A test child left by a previous runner process is stopped, best effort,
+    before its scratch dir is reused (it is not in the ledger)."""
+    marker = root / "smoke.pid"
+    try:
+        pid = int(marker.read_text().strip())
+    except (OSError, ValueError):
+        return
+    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+        os.killpg(pid, signal.SIGTERM)
+
+
 def _read_tail(path: Path, *, limit: int) -> str:
     try:
         with path.open("rb") as handle:
@@ -3495,7 +3546,10 @@ def _run_runner(
             response = runner.report_presence()
             runner.apply_desired(response)
             runner.reconcile()
-            runner.advance_smoke()
+            if not once:
+                # A test call is supervised across cycles; a one-shot run
+                # would start it and walk away.
+                runner.advance_smoke()
             runner.advance_ready()
             runner.fill_available_slots()
         except RunnerCredentialError:
