@@ -21,7 +21,9 @@ is a satellite that names the beat it belongs to (`anchor`) and which side of
 the spine it lives on (`lane`):
 
   * ``lane: "evidence"``  — what a beat put up for review: the proposal (plan &
-    friends) above an attempt marker, the results above a submission marker.
+    friends) feeding an attempt marker, the results feeding a submission
+    marker. Files are prepared before they are submitted, so evidence leads
+    INTO its marker (drawn just before it, arrows converging on it).
   * ``lane: "execution"`` — the sandbox and files produced but not (yet) sealed
     into a result submission, hanging below the beat they trail.
 
@@ -31,20 +33,20 @@ Edge vocabulary:
   then         plain succession on the spine (approval → next round, re-review,
                marker → next marker when no verdict links them, → open gate)
   revised_to   a rejecting verdict → the round it caused
-  proposed     attempt → proposal artifact           (attachment; placement)
-  submitted    submission → evidence artifact        (attachment; placement)
+  feeds        evidence artifact → the marker it was submitted with
   produced     attempt → execution-lane artifact     (attachment; placement)
   ran_on       attempt → sandbox                     (attachment; placement)
   concludes    final beat → conclusion
   tests        conclusion (or final beat) → tested claim
 
-Attachment edges are semantic; the canvas shows them as placement (the
-satellite sits in its anchor's column) rather than as lines.
+`produced` and `ran_on` are attachments the canvas shows as placement (the
+satellite sits below its anchor's column) rather than as lines.
 
 Node `status` values are normalized for UI coloring:
   pending | active | done | failed | superseded | abandoned
 except `review` nodes, whose status is the verdict (pass | needs_changes |
-fail | open) and `claim` nodes, whose status is the claim status.
+fail | open), `submission` nodes, which add `returned` for a round whose
+verdict sent it back, and `claim` nodes, whose status is the claim status.
 
 Every node that belongs to a round carries `qualifier` — "attempt 2" or
 "round 3.1" — so a label like `report.md` or `Experiment review` never has to
@@ -350,6 +352,18 @@ def build_experiment_figure(
     def tail_of(marker: str) -> tuple[str, str | None]:
         return tails.get(marker, (marker, None))
 
+    # A round wears its verdict: a submission that was sent back reads as
+    # returned (amber), one that failed as failed, so the spine is honest at a
+    # glance instead of every round looking like a success.
+    for node in nodes:
+        if node["type"] != "submission":
+            continue
+        verdict = tail_of(node["id"])[1]
+        if verdict == "fail":
+            node["status"], node["sublabel"] = "failed", "failed review"
+        elif verdict in _REJECTIONS:
+            node["status"], node["sublabel"] = "returned", "sent back"
+
     # ---- spine succession: each round follows the verdict of the last ----
     # A rejection is what caused the next round, so the arrow leaves the
     # review, not the marker; without a verdict (legacy rows, abandoned
@@ -390,16 +404,18 @@ def build_experiment_figure(
         return tail_of(marker)[0]
 
     def place(res: dict[str, Any]) -> tuple[str, str, str, str]:
-        """(anchor, lane, edge_source, edge_type) for one artifact row."""
+        """(anchor, lane, marker, edge_type) for one artifact row. Evidence
+        feeds its marker (artifact → marker); execution output is produced by
+        its attempt (attempt → artifact)."""
         attempt = clamp_attempt(res.get("attempt_index"))
         attempt_id = f"attempt:{attempt}"
         seal = seal_by_id.get(str(res.get("submission_id") or ""))
         if seal is not None:
             submission = submission_nodes.get(str(seal.get("id")))
             if submission:
-                return submission, "evidence", submission, "submitted"
+                return submission, "evidence", submission, "feeds"
             if str(seal.get("transition") or "") in _PROPOSAL_TRANSITIONS:
-                return attempt_id, "evidence", attempt_id, "proposed"
+                return attempt_id, "evidence", attempt_id, "feeds"
             anchor = execution_anchor(attempt, _seq_order(seal))
             return anchor, "execution", attempt_id, "produced"
         # Unsealed. Once this attempt has sealed anything, an unsealed row was
@@ -408,7 +424,7 @@ def build_experiment_figure(
         # the role decides: inputs are the proposal, outputs are execution.
         role = str(res.get("role") or "other")
         if attempt not in sealed_attempts and role in UPSTREAM_ROLES:
-            return attempt_id, "evidence", attempt_id, "proposed"
+            return attempt_id, "evidence", attempt_id, "feeds"
         return execution_anchor(attempt, None), "execution", attempt_id, "produced"
 
     buckets: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
@@ -428,7 +444,13 @@ def build_experiment_figure(
     beat_name = {
         n["id"]: round_name.get(n["id"]) or str(n.get("qualifier") or "") for n in nodes
     }
-    for (anchor, lane, edge_source, edge_type), bucket in sorted(
+    def attach(node_id: str, marker: str, edge_type: str) -> None:
+        if edge_type == "feeds":
+            add_edge(node_id, marker, edge_type)
+        else:
+            add_edge(marker, node_id, edge_type)
+
+    for (anchor, lane, marker, edge_type), bucket in sorted(
         buckets.items(), key=lambda item: (spine_index.get(item[0][0], 0), item[0])
     ):
         bucket.sort(
@@ -437,8 +459,8 @@ def build_experiment_figure(
                 str(r.get("path") or ""),
             )
         )
-        qualifier = beat_name.get(anchor) or round_name.get(edge_source) or ""
-        group = f"attempt:{marker_attempt.get(edge_source, current_attempt)}"
+        qualifier = beat_name.get(anchor) or round_name.get(marker) or ""
+        group = f"attempt:{marker_attempt.get(marker, current_attempt)}"
         shown, overflow = bucket[:ARTIFACT_FANOUT_CAP], bucket[ARTIFACT_FANOUT_CAP:]
         for res in shown:
             role = str(res.get("role") or "other")
@@ -464,7 +486,7 @@ def build_experiment_figure(
                     },
                 }
             )
-            add_edge(edge_source, node_id, edge_type)
+            attach(node_id, marker, edge_type)
         if overflow:
             roles = sorted({str(r.get("role") or "other") for r in overflow})
             node_id = f"artifact_group:{anchor}:{lane}"
@@ -487,7 +509,7 @@ def build_experiment_figure(
                     },
                 }
             )
-            add_edge(edge_source, node_id, edge_type)
+            attach(node_id, marker, edge_type)
 
     # ---- sandbox / execution ----
     # Hangs below the beat where this attempt's execution began: its design

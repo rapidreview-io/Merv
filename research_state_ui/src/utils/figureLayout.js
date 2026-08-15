@@ -8,10 +8,11 @@
  * ranked by longest path over spine-only edges and pinned to ONE horizontal
  * row, so the reader follows a single line: marker → verdict → next round →
  * verdict → … Satellites (artifacts, artifact groups, sandbox) never take part
- * in ranking; each sits in its anchor's column, stacked tightly above the
- * spine (`lane: 'evidence'`) or below it (`lane: 'execution'`). Column = beat,
- * and a beat's evidence is directly above it — association by adjacency, with
- * no diagonal edges to trace.
+ * in ranking. Evidence (`lane: 'evidence'`) is what was prepared and then
+ * submitted with a marker, so it LEADS INTO the marker: a sub-column just
+ * left of the marker, stacked above the spine row (the spine arrow passes
+ * beneath) with the drawn `feeds` arrows converging on the marker. Execution
+ * output (`lane: 'execution'`) hangs below the beat it trails.
  *
  * LEGACY — every other small DAG (agent-authored logic graphs, reflection
  * waves, mobile outlines): longest-path layering gives the reading order and a
@@ -40,6 +41,9 @@ const GAP_Y = 80;
 // off the spine so the spine row still reads as a line.
 const SAT_GAP = 10;
 const LANE_GAP = 26;
+// Evidence sits closer to its marker than beats sit to each other, so the
+// pair (files ↘ marker) reads as one unit.
+const EVIDENCE_GAP_X = 40;
 
 // Vertical order within a legacy column: inputs above the spine, verdicts/outputs below.
 const TYPE_ORDER = { artifact: 0, artifact_group: 1, attempt: 2, submission: 3, sandbox: 4, review: 5, conclusion: 6, claim: 7 };
@@ -92,25 +96,37 @@ function layoutTimeline(rawNodes, edges, ids) {
 
   const columns = new Map();
   const col = (r) => {
-    if (!columns.has(r)) columns.set(r, { spine: [], above: [], below: [] });
+    if (!columns.has(r)) columns.set(r, { spine: [], evidence: [], below: [] });
     return columns.get(r);
   };
   for (const n of spineNodes) col(rank.get(n.id)).spine.push(n);
   for (const n of satellites) {
-    (n.lane === 'execution' ? col(rankOf(n)).below : col(rankOf(n)).above).push(n);
+    (n.lane === 'execution' ? col(rankOf(n)).below : col(rankOf(n)).evidence).push(n);
   }
 
   // Cards are top-aligned on the spine row (their edge handles sit at a fixed
-  // offset from the top, so a tall accumulating card still reads as one
-  // straight line). The row must clear the tallest evidence stack.
+  // offset from the top). The row must clear the tallest evidence stack, which
+  // sits above the row so the spine arrow into the marker passes beneath it.
   const sum = (arr, f) => arr.reduce((acc, n) => acc + f(n), 0);
   const stackH = (arr) => (arr.length ? sum(arr, heightOf) + (arr.length - 1) * SAT_GAP + LANE_GAP : 0);
   let spineY = 0;
-  for (const c of columns.values()) spineY = Math.max(spineY, stackH(c.above));
+  for (const c of columns.values()) spineY = Math.max(spineY, stackH(c.evidence));
 
+  // Columns are laid out left to right; a beat with evidence reserves a
+  // sub-column just before it for the files that led into it.
   const nodes = [];
-  for (const [r, c] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
-    const x = r * (FIG_NODE_W + BEAT_GAP_X);
+  let x = 0;
+  for (const [, c] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
+    if (c.evidence.length) {
+      // Evidence stacks upward, most load-bearing file nearest the spine.
+      let y = spineY - LANE_GAP;
+      for (const n of c.evidence) {
+        y -= heightOf(n);
+        nodes.push({ ...n, x, y });
+        y -= SAT_GAP;
+      }
+      x += FIG_NODE_W + EVIDENCE_GAP_X;
+    }
     // Spine nodes: one sits on the row; several stack down from it (in input order).
     let y = spineY;
     for (const n of c.spine) {
@@ -118,19 +134,13 @@ function layoutTimeline(rawNodes, edges, ids) {
       y += heightOf(n) + GAP_Y;
     }
     const blockBottom = c.spine.length ? y - GAP_Y : spineY;
-    // Evidence stacks upward from the spine, first item nearest the row.
-    y = spineY - LANE_GAP;
-    for (const n of c.above) {
-      y -= heightOf(n);
-      nodes.push({ ...n, x, y });
-      y -= SAT_GAP;
-    }
     // Execution stacks downward from the spine block.
     y = blockBottom + LANE_GAP;
     for (const n of c.below) {
       nodes.push({ ...n, x, y });
       y += heightOf(n) + SAT_GAP;
     }
+    x += FIG_NODE_W + BEAT_GAP_X;
   }
   return { nodes, edges };
 }

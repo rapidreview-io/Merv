@@ -1313,7 +1313,7 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.assertEqual(plan_node["anchor"], "attempt:1")
         self.assertEqual(plan_node["lane"], "evidence")
         self.assertEqual(plan_node["qualifier"], "attempt 1")
-        self.assertIn(f"attempt:1->artifact:{plan_id}:a1:proposed", edge_ids)
+        self.assertIn(f"artifact:{plan_id}:a1->attempt:1:feeds", edge_ids)
         self.assertEqual(nodes[f"claim:{claim['id']}"]["type"], "claim")
         self.assertIn(f"attempt:1->claim:{claim['id']}:tests", edge_ids)
 
@@ -1341,7 +1341,7 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.assertIn(f"attempt:1->{gate['id']}:reviewed_by", edge_ids)
         # submit_design sealed the plan: still the proposal on attempt 1.
         self.assertEqual(nodes[f"artifact:{plan_id}:a1"]["anchor"], "attempt:1")
-        self.assertIn(f"attempt:1->artifact:{plan_id}:a1:proposed", edge_ids)
+        self.assertIn(f"artifact:{plan_id}:a1->attempt:1:feeds", edge_ids)
 
         session = self.request(
             "POST",

@@ -3865,13 +3865,16 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 }
 .fig-canvas .react-flow__controls-button:hover { background: var(--bg-soft); }
 /* Edges: one solid stroke for every step along the spine (reviewed_by / then /
-   concludes), the dashed amber arrow for a verdict that sent work back, and
-   purple for the claim it all tests. Attachment edges (files, sandbox) are
-   not drawn — placement carries them. */
+   concludes), the dashed amber arrow for a verdict that sent work back, thin
+   quiet arrows for the files that led into a marker, and purple for the claim
+   it all tests. Execution attachments (working files, sandbox) are not drawn
+   — placement carries them. */
 .fig-canvas .react-flow__edge-path { stroke: var(--line-strong); stroke-width: 1.6; }
 .fig-canvas .react-flow__arrowhead * { fill: var(--line-strong); }
 .fig-edge--revised_to .react-flow__edge-path { stroke: var(--qualifies); stroke-dasharray: 6 4; }
 .fig-edge--tests .react-flow__edge-path { stroke: var(--mcp); }
+/* Files leading into the marker they were submitted with: many, quiet, thin. */
+.fig-edge--feeds .react-flow__edge-path { stroke: var(--line-strong); stroke-width: 1.1; opacity: .75; }
 
 .fig-node {
   position: relative;
@@ -3933,28 +3936,6 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 /* The beat that is "now" — the reader's reference point. */
 .fig-node--current { box-shadow: 0 0 0 2px rgba(var(--active-rgb), .22), var(--shadow-sm); }
 
-/* What a beat accumulated: a submission's sealed files, an attempt's plan.
-   Rows are the artifacts themselves — click one to open it. Row height is
-   mirrored in ExperimentFigure's ITEM_ROW_H / ITEMS_PAD for layout. */
-.fig-node-items {
-  list-style: none; margin: 7px -4px 0; padding: 3px 0 0;
-  border-top: 1px solid var(--line-soft);
-}
-.fig-node-item {
-  display: flex; align-items: center; gap: 6px; height: 20px;
-  padding: 0 4px; border-radius: 4px; font-size: var(--text-xs); color: var(--text);
-  cursor: pointer;
-}
-.fig-node-item:hover { background: var(--bg-soft); }
-.fig-node-item--selected { background: rgba(var(--active-rgb), .10); color: var(--active); }
-.fig-node-item--faded { opacity: .55; }
-.fig-node-item--more { color: var(--muted); cursor: default; padding-left: 22px; }
-.fig-node-item--more:hover { background: transparent; }
-.fig-node-item-glyph { font-size: 10px; color: var(--faint); flex: none; }
-.fig-node-item-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fig-node-item-hint { flex: none; color: var(--faint); font-size: 10px; max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fig-node--working { border-style: dashed; }
-.fig-node--working.fig-st--open { border-color: rgba(var(--active-rgb), .45); }
 @keyframes fig-pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(var(--active-rgb), .35); }
   50% { opacity: .55; box-shadow: 0 0 0 4px rgba(var(--active-rgb), 0); }

@@ -133,6 +133,11 @@ class ExperimentFigureTimelineTest(unittest.TestCase):
             self.assertEqual(self.edges[(f"review:rv_3{j}", f"submission:3.{j + 1}")], "revised_to")
             self.assertNotIn((f"submission:3.{j}", f"submission:3.{j + 1}"), self.edges)
         self.assertEqual(self.edges[("submission:3.4", "review:rv_34")], "reviewed_by")
+        # A round wears its verdict: sent back → returned, accepted → done.
+        for j in (1, 2, 3):
+            self.assertEqual(self.nodes[f"submission:3.{j}"]["status"], "returned")
+            self.assertEqual(self.nodes[f"submission:3.{j}"]["sublabel"], "sent back")
+        self.assertEqual(self.nodes["submission:3.4"]["status"], "done")
         self.assertEqual(self.edges[("review:rv_34", "conclusion")], "concludes")
         self.assertEqual(self.edges[("conclusion", "claim:claim_1")], "tests")
         # Exactly one beat is "now": the conclusion of a finished experiment.
@@ -141,12 +146,13 @@ class ExperimentFigureTimelineTest(unittest.TestCase):
     def test_satellites_name_their_beat(self) -> None:
         plan1 = self.nodes["artifact:plan1:a1"]
         self.assertEqual((plan1["anchor"], plan1["lane"], plan1["qualifier"]), ("attempt:1", "evidence", "attempt 1"))
-        self.assertEqual(self.edges[("attempt:1", "artifact:plan1:a1")], "proposed")
+        # Evidence leads INTO its marker: the plan feeds the attempt.
+        self.assertEqual(self.edges[("artifact:plan1:a1", "attempt:1")], "feeds")
         self.assertEqual(plan1["sublabel"], "plan · superseded")
 
         rep31 = self.nodes["artifact:rep31:a3"]
         self.assertEqual((rep31["anchor"], rep31["lane"], rep31["qualifier"]), ("submission:3.1", "evidence", "round 3.1"))
-        self.assertEqual(self.edges[("submission:3.1", "artifact:rep31:a3")], "submitted")
+        self.assertEqual(self.edges[("artifact:rep31:a3", "submission:3.1")], "feeds")
         rep34 = self.nodes["artifact:rep34:a3"]
         self.assertEqual(rep34["anchor"], "submission:3.4")
         self.assertEqual(rep34["sublabel"], "report")
@@ -180,7 +186,7 @@ class ExperimentFigureTimelineTest(unittest.TestCase):
         group = self.nodes["artifact_group:submission:3.1:evidence"]
         self.assertEqual(group["meta"]["count"], 9 + 2 - ARTIFACT_FANOUT_CAP)
         self.assertEqual((group["anchor"], group["qualifier"]), ("submission:3.1", "round 3.1"))
-        self.assertEqual(self.edges[("submission:3.1", group["id"])], "submitted")
+        self.assertEqual(self.edges[(group["id"], "submission:3.1")], "feeds")
         # Other rounds are untouched by 3.1's overflow.
         self.assertNotIn("artifact_group:submission:3.4:evidence", self.nodes)
 
