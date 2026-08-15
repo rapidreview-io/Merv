@@ -255,7 +255,7 @@ class Application:
             "candidates": review_candidates + consolidation_candidates + owner_candidates,
         }
 
-    def dispatch_queue(self, *, project_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    def dispatch_queue(self, *, project_id: str) -> list[dict[str, Any]]:
         """What auto-run would pick up next, in order, whether or not anything
         can pick it up right now: candidates without a live session. Read-only;
         the page shows these as waiting rows and counts them in its headline."""
@@ -285,15 +285,21 @@ class Application:
                     "attempt_index": int(candidate.get("attempt_index") or 0),
                 }
             )
-            if len(queue) >= limit:
-                break
         return queue
 
-    def list_agent_sessions(self, *, project_id: str) -> dict[str, Any]:
-        """The Auto-run page's one read: sessions, runners, and the queue."""
+    def list_agent_sessions(
+        self, *, project_id: str, queue_limit: int = 50
+    ) -> dict[str, Any]:
+        """The Auto-run page's one read: sessions, runners, and the queue.
+
+        ``queue`` carries at most ``queue_limit`` rows; ``queue_total`` is the
+        real count so the headline never reports a truncated list as the whole.
+        """
+        queue = self.dispatch_queue(project_id=project_id)
         return {
             **self.agent_sessions.list(project_id=project_id),
-            "queue": self.dispatch_queue(project_id=project_id),
+            "queue": queue[:queue_limit],
+            "queue_total": len(queue),
         }
 
     def claim_agent_session(

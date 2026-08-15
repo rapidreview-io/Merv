@@ -2294,7 +2294,7 @@ class AgentRunner:
         if reason == "agent_dispatch_disabled":
             print(
                 f"{self.project_id}: automatic dispatch is off for this "
-                "project; turn it on in project settings to claim work"
+                "project; turn it on at the top of the Auto-run page to claim work"
             )
 
     def _agent_setup(self, session: LocalSession) -> dict[str, Any]:

@@ -42,6 +42,7 @@ function closedAt(session) {
 }
 
 function waitingReason({ dispatch, runners, running, now }) {
+  if (dispatch === null) return 'checking dispatch…';
   if (dispatch === false) return 'dispatch is off';
   const live = runners.filter((runner) => runnerPresentation(runner, now).live);
   if (live.length === 0) return 'no live machine';
@@ -51,7 +52,7 @@ function waitingReason({ dispatch, runners, running, now }) {
   return 'starting soon';
 }
 
-export default function AutorunJobs({ projectId, sessions, queue, tab, now, dispatch, runners, onStop }) {
+export default function AutorunJobs({ projectId, sessions, queue, queueTotal = null, tab, now, dispatch, runners, onStop }) {
   const [expanded, setExpanded] = useState('');
   const [stopping, setStopping] = useState('');
   const [stopError, setStopError] = useState({ id: '', message: '' });
@@ -124,6 +125,11 @@ export default function AutorunJobs({ projectId, sessions, queue, tab, now, disp
         {waiting.map((item) => (
           <WaitingRow key={`${item.kind}:${item.target_id}:${item.review_request_id || ''}`} item={item} reason={reason} projectId={projectId} />
         ))}
+        {waiting.length > 0 && queueTotal > waiting.length && (
+          <div className="arj-more">
+            {queueTotal - waiting.length} more waiting — the list shows the next {waiting.length}.
+          </div>
+        )}
       </div>
     </div>
   );

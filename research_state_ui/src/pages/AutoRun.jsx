@@ -30,6 +30,7 @@ export default function AutoRun() {
   const [sessions, setSessions] = useState(null); // null = loading
   const [runners, setRunners] = useState([]);
   const [queue, setQueue] = useState(null); // null = brain does not report one
+  const [queueTotal, setQueueTotal] = useState(null);
   const [error, setError] = useState('');
   const [dispatch, setDispatch] = useState(null); // null = unknown
   const [dispatchBusy, setDispatchBusy] = useState(false);
@@ -45,7 +46,9 @@ export default function AutoRun() {
       setRunners(Array.isArray(response?.runners)
         ? response.runners
         : (response?.runner ? [response.runner] : []));
-      setQueue(Array.isArray(response?.queue) ? response.queue : null);
+      const rows = Array.isArray(response?.queue) ? response.queue : null;
+      setQueue(rows);
+      setQueueTotal(rows ? Math.max(Number(response?.queue_total) || 0, rows.length) : null);
       setError('');
     } catch (err) {
       setError(err?.message || 'Auto-run status is unavailable.');
@@ -56,19 +59,32 @@ export default function AutoRun() {
     setSessions(null);
     setRunners([]);
     setQueue(null);
+    setQueueTotal(null);
     setDispatch(null);
     setTab('active');
     refresh();
   }, [projectId, refresh]);
 
+  // The dispatch switch is project state that can change elsewhere (another
+  // tab, an agent over MCP), and a first fetch can fail: read it on mount,
+  // retry while unknown, and re-read every 30 s.
+  const readDispatch = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const project = await api.getProject(projectId);
+      setDispatch(Boolean(project?.settings?.agent_dispatch));
+      setDispatchError('');
+    } catch {
+      setDispatchError('Dispatch setting is unavailable — retrying.');
+    }
+  }, [projectId]);
+
   useEffect(() => {
     if (!projectId) return undefined;
-    let disposed = false;
-    api.getProject(projectId)
-      .then((project) => { if (!disposed) setDispatch(Boolean(project?.settings?.agent_dispatch)); })
-      .catch(() => { if (!disposed) setDispatchError('Dispatch setting is unavailable.'); });
-    return () => { disposed = true; };
-  }, [projectId]);
+    readDispatch();
+    const timer = setInterval(readDispatch, dispatch === null ? 5000 : 30000);
+    return () => clearInterval(timer);
+  }, [projectId, readDispatch, dispatch]);
 
   const running = useMemo(() => (sessions || []).filter(isLiveSession).length, [sessions]);
 
@@ -121,11 +137,12 @@ export default function AutoRun() {
     const out = { active: 0, done: 0, failed: 0, all: (sessions || []).length };
     for (const session of sessions || []) out[jobBucket(session)] += 1;
     if (queue) {
-      out.active += queue.length;
-      out.all += queue.length;
+      const waiting = queueTotal ?? queue.length;
+      out.active += waiting;
+      out.all += waiting;
     }
     return out;
-  }, [sessions, queue]);
+  }, [sessions, queue, queueTotal]);
 
   // Say nothing until the first answer lands: an empty runner list before
   // the fetch is not "no machine paired".
@@ -135,7 +152,7 @@ export default function AutoRun() {
       dispatch,
       runners,
       sessions,
-      waiting: queue ? queue.length : null,
+      waiting: queue ? (queueTotal ?? queue.length) : null,
       now,
     });
   const noMachines = sessions !== null && runners.length === 0;
@@ -199,6 +216,7 @@ export default function AutoRun() {
               projectId={projectId}
               sessions={sessions}
               queue={queue}
+              queueTotal={queueTotal}
               tab={tab}
               now={now}
               dispatch={dispatch}

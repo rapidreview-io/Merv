@@ -317,8 +317,9 @@ seen first (`runner` keeps the single most-recent row for one release), and
 then a pending consolidation, then experiments needing an owner, published
 wave first), minus anything with a live session — up to 50 rows of
 `{target_type, target_id, kind, review_request_id, title, status,
-attempt_index}`. The queue is computed whether or not dispatch is on, so the
-page can say "3 items waiting" precisely when nothing can run. A runner row is
+attempt_index}`, with `queue_total` as the real count. The queue is computed
+whether or not dispatch is on, so the page can say "3 items waiting"
+precisely when nothing can run. A runner row is
 non-secret — `machine`, `platforms` (each with `enabled` and `managed`; a
 `managed: false` entry is a CLI-only custom agent the brain may show but never
 edit), `capacity`, `last_seen_at`, `live` (heartbeat at most 45 s old),

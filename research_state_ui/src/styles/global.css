@@ -3668,6 +3668,7 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .arj-row--waiting { color: var(--muted); border-bottom: 1px solid var(--line-soft); }
 .arj-row--waiting .arj-work-title { color: var(--muted); }
 .arj-waiting-reason { font-style: italic; }
+.arj-more { padding: 8px 14px 10px 46px; font-size: var(--text-xs); color: var(--faint); }
 /* Drawer: the trace, then one line of facts and the one action. */
 .arj-drawer { padding: 10px 14px 12px 46px; border-bottom: 1px solid var(--line-soft); background: var(--bg-soft); }
 .arj-rowgroup:last-child .arj-drawer { border-bottom: none; }
@@ -5987,9 +5988,6 @@ a.spend-row-name:hover { color: var(--active); }
   color: var(--muted); font-size: var(--text-xs);
 }
 .cnx-poll .sbxpw-spinner { width: 14px; height: 14px; }
-  flex: 1; min-width: 0; overflow-wrap: anywhere;
-  font-size: var(--text-xs);
-}
 .mcpk-state--offered { color: var(--qualifies); border-color: rgba(var(--qualifies-rgb), 0.45); }
 .mcpk-state--closed { color: var(--faint); border-color: var(--line); }
 
@@ -6055,11 +6053,6 @@ a.spend-row-name:hover { color: var(--active); }
 
 @media (max-width: 720px) {
   .settings-section-head { align-items: flex-start; flex-direction: column; }
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: 10px; padding: 14px;
-  }
-    grid-column: 2 / -1; justify-content: flex-start; gap: 10px;
-  }
   .mcpk-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
   .mcpk-row--head { display: none; }
   .mcpk-when, .mcpk-scope { display: none; }

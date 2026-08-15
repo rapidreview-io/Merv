@@ -195,6 +195,7 @@ export default function App() {
             <Route path="experiments" element={<ExperimentCardList />} />
             <Route path="experiments/:experimentId" element={<MobileExperimentDetail />} />
             <Route path="reflection" element={<MobileReflectionScreen />} />
+            <Route path="reflection/:reflectionId" element={<MobileReflectionScreen />} />
             <Route path="artifacts" element={<MobileArtifacts />} />
             <Route path="artifacts/:artifactId" element={<MobileArtifacts />} />
             <Route path="storage" element={<Storage />} />

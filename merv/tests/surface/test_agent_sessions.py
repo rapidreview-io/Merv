@@ -885,6 +885,7 @@ class AgentDispatchSwitchTest(unittest.TestCase):
             [("experiment", "dispatchable", "planned")],
         )
         self.assertEqual(listing["queue"][0]["target_type"], "experiment")
+        self.assertEqual(listing["queue_total"], 1)
 
         # A live session on the target takes it out of the queue; closing it
         # (here: halt) puts it back.

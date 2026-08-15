@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { useProjectStore, selectProject, useProjectHref } from '../store/useProjectStore';
 import ArtifactContentView from '../components/ArtifactContentView';
@@ -45,7 +45,11 @@ export default function MobileReflectionScreen() {
 
   const [data, setData] = useState(null);
   const [graph, setGraph] = useState(null);
-  const [pinnedId, setPinnedId] = useState(null); // null = follow the live wave
+  // A deep link (/reflection/:reflectionId — the desktop detail route, also
+  // what auto-run's job and queue rows produce) pins that wave; otherwise
+  // follow the live one.
+  const { reflectionId: linkedId } = useParams();
+  const [pinnedId, setPinnedId] = useState(linkedId || null); // null = follow the live wave
   const [showCanvas, setShowCanvas] = useState(false);
 
   const fetchReflections = useCallback(async () => {
