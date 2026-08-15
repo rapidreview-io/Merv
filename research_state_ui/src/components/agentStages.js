@@ -36,7 +36,6 @@ function ago(iso, now) {
 export function agentStages({ entry = null, readiness, enabled = true, now = Date.now() }) {
   const stages = [];
   const missing = readiness?.tone === 'missing';
-  const notReady = readiness?.tone === 'warn';
 
   // 1. Installed
   if (missing) {
@@ -65,11 +64,13 @@ export function agentStages({ entry = null, readiness, enabled = true, now = Dat
     stages.push({ key: 'quota', label: 'Provider quota', state: 'fail', detail: entry.quota.line || 'refused', hint: entry.quota.detail || '' });
   }
 
-  // 3. Merv skills / MCP
+  // 3. Merv skills / MCP — judged from the machine's own static probe
+  // (entry.problems), never from sign-in evidence, which has its own rung.
+  const staticProblems = Array.isArray(entry?.problems) ? entry.problems.filter(Boolean) : [];
   if (missing) {
     stages.push({ key: 'skills', label: 'Merv skills', state: 'pending', detail: '' });
-  } else if (notReady && (readiness.problems || []).length) {
-    stages.push({ key: 'skills', label: 'Merv skills', state: 'fail', detail: readiness.problems[0] });
+  } else if (entry && entry.ok === false && staticProblems.length) {
+    stages.push({ key: 'skills', label: 'Merv skills', state: 'fail', detail: staticProblems[0] });
   } else if (entry) {
     const how = entry.skills === 'mounted' ? 'mounted' : entry.skills === 'instruction' ? 'by instruction' : '';
     const mcp = entry.merv_mcp === 'native' ? 'MCP native' : entry.merv_mcp === 'merv-client' ? 'MCP via merv-client' : '';
