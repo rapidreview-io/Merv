@@ -3772,18 +3772,23 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
    the same evidence palette used everywhere else (supports/qualifies/
    refutes/active). */
 
-.exp-figure {
+/* Every graph is a header floating over a framed canvas — no card wrapped
+   around the pair. The canvas keeps the only box on screen; the header sits
+   above it on the page's own ground. Shared with the project graph's slot, so
+   all four section graphs present identically. */
+.exp-figure,
+.wflow-slot {
   margin-top: var(--space-5);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--bg-elev);
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
+/* No rule under the header: it spanned the full width and cut straight across
+   the rounded top corners of the canvas below it. The gap does the separating. */
 .fig-head {
   display: flex; align-items: baseline; justify-content: space-between;
   gap: var(--space-3); flex-wrap: wrap;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line-soft);
+  padding: 0 2px 10px;
 }
 .fig-title { font-size: var(--text-md); font-weight: 600; }
 .fig-title-hint {
@@ -3809,8 +3814,17 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 /* The sidebar OVERLAYS the canvas on every graph (see .fig-panel) rather than
    taking a grid track, so the canvas never resizes and react-flow never
    re-lays-out when a node is opened. Framing math reserves the covered gutter
-   instead — see visibleWidth() in utils/graphCamera.js. */
-.fig-body { display: grid; grid-template-columns: 1fr; position: relative; }
+   instead — see visibleWidth() in utils/graphCamera.js.
+
+   This is also the frame: a hairline and a radius around canvas + sidebar
+   together, matching .wflow. It sits here rather than on .fig-canvas so the
+   sidebar is clipped to the same rounded corners. */
+.fig-body {
+  display: grid; grid-template-columns: 1fr; position: relative;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  overflow: hidden;
+}
 
 /* Drag handle straddling the canvas/panel seam. A wide invisible hit area with
    a hairline that lights up on hover/drag; its position rides the same
@@ -4084,15 +4098,19 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   border: 1px solid var(--line); color: var(--muted); background: var(--bg-soft);
 }
 .lgr-node--dead { border-style: dashed; opacity: .6; }
+/* Sits between the header and the canvas frame. No rule under it — with the
+   card gone, that line would float across open ground. */
 .lgr-problems {
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--line-soft);
+  padding: 0 2px 8px;
   font-size: var(--text-xs); color: var(--qualifies);
 }
 /* Graph resource exists but nothing is drawable (broken JSON, no valid
-   nodes): the canvas slot states it plainly instead of hiding the tab. */
+   nodes): the canvas slot states it plainly instead of hiding the tab. It
+   stands in for the canvas, so it wears the canvas frame. */
 .lgr-broken {
   padding: 28px 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
   font-size: var(--text-sm); color: var(--muted);
   text-align: center;
 }
@@ -4163,12 +4181,18 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   background: color-mix(in srgb, var(--bg) 50%, transparent);
   backdrop-filter: blur(2px);
 }
+/* Expanded, the SLOT goes fullscreen so the header travels with it and the
+   Collapse control and legend stay reachable — see .wflow-slot--expanded,
+   which this now shares. */
 .exp-figure--expanded {
   position: fixed; inset: 18px; z-index: 81;
   margin-top: 0;
-  display: flex; flex-direction: column;
+  background: var(--bg);
+  border-radius: var(--radius-lg);
   box-shadow: 0 18px 60px rgba(0, 0, 0, .45);
+  padding: 14px;
 }
+.exp-figure--expanded .fig-head { position: sticky; top: 0; z-index: 1; background: var(--bg); }
 .exp-figure--expanded .fig-body { flex: 1; min-height: 0; }
 .exp-figure--expanded .fig-canvas { height: 100%; }
 
@@ -6619,26 +6643,17 @@ textarea.sbxpw-input { font-family: var(--mono, ui-monospace, monospace); font-s
   border: 1px solid var(--line-soft);
   border-radius: 10px;
 }
-/* Header + canvas in one slot. Inline it is pure layout — no card, no border,
-   no background — so Home keeps the airy presentation; the canvas's own
-   hairline frame is still the only box on screen. Expanded, the SLOT is what
-   goes fullscreen (same inset/z-index/shadow as .exp-figure--expanded), so the
-   header travels with it and the Collapse button and legend stay reachable.
-   Expanding the canvas alone buried both under it. */
-.wflow-slot { display: flex; flex-direction: column; min-width: 0; }
+/* The project graph's slot shares .exp-figure's layout and expanded chrome
+   above; only the canvas element differs (.wflow rather than .fig-body). */
 .wflow-slot--expanded {
   position: fixed; inset: 18px; z-index: 81;
   background: var(--bg);
   border-radius: var(--radius-lg);
   box-shadow: 0 18px 60px rgba(0, 0, 0, .45);
-  padding: 0 14px 14px;
+  padding: 14px;
+  margin-top: 0;
 }
-/* The header keeps its own ground while the canvas scrolls under nothing —
-   fullscreen, it is the only chrome, so it sticks to the top of the slot. */
-.wflow-slot--expanded .fig-head {
-  position: sticky; top: 0; z-index: 1;
-  background: var(--bg);
-}
+.wflow-slot--expanded .fig-head { position: sticky; top: 0; z-index: 1; background: var(--bg); }
 .wflow-slot--expanded .wflow { flex: 1; min-height: 0; margin-bottom: 0; }
 .wflow .react-flow { background: transparent; }
 .wflow .react-flow__background {
