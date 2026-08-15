@@ -6,24 +6,28 @@
  * TIMELINE — the derived experiment figure. One uniform row grid, read left
  * to right in time:
  *
- *   beat columns     the middle row is an alternating chain of work and
- *                    decision: attempt / submission, the review that judged
- *                    it, the next attempt / submission, its review, … and the
- *                    conclusion. Each beat is always the ONLY card in its
- *                    column and always sits on the row, so a verdict is
- *                    strictly after the round it graded and strictly before
- *                    anything of the round it caused;
+ *   round columns    an attempt / submission (or the conclusion) is the only
+ *                    card ON the middle row in its column, so the markers form
+ *                    one straight backbone of horizontal arrows; the verdict(s)
+ *                    on that round hang directly under it in the same column
+ *                    (row +1, +2 …) — column = round, work above, decision
+ *                    below, and a verdict is therefore strictly left of
+ *                    anything from the round it caused;
  *   regular columns  everything else — files prepared for the next round,
- *                    execution output trailing a beat, sandbox, claims —
- *                    pooled into the single column between two beats and
+ *                    execution output trailing a verdict, sandbox, claims —
+ *                    pooled into the single column between two rounds and
  *                    stacked on the same row pitch, centered on the row
- *                    (straddling it, never on it, so the row stays a clear
- *                    channel). No lanes: cards go in type order, top to bottom.
+ *                    (straddling it on half-row slots, never on it, so the row
+ *                    stays a clear channel — and so do the integer rows the
+ *                    verdicts sit on, since the two grids interleave). No
+ *                    lanes: cards go in type order, top to bottom.
  *
- * Spine nodes (beats and claims) are ranked by longest path over spine-only
- * edges, which orders the columns. Satellites never take part in ranking:
- * evidence joins the regular column just before the marker it fed, execution
- * output joins the column just after the beat it trails.
+ * Spine nodes (markers, reviews, claims) are ranked by longest path over
+ * spine-only edges, which orders the columns. Reviews then leave the ranking
+ * to sit under the marker they graded (found by walking their incoming spine
+ * edges back to a marker). Satellites never take part in ranking: evidence
+ * joins the regular column just before the marker it fed, execution output
+ * joins the column just after the round it trails.
  *
  * LEGACY — every other small DAG (agent-authored logic graphs, reflection
  * waves, mobile outlines): longest-path layering gives the reading order and a
@@ -51,10 +55,9 @@ const ROW_PITCH = FIG_NODE_H + GAP_Y;
 
 // Vertical order within a column: inputs above, verdicts/outputs below.
 const TYPE_ORDER = { artifact: 0, artifact_group: 1, attempt: 2, submission: 3, sandbox: 4, review: 5, conclusion: 6, claim: 7 };
-// Beats: the nodes that own a column and sit on the middle row. Reviews (and
-// open review gates, which share the type) are beats too — the verdict is what
-// sends a round back or lets it move on, so it belongs on the line.
-const MARKER_TYPES = new Set(['attempt', 'submission', 'review', 'conclusion']);
+// Markers: the nodes that own a column and sit on the middle row. Reviews (and
+// open review gates, which share the type) hang under the marker they graded.
+const MARKER_TYPES = new Set(['attempt', 'submission', 'conclusion']);
 
 /** Longest-path ranks (Kahn's order; cycle-safe: leftovers keep rank 0),
  * followed by a right-pack of pure sources next to their earliest consumer. */
@@ -94,21 +97,49 @@ function layoutTimeline(rawNodes, edges, ids) {
   const rank = rankNodes(spineNodes, spineEdges);
   const isMarker = (n) => MARKER_TYPES.has(n.type);
 
-  // Column keys: a beat owns its rank outright; other spine nodes (claims) at
-  // that rank share one regular column, placed just after the beat if they
-  // (unusually) tie with one. Keys only need to sort, so halves are fine.
+  // A review's round: walk its incoming spine edges back (through earlier
+  // reviews of the same round) to a marker. Null for an orphan review, which
+  // then just takes a regular column by rank.
+  const into = new Map();
+  for (const e of spineEdges) {
+    if (!into.has(e.to)) into.set(e.to, []);
+    into.get(e.to).push(e.from);
+  }
+  const spineById = new Map(spineNodes.map(n => [n.id, n]));
+  const roundOf = (review) => {
+    let cur = review;
+    for (let hops = 0; hops < 8 && cur; hops += 1) {
+      const prev = (into.get(cur.id) || []).map(id => spineById.get(id)).filter(Boolean);
+      const marker = prev.find(isMarker);
+      if (marker) return marker;
+      cur = prev.find(n => n.type === 'review') || null;
+    }
+    return null;
+  };
+
+  // Column keys: a marker owns its rank outright; its reviews share its key
+  // and stack under it. Other spine nodes (claims, orphan reviews) at a
+  // marker's rank share one regular column placed just after the marker.
+  // Keys only need to sort, so halves are fine.
   const keyOf = new Map();
   const markerRanks = new Set(spineNodes.filter(isMarker).map(n => rank.get(n.id)));
   const regularKeys = new Set();
+  const underMarker = new Map(); // review id → marker id
   for (const n of spineNodes) {
     const r = rank.get(n.id);
     if (isMarker(n)) {
       keyOf.set(n.id, r);
-    } else {
-      const k = markerRanks.has(r) ? r + 0.5 : r;
-      keyOf.set(n.id, k);
-      regularKeys.add(k);
+      continue;
     }
+    const round = n.type === 'review' ? roundOf(n) : null;
+    if (round) {
+      keyOf.set(n.id, rank.get(round.id));
+      underMarker.set(n.id, round.id);
+      continue;
+    }
+    const k = markerRanks.has(r) ? r + 0.5 : r;
+    keyOf.set(n.id, k);
+    regularKeys.add(k);
   }
   const sortedMarkers = [...markerRanks].sort((a, b) => a - b);
   const prevMarker = (k) => { let p = -Infinity; for (const m of sortedMarkers) { if (m < k) p = m; else break; } return p; };
@@ -120,12 +151,13 @@ function layoutTimeline(rawNodes, edges, ids) {
     return (a + b) / 2;
   };
 
-  // Satellites join the regular column in the gap next to their anchor beat:
+  // Satellites join the regular column in the gap next to their round:
   // evidence goes just BEFORE the marker it fed (prepared, then submitted),
-  // execution output just AFTER the beat it trails — so the files for round
-  // j+1 and the output trailing verdict j share the column between them.
-  // Anchored on a non-beat, it simply shares that column. Tolerate a
-  // satellite anchored on another satellite by walking up (bounded).
+  // execution output just AFTER the round whose verdict it trails — so the
+  // files for round j+1 and the output trailing verdict j share the column
+  // between the two rounds. Anchored on something outside a round (a claim,
+  // an orphan review), it simply shares that column. Tolerate a satellite
+  // anchored on another satellite by walking up (bounded).
   const byId = new Map(rawNodes.map(n => [n.id, n]));
   const spineAnchor = (n) => {
     let cur = n;
@@ -142,8 +174,9 @@ function layoutTimeline(rawNodes, edges, ids) {
   for (const n of satellites) {
     const anchor = spineAnchor(n);
     if (!anchor) { keyOf.set(n.id, gapColumn(-Infinity, sortedMarkers[0] ?? Infinity, 'last')); continue; }
-    const ka = keyOf.get(anchor.id);
-    if (!isMarker(anchor)) { keyOf.set(n.id, ka); continue; }
+    const round = isMarker(anchor) ? anchor : spineById.get(underMarker.get(anchor.id));
+    if (!round) { keyOf.set(n.id, keyOf.get(anchor.id)); continue; }
+    const ka = keyOf.get(round.id);
     keyOf.set(n.id, n.lane === 'execution'
       ? gapColumn(ka, nextMarker(ka), 'first')
       : gapColumn(prevMarker(ka), ka, 'last'));
@@ -157,10 +190,11 @@ function layoutTimeline(rawNodes, edges, ids) {
   }
 
   // Every regular column straddles the backbone row: its cards take an even
-  // number of half-row slots (odd counts leave the top slot empty), so the
-  // nearest cards sit half a pitch above and below the row and the row itself
-  // stays a clear channel for the marker → marker line. Cards keep input
-  // order within a type (the server puts load-bearing files first).
+  // number of half-row slots (odd counts leave the bottom slot empty, since
+  // verdicts already weigh the picture downward), so the nearest cards sit
+  // half a pitch above and below the row and the row itself stays a clear
+  // channel for the marker → marker line. Cards keep input order within a
+  // type (the server puts load-bearing files first).
   const slotsOf = (col) => (col.length % 2 ? col.length + 1 : col.length);
   let backboneY = 0;
   for (const [k, col] of columns) {
@@ -172,14 +206,16 @@ function layoutTimeline(rawNodes, edges, ids) {
   let x = 0;
   for (const [k, col] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
     if (sortedMarkers.includes(k)) {
-      // Beats: exactly one per column, on the row. (Two beats can only tie
-      // on rank in malformed data; stack them rather than lose one.)
+      // Round columns: the marker on the row, its verdicts stacked under it
+      // in the order they were given. (Two markers can only tie on rank in
+      // malformed data; they stack too rather than get lost.)
+      col.sort((a, b) => (isMarker(a) ? 0 : 1) - (isMarker(b) ? 0 : 1) || (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
       let y = backboneY;
       for (const n of col) { nodes.push({ ...n, x, y }); y += ROW_PITCH; }
     } else {
       col.sort((a, b) => (TYPE_ORDER[a.type] ?? 9) - (TYPE_ORDER[b.type] ?? 9));
       const slots = slotsOf(col);
-      let slot = slots - col.length; // odd count → leave the top slot empty
+      let slot = 0;
       for (const n of col) {
         nodes.push({ ...n, x, y: backboneY + (slot - (slots - 1) / 2) * ROW_PITCH });
         slot += 1;
