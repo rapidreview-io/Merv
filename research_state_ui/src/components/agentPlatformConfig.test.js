@@ -6,6 +6,7 @@ import {
   PLATFORM_PRESETS,
   defaultWorktreeRoot,
   draftFromRunner,
+  readinessFor,
   settingsFromDraft,
   validateDraft,
   workspaceWithRepository,
@@ -114,4 +115,27 @@ test('validation requires absolute workspace paths and sane parallelism', () => 
   assert.equal(bad.platforms.codex.parallelism, 'Parallelism must be an integer from 1 to 32.');
   const good = validateDraft(draft.platforms, { repository: '~/repo', root: '/tmp/wt', base_ref: 'main' });
   assert.equal(good.valid, true);
+});
+
+test('harness readiness beats the plain executable probe and explains problems', () => {
+  const harness = {
+    skills: { count: 12, digest: 'abcdef1234' },
+    platforms: {
+      codex: { ok: true, executable: '/opt/codex', version: '0.9.1', merv_mcp: 'native', skills: 'mounted' },
+      claude: { ok: false, version: 'v1.2', merv_mcp: 'native', skills: 'mounted', problems: ['claude: MCP config flag unsupported'] },
+      gemini: { ok: false, problems: ['gemini: executable not found on PATH'] },
+    },
+  };
+  const commands = { codex: true, claude: true, gemini: false, hermes: true };
+  assert.deepEqual(readinessFor('codex', 'codex', harness, commands), {
+    tag: 'ready', tone: 'ok', details: ['v0.9.1', 'MCP native', 'skills mounted'], problems: [],
+  });
+  const claude = readinessFor('claude', 'claude', harness, commands);
+  assert.equal(claude.tag, 'not ready');
+  assert.equal(claude.tone, 'warn');
+  assert.deepEqual(claude.problems, ['claude: MCP config flag unsupported']);
+  assert.equal(readinessFor('gemini', 'gemini', harness, commands).tag, 'not found');
+  // No harness entry → fall back to the executable probe.
+  assert.equal(readinessFor('hermes', 'hermes', harness, commands).tag, 'installed');
+  assert.equal(readinessFor('qwen', 'qwen', null, commands).tag, '');
 });

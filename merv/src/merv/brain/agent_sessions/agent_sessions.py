@@ -6,6 +6,7 @@ from __future__ import annotations
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 import json
+import re
 from typing import Any, Iterable, Mapping
 
 from ..kernel.secret_tokens import hash_secret, secret_digest_matches
@@ -48,6 +49,12 @@ MAX_AGENT_SETUP_BYTES = 8 * 1024
 MAX_TELEMETRY_BYTES = 8 * 1024
 MAX_RUNNER_PRESENCE_BYTES = 16 * 1024
 RUNNER_LIVE_SECONDS = 45
+# Trace peek: a bounded, redacted excerpt per session, never the raw trace.
+MAX_TRACE_EVENTS = 60
+MAX_TRACE_EVENT_BYTES = 4 * 1024
+MAX_TRACE_EVENTS_BYTES = 96 * 1024
+MAX_TRACE_STDERR_CHARS = 8 * 1024
+TRACE_GRACE_AFTER_CLOSE_SECONDS = 15 * 60
 
 
 class AgentSessions:
@@ -781,6 +788,87 @@ class AgentSessions:
                 self._close(tx=tx, row=row, now=now, reason=reason[:200])
             return len(rows)
 
+    def record_trace(
+        self,
+        *,
+        session_id: str,
+        runner_id: str,
+        events: Iterable[Any],
+        stderr_tail: str = "",
+        complete: bool = False,
+    ) -> dict[str, Any]:
+        """Store the runner's bounded, redacted excerpt for one session.
+
+        The owning runner may write it while the session is live and shortly
+        after it closes (final capture, Hermes export). The row is capped and
+        overwritten; the raw trace never leaves the machine.
+        """
+        encoded_events, kept = _trace_events_projection(events)
+        tail = str(stderr_tail or "")[-MAX_TRACE_STDERR_CHARS:]
+        now = datetime.now(UTC)
+        with self.store.transaction() as tx:
+            row = tx.execute(
+                "SELECT id, project_id, runner_id, closed_at FROM agent_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError(f"agent session not found: {session_id}")
+            if str(row["runner_id"]) != runner_id:
+                raise PermissionDeniedError("agent session belongs to another runner")
+            closed_at = parse_iso(row["closed_at"])
+            if closed_at is not None and now - closed_at > timedelta(
+                seconds=TRACE_GRACE_AFTER_CLOSE_SECONDS
+            ):
+                raise ValidationError("agent session closed too long ago for a trace")
+            tx.execute(
+                """
+                INSERT INTO agent_session_traces (
+                  session_id, project_id, events_json, stderr_tail, complete, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (session_id) DO UPDATE SET
+                  events_json = excluded.events_json,
+                  stderr_tail = excluded.stderr_tail,
+                  complete = excluded.complete,
+                  updated_at = excluded.updated_at
+                """,
+                (
+                    session_id,
+                    str(row["project_id"]),
+                    encoded_events,
+                    tail,
+                    1 if complete else 0,
+                    format_iso(now),
+                ),
+            )
+        return {"session_id": session_id, "events": kept, "complete": bool(complete)}
+
+    def trace(self, *, project_id: str, session_id: str) -> dict[str, Any] | None:
+        """The stored excerpt for the browser, or None when nothing was mirrored."""
+        with closing(self.store.connect()) as conn:
+            row = conn.execute(
+                """
+                SELECT t.events_json, t.stderr_tail, t.complete, t.updated_at
+                FROM agent_session_traces t
+                JOIN agent_sessions s ON s.id = t.session_id
+                WHERE t.session_id = ? AND s.project_id = ?
+                """,
+                (session_id, project_id),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            events = json.loads(str(row["events_json"] or "[]"))
+        except ValueError:
+            events = []
+        return {
+            "session_id": session_id,
+            "events": events if isinstance(events, list) else [],
+            "stderr_tail": str(row["stderr_tail"] or ""),
+            "complete": bool(row["complete"]),
+            "updated_at": str(row["updated_at"]),
+        }
+
     def halt_session(
         self, *, project_id: str, session_id: str, reason: str = "halted_by_user"
     ) -> dict[str, Any]:
@@ -1139,6 +1227,47 @@ def _json_column(value: Any) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+_SECRET_KEY = re.compile(r"(?i)(api[-_]?key|token|secret|password|credential|authorization)")
+_SECRET_VALUE = re.compile(r"\b(?:mk_|mas_|rr_sk_|sk-|ghp_|xox[a-z]-)[A-Za-z0-9_\-]{8,}|Bearer\s+[A-Za-z0-9._\-]{8,}")
+
+
+def _redact(value: Any, *, depth: int = 0) -> Any:
+    """Drop secret-looking keys and mask secret-looking strings, recursively."""
+    if depth > 12:
+        return "<nested>"
+    if isinstance(value, Mapping):
+        return {
+            str(key)[:120]: ("<redacted>" if _SECRET_KEY.search(str(key)) else _redact(item, depth=depth + 1))
+            for key, item in list(value.items())[:64]
+        }
+    if isinstance(value, list):
+        return [_redact(item, depth=depth + 1) for item in value[:64]]
+    if isinstance(value, str):
+        return _SECRET_VALUE.sub("<redacted>", value)
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return str(value)[:240]
+
+
+def _trace_events_projection(events: Iterable[Any]) -> tuple[str, int]:
+    """Keep the last few events, each capped and redacted; return JSON and count."""
+    kept: list[Any] = []
+    for raw in list(events)[-MAX_TRACE_EVENTS:]:
+        cleaned = _redact(raw)
+        encoded = json.dumps(cleaned, sort_keys=True, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > MAX_TRACE_EVENT_BYTES:
+            cleaned = {
+                "truncated": True,
+                "preview": encoded[: MAX_TRACE_EVENT_BYTES // 2],
+            }
+        kept.append(cleaned)
+    encoded_all = json.dumps(kept, sort_keys=True, separators=(",", ":"))
+    while len(encoded_all.encode("utf-8")) > MAX_TRACE_EVENTS_BYTES and kept:
+        kept.pop(0)
+        encoded_all = json.dumps(kept, sort_keys=True, separators=(",", ":"))
+    return encoded_all, len(kept)
 
 
 _RUNNER_SELECT = """

@@ -183,8 +183,12 @@ inventory (`harness`) for the Auto-run page.
 Auto-run recordings stay on the executor at
 `~/.merv/agent-traces/<agent-session-id>/`: `metadata.json` binds the work item
 to its harness/model setup, `trace.jsonl` is the native provider event stream,
-and `stderr.log` holds diagnostics. Aider is intentionally unsupported for
-auto-run because it cannot emit the required complete structured trace.
+and `stderr.log` holds diagnostics. The runner mirrors one bounded, redacted
+excerpt per job to the brain — the last few events and the tail of stderr, with
+secret-shaped keys and values masked — so the Auto-run job card can show what
+an agent is doing or why it stopped; the full trace never leaves the machine.
+Aider is intentionally unsupported for auto-run because it cannot emit the
+required complete structured trace.
 
 The runner requires Git worktrees. It initializes a Merv-owned bare repository
 and central ref, gives each experiment a persistent branch under

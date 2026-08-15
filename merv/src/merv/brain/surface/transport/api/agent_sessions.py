@@ -280,6 +280,34 @@ def build_router(
             settings=settings,
         )
 
+    @router.post("/api/agent-sessions/{session_id}/trace")
+    def record_trace(
+        session_id: str, request: Request, body: JsonBody = Body(default=None)
+    ) -> dict[str, Any]:
+        """The owning runner mirrors a bounded, redacted trace excerpt."""
+        payload = dict(body or {})
+        authorize_session_control(request, session_id)
+        events = payload.get("events")
+        if not isinstance(events, list):
+            raise ValidationError("events must be a list", details={"field": "events"})
+        stderr_tail = payload.get("stderr_tail", "")
+        if not isinstance(stderr_tail, str):
+            raise ValidationError(
+                "stderr_tail must be a string", details={"field": "stderr_tail"}
+            )
+        return application.record_agent_session_trace(
+            session_id=session_id,
+            runner_id=owner(request, payload),
+            events=events,
+            stderr_tail=stderr_tail,
+            complete=bool(payload.get("complete")),
+        )
+
+    @router.get("/api/projects/{project_id}/agent-sessions/{session_id}/trace")
+    def session_trace(project_id: str, session_id: str, request: Request) -> dict[str, Any]:
+        gateway.authorize_project(request, project_id)
+        return application.agent_session_trace(project_id=project_id, session_id=session_id)
+
     @router.post("/api/projects/{project_id}/agent-sessions/{session_id}/halt")
     def halt_session(project_id: str, session_id: str, request: Request) -> dict[str, Any]:
         gateway.authorize_project(request, project_id)

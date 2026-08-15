@@ -678,6 +678,9 @@ class LocalSession:
     trace_dir: str | None = None
     trace_offset: int = 0
     telemetry: dict[str, Any] | None = None
+    # (trace bytes, stderr bytes, complete) last mirrored to the brain, so the
+    # bounded excerpt is re-sent only when something changed.
+    trace_excerpt_sig: list[Any] | None = None
 
     def host_session(self) -> HostSession | None:
         if not self.host_ref or not self.pid:
@@ -1488,6 +1491,25 @@ class AgentSessionsClient:
             or {}
         )
 
+    def record_trace(
+        self,
+        *,
+        session_id: str,
+        runner_id: str,
+        events: Sequence[Any],
+        stderr_tail: str,
+        complete: bool,
+    ) -> None:
+        self._post(
+            f"/api/agent-sessions/{session_id}/trace",
+            {
+                "runner_id": runner_id,
+                "events": list(events),
+                "stderr_tail": stderr_tail,
+                "complete": bool(complete),
+            },
+        )
+
     def _get(self, path: str) -> dict[str, Any]:
         return self._request(path, method="GET", payload=None) or {}
 
@@ -1915,6 +1937,7 @@ class AgentRunner:
             if workspace is not None:
                 self.workspaces.close(workspace)
             session.status = remote_status
+            self._mirror_trace(session, complete=True)
             return
 
         state = host.inspect(host_session)
@@ -1938,6 +1961,7 @@ class AgentRunner:
             if workspace is not None:
                 self.workspaces.close(workspace)
             session.status = "stopped"
+            self._mirror_trace(session, complete=True)
             return
         if state != "running" or not remote_status:
             session.status = "uncertain"
@@ -1969,6 +1993,7 @@ class AgentRunner:
                 workspace_stats=workspace.stats if workspace else None,
                 telemetry=telemetry,
             )
+        self._mirror_trace(session, complete=False)
 
     def _is_repeated_rapid_stop(self, session: LocalSession) -> bool:
         """Throttle a broken CLI without delaying an ordinary completed turn."""
@@ -2281,6 +2306,32 @@ class AgentRunner:
             "effort": platform.effort or "",
             "machine": socket.gethostname(),
         }
+
+    def _mirror_trace(self, session: LocalSession, *, complete: bool) -> None:
+        """Send the bounded, redacted excerpt when it changed; never raise."""
+        if not session.trace_dir:
+            return
+        try:
+            excerpt = _trace_excerpt(Path(session.trace_dir), complete=complete)
+        except OSError:
+            return
+        if excerpt is None:
+            return
+        signature = excerpt["signature"]
+        if session.trace_excerpt_sig == signature:
+            return
+        try:
+            self.client.record_trace(
+                session_id=session.session_id,
+                runner_id=self.ledger.runner_id,
+                events=excerpt["events"],
+                stderr_tail=excerpt["stderr_tail"],
+                complete=complete,
+            )
+        except RunnerError as exc:
+            print(f"{session.session_id}: trace excerpt not mirrored: {exc}", file=sys.stderr)
+            return
+        session.trace_excerpt_sig = signature
 
     def _observe_telemetry(self, session: LocalSession) -> dict[str, Any]:
         if not session.trace_dir:
@@ -2645,6 +2696,97 @@ def _prepare_trace(
         stdout=directory / stdout_filename,
         stderr=directory / "stderr.log",
     )
+
+
+TRACE_EXCERPT_EVENTS = 60
+TRACE_EXCERPT_EVENT_BYTES = 4 * 1024
+TRACE_EXCERPT_TAIL_BYTES = 256 * 1024
+TRACE_EXCERPT_STDERR_BYTES = 8 * 1024
+_EXCERPT_SECRET_KEY = re.compile(
+    r"(?i)(api[-_]?key|token|secret|password|credential|authorization)"
+)
+_EXCERPT_SECRET_VALUE = re.compile(
+    r"\b(?:mk_|mas_|rr_sk_|sk-|ghp_|xox[a-z]-)[A-Za-z0-9_\-]{8,}|Bearer\s+[A-Za-z0-9._\-]{8,}"
+)
+
+
+def _redact_excerpt(value: Any, *, depth: int = 0) -> Any:
+    if depth > 12:
+        return "<nested>"
+    if isinstance(value, Mapping):
+        return {
+            str(key)[:120]: (
+                "<redacted>"
+                if _EXCERPT_SECRET_KEY.search(str(key))
+                else _redact_excerpt(item, depth=depth + 1)
+            )
+            for key, item in list(value.items())[:64]
+        }
+    if isinstance(value, list):
+        return [_redact_excerpt(item, depth=depth + 1) for item in value[:64]]
+    if isinstance(value, str):
+        return _EXCERPT_SECRET_VALUE.sub("<redacted>", value)
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return str(value)[:240]
+
+
+def _trace_excerpt(trace_dir: Path, *, complete: bool) -> dict[str, Any] | None:
+    """The last few provider events and the stderr tail, capped and redacted.
+
+    Reads only the tail of ``trace.jsonl`` (never the whole file) so a long
+    session costs the same as a short one. Returns None when nothing exists
+    yet. ``signature`` lets the caller skip re-sending an unchanged excerpt.
+    """
+    trace_path = trace_dir / "trace.jsonl"
+    stderr_path = trace_dir / "stderr.log"
+    events: list[Any] = []
+    trace_size = 0
+    try:
+        trace_size = trace_path.stat().st_size
+    except FileNotFoundError:
+        trace_size = -1
+    if trace_size > 0:
+        with trace_path.open("rb") as handle:
+            start = max(trace_size - TRACE_EXCERPT_TAIL_BYTES, 0)
+            handle.seek(start)
+            raw = handle.read()
+        lines = raw.split(b"\n")
+        if start > 0:
+            lines = lines[1:]  # the first line is almost surely partial
+        for line in [item for item in lines if item.strip()][-TRACE_EXCERPT_EVENTS:]:
+            text = line.decode("utf-8", errors="replace")
+            if len(text.encode("utf-8")) > TRACE_EXCERPT_EVENT_BYTES:
+                events.append(
+                    {"truncated": True, "preview": _EXCERPT_SECRET_VALUE.sub(
+                        "<redacted>", text[: TRACE_EXCERPT_EVENT_BYTES // 2]
+                    )}
+                )
+                continue
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                events.append({"raw": _EXCERPT_SECRET_VALUE.sub("<redacted>", text)})
+                continue
+            events.append(_redact_excerpt(parsed))
+    stderr_tail = ""
+    stderr_size = -1
+    try:
+        stderr_size = stderr_path.stat().st_size
+        with stderr_path.open("rb") as handle:
+            handle.seek(max(stderr_size - TRACE_EXCERPT_STDERR_BYTES, 0))
+            stderr_tail = _EXCERPT_SECRET_VALUE.sub(
+                "<redacted>", handle.read().decode("utf-8", errors="replace")
+            )
+    except FileNotFoundError:
+        pass
+    if trace_size < 0 and stderr_size < 0:
+        return None
+    return {
+        "events": events,
+        "stderr_tail": stderr_tail,
+        "signature": [max(trace_size, 0), max(stderr_size, 0), bool(complete)],
+    }
 
 
 def _read_trace_telemetry(

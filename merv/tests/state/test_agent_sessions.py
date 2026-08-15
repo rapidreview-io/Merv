@@ -502,6 +502,45 @@ class AgentSessionsTest(unittest.TestCase):
                 project_id="proj_1", runner_ref="0" * 24, settings={}
             )
 
+    def test_trace_excerpt_is_bounded_redacted_and_owner_only(self) -> None:
+        session = self.claim()
+        events = [
+            {"type": "message", "text": "hello", "authorization": "Bearer abcdefghijklmnop"},
+            {"type": "tool_call", "name": "workflow.status_and_next", "args": {"key": "mk_" + "a" * 43}},
+            {"type": "big", "blob": "x" * 10_000},
+        ]
+        recorded = self.sessions.record_trace(
+            session_id=session["id"],
+            runner_id="runner",
+            events=events,
+            stderr_tail="warn: something\n",
+            complete=False,
+        )
+        self.assertEqual(recorded["events"], 3)
+        stored = self.sessions.trace(project_id="proj_1", session_id=session["id"])
+        self.assertEqual(stored["stderr_tail"], "warn: something\n")
+        self.assertFalse(stored["complete"])
+        self.assertEqual(stored["events"][0]["authorization"], "<redacted>")
+        self.assertEqual(stored["events"][1]["args"]["key"], "<redacted>")
+        self.assertTrue(stored["events"][2].get("truncated"))
+        with self.assertRaises(PermissionDeniedError):
+            self.sessions.record_trace(
+                session_id=session["id"], runner_id="other", events=[], stderr_tail=""
+            )
+        # Overwrite keeps the row bounded; a foreign project reads nothing.
+        self.sessions.record_trace(
+            session_id=session["id"],
+            runner_id="runner",
+            events=[{"i": index} for index in range(200)],
+            stderr_tail="tail",
+            complete=True,
+        )
+        again = self.sessions.trace(project_id="proj_1", session_id=session["id"])
+        self.assertLessEqual(len(again["events"]), 60)
+        self.assertEqual(again["events"][-1], {"i": 199})
+        self.assertTrue(again["complete"])
+        self.assertIsNone(self.sessions.trace(project_id="proj_other", session_id=session["id"]))
+
     def test_halt_session_closes_exactly_one_live_row(self) -> None:
         first = self.claim()
         with self.store.transaction() as tx:

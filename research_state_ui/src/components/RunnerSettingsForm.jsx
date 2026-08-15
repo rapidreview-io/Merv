@@ -1,5 +1,5 @@
 import Switch from './Switch';
-import { capabilitiesFor } from './agentPlatformConfig';
+import { capabilitiesFor, readinessFor } from './agentPlatformConfig';
 
 /**
  * RunnerSettingsForm — the one form for a paired runner's brain-held tuning.
@@ -16,19 +16,37 @@ export default function RunnerSettingsForm({
   workspace,
   validation,
   availableCommands = null,
+  harness = null,
   onUpdatePlatform,
   onRepository,
   onWorkspace,
   compact = false,
 }) {
+  const readiness = Object.fromEntries(platforms.map((platform) => [
+    platform.id,
+    readinessFor(platform.id, platform.executable, harness, availableCommands),
+  ]));
   const missingEnabled = platforms.filter((platform) => (
-    platform.enabled && availableCommands && availableCommands[platform.executable] === false
+    platform.enabled && readiness[platform.id].tone === 'missing'
   ));
+  const notReadyEnabled = platforms.filter((platform) => (
+    platform.enabled && readiness[platform.id].tone === 'warn'
+  ));
+  const skills = harness?.skills || null;
   return (
     <div className={compact ? 'aruw-form aruw-form--compact' : 'aruw-form'}>
+      {(skills || harness?.error) && (
+        <p className={`aruw-skills${harness?.error || skills?.error ? ' aruw-skills--warn' : ''}`}>
+          {harness?.error
+            ? `Harness check failed on the machine: ${harness.error}`
+            : skills?.error
+              ? `Merv skills: ${skills.error}`
+              : `Merv skills: ${Number(skills.count) || 0} installed on the machine${skills.digest ? ` · ${String(skills.digest).slice(0, 8)}` : ''}`}
+        </p>
+      )}
       <div className="aruw-agents">
         {platforms.map((platform) => {
-          const found = availableCommands ? availableCommands[platform.executable] : undefined;
+          const ready = readiness[platform.id];
           const capabilities = capabilitiesFor(platform.id);
           const errors = validation?.platforms?.[platform.id] || {};
           return (
@@ -41,10 +59,19 @@ export default function RunnerSettingsForm({
                 />
                 <span className="aruw-agent-name">
                   <strong>{platform.name}</strong>
-                  <small className="mono">{platform.executable}</small>
+                  <small className="mono">
+                    {platform.executable}
+                    {ready.details.length > 0 && ` · ${ready.details.join(' · ')}`}
+                  </small>
                 </span>
-                {found === true && <span className="aruw-tag aruw-tag--ok">installed</span>}
-                {found === false && <span className="aruw-tag aruw-tag--missing">not found</span>}
+                {ready.tag && (
+                  <span
+                    className={`aruw-tag aruw-tag--${ready.tone}`}
+                    title={ready.problems.length ? ready.problems.join('\n') : undefined}
+                  >
+                    {ready.tag}
+                  </span>
+                )}
                 <label className="aruw-par">
                   <span aria-hidden="true">×</span>
                   <input
@@ -58,6 +85,11 @@ export default function RunnerSettingsForm({
                 </label>
               </div>
               {errors.parallelism && <small className="field-error">{errors.parallelism}</small>}
+              {ready.problems.length > 0 && (
+                <ul className="aruw-problems">
+                  {ready.problems.map((problem) => <li key={problem}>{problem}</li>)}
+                </ul>
+              )}
               {platform.enabled && (capabilities.model || capabilities.effort) && (
                 <div className="aruw-agent-tuning">
                   {capabilities.model && (
@@ -111,6 +143,14 @@ export default function RunnerSettingsForm({
           {missingEnabled.map((platform) => platform.name).join(', ')}
           {missingEnabled.length === 1 ? ' is' : ' are'} not installed on
           the runner machine.
+        </p>
+      )}
+      {notReadyEnabled.length > 0 && (
+        <p className="aruw-warn">
+          {notReadyEnabled.map((platform) => platform.name).join(', ')}
+          {notReadyEnabled.length === 1 ? ' is' : ' are'} installed but not
+          ready for Merv yet — see the problems listed above; the runner
+          re-checks on every heartbeat.
         </p>
       )}
 

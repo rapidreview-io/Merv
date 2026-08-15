@@ -16,6 +16,7 @@ import SandboxTable from '../components/SandboxTable';
 import ComputeSpend from '../components/ComputeSpend';
 import ActiveExperimentPager from '../components/ActiveExperimentPager';
 import ConnectAgentPanel from '../components/ConnectAgentPanel';
+import AutorunStrip from '../components/AutorunStrip';
 import ProjectReflectionPanel from '../components/ProjectReflectionPanel';
 import { expName } from '../utils/experiment';
 
@@ -86,6 +87,8 @@ export default function Home() {
       )}
 
       {firstRun && <ConnectAgentPanel project={project} />}
+
+      <AutorunStrip project={project} />
 
       {workflow && (
         <section className="section">

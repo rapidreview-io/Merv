@@ -322,6 +322,21 @@ CREATE TABLE IF NOT EXISTS agent_runner_pairing_attempts (
   attempted_at TEXT NOT NULL
 );
 
+-- A bounded, redacted excerpt of the trace for one auto-run session (August 2026):
+-- the last few provider events and the tail of stderr, mirrored by the runner
+-- so the Auto-run page can show what a job is doing or why it stopped. The
+-- full trace stays on the executor; this row is capped and overwritten.
+CREATE TABLE IF NOT EXISTS agent_session_traces (
+  session_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  events_json TEXT NOT NULL DEFAULT '[]',
+  stderr_tail TEXT NOT NULL DEFAULT '',
+  complete INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES agent_sessions(id),
+  FOREIGN KEY(project_id) REFERENCES projects(id)
+);
+
 -- Durable code identity for an experiment across owner and reviewer sessions.
 -- The worktree stays on the runner's machine; the brain stores only Git facts
 -- needed for exact reviews, consolidation handoffs, and truthful UI lineage.
@@ -1308,6 +1323,10 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     # inventory on agent_runners, and an optional label on project keys so a
     # paired runner's credential is recognizable. Indexes stay in the handler.
     (48, "add_agent_runner_pairing", ""),
+    # Auto-run trace peek (August 2026): one bounded, redacted excerpt row per
+    # session so the page can show recent events and stderr without the raw
+    # trace ever leaving the runner.
+    (49, "add_agent_session_traces", ""),
 )
 
 # Migration 48 indexes — handler-only (they name ladder-added tables/columns).
@@ -1669,6 +1688,13 @@ class BaseStateStore:
                 conn.execute(_schema_table_ddl(table="agent_runners"))
         elif name == "add_agent_runner_pairing":
             self._add_agent_runner_pairing(conn=conn)
+        elif name == "add_agent_session_traces":
+            if not self._has_table(conn=conn, table="agent_session_traces"):
+                conn.execute(_schema_table_ddl(table="agent_session_traces"))
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_session_traces_project"
+                "  ON agent_session_traces(project_id, updated_at)"
+            )
         else:
             conn.execute(statement)
 

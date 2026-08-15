@@ -260,6 +260,8 @@ TABLE_OWNERS = {
     "experiment_workspaces": AGENT_SESSIONS,
     # Idle-runner presence plus brain-held desired tuning and runner inventory.
     "agent_runners": AGENT_SESSIONS,
+    # Bounded, redacted per-session trace excerpt mirrored by the runner.
+    "agent_session_traces": AGENT_SESSIONS,
     "consolidation_proposals": RESEARCH_CORE,
     "consolidation_decisions": RESEARCH_CORE,
     "reflection_advances": RESEARCH_CORE,

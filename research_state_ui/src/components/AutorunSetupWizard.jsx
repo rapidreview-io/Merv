@@ -249,6 +249,7 @@ export default function AutorunSetupWizard({
               workspace={draft.workspace}
               validation={validation}
               availableCommands={selected?.inventory?.available_commands || null}
+              harness={selected?.inventory?.harness || null}
               onUpdatePlatform={onUpdatePlatform}
               onRepository={onRepository}
               onWorkspace={onWorkspace}

@@ -230,6 +230,13 @@ export const api = {
   // this is the separate stop for work already running. → { halted, sessions }
   haltAgentSessions: (pid) =>
     request(`/api/projects/${encodeURIComponent(pid)}/agent-sessions/halt`, { method: 'POST' }),
+  // The bounded, redacted trace excerpt the runner mirrors for one session:
+  // { trace: { events, stderr_tail, complete, updated_at } | null }. The raw
+  // trace stays on the runner machine.
+  getAgentSessionTrace: (pid, sessionId) =>
+    request(
+      `/api/projects/${encodeURIComponent(pid)}/agent-sessions/${encodeURIComponent(sessionId)}/trace`,
+    ),
   // Close one live session; its runner stops the child on its next poll.
   haltAgentSession: (pid, sessionId) =>
     request(

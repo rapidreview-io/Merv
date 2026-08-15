@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useProjectStore, useProjectHref, selectStats, selectSandboxes } from '../store/useProjectStore';
+import { useAutorunStatus } from '../store/useAutorunStatus';
 import { useTheme } from '../store/useTheme';
 import { useBackdrop, setBackdrop } from '../store/useBackdrop';
 import { setSurfaceOverride } from '../store/useViewport';
@@ -108,6 +109,8 @@ export default function Sidebar({ onHide }) {
   const sandboxes = useProjectStore(selectSandboxes);
   const runningSandboxes = sandboxes.filter(s => s.status === 'running').length;
   const px = useProjectHref();
+  const projectId = useProjectStore(s => s.projectId);
+  const autorun = useAutorunStatus(projectId);
 
   const artifactsCount = stats.artifacts ?? home?.artifacts?.length ?? 0;
 
@@ -176,6 +179,32 @@ export default function Sidebar({ onHide }) {
               <span className="sidebar-live-dot" />{runningSandboxes}
             </span>
           )}
+        </NavLink>
+        {/* Auto-run lives under Settings, but its live state belongs in the
+            nav: running jobs and whether a paired machine is currently up. */}
+        <NavLink
+          to={px('/settings?tab=auto')}
+          className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}
+          title={autorun.known
+            ? (autorun.liveRunnerCount
+              ? `${autorun.machineName} is live · ${autorun.running} running`
+              : (autorun.runnerCount ? `${autorun.state} · ${autorun.machineName}` : 'No runner paired yet'))
+            : 'Auto-run'}
+        >
+          <span>Auto-run</span>
+          {autorun.running > 0 ? (
+            <span className="sidebar-link-count sidebar-link-count--live" title={`${autorun.running} running`}>
+              <span className="sidebar-live-dot" />{autorun.running}
+            </span>
+          ) : autorun.liveRunnerCount > 0 ? (
+            <span className="sidebar-link-count sidebar-link-count--ready" title={`${autorun.machineName} is live`}>
+              <span className="sidebar-live-dot sidebar-live-dot--ready" />
+            </span>
+          ) : autorun.runnerCount > 0 ? (
+            <span className="sidebar-link-count sidebar-link-count--off" title={`${autorun.state} · ${autorun.machineName}`}>
+              <span className="sidebar-live-dot sidebar-live-dot--off" />
+            </span>
+          ) : null}
         </NavLink>
 
         {/* Projects intentionally has no link here — scope switching lives in

@@ -196,3 +196,26 @@ export function validateDraft(platforms, workspace) {
 export function draftSignature(platforms, workspace) {
   return JSON.stringify(settingsFromDraft(platforms, workspace));
 }
+
+// What the machine reported about one harness, folded into a tag + a detail
+// line. `harness` is runner.inventory.harness (per-platform readiness the
+// runner computes locally: executable, version, how it reaches Merv tools and
+// skills, and any problems). Falls back to the plain executable probe.
+export function readinessFor(platformId, executable, harness, availableCommands) {
+  const entry = harness?.platforms?.[platformId];
+  if (entry) {
+    const details = [
+      entry.version ? `v${String(entry.version).replace(/^v/i, '')}` : '',
+      entry.merv_mcp === 'native' ? 'MCP native' : entry.merv_mcp === 'merv-client' ? 'MCP via merv-client' : '',
+      entry.skills === 'mounted' ? 'skills mounted' : entry.skills === 'instruction' ? 'skills by instruction' : '',
+    ].filter(Boolean);
+    const problems = Array.isArray(entry.problems) ? entry.problems.filter(Boolean) : [];
+    if (entry.ok) return { tag: 'ready', tone: 'ok', details, problems: [] };
+    const missing = problems.some((text) => /not found|missing|no such|not installed/i.test(String(text)));
+    return { tag: missing ? 'not found' : 'not ready', tone: missing ? 'missing' : 'warn', details, problems };
+  }
+  const found = availableCommands ? availableCommands[executable] : undefined;
+  if (found === true) return { tag: 'installed', tone: 'ok', details: [], problems: [] };
+  if (found === false) return { tag: 'not found', tone: 'missing', details: [], problems: [] };
+  return { tag: '', tone: '', details: [], problems: [] };
+}

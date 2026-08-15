@@ -249,6 +249,37 @@ class AgentSessionSurfaceTest(unittest.TestCase):
             "agent_session_scope_forbidden",
         )
 
+    def test_runner_mirrors_a_trace_excerpt_the_browser_can_read(self) -> None:
+        secret = self.secret()
+        session = self.claim(secret=secret, runner_id="owner")
+        recorded = self.client.post(
+            f"/api/agent-sessions/{session['id']}/trace",
+            json={
+                "runner_id": "owner",
+                "events": [{"type": "message", "text": "working", "token": "abc"}],
+                "stderr_tail": "note\n",
+                "complete": False,
+            },
+        )
+        self.assertEqual(recorded.status_code, 200, recorded.text)
+        listed = self.client.get(
+            f"/api/projects/{self.project_id}/agent-sessions/{session['id']}/trace"
+        )
+        self.assertEqual(listed.status_code, 200, listed.text)
+        trace = listed.json()["trace"]
+        self.assertEqual(trace["events"][0]["text"], "working")
+        self.assertEqual(trace["events"][0]["token"], "<redacted>")
+        self.assertEqual(trace["stderr_tail"], "note\n")
+        # The listing itself never carries the excerpt.
+        sessions = self.client.get(f"/api/projects/{self.project_id}/agent-sessions").json()
+        self.assertNotIn("trace", sessions["sessions"][0])
+        self.assertNotIn("events", sessions["sessions"][0])
+        missing = self.client.get(
+            f"/api/projects/{self.project_id}/agent-sessions/ags_missing/trace"
+        )
+        self.assertEqual(missing.status_code, 200, missing.text)
+        self.assertIsNone(missing.json()["trace"])
+
     def test_idle_runner_presence_is_visible_without_exposing_runner_identity(self) -> None:
         reported = self.client.post(
             f"/api/projects/{self.project_id}/agent-runners/heartbeat",

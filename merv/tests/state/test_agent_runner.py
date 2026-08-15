@@ -42,6 +42,7 @@ from merv.client.agent_runner import (
     _runner_key,
     _read_trace_telemetry,
     _run_runner,
+    _trace_excerpt,
     _safe_control_url,
     _session_key,
     load_platforms,
@@ -1015,6 +1016,34 @@ class AgentSessionProtocolTest(unittest.TestCase):
             ],
         )
 
+    def test_trace_excerpt_is_the_redacted_tail_and_changes_signature(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            trace_dir = Path(tmp)
+            self.assertIsNone(_trace_excerpt(trace_dir, complete=False))
+            lines = [json.dumps({"type": "message", "n": index}) for index in range(100)]
+            lines.append(json.dumps({"type": "tool", "authorization": "Bearer abcdefghijklmnop", "note": "key mk_" + "b" * 43}))
+            lines.append("not json at all")
+            lines.append(json.dumps({"type": "huge", "blob": "y" * 20_000}))
+            (trace_dir / "trace.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            (trace_dir / "stderr.log").write_text("boot\n" + "z" * 20_000 + "\nlast line\n", encoding="utf-8")
+
+            excerpt = _trace_excerpt(trace_dir, complete=False)
+            events = excerpt["events"]
+            self.assertLessEqual(len(events), 60)
+            self.assertEqual(events[-1].get("truncated"), True)
+            self.assertEqual(events[-2], {"raw": "not json at all"})
+            self.assertEqual(events[-3]["authorization"], "<redacted>")
+            self.assertEqual(events[-3]["note"], "key <redacted>")
+            self.assertEqual(events[0], {"type": "message", "n": 100 - (60 - 3)})
+            self.assertTrue(excerpt["stderr_tail"].endswith("last line\n"))
+            self.assertLessEqual(len(excerpt["stderr_tail"].encode("utf-8")), 8 * 1024)
+            first = excerpt["signature"]
+            self.assertEqual(_trace_excerpt(trace_dir, complete=False)["signature"], first)
+            with (trace_dir / "trace.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"type": "message", "n": 999}) + "\n")
+            self.assertNotEqual(_trace_excerpt(trace_dir, complete=False)["signature"], first)
+            self.assertNotEqual(_trace_excerpt(trace_dir, complete=True)["signature"], first)
+
     def test_jsonl_telemetry_is_incremental_and_deduplicates_tool_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             trace = Path(tmp) / "trace.jsonl"
@@ -1152,6 +1181,7 @@ class _FakeClient:
         self.attached: list[tuple[str, str]] = []
         self.released: list[tuple[str, str]] = []
         self.heartbeats: list[str] = []
+        self.traces: list[dict[str, object]] = []
         self.remote_sessions: list[dict[str, object]] = []
         self.pending: dict[str, object] | None = None
         self.advance: dict[str, object] | None = None
@@ -1178,6 +1208,11 @@ class _FakeClient:
 
     def heartbeat(self, *, session_id, runner_id, **workspace):
         self.heartbeats.append(session_id)
+
+    def record_trace(self, *, session_id, runner_id, events, stderr_tail, complete):
+        self.traces.append(
+            {"session_id": session_id, "events": list(events), "stderr_tail": stderr_tail, "complete": complete}
+        )
 
     def list(self, *, project_id):
         return self.remote_sessions
@@ -1764,6 +1799,56 @@ class AgentRunnerTest(unittest.TestCase):
 
             self.assertEqual(client.heartbeats, ["ags_1"])
             self.assertEqual(client.attached, [])
+
+    def test_reconcile_mirrors_the_trace_excerpt_on_change_and_finally_complete(self) -> None:
+        claim = Claim("ags_1", "exp_1", "proj_1")
+        client = _FakeClient(claim)
+        client.remote_sessions = [
+            {"id": "ags_1", "status": "active", "host_session_ref": "pid:41"}
+        ]
+        host = _FakeHost()
+        platform = Platform("custom", "command", ("agent",))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trace_dir = root / "traces" / "ags_1"
+            trace_dir.mkdir(parents=True)
+            (trace_dir / "trace.jsonl").write_text(
+                json.dumps({"type": "message", "text": "first"}) + "\n", encoding="utf-8"
+            )
+            (trace_dir / "stderr.log").write_text("boot\n", encoding="utf-8")
+            ledger = SessionLedger(root / "sessions.json")
+            session = ledger.reserve(claim, platform)
+            session.host_ref = "pid:41"
+            session.pid = 41
+            session.attached = True
+            session.status = "running"
+            session.trace_dir = str(trace_dir)
+            runner = AgentRunner(
+                project_id="proj_1",
+                platforms=(platform,),
+                client=client,
+                ledger=ledger,
+                workspaces=_FakeWorkspaces(root),
+                trace_dir=root / "traces",
+                runner_secret=b"r" * 32,
+            )
+            with patch.dict("merv.client.agent_runner.HOSTS", {"command": host}, clear=True):
+                runner.reconcile()
+                runner.reconcile()  # unchanged trace → no second mirror
+            self.assertEqual(len(client.traces), 1)
+            self.assertEqual(client.traces[0]["events"], [{"type": "message", "text": "first"}])
+            self.assertEqual(client.traces[0]["stderr_tail"], "boot\n")
+            self.assertFalse(client.traces[0]["complete"])
+
+            with (trace_dir / "trace.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"type": "message", "text": "second"}) + "\n")
+            host.inspect = lambda _session: "stopped"
+            with patch.dict("merv.client.agent_runner.HOSTS", {"command": host}, clear=True):
+                runner.reconcile()
+            self.assertEqual(len(client.traces), 2)
+            self.assertEqual([event["text"] for event in client.traces[1]["events"]], ["first", "second"])
+            self.assertTrue(client.traces[1]["complete"])
+            self.assertEqual(session.status, "stopped")
 
     def test_one_broken_session_does_not_stop_peer_reconciliation(self) -> None:
         client = _FakeClient(Claim("unused", "exp_1", "proj_1"))

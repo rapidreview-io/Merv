@@ -4,6 +4,7 @@ import { api } from '../api';
 import AutorunSetupWizard from './AutorunSetupWizard';
 import RunnerSettingsForm from './RunnerSettingsForm';
 import Switch from './Switch';
+import TracePeek from './TracePeek';
 import { runnerPresentation } from './runnerPresentation';
 import {
   assignmentFor,
@@ -105,14 +106,18 @@ function JobCard({ session, projectId, now, open, onToggle, onStop, stopping }) 
             </span>
           </div>
           <div className="aru-packet">
-            <span className="aru-label">Assignment</span>
-            <pre><code>{JSON.stringify(packet, null, 2)}</code></pre>
+            <span className="aru-label">Trace</span>
+            <TracePeek
+              projectId={projectId}
+              sessionId={session.id}
+              live={live}
+              machine={session?.agent_setup?.machine || ''}
+            />
           </div>
-          {session?.id && session?.agent_setup?.machine && (
-            <p className="aru-note">
-              Trace on {session.agent_setup.machine}: <code>~/.merv/agent-traces/{session.id}/</code>
-            </p>
-          )}
+          <details className="aru-packet aru-packet--collapsed">
+            <summary className="aru-label">Assignment</summary>
+            <pre><code>{JSON.stringify(packet, null, 2)}</code></pre>
+          </details>
         </div>
       )}
     </article>
@@ -159,6 +164,9 @@ export default function AgentPlatforms({ projectId }) {
   const [wizardOpen, setWizardOpen] = useState(false); // false | 'guide' | 'pair'
   const [configOpen, setConfigOpen] = useState(false);
   const [copied, setCopied] = useState('');
+  const [copyFailed, setCopyFailed] = useState('');
+  const [showAllRecent, setShowAllRecent] = useState(false);
+  const [recentFilter, setRecentFilter] = useState('all');
   const settingsRef = useRef(null);
 
   const refresh = useCallback(async () => {
@@ -238,10 +246,29 @@ export default function AgentPlatforms({ projectId }) {
   );
   const dirty = draftSignature(draft.platforms, draft.workspace) !== draftBase;
   const liveSessions = useMemo(() => (sessions || []).filter(isLiveSession), [sessions]);
-  const recentSessions = useMemo(
-    () => (sessions || []).filter((session) => !isLiveSession(session)).slice(0, 6),
+  const closedSessions = useMemo(
+    () => (sessions || []).filter((session) => !isLiveSession(session)),
     [sessions],
   );
+  const filteredClosed = useMemo(() => closedSessions.filter((session) => {
+    if (recentFilter === 'all') return true;
+    const tone = sessionOutcome(session).tone;
+    if (recentFilter === 'completed') return tone === 'complete';
+    if (recentFilter === 'stopped') return tone === 'quiet';
+    if (recentFilter === 'failed') return tone === 'error';
+    return true;
+  }), [closedSessions, recentFilter]);
+  const recentSessions = showAllRecent ? filteredClosed : filteredClosed.slice(0, 6);
+  const filterCounts = useMemo(() => {
+    const counts = { all: closedSessions.length, completed: 0, stopped: 0, failed: 0 };
+    for (const session of closedSessions) {
+      const tone = sessionOutcome(session).tone;
+      if (tone === 'complete') counts.completed += 1;
+      else if (tone === 'quiet') counts.stopped += 1;
+      else if (tone === 'error') counts.failed += 1;
+    }
+    return counts;
+  }, [closedSessions]);
   const liveSessionCount = liveSessions.length;
 
   // The clock feeds both job elapsed times (1 s while anything runs) and
@@ -371,11 +398,17 @@ export default function AgentPlatforms({ projectId }) {
     try {
       await navigator.clipboard.writeText(value);
       setCopied(label);
+      setCopyFailed('');
       setTimeout(() => setCopied(''), 1800);
     } catch {
+      // Clipboard access can be denied (insecure context, permissions); say so
+      // instead of pretending, and leave the text selectable.
       setCopied('');
+      setCopyFailed(label);
+      setTimeout(() => setCopyFailed(''), 2400);
     }
   }
+  const copyLabel = (label) => (copied === label ? 'Copied' : copyFailed === label ? 'Copy failed' : 'Copy');
 
   function showAgentSettings() {
     setConfigOpen(true);
@@ -490,7 +523,7 @@ export default function AgentPlatforms({ projectId }) {
                 className="btn btn--ghost btn--sm"
                 onClick={() => copy('start-runner', RUNNER_COMMAND)}
               >
-                {copied === 'start-runner' ? 'Copied' : 'Copy'}
+                {copyLabel('start-runner')}
               </button>
             </div>
           </div>
@@ -562,11 +595,36 @@ export default function AgentPlatforms({ projectId }) {
           </section>
         )}
 
-        {!sessionError && recentSessions.length > 0 && (
+        {!sessionError && closedSessions.length > 0 && (
           <section className="aru-jobs aru-jobs--recent" aria-label="Recent jobs">
             <div className="aru-section-head">
-              <span className="aru-section-title">Recent</span>
+              <span className="aru-section-title">
+                {showAllRecent ? 'History' : 'Recent'}
+                <span className="aru-section-count">{filteredClosed.length}</span>
+              </span>
+              <span className="aru-filter-chips" role="group" aria-label="Filter jobs">
+                {[
+                  ['all', 'All'],
+                  ['completed', 'Completed'],
+                  ['stopped', 'Stopped'],
+                  ['failed', 'Failed'],
+                ].map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`aru-chip${recentFilter === key ? ' aru-chip--active' : ''}`}
+                    aria-pressed={recentFilter === key}
+                    disabled={key !== 'all' && filterCounts[key] === 0}
+                    onClick={() => setRecentFilter(key)}
+                  >
+                    {label}{filterCounts[key] > 0 && key !== 'all' ? ` ${filterCounts[key]}` : ''}
+                  </button>
+                ))}
+              </span>
             </div>
+            {filteredClosed.length === 0 && (
+              <span className="aru-note">No {recentFilter} jobs.</span>
+            )}
             <div className="aru-job-list">
               {recentSessions.map((session) => (
                 <JobCard
@@ -581,6 +639,20 @@ export default function AgentPlatforms({ projectId }) {
                 />
               ))}
             </div>
+            {filteredClosed.length > 6 && (
+              <div className="aru-history-more">
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => setShowAllRecent((current) => !current)}
+                >
+                  {showAllRecent ? 'Show fewer' : `Show all ${filteredClosed.length}`}
+                </button>
+                {showAllRecent && closedSessions.length >= 250 && (
+                  <span className="aru-note">Showing the latest 250 jobs.</span>
+                )}
+              </div>
+            )}
           </section>
         )}
 
@@ -623,6 +695,7 @@ export default function AgentPlatforms({ projectId }) {
                   workspace={draft.workspace}
                   validation={validation}
                   availableCommands={selected.inventory?.available_commands || null}
+                  harness={selected.inventory?.harness || null}
                   onUpdatePlatform={updatePlatform}
                   onRepository={updateRepository}
                   onWorkspace={updateWorkspace}
@@ -671,13 +744,13 @@ export default function AgentPlatforms({ projectId }) {
               <div className="aru-command">
                 <code className="mono">{INSTALL_COMMAND} -s -- --install-only</code>
                 <button type="button" className="btn btn--ghost btn--sm" onClick={() => copy('install-only', `${INSTALL_COMMAND} -s -- --install-only`)}>
-                  {copied === 'install-only' ? 'Copied' : 'Copy'}
+                  {copyLabel('install-only')}
                 </button>
               </div>
               <div className="aru-command">
                 <code className="mono">{RUNNER_COMMAND} --project {projectId || 'PROJECT_ID'}</code>
                 <button type="button" className="btn btn--ghost btn--sm" onClick={() => copy('run', `${RUNNER_COMMAND} --project ${projectId || 'PROJECT_ID'}`)}>
-                  {copied === 'run' ? 'Copied' : 'Copy'}
+                  {copyLabel('run')}
                 </button>
               </div>
             </details>

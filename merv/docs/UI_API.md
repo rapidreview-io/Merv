@@ -303,6 +303,7 @@ agent's storage tools (`storage.submit` / `storage.fetch`). Uploads through
 GET   /api/projects/{project_id}/agent-sessions
 POST  /api/projects/{project_id}/agent-sessions/halt
 POST  /api/projects/{project_id}/agent-sessions/{session_id}/halt
+GET   /api/projects/{project_id}/agent-sessions/{session_id}/trace
 POST  /api/projects/{project_id}/agent-runners/pairings/approve   {"user_code": "7Q2KM4B9"}
 PUT   /api/projects/{project_id}/agent-runners/settings           {"runner_ref": …, "settings": {…}}
 PATCH /api/projects/{project_id}                                  {"agent_dispatch": true|false}
@@ -321,9 +322,13 @@ edit), `capacity`, `last_seen_at`, `live` (heartbeat at most 45 s old),
 `runner_ref` the browser uses to address settings. Runner identity itself is
 private to the runner and the brain. Each session row carries its immutable
 `assignment`, non-secret `agent_setup`, aggregate `telemetry`, `status`
-(`offered`, `active`, `released`, `expired`), and `close_reason`. Raw agent
-traces never reach the brain; they stay on the runner machine under
-`~/.merv/agent-traces/`.
+(`offered`, `active`, `released`, `expired`), and `close_reason`. The listing
+never carries trace content; `GET …/{session_id}/trace` returns the runner's
+mirrored excerpt — `{trace: {events, stderr_tail, complete, updated_at} |
+null}` — capped at the last 60 events and 8 KiB of stderr with secret-shaped
+keys and values redacted, or `null` when nothing was mirrored (a job that never
+started, or a runner that predates trace peek). The raw trace stays on the
+runner machine under `~/.merv/agent-traces/`.
 
 Pairing approval is owner-only (a Supabase browser session), exactly like
 minting a key: the runner has already generated its own `mk_` key and sent only
@@ -352,7 +357,9 @@ runner has no credential yet and polls with the 256-bit device code it alone
 holds), `POST /api/agent-sessions/claim`, `/{session_id}/attach`,
 `/{session_id}/release`, `/{session_id}/heartbeat`,
 `POST /api/projects/{project_id}/agent-runners/heartbeat` (whose reply carries
-the caller's own row and desired settings), and the
+the caller's own row and desired settings), `POST
+/api/agent-sessions/{session_id}/trace` (the bounded excerpt, owning runner
+only, accepted while live and for 15 min after close), and the
 `/consolidation/prepare|pending|settle` trio — is not a browser API. Runner
 executable commands and custom agents are never stored in the brain; they live
 in `~/.merv/client.json` on the machine (`merv-client agent`).

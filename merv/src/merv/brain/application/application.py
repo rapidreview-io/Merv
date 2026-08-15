@@ -575,6 +575,28 @@ class Application:
             )
         }
 
+    def record_agent_session_trace(
+        self,
+        *,
+        session_id: str,
+        runner_id: str,
+        events: list[Any],
+        stderr_tail: str,
+        complete: bool,
+    ) -> dict[str, Any]:
+        """The runner mirrors a bounded, redacted excerpt for the job card."""
+        return self.agent_sessions.record_trace(
+            session_id=session_id,
+            runner_id=runner_id,
+            events=events,
+            stderr_tail=stderr_tail,
+            complete=complete,
+        )
+
+    def agent_session_trace(self, *, project_id: str, session_id: str) -> dict[str, Any]:
+        trace = self.agent_sessions.trace(project_id=project_id, session_id=session_id)
+        return {"trace": trace}
+
     def halt_agent_session(self, *, project_id: str, session_id: str) -> dict[str, Any]:
         """Stop one live session now; its runner kills the child on reconcile."""
         return {

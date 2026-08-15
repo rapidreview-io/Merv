@@ -162,7 +162,9 @@ exactly one immutable work-item snapshot and one sanitized harness/model setup;
 `trace.jsonl` contains the provider's native event stream, and `stderr.log`
 keeps diagnostics separate so they cannot corrupt the JSONL. Hermes writes the
 same `trace.jsonl` through its post-run session export. These files stay on the
-client machine and are never created for interactive, non-auto-run sessions.
+client machine and are never created for interactive, non-auto-run sessions;
+the runner mirrors only a bounded, redacted excerpt (last events + stderr tail)
+so the Auto-run job card can show what a job is doing.
 The runner initializes a Merv-owned bare repository and central ref, then keeps
 one persistent branch/worktree per experiment. Reflection approval dispatches a
 separate consolidator and code reviewer; the runner alone advances central

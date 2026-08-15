@@ -10,9 +10,8 @@ agent sessions on the user's machine.
 - Agent Sessions owns worker identity, leases, credentials, and exclusivity.
 - Surface authenticates and transports runner/session requests.
 - The local runner owns processes and platform-specific commands.
-
-There is no campaign object. Reviews dispatch independently; after reflection
-approval, consolidation and its code review finish before the next wave.
+- No campaign object: reviews dispatch independently, and after reflection
+  approval, consolidation and its code review finish before the next wave.
 
 ## Dispatch switch
 
@@ -39,8 +38,8 @@ children on the next reconcile.
    attempt, or submitted review closes the session.
 
 The database enforces one live experiment owner, one live worker per review
-request, and one result per runner/idempotency key. Reviewers use separate
-sessions so producers never review their own work. An ordinary process exit is
+request, and one result per runner/idempotency key; reviewers use separate
+sessions so producers never review their own work. An ordinary exit is
 immediately resumable; two rapid exits without a commit are a crash loop and
 use the short launch backoff so a broken CLI cannot spawn every poll cycle.
 
@@ -70,8 +69,8 @@ approval in Settings registers the digest as a labelled project key (Surface's
 the machine's inventory: the heartbeat carries inventory and applied version up
 and the caller's own row plus `desired_settings` down. The schema is closed
 (`merv.shared.runner_settings`): enabled/model/effort/parallelism per native
-platform and workspace paths, never executable argv. Browsers address a runner
-by an opaque `runner_ref`; runner identity stays private.
+platform and workspace paths, never argv. Browsers address a runner by an
+opaque `runner_ref`; runner identity stays private.
 
 ## Local platforms
 
@@ -81,19 +80,20 @@ cover Codex, Claude Code, Gemini CLI, Cursor Agent, OpenCode, GitHub Copilot
 CLI, Qwen Code, and Hermes Agent; a shell-free stdin command adapter covers
 custom agents that emit JSONL on stdout. Codex and Claude Code receive an
 isolated, session-scoped MCP configuration; other adapters use the shell-safe
-`merv-client call` bridge, which reads the session secret from the environment.
-Hermes is told to ignore ambient Merv MCP configuration in runner-owned
-sessions. One runner machine owns a project's experiment branches and central
-repository; agent platforms share that runner.
+`merv-client call` bridge (session secret from the environment); Hermes is told
+to ignore ambient Merv MCP configuration. One runner machine owns a project's
+experiment branches and central repository; agent platforms share that runner.
 
 Every claimed session writes only to the executor under
 `~/.merv/agent-traces/<agent-session-id>/`: immutable `metadata.json` (one work
 item, one sanitized harness/model setup), `trace.jsonl` (provider events), and
-`stderr.log` (diagnostics, kept out of the structured stream). Hermes produces
-the same trace through its session export after the process stops. Aider is not
-an auto-run adapter because it cannot provide a complete structured trace.
+`stderr.log` (diagnostics). Hermes produces the same trace through its session
+export after the process stops. Aider is not an auto-run adapter because it
+cannot provide a complete structured trace.
 
-The server keeps only the immutable human-readable assignment, non-secret agent
-setup, and aggregate token/tool/message counters. Raw events never leave the
-runner. The non-secret heartbeat marks a machine live even with no job or no
-platforms enabled yet; commands and runner identity stay private.
+The server keeps the assignment, non-secret agent setup, aggregate counters,
+and one bounded, redacted excerpt per session (`agent_session_traces`: last ≤60
+events + ≤8 KiB stderr, secret-shaped keys/values masked on both ends, owner
+runner only, overwritten in place) for the job card. The raw trace never leaves
+the runner. The heartbeat marks a machine live even with no job or platforms;
+commands and runner identity stay private.
