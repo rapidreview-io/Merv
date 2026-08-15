@@ -2561,14 +2561,19 @@ def _stored_runner_key(config_path: Path) -> str | None:
 
 
 def _runner_key(config_path: Path) -> str | None:
-    return dual_env_value(MCP_KEY_ENV_VAR) or _stored_runner_key(config_path)
+    # Pairing writes a credential specifically for this runner and project.
+    # Prefer it over a general MCP key inherited from the user's shell: that
+    # environment value may belong to another project and must not silently
+    # override the credential the UI just installed.
+    return _stored_runner_key(config_path) or dual_env_value(MCP_KEY_ENV_VAR)
 
 
 def _has_runner_credential(config_path: Path) -> bool:
-    if dual_env_value(MCP_KEY_ENV_VAR):
-        return True
     try:
-        return _stored_runner_key(config_path) is not None
+        return bool(
+            _stored_runner_key(config_path)
+            or dual_env_value(MCP_KEY_ENV_VAR)
+        )
     except RunnerError:
         return False
 

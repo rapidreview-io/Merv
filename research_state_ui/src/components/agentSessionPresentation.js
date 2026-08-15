@@ -1,4 +1,5 @@
 import { projectPath } from '../store/useProjectStore';
+export { sessionOutcome } from './agentSessionOutcome.js';
 
 export function isLiveSession(session) {
   return session?.status === 'offered' || session?.status === 'active';
@@ -54,24 +55,6 @@ export function formatTokens(value) {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(count >= 10_000_000 ? 0 : 1)}m`;
   if (count >= 1_000) return `${(count / 1_000).toFixed(count >= 100_000 ? 0 : 1)}k`;
   return String(Math.round(count));
-}
-
-export function sessionOutcome(session) {
-  if (session?.status === 'active') return { label: 'Running', tone: 'live' };
-  if (session?.status === 'offered') return { label: 'Starting', tone: 'starting' };
-  const reason = String(session?.close_reason || '');
-  if (reason === 'dispatch_halted' || reason === 'runner_released') {
-    return { label: 'Stopped', tone: 'quiet' };
-  }
-  if (
-    reason.includes('failed')
-    || reason.includes('crash')
-    || reason === 'lease_expired'
-    || reason === 'hard_deadline'
-  ) {
-    return { label: 'Interrupted', tone: 'error' };
-  }
-  return { label: 'Completed', tone: 'complete' };
 }
 
 export function sessionDestination(projectId, session) {

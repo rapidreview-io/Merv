@@ -473,6 +473,12 @@ export default function AutorunSetupWizard({
               <>
                 <p className="sbxpw-fail">Could not start the runner</p>
                 <p className="sbxpw-fail-detail">{startState.detail}</p>
+                <p className="sbxpw-help">Run this on the runner machine, then retry.</p>
+                <CommandRow
+                  command={runCommand}
+                  copied={copied === 'run'}
+                  onCopy={() => copy('run', runCommand)}
+                />
               </>
             ) : startState.phase === 'restart' ? (
               <>

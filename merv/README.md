@@ -167,11 +167,12 @@ changes, not same-user filesystem access; use an OS sandbox for hostile agents.
 The web Settings page can save this same machine file through the optional
 runner control at `http://127.0.0.1:8791`. The installer starts it without
 dispatching; paste the printed pairing token
-into Settings. Only paired settings, redacted status, and a write-only runner
-credential endpoint are exposed; starting or stopping executable commands
-remains a local CLI operation. The pairing token can edit executable agent
-commands and replace the credential, so treat it as local-administrator
-authority and paste it only into a trusted Merv UI origin.
+into Settings. The paired UI saves the dedicated runner credential and can hand
+the setup process directly into polling mode. If no local service is reachable,
+the UI shows the exact install or start command for the runner machine. The
+pairing token can edit executable agent commands and replace the credential, so
+treat it as local-administrator authority and paste it only into a trusted Merv
+UI origin.
 
 Agent-authored evidence is kept in regular repo files. The brain records their
 relative paths and versions and pins selected submitted bytes for gates and

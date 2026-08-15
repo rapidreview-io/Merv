@@ -166,6 +166,7 @@ export default function AgentPlatforms({ projectId }) {
   const [clock, setClock] = useState(Date.now());
   const [wizardOpen, setWizardOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [startBusy, setStartBusy] = useState(false);
   const settingsRef = useRef(null);
   // Unpaired, the guided setup is the page; manual pairing is an explicit
   // opt-in so a fresh project is not greeted with raw fields and a draft.
@@ -277,17 +278,18 @@ export default function AgentPlatforms({ projectId }) {
     [sessions],
   );
 
+  const liveSessionCount = liveSessions.length;
+
   useEffect(() => {
-    if (liveSessions.length === 0) return undefined;
-    setExpandedSession((current) => (
-      liveSessions.some((session) => session.id === current)
-        ? current
-        : liveSessions[0].id
-    ));
+    if (liveSessionCount === 0) return undefined;
     setClock(Date.now());
     const timer = setInterval(() => setClock(Date.now()), 1_000);
     return () => clearInterval(timer);
-  }, [liveSessions]);
+  }, [liveSessionCount]);
+
+  useEffect(() => {
+    setExpandedSession('');
+  }, [projectId]);
   const enabledPlatforms = platforms.filter(
     (platform) => platform.present !== false && platform.enabled,
   );
@@ -516,6 +518,20 @@ export default function AgentPlatforms({ projectId }) {
     }
   }
 
+  async function startRunnerFromPage() {
+    if (!connected) {
+      setRunnerMessage('Start the runner from its terminal using the command below.');
+      return;
+    }
+    setStartBusy(true);
+    setRunnerMessage('');
+    const result = await startConfiguredRunner();
+    if (!result.ok) {
+      setRunnerMessage(result.error || 'Could not start the runner. Use the terminal command below.');
+    }
+    setStartBusy(false);
+  }
+
   function markRunnerLive(status) {
     setRunnerStatus(status);
     setRunnerLastSeen(Date.now());
@@ -552,6 +568,7 @@ export default function AgentPlatforms({ projectId }) {
   const machineState = effectivePresence
     ? (effectivePresence.live ? 'Live' : 'Offline')
     : runnerView.state;
+  const runnerLive = Boolean(effectivePresence?.live || runnerView.active);
   return (
     <>
       <section className="aru-scope" aria-label="Auto-run status">
@@ -574,14 +591,25 @@ export default function AgentPlatforms({ projectId }) {
           <div className="aru-overview-actions">
             {paired ? (
               <>
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--sm"
-                  disabled={runnerConnection === 'connecting' || runnerConnection === 'applying'}
-                  onClick={connectRunner}
-                >
-                  Refresh
-                </button>
+                {runnerLive ? (
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--sm"
+                    disabled={runnerConnection === 'connecting' || runnerConnection === 'applying'}
+                    onClick={connectRunner}
+                  >
+                    Refresh
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn--primary btn--sm"
+                    disabled={startBusy || runnerConnection === 'connecting' || runnerConnection === 'applying'}
+                    onClick={startRunnerFromPage}
+                  >
+                    {startBusy || runnerConnection === 'connecting' ? 'Starting…' : 'Start runner'}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn btn--ghost btn--sm"
@@ -601,10 +629,10 @@ export default function AgentPlatforms({ projectId }) {
                 </button>
                 <button
                   type="button"
-                  className="btn btn--ghost btn--sm"
+                  className={`btn ${effectivePresence.live ? 'btn--ghost' : 'btn--primary'} btn--sm`}
                   onClick={() => setWizardOpen(true)}
                 >
-                  Setup guide
+                  {effectivePresence.live ? 'Setup guide' : 'Start runner'}
                 </button>
               </>
             ) : (
@@ -657,6 +685,29 @@ export default function AgentPlatforms({ projectId }) {
             </span>
           </div>
         </div>
+
+        {runnerKnown && !runnerLive && (
+          <div className="aru-start-panel" role="status">
+            <span>
+              <strong>Runner stopped</strong>
+              <small>Terminal fallback</small>
+            </span>
+            <div className="aru-command">
+              <code className="mono">{runCommand}</code>
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={() => copy('start-runner', runCommand)}
+              >
+                {copied === 'start-runner' ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {runnerMessage && !configOpen && (
+          <p className="aru-pairing-status" role="status">{runnerMessage}</p>
+        )}
 
         {showHaltPrompt && liveSessions.length > 0 && (
           <div className="aru-card aru-halt" role="status">

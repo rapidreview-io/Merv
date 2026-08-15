@@ -20,8 +20,8 @@ test('a reachable active runner on this project is live and identified', () => {
     {
       active: true,
       machineName: 'Gurals-MBP.local',
-      machineDetails: 'macOS · arm64 · runner 012345…bcdef',
-      project: 'This project',
+      machineDetails: 'macOS · arm64',
+      project: '',
       projectMatches: true,
       reachable: true,
       state: 'Live',

@@ -2039,6 +2039,14 @@ class LocalControlTest(unittest.TestCase):
                     {"MERV_MCP_KEY": "", "RESEARCH_PLUGIN_MCP_KEY": ""},
                 ):
                     self.assertEqual(_runner_key(config_path), credential)
+                with patch.dict(
+                    os.environ,
+                    {
+                        "MERV_MCP_KEY": "mk_" + ("z" * 43),
+                        "RESEARCH_PLUGIN_MCP_KEY": "",
+                    },
+                ):
+                    self.assertEqual(_runner_key(config_path), credential)
                 self.assertEqual(credential_path.stat().st_mode & 0o777, 0o600)
 
                 payload = json.dumps(

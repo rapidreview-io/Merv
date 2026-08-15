@@ -5541,6 +5541,18 @@ a.spend-row-name:hover { color: var(--active); }
   display: flex; align-items: center; justify-content: flex-end; gap: 6px;
   padding: 12px 14px 12px 8px;
 }
+.aru-start-panel {
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  align-items: center; gap: 14px; margin-top: 8px; padding: 10px 12px;
+  border: 1px solid rgba(var(--active-rgb), 0.42);
+  border-radius: var(--radius-lg); background: rgba(var(--active-rgb), 0.035);
+}
+.aru-start-panel > span { min-width: 105px; }
+.aru-start-panel > span strong,
+.aru-start-panel > span small { display: block; }
+.aru-start-panel > span strong { font-size: var(--text-xs); }
+.aru-start-panel > span small { margin-top: 2px; color: var(--muted); font-size: 10.5px; }
+.aru-start-panel .aru-command { margin: 0; }
 .aru-facts {
   grid-column: 1 / -1; display: flex; align-items: stretch;
   min-width: 0; border-top: 1px solid var(--line-soft);
@@ -5959,6 +5971,8 @@ a.spend-row-name:hover { color: var(--active); }
   .aru-machine { flex-wrap: wrap; padding-bottom: 10px; }
   .aru-machine-name { flex: 1; min-width: 180px; }
   .aru-overview-actions { justify-content: flex-start; padding: 0 14px 12px 34px; }
+  .aru-start-panel { grid-template-columns: minmax(0, 1fr); }
+  .aru-start-panel > span { min-width: 0; }
   .aru-facts { flex-wrap: wrap; }
   .aru-dispatch-control,
   .aru-fact { flex: 1 1 calc(50% - 1px); box-sizing: border-box; }
