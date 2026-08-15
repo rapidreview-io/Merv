@@ -120,6 +120,27 @@ class AgentConfigurationTest(unittest.TestCase):
             self.assertIsNone(calls[1].get("start"))
             launched = run.call_args.args[0]
             self.assertEqual(launched.project_id, "proj_123")
+            settings_changed = calls[1].get("settings_changed")
+            self.assertIsNotNone(settings_changed)
+
+            configure_agent(
+                config_path=config_path,
+                platform="codex",
+                model="gpt-tuned",
+                effort="medium",
+            )
+            self.assertFalse(settings_changed(config_path))
+            self.assertEqual(launched.platforms[0].model, "gpt-tuned")
+            self.assertEqual(launched.platforms[0].effort, "medium")
+
+            configure_workspace(
+                config_path=config_path,
+                strategy="git_worktree",
+                repository=str(root / "repository"),
+                root=str(root / "worktrees"),
+                base_ref="release",
+            )
+            self.assertTrue(settings_changed(config_path))
 
     def test_agent_command_updates_machine_settings_without_losing_server(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

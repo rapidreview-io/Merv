@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Switch from './Switch';
+import { capabilitiesFor } from './agentPlatformConfig';
 import { connectRunnerBridge, runnerRequest } from './runnerClient';
 
 /**
@@ -327,30 +328,66 @@ export default function AutorunSetupWizard({
             <div className="aruw-agents">
               {platforms.filter((platform) => !platform.custom).map((platform) => {
                 const found = available ? available[platform.command[0]] : undefined;
+                const capabilities = capabilitiesFor(platform.adapter);
                 return (
                   <div className="aruw-agent" key={platform.id}>
-                    <Switch
-                      checked={platform.enabled}
-                      onChange={(value) => onUpdatePlatform(platform.id, { enabled: value })}
-                      label={`Enable ${platform.name}`}
-                    />
-                    <span className="aruw-agent-name">
-                      <strong>{platform.name}</strong>
-                      <small className="mono">{platform.command[0] || 'no command'}</small>
-                    </span>
-                    {found === true && <span className="aruw-tag aruw-tag--ok">installed</span>}
-                    {found === false && <span className="aruw-tag aruw-tag--missing">not found</span>}
-                    <label className="aruw-par">
-                      <span aria-hidden="true">×</span>
-                      <input
-                        type="number"
-                        min="1"
-                        max="32"
-                        aria-label={`${platform.name} parallel experiments`}
-                        value={platform.parallelism}
-                        onChange={(e) => onUpdatePlatform(platform.id, { parallelism: e.target.value })}
+                    <div className="aruw-agent-head">
+                      <Switch
+                        checked={platform.enabled}
+                        onChange={(value) => onUpdatePlatform(platform.id, { enabled: value })}
+                        label={`Enable ${platform.name}`}
                       />
-                    </label>
+                      <span className="aruw-agent-name">
+                        <strong>{platform.name}</strong>
+                        <small className="mono">{platform.command[0] || 'no command'}</small>
+                      </span>
+                      {found === true && <span className="aruw-tag aruw-tag--ok">installed</span>}
+                      {found === false && <span className="aruw-tag aruw-tag--missing">not found</span>}
+                      <label className="aruw-par">
+                        <span aria-hidden="true">×</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="32"
+                          aria-label={`${platform.name} parallel experiments`}
+                          value={platform.parallelism}
+                          onChange={(e) => onUpdatePlatform(platform.id, { parallelism: e.target.value })}
+                        />
+                      </label>
+                    </div>
+                    {platform.enabled && (capabilities.model || capabilities.effort) && (
+                      <div className="aruw-agent-tuning">
+                        {capabilities.model && (
+                          <label>
+                            <span>Model</span>
+                            <input
+                              value={platform.model}
+                              placeholder="Platform default"
+                              spellCheck={false}
+                              onChange={(e) => onUpdatePlatform(platform.id, { model: e.target.value })}
+                            />
+                          </label>
+                        )}
+                        {capabilities.effort && (
+                          <label>
+                            <span>Effort</span>
+                            <input
+                              value={platform.effort}
+                              placeholder="Platform default"
+                              spellCheck={false}
+                              list={`aruw-effort-${platform.id}`}
+                              onChange={(e) => onUpdatePlatform(platform.id, { effort: e.target.value })}
+                            />
+                            <datalist id={`aruw-effort-${platform.id}`}>
+                              <option value="low" />
+                              <option value="medium" />
+                              <option value="high" />
+                              <option value="xhigh" />
+                            </datalist>
+                          </label>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

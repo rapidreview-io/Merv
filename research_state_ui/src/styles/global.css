@@ -5728,10 +5728,11 @@ a.spend-row-name:hover { color: var(--active); }
   max-height: 300px; overflow: auto;
 }
 .aruw-agent {
-  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  padding: 8px 10px;
   border: 1px solid var(--line-soft); border-radius: var(--radius-md);
   background: var(--bg-elev);
 }
+.aruw-agent-head { display: flex; align-items: center; gap: 10px; }
 .aruw-agent-name { flex: 1; min-width: 0; }
 .aruw-agent-name strong { display: block; font-size: var(--text-sm); }
 .aruw-agent-name small {
@@ -5750,6 +5751,19 @@ a.spend-row-name:hover { color: var(--active); }
 }
 .aruw-par input {
   width: 52px; padding: 4px 6px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--bg); color: var(--text); font-size: var(--text-xs);
+}
+.aruw-agent-tuning {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px; margin: 9px 0 1px 44px;
+}
+.aruw-agent-tuning label > span {
+  display: block; margin-bottom: 4px;
+  color: var(--muted); font-size: 10.5px;
+}
+.aruw-agent-tuning input {
+  width: 100%; box-sizing: border-box; padding: 6px 8px;
   border: 1px solid var(--line); border-radius: var(--radius-sm);
   background: var(--bg); color: var(--text); font-size: var(--text-xs);
 }
@@ -5961,6 +5975,7 @@ a.spend-row-name:hover { color: var(--active); }
   .aru-job-body { padding: 0 14px 14px; }
   .aru-job-detail-bar { align-items: flex-start; }
   .aru-pairing { grid-template-columns: minmax(0, 1fr); }
+  .aruw-agent-tuning { grid-template-columns: minmax(0, 1fr); margin-left: 0; }
   .aru-platform-row { flex-wrap: wrap; }
   .aru-platform-summary { flex-basis: 100%; order: 4; text-align: left; }
   .aru-platform-fields { grid-template-columns: minmax(0, 1fr); }

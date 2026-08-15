@@ -1523,6 +1523,32 @@ class AgentRunner:
         self.environment = environment if environment is not None else os.environ
         self._idle_reason = ""
 
+    def apply_platform_tuning(self, platforms: Sequence[Platform]) -> bool:
+        """Apply model/effort-only edits for future launches without a restart."""
+        updated = tuple(platforms)
+        current_by_name = {item.name: item for item in self.platforms}
+        updated_by_name = {item.name: item for item in updated}
+        if current_by_name.keys() != updated_by_name.keys():
+            return False
+        for name, current in current_by_name.items():
+            candidate = updated_by_name[name]
+            if (
+                current.adapter,
+                current.command,
+                current.enabled,
+                current.parallelism,
+            ) != (
+                candidate.adapter,
+                candidate.command,
+                candidate.enabled,
+                candidate.parallelism,
+            ):
+                return False
+        # Tuple replacement is atomic in CPython. A launch already in progress
+        # retains its Platform value; the next claim sees the new tuning.
+        self.platforms = updated
+        return True
+
     def reconcile(self) -> None:
         remote = {
             str(item.get("id")): item
@@ -2790,6 +2816,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         server = None
         try:
             if not args.no_local_control:
+                def settings_changed(path: Path) -> bool:
+                    if load_workspace_settings(path) != workspace_settings:
+                        return True
+                    return not runner.apply_platform_tuning(load_platforms(path))
+
                 server = local_control(
                     config_path=config_path,
                     token=token,
@@ -2801,6 +2832,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         ledger=ledger,
                         config_path=config_path,
                     ),
+                    settings_changed=settings_changed,
                     port=args.settings_port,
                 )
                 start_in_background(server)

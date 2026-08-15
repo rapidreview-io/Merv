@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   DEFAULT_WORKSPACE,
   PLATFORM_PRESETS,
+  configFromDraft,
   defaultWorktreeRoot,
   draftFromSettings,
   normalizeLocalPlatforms,
@@ -55,4 +56,22 @@ test('aider is absent from auto-run presets and old drafts', () => {
     }).platforms.some((platform) => platform.id === 'aider'),
     false,
   );
+});
+
+test('model and effort selections are written into runner settings', () => {
+  const platforms = PLATFORM_PRESETS.map((platform) => ({
+    ...platform,
+    command: [...platform.command],
+    enabled: platform.id === 'codex',
+    model: platform.id === 'codex' ? 'gpt-tuned' : platform.model,
+    effort: platform.id === 'codex' ? 'medium' : platform.effort,
+  }));
+  const config = configFromDraft(platforms, {
+    ...DEFAULT_WORKSPACE,
+    repository: '/projects/repo',
+    root: '/projects/repo-worktrees',
+  });
+
+  assert.equal(config.agent_platforms.codex.model, 'gpt-tuned');
+  assert.equal(config.agent_platforms.codex.effort, 'medium');
 });

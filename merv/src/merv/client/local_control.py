@@ -137,6 +137,7 @@ def local_control(
     validate: Callable[[Path], None],
     status: Callable[[], Mapping[str, Any]],
     start: Callable[[str], None] | None = None,
+    settings_changed: Callable[[Path], bool] | None = None,
     credential_path: Path | None = None,
     port: int = DEFAULT_PORT,
     origins: set[str] | None = None,
@@ -219,9 +220,15 @@ def local_control(
             except (LocalControlError, ValueError) as exc:
                 self._json(400, {"error": str(exc)})
                 return
+            restart_required = True
+            if settings_changed is not None:
+                restart_required = bool(settings_changed(config_path))
             self._json(
                 200,
-                {**_public_settings(updated), "restart_required": True},
+                {
+                    **_public_settings(updated),
+                    "restart_required": restart_required,
+                },
             )
 
         def do_POST(self) -> None:
