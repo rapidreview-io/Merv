@@ -646,30 +646,34 @@ export default function WaveFlow({
       {expanded && (
         <div className="fig-backdrop" onClick={() => setExpanded(false)} aria-hidden="true" />
       )}
-      {/* Same header row as every other graph: name on the left, legend and the
-          Expand control on the right. This slot used to have no title at all,
-          and its Expand button floated over the canvas. */}
-      <div className="fig-head">
-        <div className="fig-title">{title}</div>
-        <div className="fig-head-right">
-          <div className="wflow-legend" aria-hidden="true">
-            <span className="fig-chip fig-st--done">done</span>
-            <span className="fig-chip fig-st--open">running</span>
-            <span className="fig-chip wflow-chip--failed">failed</span>
-            <span className="fig-chip wflow-chip--refl">reflection</span>
-            <span className="fig-chip wflow-chip--pending">not yet consolidated</span>
+      {/* Header and canvas share one slot, and the SLOT is what goes
+          fullscreen — the header has to ride along, or expanding buries the
+          Collapse button and the legend under the canvas with no way out but
+          Escape. Same reason .exp-figure--expanded wraps the other graphs'
+          headers. The slot is pure layout inline, so Home keeps its airy,
+          card-less presentation. */}
+      <div className={`wflow-slot${expanded ? ' wflow-slot--expanded' : ''}`}>
+        <div className="fig-head">
+          <div className="fig-title">{title}</div>
+          <div className="fig-head-right">
+            <div className="wflow-legend" aria-hidden="true">
+              <span className="fig-chip fig-st--done">done</span>
+              <span className="fig-chip fig-st--open">running</span>
+              <span className="fig-chip wflow-chip--failed">failed</span>
+              <span className="fig-chip wflow-chip--refl">reflection</span>
+              <span className="fig-chip wflow-chip--pending">not yet consolidated</span>
+            </div>
+            <GraphExpandButton
+              expanded={expanded}
+              onToggle={() => setExpanded(v => !v)}
+              label="project graph"
+            />
           </div>
-          <GraphExpandButton
-            expanded={expanded}
-            onToggle={() => setExpanded(v => !v)}
-            label="project graph"
-          />
         </div>
-      </div>
-      <div
-        className={`wflow${sel ? ' wflow--panel-open' : ''}${expanded ? ' wflow--expanded' : ''}`}
-        style={{ height: expanded ? undefined : cssHeight, '--fig-panel-w': `${panelWidth}px` }}
-      >
+        <div
+          className={`wflow${sel ? ' wflow--panel-open' : ''}`}
+          style={{ height: expanded ? undefined : cssHeight, '--fig-panel-w': `${panelWidth}px` }}
+        >
         {/* The graph shifts aside for the drawer — a pure transform, so the
             canvas never resizes and react-flow never re-lays-out. */}
         <div className="wflow-shift" ref={shiftRef}>
@@ -728,6 +732,7 @@ export default function WaveFlow({
               onSelectNode={setSel}
             />
           )}
+        </div>
         </div>
       </div>
     </FlowCtx.Provider>

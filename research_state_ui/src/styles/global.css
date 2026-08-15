@@ -6619,12 +6619,27 @@ textarea.sbxpw-input { font-family: var(--mono, ui-monospace, monospace); font-s
   border: 1px solid var(--line-soft);
   border-radius: 10px;
 }
-.wflow--expanded {
+/* Header + canvas in one slot. Inline it is pure layout — no card, no border,
+   no background — so Home keeps the airy presentation; the canvas's own
+   hairline frame is still the only box on screen. Expanded, the SLOT is what
+   goes fullscreen (same inset/z-index/shadow as .exp-figure--expanded), so the
+   header travels with it and the Collapse button and legend stay reachable.
+   Expanding the canvas alone buried both under it. */
+.wflow-slot { display: flex; flex-direction: column; min-width: 0; }
+.wflow-slot--expanded {
   position: fixed; inset: 18px; z-index: 81;
-  height: auto; margin-bottom: 0;
   background: var(--bg);
+  border-radius: var(--radius-lg);
   box-shadow: 0 18px 60px rgba(0, 0, 0, .45);
+  padding: 0 14px 14px;
 }
+/* The header keeps its own ground while the canvas scrolls under nothing —
+   fullscreen, it is the only chrome, so it sticks to the top of the slot. */
+.wflow-slot--expanded .fig-head {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg);
+}
+.wflow-slot--expanded .wflow { flex: 1; min-height: 0; margin-bottom: 0; }
 .wflow .react-flow { background: transparent; }
 .wflow .react-flow__background {
   -webkit-mask-image: radial-gradient(ellipse 92% 88% at 50% 50%, #000 45%, transparent 97%);
