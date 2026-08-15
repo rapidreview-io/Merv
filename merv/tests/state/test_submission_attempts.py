@@ -350,23 +350,44 @@ class SubmissionAttemptFlowTest(unittest.TestCase):
         figure = self.app._client.get(
             f"/api/projects/{self.project_id}/experiments/{exp_id}/figure"
         ).json()
-        node_ids = {n["id"] for n in figure["nodes"]}
-        edge_ids = {e["id"] for e in figure["edges"]}
-        self.assertIn("submission:1.1", node_ids)
-        self.assertIn("submission:1.2", node_ids)
-        self.assertIn("attempt:1->submission:1.1:submitted", edge_ids)
-        self.assertIn(
-            "submission:1.1->submission:1.2:revised_to",
-            edge_ids,
-            "round 2 must follow round 1, not hang off the attempt",
-        )
-        # The round-1 verdict hangs off round 1, not off the attempt.
-        review_edges = [
-            e for e in figure["edges"] if e["to"].startswith("review:")
+        nodes = {n["id"]: n for n in figure["nodes"]}
+        edges = {(e["from"], e["to"]): e["type"] for e in figure["edges"]}
+        self.assertIn("submission:1.1", nodes)
+        self.assertIn("submission:1.2", nodes)
+        # The spine is temporal: design approval → round 1 → its verdict →
+        # round 2. Round 2 hangs off the rejecting review, not the attempt and
+        # not round 1 directly.
+        design = [
+            n for n in figure["nodes"]
+            if n["type"] == "review" and n["qualifier"] == "attempt 1"
         ]
-        self.assertTrue(
-            any(e["from"] == "submission:1.1" for e in review_edges),
-            f"expected a review rooted on submission:1.1, got {review_edges}",
+        self.assertEqual(len(design), 1)
+        self.assertEqual(edges[("attempt:1", design[0]["id"])], "reviewed_by")
+        self.assertEqual(edges[(design[0]["id"], "submission:1.1")], "then")
+        verdicts = [
+            n for n in figure["nodes"]
+            if n["type"] == "review" and n["qualifier"] == "round 1.1"
+        ]
+        self.assertEqual(len(verdicts), 1, "expected one verdict on round 1.1")
+        self.assertEqual(edges[("submission:1.1", verdicts[0]["id"])], "reviewed_by")
+        self.assertEqual(
+            edges[(verdicts[0]["id"], "submission:1.2")],
+            "revised_to",
+            "round 2 must follow round 1's verdict, not hang off the attempt",
+        )
+        self.assertNotIn(("submission:1.1", "submission:1.2"), edges)
+        self.assertNotIn(("attempt:1", "submission:1.1"), edges)
+        # Each round's report is evidence anchored on that round.
+        reports = [
+            n for n in figure["nodes"]
+            if n["type"] == "artifact" and n["meta"]["role"] == "report"
+        ]
+        self.assertEqual(
+            sorted((r["anchor"], r["lane"], r["qualifier"]) for r in reports),
+            [
+                ("submission:1.1", "evidence", "round 1.1"),
+                ("submission:1.2", "evidence", "round 1.2"),
+            ],
         )
 
 

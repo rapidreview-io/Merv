@@ -35,7 +35,10 @@ export default function GraphCanvasOverlay({ title, nodes, edges, onClose }) {
       draggable: false,
       connectable: false,
     }));
-    const rfEdges = (laid.edges || []).map((e, i) => ({
+    // Timeline satellites (files, sandbox) sit in their beat's column; the
+    // attachment edge into them is placement, not a line to draw.
+    const satellite = new Set(nodes.filter(n => n.anchor).map(n => n.id));
+    const rfEdges = (laid.edges || []).filter(e => !satellite.has(e.to)).map((e, i) => ({
       id: `${e.from}->${e.to}:${i}`,
       source: e.from,
       target: e.to,

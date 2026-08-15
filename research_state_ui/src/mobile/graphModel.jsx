@@ -40,9 +40,15 @@ const LOGIC_KIND_COLORS = [
 export function normalizeFigure(figure) {
   const nodes = (figure?.nodes || []).map(n => {
     const sc = figStatusClass(n);
+    // The round qualifier rides in the sublabel on mobile ("round 3.1 ·
+    // report"); anchor/lane pass through so the outline's reading order
+    // follows the same timeline layout as the desktop canvas.
+    const sublabel = [n.qualifier, n.sublabel].filter(Boolean).join(' · ');
     return {
-      id: n.id, label: n.label, sublabel: n.sublabel || '',
-      kindLabel: n.type, color: FIG_STATUS_COLOR[sc], glyph: FIG_TYPE_GLYPH[n.type] || '•',
+      id: n.id, label: n.label, sublabel,
+      kindLabel: String(n.type || '').replace(/_/g, ' '),
+      color: FIG_STATUS_COLOR[sc], glyph: FIG_TYPE_GLYPH[n.type] || '•',
+      anchor: n.anchor, lane: n.lane,
       raw: n,
     };
   });

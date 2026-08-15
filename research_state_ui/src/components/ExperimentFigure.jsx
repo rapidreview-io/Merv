@@ -48,6 +48,11 @@ function statusClass(node) {
   }[s] || 'neutral';
 }
 
+// Attachment edges (a beat → the files / sandbox that belong to it) are shown
+// as placement — the satellite sits in its beat's column — not as lines. Lines
+// are reserved for the spine, so what remains readable is the temporal story.
+const ATTACHMENT_EDGES = new Set(['proposed', 'submitted', 'produced', 'ran_on']);
+
 function FigureNode({ data, selected }) {
   return (
     <div
@@ -55,6 +60,7 @@ function FigureNode({ data, selected }) {
         'fig-node',
         `fig-node--${data.type}`,
         `fig-st--${data.statusClass}`,
+        data.anchor ? 'fig-node--satellite' : '',
         selected ? 'fig-node--selected' : '',
       ].filter(Boolean).join(' ')}
       style={{ width: FIG_NODE_W }}
@@ -62,8 +68,12 @@ function FigureNode({ data, selected }) {
       <Handle type="target" position={Position.Left} className="fig-handle" />
       <div className="fig-node-head">
         <span className="fig-node-glyph" aria-hidden="true">{TYPE_GLYPH[data.type] || '•'}</span>
-        <span className="fig-node-type">{data.type}</span>
+        <span className="fig-node-type">{String(data.type || '').replace(/_/g, ' ')}</span>
         {data.statusClass === 'open' && <span className="fig-node-live" aria-hidden="true" />}
+        {/* Which round this node is about ("attempt 2", "round 3.1"): the
+            qualifier that keeps three `report.md`s and four `Experiment
+            review`s apart without tracing an edge. */}
+        {data.qualifier && <span className="fig-node-qual">{data.qualifier}</span>}
       </div>
       <div className="fig-node-label" title={data.label}>{data.label}</div>
       {data.sublabel ? <div className="fig-node-sub" title={data.sublabel}>{data.sublabel}</div> : null}
@@ -115,15 +125,17 @@ function toFlow(figure) {
     draggable: false,
     connectable: false,
   }));
-  const edges = laid.edges.map(e => ({
-    id: e.id,
-    source: e.from,
-    target: e.to,
-    type: 'smoothstep',
-    className: `fig-edge fig-edge--${e.type}`,
-    animated: liveIds.has(e.from) || liveIds.has(e.to),
-    markerEnd: { type: MarkerType.ArrowClosed, width: 13, height: 13 },
-  }));
+  const edges = laid.edges
+    .filter(e => !ATTACHMENT_EDGES.has(e.type))
+    .map(e => ({
+      id: e.id,
+      source: e.from,
+      target: e.to,
+      type: 'smoothstep',
+      className: `fig-edge fig-edge--${e.type}`,
+      animated: liveIds.has(e.from) || liveIds.has(e.to),
+      markerEnd: { type: MarkerType.ArrowClosed, width: 13, height: 13 },
+    }));
   return { nodes, edges };
 }
 
@@ -132,8 +144,13 @@ function FigurePanel({ projectId, node, onClose }) {
   const ref = node.ref || {};
   const meta = node.meta || {};
 
+  const typeLabel = String(node.type || '').replace(/_/g, ' ');
   return (
-    <DetailPanelShell typeLabel={node.type} title={node.label} onClose={onClose}>
+    <DetailPanelShell
+      typeLabel={node.qualifier ? `${typeLabel} · ${node.qualifier}` : typeLabel}
+      title={node.label}
+      onClose={onClose}
+    >
       {node.status && node.status !== 'none' && (
         <div style={{ margin: '6px 0' }}><StatusPill value={String(node.status)} /></div>
       )}
@@ -291,6 +308,9 @@ export default function ExperimentFigure({
             <span className="fig-chip fig-st--revise">needs changes</span>
             <span className="fig-chip fig-st--failed">failed</span>
             <span className="fig-chip fig-st--faded">superseded</span>
+            <span className="fig-legend-sep" aria-hidden="true" />
+            <span className="fig-chip fig-chip--edge fig-chip--edge-then">→ next</span>
+            <span className="fig-chip fig-chip--edge fig-chip--edge-revised">⇢ sent back</span>
           </div>
           {onToggleExpand && (
             <button

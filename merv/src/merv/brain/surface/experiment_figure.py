@@ -1,20 +1,54 @@
 """Surface-owned derived experiment-figure projection.
 
 Builds a graph document — typed nodes + edges — for one experiment from state
-the backend already owns: the attempt chain, submitted artifacts (with
-attempt indices), review verdicts, sandbox liveness, conclusion, and tested
-claims. Nothing here is agent-authored; every node is derived and therefore
-true by construction. A later phase merges an agent-authored overlay (arms,
-decisions, metrics, lessons) into the same document shape.
+the backend already owns: the attempt chain, sealed submissions, artifacts,
+review verdicts, sandbox liveness, conclusion, and tested claims. Nothing here
+is agent-authored; every node is derived and therefore true by construction.
 
-Pure projection logic — no DB or backend calls. The Application query gathers the
-inputs (experiment state, review snapshots, open review requests, sandbox
+Pure projection logic — no DB or backend calls. The Application query gathers
+the inputs (experiment state, review snapshots, open review requests, sandbox
 view) and hands them in.
+
+The document is a timeline. Its spine is the temporal sequence of *beats*:
+
+    Attempt k  →  Design review  →  Submission k.1  →  Experiment review  →
+    Submission k.2  →  Experiment review  →  …  →  Conclusion  →  Claims
+
+Every attempt marker and result-submission marker is followed by the review
+that judged it, and a rejecting review is what leads to the next round — so
+round j+1 always sits strictly after round j *and* its verdict. Everything else
+is a satellite that names the beat it belongs to (`anchor`) and which side of
+the spine it lives on (`lane`):
+
+  * ``lane: "evidence"``  — what a beat put up for review: the proposal (plan &
+    friends) above an attempt marker, the results above a submission marker.
+  * ``lane: "execution"`` — the sandbox and files produced but not (yet) sealed
+    into a result submission, hanging below the beat they trail.
+
+Edge vocabulary:
+
+  reviewed_by  marker → the review that graded it
+  then         plain succession on the spine (approval → next round, re-review,
+               marker → next marker when no verdict links them, → open gate)
+  revised_to   a rejecting verdict → the round it caused
+  proposed     attempt → proposal artifact           (attachment; placement)
+  submitted    submission → evidence artifact        (attachment; placement)
+  produced     attempt → execution-lane artifact     (attachment; placement)
+  ran_on       attempt → sandbox                     (attachment; placement)
+  concludes    final beat → conclusion
+  tests        conclusion (or final beat) → tested claim
+
+Attachment edges are semantic; the canvas shows them as placement (the
+satellite sits in its anchor's column) rather than as lines.
 
 Node `status` values are normalized for UI coloring:
   pending | active | done | failed | superseded | abandoned
 except `review` nodes, whose status is the verdict (pass | needs_changes |
 fail | open) and `claim` nodes, whose status is the claim status.
+
+Every node that belongs to a round carries `qualifier` — "attempt 2" or
+"round 3.1" — so a label like `report.md` or `Experiment review` never has to
+be traced back through edges to know which round it is about.
 """
 
 from __future__ import annotations
@@ -24,18 +58,19 @@ from typing import Any
 
 from ..research_core import EXPERIMENT_WORKFLOW
 
-FIGURE_SCHEMA_VERSION = 2
+FIGURE_SCHEMA_VERSION = 3
 
-# Artifact roles that feed an attempt vs. ones an attempt produces (legacy
-# untyped roles remain readable on rows backfilled from the resource era).
+# Artifact roles that read as a proposal when nothing has sealed them yet
+# (legacy untyped roles remain readable on rows backfilled from the resource
+# era).
 UPSTREAM_ROLES = {"plan", "input", "code", "config", "model"}
 
-# Per-attempt, per-direction cap on individual artifact nodes. Old sandbox syncs
-# could attach hundreds of files to one attempt; past the cap the remainder
-# rolls up into a single `artifact_group` node so the canvas stays readable.
+# Per-beat, per-lane cap on individual artifact nodes. Old sandbox syncs could
+# attach hundreds of files to one round; past the cap the remainder rolls up
+# into a single `artifact_group` node so the canvas stays readable.
 ARTIFACT_FANOUT_CAP = 6
 
-# Which artifacts survive the cap, most-load-bearing first.
+# Which artifacts survive the cap, most-load-bearing first (nearest the spine).
 _ROLE_PRIORITY = {
     "plan": 0,
     "report": 1,
@@ -46,6 +81,8 @@ _ROLE_PRIORITY = {
     "config": 6,
     "note": 7,
 }
+
+_REJECTIONS = {"needs_changes", "fail"}
 
 _ACTIVE_ATTEMPT_STATUSES = EXPERIMENT_WORKFLOW.effect_sources(
     "result_submission"
@@ -84,32 +121,46 @@ _RESULT_SUBMISSION_TRANSITIONS = {
     for transition in EXPERIMENT_WORKFLOW.transitions
     if "result_submission" in transition.effects
 }
+# Seals taken by the transition into a non-result review gate (submit_design):
+# what they froze is the proposal the design reviewer read.
+_PROPOSAL_TRANSITIONS = {
+    transition.name
+    for transition in EXPERIMENT_WORKFLOW.transitions
+    if transition.to_status
+    in {
+        state.name
+        for state in EXPERIMENT_WORKFLOW.states
+        if state.review is not None
+        and state.name
+        not in EXPERIMENT_WORKFLOW.effect_destinations("result_submission")
+    }
+}
 
 
 def _humanize(value: str) -> str:
     return value.replace("_", " ")
 
 
-def _review_order(review: dict[str, Any]) -> tuple[int, str, str]:
-    """Chronological key. Reviews arrive newest-first; created_seq is the
+def _seq_order(row: dict[str, Any]) -> tuple[int, str, str]:
+    """Chronological key shared by reviews and seals. `created_seq` is the
     authoritative insertion order, with created_at and the id as tie-breakers
     so rows that predate the column still sort deterministically."""
     try:
-        seq = int(review.get("created_seq") or 0)
+        seq = int(row.get("created_seq") or 0)
     except (TypeError, ValueError):
         seq = 0
-    return (seq, str(review.get("created_at") or ""), str(review.get("id") or ""))
+    return (seq, str(row.get("created_at") or ""), str(row.get("id") or ""))
 
 
 def _chain_edge(add_edge, source: str, source_verdict: str | None, target: str) -> None:
-    """Link a review round to whatever preceded it.
+    """Link a spine beat to whatever preceded it.
 
-    `source_verdict` is None when the source is the attempt or submission
-    itself. A round that sent the work back earns the dashed revision arrow;
-    one that merely came first gets a plain sequence arrow."""
+    `source_verdict` is None when the source is a round marker (attempt or
+    submission). A rejecting verdict earns the dashed revision arrow; a
+    non-rejecting one is plain succession."""
     if source_verdict is None:
         add_edge(source, target, "reviewed_by")
-    elif source_verdict in {"needs_changes", "fail"}:
+    elif source_verdict in _REJECTIONS:
         add_edge(source, target, "revised_to")
     else:
         add_edge(source, target, "then")
@@ -164,12 +215,28 @@ def build_experiment_figure(
             return current_attempt
         return attempt
 
-    # ---- attempt spine ----
+    # Round markers in temporal order, and what each one is called.
+    spine: list[str] = []
+    round_name: dict[str, str] = {}
+    marker_attempt: dict[str, int] = {}
+
+    # ---- seals: every forward transition froze the live composition ----
+    seals = sorted(experiment.get("submissions", []), key=_seq_order)
+    seal_by_id = {str(row.get("id")): row for row in seals}
+    sealed_attempts = {clamp_attempt(row.get("attempt_index")) for row in seals}
+    result_rounds: dict[int, list[dict[str, Any]]] = {}
+    for row in seals:
+        if str(row.get("transition") or "") in _RESULT_SUBMISSION_TRANSITIONS:
+            result_rounds.setdefault(clamp_attempt(row.get("attempt_index")), []).append(row)
+    submission_nodes: dict[str, str] = {}
+
+    # ---- attempt markers + the result-submission rounds inside them ----
     for k in range(1, current_attempt + 1):
         is_current = k == current_attempt
+        attempt_id = f"attempt:{k}"
         nodes.append(
             {
-                "id": f"attempt:{k}",
+                "id": attempt_id,
                 "type": "attempt",
                 "label": f"Attempt {k}",
                 "sublabel": _humanize(status) if is_current else "superseded",
@@ -178,147 +245,57 @@ def build_experiment_figure(
                     if is_current
                     else "superseded"
                 ),
-                "group": f"attempt:{k}",
+                "group": attempt_id,
                 "ref": {"kind": "experiment", "id": experiment.get("id")},
             }
         )
-        if k > 1:
-            add_edge(f"attempt:{k - 1}", f"attempt:{k}", "revised_to")
-
-    # ---- submission attempts: the rounds inside an experiment attempt ----
-    # Only result-submission rounds become nodes. Every forward transition seals a
-    # composition, but a plan submission is already drawn by the attempt spine;
-    # what has no home on the canvas is the report round, which is exactly the
-    # thing a review return to running repeats without bumping the attempt.
-    submissions = [
-        row
-        for row in experiment.get("submissions", [])
-        if str(row.get("transition") or "") in _RESULT_SUBMISSION_TRANSITIONS
-    ]
-    submission_nodes: dict[str, str] = {}
-    rounds_by_attempt: dict[int, list[dict[str, Any]]] = {}
-    for row in submissions:
-        rounds_by_attempt.setdefault(
-            clamp_attempt(row.get("attempt_index")), []
-        ).append(row)
-    for attempt, rounds in sorted(rounds_by_attempt.items()):
-        # Chained, not fanned: round 2 follows round 1 so the report loop reads
-        # left to right like the design loop, instead of stacking as siblings.
-        previous = f"attempt:{attempt}"
-        for index, row in enumerate(rounds, start=1):
-            node_id = f"submission:{attempt}.{index}"
+        spine.append(attempt_id)
+        round_name[attempt_id] = f"attempt {k}"
+        marker_attempt[attempt_id] = k
+        # Only result-submission seals become beats. A plan seal is already
+        # drawn by the attempt marker; what has no home otherwise is the report
+        # round, which is exactly what a return to running repeats without
+        # bumping the attempt.
+        for index, row in enumerate(result_rounds.get(k, []), start=1):
+            node_id = f"submission:{k}.{index}"
             submission_nodes[str(row.get("id"))] = node_id
             nodes.append(
                 {
                     "id": node_id,
                     "type": "submission",
-                    "label": f"Submission {attempt}.{index}",
+                    "label": f"Submission {k}.{index}",
                     "sublabel": "results submitted",
                     "status": "done",
-                    "group": f"attempt:{attempt}",
+                    "group": attempt_id,
                     "ref": {"kind": "submission", "id": row.get("id")},
-                    "meta": {"attempt_index": attempt, "submission_index": index},
+                    "meta": {"attempt_index": k, "submission_index": index},
                 }
             )
-            add_edge(previous, node_id, "submitted" if index == 1 else "revised_to")
-            previous = node_id
+            spine.append(node_id)
+            round_name[node_id] = f"round {k}.{index}"
+            marker_attempt[node_id] = k
 
-    # ---- artifacts, one node per (artifact, attempt) association ----
-    # Bucket by (attempt, direction), keep the most load-bearing files under
-    # the fan-out cap, and roll the rest into one expandable group node.
-    # Superseded rows now survive their round (that is the history), so mark
-    # anything the target no longer treats as current.
-    current_ids = {
-        str(res.get("id")) for res in experiment.get("current_attempt_artifacts", [])
-    }
-    buckets: dict[tuple[int, bool], list[dict[str, Any]]] = {}
-    seen_assoc: set[tuple[str, int]] = set()
-    for res in experiment.get("artifacts", []):
-        attempt = clamp_attempt(res.get("attempt_index"))
-        key = (str(res.get("id")), attempt)
-        if key in seen_assoc:
-            continue
-        seen_assoc.add(key)
-        role = str(res.get("role") or "other")
-        buckets.setdefault((attempt, role in UPSTREAM_ROLES), []).append(res)
-
-    for (attempt, upstream), bucket in sorted(buckets.items()):
-        bucket.sort(
-            key=lambda r: (
-                _ROLE_PRIORITY.get(str(r.get("role") or "other"), 9),
-                str(r.get("path") or ""),
-            )
-        )
-        shown, overflow = bucket[:ARTIFACT_FANOUT_CAP], bucket[ARTIFACT_FANOUT_CAP:]
-        for res in shown:
-            role = str(res.get("role") or "other")
-            node_id = f"artifact:{res.get('id')}:a{attempt}"
-            superseded = bool(current_ids) and str(res.get("id")) not in current_ids
-            nodes.append(
-                {
-                    "id": node_id,
-                    "type": "artifact",
-                    "label": _artifact_label(res),
-                    "sublabel": f"{role} · superseded" if superseded else role,
-                    "status": "superseded" if superseded else "none",
-                    "group": f"attempt:{attempt}",
-                    "ref": {"kind": "artifact", "id": res.get("id")},
-                    "meta": {
-                        "role": role,
-                        "path": res.get("path"),
-                        "superseded": superseded,
-                    },
-                }
-            )
-            if upstream:
-                add_edge(node_id, f"attempt:{attempt}", "feeds")
-            else:
-                # A produced file hangs off the round that shipped it, so a
-                # rejected round keeps its own report instead of every version
-                # piling onto the attempt.
-                source = submission_nodes.get(str(res.get("submission_id") or ""))
-                add_edge(source or f"attempt:{attempt}", node_id, "produced")
-        if overflow:
-            roles = sorted({str(r.get("role") or "other") for r in overflow})
-            node_id = f"artifact_group:a{attempt}:{'up' if upstream else 'down'}"
-            nodes.append(
-                {
-                    "id": node_id,
-                    "type": "artifact_group",
-                    "label": f"{len(overflow)} more files",
-                    "sublabel": " · ".join(roles),
-                    "status": "none",
-                    "group": f"attempt:{attempt}",
-                    "ref": {"kind": "artifact_group", "id": None},
-                    "meta": {
-                        "count": len(overflow),
-                        "roles": roles,
-                        "artifact_ids": [str(r.get("id")) for r in overflow],
-                    },
-                }
-            )
-            if upstream:
-                add_edge(node_id, f"attempt:{attempt}", "feeds")
-            else:
-                add_edge(f"attempt:{attempt}", node_id, "produced")
-
-    # ---- submitted reviews, rooted on the round they graded ----
-    # A review of a submission hangs off that submission; a design review (or
-    # any review predating submissions) hangs off the attempt. Rounds sharing a
-    # root chain in the order they happened rather than fanning out, which is
-    # what gives the report loop a spine instead of a vertical pile.
-    reviews_by_root: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    # ---- submitted reviews, chained after the marker they graded ----
+    # A review of a result submission hangs off that submission; a design
+    # review (or any review predating submissions) hangs off the attempt.
+    # Rounds sharing a root chain in the order they happened, so a re-review
+    # is another beat, not a sibling.
+    reviews_by_root: dict[str, list[dict[str, Any]]] = {}
     for review in experiment.get("reviews", []):
         attempt = clamp_attempt(review_attempts.get(str(review.get("id"))))
         root = (
             submission_nodes.get(str(review.get("submission_id") or ""))
             or f"attempt:{attempt}"
         )
-        reviews_by_root.setdefault((root, attempt), []).append(review)
+        reviews_by_root.setdefault(root, []).append(review)
 
+    # tail[marker] = (last spine node of that round, its verdict or None)
     tails: dict[str, tuple[str, str | None]] = {}
-    for (root, attempt), rounds in sorted(reviews_by_root.items()):
-        rounds.sort(key=_review_order)
+    for root in spine:
+        rounds = reviews_by_root.get(root)
+        if not rounds:
+            continue
+        rounds.sort(key=_seq_order)
         source, source_verdict = root, None
         for review in rounds:
             review_id = str(review.get("id"))
@@ -331,7 +308,8 @@ def build_experiment_figure(
                     "label": _REVIEW_LABELS.get(str(review.get("role")), "Review"),
                     "sublabel": _humanize(verdict),
                     "status": verdict or "open",
-                    "group": f"attempt:{attempt}",
+                    "group": f"attempt:{marker_attempt[root]}",
+                    "qualifier": round_name[root],
                     "ref": {"kind": "review", "id": review_id},
                     "meta": {
                         "role": review.get("role"),
@@ -342,19 +320,15 @@ def build_experiment_figure(
             )
             _chain_edge(add_edge, source, source_verdict, node_id)
             source, source_verdict = node_id, verdict
-            # Only a rejection sent back to planning spawns the next attempt.
-            # One sent back to running is another round of this same attempt,
-            # already drawn by the submission chain.
-            route = EXPERIMENT_WORKFLOW.return_route(str(review.get("return_to") or ""))
-            if (
-                verdict == "needs_changes"
-                and attempt < current_attempt
-                and (route is None or route.attempt == "new")
-            ):
-                add_edge(node_id, f"attempt:{attempt + 1}", "revised_to")
         tails[root] = (source, source_verdict)
 
     # ---- open review gates (requested/started, no verdict yet) ----
+    # Land after the newest verdict on the round being reviewed, not back on
+    # the marker.
+    open_root = f"attempt:{current_attempt}"
+    for row in reversed(result_rounds.get(current_attempt, [])):
+        open_root = submission_nodes[str(row.get("id"))]
+        break
     for request in open_review_requests:
         node_id = f"review_request:{request.get('id')}"
         nodes.append(
@@ -365,23 +339,164 @@ def build_experiment_figure(
                 "sublabel": "awaiting verdict",
                 "status": "open",
                 "group": f"attempt:{current_attempt}",
+                "qualifier": round_name[open_root],
                 "ref": {"kind": "review_request", "id": request.get("id")},
             }
         )
-        # Land after the newest verdict on the round being reviewed, not back
-        # on the attempt node.
-        root = f"attempt:{current_attempt}"
-        for submission in reversed(submissions):
-            if clamp_attempt(submission.get("attempt_index")) == current_attempt:
-                root = submission_nodes[str(submission.get("id"))]
-                break
-        source, source_verdict = tails.get(root, (root, None))
+        source, source_verdict = tails.get(open_root, (open_root, None))
         _chain_edge(add_edge, source, source_verdict, node_id)
-        tails[root] = (node_id, "")
+        tails[open_root] = (node_id, "")
+
+    def tail_of(marker: str) -> tuple[str, str | None]:
+        return tails.get(marker, (marker, None))
+
+    # ---- spine succession: each round follows the verdict of the last ----
+    # A rejection is what caused the next round, so the arrow leaves the
+    # review, not the marker; without a verdict (legacy rows, abandoned
+    # gates) the markers link directly.
+    for previous, following in zip(spine, spine[1:]):
+        source, verdict = tail_of(previous)
+        add_edge(
+            source,
+            following,
+            "revised_to" if verdict in _REJECTIONS else "then",
+        )
+
+    # ---- artifacts, one node per (artifact, attempt) association ----
+    # Where an artifact sits is decided by what sealed it: a result seal makes
+    # it evidence above that submission, a proposal seal makes it the proposal
+    # above the attempt, and anything else (a seal taken by mark_ready /
+    # start_running / retry, or nothing yet) is execution output trailing the
+    # latest beat that preceded it. Superseded rows survive their round (that
+    # is the history), so mark anything the target no longer treats as current.
+    current_ids = {
+        str(res.get("id")) for res in experiment.get("current_attempt_artifacts", [])
+    }
+    result_seal_orders = {
+        attempt: [_seq_order(row) for row in rows]
+        for attempt, rows in result_rounds.items()
+    }
+
+    def execution_anchor(attempt: int, before: tuple[int, str, str] | None) -> str:
+        """The spine beat an unsubmitted file trails: the verdict on the last
+        result round sealed before it, else the attempt's design verdict."""
+        rounds = result_rounds.get(attempt, [])
+        orders = result_seal_orders.get(attempt, [])
+        marker = f"attempt:{attempt}"
+        for row, order in zip(rounds, orders):
+            if before is not None and order >= before:
+                break
+            marker = submission_nodes[str(row.get("id"))]
+        return tail_of(marker)[0]
+
+    def place(res: dict[str, Any]) -> tuple[str, str, str, str]:
+        """(anchor, lane, edge_source, edge_type) for one artifact row."""
+        attempt = clamp_attempt(res.get("attempt_index"))
+        attempt_id = f"attempt:{attempt}"
+        seal = seal_by_id.get(str(res.get("submission_id") or ""))
+        if seal is not None:
+            submission = submission_nodes.get(str(seal.get("id")))
+            if submission:
+                return submission, "evidence", submission, "submitted"
+            if str(seal.get("transition") or "") in _PROPOSAL_TRANSITIONS:
+                return attempt_id, "evidence", attempt_id, "proposed"
+            anchor = execution_anchor(attempt, _seq_order(seal))
+            return anchor, "execution", attempt_id, "produced"
+        # Unsealed. Once this attempt has sealed anything, an unsealed row was
+        # registered after that seal: work in progress trailing the latest
+        # beat. Before any seal (still planning, or rows that predate seals)
+        # the role decides: inputs are the proposal, outputs are execution.
+        role = str(res.get("role") or "other")
+        if attempt not in sealed_attempts and role in UPSTREAM_ROLES:
+            return attempt_id, "evidence", attempt_id, "proposed"
+        return execution_anchor(attempt, None), "execution", attempt_id, "produced"
+
+    buckets: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    seen_assoc: set[tuple[str, int]] = set()
+    for res in experiment.get("artifacts", []):
+        attempt = clamp_attempt(res.get("attempt_index"))
+        key = (str(res.get("id")), attempt)
+        if key in seen_assoc:
+            continue
+        seen_assoc.add(key)
+        buckets.setdefault(place(res), []).append(res)
+
+    # Emit in spine order so a bucket's most load-bearing file sits nearest the
+    # spine and columns fill left to right. A satellite is named after the beat
+    # it hangs on: a marker's round, or the round a verdict graded.
+    spine_index = {node_id: i for i, node_id in enumerate(n["id"] for n in nodes)}
+    beat_name = {
+        n["id"]: round_name.get(n["id"]) or str(n.get("qualifier") or "") for n in nodes
+    }
+    for (anchor, lane, edge_source, edge_type), bucket in sorted(
+        buckets.items(), key=lambda item: (spine_index.get(item[0][0], 0), item[0])
+    ):
+        bucket.sort(
+            key=lambda r: (
+                _ROLE_PRIORITY.get(str(r.get("role") or "other"), 9),
+                str(r.get("path") or ""),
+            )
+        )
+        qualifier = beat_name.get(anchor) or round_name.get(edge_source) or ""
+        group = f"attempt:{marker_attempt.get(edge_source, current_attempt)}"
+        shown, overflow = bucket[:ARTIFACT_FANOUT_CAP], bucket[ARTIFACT_FANOUT_CAP:]
+        for res in shown:
+            role = str(res.get("role") or "other")
+            attempt = clamp_attempt(res.get("attempt_index"))
+            node_id = f"artifact:{res.get('id')}:a{attempt}"
+            superseded = bool(current_ids) and str(res.get("id")) not in current_ids
+            nodes.append(
+                {
+                    "id": node_id,
+                    "type": "artifact",
+                    "label": _artifact_label(res),
+                    "sublabel": f"{role} · superseded" if superseded else role,
+                    "status": "superseded" if superseded else "none",
+                    "group": group,
+                    "anchor": anchor,
+                    "lane": lane,
+                    "qualifier": qualifier,
+                    "ref": {"kind": "artifact", "id": res.get("id")},
+                    "meta": {
+                        "role": role,
+                        "path": res.get("path"),
+                        "superseded": superseded,
+                    },
+                }
+            )
+            add_edge(edge_source, node_id, edge_type)
+        if overflow:
+            roles = sorted({str(r.get("role") or "other") for r in overflow})
+            node_id = f"artifact_group:{anchor}:{lane}"
+            nodes.append(
+                {
+                    "id": node_id,
+                    "type": "artifact_group",
+                    "label": f"{len(overflow)} more files",
+                    "sublabel": " · ".join(roles),
+                    "status": "none",
+                    "group": group,
+                    "anchor": anchor,
+                    "lane": lane,
+                    "qualifier": qualifier,
+                    "ref": {"kind": "artifact_group", "id": None},
+                    "meta": {
+                        "count": len(overflow),
+                        "roles": roles,
+                        "artifact_ids": [str(r.get("id")) for r in overflow],
+                    },
+                }
+            )
+            add_edge(edge_source, node_id, edge_type)
 
     # ---- sandbox / execution ----
+    # Hangs below the beat where this attempt's execution began: its design
+    # approval when there is one, else the attempt marker itself.
     if sandbox and str(sandbox.get("status") or "none") != "none":
         sandbox_status = str(sandbox.get("status"))
+        attempt_id = f"attempt:{current_attempt}"
+        design_tail, design_verdict = tail_of(attempt_id)
+        anchor = design_tail if design_verdict == "pass" else attempt_id
         nodes.append(
             {
                 "id": "sandbox",
@@ -391,16 +506,20 @@ def build_experiment_figure(
                     sandbox.get("gpu") or sandbox.get("instance_type") or sandbox_status
                 ),
                 "status": "active" if sandbox_active else "done",
-                "group": f"attempt:{current_attempt}",
+                "group": attempt_id,
+                "anchor": anchor,
+                "lane": "execution",
+                "qualifier": beat_name.get(anchor) or round_name[attempt_id],
                 "ref": {"kind": "sandbox", "id": experiment.get("id")},
                 "meta": {"sandbox_status": sandbox_status},
             }
         )
-        add_edge(f"attempt:{current_attempt}", "sandbox", "ran_on")
+        add_edge(attempt_id, "sandbox", "ran_on")
 
-    # ---- conclusion + tested claims ----
+    # ---- conclusion + tested claims, after the final beat ----
+    end_source = tail_of(spine[-1])[0]
     conclusion = str(experiment.get("conclusion") or "").strip()
-    claim_source = f"attempt:{current_attempt}"
+    claim_source = end_source
     if conclusion:
         nodes.append(
             {
@@ -413,7 +532,7 @@ def build_experiment_figure(
                 "ref": {"kind": "experiment", "id": experiment.get("id")},
             }
         )
-        add_edge(claim_source, "conclusion", "concludes")
+        add_edge(end_source, "conclusion", "concludes")
         claim_source = "conclusion"
     for claim in experiment.get("tested_claims", []):
         node_id = f"claim:{claim.get('id')}"

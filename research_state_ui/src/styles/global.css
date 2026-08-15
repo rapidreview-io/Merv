@@ -3801,6 +3801,10 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .fig-chip.fig-st--revise  { color: var(--qualifies); border-color: rgba(var(--qualifies-rgb), .35); background: rgba(var(--qualifies-rgb), .08); }
 .fig-chip.fig-st--failed  { color: var(--refutes);   border-color: rgba(var(--refutes-rgb), .35);   background: rgba(var(--refutes-rgb), .07); }
 .fig-chip.fig-st--faded   { color: var(--faint); }
+.fig-legend-sep { width: 1px; height: 14px; background: var(--line); margin: 0 2px; align-self: center; }
+.fig-chip--edge { border-style: dashed; color: var(--muted); }
+.fig-chip--edge-then { border-style: solid; border-color: var(--line-strong); }
+.fig-chip--edge-revised { color: var(--qualifies); border-color: rgba(var(--qualifies-rgb), .6); }
 
 .fig-body { display: grid; grid-template-columns: 1fr; position: relative; }
 /* Wider detail column than the old 320px: the panel now renders real file
@@ -3860,12 +3864,14 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   background: var(--bg-elev); border-bottom: 1px solid var(--line-soft); color: var(--muted);
 }
 .fig-canvas .react-flow__controls-button:hover { background: var(--bg-soft); }
-.fig-canvas .react-flow__edge-path { stroke: var(--line-strong); stroke-width: 1.4; }
+/* Edges: one solid stroke for every step along the spine (reviewed_by / then /
+   concludes), the dashed amber arrow for a verdict that sent work back, and
+   purple for the claim it all tests. Attachment edges (files, sandbox) are
+   not drawn — placement carries them. */
+.fig-canvas .react-flow__edge-path { stroke: var(--line-strong); stroke-width: 1.6; }
 .fig-canvas .react-flow__arrowhead * { fill: var(--line-strong); }
 .fig-edge--revised_to .react-flow__edge-path { stroke: var(--qualifies); stroke-dasharray: 6 4; }
 .fig-edge--tests .react-flow__edge-path { stroke: var(--mcp); }
-.fig-edge--ran_on .react-flow__edge-path { stroke: var(--active); }
-.fig-edge--submitted .react-flow__edge-path { stroke: var(--steel); }
 
 .fig-node {
   position: relative;
@@ -3910,6 +3916,19 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   background: var(--active); margin-left: auto;
   animation: fig-pulse 1.6s ease-in-out infinite;
 }
+/* Round qualifier ("attempt 2", "round 3.1"): same corner on every node, so
+   the eye can scan the top-right of a column and confirm which round it is. */
+.fig-node-qual {
+  margin-left: auto; padding: 0 5px; border-radius: 999px;
+  font-size: 9.5px; font-weight: 600; letter-spacing: .04em; text-transform: none;
+  color: var(--muted); background: var(--bg-soft); border: 1px solid var(--line-soft);
+  white-space: nowrap;
+}
+.fig-node-live + .fig-node-qual { margin-left: 6px; }
+/* Satellites (files, sandbox) are subordinate to the beat they hang on:
+   flatter, so the spine row stays the loudest thing on the canvas. */
+.fig-node--satellite { box-shadow: none; }
+.fig-node--satellite:hover { box-shadow: var(--shadow-sm); }
 @keyframes fig-pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(var(--active-rgb), .35); }
   50% { opacity: .55; box-shadow: 0 0 0 4px rgba(var(--active-rgb), 0); }
