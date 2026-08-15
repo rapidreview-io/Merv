@@ -13,6 +13,15 @@ html[data-theme="dark"] { --xmap-leader: rgba(255, 255, 255, 0.14); }
   min-height: 480px;
 }
 .xmap--empty { display: flex; align-items: center; justify-content: center; }
+/* Expanded: the map lifts out of the page over everything else. Same idea as
+   .exp-figure--expanded, so all five graphs expand the same way. */
+.xmap--expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  height: auto;
+  background: var(--bg);
+}
 .xmap .react-flow { background: var(--bg); }
 .react-flow__node-exp { cursor: default; }
 
@@ -58,7 +67,7 @@ html[data-theme="dark"] { --xmap-leader: rgba(255, 255, 255, 0.14); }
 .xmap-ic--sbx, .xmap-ic--res { color: var(--faint); }
 
 .xmap-card:focus-visible, .xmap-chip:focus-visible, .xmap-sat:focus-visible,
-.xmap-ref:focus-visible, .xmap-open:focus-visible,
+.xmap-ref:focus-visible, .graph-open:focus-visible,
 .xmap-panel-close:focus-visible,
 .xmap-ref-ext:focus-visible {
   outline: 2px solid var(--active);
@@ -243,14 +252,20 @@ html[data-theme="dark"] { --xmap-leader: rgba(255, 255, 255, 0.14); }
 .xmap-legend-word { color: var(--muted); }
 
 /* ── Detail panel ─────────────────────────────────────────────────────── */
+/* Width comes from the shared usePanelWidth store, the same one the other four
+   graph sidebars read, and is draggable here too (see PanelResizer). */
 .xmap-panel {
   position: absolute;
   top: 0; right: 0; bottom: 0;
-  width: 380px;
+  width: var(--fig-panel-w, 380px);
   background: var(--bg-elev);
   border-left: 1px solid var(--line);
   overflow-y: auto;
-  z-index: 5;
+  overscroll-behavior: contain;
+  z-index: 6;
+}
+@media (max-width: 900px) {
+  .xmap-panel { left: 0; width: auto; border-left: none; }
 }
 .xmap-panel-head {
   display: flex;
@@ -305,15 +320,8 @@ html[data-theme="dark"] { --xmap-leader: rgba(255, 255, 255, 0.14); }
 }
 .xmap-panel-text { font-size: 13px; line-height: 1.6; color: var(--muted); }
 
-/* The panel's one primary action: full-width so it reads as the way out of
-   the map and into the record. */
-.btn.xmap-open {
-  display: flex;
-  justify-content: center;
-  gap: 6px;
-  margin-top: 16px;
-  padding: 7px 10px;
-}
+/* The panel's one primary action is .btn.graph-open, shared with the project
+   braid's panels — see global.css. */
 
 .xmap-section { display: flex; flex-direction: column; gap: 10px; }
 .xmap-eyebrow {

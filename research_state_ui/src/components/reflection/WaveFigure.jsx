@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
+} from 'react';
 import { ReactFlow, Background, Controls, Handle, Position, MarkerType } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { MeasureSync } from '../ExperimentFigure';
-import DetailPanelShell from '../DetailPanelShell';
+import DetailPanelShell, { PanelResizer } from '../DetailPanelShell';
+import GraphExpandButton from '../GraphExpandButton';
 import StatusPill from '../StatusPill';
 import { layoutFigure, FIG_NODE_W } from '../../utils/figureLayout';
+import { readableViewport, visibleWidth } from '../../utils/graphCamera';
+import { motionMs } from '../../utils/motion';
 import { usePanelWidth } from '../../store/usePanelWidth';
 import { buildWaveFigure } from './waveModel.js';
 
@@ -38,16 +43,32 @@ function statusClass(node) {
   }[s] || 'neutral';
 }
 
+/**
+ * Selection reaches the nodes through context, not node data: threading it
+ * through toFlow rebuilt every node object on every click, which wipes
+ * react-flow's measured handle bounds and silently drops the edges. The
+ * selecting callback rides along because react-flow's own Enter/Space handler
+ * talks to its internal store and never calls our onNodeClick.
+ */
+const WaveFigCtx = createContext({ selectedId: null, select: () => {} });
+
 function WaveFigNode({ data }) {
+  const { selectedId, select } = useContext(WaveFigCtx);
   return (
     <div
       className={[
         'fig-node',
         `fig-node--${data.type}`,
         `fig-st--${data.statusClass}`,
-        data.selected ? 'fig-node--selected' : '',
+        selectedId === data.id ? 'fig-node--selected' : '',
       ].filter(Boolean).join(' ')}
       style={{ width: FIG_NODE_W }}
+      role="button"
+      tabIndex={0}
+      aria-label={`${data.label} — ${String(data.status || data.type).replace(/_/g, ' ')}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(data.id); }
+      }}
     >
       <Handle type="target" position={Position.Left} className="fig-handle" />
       <div className="fig-node-head">
@@ -64,14 +85,14 @@ function WaveFigNode({ data }) {
 
 const nodeTypes = { wavefig: WaveFigNode };
 
-function toFlow(figure, selectedId) {
+function toFlow(figure) {
   const laid = layoutFigure(figure);
   const liveIds = new Set(laid.nodes.filter(n => statusClass(n) === 'open').map(n => n.id));
   const nodes = laid.nodes.map(n => ({
     id: n.id,
     type: 'wavefig',
     position: { x: n.x, y: n.y },
-    data: { ...n, statusClass: statusClass(n), selected: n.id === selectedId },
+    data: { ...n, statusClass: statusClass(n) },
     draggable: false,
     connectable: false,
   }));
@@ -97,16 +118,21 @@ export default function WaveFigure({
   const figure = useMemo(() => JSON.parse(figureJson), [figureJson]);
   const [selectedId, setSelectedId] = useState(null);
   const rfRef = useRef(null);
-  const { width: panelWidth, startResize } = usePanelWidth();
+  const { width: panelWidth } = usePanelWidth();
 
-  const { nodes, edges } = useMemo(() => toFlow(figure, selectedId), [figure, selectedId]);
+  const { nodes, edges } = useMemo(() => toFlow(figure), [figure]);
   const topologyKey = useMemo(() => nodes.map(n => n.id).sort().join('|'), [nodes]);
+  const select = useCallback((id) => setSelectedId(id), []);
+  const waveFigCtx = useMemo(() => ({ selectedId, select }), [selectedId, select]);
 
   // The process spine is a wide flat ribbon; fitting it to WIDTH crushes the
   // zoom (the LogicGraph readableFit problem). Inline: fill the height up to
   // 1x, never below a legible floor, anchor the start at the left. Expanded
   // has room, so it keeps plain fit-everything.
   const canvasRef = useRef(null);
+  // The sidebar overlays the canvas, so framing aims at the width still
+  // visible beside it rather than the element's full width.
+  const reserved = selectedId ? panelWidth : 0;
   const applyView = useCallback(() => {
     const inst = rfRef.current;
     if (!inst) return;
@@ -114,22 +140,15 @@ export default function WaveFigure({
       inst.fitView({ padding: 0.18, maxZoom: 1.6 });
       return;
     }
-    const xs = nodes.map(n => n.position.x);
-    const ys = nodes.map(n => n.position.y);
-    if (!xs.length) return;
-    const cw = canvasRef.current?.clientWidth || 1000;
-    const ch = canvasRef.current?.clientHeight || 400;
-    const minX = Math.min(...xs);
-    const minY = Math.min(...ys);
-    const gW = Math.max(1, Math.max(...xs) + FIG_NODE_W - minX);
-    const gH = Math.max(1, Math.max(...ys) + 72 - minY);
-    const pad = 28;
-    const zoom = Math.min(1, Math.max(0.8, Math.max((cw - pad * 2) / gW, (ch - pad * 2) / gH)));
-    inst.setViewport(
-      { x: pad - minX * zoom, y: (ch - gH * zoom) / 2 - minY * zoom, zoom },
-      { duration: document.hidden ? 0 : 200 },
-    );
-  }, [expanded, nodes]);
+    const vp = readableViewport({
+      xs: nodes.map(n => n.position.x),
+      ys: nodes.map(n => n.position.y),
+      nodeW: FIG_NODE_W,
+      cw: visibleWidth(canvasRef.current, reserved),
+      ch: canvasRef.current?.clientHeight || 400,
+    });
+    if (vp) inst.setViewport(vp, { duration: motionMs(200) });
+  }, [expanded, nodes, reserved]);
   useEffect(() => {
     const t = setTimeout(applyView, 350);
     return () => clearTimeout(t);
@@ -138,6 +157,19 @@ export default function WaveFigure({
     const t = setTimeout(applyView, 120);
     return () => clearTimeout(t);
   }, [expanded, applyView]);
+
+  // Escape closes the sidebar first; the graph slot's handler then gets the
+  // next Escape to leave fullscreen.
+  useEffect(() => {
+    if (!selectedId) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      setSelectedId(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [selectedId]);
 
   const selected = useMemo(
     () => figure.nodes.find(n => n.id === selectedId) || null,
@@ -156,29 +188,21 @@ export default function WaveFigure({
           <span className="fig-title-hint">derived from wave state</span>
         </div>
         <div className="fig-head-right">
-          <div className="fig-legend">
+          <div className="fig-legend" aria-hidden="true">
             <span className="fig-chip fig-st--done">done</span>
             <span className="fig-chip fig-st--open">in motion</span>
             <span className="fig-chip fig-st--revise">needs changes</span>
             <span className="fig-chip fig-st--faded">superseded</span>
           </div>
-          {onToggleExpand && (
-            <button
-              type="button"
-              className="fig-expand-btn"
-              onClick={onToggleExpand}
-              aria-label={expanded ? 'Collapse graph' : 'Expand graph'}
-            >
-              {expanded ? '✕ Close' : '⤢ Expand'}
-            </button>
-          )}
+          <GraphExpandButton expanded={expanded} onToggle={onToggleExpand} label="process graph" />
         </div>
       </div>
       <div
-        className={`fig-body${selected ? ' fig-body--split' : ''}`}
+        className="fig-body"
         style={{ '--fig-panel-w': `${panelWidth}px` }}
       >
         <div className="fig-canvas" ref={canvasRef}>
+          <WaveFigCtx.Provider value={waveFigCtx}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -193,6 +217,8 @@ export default function WaveFigure({
             proOptions={{ hideAttribution: true }}
             nodesDraggable={false}
             nodesConnectable={false}
+            nodesFocusable={false}
+            elementsSelectable={false}
             edgesFocusable={false}
             zoomOnDoubleClick={false}
             zoomOnScroll={expanded}
@@ -205,26 +231,17 @@ export default function WaveFigure({
             <Background gap={22} size={1.1} />
             <Controls showInteractive={false} position="bottom-right" />
           </ReactFlow>
-          <div className="fig-canvas-hint">drag to pan · pinch to zoom</div>
+          </WaveFigCtx.Provider>
+          <div className="fig-canvas-hint" aria-hidden="true">drag to pan · pinch to zoom</div>
         </div>
-        {selected && (
-          <div
-            className="fig-resizer"
-            onPointerDown={startResize}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Drag to resize panel"
-          />
-        )}
+        {selected && <PanelResizer />}
         {selected && (
           <DetailPanelShell
             typeLabel={selected.type.replace(/_/g, ' ')}
             title={selected.label}
+            status={selected.status ? <StatusPill value={String(selected.status)} /> : null}
             onClose={() => setSelectedId(null)}
           >
-            {selected.status && (
-              <div style={{ margin: '6px 0' }}><StatusPill value={String(selected.status)} /></div>
-            )}
             {selected.sublabel && <div className="fig-panel-notes">{selected.sublabel}</div>}
             {selected.type === 'review' && selected.status === 'needs_changes' && !selected.sublabel && (
               <div className="fig-panel-meta">Rejected this attempt; the revision reason was not recorded.</div>

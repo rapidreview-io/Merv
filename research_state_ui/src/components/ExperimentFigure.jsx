@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ReactFlow, Background, Controls, Handle, Position, MarkerType, useStoreApi } from '@xyflow/react';
+import { ReactFlow, Background, Controls, Handle, Position, MarkerType, BaseEdge, getSmoothStepPath, useStoreApi } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api } from '../api';
 import StatusPill from './StatusPill';
-import DetailPanelShell from './DetailPanelShell';
+import DetailPanelShell, { PanelResizer } from './DetailPanelShell';
+import GraphExpandButton from './GraphExpandButton';
 import ArtifactContentView from './ArtifactContentView';
-import { layoutFigure, FIG_NODE_W } from '../utils/figureLayout';
+import { visibleWidth } from '../utils/graphCamera';
+import { layoutFigure, figureBounds, FIG_NODE_W } from '../utils/figureLayout';
 import { TERMINAL_STATUSES } from '../utils/experiment';
 import { usePanelWidth } from '../store/usePanelWidth';
 import { useProjectHref } from '../store/useProjectStore';
@@ -48,26 +50,87 @@ function statusClass(node) {
   }[s] || 'neutral';
 }
 
-function FigureNode({ data, selected }) {
+// Attachment edges that are shown as placement, not lines: an execution-lane
+// file or the sandbox simply sits next to the beat it trails. Evidence edges
+// (`feeds`) ARE drawn — files lead into the marker they were submitted with.
+const ATTACHMENT_EDGES = new Set(['produced', 'ran_on']);
+
+// Where the spine passes through every card: a fixed offset from the top, so
+// cards of slightly different heights still sit on one straight line.
+const HANDLE_TOP = 38;
+
+/**
+ * Edges bend late. A verdict hangs under its round, one row below the
+ * backbone, and its arrow to the next round has to cross the column of files
+ * in between; the rows interleave (verdicts on whole rows, files on half rows)
+ * so a level run at the verdict's row passes through a clear channel — as long
+ * as the turn up to the marker happens in the gap right before it, not
+ * mid-column behind a file card, where react-flow's default step would put it.
+ * Verdict arrows turn nearer the marker than file arrows so the two verticals
+ * in that gap don't overprint. Level edges (marker → marker) come out straight;
+ * within-column edges (marker → its verdict) use the top/bottom handles and
+ * drop straight down.
+ */
+const BEND_BEFORE_TARGET = { verdict: 22, other: 40 };
+function FigureEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style, data }) {
+  const late = sourcePosition === Position.Right && targetPosition === Position.Left && targetX > sourceX + 40;
+  const [path] = getSmoothStepPath({
+    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition,
+    borderRadius: 6,
+    ...(late ? { centerX: targetX - (data?.bend ?? BEND_BEFORE_TARGET.other) } : {}),
+  });
+  return <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />;
+}
+const edgeTypes = { figure: FigureEdge };
+
+// Which node's detail is open (and how to open one). Read by the card so it
+// can ring itself without recreating node objects (react-flow keys its handle
+// measurements to node identity) and without a second, drifting selection
+// state in react-flow's own store.
+const SelectedContext = createContext(null);
+
+function FigureNode({ data }) {
+  const { selectedId, select } = useContext(SelectedContext);
   return (
     <div
       className={[
         'fig-node',
         `fig-node--${data.type}`,
         `fig-st--${data.statusClass}`,
-        selected ? 'fig-node--selected' : '',
+        data.anchor ? 'fig-node--satellite' : '',
+        data.current ? 'fig-node--current' : '',
+        selectedId === data.id ? 'fig-node--selected' : '',
       ].filter(Boolean).join(' ')}
       style={{ width: FIG_NODE_W }}
+      // react-flow's own Enter/Space handler drives its internal store and
+      // never reaches our onNodeClick, so keyboard activation is the card's
+      // own business — without this the whole canvas is mouse-only.
+      role="button"
+      tabIndex={0}
+      aria-label={`${data.label} — ${String(data.status || data.type).replace(/_/g, ' ')}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(data.id); }
+      }}
     >
-      <Handle type="target" position={Position.Left} className="fig-handle" />
+      <Handle type="target" position={Position.Left} className="fig-handle" style={{ top: HANDLE_TOP }} />
       <div className="fig-node-head">
         <span className="fig-node-glyph" aria-hidden="true">{TYPE_GLYPH[data.type] || '•'}</span>
-        <span className="fig-node-type">{data.type}</span>
+        <span className="fig-node-type">{String(data.type || '').replace(/_/g, ' ')}</span>
         {data.statusClass === 'open' && <span className="fig-node-live" aria-hidden="true" />}
+        {/* Which round this node is about ("attempt 2", "round 3.1"): the
+            qualifier that keeps three `report.md`s and four `Experiment
+            review`s apart without tracing an edge. Markers ARE their round,
+            so they carry none. */}
+        {data.qualifier && <span className="fig-node-qual">{data.qualifier}</span>}
       </div>
       <div className="fig-node-label" title={data.label}>{data.label}</div>
       {data.sublabel ? <div className="fig-node-sub" title={data.sublabel}>{data.sublabel}</div> : null}
-      <Handle type="source" position={Position.Right} className="fig-handle" />
+      <Handle type="source" position={Position.Right} className="fig-handle" style={{ top: HANDLE_TOP }} />
+      {/* Within-column connectors (a round down to its verdict). Declared
+          after the left/right pair: edges that name no handle get the first
+          one of their type, so the row handles stay the default. */}
+      <Handle type="target" position={Position.Top} id="up" className="fig-handle" />
+      <Handle type="source" position={Position.Bottom} id="down" className="fig-handle" />
     </div>
   );
 }
@@ -103,7 +166,7 @@ export function MeasureSync({ topologyKey }) {
 }
 
 function toFlow(figure) {
-  const laid = layoutFigure(figure);
+  const laid = layoutFigure(figure, { timeline: true });
   const liveIds = new Set(
     laid.nodes.filter(n => statusClass(n) === 'open').map(n => n.id),
   );
@@ -115,16 +178,81 @@ function toFlow(figure) {
     draggable: false,
     connectable: false,
   }));
-  const edges = laid.edges.map(e => ({
-    id: e.id,
-    source: e.from,
-    target: e.to,
-    type: 'smoothstep',
-    className: `fig-edge fig-edge--${e.type}`,
-    animated: liveIds.has(e.from) || liveIds.has(e.to),
-    markerEnd: { type: MarkerType.ArrowClosed, width: 13, height: 13 },
-  }));
-  return { nodes, edges };
+  const at = new Map(laid.nodes.map(n => [n.id, n]));
+  const edges = laid.edges
+    .filter(e => !ATTACHMENT_EDGES.has(e.type))
+    .map(e => {
+      const from = at.get(e.from);
+      const to = at.get(e.to);
+      // Same column: a round down to its verdict (or verdict to re-verdict).
+      const vertical = from && to && from.x === to.x;
+      return {
+        id: e.id,
+        source: e.from,
+        target: e.to,
+        ...(vertical ? { sourceHandle: 'down', targetHandle: 'up' } : {}),
+        type: 'figure',
+        data: { bend: from?.type === 'review' ? BEND_BEFORE_TARGET.verdict : BEND_BEFORE_TARGET.other },
+        className: `fig-edge fig-edge--${e.type}`,
+        animated: e.type !== 'feeds' && (liveIds.has(e.from) || liveIds.has(e.to)),
+        // Evidence arrows are many and quiet; spine arrows are few and loud.
+        markerEnd: e.type === 'feeds'
+          ? { type: MarkerType.ArrowClosed, width: 10, height: 10 }
+          : { type: MarkerType.ArrowClosed, width: 13, height: 13 },
+      };
+    });
+  // The reader's reference point: the beat the server marks as "now", else
+  // the rightmost card on the spine.
+  const spine = laid.nodes.filter(n => !n.anchor);
+  const current = spine.find(n => n.current)
+    || spine.slice().sort((a, b) => b.x - a.x || a.y - b.y)[0]
+    || null;
+  return { nodes, edges, laid: laid.nodes, backboneY: laid.backboneY, currentId: current ? current.id : null };
+}
+
+// Readable framing. Fit everything only when that keeps cards legible;
+// otherwise show the timeline at a readable zoom and anchor the view on the
+// current beat — near the right edge, so what led up to it fills the canvas.
+const FIT_FLOOR = 0.7;
+const READABLE_ZOOM = 0.85;
+const VIEW_PAD = 28;
+const CURRENT_AT = 0.78; // current card's right edge, as a fraction of canvas width
+const SPINE_AT = 0.5;    // backbone row, as a fraction of canvas height, when the graph is taller than the canvas
+
+function frameFigure(inst, canvasEl, laid, currentId, { expanded, reserved = 0, backboneY = null }) {
+  if (!inst || !laid?.length) return;
+  const b = figureBounds(laid);
+  // The detail sidebar overlays the canvas rather than shrinking it, so frame
+  // against the width still visible beside it — otherwise the current beat
+  // lands underneath the panel.
+  const cw = visibleWidth(canvasEl, reserved);
+  const ch = canvasEl?.clientHeight || 400;
+  const fitZoom = Math.min((cw - VIEW_PAD * 2) / b.width, (ch - VIEW_PAD * 2) / b.height);
+  if (fitZoom >= FIT_FLOOR) {
+    inst.fitView({ padding: 0.12, maxZoom: expanded ? 1.6 : 1, duration: 0 });
+    return;
+  }
+  const zoom = READABLE_ZOOM;
+  const cur = laid.find(n => n.id === currentId) || laid[laid.length - 1];
+  const gW = b.width * zoom;
+  const gH = b.height * zoom;
+  let x;
+  if (gW <= cw - VIEW_PAD * 2) {
+    x = (cw - gW) / 2 - b.minX * zoom;
+  } else {
+    x = CURRENT_AT * cw - (cur.x + FIG_NODE_W) * zoom;
+    // Never leave dead space before the story starts; room after the current
+    // beat is fine (a finished experiment simply ends there).
+    x = Math.min(VIEW_PAD - b.minX * zoom, x);
+  }
+  // Vertically: everything, centered, when it fits; otherwise put the
+  // backbone row mid-canvas — evidence above it, verdicts and execution below
+  // — falling back to the current card's row when the layout has no backbone.
+  const rowY = Number.isFinite(backboneY) ? backboneY : cur.y;
+  const y = gH <= ch - VIEW_PAD * 2
+    ? (ch - gH) / 2 - b.minY * zoom
+    : SPINE_AT * ch - (rowY + HANDLE_TOP) * zoom;
+  inst.setViewport({ x, y, zoom }, { duration: 0 });
 }
 
 function FigurePanel({ projectId, node, onClose }) {
@@ -132,11 +260,16 @@ function FigurePanel({ projectId, node, onClose }) {
   const ref = node.ref || {};
   const meta = node.meta || {};
 
+  const typeLabel = String(node.type || '').replace(/_/g, ' ');
   return (
-    <DetailPanelShell typeLabel={node.type} title={node.label} onClose={onClose}>
-      {node.status && node.status !== 'none' && (
-        <div style={{ margin: '6px 0' }}><StatusPill value={String(node.status)} /></div>
-      )}
+    <DetailPanelShell
+      typeLabel={node.qualifier ? `${typeLabel} · ${node.qualifier}` : typeLabel}
+      title={node.label}
+      status={node.status && node.status !== 'none'
+        ? <StatusPill value={String(node.status)} />
+        : null}
+      onClose={onClose}
+    >
 
       {ref.kind === 'artifact' && ref.id && (
         <>
@@ -224,7 +357,10 @@ export default function ExperimentFigure({
   const [figureJson, setFigureJson] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const rfRef = useRef(null);
-  const { width: panelWidth, startResize } = usePanelWidth();
+  const canvasRef = useRef(null);
+  const { width: panelWidth } = usePanelWidth();
+  const select = useCallback((id) => setSelectedId(id), []);
+  const selCtx = useMemo(() => ({ selectedId, select }), [selectedId, select]);
 
   const fetchFigure = useCallback(async () => {
     try {
@@ -246,19 +382,24 @@ export default function ExperimentFigure({
   });
 
   const figure = useMemo(() => (figureJson ? JSON.parse(figureJson) : null), [figureJson]);
-  const { nodes, edges } = useMemo(() => toFlow(figure), [figure]);
+  const { nodes, edges, laid, backboneY, currentId } = useMemo(() => toFlow(figure), [figure]);
 
-  // Re-fit when the topology grows (new nodes), not on every poll tick.
-  // Plain timer + no animation duration: animated fits ride rAF, which is
+  // Frame the view: readable zoom, current beat in sight (see frameFigure).
+  // `reserved` is the gutter the overlaying sidebar covers when one is open.
+  const reserved = selectedId ? panelWidth : 0;
+  const frame = useCallback(() => {
+    frameFigure(rfRef.current, canvasRef.current, laid, currentId, { expanded, reserved, backboneY });
+  }, [laid, currentId, expanded, reserved, backboneY]);
+
+  // Re-frame when the topology grows (new nodes), not on every poll tick.
+  // Plain timer + no animation duration: animated moves ride rAF, which is
   // throttled to never in background tabs — see MeasureSync. 350ms lands
   // after MeasureSync's second measure pass.
   const topologyKey = useMemo(() => nodes.map(n => n.id).sort().join('|'), [nodes]);
-  // Expanded mode may zoom past 1x so the graph actually uses the space.
-  const fitMaxZoom = expanded ? 1.6 : 1;
   useEffect(() => {
-    const t = setTimeout(() => rfRef.current?.fitView({ padding: 0.18, maxZoom: fitMaxZoom }), 350);
+    const t = setTimeout(frame, 350);
     return () => clearTimeout(t);
-  }, [topologyKey, fitMaxZoom]);
+  }, [topologyKey, frame]);
 
   const selected = useMemo(
     () => (figure?.nodes || []).find(n => n.id === selectedId) || null,
@@ -268,12 +409,44 @@ export default function ExperimentFigure({
   const available = Boolean(figure && (figure.nodes || []).length >= 2);
   useEffect(() => { onAvailability?.(available); }, [available, onAvailability]);
 
-  // Refit after the canvas resizes between inline and expanded modes.
+  // Re-frame after the canvas resizes between inline and expanded modes.
   useEffect(() => {
-    const maxZoom = expanded ? 1.6 : 1;
-    const t = setTimeout(() => rfRef.current?.fitView({ padding: 0.18, maxZoom }), 120);
+    const t = setTimeout(frame, 120);
     return () => clearTimeout(t);
-  }, [expanded]);
+  }, [expanded, frame]);
+
+  // Escape closes the sidebar first; the graph slot's handler then gets the
+  // next Escape to leave fullscreen. Capture phase so this runs before it.
+  useEffect(() => {
+    if (!selectedId) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      setSelectedId(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [selectedId]);
+
+  // …and whenever the canvas itself changes size (page layout settling after
+  // data arrives, sidebar toggles, window resizes): the framing depends on the
+  // real width. Debounced, and only for real size changes, so a pan is never
+  // yanked back mid-gesture.
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    let last = { w: el.clientWidth, h: el.clientHeight };
+    let t = null;
+    const ro = new ResizeObserver(() => {
+      const w = el.clientWidth, h = el.clientHeight;
+      if (Math.abs(w - last.w) < 8 && Math.abs(h - last.h) < 8) return;
+      last = { w, h };
+      clearTimeout(t);
+      t = setTimeout(frame, 150);
+    });
+    ro.observe(el);
+    return () => { ro.disconnect(); clearTimeout(t); };
+  }, [frame, available]);
 
   if (!available || !active) return null;
 
@@ -285,27 +458,21 @@ export default function ExperimentFigure({
           <span className="fig-title-hint">derived from experiment state</span>
         </div>
         <div className="fig-head-right">
-          <div className="fig-legend">
+          <div className="fig-legend" aria-hidden="true">
             <span className="fig-chip fig-st--done">done</span>
             <span className="fig-chip fig-st--open">in motion</span>
             <span className="fig-chip fig-st--revise">needs changes</span>
             <span className="fig-chip fig-st--failed">failed</span>
             <span className="fig-chip fig-st--faded">superseded</span>
+            <span className="fig-legend-sep" aria-hidden="true" />
+            <span className="fig-chip fig-chip--edge fig-chip--edge-then">→ next</span>
+            <span className="fig-chip fig-chip--edge fig-chip--edge-revised">⇢ sent back</span>
           </div>
-          {onToggleExpand && (
-            <button
-              type="button"
-              className="fig-expand-btn"
-              onClick={onToggleExpand}
-              aria-label={expanded ? 'Collapse graph' : 'Expand graph'}
-            >
-              {expanded ? '✕ Close' : '⤢ Expand'}
-            </button>
-          )}
+          <GraphExpandButton expanded={expanded} onToggle={onToggleExpand} label="figure" />
         </div>
       </div>
       <div
-        className={`fig-body${selected ? ' fig-body--split' : ''}`}
+        className="fig-body"
         style={{ '--fig-panel-w': `${panelWidth}px` }}
       >
         {/* Inline, the page owns the wheel: plain scrolling over the canvas
@@ -313,23 +480,28 @@ export default function ExperimentFigure({
             zooming is reserved for unambiguous gestures — pinch / ctrl+wheel,
             the +/- controls. Expanded, page scroll is locked, so the wheel
             zooms the canvas instead. */}
-        <div className="fig-canvas">
+        <div className="fig-canvas" ref={canvasRef}>
+          <SelectedContext.Provider value={selCtx}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
-            onInit={inst => { rfRef.current = inst; }}
+            edgeTypes={edgeTypes}
+            onInit={inst => { rfRef.current = inst; frame(); }}
             onNodeClick={(event, node) => {
               // Non-draggable nodes get no d3-drag click suppression, so the
               // click would bubble to the pane and immediately deselect.
               event.stopPropagation();
-              setSelectedId(node.id);
+              select(node.id);
             }}
             onPaneClick={() => setSelectedId(null)}
-            fitView
             proOptions={{ hideAttribution: true }}
             nodesDraggable={false}
             nodesConnectable={false}
+            // The card paints its own ring from selectedId; react-flow's own
+            // selection would be a second state that drifts from it.
+            nodesFocusable={false}
+            elementsSelectable={false}
             edgesFocusable={false}
             zoomOnDoubleClick={false}
             zoomOnScroll={expanded}
@@ -342,17 +514,10 @@ export default function ExperimentFigure({
             <Background gap={22} size={1.1} />
             <Controls showInteractive={false} position="bottom-right" />
           </ReactFlow>
-          <div className="fig-canvas-hint">drag to pan · pinch to zoom</div>
+          </SelectedContext.Provider>
+          <div className="fig-canvas-hint" aria-hidden="true">drag to pan · pinch to zoom</div>
         </div>
-        {selected && (
-          <div
-            className="fig-resizer"
-            onPointerDown={startResize}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Drag to resize panel"
-          />
-        )}
+        {selected && <PanelResizer />}
         {selected && (
           <FigurePanel
             projectId={projectId}

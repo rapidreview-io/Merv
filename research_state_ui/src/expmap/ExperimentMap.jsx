@@ -5,13 +5,17 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { MeasureSync } from '../components/ExperimentFigure';
+import { PanelResizer } from '../components/DetailPanelShell';
+import GraphExpandButton from '../components/GraphExpandButton';
+import { panExtentFor } from '../utils/graphCamera';
+import { motionMs } from '../utils/motion';
+import { usePanelWidth } from '../store/usePanelWidth';
 import { useMapModel } from './useMapModel';
 import { CARD_W, CARD_H } from './mapLayout';
 import MapPanel from './MapPanel';
 import './expmap.css';
 
 const SAT_ICON = { paper: '¶', claim: '✦', sbx: '▣' };
-const PANEL_W = 380;
 // Satellite wrap geometry: rows below the card, each within its width.
 // Budget fits two max-width chips per row: 6 + 2×(20×6.2 + 34) = 322 ≤ 328
 // (labels are capped at 19 kept chars + '…' in useMapModel's satTrunc).
@@ -20,12 +24,6 @@ const SAT_ROWS = 2;
 const SAT_ROW_H = 26;
 const satW = (label) => label.length * 6.2 + 34;
 const zoomBelowHalf = (s) => s.transform[2] < 0.5;
-
-// Camera animations collapse to 0ms under prefers-reduced-motion.
-function motionMs(ms) {
-  return typeof window !== 'undefined'
-    && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : ms;
-}
 
 // Selection/hover reach the nodes via context, NOT node data: recreating
 // node objects on every selection would wipe react-flow's measured handle
@@ -46,17 +44,10 @@ function fitViewportFor(bounds, vw, vh) {
 
 // The canvas is finite: panning is clamped to the fitted frame plus a
 // quarter-viewport of play on each side, and zooming out stops just past the
-// fit — the experiments can never leave the screen.
+// fit — the experiments can never leave the screen. (panExtentFor is shared;
+// see utils/graphCamera.js.)
 function panBounds(bounds, vw, vh) {
-  const f = fitViewportFor(bounds, vw, vh);
-  const w = vw / f.zoom;
-  const h = vh / f.zoom;
-  const x0 = -f.x / f.zoom;
-  const y0 = -f.y / f.zoom;
-  return {
-    minZoom: Math.max(0.05, f.zoom * 0.8),
-    extent: [[x0 - w / 4, y0 - h / 4], [x0 + w * 1.25, y0 + h * 1.25]],
-  };
+  return panExtentFor(fitViewportFor(bounds, vw, vh), vw, vh);
 }
 
 // React Flow inline-styles pointer-events:none onto node wrappers unless nodes
@@ -290,12 +281,15 @@ function Legend({ hasAbandoned }) {
   );
 }
 
-function MapCanvas({ model, wrapRef, size, initialViewport }) {
+function MapCanvas({ model, wrapRef, size, initialViewport, onCollapse }) {
   const { cards, layout, objects, citedBy } = model;
   const rf = useReactFlow();
   const compact = useStore(zoomBelowHalf);
   const [sel, setSel] = useState(null);
   const [hover, setHover] = useState(null);
+  // Shared with every other graph sidebar, and draggable here too — this used
+  // to be a hard-coded 380px constant.
+  const { width: panelWidth } = usePanelWidth();
 
   // Artifact refs arrive as type 'art'; the object panel speaks 'sbx'.
   const selectObject = useCallback((type, id) => {
@@ -308,21 +302,25 @@ function MapCanvas({ model, wrapRef, size, initialViewport }) {
     const el = wrapRef.current;
     if (!p || !el) return;
     const s = Math.max(rf.getZoom(), 0.95);
-    const vw = el.clientWidth - PANEL_W, vh = el.clientHeight;
+    const vw = el.clientWidth - panelWidth, vh = el.clientHeight;
     setSel({ type: 'exp', id });
     rf.setViewport(
       { x: vw / 2 - (p.x + CARD_W / 2) * s, y: vh / 2 - (p.y + CARD_H / 2) * s, zoom: s },
       { duration: motionMs(550) },
     );
-  }, [layout, rf, wrapRef]);
+  }, [layout, rf, wrapRef, panelWidth]);
 
-  // Escape closes the panel.
+  // Escape peels one layer at a time: the panel first, then expanded mode.
   useEffect(() => {
-    if (!sel) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') setSel(null); };
+    if (!sel && !onCollapse) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (sel) setSel(null);
+      else onCollapse?.();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [sel]);
+  }, [sel, onCollapse]);
 
   const selectExp = useCallback((id) => setSel({ type: 'exp', id }), []);
   const setHoverId = useCallback((id) => setHover(id), []);
@@ -414,6 +412,7 @@ function MapCanvas({ model, wrapRef, size, initialViewport }) {
       </ReactFlow>
       <AxisStrip ticks={layout.ticks} nowX={layout.nowX} />
       <Legend hasAbandoned={cards.some((c) => c.status === 'abandoned')} />
+      {sel && <PanelResizer />}
       {sel && (
         <MapPanel
           sel={sel}
@@ -435,8 +434,9 @@ function MapCanvas({ model, wrapRef, size, initialViewport }) {
  * edges on hover/selection and a right-hand detail panel. All data and
  * layout come from useMapModel; this file is view-only.
  */
-export default function ExperimentMap() {
+export default function ExperimentMap({ expanded = false, onCollapse = null }) {
   const wrapRef = useRef(null);
+  const { width: panelWidth } = usePanelWidth();
   // Measure the map area before mounting the canvas so the first frame IS the
   // fitted frame: the initial viewport comes from pure layout data instead of
   // an animated post-init fit, which node measurement can stall in hidden tabs.
@@ -470,12 +470,22 @@ export default function ExperimentMap() {
   );
 
   return (
-    <div className={`xmap${empty ? ' xmap--empty' : ''}`} ref={wrapRef}>
+    <div
+      className={`xmap${empty ? ' xmap--empty' : ''}${expanded ? ' xmap--expanded' : ''}`}
+      ref={wrapRef}
+      style={{ '--fig-panel-w': `${panelWidth}px` }}
+    >
       {empty ? (
         <div className="empty-state"><h2>No experiments yet</h2></div>
       ) : model.ready && initialViewport ? (
         <ReactFlowProvider>
-          <MapCanvas model={model} wrapRef={wrapRef} size={size} initialViewport={initialViewport} />
+          <MapCanvas
+            model={model}
+            wrapRef={wrapRef}
+            size={size}
+            initialViewport={initialViewport}
+            onCollapse={expanded ? onCollapse : null}
+          />
         </ReactFlowProvider>
       ) : null}
     </div>

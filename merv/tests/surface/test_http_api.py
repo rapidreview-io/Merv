@@ -1307,7 +1307,12 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.assertEqual(figure["source"], "derived")
         self.assertEqual(figure["attempt_index"], 1)
         self.assertEqual(nodes["attempt:1"]["status"], "pending")
-        self.assertEqual(nodes[f"artifact:{plan_id}:a1"]["sublabel"], "plan")
+        plan_node = nodes[f"artifact:{plan_id}:a1"]
+        self.assertEqual(plan_node["sublabel"], "plan")
+        # The live plan is the proposal: evidence above the attempt marker.
+        self.assertEqual(plan_node["anchor"], "attempt:1")
+        self.assertEqual(plan_node["lane"], "evidence")
+        self.assertEqual(plan_node["qualifier"], "attempt 1")
         self.assertIn(f"artifact:{plan_id}:a1->attempt:1:feeds", edge_ids)
         self.assertEqual(nodes[f"claim:{claim['id']}"]["type"], "claim")
         self.assertIn(f"attempt:1->claim:{claim['id']}:tests", edge_ids)
@@ -1329,9 +1334,14 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         )
         figure = self.request("GET", f"/api/projects/{pid}/experiments/{exp_id}/figure")
         nodes = {node["id"]: node for node in figure["nodes"]}
-        self.assertEqual(
-            nodes[f"review_request:{req['review_request_id']}"]["status"], "open"
-        )
+        edge_ids = {edge["id"] for edge in figure["edges"]}
+        gate = nodes[f"review_request:{req['review_request_id']}"]
+        self.assertEqual(gate["status"], "open")
+        self.assertEqual(gate["qualifier"], "attempt 1")
+        self.assertIn(f"attempt:1->{gate['id']}:reviewed_by", edge_ids)
+        # submit_design sealed the plan: still the proposal on attempt 1.
+        self.assertEqual(nodes[f"artifact:{plan_id}:a1"]["anchor"], "attempt:1")
+        self.assertIn(f"artifact:{plan_id}:a1->attempt:1:feeds", edge_ids)
 
         session = self.request(
             "POST",
@@ -1358,7 +1368,6 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.assertEqual(figure["attempt_index"], 2)
         self.assertEqual(nodes["attempt:1"]["status"], "superseded")
         self.assertEqual(nodes["attempt:2"]["status"], "pending")
-        self.assertIn("attempt:1->attempt:2:revised_to", edge_ids)
         self.assertNotIn(f"review_request:{req['review_request_id']}", nodes)
         review_nodes = [
             n
@@ -1367,7 +1376,13 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         ]
         self.assertEqual(len(review_nodes), 1)
         self.assertEqual(review_nodes[0]["group"], "attempt:1")
+        self.assertEqual(review_nodes[0]["qualifier"], "attempt 1")
+        # The verdict is the beat between the rounds (attempt 1 → review →
+        # attempt 2, dashed) and the backbone links the markers directly.
+        self.assertIn(f"attempt:1->{review_nodes[0]['id']}:reviewed_by", edge_ids)
         self.assertIn(f"{review_nodes[0]['id']}->attempt:2:revised_to", edge_ids)
+        self.assertIn("attempt:1->attempt:2:then", edge_ids)
+        self.assertNotIn("attempt:1->attempt:2:revised_to", edge_ids)
 
         # Sandbox liveness and the conclusion both surface as derived nodes.
         with self.app.store.transaction() as conn:
@@ -2117,8 +2132,12 @@ class FigureViewTest(unittest.TestCase):
         self.assertEqual(len(artifact_nodes), ARTIFACT_FANOUT_CAP)
         self.assertEqual(len(group_nodes), 1)
         self.assertEqual(group_nodes[0]["meta"]["count"], 20 - ARTIFACT_FANOUT_CAP)
+        # Unsealed results on a running attempt are execution output trailing
+        # the attempt's latest beat — here the attempt marker itself.
+        self.assertEqual(group_nodes[0]["anchor"], "attempt:1")
+        self.assertEqual(group_nodes[0]["lane"], "execution")
         self.assertIn(
-            "attempt:1->artifact_group:a1:down:produced",
+            f"attempt:1->{group_nodes[0]['id']}:produced",
             {e["id"] for e in figure["edges"]},
         )
         # Live attempt status flows through to the spine node.

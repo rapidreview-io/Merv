@@ -132,7 +132,7 @@ function ExperimentPanel({ card, cards, objects, citedBy, onClose, onTransport, 
       <div>
         <div className="xmap-panel-title">{card.title}</div>
         {card.tldr ? <div className="xmap-panel-text">{card.tldr}</div> : null}
-        <Link className="btn xmap-open" to={px(`/experiments/${card.id}`)}>
+        <Link className="btn graph-open" to={px(`/experiments/${card.id}`)}>
           Open experiment <span aria-hidden="true">→</span>
         </Link>
       </div>
@@ -217,7 +217,7 @@ function ObjectPanel({ sel, cards, objects, onClose, onTransport }) {
         <div className="xmap-panel-title">{obj.title}</div>
         <div className="xmap-panel-text">{[obj.detail, obj.sub].filter(Boolean).join(' — ')}</div>
         {obj.url ? (
-          <a className="btn xmap-open" href={obj.url} target="_blank" rel="noopener noreferrer">
+          <a className="btn graph-open" href={obj.url} target="_blank" rel="noopener noreferrer">
             Open {OBJ_WORD[sel.type] || sel.type} <span aria-hidden="true">↗</span>
           </a>
         ) : null}

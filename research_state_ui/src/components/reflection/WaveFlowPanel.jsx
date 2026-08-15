@@ -53,14 +53,20 @@ function ExpPanel({ strand, row, epochs, onClose, onOpenExp, onSelectNode }) {
   const spawn = strand.spawnIdx >= 0 ? epochs[strand.spawnIdx] : null;
   const cover = strand.coverIdx >= 0 ? epochs[strand.coverIdx] : null;
   return (
-    <DetailPanelShell typeLabel="experiment" title={strand.name} onClose={onClose}>
-      <button type="button" className="wflow-open-btn" onClick={() => onOpenExp(strand.id)}>
-        Open experiment →
+    <DetailPanelShell
+      typeLabel="experiment"
+      title={strand.name}
+      status={<StatusPill value={String(strand.status || 'unknown')} />}
+      onClose={onClose}
+    >
+      <button type="button" className="btn graph-open" onClick={() => onOpenExp(strand.id)}>
+        Open experiment <span aria-hidden="true">→</span>
       </button>
-      <div className="wflow-panel-pills">
-        <StatusPill value={String(strand.status || 'unknown')} />
-        {strand.attemptIndex > 1 && <span className="wflow-chip-quiet">attempt {strand.attemptIndex}</span>}
-      </div>
+      {strand.attemptIndex > 1 && (
+        <div className="wflow-panel-pills">
+          <span className="wflow-chip-quiet">attempt {strand.attemptIndex}</span>
+        </div>
+      )}
       {exp.intent && <p className="wflow-panel-prose">{exp.intent}</p>}
       {exp.conclusion && (
         <>
@@ -111,14 +117,20 @@ function WavePanel({ epoch, wave, strands, onClose, onOpenWave, onSelectNode }) 
   const missing = wave?.reflection_coverage?.missing || [];
   const reviewItem = (wave?.gate_checklist?.items || []).find(it => it.kind === 'review') || null;
   return (
-    <DetailPanelShell typeLabel="reflection · consolidation" title={`R${epoch.ordinal} · ${epoch.title}`} onClose={onClose}>
-      <button type="button" className="wflow-open-btn" onClick={() => onOpenWave(epoch.id)}>
-        Open reflection →
+    <DetailPanelShell
+      typeLabel="reflection · consolidation"
+      title={`R${epoch.ordinal} · ${epoch.title}`}
+      status={<StatusPill value={epoch.status} />}
+      onClose={onClose}
+    >
+      <button type="button" className="btn graph-open" onClick={() => onOpenWave(epoch.id)}>
+        Open reflection <span aria-hidden="true">→</span>
       </button>
-      <div className="wflow-panel-pills">
-        <StatusPill value={epoch.status} />
-        {epoch.attemptIndex > 1 && <span className="wflow-chip-quiet">attempt {epoch.attemptIndex}</span>}
-      </div>
+      {epoch.attemptIndex > 1 && (
+        <div className="wflow-panel-pills">
+          <span className="wflow-chip-quiet">attempt {epoch.attemptIndex}</span>
+        </div>
+      )}
       {epoch.revisionContext && (
         <div className="wflow-revision">↩ {epoch.revisionContext}</div>
       )}
@@ -188,8 +200,8 @@ function GhostPanel({ strands, signal, onClose, onOpenWave, onSelectNode }) {
   const m = signal?.block_new_terminal_threshold;
   return (
     <DetailPanelShell typeLabel="next reflection" title="Not started yet" onClose={onClose}>
-      <button type="button" className="wflow-open-btn" onClick={() => onOpenWave(null)}>
-        Open reflection →
+      <button type="button" className="btn graph-open" onClick={() => onOpenWave(null)}>
+        Open reflection <span aria-hidden="true">→</span>
       </button>
       {n != null && m && (
         <div className="wflow-revision">

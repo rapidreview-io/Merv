@@ -1,21 +1,25 @@
 import { useCallback, useRef, useSyncExternalStore } from 'react';
 
 /**
- * Shared, draggable width for the graph node-detail panel.
+ * Shared, draggable width for EVERY graph detail sidebar — the experiment
+ * figure, the logic graph, the wave process figure, the project braid, and the
+ * experiment map. One module-level store (same pattern as useTheme) rather than
+ * per-component state, so dragging one panel moves all of them and the choice
+ * survives a reload.
  *
- * The figure and logic graphs each render their own .fig-body split, and the
- * project-reflection panel reuses the logic graph — so the width lives in a
- * tiny module-level store (same pattern as useTheme) rather than per-component
- * state. That keeps every panel in lockstep and persists the user's choice
- * across reloads.
- *
- * The width drives a CSS custom property (--fig-panel-w) that the .fig-body
- * grid and the resize handle both read, so the media-query stack-on-mobile
- * rule can still override the grid wholesale (an inline grid-template can't).
+ * The width drives a CSS custom property (--fig-panel-w) that the panel, the
+ * resize handle, and the map's canvas-inset math all read, so a media query can
+ * still override the layout wholesale on small screens.
  */
 const KEY = 'rsui:figPanelW';
 const MIN = 300;
 const DEFAULT = 380;
+
+// Exported so camera math can reserve the same gutter the CSS paints, and so a
+// canvas can never be squeezed below a usable width by the drag.
+export const PANEL_MIN = MIN;
+export const PANEL_DEFAULT = DEFAULT;
+export const CANVAS_MIN = 300;
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -59,15 +63,27 @@ export function usePanelWidth() {
 
   const startResize = useCallback((e) => {
     e.preventDefault();
-    const body = e.currentTarget.closest('.fig-body');
+    // Every graph shell that hosts a sidebar, in one selector — the section
+    // graphs, the project braid, and the experiment map.
+    const body = e.currentTarget.closest('.fig-body, .wflow, .xmap');
     const bodyW = body ? body.clientWidth : 960;
     // Never let the panel eat the whole canvas: leave the graph ~300px.
-    drag.current = { startX: e.clientX, startW: width, maxW: Math.max(MIN, bodyW - 300) };
+    drag.current = { startX: e.clientX, startW: width, maxW: Math.max(MIN, bodyW - CANVAS_MIN) };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
   }, [onMove, onUp]);
 
-  return { width: value, startResize };
+  // Keyboard path for the resize handle. The handle announces itself as an
+  // adjustable separator, so arrow keys have to actually move it — it used to
+  // carry the role with pointer events as the only way to operate it.
+  const nudge = useCallback((delta) => {
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+    const next = clamp(width + delta, MIN, Math.max(MIN, vw - CANVAS_MIN));
+    setWidth(next);
+    try { localStorage.setItem(KEY, String(Math.round(next))); } catch { /* best-effort */ }
+  }, [width]);
+
+  return { width: value, startResize, nudge };
 }

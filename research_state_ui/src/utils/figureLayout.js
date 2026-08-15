@@ -1,45 +1,76 @@
 /**
  * Layered left-to-right layout for the experiment figure graph.
  *
- * The figures are small DAGs (attempt spine + satellites), so a full layout
- * engine is overkill: longest-path layering gives the reading order —
- * inputs → attempt 1 → review → attempt 2 → … → conclusion → claims — and a
- * right-pack pass pulls pure sources (e.g. a plan registered at attempt 2)
- * next to their consumer instead of stranding them at column 0. Deterministic
- * by construction: same figure JSON → same positions, so polling never
- * reshuffles the canvas.
+ * Two modes, picked from the data:
+ *
+ * TIMELINE — the derived experiment figure. One uniform row grid, read left
+ * to right in time:
+ *
+ *   round columns    an attempt / submission (or the conclusion) is the only
+ *                    card ON the middle row in its column, so the markers form
+ *                    one straight backbone of horizontal arrows; the verdict(s)
+ *                    on that round hang directly under it in the same column
+ *                    (row +1, +2 …) — column = round, work above, decision
+ *                    below, and a verdict is therefore strictly left of
+ *                    anything from the round it caused;
+ *   regular columns  everything else — files prepared for the next round,
+ *                    execution output trailing a verdict, sandbox, claims —
+ *                    pooled into the single column between two rounds and
+ *                    stacked on the same row pitch, centered on the row
+ *                    (straddling it on half-row slots, never on it, so the row
+ *                    stays a clear channel — and so do the integer rows the
+ *                    verdicts sit on, since the two grids interleave). No
+ *                    lanes: cards go in type order, top to bottom.
+ *
+ * Spine nodes (markers, reviews, claims) are ranked by longest path over
+ * spine-only edges, which orders the columns. Reviews then leave the ranking
+ * to sit under the marker they graded (found by walking their incoming spine
+ * edges back to a marker). Satellites never take part in ranking: evidence
+ * joins the regular column just before the marker it fed, execution output
+ * joins the column just after the round it trails.
+ *
+ * LEGACY — every other small DAG (agent-authored logic graphs, reflection
+ * waves, mobile outlines): longest-path layering gives the reading order and a
+ * right-pack pass pulls pure sources next to their consumer; each column is
+ * centered independently.
+ *
+ * Deterministic by construction: same figure JSON → same positions, so
+ * polling never reshuffles the canvas.
  */
 
 export const FIG_NODE_W = 196;
+// Nominal node heights. A plain figure card measures 76px; a card may pass its
+// own estimate as `h` (bounds honor it). Legacy layouts keep the older 66px
+// pitch so their spacing is unchanged.
 const FIG_NODE_H = 66;
+export const FIG_CARD_H = 76;
+const heightOf = (n) => (Number.isFinite(n.h) ? n.h : FIG_CARD_H);
 const GAP_X = 72;
-// Generous vertical separation between stacked/branching nodes: tight rows make
-// the diagonal edges hard to follow, so give them room (the readable-fit view
-// uses the extra height the graph would otherwise leave empty).
+// Generous vertical separation between stacked/branching nodes: tight rows
+// make the diagonal edges hard to follow, so give them room.
 const GAP_Y = 80;
+// The timeline shares the legacy grid: same column pitch, same row pitch, so
+// the figure keeps the spacing it always had.
+const ROW_PITCH = FIG_NODE_H + GAP_Y;
 
-// Vertical order within a column: inputs above the spine, verdicts/outputs below.
+// Vertical order within a column: inputs above, verdicts/outputs below.
 const TYPE_ORDER = { artifact: 0, artifact_group: 1, attempt: 2, submission: 3, sandbox: 4, review: 5, conclusion: 6, claim: 7 };
+// Markers: the nodes that own a column and sit on the middle row. Reviews (and
+// open review gates, which share the type) hang under the marker they graded.
+const MARKER_TYPES = new Set(['attempt', 'submission', 'conclusion']);
 
-export function layoutFigure(figure) {
-  const rawNodes = figure?.nodes || [];
-  const rawEdges = figure?.edges || [];
-  if (!rawNodes.length) return { nodes: [], edges: [] };
-
-  const ids = new Set(rawNodes.map(n => n.id));
-  const edges = rawEdges.filter(e => ids.has(e.from) && ids.has(e.to) && e.from !== e.to);
-
-  const out = new Map(rawNodes.map(n => [n.id, []]));
-  const indeg = new Map(rawNodes.map(n => [n.id, 0]));
+/** Longest-path ranks (Kahn's order; cycle-safe: leftovers keep rank 0),
+ * followed by a right-pack of pure sources next to their earliest consumer. */
+function rankNodes(nodes, edges) {
+  const out = new Map(nodes.map(n => [n.id, []]));
+  const indeg = new Map(nodes.map(n => [n.id, 0]));
   for (const e of edges) {
     out.get(e.from).push(e.to);
     indeg.set(e.to, indeg.get(e.to) + 1);
   }
-
-  // Longest-path layering via Kahn's order (cycle-safe: leftovers keep rank 0).
-  const rank = new Map(rawNodes.map(n => [n.id, 0]));
+  const rank = new Map(nodes.map(n => [n.id, 0]));
   const remaining = new Map(indeg);
-  const queue = rawNodes.filter(n => indeg.get(n.id) === 0).map(n => n.id);
+  const queue = nodes.filter(n => indeg.get(n.id) === 0).map(n => n.id);
   while (queue.length) {
     const id = queue.shift();
     for (const next of out.get(id)) {
@@ -48,16 +79,157 @@ export function layoutFigure(figure) {
       if (remaining.get(next) === 0) queue.push(next);
     }
   }
-
-  // Right-pack sources: a node with no inputs sits just left of its earliest consumer.
-  for (const n of rawNodes) {
+  for (const n of nodes) {
     const targets = out.get(n.id);
     if (indeg.get(n.id) === 0 && targets.length) {
       const minSucc = Math.min(...targets.map(t => rank.get(t)));
       if (Number.isFinite(minSucc)) rank.set(n.id, Math.max(rank.get(n.id), minSucc - 1));
     }
   }
+  return rank;
+}
 
+function layoutTimeline(rawNodes, edges, ids) {
+  const satellites = rawNodes.filter(n => n.anchor && ids.has(n.anchor));
+  const satIds = new Set(satellites.map(n => n.id));
+  const spineNodes = rawNodes.filter(n => !satIds.has(n.id));
+  const spineEdges = edges.filter(e => !satIds.has(e.from) && !satIds.has(e.to));
+  const rank = rankNodes(spineNodes, spineEdges);
+  const isMarker = (n) => MARKER_TYPES.has(n.type);
+
+  // A review's round: walk its incoming spine edges back (through earlier
+  // reviews of the same round) to a marker. Null for an orphan review, which
+  // then just takes a regular column by rank.
+  const into = new Map();
+  for (const e of spineEdges) {
+    if (!into.has(e.to)) into.set(e.to, []);
+    into.get(e.to).push(e.from);
+  }
+  const spineById = new Map(spineNodes.map(n => [n.id, n]));
+  const roundOf = (review) => {
+    let cur = review;
+    for (let hops = 0; hops < 8 && cur; hops += 1) {
+      const prev = (into.get(cur.id) || []).map(id => spineById.get(id)).filter(Boolean);
+      const marker = prev.find(isMarker);
+      if (marker) return marker;
+      cur = prev.find(n => n.type === 'review') || null;
+    }
+    return null;
+  };
+
+  // Column keys: a marker owns its rank outright; its reviews share its key
+  // and stack under it. Other spine nodes (claims, orphan reviews) at a
+  // marker's rank share one regular column placed just after the marker.
+  // Keys only need to sort, so halves are fine.
+  const keyOf = new Map();
+  const markerRanks = new Set(spineNodes.filter(isMarker).map(n => rank.get(n.id)));
+  const regularKeys = new Set();
+  const underMarker = new Map(); // review id → marker id
+  for (const n of spineNodes) {
+    const r = rank.get(n.id);
+    if (isMarker(n)) {
+      keyOf.set(n.id, r);
+      continue;
+    }
+    const round = n.type === 'review' ? roundOf(n) : null;
+    if (round) {
+      keyOf.set(n.id, rank.get(round.id));
+      underMarker.set(n.id, round.id);
+      continue;
+    }
+    const k = markerRanks.has(r) ? r + 0.5 : r;
+    keyOf.set(n.id, k);
+    regularKeys.add(k);
+  }
+  const sortedMarkers = [...markerRanks].sort((a, b) => a - b);
+  const prevMarker = (k) => { let p = -Infinity; for (const m of sortedMarkers) { if (m < k) p = m; else break; } return p; };
+  const nextMarker = (k) => { for (const m of sortedMarkers) if (m > k) return m; return Infinity; };
+  const mid = (a, b) => {
+    if (a === -Infinity && b === Infinity) return 0;
+    if (a === -Infinity) return b - 1;
+    if (b === Infinity) return a + 1;
+    return (a + b) / 2;
+  };
+
+  // Satellites join the regular column in the gap next to their round:
+  // evidence goes just BEFORE the marker it fed (prepared, then submitted),
+  // execution output just AFTER the round whose verdict it trails — so the
+  // files for round j+1 and the output trailing verdict j share the column
+  // between the two rounds. Anchored on something outside a round (a claim,
+  // an orphan review), it simply shares that column. Tolerate a satellite
+  // anchored on another satellite by walking up (bounded).
+  const byId = new Map(rawNodes.map(n => [n.id, n]));
+  const spineAnchor = (n) => {
+    let cur = n;
+    for (let hops = 0; hops < 4 && cur && satIds.has(cur.id); hops += 1) cur = byId.get(cur.anchor);
+    return cur && keyOf.has(cur.id) ? cur : null;
+  };
+  const gapColumn = (lo, hi, pick) => {
+    const inGap = [...regularKeys].filter(k => k > lo && k < hi).sort((a, b) => a - b);
+    if (inGap.length) return pick === 'last' ? inGap[inGap.length - 1] : inGap[0];
+    const k = mid(lo, hi);
+    regularKeys.add(k);
+    return k;
+  };
+  for (const n of satellites) {
+    const anchor = spineAnchor(n);
+    if (!anchor) { keyOf.set(n.id, gapColumn(-Infinity, sortedMarkers[0] ?? Infinity, 'last')); continue; }
+    const round = isMarker(anchor) ? anchor : spineById.get(underMarker.get(anchor.id));
+    if (!round) { keyOf.set(n.id, keyOf.get(anchor.id)); continue; }
+    const ka = keyOf.get(round.id);
+    keyOf.set(n.id, n.lane === 'execution'
+      ? gapColumn(ka, nextMarker(ka), 'first')
+      : gapColumn(prevMarker(ka), ka, 'last'));
+  }
+
+  const columns = new Map();
+  for (const n of rawNodes) {
+    const k = keyOf.get(n.id);
+    if (!columns.has(k)) columns.set(k, []);
+    columns.get(k).push(n);
+  }
+
+  // Every regular column straddles the backbone row: its cards take an even
+  // number of half-row slots (odd counts leave the bottom slot empty, since
+  // verdicts already weigh the picture downward), so the nearest cards sit
+  // half a pitch above and below the row and the row itself stays a clear
+  // channel for the marker → marker line. Cards keep input order within a
+  // type (the server puts load-bearing files first).
+  const slotsOf = (col) => (col.length % 2 ? col.length + 1 : col.length);
+  let backboneY = 0;
+  for (const [k, col] of columns) {
+    if (sortedMarkers.includes(k)) continue;
+    backboneY = Math.max(backboneY, ((slotsOf(col) - 1) / 2) * ROW_PITCH);
+  }
+
+  const nodes = [];
+  let x = 0;
+  for (const [k, col] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
+    if (sortedMarkers.includes(k)) {
+      // Round columns: the marker on the row, its verdicts stacked under it
+      // in the order they were given. (Two markers can only tie on rank in
+      // malformed data; they stack too rather than get lost.)
+      col.sort((a, b) => (isMarker(a) ? 0 : 1) - (isMarker(b) ? 0 : 1) || (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+      let y = backboneY;
+      for (const n of col) { nodes.push({ ...n, x, y }); y += ROW_PITCH; }
+    } else {
+      col.sort((a, b) => (TYPE_ORDER[a.type] ?? 9) - (TYPE_ORDER[b.type] ?? 9));
+      const slots = slotsOf(col);
+      let slot = 0;
+      for (const n of col) {
+        nodes.push({ ...n, x, y: backboneY + (slot - (slots - 1) / 2) * ROW_PITCH });
+        slot += 1;
+      }
+    }
+    x += FIG_NODE_W + GAP_X;
+  }
+  // `backboneY` lets the viewport center on the marker row rather than on
+  // whichever card happens to be current (often a verdict off the row).
+  return { nodes, edges, backboneY };
+}
+
+function layoutLegacy(rawNodes, edges) {
+  const rank = rankNodes(rawNodes, edges);
   const columns = new Map();
   for (const n of rawNodes) {
     const r = rank.get(n.id) || 0;
@@ -83,4 +255,35 @@ export function layoutFigure(figure) {
     }
   }
   return { nodes, edges };
+}
+
+/** Bounding box of laid-out nodes in flow coordinates (uses per-node `h`). */
+export function figureBounds(nodes) {
+  if (!nodes.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of nodes) {
+    minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + FIG_NODE_W); maxY = Math.max(maxY, n.y + heightOf(n));
+  }
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+/**
+ * `opts.timeline` forces the timeline mode (the experiment figure asks for it
+ * explicitly, since after folding evidence into cards a figure may carry no
+ * anchored node at all); by default the mode is inferred from the data.
+ */
+export function layoutFigure(figure, opts = {}) {
+  const rawNodes = figure?.nodes || [];
+  const rawEdges = figure?.edges || [];
+  if (!rawNodes.length) return { nodes: [], edges: [] };
+
+  const ids = new Set(rawNodes.map(n => n.id));
+  const edges = rawEdges.filter(e => ids.has(e.from) && ids.has(e.to) && e.from !== e.to);
+
+  const timeline = opts.timeline ?? rawNodes.some(n => n.anchor && ids.has(n.anchor));
+  if (timeline) {
+    return layoutTimeline(rawNodes, edges, ids);
+  }
+  return layoutLegacy(rawNodes, edges);
 }

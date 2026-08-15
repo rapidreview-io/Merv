@@ -3791,18 +3791,23 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
    the same evidence palette used everywhere else (supports/qualifies/
    refutes/active). */
 
-.exp-figure {
+/* Every graph is a header floating over a framed canvas — no card wrapped
+   around the pair. The canvas keeps the only box on screen; the header sits
+   above it on the page's own ground. Shared with the project graph's slot, so
+   all four section graphs present identically. */
+.exp-figure,
+.wflow-slot {
   margin-top: var(--space-5);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--bg-elev);
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
+/* No rule under the header: it spanned the full width and cut straight across
+   the rounded top corners of the canvas below it. The gap does the separating. */
 .fig-head {
   display: flex; align-items: baseline; justify-content: space-between;
   gap: var(--space-3); flex-wrap: wrap;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line-soft);
+  padding: 0 2px 10px;
 }
 .fig-title { font-size: var(--text-md); font-weight: 600; }
 .fig-title-hint {
@@ -3820,18 +3825,29 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .fig-chip.fig-st--revise  { color: var(--qualifies); border-color: rgba(var(--qualifies-rgb), .35); background: rgba(var(--qualifies-rgb), .08); }
 .fig-chip.fig-st--failed  { color: var(--refutes);   border-color: rgba(var(--refutes-rgb), .35);   background: rgba(var(--refutes-rgb), .07); }
 .fig-chip.fig-st--faded   { color: var(--faint); }
+.fig-legend-sep { width: 1px; height: 14px; background: var(--line); margin: 0 2px; align-self: center; }
+.fig-chip--edge { border-style: dashed; color: var(--muted); }
+.fig-chip--edge-then { border-style: solid; border-color: var(--line-strong); }
+.fig-chip--edge-revised { color: var(--qualifies); border-color: rgba(var(--qualifies-rgb), .6); }
 
-.fig-body { display: grid; grid-template-columns: 1fr; position: relative; }
-/* Wider detail column than the old 320px: the panel now renders real file
-   content (markdown / code / pdf), so it earns the extra room. The width is a
-   drag-controlled custom property (--fig-panel-w, set inline from usePanelWidth)
-   with a sensible default; minmax(0,1fr) keeps the canvas from collapsing as
-   the panel grows. */
-.fig-body--split { grid-template-columns: minmax(0, 1fr) var(--fig-panel-w, clamp(340px, 34%, 460px)); }
+/* The sidebar OVERLAYS the canvas on every graph (see .fig-panel) rather than
+   taking a grid track, so the canvas never resizes and react-flow never
+   re-lays-out when a node is opened. Framing math reserves the covered gutter
+   instead — see visibleWidth() in utils/graphCamera.js.
+
+   This is also the frame: a hairline and a radius around canvas + sidebar
+   together, matching .wflow. It sits here rather than on .fig-canvas so the
+   sidebar is clipped to the same rounded corners. */
+.fig-body {
+  display: grid; grid-template-columns: 1fr; position: relative;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  overflow: hidden;
+}
 
 /* Drag handle straddling the canvas/panel seam. A wide invisible hit area with
    a hairline that lights up on hover/drag; its position rides the same
-   --fig-panel-w the grid does, so it always sits on the boundary. */
+   --fig-panel-w the panel does, so it always sits on the boundary. */
 .fig-resizer {
   position: absolute;
   top: 0;
@@ -3840,7 +3856,7 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   width: 11px;
   transform: translateX(50%);
   cursor: col-resize;
-  z-index: 5;
+  z-index: 7;
   touch-action: none;
 }
 .fig-resizer::after {
@@ -3854,8 +3870,11 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   background: transparent;
   transition: background var(--motion-fast);
 }
-.fig-resizer:hover::after,
 .fig-resizer:active::after { background: var(--active); }
+.fig-resizer:focus-visible::after { background: var(--active); }
+@media (hover: hover) {
+  .fig-resizer:hover::after { background: var(--active); }
+}
 .fig-canvas { height: 400px; background: var(--bg); position: relative; }
 .fig-canvas-hint {
   position: absolute;
@@ -3878,13 +3897,20 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .fig-canvas .react-flow__controls-button {
   background: var(--bg-elev); border-bottom: 1px solid var(--line-soft); color: var(--muted);
 }
-.fig-canvas .react-flow__controls-button:hover { background: var(--bg-soft); }
-.fig-canvas .react-flow__edge-path { stroke: var(--line-strong); stroke-width: 1.4; }
+@media (hover: hover) {
+  .fig-canvas .react-flow__controls-button:hover { background: var(--bg-soft); }
+}
+/* Edges: one solid stroke for every step along the spine (reviewed_by / then /
+   concludes), the dashed amber arrow for a verdict that sent work back, thin
+   quiet arrows for the files that led into a marker, and purple for the claim
+   it all tests. Execution attachments (working files, sandbox) are not drawn
+   — placement carries them. */
+.fig-canvas .react-flow__edge-path { stroke: var(--line-strong); stroke-width: 1.6; }
 .fig-canvas .react-flow__arrowhead * { fill: var(--line-strong); }
 .fig-edge--revised_to .react-flow__edge-path { stroke: var(--qualifies); stroke-dasharray: 6 4; }
 .fig-edge--tests .react-flow__edge-path { stroke: var(--mcp); }
-.fig-edge--ran_on .react-flow__edge-path { stroke: var(--active); }
-.fig-edge--submitted .react-flow__edge-path { stroke: var(--steel); }
+/* Files leading into the marker they were submitted with: many, quiet, thin. */
+.fig-edge--feeds .react-flow__edge-path { stroke: var(--line-strong); stroke-width: 1.1; opacity: .75; }
 
 .fig-node {
   position: relative;
@@ -3897,16 +3923,44 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   font-size: var(--text-sm);
   transition: box-shadow var(--motion-fast), border-color var(--motion-fast);
 }
-.fig-node:hover { box-shadow: var(--shadow-md); }
-.fig-node--selected { border-color: var(--active); box-shadow: 0 0 0 2px rgba(var(--active-rgb), .18); }
+@media (hover: hover) {
+  .fig-node:hover { box-shadow: var(--shadow-md); }
+}
+/* Selection is a RING, at higher specificity than both the hover shadow above
+   and the .fig-st--* status tints below — it used to be a border-colour swap
+   that every tinted node overrode, on a box-shadow that plain hover erased. */
+.fig-node.fig-node--selected,
+.fig-node.fig-node--selected:hover {
+  box-shadow: 0 0 0 2px var(--active), 0 0 0 5px rgba(var(--active-rgb), .18);
+}
 .fig-handle { opacity: 0; width: 6px; height: 6px; pointer-events: none; }
+
+/* One focus ring for every graph control, matching the map's
+   (expmap.css). `.react-flow__node` is listed because the vendor stylesheet
+   kills the outline on nodes, so the graph cards would otherwise be the one
+   focusable thing on the page with no visible focus at all. */
+.fig-node:focus-visible,
+.react-flow__node:focus-visible,
+.fig-panel-close:focus-visible,
+.fig-expand-btn:focus-visible,
+.fig-title-tab:focus-visible,
+.fig-resizer:focus-visible,
+.wflow-panel-item:focus-visible,
+.cons-row-head:focus-visible,
+.cons-retry:focus-visible,
+.rfl-lineage-item:focus-visible,
+.graph-open:focus-visible {
+  outline: 2px solid var(--active);
+  outline-offset: -2px;
+}
 
 .fig-node-head {
   display: flex; align-items: center; gap: 6px;
   font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
   color: var(--faint); margin-bottom: 3px;
 }
-.fig-node-glyph { font-size: 11px; }
+.fig-node-glyph { font-size: 11px; flex: none; }
+.fig-node-type { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fig-node-label {
   font-weight: 600; line-height: var(--leading-tight); color: var(--text);
   overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
@@ -3928,6 +3982,30 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   width: 7px; height: 7px; border-radius: 50%;
   background: var(--active); margin-left: auto;
   animation: fig-pulse 1.6s ease-in-out infinite;
+}
+/* Round qualifier ("attempt 2", "round 3.1"): same corner on every node, so
+   the eye can scan the top-right of a column and confirm which round it is. */
+.fig-node-qual {
+  margin-left: auto; padding: 0 5px; border-radius: 999px;
+  font-size: 9.5px; font-weight: 600; letter-spacing: .04em; text-transform: none;
+  color: var(--muted); background: var(--bg-soft); border: 1px solid var(--line-soft);
+  white-space: nowrap;
+}
+.fig-node-live + .fig-node-qual { margin-left: 6px; }
+/* Satellites (working files, sandbox) are subordinate to the beat they hang
+   on: flatter, so the spine row stays the loudest thing on the canvas. */
+.fig-node--satellite { box-shadow: none; }
+@media (hover: hover) {
+  .fig-node--satellite:hover { box-shadow: var(--shadow-sm); }
+}
+/* The beat that is "now" — the reader's reference point. */
+.fig-node--current { box-shadow: 0 0 0 2px rgba(var(--active-rgb), .22), var(--shadow-sm); }
+
+/* The live dot and react-flow's marching-ants edges are the two perpetual
+   animations on these canvases; neither was gated. */
+@media (prefers-reduced-motion: reduce) {
+  .fig-node-live { animation: none; }
+  .react-flow__edge.animated path { animation: none; }
 }
 @keyframes fig-pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(var(--active-rgb), .35); }
@@ -3955,22 +4033,43 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .fig-node--claim.fig-st--open { border-color: rgba(var(--mcp-rgb), .45); background: rgba(var(--mcp-rgb), .04); }
 
 /* Detail panel */
+/* Docked as an OVERLAY, not a grid track: the canvas keeps its full size when
+   a node opens, so react-flow never re-lays-out and the graph never jumps.
+   Same recipe as the map's .xmap-panel, at the shared --fig-panel-w. */
 .fig-panel {
-  border-left: 1px solid var(--line-soft);
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: var(--fig-panel-w, 380px);
+  border-left: 1px solid var(--line);
+  background: var(--bg-elev);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  z-index: 6;
+}
+/* Sticky so the close button is reachable at any scroll depth — these panels
+   render real file content and run long. */
+.fig-panel-head {
+  display: flex; align-items: center; gap: 10px;
   padding: 12px 14px;
-  max-height: 400px; overflow: auto;
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 1;
   background: var(--bg-elev);
 }
-.fig-panel-head { display: flex; align-items: center; justify-content: space-between; }
 .fig-panel-type {
-  font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px; text-transform: uppercase; letter-spacing: .2em; color: var(--faint);
 }
+.fig-panel-head-status { display: flex; align-items: center; }
 .fig-panel-close {
+  margin-left: auto;
   border: none; background: transparent; color: var(--faint);
-  font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 4px;
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 6px;
 }
-.fig-panel-close:hover { color: var(--text); }
-.fig-panel-title { font-weight: 600; margin-top: 4px; line-height: var(--leading-tight); }
+@media (hover: hover) {
+  .fig-panel-close:hover { color: var(--text); }
+}
+.fig-panel-body { padding: 14px 14px 18px; }
+.fig-panel-title { font-weight: 600; line-height: var(--leading-tight); }
 .fig-panel-meta {
   margin: 6px 0; font-family: var(--font-mono); font-size: var(--text-xs);
   color: var(--muted); word-break: break-all;
@@ -3998,10 +4097,12 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .fig-panel-render .pdf-view-frame { height: 320px; min-height: 0; }
 .exp-figure--expanded .fig-panel-render .pdf-view-frame { height: 70vh; min-height: 360px; }
 
+/* Narrow screens: the sidebar stops being a sidebar and covers the canvas
+   outright — at this width a 300px-minimum panel beside a graph leaves neither
+   of them usable. The close button is sticky, so the way out is always in view. */
 @media (max-width: 900px) {
-  .fig-body--split { grid-template-columns: 1fr; }
-  .fig-panel { border-left: none; border-top: 1px solid var(--line-soft); }
-  /* Stacked, not side-by-side: a horizontal drag handle makes no sense. */
+  .fig-panel { left: 0; width: auto; border-left: none; }
+  /* Full-bleed, not side-by-side: a vertical drag handle makes no sense. */
   .fig-resizer { display: none; }
 }
 
@@ -4016,15 +4117,19 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   border: 1px solid var(--line); color: var(--muted); background: var(--bg-soft);
 }
 .lgr-node--dead { border-style: dashed; opacity: .6; }
+/* Sits between the header and the canvas frame. No rule under it — with the
+   card gone, that line would float across open ground. */
 .lgr-problems {
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--line-soft);
+  padding: 0 2px 8px;
   font-size: var(--text-xs); color: var(--qualifies);
 }
 /* Graph resource exists but nothing is drawable (broken JSON, no valid
-   nodes): the canvas slot states it plainly instead of hiding the tab. */
+   nodes): the canvas slot states it plainly instead of hiding the tab. It
+   stands in for the canvas, so it wears the canvas frame. */
 .lgr-broken {
   padding: 28px 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
   font-size: var(--text-sm); color: var(--muted);
   text-align: center;
 }
@@ -4039,9 +4144,13 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   color: var(--text); text-decoration: none;
   overflow: hidden; text-overflow: ellipsis;
 }
-.lgr-ref:hover { border-color: var(--line-strong); }
+@media (hover: hover) {
+  .lgr-ref:hover { border-color: var(--line-strong); }
+}
 .lgr-ref .fig-node-type { margin-right: 6px; }
-.lgr-ref--static:hover { border-color: var(--line-soft); }
+@media (hover: hover) {
+  .lgr-ref--static:hover { border-color: var(--line-soft); }
+}
 .lgr-ref--unresolved {
   color: var(--faint); font-family: var(--font-mono); word-break: break-all;
 }
@@ -4055,39 +4164,56 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   font: inherit; font-size: var(--text-md); font-weight: 600;
   color: var(--faint);
 }
-.fig-title-tab:hover:not(:disabled):not(.fig-title-tab--on) { color: var(--muted); }
+@media (hover: hover) {
+  .fig-title-tab:hover:not(:disabled):not(.fig-title-tab--on) { color: var(--muted); }
+}
 .fig-title-tab--on { color: var(--text); cursor: default; }
 .fig-title-tab:disabled { opacity: .4; cursor: default; }
 .fig-title-tab-sep { color: var(--line-strong); font-weight: 400; }
 
 /* Expanded (near-fullscreen) graph mode. The section lifts out of the page
    flow over a dimmed backdrop; the canvas grows to fill the viewport.
-   Escape, the backdrop, or the ✕ button collapse it. */
+   Escape, the backdrop, or the Collapse button end it. */
 .fig-head-right {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   justify-content: flex-end;
 }
+/* One expand control, same place on every graph, and always legible — it used
+   to be a faint 1px outline that read as decoration. Icon + word, because the
+   icon alone is not a known mark and the word alone is not findable at a
+   glance. Never '✕': that glyph means "close the sidebar" and only that. */
 .fig-expand-btn {
-  border: 1px solid var(--line); background: var(--bg); color: var(--muted);
-  border-radius: var(--radius-md); padding: 4px 10px;
-  font-size: var(--text-xs); line-height: 1; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--line-strong); background: var(--bg-elev); color: var(--text);
+  border-radius: var(--radius-md); padding: 5px 11px;
+  font-size: var(--text-xs); font-weight: 600; line-height: 1; white-space: nowrap;
   cursor: pointer;
+  transition: background var(--motion-fast), border-color var(--motion-fast);
 }
-.fig-expand-btn:hover { color: var(--text); border-color: var(--line-strong); }
+.fig-expand-ic { font-size: 13px; line-height: 1; color: var(--muted); }
+@media (hover: hover) {
+  .fig-expand-btn:hover { background: var(--bg-soft); border-color: var(--active); }
+  .fig-expand-btn:hover .fig-expand-ic { color: var(--active); }
+}
 .fig-backdrop {
   position: fixed; inset: 0; z-index: 80;
   background: color-mix(in srgb, var(--bg) 50%, transparent);
   backdrop-filter: blur(2px);
 }
+/* Expanded, the SLOT goes fullscreen so the header travels with it and the
+   Collapse control and legend stay reachable — see .wflow-slot--expanded,
+   which this now shares. */
 .exp-figure--expanded {
   position: fixed; inset: 18px; z-index: 81;
   margin-top: 0;
-  display: flex; flex-direction: column;
+  background: var(--bg);
+  border-radius: var(--radius-lg);
   box-shadow: 0 18px 60px rgba(0, 0, 0, .45);
+  padding: 14px;
 }
+.exp-figure--expanded .fig-head { position: sticky; top: 0; z-index: 1; background: var(--bg); }
 .exp-figure--expanded .fig-body { flex: 1; min-height: 0; }
 .exp-figure--expanded .fig-canvas { height: 100%; }
-.exp-figure--expanded .fig-panel { max-height: none; }
 
 /* Project reflection panel (Home). The living project logic graph plus the
    reflection-wave lifecycle around it: reflection FSM strip, per-lens
@@ -4395,7 +4521,9 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   margin-left: 8px; padding: 0; background: none; border: none; cursor: pointer;
   color: var(--active); font-size: var(--text-sm);
 }
-.cons-retry:hover { text-decoration: underline; }
+@media (hover: hover) {
+  .cons-retry:hover { text-decoration: underline; }
+}
 
 @media (max-width: 900px) {
   .cons-row-track { flex-basis: 72px; }
@@ -4517,7 +4645,9 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   padding: 5px 8px; border-radius: 6px;
   color: var(--text); text-decoration: none; font-size: var(--text-sm);
 }
-.rfl-lineage-item:hover { background: var(--hover); }
+@media (hover: hover) {
+  .rfl-lineage-item:hover { background: var(--hover); }
+}
 
 /* Experiment naming: form hint under the name field. */
 .form-hint {
@@ -6652,12 +6782,18 @@ textarea.sbxpw-input { font-family: var(--mono, ui-monospace, monospace); font-s
   border: 1px solid var(--line-soft);
   border-radius: 10px;
 }
-.wflow--expanded {
+/* The project graph's slot shares .exp-figure's layout and expanded chrome
+   above; only the canvas element differs (.wflow rather than .fig-body). */
+.wflow-slot--expanded {
   position: fixed; inset: 18px; z-index: 81;
-  height: auto; margin-bottom: 0;
   background: var(--bg);
+  border-radius: var(--radius-lg);
   box-shadow: 0 18px 60px rgba(0, 0, 0, .45);
+  padding: 14px;
+  margin-top: 0;
 }
+.wflow-slot--expanded .fig-head { position: sticky; top: 0; z-index: 1; background: var(--bg); }
+.wflow-slot--expanded .wflow { flex: 1; min-height: 0; margin-bottom: 0; }
 .wflow .react-flow { background: transparent; }
 .wflow .react-flow__background {
   -webkit-mask-image: radial-gradient(ellipse 92% 88% at 50% 50%, #000 45%, transparent 97%);
@@ -6699,11 +6835,9 @@ textarea.sbxpw-input { font-family: var(--mono, ui-monospace, monospace); font-s
   background: var(--bg-elev); opacity: .7;
 }
 .wflow-chip--failed { color: var(--muted); border-color: var(--line-strong); }
-.wflow-expand {
-  position: absolute; top: 8px; right: 10px; z-index: 31;
-  transition: right .2s cubic-bezier(.2, .8, .25, 1);
-}
-.wflow--panel-open .wflow-expand { right: calc(var(--wflow-drawer-w) + 10px); }
+/* The expand control lives in the section header now (.fig-head-right), like
+   every other graph — it used to float over the canvas and slide sideways to
+   dodge the drawer. */
 .wflow-refl {
   width: 48px; height: 148px; box-sizing: border-box; position: relative;
   display: flex; align-items: center; justify-content: center;
@@ -6728,18 +6862,14 @@ textarea.sbxpw-input { font-family: var(--mono, ui-monospace, monospace); font-s
 /* Origin: project creation — quiet and solid, history rather than work. */
 .wflow-refl--origin { border-color: var(--line-strong); background: var(--bg-elev); }
 .wflow-refl--origin .wflow-refl-label { color: var(--muted); font-size: 14px; }
-.wflow-refl--selected { box-shadow: 0 0 0 3px rgba(var(--steel-rgb), .25); }
 .wflow-refl-sub {
   position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
   margin-top: 6px; font-size: 10px; color: var(--faint); white-space: nowrap;
 }
-.wflow-legend {
-  position: absolute; right: 96px; top: 12px; z-index: 31;
-  display: flex; gap: 6px; pointer-events: none;
-  opacity: .55; transition: opacity .15s ease, right .2s cubic-bezier(.2, .8, .25, 1);
-}
-.wflow:hover .wflow-legend { opacity: 1; }
-.wflow--panel-open .wflow-legend { right: calc(var(--wflow-drawer-w) + 96px); }
+/* In the section header beside the title, at full strength — the same place
+   the figure and process graphs put theirs. It used to float on the canvas at
+   55% opacity and only came up to full on hover. */
+.wflow-legend { display: flex; gap: 6px; }
 .wflow-chip--refl { color: var(--steel); border-color: rgba(var(--steel-rgb), .35); background: rgba(var(--steel-rgb), .07); }
 .wflow-chip--pending { color: var(--active); border-color: rgba(var(--active-rgb), .35); border-style: dashed; }
 
@@ -6748,48 +6878,56 @@ textarea.sbxpw-input { font-family: var(--mono, ui-monospace, monospace); font-s
    fast; the GRAPH SHIFTS aside via transform — the canvas is never resized,
    so react-flow never re-lays-out. The clicked node is kept in view by a
    viewport pan in the component. ---- */
-.wflow { --wflow-drawer-w: clamp(360px, 42%, 560px); }
+/* Width comes from the shared usePanelWidth store (--fig-panel-w, set inline),
+   the same one the four other graph sidebars read — this used to carry its own
+   `clamp(360px, 42%, 560px)` and could not be resized at all. */
 .wflow-canvas { position: relative; min-width: 0; height: 100%; }
 .wflow-shift { height: 100%; transition: transform .2s cubic-bezier(.2, .8, .25, 1); }
 .wflow--panel-open .wflow-shift {
-  transform: translateX(calc(var(--wflow-drawer-w) * -0.45));
+  transform: translateX(calc(var(--fig-panel-w, 380px) * -0.45));
 }
 .wflow-drawer {
-  position: absolute; top: 0; right: 0; bottom: 0; z-index: 30;
-  width: var(--wflow-drawer-w);
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 6;
+  width: var(--fig-panel-w, 380px);
   display: flex;
   background: var(--bg-elev);
-  border-left: 1px solid var(--line-soft);
+  border-left: 1px solid var(--line);
   transform: translateX(103%);
   transition: transform .2s cubic-bezier(.2, .8, .25, 1);
   pointer-events: none;
 }
 .wflow-drawer--open { transform: translateX(0); pointer-events: auto; }
 @media (prefers-reduced-motion: reduce) {
-  .wflow-shift, .wflow-drawer { transition: none; }
+  .wflow-shift, .wflow-drawer, .wflow-legend { transition: none; }
 }
 .wflow-panel { flex: 1; min-width: 0; min-height: 0; display: flex; }
-/* Independent scroll: the panel body scrolls by itself and never hands the
-   wheel to the page underneath. */
+/* The drawer owns the geometry (and the slide); the panel inside owns only the
+   shared chrome — sticky head, close button, body rhythm. Independent scroll:
+   the body scrolls by itself and never hands the wheel to the page underneath. */
 .wflow-panel .fig-panel {
-  max-height: none; flex: 1; overflow-y: auto;
+  position: static; width: auto;
+  flex: 1; overflow-y: auto;
   overscroll-behavior: contain;
   border-left: none; background: transparent;
-  padding: 16px 18px;
 }
-/* Same selection recipe as the figure graph, for the pill nodes. */
+@media (max-width: 900px) {
+  .wflow-drawer { left: 0; width: auto; }
+}
+/* Same selection recipe as the figure graph, for the pill nodes: a ring, not a
+   border-colour swap, so selecting never shifts layout and never needs
+   !important to outrank the status tints. */
 .wflow-node--selected {
-  border-color: var(--active) !important;
-  box-shadow: 0 0 0 2px rgba(var(--active-rgb), .18);
+  box-shadow: 0 0 0 2px var(--active), 0 0 0 5px rgba(var(--active-rgb), .18);
 }
-.wflow-open-btn {
-  display: block; width: 100%; box-sizing: border-box;
-  margin: 10px 0 12px; padding: 11px 12px;
-  font-size: 13px; font-weight: 650; text-align: center;
-  color: var(--text); background: rgba(var(--steel-rgb), .12);
-  border: 1.5px solid var(--steel); border-radius: 9px; cursor: pointer;
+/* The one primary action a graph sidebar gets: full width, so it reads as the
+   way out of the graph and into the record. Shared by the map's panel and the
+   project braid's five panel bodies — the braid used to roll its own button
+   here (steel fill, 1.5px border, 9px radius) that existed nowhere else. */
+.btn.graph-open {
+  display: flex; justify-content: center; gap: 6px;
+  width: 100%; box-sizing: border-box;
+  margin-top: 16px; padding: 7px 10px;
 }
-.wflow-open-btn:hover { background: rgba(var(--steel-rgb), .22); }
 .wflow-panel-pills { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .wflow-chip-quiet { font-size: 11px; color: var(--faint); }
 .wflow-panel-prose { font-size: 12.5px; line-height: 1.5; color: var(--text); margin: 4px 0 10px; }
@@ -6808,7 +6946,9 @@ textarea.sbxpw-input { font-family: var(--mono, ui-monospace, monospace); font-s
   font-size: 12px; text-align: left; color: var(--text);
   background: none; border: 1px solid transparent; border-radius: 7px; cursor: pointer;
 }
-.wflow-panel-item:hover { background: rgba(var(--steel-rgb), .08); border-color: var(--line-soft); }
+@media (hover: hover) {
+  .wflow-panel-item:hover { background: rgba(var(--steel-rgb), .08); border-color: var(--line-soft); }
+}
 .wflow-item-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .wflow-item-dot--done      { background: var(--supports); }
 .wflow-item-dot--failed    { background: var(--muted); }
