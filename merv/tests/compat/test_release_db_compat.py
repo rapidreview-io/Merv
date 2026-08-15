@@ -12,6 +12,7 @@ from typing import Any
 from merv.brain.artifacts import Artifacts
 from merv.brain.feed.persistence import install_feed_schema
 from merv.brain.kernel.state import StateStore
+from merv.brain.kernel.state.store import MIGRATIONS
 from merv.brain.object_storage.blobs import LocalDirBlobStore
 from merv.brain.research_core.association_targets import AssociationTargets
 
@@ -287,7 +288,9 @@ class ReleaseDatabaseCompatibilityTest(unittest.TestCase):
                 latest_migration = conn.execute(
                     "SELECT MAX(version) FROM schema_migrations"
                 ).fetchone()[0]
-                self.assertEqual(latest_migration, 45)
+                # A v40 database must boot all the way to the current ladder,
+                # whatever its length is today.
+                self.assertEqual(latest_migration, MIGRATIONS[-1][0])
             finally:
                 conn.close()
 
