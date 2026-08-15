@@ -4073,6 +4073,19 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 @media (prefers-reduced-motion: reduce) {
   .graph-drawer { transition: none; }
 }
+/* The panel breathes with its width. At the 380px default its 14px side
+   padding is right; dragged to 700px with the same 14px, the content sits
+   pressed against the edges — the padding-to-width ratio drifts. So the side
+   padding grows by a twentieth of every pixel past the default, capped at
+   +26px: 14px at 380, ~27px at 640, 40px from 900 on. A slow law, not a
+   proportional one — a wide panel is roomier, never a magazine gutter.
+   Measured on the drawer itself (container units), so the full-bleed
+   narrow-screen drawer breathes too; browsers without container units keep
+   the flat 14px. Consumers add var(--panel-pad-extra) to their own base. */
+.graph-drawer { container-type: inline-size; --panel-pad-extra: 0px; }
+@supports (container-type: inline-size) {
+  .graph-drawer { --panel-pad-extra: clamp(0px, (100cqi - 380px) * 0.05, 26px); }
+}
 /* Detail panel: the scroll body inside the drawer. Independent scroll — the
    body scrolls by itself and never hands the wheel to the page underneath. */
 .fig-panel {
@@ -4086,7 +4099,8 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
    render real file content and run long. */
 .fig-panel-head {
   display: flex; align-items: center; gap: 10px;
-  padding: 12px 14px;
+  /* Side padding follows the drawer's width law (--panel-pad-extra above). */
+  padding: 12px calc(14px + var(--panel-pad-extra, 0px));
   border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: 1;
   background: var(--bg-elev);
@@ -4104,7 +4118,7 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 @media (hover: hover) {
   .fig-panel-close:hover { color: var(--text); }
 }
-.fig-panel-body { padding: 14px 14px 18px; }
+.fig-panel-body { padding: 14px calc(14px + var(--panel-pad-extra, 0px)) 18px; }
 .fig-panel-title { font-weight: 600; line-height: var(--leading-tight); }
 .fig-panel-meta {
   margin: 6px 0; font-family: var(--font-mono); font-size: var(--text-xs);
