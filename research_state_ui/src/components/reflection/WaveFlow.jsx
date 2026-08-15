@@ -7,6 +7,7 @@ import { PanelResizer } from '../DetailPanelShell';
 import GraphExpandButton from '../GraphExpandButton';
 import { usePanelWidth } from '../../store/usePanelWidth';
 import { useProjectHref } from '../../store/useProjectStore';
+import { fmtSpan } from '../../utils/format';
 import { buildBraid } from './braidModel.js';
 import WaveFlowPanel from './WaveFlowPanel';
 
@@ -48,27 +49,16 @@ const statusWord = (s) => String(s || '').replace(/_/g, ' ') || '—';
 // Queued work stays neutral: no tint is what "not judged yet" looks like.
 const FIG_ST = { done: 'done', failed: 'failed', live: 'open', abandoned: 'faded' };
 
-// Coarse human duration — the experiments-map register ("4d 15h", "34m").
-function fmtDur(ms) {
-  if (!Number.isFinite(ms) || ms < 0) return null;
-  const m = Math.floor(ms / 60000);
-  if (m < 1) return '<1m';
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 48) return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
-  const d = Math.floor(h / 24);
-  return h % 24 ? `${d}d ${h % 24}h` : `${d}d`;
-}
-
 // Card metadata line: duration (elapsed for live work, span for finished),
-// then claim/artifact counts when there are any.
+// then claim/artifact counts when there are any. Same coarse register as the
+// sidebar's meta line (fmtSpan), so the card and the panel never disagree.
 function expMetaLine(data) {
   const parts = [];
   const t0 = data.createdAt ? Date.parse(data.createdAt) : NaN;
   const t1 = data.tone === 'live'
     ? Date.now()
     : (data.updatedAt ? Date.parse(data.updatedAt) : NaN);
-  const dur = fmtDur(t1 - t0);
+  const dur = fmtSpan(t1 - t0);
   if (dur && dur !== '<1m') parts.push(dur);
   if (data.nClaims) parts.push(`${data.nClaims} claim${data.nClaims > 1 ? 's' : ''}`);
   if (data.nArt) parts.push(`${data.nArt} artifact${data.nArt > 1 ? 's' : ''}`);
@@ -332,10 +322,17 @@ export function buildFlowModel(braid, signal, expMeta = {}) {
 
 // Selection reaches nodes via context, not node data — recreating node
 // objects on selection would wipe measured handle bounds (Map/Figure gotcha).
-const FlowCtx = createContext({ sel: null, selectedId: null, currentId: null });
+const FlowCtx = createContext({ sel: null, select: () => {} });
+
+// react-flow's own Enter/Space handler drives its internal store and never
+// reaches our onNodeClick, so keyboard activation is each card's own business
+// — the same contract the figure, logic, and process graphs carry.
+const keyActivate = (fn) => (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); }
+};
 
 function ExpNode({ data }) {
-  const { sel } = useContext(FlowCtx);
+  const { sel, select } = useContext(FlowCtx);
   const selected = sel?.kind === 'exp' && sel.id === data.expId;
   const figSt = FIG_ST[data.tone];
   return (
@@ -346,6 +343,10 @@ function ExpNode({ data }) {
         selected ? 'fig-node--selected' : '',
       ].filter(Boolean).join(' ')}
       title={`${data.name} · ${data.sub}`}
+      role="button"
+      tabIndex={0}
+      aria-label={`${data.name} — ${data.sub}`}
+      onKeyDown={keyActivate(() => select({ kind: 'exp', id: data.expId }))}
     >
       <Handle type="target" position={Position.Left} className="fig-handle" />
       <div className="fig-node-head">
@@ -363,7 +364,7 @@ function ExpNode({ data }) {
 // A stack of set-aside work: one passive card standing in for N dead
 // experiments. Clicking it lists the members in the drawer.
 function ExpGroupNode({ id, data }) {
-  const { sel } = useContext(FlowCtx);
+  const { sel, select } = useContext(FlowCtx);
   const selected = (sel?.kind === 'group' && sel.id === id)
     || (sel?.kind === 'exp' && data.ids.includes(sel.id));
   return (
@@ -374,6 +375,10 @@ function ExpGroupNode({ id, data }) {
         selected ? 'fig-node--selected' : '',
       ].filter(Boolean).join(' ')}
       title={data.sub}
+      role="button"
+      tabIndex={0}
+      aria-label={`${data.count} experiments set aside — ${data.label}`}
+      onKeyDown={keyActivate(() => select({ kind: 'group', id, ids: data.ids }))}
     >
       <Handle type="target" position={Position.Left} className="fig-handle" />
       <div className="fig-node-head">
@@ -388,7 +393,7 @@ function ExpGroupNode({ id, data }) {
 }
 
 function ReflNode({ data }) {
-  const { sel } = useContext(FlowCtx);
+  const { sel, select } = useContext(FlowCtx);
   const selected = data.origin
     ? sel?.kind === 'origin'
     : data.ghost
@@ -397,10 +402,17 @@ function ReflNode({ data }) {
   const kind = data.origin
     ? 'origin'
     : data.ghost ? 'ghost' : (data.isOpen ? 'open' : 'published');
+  const target = data.origin
+    ? { kind: 'origin' }
+    : data.ghost ? { kind: 'ghost' } : { kind: 'wave', id: data.waveId };
   return (
     <div
       className={`wflow-refl wflow-refl--${kind}${selected ? ' wflow-node--selected' : ''}`}
       title={data.title}
+      role="button"
+      tabIndex={0}
+      aria-label={data.title}
+      onKeyDown={keyActivate(() => select(target))}
     >
       <Handle type="target" position={Position.Left} className="fig-handle" />
       <div className="wflow-refl-label">{data.label}</div>
@@ -553,7 +565,7 @@ export default function WaveFlow({
     [onSelect],
   );
 
-  const ctx = useMemo(() => ({ sel }), [sel]);
+  const ctx = useMemo(() => ({ sel, select: setSel }), [sel]);
 
   // Adaptive height: the `height` prop is a CEILING, not the size. fitCanvas
   // caps zoom at 1 and fits wide braids by WIDTH, so a short (or wide-but-
@@ -633,6 +645,11 @@ export default function WaveFlow({
               proOptions={{ hideAttribution: true }}
               nodesDraggable={false}
               nodesConnectable={false}
+              // The cards are the focusable, activatable things (role=button
+              // above); react-flow's own node focus/selection would add a
+              // second tab stop and a second, drifting selection state.
+              nodesFocusable={false}
+              elementsSelectable={false}
               edgesFocusable={false}
               zoomOnDoubleClick={false}
               zoomOnScroll={expanded}

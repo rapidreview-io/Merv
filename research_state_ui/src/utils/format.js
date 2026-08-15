@@ -70,6 +70,20 @@ export function fmtDuration(ms) {
   return `${d}d ${h % 24}h`;
 }
 
+// Coarse human span for graph cards and sidebars ("4d 15h", "34m", "<1m"):
+// two units at most, and the trailing zero unit dropped ("4d", not "4d 0h").
+// Returns null for anything unparseable so callers can simply omit it.
+export function fmtSpan(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return '<1m';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d}d ${h % 24}h` : `${d}d`;
+}
+
 // Split timestamp for compact two-line table cells: "Jun 11" over "1:36 PM".
 export function fmtDayTime(iso) {
   if (!iso) return null;
