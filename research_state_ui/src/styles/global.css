@@ -3685,6 +3685,11 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .arun-pair-input { width: 130px; letter-spacing: 0.12em; text-transform: uppercase; }
 .arun-pair-status { color: var(--muted); font-size: var(--text-sm); }
 .arun-pair-status--ok { color: var(--supports); }
+.arun-pair-stages { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: var(--text-sm); color: var(--muted); }
+.arun-pair-stage > span { font-size: 9px; margin-right: 6px; color: var(--line-strong); }
+.arun-pair-stage--ok > span { color: var(--supports); }
+.arun-pair-stage--running > span { color: var(--qualifies); animation: log-pulse 1.4s ease-in-out infinite; }
+.arun-pair-stage--ok { color: var(--text); }
 .arun-pair-note { margin: 0; color: var(--muted); font-size: var(--text-sm); }
 .arun-pair-error { margin: 0; padding-left: 140px; color: var(--refutes); font-size: var(--text-xs); }
 
@@ -3892,6 +3897,21 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   background: var(--bg); color: var(--text); font: inherit; font-size: var(--text-xs); text-align: right;
 }
 .arf-problems { margin: 6px 0 0 44px; padding-left: 16px; font-size: 10.5px; color: var(--qualifies); }
+/* The setup ladder: installed → signed in → Merv skills → test call. The
+   glyph carries the state, the words carry the fact or the fix. */
+.arf-stages { list-style: none; margin: 8px 0 0 44px; padding: 0; display: grid; gap: 3px; }
+.arf-stage { display: grid; grid-template-columns: 12px 84px minmax(0, 1fr) auto; align-items: baseline; gap: 8px; font-size: 10.5px; }
+.arf-stage-glyph { font-size: 9px; line-height: 1; color: var(--line-strong); }
+.arf-stage--ok .arf-stage-glyph { color: var(--supports); }
+.arf-stage--running .arf-stage-glyph { color: var(--qualifies); animation: log-pulse 1.4s ease-in-out infinite; }
+.arf-stage--fail .arf-stage-glyph { color: var(--refutes); }
+.arf-stage-label { color: var(--muted); }
+.arf-stage--fail .arf-stage-label { color: var(--text); }
+.arf-stage-detail { color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+.arf-stage--fail .arf-stage-detail { color: var(--text); }
+.arf-stage-hint { color: var(--refutes); }
+.arf-stage--unknown .arf-stage-detail, .arf-stage--pending .arf-stage-detail { color: var(--faint); }
+.arf-stage-test { justify-self: end; }
 .arf-agent-tuning {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px;
   margin: 8px 0 0 44px;

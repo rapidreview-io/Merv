@@ -354,10 +354,23 @@ and does not mount this route.
 
 `PUT …/agent-runners/settings` stores what the owner wants a paired runner to
 apply. The schema is closed and validated on both sides: `platforms.<native
-adapter>.{enabled, model, effort, parallelism}` and `workspace.{repository,
-root, base_ref}` — never `command`, never `adapter`. The runner pulls it on its
+adapter>.{enabled, model, effort, parallelism}`, `workspace.{repository,
+root, base_ref}` — never `command`, never `adapter` — and the one-shot
+`probe.{platform, nonce}` (the Test button: the runner runs one test call
+through that platform, once per nonce). Each PUT folds into what is already
+desired, so a probe-only PUT keeps earlier tuning. The runner pulls it on its
 next heartbeat and reports the version it applied; `settings_pending` and
 `inventory.pending.reason` are how the page says so honestly.
+
+The runner's `inventory.harness.platforms.<name>` carries, besides the static
+probe (executable, version, MCP wiring, skills), the evidence the page's
+setup ladder reads: `auth` — `{status: present|unknown|n/a}` from a sign-in
+signal (a credential file or provider variable, existence only), or
+`{status: failed, line, detail}` after a refused launch or test; `quota` in the
+same shape; and `smoke` — the last test call: `{status: ok|failed|running|
+queued, at, duration_ms, detail, kind, why}`. Merv never holds provider
+credentials; the fix is always something to run on the machine, in the
+harness's own words.
 
 Automatic dispatch is a per-project setting, off by default. Turning it off
 stops new claims only; `…/agent-sessions/halt` closes every live session and

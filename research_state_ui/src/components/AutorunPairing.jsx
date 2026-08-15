@@ -131,9 +131,15 @@ export default function AutorunPairing({ projectId, runners, onRefresh, onPaired
         <span className="arun-pair-step">2</span>
         <span className="arun-pair-text">Code it prints</span>
         {approved ? (
-          <span className={`arun-pair-status${arrivedLive ? ' arun-pair-status--ok' : ''}`} role="status">
-            {arrivedLive ? `${host} is live.` : `Approved — waiting for ${host} to check in…`}
-          </span>
+          <ol className="arun-pair-stages" role="status" aria-label="Pairing progress">
+            <li className="arun-pair-stage arun-pair-stage--ok"><span aria-hidden="true">●</span> Code approved</li>
+            <li className={`arun-pair-stage arun-pair-stage--${arrived ? 'ok' : 'running'}`}>
+              <span aria-hidden="true">●</span> {arrived ? `${host} checked in` : `Waiting for ${host} to check in…`}
+            </li>
+            <li className={`arun-pair-stage arun-pair-stage--${arrivedLive ? 'ok' : arrived ? 'running' : 'pending'}`}>
+              <span aria-hidden="true">{arrivedLive || arrived ? '●' : '○'}</span> {arrivedLive ? 'Live — its agents are checked next' : 'Live'}
+            </li>
+          </ol>
         ) : (
           <span className="arun-pair-code">
             <input

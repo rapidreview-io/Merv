@@ -20,6 +20,8 @@ from unittest.mock import patch
 
 from merv.client.agent_runner import (
     AgentRunner,
+    HostSession,
+    LocalSession,
     Platform,
     RunnerCredentialError,
     SessionLedger,
@@ -560,3 +562,132 @@ class RunnerMainTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _FakeHost:
+    """A harness stand-in: writes what the child would have written, then stops."""
+
+    trace_format = "jsonl"
+    stdout_filename = "trace.jsonl"
+    trace_filename = "trace.jsonl"
+
+    def __init__(self, *, stdout="", stderr="", exit_code=0):
+        self.stdout_text = stdout
+        self.stderr_text = stderr
+        self.code = exit_code
+        self.spawned = []
+
+    def spawn(self, *, platform, instruction, child_env, stdout_path, stderr_path, cwd):
+        stdout_path.write_text(self.stdout_text)
+        stderr_path.write_text(self.stderr_text)
+        self.spawned.append({"instruction": instruction, "env": dict(child_env), "cwd": cwd})
+        return HostSession(ref="pid:4242:fake", pid=4242)
+
+    def inspect(self, session):
+        return "stopped"
+
+    def stop(self, session):
+        return None
+
+    def finalize_trace(self, *, platform, trace_dir):
+        return None
+
+    def exit_code(self, session):
+        return self.code
+
+
+class RunnerTestCallTest(unittest.TestCase):
+    """The test call: one real turn through a harness, judged and remembered."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+        self.config = self.root / "client.json"
+        configure_client(config_path=self.config, control_url="https://merv.test")
+        configure_agent(config_path=self.config, platform="codex", model="gpt-5", parallelism=1)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _runner(self, client=None):
+        return AgentRunner(
+            project_id="proj_1",
+            platforms=load_platforms(self.config, include_disabled=True),
+            client=client or _FakeSettingsClient(),
+            ledger=SessionLedger(self.root / "sessions.json"),
+            workspaces=WorkspaceManager(WorkspaceSettings("git_worktree", self.root / "repo", self.root / "worktrees", "main")),
+            trace_dir=self.root / "traces",
+            runner_secret=b"r" * 32,
+            config_path=self.config,
+        )
+
+    def test_first_run_tests_each_enabled_agent_and_remembers_a_pass(self) -> None:
+        host = _FakeHost(stdout='{"type":"item.completed","item":{"type":"agent_message","text":"proj_1"}}\n')
+        client = _FakeSettingsClient()
+        client.runner_key = "mk_" + "k" * 43
+        with patch("merv.client.agent_runner.HOSTS", {"codex": host}), redirect_stdout(io.StringIO()):
+            runner = self._runner(client)
+            self.assertEqual(runner.harness_readiness()["platforms"]["codex"]["smoke"], {"status": "queued"})
+            runner.advance_smoke()  # starts
+            self.assertEqual(runner.harness_readiness()["platforms"]["codex"]["smoke"]["status"], "running")
+            runner.advance_smoke()  # the fake stopped at once → judged
+        smoke = runner.harness_readiness()["platforms"]["codex"]["smoke"]
+        self.assertEqual(smoke["status"], "ok")
+        self.assertIn("project id", smoke["detail"])
+        # The child asked Merv as this machine, in a scratch dir, with the fixed instruction.
+        spawned = host.spawned[0]
+        self.assertIn("project", spawned["instruction"])
+        self.assertEqual(spawned["env"]["MERV_AGENT_SESSION_KEY"], client.runner_key)
+        self.assertEqual(spawned["env"]["MERV_AGENT_SESSION_ID"], "smoke")
+        # Remembered across restarts; not re-run on the next start.
+        stored = json.loads(self.config.read_text())["agent_smoke"]["codex"]
+        self.assertEqual(stored["status"], "ok")
+        with patch("merv.client.agent_runner.HOSTS", {"codex": host}), redirect_stdout(io.StringIO()):
+            again = self._runner(client)
+        self.assertEqual(again.harness_readiness()["platforms"]["codex"]["smoke"]["status"], "ok")
+
+    def test_a_failed_test_names_the_fix_and_a_probe_runs_once_per_nonce(self) -> None:
+        host = _FakeHost(stderr="Error: not logged in. Please run codex login\n", exit_code=1)
+        with patch("merv.client.agent_runner.HOSTS", {"codex": host}), redirect_stdout(io.StringIO()):
+            runner = self._runner()
+            runner.advance_smoke()
+            runner.advance_smoke()
+        codex = runner.harness_readiness()["platforms"]["codex"]
+        self.assertEqual(codex["smoke"]["status"], "failed")
+        self.assertIn("codex login", codex["smoke"]["detail"])
+        self.assertEqual(codex["auth"]["status"], "failed")
+        self.assertIn("codex login", codex["auth"]["detail"])
+
+        # Test from the page: a probe in the desired settings runs once per nonce.
+        with patch("merv.client.agent_runner.HOSTS", {"codex": host}), redirect_stdout(io.StringIO()):
+            runner.apply_desired({"desired_version": 2, "desired_settings": {"probe": {"platform": "codex", "nonce": "n1"}}})
+            self.assertEqual(runner.harness_readiness()["platforms"]["codex"]["smoke"], {"status": "queued"})
+            runner.advance_smoke()
+            runner.advance_smoke()
+            runner.apply_desired({"desired_version": 3, "desired_settings": {"probe": {"platform": "codex", "nonce": "n1"}}})
+            self.assertEqual(runner.harness_readiness()["platforms"]["codex"]["smoke"]["status"], "failed")  # same nonce: not queued
+            runner.apply_desired({"desired_version": 4, "desired_settings": {"probe": {"platform": "codex", "nonce": "n2"}}})
+            self.assertEqual(runner.harness_readiness()["platforms"]["codex"]["smoke"], {"status": "queued"})
+        self.assertEqual(json.loads(self.config.read_text())["agent_smoke_probe_nonce"], "n2")
+        self.assertEqual(runner.applied_settings_version, 4)
+
+    def test_a_dead_child_with_a_provider_refusal_is_a_failure_not_a_completed_turn(self) -> None:
+        with patch("merv.client.agent_runner.HOSTS", {"codex": _FakeHost()}), redirect_stdout(io.StringIO()):
+            runner = self._runner()
+        trace_dir = self.root / "traces" / "ags_1"
+        trace_dir.mkdir(parents=True)
+        (trace_dir / "stderr.log").write_text("codex: API Error 401 Unauthorized — please run codex login\n")
+        session = LocalSession(
+            session_id="ags_1", experiment_id="exp_1", project_id="proj_1", platform="codex",
+            launch_attempted=True, adapter="codex", host_ref="pid:1:x", pid=1, trace_dir=str(trace_dir),
+            base_sha="a" * 40, head_sha="a" * 40,
+        )
+        reason = runner._note_stop_evidence(session, host=_FakeHost(exit_code=1), rapid=True)
+        self.assertEqual(reason, "host_process_failed")
+        self.assertEqual(runner.harness_readiness()["platforms"]["codex"]["auth"]["status"], "failed")
+        # A quiet non-zero rapid exit without commits is also a failure; a slow clean exit is a turn.
+        (trace_dir / "stderr.log").write_text("some warning\n")
+        self.assertEqual(runner._note_stop_evidence(session, host=_FakeHost(exit_code=2), rapid=True), "host_process_failed")
+        self.assertEqual(runner._note_stop_evidence(session, host=_FakeHost(exit_code=0), rapid=False), "host_process_stopped")
+        # A healthy turn clears the evidence; what remains is the static signal, never "failed".
+        self.assertNotEqual(runner.harness_readiness()["platforms"]["codex"].get("auth", {}).get("status"), "failed")

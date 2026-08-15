@@ -78,7 +78,19 @@ the machine's inventory: the heartbeat carries inventory and applied version up
 and the caller's own row plus `desired_settings` down. The schema is closed
 (`merv.shared.runner_settings`): enabled/model/effort/parallelism per native
 platform and workspace paths, never argv. Browsers address a runner by an
-opaque `runner_ref`; runner identity stays private.
+opaque `runner_ref`; runner identity stays private. A settings PUT folds into
+what is already desired (platform entries by name, workspace whole), so a PUT
+that carries only a `probe` — the page's Test button asking the machine for one
+test call through a platform — never erases tuning a machine has not pulled
+yet; a probe stays until the next probe.
+
+Provider sign-in belongs to each harness; the brain never holds it. The runner
+reports evidence in its harness inventory, projected field by field: an `auth`
+signal (`present`/`unknown`/`n/a`, or `failed` with the harness's own refusal
+line and the fix in words), `quota` evidence, and `smoke` — the last test call
+(`ok`/`failed`/`running`/`queued`, when, how long, why). A child that dies fast
+with a recognisable refusal closes as `host_process_failed`, which counts as a
+failure for dispatch backoff and shows as one on the page.
 
 ## Local platforms
 

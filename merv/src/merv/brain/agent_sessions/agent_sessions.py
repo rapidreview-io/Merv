@@ -31,6 +31,7 @@ FAILURE_BACKOFF_SECONDS = 5 * 60
 FAILURE_REASONS = (
     "workspace_failed",
     "launch_failed",
+    "host_process_failed",
     "host_process_crash_loop",
 )
 LIVE_STATUSES = ("offered", "active")
@@ -587,16 +588,14 @@ class AgentSessions:
             desired = validate_desired_settings(settings)
         except RunnerSettingsError as exc:
             raise ValidationError(str(exc), details={"field": "settings"}) from exc
-        encoded = _bounded_json_object(
-            desired, field="settings", limit=MAX_RUNNER_PRESENCE_BYTES
-        )
         with self.store.transaction() as tx:
             self.store.require_project_id(conn=tx, project_id=project_id)
-            runner_id = next(
+            match = next(
                 (
-                    str(row["runner_id"])
+                    row
                     for row in tx.execute(
-                        "SELECT runner_id FROM agent_runners WHERE project_id = ?",
+                        "SELECT runner_id, desired_settings_json FROM agent_runners "
+                        "WHERE project_id = ?",
                         (project_id,),
                     ).fetchall()
                     if runner_ref_matches(
@@ -605,8 +604,28 @@ class AgentSessions:
                 ),
                 None,
             )
-            if runner_id is None:
+            if match is None:
                 raise NotFoundError("runner not found")
+            runner_id = str(match["runner_id"])
+            # Fold into what is already desired: a PUT that carries only a
+            # probe (Test) must not erase platform or workspace wishes a
+            # machine has not pulled yet. Platform entries replace by name,
+            # workspace replaces whole, a probe stays until the next probe.
+            existing = _json_column(match["desired_settings_json"])
+            merged: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
+            if "platforms" in desired:
+                current = merged.get("platforms")
+                merged["platforms"] = {
+                    **(current if isinstance(current, dict) else {}),
+                    **desired["platforms"],
+                }
+            if "workspace" in desired:
+                merged["workspace"] = desired["workspace"]
+            if "probe" in desired:
+                merged["probe"] = desired["probe"]
+            encoded = _bounded_json_object(
+                merged, field="settings", limit=MAX_RUNNER_PRESENCE_BYTES
+            )
             tx.execute(
                 """
                 UPDATE agent_runners
@@ -1419,6 +1438,27 @@ def _harness_projection(value: Any) -> dict[str, Any]:
                 entry["problems"] = [
                     str(item).strip()[:240] for item in problems[:8] if str(item).strip()
                 ]
+            # Sign-in signal / evidence, quota evidence, and the last test call:
+            # small string-valued objects, whitelisted field by field.
+            for block, fields in (
+                ("auth", ("status", "via", "detail", "line", "at")),
+                ("quota", ("status", "detail", "line", "at")),
+                ("smoke", ("status", "at", "detail", "kind", "nonce", "why")),
+            ):
+                raw_block = raw.get(block)
+                if not isinstance(raw_block, Mapping):
+                    continue
+                projected: dict[str, Any] = {}
+                for field in fields:
+                    text = raw_block.get(field)
+                    if isinstance(text, str) and text.strip():
+                        projected[field] = text.strip()[:240]
+                if block == "smoke":
+                    duration = raw_block.get("duration_ms")
+                    if isinstance(duration, int) and not isinstance(duration, bool):
+                        projected["duration_ms"] = max(duration, 0)
+                if projected:
+                    entry[block] = projected
             entries[str(name)[:80]] = entry
         if entries:
             result["platforms"] = entries

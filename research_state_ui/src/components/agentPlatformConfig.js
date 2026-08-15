@@ -210,6 +210,11 @@ export function readinessFor(platformId, executable, harness, availableCommands)
       entry.skills === 'mounted' ? 'skills mounted' : entry.skills === 'instruction' ? 'skills by instruction' : '',
     ].filter(Boolean);
     const problems = Array.isArray(entry.problems) ? entry.problems.filter(Boolean) : [];
+    // Evidence outranks the static probe: a refused sign-in or a failed test
+    // call is what the tag says; a passed test call is the strongest word.
+    if (entry.auth?.status === 'failed') return { tag: 'not signed in', tone: 'warn', details, problems: [entry.auth.detail || 'sign in on the machine'].concat(problems) };
+    if (entry.smoke?.status === 'failed') return { tag: 'test failed', tone: 'warn', details, problems: [entry.smoke.detail || 'the test call failed'].concat(problems) };
+    if (entry.ok && entry.smoke?.status === 'ok') return { tag: 'verified', tone: 'ok', details, problems: [] };
     if (entry.ok) return { tag: 'ready', tone: 'ok', details, problems: [] };
     const missing = problems.some((text) => /not found|missing|no such|not installed/i.test(String(text)));
     return { tag: missing ? 'not found' : 'not ready', tone: missing ? 'missing' : 'warn', details, problems };

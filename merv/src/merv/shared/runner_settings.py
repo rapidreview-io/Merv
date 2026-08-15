@@ -33,6 +33,8 @@ NATIVE_ADAPTERS = tuple(DEFAULT_PLATFORM_EXECUTABLES)
 
 PLATFORM_FIELDS = ("enabled", "model", "effort", "parallelism")
 WORKSPACE_FIELDS = ("repository", "root", "base_ref")
+PROBE_FIELDS = ("platform", "nonce")
+MAX_NONCE_CHARS = 64
 MIN_PARALLELISM = 1
 MAX_PARALLELISM = 32
 MAX_TEXT_CHARS = 200
@@ -45,14 +47,17 @@ class RunnerSettingsError(ValueError):
 
 
 def validate_desired_settings(payload: object) -> dict[str, Any]:
-    """Return a normalized ``{platforms, workspace}`` document or raise.
+    """Return a normalized ``{platforms, workspace, probe}`` document or raise.
 
-    Both halves are optional; an absent half means "no change". Present
-    entries are validated field by field. Unknown keys anywhere reject.
+    Every part is optional; an absent part means "no change". Present entries
+    are validated field by field. Unknown keys anywhere reject. ``probe`` is
+    the one non-persistent part: an owner asking the machine to run one test
+    call through a platform (``{"platform", "nonce"}``); the runner runs it
+    once per nonce and reports the outcome in its inventory.
     """
     if not isinstance(payload, Mapping):
         raise RunnerSettingsError("settings must be an object")
-    unknown = sorted(set(payload) - {"platforms", "workspace"})
+    unknown = sorted(set(payload) - {"platforms", "workspace", "probe"})
     if unknown:
         raise RunnerSettingsError(f"unsupported settings key(s): {', '.join(unknown)}")
     result: dict[str, Any] = {}
@@ -60,7 +65,26 @@ def validate_desired_settings(payload: object) -> dict[str, Any]:
         result["platforms"] = _platforms(payload["platforms"])
     if "workspace" in payload:
         result["workspace"] = _workspace(payload["workspace"])
+    if "probe" in payload:
+        result["probe"] = _probe(payload["probe"])
     return result
+
+
+def _probe(value: object) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise RunnerSettingsError("probe must be an object")
+    unknown = sorted(set(value) - set(PROBE_FIELDS))
+    if unknown:
+        raise RunnerSettingsError(f"unsupported probe field(s): {', '.join(unknown)}")
+    platform = _text(value.get("platform"), field="probe.platform")
+    if platform not in NATIVE_ADAPTERS:
+        raise RunnerSettingsError(
+            f"probe.platform must be a native platform ({', '.join(NATIVE_ADAPTERS)})"
+        )
+    nonce = _text(value.get("nonce"), field="probe.nonce", limit=MAX_NONCE_CHARS)
+    if not nonce or not all(ch.isalnum() or ch in "-_" for ch in nonce):
+        raise RunnerSettingsError("probe.nonce must be 1-64 letters, digits, '-' or '_'")
+    return {"platform": platform, "nonce": nonce}
 
 
 def _platforms(value: object) -> dict[str, dict[str, Any]]:

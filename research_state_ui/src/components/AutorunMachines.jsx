@@ -73,6 +73,7 @@ export default function AutorunMachines({ projectId, runners, sessions, dispatch
             open={expanded === runner.runner_ref}
             onToggle={() => setExpanded(expanded === runner.runner_ref ? '' : runner.runner_ref)}
             onRunner={onRunner}
+            now={now}
           />
         ))}
         <div className={`arm-rowgroup arm-rowgroup--foot${pairing ? ' open' : ''}`}>
@@ -103,7 +104,7 @@ export default function AutorunMachines({ projectId, runners, sessions, dispatch
   );
 }
 
-function MachineRow({ projectId, runner, view, used, dispatch, open, onToggle, onRunner }) {
+function MachineRow({ projectId, runner, view, used, dispatch, open, onToggle, onRunner, now }) {
   const enabled = (runner.platforms || []).filter((item) => item.enabled !== false).map((item) => item.name);
   const capacity = Number(runner.capacity) || 0;
   const rail = view.settingsTone === 'error'
@@ -135,7 +136,7 @@ function MachineRow({ projectId, runner, view, used, dispatch, open, onToggle, o
       </div>
       {open && (
         <div className="arm-drawer">
-          <MachineDrawer projectId={projectId} runner={runner} view={view} onRunner={onRunner} />
+          <MachineDrawer projectId={projectId} runner={runner} view={view} onRunner={onRunner} now={now} />
         </div>
       )}
     </div>
@@ -148,8 +149,10 @@ function MachineRow({ projectId, runner, view, used, dispatch, open, onToggle, o
  * view while the form is clean. Saving hands the settings to the brain; the
  * runner applies them on its next poll and reports back.
  */
-function MachineDrawer({ projectId, runner, view, onRunner }) {
+function MachineDrawer({ projectId, runner, view, onRunner, now }) {
   const [draft, setDraft] = useState(() => draftFromRunner(runner));
+  const [testing, setTesting] = useState('');
+  const [testError, setTestError] = useState('');
   const [base, setBase] = useState(() => {
     const seeded = draftFromRunner(runner);
     return draftSignature(seeded.platforms, seeded.workspace);
@@ -209,7 +212,27 @@ function MachineDrawer({ projectId, runner, view, onRunner }) {
     }
   }
 
+  // Test = one probe in the desired settings; the runner runs it once per
+  // nonce and reports the outcome on its next heartbeat (the stage shows
+  // "queued" / "running" / the result as it arrives).
+  async function testAgent(platformId) {
+    setTesting(platformId);
+    setTestError('');
+    try {
+      const nonce = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      const response = await api.putRunnerSettings(projectId, runner.runner_ref, {
+        probe: { platform: platformId, nonce },
+      });
+      if (response?.runner) onRunner?.(response.runner);
+    } catch (err) {
+      setTestError(err?.message || 'Could not ask the machine to test.');
+    } finally {
+      setTesting('');
+    }
+  }
+
   const note = (() => {
+    if (testError) return testError;
     if (save.busy) return 'Saving…';
     if (dirty) return 'Unsaved changes.';
     if (view.settings) return view.settings;
@@ -236,6 +259,9 @@ function MachineDrawer({ projectId, runner, view, onRunner }) {
         onUpdatePlatform={updatePlatform}
         onRepository={updateRepository}
         onWorkspace={updateWorkspace}
+        onTest={view.live ? testAgent : null}
+        testing={testing}
+        now={now}
       />
       {!validation.valid && (
         <ul className="arf-validation" role="alert">
@@ -243,7 +269,7 @@ function MachineDrawer({ projectId, runner, view, onRunner }) {
         </ul>
       )}
       <div className="arf-apply">
-        <span className={`arf-note${save.error ? ' arf-note--error' : ''}`} role="status">{save.error || note}</span>
+        <span className={`arf-note${save.error || testError ? ' arf-note--error' : ''}`} role="status">{save.error || note}</span>
         <button
           type="button"
           className="btn btn--primary btn--sm"

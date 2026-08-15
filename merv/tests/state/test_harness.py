@@ -189,3 +189,43 @@ class ReadinessTest(unittest.TestCase):
             self.assertEqual(missing["merv_mcp"], "merv-client")
             self.assertEqual(missing["skills"], "instruction")
             self.assertIn("'hermes-missing' is not on PATH", missing["problems"])
+
+
+class SignInEvidenceTest(unittest.TestCase):
+    """Sign-in is the harness's business; the runner notices signals and reads refusals."""
+
+    def test_auth_signal_is_present_unknown_or_not_applicable_and_never_reads_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self.assertEqual(harness.auth_signal("codex", {}, home=home), {"status": "unknown", "via": ""})
+            self.assertEqual(
+                harness.auth_signal("codex", {"OPENAI_API_KEY": "sk-secret"}, home=home),
+                {"status": "present", "via": "env OPENAI_API_KEY"},
+            )
+            (home / ".codex").mkdir()
+            (home / ".codex" / "auth.json").write_text('{"token": "secret"}')
+            signal = harness.auth_signal("codex", {}, home=home)
+            self.assertEqual(signal, {"status": "present", "via": "~/.codex/auth.json"})
+            self.assertNotIn("secret", json.dumps(signal))
+            self.assertEqual(harness.auth_signal("command", {}, home=home)["status"], "n/a")
+
+    def test_classify_failure_reads_the_harness_own_words_and_names_the_fix(self) -> None:
+        auth = harness.classify_failure("codex", "warming up\nError: not logged in. Please run codex login\n")
+        self.assertEqual(auth["kind"], "auth")
+        self.assertEqual(auth["line"], "Error: not logged in. Please run codex login")
+        self.assertIn("codex login", auth["hint"])
+        claude = harness.classify_failure("claude", 'API Error: 401 {"type":"authentication_error"}')
+        self.assertEqual(claude["kind"], "auth")
+        self.assertIn("sign in", claude["hint"])
+        quota = harness.classify_failure("gemini", "429 RESOURCE_EXHAUSTED: quota exceeded")
+        self.assertEqual(quota["kind"], "quota")
+        self.assertIsNone(harness.classify_failure("codex", "all good\nwrote results.json\n"))
+
+    def test_readiness_carries_the_auth_signal_per_platform(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = harness.readiness(
+                platforms=[Platform(name="codex", adapter="codex", command=("codex",), enabled=True)],
+                install=None,
+                environment={"PATH": tmp, "OPENAI_API_KEY": "x"},
+            )
+        self.assertEqual(report["platforms"]["codex"]["auth"], {"status": "present", "via": "env OPENAI_API_KEY"})

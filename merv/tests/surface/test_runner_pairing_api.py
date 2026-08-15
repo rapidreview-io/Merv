@@ -219,6 +219,49 @@ class RunnerPairingApiTest(unittest.TestCase):
         self.assertEqual([item["runner_ref"] for item in listed.json()["runners"]], [runner_ref])
         self.assertNotIn("runner_id", listed.json()["runners"][0])
 
+        # Test = a probe-only PUT. It folds into what is already desired (the
+        # claude tuning above must survive), bumps the version, and the
+        # runner's next heartbeat carries it; the runner reports the outcome
+        # in its harness inventory, which the row exposes field by field.
+        probed = self.client.put(
+            f"/api/projects/{self.project_id}/agent-runners/settings",
+            json={"runner_ref": runner_ref, "settings": {"probe": {"platform": "claude", "nonce": "t1abc"}}},
+            headers=_bearer(self.owner_jwt),
+        )
+        self.assertEqual(probed.status_code, 200, probed.text)
+        self.assertEqual(probed.json()["runner"]["desired_version"], 2)
+        desired = probed.json()["runner"]["desired_settings"]
+        self.assertEqual(desired["probe"], {"platform": "claude", "nonce": "t1abc"})
+        self.assertEqual(desired["platforms"]["claude"]["model"], "opus")
+        self.assertEqual(desired["workspace"]["base_ref"], "main")
+        bad_probe = self.client.put(
+            f"/api/projects/{self.project_id}/agent-runners/settings",
+            json={"runner_ref": runner_ref, "settings": {"probe": {"platform": "claude", "nonce": "no spaces"}}},
+            headers=_bearer(self.owner_jwt),
+        )
+        self.assertEqual(bad_probe.status_code, 400, bad_probe.text)
+        reported = self.client.post(
+            f"/api/projects/{self.project_id}/agent-runners/heartbeat",
+            json={
+                "runner_id": "runner-uuid", "machine": {}, "platforms": [], "capacity": 2, "applied_version": 2,
+                "inventory": {"harness": {"platforms": {"claude": {
+                    "adapter": "claude", "ok": True,
+                    "auth": {"status": "present", "via": "~/.claude/.credentials.json", "secret": "never"},
+                    "smoke": {"status": "ok", "at": "2026-08-15T12:00:00Z", "duration_ms": 4100, "nonce": "t1abc", "why": "requested"},
+                }}}},
+            },
+            headers=_bearer(key),
+        )
+        self.assertEqual(reported.status_code, 200, reported.text)
+        row = self.client.get(
+            f"/api/projects/{self.project_id}/agent-sessions", headers=_bearer(self.owner_jwt)
+        ).json()["runners"][0]
+        claude = row["inventory"]["harness"]["platforms"]["claude"]
+        self.assertEqual(claude["auth"], {"status": "present", "via": "~/.claude/.credentials.json"})
+        self.assertEqual(claude["smoke"]["status"], "ok")
+        self.assertEqual(claude["smoke"]["duration_ms"], 4100)
+        self.assertFalse(row["settings_pending"])
+
     def test_pairing_routes_need_no_credential_but_approval_needs_an_owner(self) -> None:
         _, started = self._start_pairing()
         unauth = self.client.post(

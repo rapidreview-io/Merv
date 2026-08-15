@@ -1,5 +1,6 @@
 import Switch from './Switch';
 import { capabilitiesFor, readinessFor } from './agentPlatformConfig';
+import { agentStages } from './agentStages';
 
 /**
  * RunnerSettingsForm — the one form for a paired runner's brain-held tuning.
@@ -9,6 +10,12 @@ import { capabilitiesFor, readinessFor } from './agentPlatformConfig';
  * and reports edits upward; saving is the caller's job. Custom command-adapter
  * agents configured on the machine are listed read-only: their executable
  * argv is machine-local by design.
+ *
+ * Under each enabled agent sits its setup ladder — installed → signed in →
+ * Merv skills → test call — with one state per rung, so the owner sees what
+ * is being checked and what has held so far. Test asks the machine for one
+ * real call through that harness (``onTest``); the runner reports the outcome
+ * on its next heartbeat.
  */
 export default function RunnerSettingsForm({
   platforms,
@@ -20,6 +27,9 @@ export default function RunnerSettingsForm({
   onUpdatePlatform,
   onRepository,
   onWorkspace,
+  onTest = null,
+  testing = '',
+  now = Date.now(),
 }) {
   const readiness = Object.fromEntries(platforms.map((platform) => [
     platform.id,
@@ -89,10 +99,23 @@ export default function RunnerSettingsForm({
                 </label>
               </div>
               {errors.parallelism && <small className="field-error">{errors.parallelism}</small>}
-              {ready.problems.length > 0 && (
+              {ready.problems.length > 0 && !platform.enabled && (
                 <ul className="arf-problems">
                   {ready.problems.map((problem) => <li key={problem}>{problem}</li>)}
                 </ul>
+              )}
+              {platform.enabled && (
+                <AgentStages
+                  stages={agentStages({
+                    entry: harness?.platforms?.[platform.id] || null,
+                    readiness: ready,
+                    enabled: platform.enabled,
+                    now,
+                  })}
+                  canTest={Boolean(onTest) && ready.tone !== 'missing'}
+                  testing={testing === platform.id}
+                  onTest={() => onTest?.(platform.id)}
+                />
               )}
               {platform.enabled && (capabilities.model || capabilities.effort) && (
                 <div className="arf-agent-tuning">
@@ -207,5 +230,38 @@ export default function RunnerSettingsForm({
         </label>
       </div>
     </div>
+  );
+}
+
+const STAGE_GLYPH = { ok: '●', running: '●', fail: '●', unknown: '○', pending: '○' };
+
+/**
+ * The ladder: one line per stage, the state in the glyph's colour, the fact
+ * or the fix in words. Test sits on the last rung.
+ */
+function AgentStages({ stages, canTest, testing, onTest }) {
+  return (
+    <ol className="arf-stages" aria-label="Setup stages">
+      {stages.map((stage) => (
+        <li key={stage.key} className={`arf-stage arf-stage--${stage.state}`}>
+          <span className="arf-stage-glyph" aria-hidden="true">{STAGE_GLYPH[stage.state] || '○'}</span>
+          <span className="arf-stage-label">{stage.label}</span>
+          <span className="arf-stage-detail">
+            {stage.detail}
+            {stage.hint && <span className="arf-stage-hint"> — {stage.hint}</span>}
+          </span>
+          {stage.key === 'smoke' && canTest && (
+            <button
+              type="button"
+              className="btn btn--ghost btn--xs arf-stage-test"
+              disabled={testing || stage.state === 'running'}
+              onClick={onTest}
+            >
+              {testing ? 'Asking…' : stage.state === 'running' ? 'Running…' : stage.state === 'unknown' ? 'Test' : 'Test again'}
+            </button>
+          )}
+        </li>
+      ))}
+    </ol>
   );
 }

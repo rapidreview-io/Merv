@@ -10,6 +10,7 @@ export function sessionOutcome(session) {
   }
   if (reason === 'workspace_failed') return { label: 'Workspace failed', tone: 'error' };
   if (reason === 'launch_failed') return { label: 'Could not start', tone: 'error' };
+  if (reason === 'host_process_failed') return { label: 'Agent failed', tone: 'error' };
   if (reason === 'host_process_crash_loop') return { label: 'Agent crashed', tone: 'error' };
   if (reason === 'lease_expired') return { label: 'Connection lost', tone: 'error' };
   if (reason === 'hard_deadline') return { label: 'Timed out', tone: 'error' };

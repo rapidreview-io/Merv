@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import uuid
@@ -45,6 +46,132 @@ NATIVE_SKILL_MOUNTS: dict[str, str] = {
 # Adapters whose child receives a native, session-scoped Merv MCP server. The
 # rest reach Merv through ``merv-client call``.
 NATIVE_MCP_ADAPTERS = frozenset({"codex", "claude"})
+
+# Provider sign-in is each harness's own business; Merv never holds it. What
+# the runner can do is notice a sign-in *signal* — a credential file the CLI
+# keeps or a provider variable in the runner's environment — and report
+# "present" or "unknown". Absence is never reported as "not signed in": only
+# evidence (a failed launch, a failed test call) may say that. Existence checks
+# only; nothing is read.
+AUTH_SIGNALS: dict[str, dict[str, tuple[str, ...]]] = {
+    "codex": {
+        "env": ("OPENAI_API_KEY", "CODEX_API_KEY"),
+        "files": ("~/.codex/auth.json",),
+    },
+    "claude": {
+        "env": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"),
+        "files": ("~/.claude/.credentials.json",),
+    },
+    "gemini": {
+        "env": ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS"),
+        "files": ("~/.gemini/oauth_creds.json",),
+    },
+    "cursor": {"env": ("CURSOR_API_KEY",), "files": ()},
+    "opencode": {
+        "env": ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"),
+        "files": ("~/.local/share/opencode/auth.json",),
+    },
+    "copilot": {
+        "env": ("GITHUB_TOKEN", "GH_TOKEN", "COPILOT_GITHUB_TOKEN"),
+        "files": (
+            "~/.config/gh/hosts.yml",
+            "~/.config/github-copilot/hosts.json",
+            "~/.config/github-copilot/apps.json",
+        ),
+    },
+    "qwen": {
+        "env": ("OPENAI_API_KEY", "DASHSCOPE_API_KEY", "QWEN_API_KEY"),
+        "files": ("~/.qwen/oauth_creds.json",),
+    },
+    "hermes": {"env": (), "files": ()},
+}
+
+# The one-line remedy per harness, in the harness's own terms. Shown next to
+# a failure the CLI itself reported; never as installation documentation.
+SIGN_IN_HINTS: dict[str, str] = {
+    "codex": "run `codex login` on this machine (or set OPENAI_API_KEY for the runner)",
+    "claude": "run `claude` on this machine once and sign in (or set ANTHROPIC_API_KEY for the runner)",
+    "gemini": "run `gemini` on this machine once and sign in (or set GEMINI_API_KEY for the runner)",
+    "cursor": "run `cursor-agent login` on this machine",
+    "opencode": "run `opencode auth login` on this machine",
+    "copilot": "run `gh auth login` on this machine",
+    "qwen": "run `qwen` on this machine once and sign in",
+    "hermes": "sign in to hermes on this machine",
+}
+
+# What a harness prints when the provider will not talk to it. Matched against
+# its stderr; the matching line travels with the classification so the user
+# reads the CLI's own words.
+_AUTH_FAILURE = re.compile(
+    r"(not logged in|not authenticated|unauthori[sz]ed|\b401\b|invalid[ _-]?api[ _-]?key|"
+    r"incorrect api key|api key (?:is )?(?:missing|invalid|required|not set)|no api key|"
+    r"missing (?:api key|credentials)|authentication[ _](?:failed|required|error)|"
+    r"please (?:log ?in|sign ?in|run .{0,40}login)|login required|sign in required|"
+    r"(?:expired|invalid) (?:token|credentials?)|token (?:has )?expired|"
+    r"credentials? (?:not found|missing|invalid|expired)|permission_error|"
+    r"forbidden|\b403\b)",
+    re.IGNORECASE,
+)
+_QUOTA_FAILURE = re.compile(
+    r"(insufficient[_ ]quota|quota exceeded|exceeded your current quota|billing|"
+    r"rate[ _-]?limit|too many requests|\b429\b|out of credits|usage limit)",
+    re.IGNORECASE,
+)
+
+
+def auth_signal(
+    adapter: str,
+    environment: Mapping[str, str] | None = None,
+    home: Path | None = None,
+) -> dict[str, str]:
+    """``{"status": "present"|"unknown"|"n/a", "via": ...}`` for one adapter.
+
+    ``present`` names the signal (a variable name or a path — never a value);
+    ``unknown`` means no signal was found, which is not the same as absent
+    (some harnesses keep credentials in a keychain); ``n/a`` is the custom
+    ``command`` adapter, whose auth is its own affair.
+    """
+    if adapter not in AUTH_SIGNALS:
+        return {"status": "n/a", "via": ""}
+    environment = dict(os.environ if environment is None else environment)
+    home_dir = home if home is not None else Path.home()
+    signals = AUTH_SIGNALS[adapter]
+    for name in signals["env"]:
+        if environment.get(name, "").strip():
+            return {"status": "present", "via": f"env {name}"}
+    for raw in signals["files"]:
+        candidate = (
+            Path(raw.replace("~", str(home_dir), 1)) if raw.startswith("~") else Path(raw)
+        )
+        try:
+            if candidate.is_file():
+                return {"status": "present", "via": raw}
+        except OSError:
+            continue
+    return {"status": "unknown", "via": ""}
+
+
+def classify_failure(adapter: str, stderr_text: str) -> dict[str, str] | None:
+    """Read a dead harness's stderr and say, in its own words, why it died.
+
+    Returns ``{"kind": "auth"|"quota", "line": <the matching line>,
+    "hint": <what to do on this machine>}`` or ``None`` when nothing in the
+    tail is recognisable. Auth wins over quota when both appear.
+    """
+    lines = [line.strip() for line in str(stderr_text or "").splitlines() if line.strip()]
+    for pattern, kind in ((_AUTH_FAILURE, "auth"), (_QUOTA_FAILURE, "quota")):
+        for line in reversed(lines):
+            if pattern.search(line):
+                hint = (
+                    SIGN_IN_HINTS.get(adapter, "sign in to this harness on this machine")
+                    if kind == "auth"
+                    else (
+                        "the provider refused for quota or billing reasons; check the "
+                        "account this harness signs in with"
+                    )
+                )
+                return {"kind": kind, "line": line[:240], "hint": hint}
+    return None
 
 
 class HarnessError(Exception):
@@ -315,6 +442,7 @@ def readiness(
             "skills": (
                 "mounted" if native_skill_mount(adapter) is not None else "instruction"
             ),
+            "auth": auth_signal(adapter, environment),
             "ok": not problems,
         }
         if problems:

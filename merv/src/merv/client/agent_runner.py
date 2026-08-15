@@ -69,10 +69,21 @@ SESSION_KEY_PREFIX = "mas_"
 # Reported in the heartbeat inventory so Settings can tell an old runner
 # archive from a current one; the runner is brain-free and has no package
 # version of its own. Bump when the runner/brain contract changes.
-RUNNER_VERSION = "2026.08.15"
+RUNNER_VERSION = "2026.08.16"
 DEFAULT_POLL_SECONDS = 10.0
 RAPID_STOP_SECONDS = 30.0
 CRASH_LOOP_WINDOW_SECONDS = 2 * 60.0
+# The test call: one tiny turn through a harness with Merv wired in, proving
+# sign-in, model, and MCP end to end. Bounded so a wedged CLI cannot hold the
+# runner; results persist in client.json under SMOKE_STATE_KEY.
+SMOKE_TIMEOUT_SECONDS = 150.0
+SMOKE_STATE_KEY = "agent_smoke"
+SMOKE_NONCE_KEY = "agent_smoke_probe_nonce"
+SMOKE_INSTRUCTION = (
+    "This is a Merv connection test, not a task. Call the Merv MCP tool named "
+    "'project' with action 'current' and reply with exactly the project id it "
+    "returns and nothing else. Do not create, modify, or run anything."
+)
 # client.json key that remembers which brain-held settings version this
 # machine last applied, so a restart does not re-report "pending".
 SETTINGS_VERSION_KEY = "desired_settings_version"
@@ -192,6 +203,12 @@ class CommandHost:
 
     def __init__(self) -> None:
         self._processes: dict[int, subprocess.Popen[bytes]] = {}
+        # Exit codes of children this process started and saw stop, so a
+        # rapid non-zero exit can be told from a normal completed turn.
+        self._exit_codes: dict[int, int] = {}
+
+    def exit_code(self, session: HostSession) -> int | None:
+        return self._exit_codes.get(session.pid)
 
     def command_for(self, platform: Platform) -> list[str]:
         return list(platform.command)
@@ -312,6 +329,10 @@ class CommandHost:
             if process.poll() is None:
                 return "running"
             self._processes.pop(session.pid, None)
+            if process.returncode is not None:
+                self._exit_codes[session.pid] = int(process.returncode)
+                if len(self._exit_codes) > 256:
+                    self._exit_codes.pop(next(iter(self._exit_codes)))
             return "stopped"
         try:
             os.kill(session.pid, 0)
@@ -1625,6 +1646,19 @@ class AgentRunner:
         except HarnessError as exc:
             self.harness_error = str(exc)
         self._harness_report: tuple[tuple[Any, ...], dict[str, Any]] | None = None
+        # Evidence about each harness beyond the static probe: what a dead
+        # child's stderr said (auth, quota), and the outcome of the last test
+        # call. Test results persist across restarts; stderr evidence is
+        # cleared by the next healthy launch or a passing test.
+        self._harness_flags: dict[str, dict[str, Any]] = {}
+        self._smoke_results: dict[str, dict[str, Any]] = self._load_smoke_results()
+        self._smoke_queue: list[tuple[str, str, str]] = []  # (platform, nonce, why)
+        self._smoke_active: _ActiveSmoke | None = None
+        self._smoke_auto_done: set[str] = set()
+        # First run after pairing or upgrade: prove every enabled harness once.
+        for item in self.platforms:
+            if item.enabled and item.name not in self._smoke_results:
+                self.queue_smoke(item.name, why="first run")
 
     # -- brain-held settings ---------------------------------------------
 
@@ -1711,7 +1745,16 @@ class AgentRunner:
             print(f"settings v{version} could not be applied: {exc}", file=sys.stderr)
             return
         self.settings_error = ""
+        previously_enabled = {item.name for item in self.platforms if item.enabled}
         self.apply_platforms(load_platforms(self.config_path, include_disabled=True))
+        for item in self.platforms:
+            if item.enabled and item.name not in previously_enabled and (
+                self._smoke_results.get(item.name, {}).get("status") != "ok"
+            ):
+                self.queue_smoke(item.name, why="enabled")
+        probe = normalized.get("probe")
+        if isinstance(probe, Mapping):
+            self._accept_probe(str(probe.get("platform") or ""), str(probe.get("nonce") or ""))
         if not workspace_changes:
             self.pending_workspace = None
             self.pending_workspace_document = None
@@ -1733,11 +1776,21 @@ class AgentRunner:
         try:
             # Activation is the moment the workspace and its version become
             # durable together; a crash before this line leaves the old
-            # workspace and version on disk, which is exactly right.
+            # workspace and version on disk, which is exactly right. Only the
+            # workspace half and the version land — onto the file as it is
+            # now, not the snapshot taken when the change arrived, so nothing
+            # written meanwhile (test results, a probe nonce) is lost.
             if self.pending_workspace_document is not None:
+                current = read_json_document(self.config_path)
+                activated = dict(current)
+                if "agent_workspace" in self.pending_workspace_document:
+                    activated["agent_workspace"] = self.pending_workspace_document["agent_workspace"]
+                else:
+                    activated.pop("agent_workspace", None)
+                activated[SETTINGS_VERSION_KEY] = self.pending_workspace_version
                 replace_json_document(
                     self.config_path,
-                    self.pending_workspace_document,
+                    activated,
                     validate=_validate_settings,
                 )
         except (PrivateFileError, RunnerError) as exc:
@@ -1820,7 +1873,242 @@ class AgentRunner:
             if self.harness_error:
                 report["error"] = self.harness_error
             self._harness_report = (key, report)
-        return self._harness_report[1]
+        report = json.loads(json.dumps(self._harness_report[1]))
+        platforms = report.get("platforms")
+        if isinstance(platforms, dict):
+            for name, entry in platforms.items():
+                flags = self._harness_flags.get(name) or {}
+                if flags.get("auth"):
+                    entry["auth"] = dict(flags["auth"])
+                if flags.get("quota"):
+                    entry["quota"] = dict(flags["quota"])
+                smoke = self._smoke_status(name)
+                if smoke is not None:
+                    entry["smoke"] = smoke
+        return report
+
+    # -- the test call -----------------------------------------------------
+
+    def queue_smoke(self, platform_name: str, *, nonce: str = "", why: str = "") -> None:
+        """Ask for one test call through a platform; runs on the next cycles."""
+        if any(item[0] == platform_name for item in self._smoke_queue):
+            return
+        if self._smoke_active is not None and self._smoke_active.platform.name == platform_name:
+            return
+        self._smoke_queue.append((platform_name, nonce, why))
+
+    def _accept_probe(self, platform_name: str, nonce: str) -> None:
+        """An owner pressed Test: run once per nonce, remembered across restarts."""
+        if not platform_name or not nonce or self.config_path is None:
+            return
+        try:
+            document = read_json_document(self.config_path)
+        except PrivateFileError:
+            document = {}
+        if str(document.get(SMOKE_NONCE_KEY) or "") == nonce:
+            return
+        try:
+            replace_json_document(
+                self.config_path,
+                {**document, SMOKE_NONCE_KEY: nonce},
+                validate=_validate_settings,
+            )
+        except (PrivateFileError, RunnerError):
+            return
+        self.queue_smoke(platform_name, nonce=nonce, why="requested")
+
+    def _smoke_status(self, platform_name: str) -> dict[str, Any] | None:
+        active = self._smoke_active
+        if active is not None and active.platform.name == platform_name:
+            return {
+                "status": "running",
+                "at": _iso(active.started_at),
+                "why": active.why,
+            }
+        if any(item[0] == platform_name for item in self._smoke_queue):
+            return {"status": "queued"}
+        result = self._smoke_results.get(platform_name)
+        return dict(result) if isinstance(result, dict) else None
+
+    def _load_smoke_results(self) -> dict[str, dict[str, Any]]:
+        if self.config_path is None:
+            return {}
+        try:
+            raw = read_json_document(self.config_path).get(SMOKE_STATE_KEY)
+        except PrivateFileError:
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(name): dict(value)
+            for name, value in raw.items()
+            if isinstance(value, dict) and value.get("status") in {"ok", "failed"}
+        }
+
+    def _save_smoke_result(self, platform_name: str, result: Mapping[str, Any]) -> None:
+        self._smoke_results[platform_name] = dict(result)
+        if self.config_path is None:
+            return
+        try:
+            document = read_json_document(self.config_path)
+            stored = document.get(SMOKE_STATE_KEY)
+            merged = dict(stored) if isinstance(stored, dict) else {}
+            merged[platform_name] = dict(result)
+            replace_json_document(
+                self.config_path,
+                {**document, SMOKE_STATE_KEY: merged},
+                validate=_validate_settings,
+            )
+        except (PrivateFileError, RunnerError) as exc:
+            print(f"could not remember the {platform_name} test result: {exc}", file=sys.stderr)
+
+    def advance_smoke(self) -> None:
+        """Start the next queued test call, or finish the running one."""
+        active = self._smoke_active
+        if active is None:
+            if not self._smoke_queue:
+                return
+            platform_name, nonce, why = self._smoke_queue.pop(0)
+            try:
+                self._smoke_active = self._start_smoke(platform_name, nonce=nonce, why=why)
+            except Exception as exc:  # noqa: BLE001 -- a broken CLI must not stop the loop
+                self._save_smoke_result(platform_name, {
+                    "status": "failed",
+                    "at": _iso(time.time()),
+                    "nonce": nonce,
+                    "duration_ms": 0,
+                    "detail": f"could not start: {exc}"[:240],
+                })
+            return
+        host = HOSTS[active.platform.adapter]
+        state = host.inspect(active.host_session)
+        timed_out = time.time() - active.started_at > SMOKE_TIMEOUT_SECONDS
+        if state == "running" and not timed_out:
+            return
+        if state == "running":
+            host.stop(active.host_session)
+        self._smoke_active = None
+        self._finish_smoke(active, host=host, timed_out=timed_out)
+
+    def _start_smoke(self, platform_name: str, *, nonce: str, why: str) -> _ActiveSmoke:
+        platform = self._platform(platform_name)
+        host = HOSTS[platform.adapter]
+        root = self.trace_dir.parent / "agent-smoke" / _safe_name(platform.name)
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True, exist_ok=True)
+        os.chmod(root, 0o700)
+        stdout_path = root / host.stdout_filename
+        stderr_path = root / "stderr.log"
+        # The child gets this machine's own Merv credential for the length of
+        # one fixed instruction; a session credential does not exist for a
+        # test, and the runner key is what any interactive agent on this
+        # machine already holds.
+        environment = _child_environment(
+            self.environment,
+            session_key=str(getattr(self.client, "runner_key", "") or ""),
+            control_url=self.client.control_url,
+            session_id="smoke",
+        )
+        environment["MERV_AGENT_TRACE_DIR"] = str(root)
+        if self.skills is not None:
+            environment["MERV_SKILLS_DIR"] = str(self.skills.root)
+        host_session = host.spawn(
+            platform=platform,
+            instruction=SMOKE_INSTRUCTION,
+            child_env=environment,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            cwd=root,
+        )
+        print(f"{platform.name}: test call started ({why or 'requested'})")
+        return _ActiveSmoke(
+            platform=platform,
+            host_session=host_session,
+            started_at=time.time(),
+            root=root,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            nonce=nonce,
+            why=why,
+        )
+
+    def _finish_smoke(self, active: _ActiveSmoke, *, host: AgentHost, timed_out: bool) -> None:
+        platform = active.platform
+        duration_ms = int((time.time() - active.started_at) * 1000)
+        try:
+            host.finalize_trace(platform=platform, trace_dir=active.root)
+        except Exception:  # noqa: BLE001 -- the answer is judged from what was written
+            pass
+        stdout_text = _read_tail(active.stdout_path, limit=256 * 1024)
+        stderr_text = _read_tail(active.stderr_path, limit=16 * 1024)
+        exit_code = getattr(host, "exit_code", lambda _s: None)(active.host_session)
+        answered = bool(self.project_id) and self.project_id in stdout_text
+        result: dict[str, Any] = {
+            "at": _iso(time.time()),
+            "nonce": active.nonce,
+            "duration_ms": duration_ms,
+        }
+        if answered and exit_code in (0, None) and not timed_out:
+            result["status"] = "ok"
+            result["detail"] = "answered with the project id through Merv"
+            self._harness_flags.pop(platform.name, None)
+        else:
+            result["status"] = "failed"
+            failure = harness_kit.classify_failure(platform.adapter, stderr_text)
+            if failure is not None:
+                result["detail"] = f"{failure['line']} — {failure['hint']}"
+                result["kind"] = failure["kind"]
+                self._harness_flags.setdefault(platform.name, {})[failure["kind"]] = {
+                    "status": "failed",
+                    "detail": failure["hint"],
+                    "line": failure["line"],
+                    "at": result["at"],
+                }
+            elif timed_out:
+                result["detail"] = f"no answer within {int(SMOKE_TIMEOUT_SECONDS)} s"
+            elif exit_code not in (0, None):
+                last = _last_line(stderr_text)
+                result["detail"] = f"exited with code {exit_code}" + (f": {last}" if last else "")
+            elif not answered:
+                result["detail"] = "the agent ran but did not answer with the project id (is the Merv MCP server reachable from it?)"
+            else:
+                result["detail"] = "did not complete"
+        print(f"{platform.name}: test call {result['status']} — {result['detail']}")
+        self._save_smoke_result(platform.name, result)
+        shutil.rmtree(active.root, ignore_errors=True)
+
+    def _note_stop_evidence(self, session: LocalSession, *, host: AgentHost, rapid: bool) -> str:
+        """Read a stopped child's stderr; return the release reason to use.
+
+        A rapid stop with a recognisable provider refusal (or a non-zero exit
+        and no commits) is a failure of the harness, not a completed turn:
+        it is reported as ``host_process_failed`` and the evidence lands on
+        the machine's readiness so the page can say what to do.
+        """
+        if not session.trace_dir:
+            return "host_process_stopped"
+        stderr_text = _read_tail(Path(session.trace_dir) / "stderr.log", limit=16 * 1024)
+        adapter = session.adapter or ""
+        try:
+            adapter = adapter or self._platform(session.platform).adapter
+        except RunnerError:
+            pass
+        failure = harness_kit.classify_failure(adapter, stderr_text)
+        if failure is not None:
+            self._harness_flags.setdefault(session.platform, {})[failure["kind"]] = {
+                "status": "failed",
+                "detail": failure["hint"],
+                "line": failure["line"],
+                "at": _iso(time.time()),
+            }
+            return "host_process_failed"
+        exit_code = getattr(host, "exit_code", lambda _s: None)(session.host_session())
+        if rapid and exit_code not in (0, None) and session.head_sha == session.base_sha:
+            return "host_process_failed"
+        if not rapid or exit_code == 0:
+            # A healthy turn clears stale evidence for this platform.
+            self._harness_flags.pop(session.platform, None)
+        return "host_process_stopped"
 
     # -- the cycle ---------------------------------------------------------
 
@@ -1945,10 +2233,14 @@ class AgentRunner:
             self._finalize_trace(session=session, host=host)
             telemetry = self._observe_telemetry(session)
             workspace = self._capture_after_stop(session)
+            rapid = (
+                session.started_at is not None
+                and time.time() - session.started_at < RAPID_STOP_SECONDS
+            )
             reason = (
                 "host_process_crash_loop"
                 if self._is_repeated_rapid_stop(session)
-                else "host_process_stopped"
+                else self._note_stop_evidence(session, host=host, rapid=rapid)
             )
             self.client.release(
                 session_id=session.session_id,
@@ -2523,83 +2815,38 @@ def load_workspace_settings_from(
     )
 
 
-def merge_desired_settings(
-    document: Mapping[str, Any], desired: Mapping[str, Any]
-) -> dict[str, Any]:
-    """Fold a validated desired document into ``client.json`` per entry.
+@dataclass
+class _ActiveSmoke:
+    """One test call in flight: the child, where it writes, why it ran."""
 
-    Never a map replace: a ``command``-adapter (custom, CLI-only) entry is
-    left byte-identical; a native entry updates only its four tuning fields
-    and keeps its ``command``; a native entry that does not exist yet is
-    created with the adapter's default executable; native entries the desired
-    map does not mention are untouched. Workspace replaces its three fields
-    and keeps the strategy.
-    """
-    result = dict(document)
-    existing = result.get("agent_platforms")
-    platforms: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
-    for name, entry in (desired.get("platforms") or {}).items():
-        current = platforms.get(name)
-        if isinstance(current, dict) and str(current.get("adapter") or name) == "command":
-            continue
-        if not isinstance(current, dict):
-            current = {
-                "adapter": name,
-                "command": [DEFAULT_PLATFORM_EXECUTABLES[name]],
-                "enabled": False,
-            }
-        updated = dict(current)
-        for field in ("enabled", "model", "effort", "parallelism"):
-            if field in entry:
-                if field in ("model", "effort") and not entry[field]:
-                    updated.pop(field, None)
-                else:
-                    updated[field] = entry[field]
-        platforms[name] = updated
-    if "platforms" in desired:
-        result["agent_platforms"] = platforms
-    if "workspace" in desired:
-        current_workspace = result.get("agent_workspace")
-        workspace = (
-            dict(current_workspace) if isinstance(current_workspace, dict) else {}
-        )
-        for field in ("repository", "root", "base_ref"):
-            if field in desired["workspace"]:
-                value = desired["workspace"][field]
-                if value:
-                    workspace[field] = value
-                else:
-                    workspace.pop(field, None)
-        workspace["strategy"] = "git_worktree"
-        result["agent_workspace"] = workspace
-    return result
+    platform: Platform
+    host_session: HostSession
+    started_at: float
+    root: Path
+    stdout_path: Path
+    stderr_path: Path
+    nonce: str = ""
+    why: str = ""
 
 
-def load_workspace_settings(
-    config_path: Path, *, default_repository: Path | None = None
-) -> WorkspaceSettings:
+def _iso(timestamp: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp))
+
+
+def _read_tail(path: Path, *, limit: int) -> str:
     try:
-        document = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        document = {}
-    raw = document.get("agent_workspace") if isinstance(document, dict) else {}
-    if raw is None:
-        raw = {}
-    if not isinstance(raw, dict):
-        raise RunnerError("agent_workspace must be an object")
-    strategy = str(raw.get("strategy") or "git_worktree")
-    if strategy != "git_worktree":
-        raise RunnerError("agent workspaces must use persistent Git worktrees")
-    repository = Path(
-        str(raw.get("repository") or default_repository or Path.cwd())
-    ).expanduser()
-    root = Path(str(raw.get("root") or config_path.parent / "worktrees")).expanduser()
-    return WorkspaceSettings(
-        strategy=strategy,
-        repository=repository,
-        root=root,
-        base_ref=str(raw.get("base_ref") or "HEAD"),
-    )
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(size - limit, 0))
+            return handle.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def _last_line(text: str) -> str:
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    return lines[-1][:240] if lines else ""
 
 
 def _child_environment(
@@ -3248,6 +3495,7 @@ def _run_runner(
             response = runner.report_presence()
             runner.apply_desired(response)
             runner.reconcile()
+            runner.advance_smoke()
             runner.advance_ready()
             runner.fill_available_slots()
         except RunnerCredentialError:

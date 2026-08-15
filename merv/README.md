@@ -173,6 +173,15 @@ consolidation worktrees remain recoverable. The private bare clone has no
 remotes and never pushes into the user's repository. Worktrees isolate Git
 changes, not same-user filesystem access; use an OS sandbox for hostile agents.
 
+Provider sign-in (`codex login`, signing in to `claude`, a provider API key)
+happens once on the machine, as the user that runs the runner; Merv never
+holds it. The runner notices a sign-in signal, runs one small test call
+through each enabled agent (first run, when an agent is enabled, or on
+**Test** in the page) — a real turn that calls Merv's `project` tool and
+answers with the project id — and reads a dead child's stderr for the
+provider's own refusal, so the page's per-agent ladder (installed → signed in
+→ Merv skills → test call) says what to run on which machine.
+
 The Auto-run page (each machine's drawer) edits a paired runner's tuning
 through the brain:
 which native platforms are enabled, their model, effort, and parallelism, and
