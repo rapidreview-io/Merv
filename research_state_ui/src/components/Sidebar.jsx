@@ -181,30 +181,24 @@ export default function Sidebar({ onHide }) {
           )}
         </NavLink>
         {/* Auto-run lives under Settings, but its live state belongs in the
-            nav: running jobs and whether a paired machine is currently up. */}
+            nav — same grammar as Sandboxes: the pulsing light plus how many
+            runners are live right now. No live runner, no light. */}
         <NavLink
           to={px('/settings?tab=auto')}
           className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}
-          title={autorun.known
-            ? (autorun.liveRunnerCount
-              ? `${autorun.machineName} is live · ${autorun.running} running`
-              : (autorun.runnerCount ? `${autorun.state} · ${autorun.machineName}` : 'No runner paired yet'))
+          title={autorun.liveRunnerCount > 0
+            ? `${autorun.liveRunnerCount} live runner${autorun.liveRunnerCount === 1 ? '' : 's'} · ${autorun.running} running`
             : 'Auto-run'}
         >
           <span>Auto-run</span>
-          {autorun.running > 0 ? (
-            <span className="sidebar-link-count sidebar-link-count--live" title={`${autorun.running} running`}>
-              <span className="sidebar-live-dot" />{autorun.running}
+          {autorun.liveRunnerCount > 0 && (
+            <span
+              className="sidebar-link-count sidebar-link-count--live"
+              title={`${autorun.liveRunnerCount} live runner${autorun.liveRunnerCount === 1 ? '' : 's'}`}
+            >
+              <span className="sidebar-live-dot" />{autorun.liveRunnerCount}
             </span>
-          ) : autorun.liveRunnerCount > 0 ? (
-            <span className="sidebar-link-count sidebar-link-count--ready" title={`${autorun.machineName} is live`}>
-              <span className="sidebar-live-dot sidebar-live-dot--ready" />
-            </span>
-          ) : autorun.runnerCount > 0 ? (
-            <span className="sidebar-link-count sidebar-link-count--off" title={`${autorun.state} · ${autorun.machineName}`}>
-              <span className="sidebar-live-dot sidebar-live-dot--off" />
-            </span>
-          ) : null}
+          )}
         </NavLink>
 
         {/* Projects intentionally has no link here — scope switching lives in

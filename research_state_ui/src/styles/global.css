@@ -3540,13 +3540,6 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   margin-left: 10px; font-size: var(--text-xs); font-weight: 500;
   color: var(--qualifies); text-transform: none; letter-spacing: 0;
 }
-/* Auto-run nav state when nothing is running: a live paired machine (steady
-   green) or a paired machine that is not responding (muted). */
-.sidebar-link-count--ready,
-.sidebar-link-count--off { display: inline-flex; align-items: center; }
-.sidebar-live-dot--ready { background: var(--supports); animation: none; }
-.sidebar-live-dot--off { background: var(--line); animation: none; }
-
 /* Home: ambient auto-run strip */
 .autorun-strip {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
