@@ -3833,10 +3833,6 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .fig-chip.fig-st--revise  { color: var(--qualifies); border-color: rgba(var(--qualifies-rgb), .35); background: rgba(var(--qualifies-rgb), .08); }
 .fig-chip.fig-st--failed  { color: var(--refutes);   border-color: rgba(var(--refutes-rgb), .35);   background: rgba(var(--refutes-rgb), .07); }
 .fig-chip.fig-st--faded   { color: var(--faint); }
-.fig-legend-sep { width: 1px; height: 14px; background: var(--line); margin: 0 2px; align-self: center; }
-.fig-chip--edge { border-style: dashed; color: var(--muted); }
-.fig-chip--edge-then { border-style: solid; border-color: var(--line-strong); }
-.fig-chip--edge-revised { color: var(--qualifies); border-color: rgba(var(--qualifies-rgb), .6); }
 
 /* The sidebar OVERLAYS the canvas on every graph (see .fig-panel) rather than
    taking a grid track, so the canvas never resizes and react-flow never
