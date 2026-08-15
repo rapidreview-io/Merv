@@ -214,8 +214,8 @@ function toFlow(figure) {
 // Readable framing. Fit everything only when that keeps cards legible;
 // otherwise show the timeline at a readable zoom and anchor the view on the
 // current beat — near the right edge, so what led up to it fills the canvas.
-const FIT_FLOOR = 0.7;
-const READABLE_ZOOM = 0.85;
+const FIT_FLOOR = 0.6;
+const READABLE_ZOOM = 0.7;
 const VIEW_PAD = 28;
 const CURRENT_AT = 0.78; // current card's right edge, as a fraction of canvas width
 const SPINE_AT = 0.5;    // backbone row, as a fraction of canvas height, when the graph is taller than the canvas
