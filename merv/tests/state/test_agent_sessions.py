@@ -8,7 +8,7 @@ from pathlib import Path
 from merv.brain.agent_sessions import AgentSessions
 from merv.brain.kernel.secret_tokens import hash_secret
 from merv.brain.kernel.state import StateStore
-from merv.brain.kernel.utils import PermissionDeniedError, ValidationError, now_iso
+from merv.brain.kernel.utils import NotFoundError, PermissionDeniedError, ValidationError, now_iso
 
 
 class AgentSessionsTest(unittest.TestCase):
@@ -363,7 +363,7 @@ class AgentSessionsTest(unittest.TestCase):
             )
 
     def test_idle_runner_presence_names_the_live_machine(self) -> None:
-        presence = self.sessions.heartbeat_runner(
+        response = self.sessions.heartbeat_runner(
             project_id="proj_1",
             runner_id="runner",
             machine={
@@ -378,20 +378,136 @@ class AgentSessionsTest(unittest.TestCase):
                     "harness": "codex",
                     "model": "gpt-5.6-sol",
                     "parallelism": 2,
+                    "enabled": True,
+                    "managed": True,
                     "command": ["must", "not", "leave"],
                 }
             ],
             capacity=2,
+            inventory={
+                "workspace": {"repository": "/repo", "root": "/repo-worktrees"},
+                "available_commands": {"codex": True, "claude": False},
+                "local_sessions": {"running": 0, "uncertain": 0},
+                "secret": "discard me too",
+            },
+            applied_version=0,
         )
 
+        presence = response["presence"]
         self.assertTrue(presence["live"])
+        self.assertNotIn("runner_id", presence)
+        self.assertEqual(len(presence["runner_ref"]), 24)
         self.assertEqual(presence["machine"]["hostname"], "research-mac")
         self.assertNotIn("secret", presence["machine"])
         self.assertEqual(presence["capacity"], 2)
-        self.assertEqual(
-            self.sessions.list(project_id="proj_1")["runner"], presence
-        )
+        self.assertEqual(presence["inventory"]["available_commands"], {"claude": False, "codex": True})
+        self.assertNotIn("secret", presence["inventory"])
+        self.assertEqual(response["desired_version"], 0)
+        self.assertEqual(response["desired_settings"], {})
+        listing = self.sessions.list(project_id="proj_1")
+        self.assertEqual(listing["runner"], presence)
+        self.assertEqual(listing["runners"], [presence])
         self.assertNotIn("command", presence["platforms"][0])
+        self.assertTrue(presence["platforms"][0]["enabled"])
+        self.assertTrue(presence["platforms"][0]["managed"])
+
+    def test_heartbeat_response_is_scoped_to_the_calling_runner(self) -> None:
+        refs = {}
+        for runner_id in ("runner-a", "runner-b"):
+            refs[runner_id] = self.sessions.heartbeat_runner(
+                project_id="proj_1",
+                runner_id=runner_id,
+                machine={"hostname": runner_id},
+                platforms=[],
+                capacity=0,
+            )["presence"]["runner_ref"]
+        self.assertNotEqual(refs["runner-a"], refs["runner-b"])
+        saved = self.sessions.set_desired_settings(
+            project_id="proj_1",
+            runner_ref=refs["runner-a"],
+            settings={
+                "platforms": {"claude": {"enabled": True, "model": "opus", "parallelism": 2}},
+                "workspace": {"repository": "/Users/me/repo", "root": "/Users/me/repo-worktrees", "base_ref": "main"},
+            },
+        )
+        self.assertEqual(saved["desired_version"], 1)
+        self.assertTrue(saved["settings_pending"])
+
+        # runner-b heartbeated most recently, but runner-a still gets its own row.
+        response = self.sessions.heartbeat_runner(
+            project_id="proj_1",
+            runner_id="runner-a",
+            machine={"hostname": "runner-a"},
+            platforms=[],
+            capacity=0,
+            applied_version=1,
+        )
+        self.assertEqual(response["presence"]["runner_ref"], refs["runner-a"])
+        self.assertEqual(response["presence"]["machine"]["hostname"], "runner-a")
+        self.assertEqual(response["desired_version"], 1)
+        self.assertEqual(response["desired_settings"]["platforms"]["claude"]["model"], "opus")
+        self.assertFalse(response["presence"]["settings_pending"])
+        other = self.sessions.heartbeat_runner(
+            project_id="proj_1",
+            runner_id="runner-b",
+            machine={"hostname": "runner-b"},
+            platforms=[],
+            capacity=0,
+        )
+        self.assertEqual(other["desired_version"], 0)
+        listed = self.sessions.list(project_id="proj_1")["runners"]
+        self.assertEqual({item["runner_ref"] for item in listed}, set(refs.values()))
+        self.assertTrue(all("runner_id" not in item for item in listed))
+
+        with self.assertRaises(ValidationError):
+            self.sessions.set_desired_settings(
+                project_id="proj_1",
+                runner_ref=refs["runner-a"],
+                settings={"platforms": {"claude": {"command": ["evil"]}}},
+            )
+        with self.assertRaises(ValidationError):
+            self.sessions.set_desired_settings(
+                project_id="proj_1",
+                runner_ref=refs["runner-a"],
+                settings={"platforms": {"agent-1": {"enabled": True}}},
+            )
+        with self.assertRaises(NotFoundError):
+            self.sessions.set_desired_settings(
+                project_id="proj_1", runner_ref="0" * 24, settings={}
+            )
+
+    def test_halt_session_closes_exactly_one_live_row(self) -> None:
+        first = self.claim()
+        with self.store.transaction() as tx:
+            tx.execute(
+                """
+                INSERT INTO experiments (
+                  id, project_id, name, intent, status, attempt_index,
+                  created_at, updated_at
+                )
+                VALUES ('exp_2', 'proj_1', 'Second', 'Test it',
+                        'planned', 1, ?, ?)
+                """,
+                (now_iso(), now_iso()),
+            )
+        second = self.sessions.claim(
+            project_id="proj_1",
+            candidates=[{"id": "exp_2", "status": "planned", "attempt_index": 1, "kind": "experiment"}],
+            runner_id="runner",
+            platform="codex",
+            idempotency_key="second",
+            session_secret="mas_" + "b" * 60,
+        )
+        halted = self.sessions.halt_session(project_id="proj_1", session_id=first["id"])
+        self.assertEqual(halted["status"], "expired")
+        self.assertEqual(halted["close_reason"], "halted_by_user")
+        remaining = {
+            item["id"]: item["status"]
+            for item in self.sessions.list(project_id="proj_1")["sessions"]
+        }
+        self.assertEqual(remaining[second["id"]], "offered")
+        with self.assertRaises(NotFoundError):
+            self.sessions.halt_session(project_id="proj_1", session_id="ags_missing")
 
     def test_heartbeat_rejects_an_offer_until_the_agent_authenticates(self) -> None:
         session = self.claim()

@@ -154,6 +154,10 @@ FILE_LAYERS = {
     "surface/surface.py": BOOTSTRAP,
     "surface/telemetry.py": DELIVERY,
     "surface/project_keys.py": APPLICATION_LAYER,
+    # Device-code runner pairing: the sibling of project_keys.py that registers
+    # a runner-presented key digest inside its own exchange transaction. Its
+    # transport router stays DELIVERY and receives the built component.
+    "surface/runner_pairing.py": APPLICATION_LAYER,
     "surface/oauth.py": APPLICATION_LAYER,
     "surface/oauth_store.py": ADAPTER,
     # Write-only per-user HF-token facade over the KERNEL-owned user_hf_tokens
@@ -200,6 +204,11 @@ TABLE_OWNERS = {
     # (sandbox_providers.py) is the only writer, provisioning the only reader.
     "sandbox_provider_settings": KERNEL,
     "project_api_keys": SURFACE,
+    # Device-code runner pairing: the surface registers a runner-presented key
+    # digest as a project key, so it owns the exchange rows and the approval
+    # miss counter the same way it owns project_api_keys.
+    "agent_runner_pairings": SURFACE,
+    "agent_runner_pairing_attempts": SURFACE,
     "oauth_clients": SURFACE,
     "oauth_authorization_codes": SURFACE,
     "oauth_refresh_tokens": SURFACE,
@@ -249,6 +258,8 @@ TABLE_OWNERS = {
     "feed_upload_tokens": FEED,
     "agent_sessions": AGENT_SESSIONS,
     "experiment_workspaces": AGENT_SESSIONS,
+    # Idle-runner presence plus brain-held desired tuning and runner inventory.
+    "agent_runners": AGENT_SESSIONS,
     "consolidation_proposals": RESEARCH_CORE,
     "consolidation_decisions": RESEARCH_CORE,
     "reflection_advances": RESEARCH_CORE,

@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, Response
 from .... import __version__
 from ....kernel.secret_tokens import MIN_WAIT_SECRET_BYTES
 from ...auth import require_hosted_auth_decision
+from ...runner_pairing import RunnerPairings
 from ..feed_http import register_feed_routes
 from ..http_policy import HttpSurfacePolicy
 from ..mcp_http import register_mcp_routes
@@ -60,6 +61,7 @@ def create_fastapi_app(
     oauth_resource_uri: str = "",
     wait_secret: bytes | None = None,
     env: Mapping[str, str] | None = None,
+    runner_pairings: RunnerPairings | None = None,
 ) -> FastAPI:
     """Compose transport adapters around an already-built backend."""
     if app is None:
@@ -112,6 +114,8 @@ def create_fastapi_app(
         http,
         verifier=auth,
         tracking_enabled=api.application.tracking_enabled,
+        runner_pairings=runner_pairings,
+        gateway=gateway,
     )
     oauth.install_routes(
         http,

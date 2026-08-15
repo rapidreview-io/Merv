@@ -18,6 +18,7 @@ from ..kernel.utils import (
     new_id,
     parse_iso,
 )
+from merv.shared.runner_settings import RunnerSettingsError, validate_desired_settings
 
 
 AGENT_SESSION_SECRET_PREFIX = "mas_"
@@ -474,8 +475,17 @@ class AgentSessions:
         machine: Mapping[str, Any],
         platforms: Iterable[Mapping[str, Any]],
         capacity: int,
+        inventory: Mapping[str, Any] | None = None,
+        applied_version: int | None = None,
     ) -> dict[str, Any]:
-        """Remember a polling runner without exposing credentials or commands."""
+        """Remember a polling runner and hand back its own desired tuning.
+
+        Nothing secret travels either way: the runner reports machine identity,
+        its platform inventory (enabled or not, native or CLI-only), workspace
+        paths, resolvable executables, and which settings version it has
+        applied; the brain answers with that runner's own row and the desired
+        settings an owner saved. Executable argv never appears in either.
+        """
         runner_id = _required(runner_id, "runner_id", limit=240)
         machine_payload = {
             name: str(machine.get(name) or "").strip()[:240]
@@ -494,6 +504,9 @@ class AgentSessions:
             parallelism = item.get("parallelism")
             if isinstance(parallelism, int) and not isinstance(parallelism, bool):
                 projected["parallelism"] = max(parallelism, 0)
+            for flag in ("enabled", "managed"):
+                if isinstance(item.get(flag), bool):
+                    projected[flag] = item[flag]
             platform_items.append(projected)
         encoded_machine = _bounded_json_object(
             machine_payload,
@@ -505,6 +518,16 @@ class AgentSessions:
             field="platforms",
             limit=MAX_RUNNER_PRESENCE_BYTES,
         )
+        encoded_inventory = _bounded_json_object(
+            _inventory_projection(inventory),
+            field="inventory",
+            limit=MAX_RUNNER_PRESENCE_BYTES,
+        )
+        applied = (
+            max(int(applied_version), 0)
+            if isinstance(applied_version, int) and not isinstance(applied_version, bool)
+            else None
+        )
         now = format_iso(datetime.now(UTC))
         with self.store.transaction() as tx:
             self.store.require_project_id(conn=tx, project_id=project_id)
@@ -512,14 +535,16 @@ class AgentSessions:
                 """
                 INSERT INTO agent_runners (
                   project_id, runner_id, machine_json, platforms_json,
-                  capacity, started_at, last_seen_at
+                  capacity, started_at, last_seen_at, inventory_json, applied_version
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (project_id, runner_id) DO UPDATE SET
                   machine_json = excluded.machine_json,
                   platforms_json = excluded.platforms_json,
                   capacity = excluded.capacity,
-                  last_seen_at = excluded.last_seen_at
+                  last_seen_at = excluded.last_seen_at,
+                  inventory_json = excluded.inventory_json,
+                  applied_version = COALESCE(?, agent_runners.applied_version)
                 """,
                 (
                     project_id,
@@ -529,9 +554,61 @@ class AgentSessions:
                     max(int(capacity), 0),
                     now,
                     now,
+                    encoded_inventory,
+                    applied if applied is not None else 0,
+                    applied,
                 ),
             )
-            return self._runner_presence(tx=tx, project_id=project_id) or {}
+            own = self.runner_row(tx=tx, project_id=project_id, runner_id=runner_id) or {}
+            return {
+                "presence": own,
+                "desired_version": int(own.get("desired_version") or 0),
+                "desired_settings": own.get("desired_settings") or {},
+            }
+
+    def set_desired_settings(
+        self, *, project_id: str, runner_ref: str, settings: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Store what an owner wants a paired runner to apply; bump the version.
+
+        The browser names the runner by its opaque ``runner_ref``; only a
+        runner that has heartbeated at least once has a row, and the browser
+        only ever offers the runners it can see.
+        """
+        ref = _required(runner_ref, "runner_ref", limit=64)
+        try:
+            desired = validate_desired_settings(settings)
+        except RunnerSettingsError as exc:
+            raise ValidationError(str(exc), details={"field": "settings"}) from exc
+        encoded = _bounded_json_object(
+            desired, field="settings", limit=MAX_RUNNER_PRESENCE_BYTES
+        )
+        with self.store.transaction() as tx:
+            self.store.require_project_id(conn=tx, project_id=project_id)
+            runner_id = next(
+                (
+                    str(row["runner_id"])
+                    for row in tx.execute(
+                        "SELECT runner_id FROM agent_runners WHERE project_id = ?",
+                        (project_id,),
+                    ).fetchall()
+                    if runner_ref_matches(
+                        project_id=project_id, runner_id=str(row["runner_id"]), ref=ref
+                    )
+                ),
+                None,
+            )
+            if runner_id is None:
+                raise NotFoundError("runner not found")
+            tx.execute(
+                """
+                UPDATE agent_runners
+                SET desired_settings_json = ?, desired_version = desired_version + 1
+                WHERE project_id = ? AND runner_id = ?
+                """,
+                (encoded, project_id, runner_id),
+            )
+            return self.runner_row(tx=tx, project_id=project_id, runner_id=runner_id) or {}
 
     def list(self, *, project_id: str) -> dict[str, Any]:
         with self.store.transaction() as tx:
@@ -558,43 +635,48 @@ class AgentSessions:
                 """,
                 (project_id,),
             ).fetchall()
+            runners = self.list_runners(tx=tx, project_id=project_id, now=now)
             return {
                 "sessions": [_public_row(row) for row in rows],
-                "runner": self._runner_presence(
-                    tx=tx, project_id=project_id, now=now
-                ),
+                # Every machine that has heartbeated for this project, most
+                # recently seen first. ``runner`` keeps the pre-existing
+                # single-row shape for one release.
+                "runners": runners,
+                "runner": runners[0] if runners else None,
             }
 
-    @staticmethod
-    def _runner_presence(
-        *, tx: Any, project_id: str, now: datetime | None = None
+    def runner_row(
+        self,
+        *,
+        project_id: str,
+        runner_id: str,
+        tx: Any | None = None,
+        now: datetime | None = None,
     ) -> dict[str, Any] | None:
-        row = tx.execute(
-            """
-            SELECT machine_json, platforms_json, capacity, started_at, last_seen_at
-            FROM agent_runners
-            WHERE project_id = ?
-            ORDER BY last_seen_at DESC
-            LIMIT 1
-            """,
-            (project_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        seen = parse_iso(row["last_seen_at"])
-        current = now or datetime.now(UTC)
-        platforms = _json_column(row["platforms_json"]).get("items")
-        return {
-            "machine": _json_column(row["machine_json"]),
-            "platforms": platforms if isinstance(platforms, list) else [],
-            "capacity": max(int(row["capacity"] or 0), 0),
-            "started_at": str(row["started_at"]),
-            "last_seen_at": str(row["last_seen_at"]),
-            "live": bool(
-                seen is not None
-                and (current - seen).total_seconds() <= RUNNER_LIVE_SECONDS
-            ),
-        }
+        """One caller-scoped runner row, or None before its first heartbeat."""
+        if tx is None:
+            with closing(self.store.connect()) as conn:
+                row = conn.execute(
+                    f"{_RUNNER_SELECT} WHERE project_id = ? AND runner_id = ?",
+                    (project_id, runner_id),
+                ).fetchone()
+        else:
+            row = tx.execute(
+                f"{_RUNNER_SELECT} WHERE project_id = ? AND runner_id = ?",
+                (project_id, runner_id),
+            ).fetchone()
+        return None if row is None else _runner_view(row, now=now)
+
+    def list_runners(
+        self, *, project_id: str, tx: Any | None = None, now: datetime | None = None
+    ) -> list[dict[str, Any]]:
+        sql = f"{_RUNNER_SELECT} WHERE project_id = ? ORDER BY last_seen_at DESC, runner_id"
+        if tx is None:
+            with closing(self.store.connect()) as conn:
+                rows = conn.execute(sql, (project_id,)).fetchall()
+        else:
+            rows = tx.execute(sql, (project_id,)).fetchall()
+        return [_runner_view(row, now=now) for row in rows]
 
     @staticmethod
     def _record_observability(
@@ -698,6 +780,23 @@ class AgentSessions:
             for row in rows:
                 self._close(tx=tx, row=row, now=now, reason=reason[:200])
             return len(rows)
+
+    def halt_session(
+        self, *, project_id: str, session_id: str, reason: str = "halted_by_user"
+    ) -> dict[str, Any]:
+        """Close exactly one live session; the owning runner stops its child."""
+        now = datetime.now(UTC)
+        with self.store.transaction() as tx:
+            self.store.require_project_id(conn=tx, project_id=project_id)
+            row = tx.execute(
+                "SELECT * FROM agent_sessions WHERE id = ? AND project_id = ?",
+                (session_id, project_id),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError(f"agent session not found: {session_id}")
+            if str(row["status"]) in LIVE_STATUSES:
+                self._close(tx=tx, row=row, now=now, reason=reason[:200])
+            return self._find(tx=tx, session_id=session_id)
 
     def invalidate(self, *, session_id: str, reason: str) -> None:
         """Close a credential when Surface detects lost parent authority."""
@@ -1040,6 +1139,94 @@ def _json_column(value: Any) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+_RUNNER_SELECT = """
+SELECT project_id, runner_id, machine_json, platforms_json, capacity, started_at,
+       last_seen_at, desired_settings_json, desired_version, applied_version,
+       inventory_json
+FROM agent_runners
+"""
+
+
+def runner_ref(*, project_id: str, runner_id: str) -> str:
+    """Opaque, stable browser handle for a runner row.
+
+    Runner identity itself (the principal-prefixed machine id) stays private to
+    the runner and the brain; the browser addresses settings by this digest.
+    """
+    return hash_secret(f"merv-runner-ref:{project_id}:{runner_id}")[:24]
+
+
+def runner_ref_matches(*, project_id: str, runner_id: str, ref: str) -> bool:
+    return secret_digest_matches(
+        stored_digest=runner_ref(project_id=project_id, runner_id=runner_id),
+        presented_digest=ref,
+    )
+
+
+def _runner_view(row: Any, *, now: datetime | None = None) -> dict[str, Any]:
+    """The non-secret runner row the browser and the runner itself both see."""
+    seen = parse_iso(row["last_seen_at"])
+    current = now or datetime.now(UTC)
+    platforms = _json_column(row["platforms_json"]).get("items")
+    desired_version = int(row["desired_version"] or 0)
+    applied_version = int(row["applied_version"] or 0)
+    return {
+        "runner_ref": runner_ref(
+            project_id=str(row["project_id"]), runner_id=str(row["runner_id"])
+        ),
+        "machine": _json_column(row["machine_json"]),
+        "platforms": platforms if isinstance(platforms, list) else [],
+        "capacity": max(int(row["capacity"] or 0), 0),
+        "started_at": str(row["started_at"]),
+        "last_seen_at": str(row["last_seen_at"]),
+        "live": bool(
+            seen is not None and (current - seen).total_seconds() <= RUNNER_LIVE_SECONDS
+        ),
+        "desired_settings": _json_column(row["desired_settings_json"]),
+        "desired_version": desired_version,
+        "applied_version": applied_version,
+        "settings_pending": applied_version < desired_version,
+        "inventory": _json_column(row["inventory_json"]),
+    }
+
+
+def _inventory_projection(value: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Keep the runner's non-secret self-report; drop anything unexpected."""
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    workspace = value.get("workspace")
+    if isinstance(workspace, Mapping):
+        result["workspace"] = {
+            name: str(workspace.get(name) or "").strip()[:1024]
+            for name in ("repository", "root", "base_ref")
+            if str(workspace.get(name) or "").strip()
+        }
+    commands = value.get("available_commands")
+    if isinstance(commands, Mapping):
+        result["available_commands"] = {
+            str(name)[:80]: bool(flag)
+            for name, flag in sorted(commands.items())[:64]
+            if str(name).strip()
+        }
+    local_sessions = value.get("local_sessions")
+    if isinstance(local_sessions, Mapping):
+        result["local_sessions"] = {
+            name: max(int(local_sessions[name]), 0)
+            for name in ("running", "uncertain")
+            if isinstance(local_sessions.get(name), int)
+            and not isinstance(local_sessions.get(name), bool)
+        }
+    pending = value.get("pending")
+    if isinstance(pending, Mapping) and str(pending.get("reason") or "").strip():
+        result["pending"] = {"reason": str(pending["reason"]).strip()[:240]}
+    for name in ("settings_error", "runner_version"):
+        raw = value.get(name)
+        if isinstance(raw, str) and raw.strip():
+            result[name] = raw.strip()[:240]
+    return result
 
 
 def _fallback_assignment(result: Mapping[str, Any]) -> dict[str, Any]:

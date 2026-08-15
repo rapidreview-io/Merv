@@ -21,7 +21,13 @@ from merv.shared.errors import TrackingPersistenceError
 
 from ....kernel.request_context import begin_request, reset_request
 from ....kernel.state import monotonic_ms
-from ....kernel.utils import ContentUnavailableError, NotFoundError, ResearchPluginError
+from ....kernel.utils import (
+    ContentUnavailableError,
+    GoneError,
+    NotFoundError,
+    ResearchPluginError,
+    ThrottledError,
+)
 from ...identity import (
     HumanSessionRequiredError,
     ProjectKeyScopeError,
@@ -88,6 +94,10 @@ def install_error_handlers(http: FastAPI) -> None:
             )
             else 404
             if isinstance(exc, (NotFoundError, ContentUnavailableError))
+            else 410
+            if isinstance(exc, GoneError)
+            else 429
+            if isinstance(exc, ThrottledError)
             # The request was valid and its transition committed; only the
             # server's own durable record failed. The message and error_code
             # still carry the do-not-retry instruction verbatim.

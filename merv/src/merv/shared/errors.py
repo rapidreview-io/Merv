@@ -36,6 +36,18 @@ class ContentUnavailableError(ResearchPluginError):
     error_code = "content_unavailable"
 
 
+class GoneError(ResearchPluginError):
+    """A short-lived resource existed but can no longer be used (HTTP 410)."""
+
+    error_code = "gone"
+
+
+class ThrottledError(ResearchPluginError):
+    """The caller exceeded a rate limit and must back off (HTTP 429)."""
+
+    error_code = "throttled"
+
+
 class TrackingPersistenceError(ResearchPluginError):
     """A committed state change whose tracking outcome never reached the DB.
 

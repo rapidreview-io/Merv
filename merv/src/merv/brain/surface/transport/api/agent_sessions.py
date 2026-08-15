@@ -220,6 +220,14 @@ def build_router(
             raise ValidationError(
                 "capacity must be an integer", details={"field": "capacity"}
             )
+        applied_version = payload.get("applied_version")
+        if applied_version is not None and (
+            not isinstance(applied_version, int) or isinstance(applied_version, bool)
+        ):
+            raise ValidationError(
+                "applied_version must be an integer",
+                details={"field": "applied_version"},
+            )
         return application.heartbeat_agent_runner(
             project_id=project_id,
             runner_id=owner(request, payload),
@@ -234,7 +242,48 @@ def build_router(
                 else []
             ),
             capacity=capacity,
+            inventory=(
+                payload.get("inventory")
+                if isinstance(payload.get("inventory"), dict)
+                else None
+            ),
+            applied_version=applied_version,
         )
+
+    @router.put("/api/projects/{project_id}/agent-runners/settings")
+    def set_runner_settings(
+        project_id: str, request: Request, body: JsonBody = Body(default=None)
+    ) -> dict[str, Any]:
+        """Owner-side tuning for one paired runner, addressed by ``runner_ref``.
+
+        The runner is named in the body because its opaque ref is the only
+        browser-visible identity; the closed schema is validated again here so
+        no executable argv can be stored even by a hand-built request.
+        """
+        payload = dict(body or {})
+        gateway.authorize_project(request, project_id)
+        principal = getattr(request.state, "principal", LOCAL_PRINCIPAL)
+        if getattr(principal, "agent_session_id", None) or getattr(
+            principal, "key_id", None
+        ):
+            raise PermissionDeniedError(
+                "runner settings are saved from the browser, not by a runner or agent"
+            )
+        settings = payload.get("settings")
+        if not isinstance(settings, dict):
+            raise ValidationError(
+                "settings must be an object", details={"field": "settings"}
+            )
+        return application.set_agent_runner_settings(
+            project_id=project_id,
+            runner_ref=str(payload.get("runner_ref") or ""),
+            settings=settings,
+        )
+
+    @router.post("/api/projects/{project_id}/agent-sessions/{session_id}/halt")
+    def halt_session(project_id: str, session_id: str, request: Request) -> dict[str, Any]:
+        gateway.authorize_project(request, project_id)
+        return application.halt_agent_session(project_id=project_id, session_id=session_id)
 
     @router.post("/api/projects/{project_id}/agent-sessions/halt")
     def halt_sessions(project_id: str, request: Request) -> dict[str, Any]:

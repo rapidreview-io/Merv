@@ -53,7 +53,8 @@ from .shared import (
     operator_membership_recovery,
 )
 from .views import present
-from . import oauth, project_keys
+from . import oauth, project_keys, runner_pairing
+from ...runner_pairing import RunnerPairings
 
 
 @dataclass(frozen=True)
@@ -74,12 +75,15 @@ class RequestAuthenticator:
         request.state.authenticated = False
         path = request.url.path
         # Token-bearer routes carry their own credential (INV-12), /wait/ too.
+        # Runner pairing is unauthenticated by construction: the runner has no
+        # credential yet, and it polls with the device code it alone holds.
         exempt = (
             "/api/artifacts/u/",
             "/api/artifacts/f/",
             "/api/feed/u/",
             "/api/storage/u/",
             "/wait/",
+            runner_pairing.PAIRING_PUBLIC_PREFIX,
         )
         if (
             path in ("/health", "/api/meta", "/internal/auth/mlflow")
@@ -815,6 +819,8 @@ def install_auth_routes(
     *,
     verifier: Any | None,
     tracking_enabled: bool = False,
+    runner_pairings: RunnerPairings | None = None,
+    gateway: "ToolInvocationGateway | None" = None,
 ) -> None:
     if verifier is None:
         return
@@ -822,6 +828,14 @@ def install_auth_routes(
         http.include_router(
             project_keys.build_router(keys=verifier.project_keys)
         )
+        # Runner pairing registers a key from a runner-presented digest, so it
+        # exists exactly where owner key management exists (hosted auth) and
+        # nowhere else; the loopback brain needs no runner credential at all.
+        # The component is built by the composition root, never here.
+        if runner_pairings is not None and gateway is not None:
+            http.include_router(
+                runner_pairing.build_router(pairings=runner_pairings, gateway=gateway)
+            )
 
     if tracking_enabled:
 

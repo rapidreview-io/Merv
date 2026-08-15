@@ -548,14 +548,38 @@ class Application:
         machine: dict[str, Any],
         platforms: list[dict[str, Any]],
         capacity: int,
+        inventory: dict[str, Any] | None = None,
+        applied_version: int | None = None,
     ) -> dict[str, Any]:
+        """Record presence and answer with the caller's own desired tuning."""
+        response = self.agent_sessions.heartbeat_runner(
+            project_id=project_id,
+            runner_id=runner_id,
+            machine=machine,
+            platforms=platforms,
+            capacity=capacity,
+            inventory=inventory,
+            applied_version=applied_version,
+        )
+        # ``runner`` keeps the pre-existing key for one release; the caller's own
+        # row, the desired version, and the desired settings are the contract.
+        return {"runner": response["presence"], **response}
+
+    def set_agent_runner_settings(
+        self, *, project_id: str, runner_ref: str, settings: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Owner saves runner tuning; the runner pulls it on its next heartbeat."""
         return {
-            "runner": self.agent_sessions.heartbeat_runner(
-                project_id=project_id,
-                runner_id=runner_id,
-                machine=machine,
-                platforms=platforms,
-                capacity=capacity,
+            "runner": self.agent_sessions.set_desired_settings(
+                project_id=project_id, runner_ref=runner_ref, settings=settings
+            )
+        }
+
+    def halt_agent_session(self, *, project_id: str, session_id: str) -> dict[str, Any]:
+        """Stop one live session now; its runner kills the child on reconcile."""
+        return {
+            "session": self.agent_sessions.halt_session(
+                project_id=project_id, session_id=session_id
             )
         }
 

@@ -119,6 +119,9 @@ CREATE TABLE IF NOT EXISTS project_api_keys (
   parent_key_id TEXT,
   sandbox_seconds_ceiling BIGINT CHECK (sandbox_seconds_ceiling IS NULL OR sandbox_seconds_ceiling >= 0),
   blob_bytes_ceiling BIGINT CHECK (blob_bytes_ceiling IS NULL OR blob_bytes_ceiling >= 0),
+  -- Optional human-readable name (e.g. "auto-run · lucia.local") so an owner
+  -- can tell which key belongs to which paired runner machine. Never secret.
+  label TEXT,
   FOREIGN KEY(project_id) REFERENCES projects(id),
   FOREIGN KEY(parent_key_id) REFERENCES project_api_keys(id)
 );
@@ -273,8 +276,50 @@ CREATE TABLE IF NOT EXISTS agent_runners (
   capacity INTEGER NOT NULL DEFAULT 0,
   started_at TEXT NOT NULL,
   last_seen_at TEXT NOT NULL,
+  -- Brain-held runner tuning (August 2026). desired_* is what the owner asked
+  -- for in Settings; the runner pulls it on its heartbeat, applies it to its
+  -- private client.json, and reports applied_version. inventory_json is the
+  -- runner's non-secret report of what it actually has: every configured
+  -- platform (enabled or not, native or CLI-only), workspace paths, which
+  -- executables resolve, local session counts, and any pending/error state.
+  -- The schema is closed and carries no executable argv in either direction.
+  desired_settings_json TEXT NOT NULL DEFAULT '{}',
+  desired_version INTEGER NOT NULL DEFAULT 0,
+  applied_version INTEGER NOT NULL DEFAULT 0,
+  inventory_json TEXT NOT NULL DEFAULT '{}',
   PRIMARY KEY(project_id, runner_id),
   FOREIGN KEY(project_id) REFERENCES projects(id)
+);
+
+-- Device-code pairing of a runner machine to one project (August 2026). The
+-- runner generates its own mk_ key and sends only the digest; approval by a
+-- project owner registers that digest as a project key. The row is the durable
+-- exchange: pending until approved, then readable by the same device code for
+-- a short window so a lost response cannot strand a registered key.
+CREATE TABLE IF NOT EXISTS agent_runner_pairings (
+  id TEXT PRIMARY KEY,
+  device_code_digest TEXT NOT NULL UNIQUE,
+  user_code TEXT NOT NULL UNIQUE,
+  key_digest TEXT NOT NULL UNIQUE,
+  runner_id TEXT NOT NULL,
+  machine_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'consumed', 'expired')),
+  project_id TEXT,
+  key_id TEXT,
+  approved_by TEXT,
+  client_ip TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  approved_at TEXT,
+  consumed_at TEXT,
+  FOREIGN KEY(project_id) REFERENCES projects(id),
+  FOREIGN KEY(key_id) REFERENCES project_api_keys(id)
+);
+
+-- Approval misses per principal, so a project owner cannot spray user codes.
+CREATE TABLE IF NOT EXISTS agent_runner_pairing_attempts (
+  principal TEXT NOT NULL,
+  attempted_at TEXT NOT NULL
 );
 
 -- Durable code identity for an experiment across owner and reviewer sessions.
@@ -1258,7 +1303,30 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     # Idle runner presence (August 2026): one non-secret machine heartbeat lets
     # Auto-run show which executor is ready even before it claims its first job.
     (47, "add_agent_runners", ""),
+    # Brain-mediated runner connection (August 2026): device-code pairing rows
+    # and approval-miss throttle, brain-held per-runner tuning + runner
+    # inventory on agent_runners, and an optional label on project keys so a
+    # paired runner's credential is recognizable. Indexes stay in the handler.
+    (48, "add_agent_runner_pairing", ""),
 )
+
+# Migration 48 indexes — handler-only (they name ladder-added tables/columns).
+AGENT_RUNNER_PAIRING_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_agent_runner_pairings_expiry"
+    "  ON agent_runner_pairings(status, expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_runner_pairings_ip"
+    "  ON agent_runner_pairings(client_ip, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_runner_pairing_attempts_principal"
+    "  ON agent_runner_pairing_attempts(principal, attempted_at)",
+)
+
+# Mirrors the agent_runners SCHEMA block for stores that predate migration 48.
+AGENT_RUNNER_SETTINGS_COLUMNS = {
+    "desired_settings_json": "TEXT NOT NULL DEFAULT '{}'",
+    "desired_version": "INTEGER NOT NULL DEFAULT 0",
+    "applied_version": "INTEGER NOT NULL DEFAULT 0",
+    "inventory_json": "TEXT NOT NULL DEFAULT '{}'",
+}
 
 CANDIDATE_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_project_candidates_order"
@@ -1599,7 +1667,25 @@ class BaseStateStore:
         elif name == "add_agent_runners":
             if not self._has_table(conn=conn, table="agent_runners"):
                 conn.execute(_schema_table_ddl(table="agent_runners"))
+        elif name == "add_agent_runner_pairing":
+            self._add_agent_runner_pairing(conn=conn)
         else:
+            conn.execute(statement)
+
+    def _add_agent_runner_pairing(self, *, conn: Connection) -> None:
+        """Migration 48: device-code pairing, brain-held runner tuning, key label."""
+        for table in ("agent_runner_pairings", "agent_runner_pairing_attempts"):
+            if not self._has_table(conn=conn, table=table):
+                conn.execute(_schema_table_ddl(table=table))
+        if self._has_table(conn=conn, table="agent_runners"):
+            for column, ddl in AGENT_RUNNER_SETTINGS_COLUMNS.items():
+                if not self._has_column(conn=conn, table="agent_runners", column=column):
+                    conn.execute(f"ALTER TABLE agent_runners ADD COLUMN {column} {ddl}")
+        if self._has_table(conn=conn, table="project_api_keys") and not self._has_column(
+            conn=conn, table="project_api_keys", column="label"
+        ):
+            conn.execute("ALTER TABLE project_api_keys ADD COLUMN label TEXT")
+        for statement in AGENT_RUNNER_PAIRING_INDEXES:
             conn.execute(statement)
 
     def _add_agent_session_observability(self, *, conn: Connection) -> None:

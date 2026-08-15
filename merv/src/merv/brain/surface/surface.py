@@ -71,6 +71,7 @@ from .auth import SupabaseVerifier
 from .oauth import OAuthService
 from .oauth_store import SqlOAuthRepository
 from .project_keys import ProjectKeys
+from .runner_pairing import RunnerPairings
 from .telemetry import ControlActivitySink, ControlToolCallSink, StructuredLogger
 from .tools.contracts import TOOL_MANIFEST, available_tool_names
 from .tools.dispatcher import ToolDispatcher
@@ -333,6 +334,10 @@ def build_control_server(
         agent_sessions=app.agent_sessions,
     )
     project_keys = ProjectKeys(store=app._store)
+    # Device-code pairing registers runner-generated key digests; it exists
+    # exactly where owner key management exists (hosted auth), so the loopback
+    # brain, which needs no runner credential, never mounts it.
+    runner_pairings = RunnerPairings(store=app._store, project_keys=project_keys)
     # The fail-closed/open decision (SEC-02) is NOT taken here: it lives in
     # create_fastapi_app, where a hosted-policy app is actually composed, so no
     # composition path can reach an open hosted surface by skipping this
@@ -368,6 +373,7 @@ def build_control_server(
         # handed to an agent would stop verifying.
         wait_secret=load_wait_secret(env=env, require_env=True),
         env=env,
+        runner_pairings=runner_pairings,
     )
     return ControlPlaneServer(
         app=app,

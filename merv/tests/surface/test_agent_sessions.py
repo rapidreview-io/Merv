@@ -280,6 +280,13 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.assertTrue(runner["live"])
         self.assertEqual(runner["machine"]["hostname"], "research-mac")
         self.assertNotIn("runner_id", runner)
+        self.assertEqual(listed.json()["runners"], [runner])
+        self.assertEqual(len(runner["runner_ref"]), 24)
+        # The heartbeat answers with the caller's own row and its desired tuning.
+        body = reported.json()
+        self.assertEqual(body["presence"]["runner_ref"], runner["runner_ref"])
+        self.assertEqual(body["desired_version"], 0)
+        self.assertEqual(body["desired_settings"], {})
 
     def test_merv_dispatches_a_separate_reviewer_session(self) -> None:
         owner_secret = self.secret()

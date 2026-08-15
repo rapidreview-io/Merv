@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from ..kernel.secret_tokens import hash_secret, mint_secret, secret_digest_matches
-from ..kernel.state.store import BaseStateStore, row_to_dict
+from ..kernel.state.store import BaseStateStore, Connection, row_to_dict
 from ..kernel.utils import NotFoundError, ValidationError, new_id, now_iso, parse_iso
 
 PROJECT_KEY_PREFIX = "mk_"
@@ -45,6 +45,12 @@ class ProjectKeyRecord:
     parent_key_id: str | None
     sandbox_seconds_ceiling: int | None
     blob_bytes_ceiling: int | None
+    label: str | None = None
+
+
+# A presented digest must be exactly the stored form ``hash_secret`` produces.
+_DIGEST_HEX_LENGTH = 64
+MAX_LABEL_CHARS = 120
 
 
 class ProjectKeyLookup(Protocol):
@@ -121,6 +127,59 @@ class ProjectKeys:
         if not self._rotate_record(record, revoked_at=now_iso()):
             raise NotFoundError(f"project key not found: {parent_key_id}")
         return {"key": _public_record(record), "secret": secret}
+
+    def register_digest(
+        self,
+        *,
+        conn: Connection,
+        project_id: str,
+        owner_user_id: str,
+        secret_digest: str,
+        label: str | None = None,
+        grant_scope: str = PROJECT_GRANT,
+        expires_at: str | None = None,
+    ) -> ProjectKeyRecord:
+        """Register a key whose secret was generated elsewhere (runner pairing).
+
+        The caller owns the transaction: this executes on ``conn`` so it can
+        compose with the pairing row update instead of opening a nested
+        ``BEGIN IMMEDIATE``. Only the sha256 digest is ever received or stored,
+        exactly like a minted key; the plaintext never touches the brain.
+        """
+        project_id = _required(project_id, field="project_id")
+        owner_user_id = _required(owner_user_id, field="owner_user_id")
+        digest = str(secret_digest or "").strip().lower()
+        if len(digest) != _DIGEST_HEX_LENGTH or any(
+            character not in "0123456789abcdef" for character in digest
+        ):
+            raise ValidationError(
+                "secret_digest must be a sha256 hex digest",
+                details={"field": "secret_digest"},
+            )
+        tenant_row = conn.execute(
+            "SELECT tenant_id FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()
+        if tenant_row is None:
+            raise NotFoundError(f"project not found: {project_id}")
+        record = ProjectKeyRecord(
+            id=new_id(prefix="mkey"),
+            secret_digest=digest,
+            owner_user_id=owner_user_id,
+            tenant_id=str(tenant_row["tenant_id"]),
+            project_id=project_id,
+            grant_scope=_grant_scope(grant_scope),
+            audience=None,
+            oauth_family_id=None,
+            created_at=now_iso(),
+            expires_at=_expiry(expires_at),
+            revoked_at=None,
+            parent_key_id=None,
+            sandbox_seconds_ceiling=None,
+            blob_bytes_ceiling=None,
+            label=_label(label),
+        )
+        conn.execute(_INSERT_SQL, _insert_params(record))
+        return record
 
     def _new_record(
         self,
@@ -388,8 +447,8 @@ _INSERT_SQL = """
 INSERT INTO project_api_keys (
   id, secret_digest, owner_user_id, tenant_id, project_id, grant_scope,
   audience, oauth_family_id, created_at, expires_at, revoked_at, parent_key_id,
-  sandbox_seconds_ceiling, blob_bytes_ceiling
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  sandbox_seconds_ceiling, blob_bytes_ceiling, label
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -409,7 +468,20 @@ def _insert_params(record: ProjectKeyRecord) -> tuple[Any, ...]:
         record.parent_key_id,
         record.sandbox_seconds_ceiling,
         record.blob_bytes_ceiling,
+        record.label,
     )
+
+
+def _label(value: object) -> str | None:
+    text = " ".join(str(value or "").split())
+    if not text:
+        return None
+    if len(text) > MAX_LABEL_CHARS:
+        raise ValidationError(
+            f"label must be at most {MAX_LABEL_CHARS} characters",
+            details={"field": "label"},
+        )
+    return text
 
 
 def _record(row: Any) -> ProjectKeyRecord | None:
@@ -443,6 +515,7 @@ def _record(row: Any) -> ProjectKeyRecord | None:
             if data.get("blob_bytes_ceiling") is not None
             else None
         ),
+        label=str(data["label"]) if data.get("label") else None,
     )
 
 
@@ -452,6 +525,11 @@ def _public_record(record: ProjectKeyRecord) -> dict[str, object]:
     result.pop("audience")
     result.pop("oauth_family_id")
     return result
+
+
+def public_key_record(record: ProjectKeyRecord) -> dict[str, object]:
+    """The non-secret projection other surface components may return."""
+    return _public_record(record)
 
 
 def _grant_scope(value: object) -> str:
