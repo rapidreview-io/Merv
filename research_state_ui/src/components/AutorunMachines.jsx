@@ -153,6 +153,7 @@ function MachineDrawer({ projectId, runner, view, onRunner, now }) {
   const [draft, setDraft] = useState(() => draftFromRunner(runner));
   const [testing, setTesting] = useState('');
   const [testError, setTestError] = useState('');
+  const [probeNonce, setProbeNonce] = useState('');
   const [base, setBase] = useState(() => {
     const seeded = draftFromRunner(runner);
     return draftSignature(seeded.platforms, seeded.workspace);
@@ -223,6 +224,7 @@ function MachineDrawer({ projectId, runner, view, onRunner, now }) {
       const response = await api.putRunnerSettings(projectId, runner.runner_ref, {
         probe: { platform: platformId, nonce },
       });
+      setProbeNonce(nonce);
       if (response?.runner) onRunner?.(response.runner);
     } catch (err) {
       setTestError(err?.message || 'Could not ask the machine to test.');
@@ -231,10 +233,14 @@ function MachineDrawer({ projectId, runner, view, onRunner, now }) {
     }
   }
 
+  const probePending = Boolean(probeNonce)
+    && runner?.desired_settings?.probe?.nonce === probeNonce
+    && Number(runner?.desired_version || 0) > Number(runner?.applied_version || 0);
   const note = (() => {
     if (testError) return testError;
     if (save.busy) return 'Saving…';
     if (dirty) return 'Unsaved changes.';
+    if (probePending) return `Test requested — ${view.machineName} picks it up on its next poll.`;
     if (view.settings) return view.settings;
     if (save.savedVersion && save.applied) return `Applied on ${view.machineName}.`;
     if (save.savedVersion) return `Saved — ${view.machineName} applies it on its next poll.`;
