@@ -23,10 +23,13 @@
  */
 
 export const FIG_NODE_W = 196;
-// Nominal node heights. Spine nodes and satellites render at the same box, so
-// stacked satellites use the real (measured) two-line height to avoid overlap.
+// Nominal node heights. A plain figure card measures 76px; cards that
+// accumulate items (a submission listing its files) pass their own estimate as
+// `h`, and the timeline layout honors it. Legacy layouts keep the older 66px
+// pitch so their spacing is unchanged.
 const FIG_NODE_H = 66;
-const SAT_NODE_H = 76;
+export const FIG_CARD_H = 76;
+const heightOf = (n) => (Number.isFinite(n.h) ? n.h : FIG_CARD_H);
 const GAP_X = 72;
 // Timeline beats can sit closer: no diagonal edges cross the gap.
 const BEAT_GAP_X = 56;
@@ -97,38 +100,36 @@ function layoutTimeline(rawNodes, edges, ids) {
     (n.lane === 'execution' ? col(rankOf(n)).below : col(rankOf(n)).above).push(n);
   }
 
-  // The spine row must clear the tallest evidence stack (and the tallest
-  // multi-node spine column, which straddles the row).
-  const stackH = (count) => (count ? count * SAT_NODE_H + (count - 1) * SAT_GAP + LANE_GAP : 0);
+  // Cards are top-aligned on the spine row (their edge handles sit at a fixed
+  // offset from the top, so a tall accumulating card still reads as one
+  // straight line). The row must clear the tallest evidence stack.
+  const sum = (arr, f) => arr.reduce((acc, n) => acc + f(n), 0);
+  const stackH = (arr) => (arr.length ? sum(arr, heightOf) + (arr.length - 1) * SAT_GAP + LANE_GAP : 0);
   let spineY = 0;
-  for (const c of columns.values()) {
-    const blockH = c.spine.length * FIG_NODE_H + Math.max(0, c.spine.length - 1) * GAP_Y;
-    spineY = Math.max(spineY, Math.max(0, (blockH - FIG_NODE_H) / 2) + stackH(c.above.length));
-  }
+  for (const c of columns.values()) spineY = Math.max(spineY, stackH(c.above));
 
   const nodes = [];
   for (const [r, c] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
     const x = r * (FIG_NODE_W + BEAT_GAP_X);
-    // Spine nodes: one sits on the row; several straddle it (in input order).
-    const blockH = c.spine.length * FIG_NODE_H + Math.max(0, c.spine.length - 1) * GAP_Y;
-    const blockTop = spineY - Math.max(0, (blockH - FIG_NODE_H) / 2);
-    let y = blockTop;
+    // Spine nodes: one sits on the row; several stack down from it (in input order).
+    let y = spineY;
     for (const n of c.spine) {
       nodes.push({ ...n, x, y });
-      y += FIG_NODE_H + GAP_Y;
+      y += heightOf(n) + GAP_Y;
     }
+    const blockBottom = c.spine.length ? y - GAP_Y : spineY;
     // Evidence stacks upward from the spine, first item nearest the row.
-    y = blockTop - LANE_GAP;
+    y = spineY - LANE_GAP;
     for (const n of c.above) {
-      y -= SAT_NODE_H;
+      y -= heightOf(n);
       nodes.push({ ...n, x, y });
       y -= SAT_GAP;
     }
     // Execution stacks downward from the spine block.
-    y = blockTop + blockH + LANE_GAP;
+    y = blockBottom + LANE_GAP;
     for (const n of c.below) {
       nodes.push({ ...n, x, y });
-      y += SAT_NODE_H + SAT_GAP;
+      y += heightOf(n) + SAT_GAP;
     }
   }
   return { nodes, edges };
@@ -163,7 +164,23 @@ function layoutLegacy(rawNodes, edges) {
   return { nodes, edges };
 }
 
-export function layoutFigure(figure) {
+/** Bounding box of laid-out nodes in flow coordinates (uses per-node `h`). */
+export function figureBounds(nodes) {
+  if (!nodes.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of nodes) {
+    minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + FIG_NODE_W); maxY = Math.max(maxY, n.y + heightOf(n));
+  }
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+/**
+ * `opts.timeline` forces the timeline mode (the experiment figure asks for it
+ * explicitly, since after folding evidence into cards a figure may carry no
+ * anchored node at all); by default the mode is inferred from the data.
+ */
+export function layoutFigure(figure, opts = {}) {
   const rawNodes = figure?.nodes || [];
   const rawEdges = figure?.edges || [];
   if (!rawNodes.length) return { nodes: [], edges: [] };
@@ -171,7 +188,8 @@ export function layoutFigure(figure) {
   const ids = new Set(rawNodes.map(n => n.id));
   const edges = rawEdges.filter(e => ids.has(e.from) && ids.has(e.to) && e.from !== e.to);
 
-  if (rawNodes.some(n => n.anchor && ids.has(n.anchor))) {
+  const timeline = opts.timeline ?? rawNodes.some(n => n.anchor && ids.has(n.anchor));
+  if (timeline) {
     return layoutTimeline(rawNodes, edges, ids);
   }
   return layoutLegacy(rawNodes, edges);

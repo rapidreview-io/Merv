@@ -534,6 +534,12 @@ def build_experiment_figure(
         )
         add_edge(end_source, "conclusion", "concludes")
         claim_source = "conclusion"
+    # The beat that is "now" — the reader's reference point: the conclusion
+    # once there is one, else the latest verdict or marker on the spine.
+    for node in nodes:
+        if node["id"] == claim_source:
+            node["current"] = True
+            break
     for claim in experiment.get("tested_claims", []):
         node_id = f"claim:{claim.get('id')}"
         nodes.append(

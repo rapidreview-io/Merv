@@ -135,6 +135,8 @@ class ExperimentFigureTimelineTest(unittest.TestCase):
         self.assertEqual(self.edges[("submission:3.4", "review:rv_34")], "reviewed_by")
         self.assertEqual(self.edges[("review:rv_34", "conclusion")], "concludes")
         self.assertEqual(self.edges[("conclusion", "claim:claim_1")], "tests")
+        # Exactly one beat is "now": the conclusion of a finished experiment.
+        self.assertEqual([n["id"] for n in self.figure["nodes"] if n.get("current")], ["conclusion"])
 
     def test_satellites_name_their_beat(self) -> None:
         plan1 = self.nodes["artifact:plan1:a1"]
@@ -197,8 +199,11 @@ class ExperimentFigureTimelineTest(unittest.TestCase):
         nodes = {n["id"]: n for n in figure["nodes"]}
         self.assertEqual(edges[("submission:3.4", "review_request:req_1")], "reviewed_by")
         self.assertEqual(nodes["review_request:req_1"]["qualifier"], "round 3.4")
-        # Claims trail whatever the final beat is when there is no conclusion.
+        # Claims trail whatever the final beat is when there is no conclusion,
+        # and that beat — the open gate — is the current one.
         self.assertEqual(edges[("review_request:req_1", "claim:claim_1")], "tests")
+        self.assertTrue(nodes["review_request:req_1"].get("current"))
+        self.assertFalse(nodes["submission:3.4"].get("current"))
 
     def test_markers_link_directly_when_no_verdict_exists(self) -> None:
         story = _story()
