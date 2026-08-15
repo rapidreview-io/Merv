@@ -652,6 +652,28 @@ class AgentSessions:
                 "runner": runners[0] if runners else None,
             }
 
+    def live_targets(self, *, project_id: str) -> set[tuple[str, ...]]:
+        """Keys of every offered/active session, shaped like the one-live-
+        session indexes: ``("review", request_id)`` for reviews, else
+        ``(kind, target_type, target_id)``. What the dispatch queue subtracts."""
+        with self.store.transaction() as tx:
+            rows = tx.execute(
+                """
+                SELECT kind, target_type, target_id, review_request_id
+                FROM agent_sessions
+                WHERE project_id = ? AND status IN ('offered', 'active')
+                """,
+                (project_id,),
+            ).fetchall()
+        keys: set[tuple[str, ...]] = set()
+        for row in rows:
+            kind = str(row["kind"] or "experiment")
+            if kind == "review":
+                keys.add(("review", str(row["review_request_id"] or "")))
+            else:
+                keys.add((kind, str(row["target_type"] or ""), str(row["target_id"] or "")))
+        return keys
+
     def runner_row(
         self,
         *,

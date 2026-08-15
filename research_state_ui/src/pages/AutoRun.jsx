@@ -120,7 +120,10 @@ export default function AutoRun() {
   const counts = useMemo(() => {
     const out = { active: 0, done: 0, failed: 0, all: (sessions || []).length };
     for (const session of sessions || []) out[jobBucket(session)] += 1;
-    if (queue) out.active += queue.length;
+    if (queue) {
+      out.active += queue.length;
+      out.all += queue.length;
+    }
     return out;
   }, [sessions, queue]);
 

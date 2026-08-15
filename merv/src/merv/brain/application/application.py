@@ -121,22 +121,12 @@ class Application:
 
     # Coding-agent execution ----------------------------------------------
 
-    def claim_agent_session(
-        self,
-        *,
-        project_id: str,
-        runner_id: str,
-        platform: str,
-        idempotency_key: str,
-        session_secret: str,
-        source_key_id: str = "",
-        source_user_id: str = "",
-        hard_deadline_seconds: int = 24 * 60 * 60,
-    ) -> dict[str, Any]:
-        """Assign the next experiment, review, or consolidation task."""
+    def _dispatch_plan(self, *, project_id: str) -> dict[str, Any]:
+        """Everything a claim needs, in claim order: review requests first,
+        then a pending consolidation, then experiments needing an owner (the
+        published wave first). Shared with ``dispatch_queue`` so the page and
+        the runner agree on what is next."""
         snapshot = self.research.snapshot(project_id=project_id)
-        if not agent_dispatch_enabled(snapshot.project):
-            return {"session": None, "reason": "agent_dispatch_disabled"}
         active = [
             experiment
             for experiment in snapshot.experiments
@@ -257,11 +247,77 @@ class Application:
             for experiment in owners
             if ("experiment", str(experiment["id"])) not in waiting_for_review
         ]
+        return {
+            "snapshot": snapshot,
+            "active_by_id": active_by_id,
+            "reflection": reflection,
+            "requests": requests,
+            "candidates": review_candidates + consolidation_candidates + owner_candidates,
+        }
+
+    def dispatch_queue(self, *, project_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        """What auto-run would pick up next, in order, whether or not anything
+        can pick it up right now: candidates without a live session. Read-only;
+        the page shows these as waiting rows and counts them in its headline."""
+        plan = self._dispatch_plan(project_id=project_id)
+        live = self.agent_sessions.live_targets(project_id=project_id)
+        queue: list[dict[str, Any]] = []
+        for candidate in plan["candidates"]:
+            kind = str(candidate.get("kind") or "experiment")
+            key = (
+                ("review", str(candidate.get("review_request_id") or ""))
+                if kind == "review"
+                else (kind, str(candidate.get("target_type") or ""), str(candidate.get("target_id") or ""))
+            )
+            if key in live:
+                continue
+            title = str(candidate.get("name") or "")
+            if not title and str(candidate.get("target_type") or "") == "reflection":
+                title = "Project reflection"
+            queue.append(
+                {
+                    "target_type": str(candidate.get("target_type") or ""),
+                    "target_id": str(candidate.get("target_id") or ""),
+                    "kind": kind,
+                    "review_request_id": str(candidate.get("review_request_id") or ""),
+                    "title": title,
+                    "status": str(candidate.get("status") or ""),
+                    "attempt_index": int(candidate.get("attempt_index") or 0),
+                }
+            )
+            if len(queue) >= limit:
+                break
+        return queue
+
+    def list_agent_sessions(self, *, project_id: str) -> dict[str, Any]:
+        """The Auto-run page's one read: sessions, runners, and the queue."""
+        return {
+            **self.agent_sessions.list(project_id=project_id),
+            "queue": self.dispatch_queue(project_id=project_id),
+        }
+
+    def claim_agent_session(
+        self,
+        *,
+        project_id: str,
+        runner_id: str,
+        platform: str,
+        idempotency_key: str,
+        session_secret: str,
+        source_key_id: str = "",
+        source_user_id: str = "",
+        hard_deadline_seconds: int = 24 * 60 * 60,
+    ) -> dict[str, Any]:
+        """Assign the next experiment, review, or consolidation task."""
+        plan = self._dispatch_plan(project_id=project_id)
+        if not agent_dispatch_enabled(plan["snapshot"].project):
+            return {"session": None, "reason": "agent_dispatch_disabled"}
+        active_by_id = plan["active_by_id"]
+        reflection = plan["reflection"]
+        requests = plan["requests"]
         session = self.agent_sessions.claim(
             project_id=project_id,
-            candidates=(
-                review_candidates + consolidation_candidates + owner_candidates
-            ),
+            candidates=plan["candidates"],
             runner_id=runner_id,
             platform=platform,
             idempotency_key=idempotency_key,
@@ -346,7 +402,7 @@ class Application:
         instruction = str(session["instruction"])
         assignment = self._agent_assignment(
             project_id=project_id,
-            project=snapshot.project,
+            project=plan["snapshot"].project,
             session=session,
             target=target,
             request=request,

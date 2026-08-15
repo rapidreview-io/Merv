@@ -202,7 +202,7 @@ def build_router(
     @router.get("/api/projects/{project_id}/agent-sessions")
     def list_sessions(project_id: str, request: Request) -> dict[str, Any]:
         gateway.authorize_project(request, project_id)
-        return application.agent_sessions.list(project_id=project_id)
+        return application.list_agent_sessions(project_id=project_id)
 
     @router.post("/api/projects/{project_id}/agent-runners/heartbeat")
     def heartbeat_runner(

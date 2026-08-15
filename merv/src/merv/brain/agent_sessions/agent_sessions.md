@@ -20,6 +20,14 @@ until the project sets `agent_dispatch`. Turning it off stops new claims only;
 halting a project or one session closes rows so each runner stops its own
 children on the next reconcile.
 
+The claim order is one plan (`Application._dispatch_plan`): pending review
+requests, then a pending consolidation, then experiments needing an owner
+(published wave first). `Application.dispatch_queue` reads the same plan minus
+`live_targets` — the keys of every offered/active row, shaped like the
+one-live-session indexes — so the Auto-run page's "waiting" rows and its
+headline count are exactly what the next claim would take, computed whether or
+not dispatch is on.
+
 ## Lifecycle
 
 1. A runner persists a stable claim key before network I/O and derives its

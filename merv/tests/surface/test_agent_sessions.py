@@ -875,3 +875,24 @@ class AgentDispatchSwitchTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["halted"], 0)
+
+    def test_the_list_reports_what_would_be_dispatched_next(self) -> None:
+        # The queue is what a claim would take, in claim order, whether or not
+        # dispatch is on — the page needs it precisely when nothing can run.
+        listing = self.client.get(f"/api/projects/{self.project_id}/agent-sessions").json()
+        self.assertEqual(
+            [(item["kind"], item["title"], item["status"]) for item in listing["queue"]],
+            [("experiment", "dispatchable", "planned")],
+        )
+        self.assertEqual(listing["queue"][0]["target_type"], "experiment")
+
+        # A live session on the target takes it out of the queue; closing it
+        # (here: halt) puts it back.
+        self.set_dispatch(True)
+        session = self.claim()["session"]
+        self.assertIsNotNone(session)
+        listing = self.client.get(f"/api/projects/{self.project_id}/agent-sessions").json()
+        self.assertEqual(listing["queue"], [])
+        self.client.post(f"/api/projects/{self.project_id}/agent-sessions/halt")
+        listing = self.client.get(f"/api/projects/{self.project_id}/agent-sessions").json()
+        self.assertEqual([item["target_id"] for item in listing["queue"]], [session["target_id"]])
