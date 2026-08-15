@@ -1,4 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
+} from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ReactFlow, Background, Handle, Position } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -457,25 +459,42 @@ export default function WaveFlow({
     [braid, signal, expMeta],
   );
   const topologyKey = useMemo(() => nodes.map(n => n.id).sort().join('|'), [nodes]);
+  // The camera re-fits when the PICTURE changes — a node added, removed, or
+  // moved to another column — never on a poll tick that only refreshed card
+  // text, so a reader's own pan or zoom survives polling.
+  const layoutKey = useMemo(
+    () => nodes.map(n => `${n.id}@${n.position.x},${n.position.y}`).join('|'),
+    [nodes],
+  );
   const rfRef = useRef(null);
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
-  // Keep the selected node in focus: the shift + drawer cover the right part
-  // of the canvas, so if the selected node falls outside the still-visible
-  // band, pan the viewport (never zoom) until it sits in the band's middle.
-  // Exposed as a callback because a late fitView (measure pass, container
-  // resize) can silently undo an earlier pan — every fit re-runs it.
-  const selRef = useRef(null);
-  selRef.current = sel;
-  // Deterministic fit from DOM-measured canvas size. react-flow's own
-  // fitView reads dimensions fed by a ResizeObserver→rAF pipeline that
-  // starves in hidden documents, so it can fit against a stale size; the
-  // DOM's clientWidth/Height never lies.
-  const fitCanvas = useCallback((maxZoom = 1) => {
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
+  // The canvas wrapper fitCanvas measures. (The drawer's own hidden-document
+  // problem — a transition that never advances in a background tab — is the
+  // shared GraphDrawer's business now: it resolves its duration to 0 there.)
+  const shiftRef = useRef(null);
+  // The canvas stays hidden until the camera has been placed once, so the
+  // first frame the reader sees is the final framing. It used to show
+  // react-flow's own auto-fit (a different framing) for ~120ms, then jump to
+  // ours — one of several "size tweaks" the graph went through on load.
+  const [framed, setFramed] = useState(false);
+  // Canvas size at the last camera placement; the resize observer below
+  // refits only when the size has really moved on from it.
+  const fittedSizeRef = useRef(null);
+  // Deterministic fit from DOM-measured canvas size and the layout's FIXED
+  // node dimensions (EXP_W/H, REFL_W/H): no measure pass, no rAF, no timer.
+  // react-flow's own fitView reads dimensions fed by a ResizeObserver→rAF
+  // pipeline that starves in hidden documents, so it can fit against a stale
+  // size; the DOM's clientWidth/Height never lies.
+  const fitCanvas = useCallback(() => {
     const rf = rfRef.current;
     const el = shiftRef.current;
     const ns = nodesRef.current;
     if (!rf || !el || !ns.length) return;
+    // Fullscreen has room to spare, so it may enlarge a small braid a little.
+    const maxZoom = expandedRef.current ? 1.15 : 1;
     let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
     for (const n of ns) {
       const w = n.type === 'wrefl' ? REFL_W : EXP_W;
@@ -487,6 +506,7 @@ export default function WaveFlow({
     }
     const W = el.clientWidth;
     const H = el.clientHeight;
+    fittedSizeRef.current = { w: W, h: H };
     const zoom = Math.min(maxZoom, (W * 0.86) / (maxX - minX), (H * 0.8) / (maxY - minY));
     // A braid much narrower than the canvas anchors LEFT (a young project
     // reads from its origin, not from the middle of a wide emptiness); snug
@@ -500,11 +520,33 @@ export default function WaveFlow({
     }, { duration: 0 });
   }, []);
 
+  // Camera placement is synchronous with layout, never deferred. In a layout
+  // effect, a changed braid (an experiment appears, a wave is published) and
+  // the container height it implies paint in the same frame as their new
+  // framing — instead of 350ms of the new picture under the old camera. Same
+  // for entering / leaving fullscreen: the fixed-position slot has its size
+  // the moment the class lands. (On first mount react-flow's pan/zoom does
+  // not exist yet; onInit places the camera and reveals the canvas.)
+  useLayoutEffect(() => { fitCanvas(); }, [layoutKey, expanded, fitCanvas]);
+  // …and when the canvas itself changes size under the reader (sidebar
+  // toggle, window resize): the framing depends on the real width. Only for
+  // a size the camera has not already been placed for — the layout effect
+  // above handles fullscreen and braid changes synchronously, so this never
+  // doubles them — and debounced, so a pan is never yanked back mid-gesture.
   useEffect(() => {
-    // 350ms lands after MeasureSync's second pass (same timing as Figure).
-    const t = setTimeout(() => fitCanvas(1), 350);
-    return () => clearTimeout(t);
-  }, [topologyKey, fitCanvas]);
+    const el = shiftRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    let t = null;
+    const ro = new ResizeObserver(() => {
+      const last = fittedSizeRef.current;
+      if (!last) return; // not placed yet: onInit will read the live size
+      if (Math.abs(el.clientWidth - last.w) < 8 && Math.abs(el.clientHeight - last.h) < 8) return;
+      clearTimeout(t);
+      t = setTimeout(fitCanvas, 150);
+    });
+    ro.observe(el);
+    return () => { ro.disconnect(); clearTimeout(t); };
+  }, [fitCanvas]);
   // The drawer neither resizes nor moves the canvas — it simply covers it —
   // so opening or closing it changes the camera not at all.
   // Escape peels one layer at a time: drawer first, then fullscreen.
@@ -518,22 +560,13 @@ export default function WaveFlow({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [sel, expanded]);
-  // Fullscreen: lock page scroll while expanded, and refit after the canvas
-  // takes its new size (this one IS a real resize, unlike the drawer).
+  // Fullscreen: lock page scroll while expanded.
   useEffect(() => {
     if (!expanded) return undefined;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, [expanded]);
-  useEffect(() => {
-    const t = setTimeout(() => fitCanvas(expanded ? 1.15 : 1), 120);
-    return () => clearTimeout(t);
-  }, [expanded, fitCanvas]);
-  // The canvas wrapper fitCanvas measures. (The drawer's own hidden-document
-  // problem — a transition that never advances in a background tab — is the
-  // shared GraphDrawer's business now: it resolves its duration to 0 there.)
-  const shiftRef = useRef(null);
   // Nothing pans the camera on select, and nothing restores it on close: the
   // drawer covers the graph rather than displacing it, so there is no
   // displacement to undo. Both used to animate the viewport on every open and
@@ -611,12 +644,17 @@ export default function WaveFlow({
         {/* The canvas wrapper: never resized, never moved — the drawer covers
             it, so react-flow never re-lays-out. */}
         <div className="wflow-shift" ref={shiftRef}>
-          <div className="wflow-canvas">
+          <div className={`wflow-canvas${framed ? '' : ' wflow-canvas--unframed'}`}>
+            {/* No `fitView`: react-flow's auto-fit frames the picture its own
+                way (padding 0.1, centered, up to maxZoom) and would show for
+                a beat before ours replaced it. The camera is ours alone —
+                placed here the moment pan/zoom exists, then kept in step by
+                the layout effect above. */}
             <ReactFlow
               nodes={nodes}
               edges={edges}
               nodeTypes={nodeTypes}
-              onInit={inst => { rfRef.current = inst; }}
+              onInit={inst => { rfRef.current = inst; fitCanvas(); setFramed(true); }}
               onNodeClick={(event, node) => {
                 event.stopPropagation();
                 if (node.type === 'wexp') setSel({ kind: 'exp', id: node.data.expId });
@@ -626,7 +664,6 @@ export default function WaveFlow({
                 else setSel({ kind: 'wave', id: node.data.waveId });
               }}
               onPaneClick={() => setSel(null)}
-              fitView
               proOptions={{ hideAttribution: true }}
               nodesDraggable={false}
               nodesConnectable={false}

@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../api';
-import { useProjectStore, useProjectHref, selectExperiments, selectProject } from '../store/useProjectStore';
+import {
+  useProjectStore, useProjectHref, selectExperiments, selectProject, selectReflections,
+} from '../store/useProjectStore';
 import WaveFlow from './reflection/WaveFlow';
+
+const NO_WAVES = Object.freeze([]);
 
 /**
  * ProjectReflectionPanel — Home's project graph. Just the graph: reflection
@@ -12,28 +15,26 @@ import WaveFlow from './reflection/WaveFlow';
  * (/reflection/<id>), the ghost's to the reflection list.
  */
 export default function ProjectReflectionPanel({ projectId }) {
-  const [data, setData] = useState(null);
   const navigate = useNavigate();
   const px = useProjectHref();
   const experiments = useProjectStore(selectExperiments);
   const project = useProjectStore(selectProject);
-
-  const fetchReflections = useCallback(async () => {
-    try {
-      const payload = await api.getReflections(projectId);
-      setData(prev => (JSON.stringify(prev) === JSON.stringify(payload) ? prev : payload));
-    } catch {
-      // Non-fatal: Home still works without the panel's metadata.
-    }
-  }, [projectId]);
+  // The waves arrive WITH the home snapshot (refreshHome fetches them for a
+  // project's first load), so the graph is built from the whole braid on
+  // Home's first frame — it used to fetch here, draw the experiments alone,
+  // then reflow when the waves landed. From here on this panel only keeps
+  // them fresh, at its own slow cadence.
+  const data = useProjectStore(selectReflections);
+  const refreshReflections = useProjectStore(s => s.refreshReflections);
 
   useEffect(() => {
-    fetchReflections();
-    const t = setInterval(fetchReflections, 8000);
+    // Insurance only: the snapshot normally hands the slice over settled.
+    if (!useProjectStore.getState().reflections) refreshReflections();
+    const t = setInterval(refreshReflections, 8000);
     return () => clearInterval(t);
-  }, [fetchReflections]);
+  }, [refreshReflections, projectId]);
 
-  const waves = data?.reflections || [];
+  const waves = data?.reflections || NO_WAVES;
   const signal = data?.signal || null;
 
   // A wave's Open button lands on its page; the ghost (no wave yet) lands on
@@ -41,6 +42,10 @@ export default function ProjectReflectionPanel({ projectId }) {
   const onSelectWave = useCallback((id) => {
     navigate(px(id ? `/reflection/${id}` : '/reflection'));
   }, [navigate, px]);
+
+  // No braid until the waves are known: the experiments alone would draw a
+  // different picture that reflows the moment the waves land.
+  if (!data) return null;
 
   return (
     <section className="section" id="project-reflection">

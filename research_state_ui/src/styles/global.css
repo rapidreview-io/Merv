@@ -6758,6 +6758,10 @@ textarea.sbxpw-input { font-family: var(--mono, ui-monospace, monospace); font-s
    container's rounded corners. The slide it has always had is now the slide
    every graph has. ---- */
 .wflow-canvas { position: relative; min-width: 0; height: 100%; }
+/* Hidden (still laid out and measured — visibility, not display) until
+   WaveFlow has placed the camera once, so the graph's first visible frame is
+   its final framing rather than react-flow's default origin/1× or auto-fit. */
+.wflow-canvas--unframed { visibility: hidden; }
 /* The canvas does NOT move when the drawer opens — the drawer covers it. It
    used to slide 45% of the drawer width aside, which is motion the reader
    never asked for and a nausea risk for anyone sensitive to it. */

@@ -37,6 +37,12 @@ export const useProjectStore = create((set, get) => ({
   home: null,            // {project, claims, experiments, artifacts, reviews, recent_events, stats, workflow, active_experiment, active_experiments, active_processes}
   sandboxes: [],         // project-wide sandbox list from GET /sandboxes (one per experiment)
   events: [],            // longer event window from GET /events?limit=500 — powers dashboard sparklines
+  // GET /reflections — the waves + staleness signal Home's project graph is
+  // built from. Fetched WITH a project's first /home snapshot (refreshHome)
+  // so the graph paints complete on Home's first frame, instead of drawing
+  // an experiments-only braid and reflowing when the waves land; kept fresh
+  // afterwards by refreshReflections at the panel's own slow cadence.
+  reflections: null,     // {reflections, signal} — null until the first fetch for this project settles
   lastSyncedAt: null,    // epoch ms of last successful refresh
   lastSyncError: null,
   isPolling: false,
@@ -46,7 +52,7 @@ export const useProjectStore = create((set, get) => ({
       if (pid) localStorage.setItem(PROJECT_KEY, pid);
       else localStorage.removeItem(PROJECT_KEY);
     } catch {}
-    set({ projectId: pid, home: null, sandboxes: [], events: [], lastSyncedAt: null, lastSyncError: null });
+    set({ projectId: pid, home: null, sandboxes: [], events: [], reflections: null, lastSyncedAt: null, lastSyncError: null });
   },
 
   // Fetch the backend version/compat floor and derive a banner descriptor.
@@ -141,10 +147,18 @@ export const useProjectStore = create((set, get) => ({
       // A failed side-fetch must read as "unchanged", not "changed to empty":
       // notModified:false here would blank the last-good list and drop its ETag.
       const failedFetch = { notModified: true, etag: null, data: null };
-      const [home, sandboxesResp, eventsResp] = await Promise.all([
+      // The waves ride a project's FIRST snapshot (the slice is null until
+      // then) and land in the same write as /home, so Home never renders
+      // with the experiments in hand but the waves still on the wire — the
+      // project graph would draw a different picture and then reflow. A
+      // failed first fetch must not hold Home hostage: it settles the slice
+      // as "no waves" and refreshReflections retries at its cadence.
+      const wantReflections = get().reflections === null;
+      const [home, sandboxesResp, eventsResp, reflections] = await Promise.all([
         api.getHomeIfChanged(pid, tags.home),
         api.listSandboxesIfChanged(pid, tags.sandboxes).catch(() => failedFetch),
         api.listEventsIfChanged(pid, 500, tags.events).catch(() => failedFetch),
+        wantReflections ? api.getReflections(pid).catch(() => EMPTY_REFLECTIONS) : null,
       ]);
       // Drop the write if the active project changed while this fetch was in
       // flight, so a late response for the previous project can't clobber the
@@ -155,6 +169,11 @@ export const useProjectStore = create((set, get) => ({
       if (!home.notModified) {
         patch.home = home.data;
         tags.home = home.etag;
+      }
+      // A concurrent first refresh may have settled the slice already; the
+      // later arrival is no fresher, so leave it be.
+      if (reflections && get().reflections === null) {
+        patch.reflections = reflections;
       }
       if (!sandboxesResp.notModified) {
         patch.sandboxes = Array.isArray(sandboxesResp.data?.sandboxes) ? sandboxesResp.data.sandboxes : [];
@@ -169,6 +188,24 @@ export const useProjectStore = create((set, get) => ({
     } catch (err) {
       if (get().projectId !== pid) return null;
       set({ lastSyncError: err.message });
+      return null;
+    }
+  },
+
+  // Steady-state refresh of the reflections slice, at whatever cadence the
+  // caller (Home's project graph) chooses — waves change on the order of
+  // days, not seconds. Identity-stable: an unchanged payload is dropped so
+  // nothing downstream re-renders; a failed fetch keeps the last good one.
+  async refreshReflections() {
+    const pid = get().projectId;
+    if (!pid) return null;
+    try {
+      const payload = await api.getReflections(pid);
+      if (get().projectId !== pid) return null;
+      const prev = get().reflections;
+      if (JSON.stringify(prev) !== JSON.stringify(payload)) set({ reflections: payload });
+      return payload;
+    } catch {
       return null;
     }
   },
@@ -193,6 +230,10 @@ export const useProjectStore = create((set, get) => ({
  */
 const EMPTY_OBJ = Object.freeze({});
 const EMPTY_ARR = Object.freeze([]);
+// What a settled-but-empty reflections slice looks like (a first fetch that
+// failed): a project with no waves, so Home renders and the graph draws the
+// pre-wave braid it would draw for a young project.
+const EMPTY_REFLECTIONS = Object.freeze({ reflections: EMPTY_ARR, signal: null });
 
 export const selectStats = (s) => s.home?.stats || EMPTY_OBJ;
 export const selectClaims = (s) => s.home?.claims || EMPTY_ARR;
@@ -209,6 +250,8 @@ export const selectActiveProcesses = (s) => s.home?.active_processes || EMPTY_AR
 export const selectSandboxes = (s) => s.sandboxes || EMPTY_ARR;
 export const selectEventsAll = (s) => s.events || EMPTY_ARR;
 export const selectProject = (s) => s.home?.project || null;
+// null until the project's first reflections fetch has settled (see refreshHome).
+export const selectReflections = (s) => s.reflections;
 
 /**
  * Project-scoped routing. The active project id lives in the URL under
