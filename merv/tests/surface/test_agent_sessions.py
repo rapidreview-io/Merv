@@ -280,6 +280,39 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.assertEqual(missing.status_code, 200, missing.text)
         self.assertIsNone(missing.json()["trace"])
 
+    def test_the_listing_names_each_job_worktree_when_the_runner_reported_one(self) -> None:
+        secret = self.secret()
+        session = self.claim(secret=secret, runner_id="owner")
+        branch = f"merv/experiments/{self.project_id}/{self.experiment_id}"
+        attached = self.client.post(
+            f"/api/agent-sessions/{session['id']}/attach",
+            json={
+                "runner_id": "owner",
+                "host_session_ref": "pid:1:abc",
+                "workspace_ref": branch,
+                "base_sha": "1" * 40,
+                "head_sha": "2" * 40,
+                "workspace_stats": {"commit_count": 3, "files_changed": 5, "insertions": 40, "deletions": 7},
+                "agent_setup": {
+                    "platform": "codex",
+                    "machine": "lucia.local",
+                    "workspace_path": "/Users/me/w/experiments/p/e",
+                },
+            },
+        )
+        self.assertEqual(attached.status_code, 200, attached.text)
+        listing = self.client.get(f"/api/projects/{self.project_id}/agent-sessions").json()
+        row = next(item for item in listing["sessions"] if item["id"] == session["id"])
+        # The branch is the worktree's identity; the path is a courtesy the
+        # runner may or may not include — the page treats both as optional.
+        self.assertEqual(row["workspace_ref"], branch)
+        self.assertEqual(row["agent_setup"]["workspace_path"], "/Users/me/w/experiments/p/e")
+        workspace = listing["workspaces"][self.experiment_id]
+        self.assertEqual(workspace["branch"], branch)
+        self.assertEqual(workspace["head_sha"], "2" * 40)
+        self.assertEqual((workspace["commit_count"], workspace["files_changed"]), (3, 5))
+        self.assertNotIn("project_id", workspace)
+
     def test_idle_runner_presence_is_visible_without_exposing_runner_identity(self) -> None:
         reported = self.client.post(
             f"/api/projects/{self.project_id}/agent-runners/heartbeat",

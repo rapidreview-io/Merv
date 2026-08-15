@@ -13,6 +13,7 @@ import {
   sessionOutcome,
 } from './agentSessionPresentation';
 import { fmtDayTime, fmtDuration } from '../utils/format';
+import { worktreeLineage } from './autorunWorktree';
 
 /**
  * AutorunJobs — the jobs console: what agents are doing or did.
@@ -22,6 +23,12 @@ import { fmtDayTime, fmtDuration } from '../utils/format';
  * to the record it belongs to via the trailing link, the way Sandboxes rows
  * do. Waiting rows (the brain's dispatch queue, when it reports one) sit in
  * Active with the reason in words and no dot: nothing is alive yet.
+ *
+ * When the runner reported a worktree for a job, the drawer names it —
+ * branch, base → head, path on the machine — and lists the other jobs that
+ * worked in the same one: that is what continuity looks like (agents picking
+ * up each other's work) versus separate things. Optional by construction:
+ * jobs without a worktree simply do not carry the line.
  */
 
 export function jobBucket(session) {
@@ -52,7 +59,7 @@ function waitingReason({ dispatch, runners, running, now }) {
   return 'starting soon';
 }
 
-export default function AutorunJobs({ projectId, sessions, queue, queueTotal = null, tab, now, dispatch, runners, onStop }) {
+export default function AutorunJobs({ projectId, sessions, queue, queueTotal = null, workspaces = {}, tab, now, dispatch, runners, onStop }) {
   const [expanded, setExpanded] = useState('');
   const [stopping, setStopping] = useState('');
   const [stopError, setStopError] = useState({ id: '', message: '' });
@@ -114,6 +121,8 @@ export default function AutorunJobs({ projectId, sessions, queue, queueTotal = n
             key={session.id}
             session={session}
             projectId={projectId}
+            lineage={worktreeLineage(session, sessions)}
+            workspace={session.experiment_id ? workspaces[session.experiment_id] : null}
             now={now}
             open={expanded === session.id}
             onToggle={() => setExpanded(expanded === session.id ? '' : session.id)}
@@ -135,7 +144,7 @@ export default function AutorunJobs({ projectId, sessions, queue, queueTotal = n
   );
 }
 
-function JobRow({ session, projectId, now, open, onToggle, onStop, stopping, stopError }) {
+function JobRow({ session, projectId, lineage, workspace, now, open, onToggle, onStop, stopping, stopError }) {
   const assignment = assignmentFor(session);
   const outcome = sessionOutcome(session);
   const live = isLiveSession(session);
@@ -172,6 +181,11 @@ function JobRow({ session, projectId, now, open, onToggle, onStop, stopping, sto
             <span className="arj-work-kind">
               {assignment.title || 'Agent task'}
               {attempt > 0 && ` · attempt ${attempt}`}
+              {lineage.before.length > 0 && (
+                <span className="arj-continues" title={`Continues ${lineage.before.length} earlier ${lineage.before.length === 1 ? 'job' : 'jobs'} in the same worktree`}>
+                  {` · continues ${lineage.before.length}`}
+                </span>
+              )}
             </span>
           </span>
           <span className="arj-agent" title={sessionAgent(session)}>{sessionAgent(session)}</span>
@@ -194,6 +208,9 @@ function JobRow({ session, projectId, now, open, onToggle, onStop, stopping, sto
       </div>
       {open && (
         <div className="arj-drawer">
+          {lineage.branch && (
+            <WorktreeLine session={session} lineage={lineage} workspace={workspace} machine={machine} now={now} />
+          )}
           <TracePeek projectId={projectId} sessionId={session.id} live={live} machine={machine} />
           <div className="arj-drawer-foot">
             <span className="arj-drawer-facts">
@@ -246,6 +263,67 @@ function WaitingRow({ item, reason, projectId }) {
           <Link to={to} className="arj-link">open ↗</Link>
         </span>
       </div>
+    </div>
+  );
+}
+
+function shortSha(value) {
+  return String(value || '').slice(0, 7);
+}
+
+/**
+ * One line naming the worktree, then who else worked in it. Rendered only when
+ * the runner reported a branch for this job.
+ */
+function WorktreeLine({ session, lineage, workspace, machine, now }) {
+  const base = shortSha(session.base_sha);
+  const head = shortSha(workspace?.head_sha || session.head_sha);
+  const path = session?.agent_setup?.workspace_path || '';
+  const commits = Number(workspace?.commit_count || 0);
+  const files = Number(workspace?.files_changed || 0);
+  const others = [...lineage.before, ...lineage.after];
+  return (
+    <div className="arj-worktree" aria-label="Worktree">
+      <div className="arj-worktree-line">
+        <span className="arj-worktree-glyph" aria-hidden="true">⎇</span>
+        <code className="mono arj-worktree-branch" title={lineage.branch}>{lineage.branch}</code>
+        {base && (
+          <span className="arj-worktree-shas mono">
+            {base}{head && head !== base ? ` → ${head}` : ''}
+          </span>
+        )}
+        {(commits > 0 || files > 0) && (
+          <span className="arj-worktree-stats">
+            {commits > 0 && `${commits} ${commits === 1 ? 'commit' : 'commits'}`}
+            {commits > 0 && files > 0 && ' · '}
+            {files > 0 && `${files} ${files === 1 ? 'file' : 'files'}`}
+            {(Number(workspace?.insertions) || Number(workspace?.deletions)) ? ` (+${Number(workspace?.insertions) || 0} −${Number(workspace?.deletions) || 0})` : ''}
+          </span>
+        )}
+        {path && (
+          <code className="mono arj-worktree-path" title={path}>{path}{machine ? ` on ${machine}` : ''}</code>
+        )}
+      </div>
+      {others.length > 0 && (
+        <div className="arj-worktree-others">
+          {lineage.before.length > 0
+            ? `Continues ${lineage.before.length === 1 ? 'the work of' : `${lineage.before.length} earlier jobs:`} `
+            : 'Also worked here: '}
+          {[...lineage.before].reverse().slice(0, 4).map((other) => (
+            <span key={other.id} className="arj-worktree-other" title={sessionAgent(other)}>
+              {String(other?.agent_setup?.platform || other?.platform || 'agent')}
+              {' · '}{fmtDayTime(other.activated_at || other.created_at)?.day || ''}
+              {' · '}{sessionOutcome(other).label}
+            </span>
+          ))}
+          {lineage.before.length > 4 && <span className="arj-worktree-other">{lineage.before.length - 4} more</span>}
+          {lineage.after.length > 0 && (
+            <span className="arj-worktree-after">
+              {`${lineage.after.length} later ${lineage.after.length === 1 ? 'job continued' : 'jobs continued'} from here`}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

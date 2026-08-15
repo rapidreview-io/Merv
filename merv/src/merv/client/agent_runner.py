@@ -2299,13 +2299,19 @@ class AgentRunner:
 
     def _agent_setup(self, session: LocalSession) -> dict[str, Any]:
         platform = self._platform(session.platform)
-        return {
+        setup = {
             "platform": platform.name,
             "harness": platform.adapter,
             "model": platform.model or "",
             "effort": platform.effort or "",
             "machine": socket.gethostname(),
         }
+        # Where the agent works, when it works in a worktree: lets the page
+        # show which jobs share one (agents continuing each other's work).
+        # Absent for jobs that need no workspace.
+        if session.cwd:
+            setup["workspace_path"] = str(session.cwd)
+        return setup
 
     def _mirror_trace(self, session: LocalSession, *, complete: bool) -> None:
         """Send the bounded, redacted excerpt when it changed; never raise."""

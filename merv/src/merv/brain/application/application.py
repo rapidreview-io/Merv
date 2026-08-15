@@ -296,8 +296,28 @@ class Application:
         real count so the headline never reports a truncated list as the whole.
         """
         queue = self.dispatch_queue(project_id=project_id)
+        listing = self.agent_sessions.list(project_id=project_id)
+        # The current state of each worktree the listed jobs worked in
+        # (branch, base, head, commit and diff counts), keyed by experiment:
+        # what "continuing each other's work" looks like in numbers.
+        workspaces = self.agent_sessions.workspaces(
+            project_id=project_id,
+            experiment_ids=(
+                str(session.get("experiment_id") or "")
+                for session in listing["sessions"]
+                if session.get("experiment_id")
+            ),
+        )
+        public_keys = {
+            "branch", "base_sha", "head_sha", "commit_count",
+            "files_changed", "insertions", "deletions", "updated_at",
+        }
         return {
-            **self.agent_sessions.list(project_id=project_id),
+            **listing,
+            "workspaces": {
+                experiment_id: {key: value for key, value in row.items() if key in public_keys}
+                for experiment_id, row in workspaces.items()
+            },
             "queue": queue[:queue_limit],
             "queue_total": len(queue),
         }

@@ -319,7 +319,13 @@ wave first), minus anything with a live session — up to 50 rows of
 `{target_type, target_id, kind, review_request_id, title, status,
 attempt_index}`, with `queue_total` as the real count. The queue is computed
 whether or not dispatch is on, so the page can say "3 items waiting"
-precisely when nothing can run. A runner row is
+precisely when nothing can run. `workspaces` maps each experiment the listed
+sessions touched to its current worktree record (`branch`, `base_sha`,
+`head_sha`, `commit_count`, `files_changed`, `insertions`, `deletions`,
+`updated_at`); together with a session's own `workspace_ref` (its branch)
+and the optional `agent_setup.workspace_path` the runner reports, the page
+shows which jobs worked in the same worktree — continuity — and where. Jobs
+that report no worktree simply carry none of it. A runner row is
 non-secret — `machine`, `platforms` (each with `enabled` and `managed`; a
 `managed: false` entry is a CLI-only custom agent the brain may show but never
 edit), `capacity`, `last_seen_at`, `live` (heartbeat at most 45 s old),

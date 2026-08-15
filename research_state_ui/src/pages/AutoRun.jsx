@@ -31,6 +31,7 @@ export default function AutoRun() {
   const [runners, setRunners] = useState([]);
   const [queue, setQueue] = useState(null); // null = brain does not report one
   const [queueTotal, setQueueTotal] = useState(null);
+  const [workspaces, setWorkspaces] = useState({});
   const [error, setError] = useState('');
   const [dispatch, setDispatch] = useState(null); // null = unknown
   const [dispatchBusy, setDispatchBusy] = useState(false);
@@ -46,6 +47,7 @@ export default function AutoRun() {
       setRunners(Array.isArray(response?.runners)
         ? response.runners
         : (response?.runner ? [response.runner] : []));
+      setWorkspaces(response?.workspaces && typeof response.workspaces === 'object' ? response.workspaces : {});
       const rows = Array.isArray(response?.queue) ? response.queue : null;
       setQueue(rows);
       setQueueTotal(rows ? Math.max(Number(response?.queue_total) || 0, rows.length) : null);
@@ -60,6 +62,7 @@ export default function AutoRun() {
     setRunners([]);
     setQueue(null);
     setQueueTotal(null);
+    setWorkspaces({});
     setDispatch(null);
     setTab('active');
     refresh();
@@ -217,6 +220,7 @@ export default function AutoRun() {
               sessions={sessions}
               queue={queue}
               queueTotal={queueTotal}
+              workspaces={workspaces}
               tab={tab}
               now={now}
               dispatch={dispatch}

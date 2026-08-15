@@ -3744,6 +3744,19 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 .arj-row--waiting .arj-work-title { color: var(--muted); }
 .arj-waiting-reason { font-style: italic; }
 .arj-more { padding: 8px 14px 10px 46px; font-size: var(--text-xs); color: var(--faint); }
+/* Worktree: the branch is the identity; who else worked in it is the
+   continuity. Machine-born, so mono. */
+.arj-continues { color: var(--faint); }
+.arj-worktree { margin-bottom: 8px; font-size: 10.5px; color: var(--muted); }
+.arj-worktree-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.arj-worktree-glyph { color: var(--faint); font-size: 12px; }
+.arj-worktree-branch { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.arj-worktree-shas { color: var(--muted); font-variant-numeric: tabular-nums; }
+.arj-worktree-stats { color: var(--muted); }
+.arj-worktree-path { color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.arj-worktree-others { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-top: 4px; color: var(--muted); }
+.arj-worktree-other { white-space: nowrap; color: var(--text); }
+.arj-worktree-after { color: var(--faint); }
 /* Drawer: the trace, then one line of facts and the one action. */
 .arj-drawer { padding: 10px 14px 12px 46px; border-bottom: 1px solid var(--line-soft); background: var(--bg-soft); }
 .arj-rowgroup:last-child .arj-drawer { border-bottom: none; }
