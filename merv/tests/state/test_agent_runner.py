@@ -215,6 +215,40 @@ class AgentConfigurationTest(unittest.TestCase):
             with self.assertRaisesRegex(RunnerError, "persistent Git worktrees"):
                 load_workspace_settings(path)
 
+    def test_harness_command_installs_skills_and_gates_on_readiness(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            path = root / "client.json"
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            codex = fake_bin / "codex"
+            codex.write_text("#!/bin/sh\necho codex-cli 9.9.9\n", encoding="utf-8")
+            codex.chmod(0o755)
+            configure_agent(config_path=path, platform="codex", command=["codex"])
+            output = io.StringIO()
+            with (
+                patch.dict(os.environ, {"PATH": str(fake_bin)}),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(["--config", str(path), "harness", "--json"]), 0)
+            report = json.loads(output.getvalue())
+            self.assertEqual(report["skills"]["root"], str(root / "skills"))
+            self.assertTrue((root / "skills" / "research-workflow" / "SKILL.md").is_file())
+            self.assertTrue(report["platforms"]["codex"]["ok"])
+            self.assertEqual(report["platforms"]["codex"]["version"], "codex-cli 9.9.9")
+
+            configure_agent(config_path=path, platform="hermes", command=["absent-agent"])
+            output = io.StringIO()
+            with (
+                patch.dict(os.environ, {"PATH": str(fake_bin)}),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(["--config", str(path), "harness"]), 1)
+            text = output.getvalue()
+            self.assertIn("codex: ready", text)
+            self.assertIn("hermes: NOT ready", text)
+            self.assertIn("'absent-agent' is not on PATH", text)
+
     def test_call_command_gives_non_mcp_agents_a_shell_safe_tool_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "client.json"
@@ -291,17 +325,33 @@ class AgentHostTest(unittest.TestCase):
                 "-",
             ],
         )
+        codex_session = [
+            "-c",
+            'mcp_servers.merv_agent_session.url="http://127.0.0.1:8878/mcp"',
+            "-c",
+            "mcp_servers.merv_agent_session.bearer_token_env_var="
+            '"MERV_AGENT_SESSION_KEY"',
+            "-c",
+            'mcp_servers.merv_agent_session.default_tools_approval_mode="approve"',
+        ]
         self.assertEqual(
             CodexHost().session_arguments(
                 {"MERV_CONTROL_URL": "http://127.0.0.1:8878"}
             ),
-            [
-                "-c",
-                'mcp_servers.merv_agent_session.url="http://127.0.0.1:8878/mcp"',
-                "-c",
-                "mcp_servers.merv_agent_session.bearer_token_env_var="
-                '"MERV_AGENT_SESSION_KEY"',
+            codex_session,
+        )
+        # ``codex exec`` drops ``-c`` overrides that precede the subcommand,
+        # so the session wiring must sit after ``exec`` and before the stdin
+        # marker; a claude session keeps its arguments right after argv[0].
+        composed = CodexHost().compose(codex, {"MERV_CONTROL_URL": "http://127.0.0.1:8878"})
+        self.assertGreater(composed.index(codex_session[1]), composed.index("exec"))
+        self.assertEqual(composed[-1], "-")
+        self.assertEqual(composed[-len(codex_session) - 1 : -1], codex_session)
+        self.assertEqual(
+            ClaudeHost().compose(claude, {"MERV_CONTROL_URL": "http://127.0.0.1:8878"})[
+                1:3
             ],
+            ["--strict-mcp-config", "--mcp-config"],
         )
         self.assertEqual(
             ClaudeHost().session_arguments(
@@ -1196,6 +1246,9 @@ class _FakeWorkspaces:
     def central_sha(self):
         return "1" * 40
 
+    def exclude_file(self):
+        return self.root / "central.git" / "info" / "exclude"
+
 
 class AgentRunnerTest(unittest.TestCase):
     def test_daemon_retries_a_transient_control_plane_failure(self) -> None:
@@ -1431,6 +1484,56 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertEqual(first["session_key"], second["session_key"])
             self.assertEqual(ledger.pending_claims, {})
             self.assertEqual(len(host.spawns), 1)
+
+    def test_launch_mounts_skills_and_tells_the_child_where_they_are(self) -> None:
+        claim = Claim(
+            "ags_1",
+            "exp_1",
+            "proj_1",
+            instruction="Resume the experiment and follow the research-workflow skill.",
+        )
+        client = _FakeClient(claim)
+        host = _FakeHost()
+        platform = Platform("codex", "codex", ("codex",))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = AgentRunner(
+                project_id="proj_1",
+                platforms=(platform,),
+                client=client,
+                ledger=SessionLedger(root / "sessions.json"),
+                workspaces=_FakeWorkspaces(root),
+                trace_dir=root / "traces",
+                runner_secret=b"r" * 32,
+                environment={"PATH": "/bin"},
+            )
+            self.assertIsNotNone(runner.skills)
+            self.assertEqual(runner.skills.root, root / "skills")
+            with (
+                patch.dict("merv.client.agent_runner.HOSTS", {"codex": host}, clear=True),
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(runner.fill_available_slots(), 1)
+            launch = host.spawns[0]
+            self.assertEqual(launch["child_env"]["MERV_SKILLS_DIR"], str(root / "skills"))
+            self.assertIn(str(root / "skills"), launch["instruction"])
+            self.assertIn("research-workflow", launch["instruction"])
+            link = root / "ags_1" / ".agents" / "skills" / "research-workflow"
+            self.assertTrue(link.is_symlink())
+            self.assertTrue((link / "SKILL.md").is_file())
+            exclude = root / "central.git" / "info" / "exclude"
+            self.assertIn("/.agents/skills/research-workflow", exclude.read_text())
+
+            inventory = runner.inventory()
+            self.assertEqual(
+                inventory["harness"]["skills"]["count"], len(runner.skills.names)
+            )
+            self.assertEqual(
+                inventory["harness"]["platforms"]["codex"]["merv_mcp"], "native"
+            )
+            self.assertEqual(
+                inventory["harness"]["platforms"]["codex"]["skills"], "mounted"
+            )
 
     def test_one_bad_platform_does_not_stop_other_launches(self) -> None:
         bad = Platform("bad", "bad", ("missing-agent",))

@@ -35,6 +35,7 @@ class RunnerBundleTest(unittest.TestCase):
         self.assertIn("merv/client/agent_runner.py", manifest)
         self.assertIn("merv/client/runner_entry.py", manifest)
         self.assertIn("merv/client/runner_pairing.py", manifest)
+        self.assertIn("merv/client/harness.py", manifest)
         self.assertIn("merv/shared/client_config.py", manifest)
         self.assertIn("merv/shared/runner_settings.py", manifest)
         self.assertNotIn("merv/client/local_control.py", manifest)
@@ -49,6 +50,33 @@ class RunnerBundleTest(unittest.TestCase):
                 names = set(bundle.namelist())
             self.assertIn("merv/client/agent_runner.py", names)
             self.assertFalse(any("/brain/" in name for name in names))
+            # The plugin skills ride along and install from inside the zip.
+            self.assertIn("merv/client/skills/research-workflow/SKILL.md", names)
+            self.assertIn(
+                "merv/client/skills/experiment-attempt-review/SKILL.md", names
+            )
+            skills = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys, json; sys.path.insert(0, sys.argv[1]); "
+                    "from merv.client.harness import install_skills; "
+                    "from pathlib import Path; "
+                    "i = install_skills(Path(sys.argv[2])); "
+                    "print(json.dumps({'names': list(i.names), "
+                    "'skill': (i.root / 'research-workflow' / 'SKILL.md').is_file()}))",
+                    str(archive),
+                    str(root / "state"),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(root),
+            )
+            self.assertEqual(skills.returncode, 0, skills.stderr)
+            installed = json.loads(skills.stdout)
+            self.assertIn("research-workflow", installed["names"])
+            self.assertTrue(installed["skill"])
 
             environment = {**os.environ, "HOME": str(root / "home")}
             client = subprocess.run(

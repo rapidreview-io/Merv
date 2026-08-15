@@ -19,12 +19,18 @@ from pathlib import Path
 
 MERV_ROOT = Path(__file__).resolve().parent.parent
 SOURCE_ROOT = MERV_ROOT / "src"
+# The plugin's skills ride along as data: the brain's instructions name them
+# and auto-run children never see the user's plugin. They land beside the
+# harness module that installs them (see merv.client.harness).
+SKILLS_ROOT = MERV_ROOT / "skills"
+SKILLS_TARGET = "merv/client/skills"
 
 INCLUDE = (
     "merv/__init__.py",
     "merv/client/__init__.py",
     "merv/client/agent_runner.py",
     "merv/client/cli.py",
+    "merv/client/harness.py",
     "merv/client/private_files.py",
     "merv/client/runner_entry.py",
     "merv/client/runner_pairing.py",
@@ -57,6 +63,25 @@ def manifest() -> tuple[str, ...]:
     return INCLUDE
 
 
+def skill_files() -> tuple[str, ...]:
+    """Every skill data file, relative to the plugin ``skills`` directory."""
+    if not SKILLS_ROOT.is_dir():
+        raise SystemExit("build_runner_bundle: missing plugin skills directory")
+    files = tuple(
+        sorted(
+            str(path.relative_to(SKILLS_ROOT))
+            for path in SKILLS_ROOT.rglob("*")
+            if path.is_file()
+            and not path.is_symlink()
+            and "__pycache__" not in path.parts
+            and not path.name.startswith(".")
+        )
+    )
+    if not any(Path(item).name == "SKILL.md" for item in files):
+        raise SystemExit("build_runner_bundle: plugin skills contain no SKILL.md")
+    return files
+
+
 def build(out: Path) -> Path:
     out = out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -67,6 +92,10 @@ def build(out: Path) -> Path:
             destination = root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(SOURCE_ROOT / relative, destination)
+        for relative in skill_files():
+            destination = root / SKILLS_TARGET / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(SKILLS_ROOT / relative, destination)
         zipapp.create_archive(
             root,
             target=target,

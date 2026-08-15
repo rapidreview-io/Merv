@@ -48,13 +48,20 @@ from merv.shared.runner_settings import (
     RunnerSettingsError,
     validate_desired_settings,
 )
+from .harness import HarnessError, SkillsInstall
+from . import harness as harness_kit
 from .private_files import (
     PrivateFileError,
     private_token,
     read_json_document,
     replace_json_document,
 )
-from .runner_pairing import PairingError, credential_path, pair as pair_runner
+from .runner_pairing import (
+    PairingError,
+    credential_path,
+    pair as pair_runner,
+    pairing_path,
+)
 
 
 MCP_KEY_ENV_VAR = "MERV_MCP_KEY"
@@ -193,6 +200,14 @@ class CommandHost:
         """Global CLI arguments that connect this process to its Merv session."""
         return []
 
+    def compose(self, platform: Platform, child_env: Mapping[str, str]) -> list[str]:
+        """The full argv: session arguments right after the executable."""
+        command = self.command_for(platform)
+        command[len(platform.command) : len(platform.command)] = self.session_arguments(
+            child_env
+        )
+        return command
+
     def instruction_arguments(self, instruction: str) -> list[str] | None:
         """Return argv prompt fields, or None when the CLI reads stdin."""
         return None
@@ -215,10 +230,7 @@ class CommandHost:
         stderr_path: Path,
         cwd: Path,
     ) -> HostSession:
-        command = self.command_for(platform)
-        command[len(platform.command) : len(platform.command)] = self.session_arguments(
-            child_env
-        )
+        command = self.compose(platform, child_env)
         instruction = self.prepare_instruction(instruction)
         instruction_arguments = self.instruction_arguments(instruction)
         if instruction_arguments is not None:
@@ -375,7 +387,19 @@ class CodexHost(CommandHost):
             "-c",
             "mcp_servers.merv_agent_session.bearer_token_env_var="
             + json.dumps(AGENT_SESSION_KEY_ENV_VAR),
+            # ``exec`` cannot ask; without this every Merv call is auto-denied
+            # as "user cancelled MCP tool call".
+            "-c",
+            'mcp_servers.merv_agent_session.default_tools_approval_mode="approve"',
         ]
+
+    def compose(self, platform: Platform, child_env: Mapping[str, str]) -> list[str]:
+        # ``codex exec`` only honours ``-c`` overrides given after the
+        # subcommand; the same flags before ``exec`` parse fine and are then
+        # silently ignored, leaving the child with no Merv MCP server at all.
+        command = self.command_for(platform)
+        command[-1:-1] = self.session_arguments(child_env)
+        return command
 
 
 class ClaudeHost(CommandHost):
@@ -976,6 +1000,12 @@ class WorkspaceManager:
     def central_sha(self) -> str:
         return self._rev_parse(self._canonical_repository(), "refs/merv/central")
 
+    def exclude_file(self) -> Path:
+        """The private central repository's ``info/exclude``, shared by every
+        worktree; runner-owned files mounted into a workspace are listed there
+        so a WIP capture never commits them."""
+        return self._canonical_repository() / "info" / "exclude"
+
     def advance(
         self,
         *,
@@ -1560,8 +1590,19 @@ class AgentRunner:
         self.config_path = config_path
         self.applied_settings_version = max(int(applied_settings_version), 0)
         self.pending_workspace: WorkspaceSettings | None = None
+        self.pending_workspace_document: dict[str, Any] | None = None
         self.pending_workspace_version = 0
         self.settings_error = ""
+        # The Merv skills every child may read, copied beside the traces once
+        # per runner build. Missing skills degrade to the old search-the-disk
+        # behaviour rather than blocking dispatch; the inventory says so.
+        self.skills: SkillsInstall | None = None
+        self.harness_error = ""
+        try:
+            self.skills = harness_kit.install_skills(trace_dir.parent)
+        except HarnessError as exc:
+            self.harness_error = str(exc)
+        self._harness_report: tuple[tuple[Any, ...], dict[str, Any]] | None = None
 
     # -- brain-held settings ---------------------------------------------
 
@@ -1618,25 +1659,47 @@ class AgentRunner:
         try:
             document = read_json_document(self.config_path)
             merged = merge_desired_settings(document, normalized)
-            merged[SETTINGS_VERSION_KEY] = version
-            replace_json_document(self.config_path, merged, validate=_validate_settings)
+            merged_workspace = load_workspace_settings_from(merged, self.config_path)
+            workspace_changes = merged_workspace != self.workspaces.settings
+            if workspace_changes:
+                # Ledger rows do not carry the WorkspaceSettings that created
+                # their worktrees and consolidation advances go through the
+                # one manager, so the workspace half — and the version marker
+                # that would say "applied" to a restart — stays out of
+                # client.json until an idle cycle activates it. Only the
+                # platform half lands now. A restart while draining therefore
+                # rebuilds the old workspace manager (matching the surviving
+                # sessions), reports the old version, and re-pulls the change.
+                platforms_only = dict(merged)
+                if "agent_workspace" in document:
+                    platforms_only["agent_workspace"] = document["agent_workspace"]
+                else:
+                    platforms_only.pop("agent_workspace", None)
+                platforms_only.pop(SETTINGS_VERSION_KEY, None)
+                if document.get(SETTINGS_VERSION_KEY) is not None:
+                    platforms_only[SETTINGS_VERSION_KEY] = document[SETTINGS_VERSION_KEY]
+                replace_json_document(
+                    self.config_path, platforms_only, validate=_validate_settings
+                )
+            else:
+                merged[SETTINGS_VERSION_KEY] = version
+                replace_json_document(self.config_path, merged, validate=_validate_settings)
         except (PrivateFileError, RunnerError, RunnerSettingsError) as exc:
             self.settings_error = str(exc)
             print(f"settings v{version} could not be applied: {exc}", file=sys.stderr)
             return
         self.settings_error = ""
         self.apply_platforms(load_platforms(self.config_path, include_disabled=True))
-        workspace = load_workspace_settings(self.config_path)
-        if workspace == self.workspaces.settings:
+        if not workspace_changes:
             self.pending_workspace = None
+            self.pending_workspace_document = None
             self.pending_workspace_version = 0
             self.applied_settings_version = version
             print(f"applied settings v{version}")
         else:
-            # Ledger rows do not carry the WorkspaceSettings that created
-            # their worktrees and consolidation advances go through the one
-            # manager, so a workspace change waits for an idle cycle.
-            self.pending_workspace = workspace
+            merged[SETTINGS_VERSION_KEY] = version
+            self.pending_workspace = merged_workspace
+            self.pending_workspace_document = merged
             self.pending_workspace_version = version
 
     def _apply_pending_workspace(self) -> None:
@@ -1644,10 +1707,26 @@ class AgentRunner:
             return
         if self._live_local_sessions() or self._advance_pending():
             return
+        assert self.config_path is not None
+        try:
+            # Activation is the moment the workspace and its version become
+            # durable together; a crash before this line leaves the old
+            # workspace and version on disk, which is exactly right.
+            if self.pending_workspace_document is not None:
+                replace_json_document(
+                    self.config_path,
+                    self.pending_workspace_document,
+                    validate=_validate_settings,
+                )
+        except (PrivateFileError, RunnerError) as exc:
+            self.settings_error = str(exc)
+            print(f"settings v{self.pending_workspace_version} could not be activated: {exc}", file=sys.stderr)
+            return
         self.workspaces = WorkspaceManager(self.pending_workspace)
         self.applied_settings_version = self.pending_workspace_version
         print(f"applied settings v{self.pending_workspace_version} (workspace)")
         self.pending_workspace = None
+        self.pending_workspace_document = None
         self.pending_workspace_version = 0
 
     def _live_local_sessions(self) -> int:
@@ -1691,12 +1770,35 @@ class AgentRunner:
             }
         if self.config_path is not None:
             result["available_commands"] = _detected_commands(self.config_path)
+        result["harness"] = self.harness_readiness()
         reason = self._pending_reason()
         if reason:
             result["pending"] = {"reason": reason}
         if self.settings_error:
             result["settings_error"] = self.settings_error
         return result
+
+    def harness_readiness(self) -> dict[str, Any]:
+        """What each configured harness will get from Merv, cached per tuning.
+
+        Probing executables costs subprocesses, so the report is recomputed
+        only when the platform set changes; the heartbeat carries it to the
+        Settings page.
+        """
+        key = tuple(
+            (item.name, item.adapter, tuple(item.command), item.enabled)
+            for item in self.platforms
+        )
+        if self._harness_report is None or self._harness_report[0] != key:
+            report = harness_kit.readiness(
+                platforms=self.platforms,
+                install=self.skills,
+                environment=self.environment,
+            )
+            if self.harness_error:
+                report["error"] = self.harness_error
+            self._harness_report = (key, report)
+        return self._harness_report[1]
 
     # -- the cycle ---------------------------------------------------------
 
@@ -2074,6 +2176,26 @@ class AgentRunner:
                 f"{workspace.branch or 'detached'} at {workspace.head_sha}; "
                 f"base {workspace.base_sha}.\n"
             )
+            if self.skills is not None:
+                try:
+                    harness_kit.mount_skills(
+                        adapter=platform.adapter,
+                        workspace=workspace.path,
+                        install=self.skills,
+                        exclude_file=self.workspaces.exclude_file(),
+                    )
+                except (HarnessError, OSError) as exc:
+                    # The note below still names the install path, so the
+                    # child can read the skills; only native listing is lost.
+                    print(
+                        f"{platform.name}: could not mount Merv skills into "
+                        f"{workspace.path}: {exc}",
+                        file=sys.stderr,
+                    )
+                instruction += (
+                    harness_kit.skills_note(self.skills, adapter=platform.adapter)
+                    + "\n"
+                )
             trace_files = _prepare_trace(
                 root=self.trace_dir,
                 claim=claim,
@@ -2090,6 +2212,8 @@ class AgentRunner:
                 session_id=claim.session_id,
             )
             child_environment["MERV_AGENT_TRACE_DIR"] = str(trace_files.directory)
+            if self.skills is not None:
+                child_environment["MERV_SKILLS_DIR"] = str(self.skills.root)
             self.ledger.save()
             host_session = host.spawn(
                 platform=platform,
@@ -2247,6 +2371,99 @@ def load_platforms(
             )
         )
     return tuple(platforms)
+
+
+def merge_desired_settings(
+    document: Mapping[str, Any], desired: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Fold a validated desired document into ``client.json`` per entry.
+
+    Never a map replace: a ``command``-adapter (custom, CLI-only) entry is
+    left byte-identical; a native entry updates only its four tuning fields
+    and keeps its ``command``; a native entry that does not exist yet is
+    created with the adapter's default executable; native entries the desired
+    map does not mention are untouched. Workspace replaces its three fields
+    and keeps the strategy.
+    """
+    result = dict(document)
+    existing = result.get("agent_platforms")
+    platforms: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
+    for name, entry in (desired.get("platforms") or {}).items():
+        current = platforms.get(name)
+        if isinstance(current, dict) and str(current.get("adapter") or name) == "command":
+            continue
+        if not isinstance(current, dict):
+            current = {
+                "adapter": name,
+                "command": [DEFAULT_PLATFORM_EXECUTABLES[name]],
+                "enabled": False,
+            }
+        updated = dict(current)
+        for field in ("enabled", "model", "effort", "parallelism"):
+            if field in entry:
+                if field in ("model", "effort") and not entry[field]:
+                    updated.pop(field, None)
+                else:
+                    updated[field] = entry[field]
+        platforms[name] = updated
+    if "platforms" in desired:
+        result["agent_platforms"] = platforms
+    if "workspace" in desired:
+        current_workspace = result.get("agent_workspace")
+        workspace = (
+            dict(current_workspace) if isinstance(current_workspace, dict) else {}
+        )
+        for field in ("repository", "root", "base_ref"):
+            if field in desired["workspace"]:
+                value = desired["workspace"][field]
+                if value:
+                    workspace[field] = value
+                else:
+                    workspace.pop(field, None)
+        workspace["strategy"] = "git_worktree"
+        result["agent_workspace"] = workspace
+    return result
+
+
+def load_workspace_settings(
+    config_path: Path, *, default_repository: Path | None = None
+) -> WorkspaceSettings:
+    try:
+        document = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        document = {}
+    return load_workspace_settings_from(
+        document if isinstance(document, dict) else {},
+        config_path,
+        default_repository=default_repository,
+    )
+
+
+def load_workspace_settings_from(
+    document: Mapping[str, Any],
+    config_path: Path,
+    *,
+    default_repository: Path | None = None,
+) -> WorkspaceSettings:
+    """Workspace settings from an in-memory client document."""
+    raw = document.get("agent_workspace")
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise RunnerError("agent_workspace must be an object")
+    strategy = str(raw.get("strategy") or "git_worktree")
+    if strategy != "git_worktree":
+        raise RunnerError("agent workspaces must use persistent Git worktrees")
+    repository = Path(
+        str(raw.get("repository") or default_repository or Path.cwd())
+    ).expanduser()
+    root = Path(str(raw.get("root") or config_path.parent / "worktrees")).expanduser()
+    return WorkspaceSettings(
+        strategy=strategy,
+        repository=repository,
+        root=root,
+        base_ref=str(raw.get("base_ref") or "HEAD"),
+    )
 
 
 def merge_desired_settings(
@@ -2959,8 +3176,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             ledger = SessionLedger(ledger_path)
             project_id = str(args.project or "").strip() or _stored_project_id(config_path)
             runner_key = _runner_key(config_path)
+            # A pairing file that survived a restart means an exchange is
+            # unfinished — possibly with the key already promoted but the
+            # project not yet recorded — so resume it before trusting the key.
+            pending_pairing = pairing_path(config_path).exists()
             needs_pairing = args.command == "pair" or (
-                not loopback and not runner_key
+                not loopback and (not runner_key or pending_pairing)
             )
             if needs_pairing:
                 if loopback:

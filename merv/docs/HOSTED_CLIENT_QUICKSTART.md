@@ -140,6 +140,7 @@ $CLI agent claude --enable --command claude --model opus
 $CLI agent hermes --enable --command hermes
 $CLI agents      # print the configured local platforms
 $CLI workspace --repository /path/to/repo --strategy git_worktree
+$CLI harness     # install the Merv skills and check each harness is ready
 ```
 
 The older `merv-client login`, `link`, `links`, `route`, and `unlink`
@@ -165,6 +166,19 @@ child receives only `MERV_AGENT_SESSION_KEY`. Codex and Claude Code receive an
 isolated MCP configuration for that credential. Hermes and the other agents use
 `merv-client call TOOL --arguments JSON`; this bridge reads the same key from
 the environment and calls Merv's MCP-shaped endpoint without a shell.
+
+That isolation also hides the user's Merv plugin from every child, so the runner
+carries the plugin's skills itself. On first start it installs them under
+`~/.merv/skills/<skill>/SKILL.md` (refreshed whenever the runner build changes),
+links them into each Codex workspace as `.agents/skills/<skill>` and each
+Claude Code workspace as `.claude/skills/<skill>` (listed in the private central
+repository's `info/exclude`, so a WIP capture never commits them), and appends
+one line to every instruction naming the install path; children also get
+`MERV_SKILLS_DIR`. `merv-client harness` performs the same install and prints,
+per configured platform, whether the executable resolves, its version, and how
+it will reach Merv tools and skills; it exits non-zero when an enabled platform
+is not ready, and the running runner reports the same facts in its heartbeat
+inventory (`harness`) for the Auto-run page.
 
 Auto-run recordings stay on the executor at
 `~/.merv/agent-traces/<agent-session-id>/`: `metadata.json` binds the work item

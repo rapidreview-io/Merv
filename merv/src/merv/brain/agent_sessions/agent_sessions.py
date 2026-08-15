@@ -1226,6 +1226,54 @@ def _inventory_projection(value: Mapping[str, Any] | None) -> dict[str, Any]:
         raw = value.get(name)
         if isinstance(raw, str) and raw.strip():
             result[name] = raw.strip()[:240]
+    harness = _harness_projection(value.get("harness"))
+    if harness:
+        result["harness"] = harness
+    return result
+
+
+def _harness_projection(value: Any) -> dict[str, Any]:
+    """The runner's per-platform readiness: executables, versions, and how
+    each harness reaches Merv skills and tools. Never argv, never secrets."""
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    skills = value.get("skills")
+    if isinstance(skills, Mapping):
+        projected: dict[str, Any] = {}
+        count = skills.get("count")
+        if isinstance(count, int) and not isinstance(count, bool):
+            projected["count"] = max(count, 0)
+        for name in ("root", "digest", "error"):
+            raw = skills.get(name)
+            if isinstance(raw, str) and raw.strip():
+                projected[name] = raw.strip()[:1024 if name == "root" else 240]
+        if projected:
+            result["skills"] = projected
+    platforms = value.get("platforms")
+    if isinstance(platforms, Mapping):
+        entries: dict[str, Any] = {}
+        for name, raw in sorted(platforms.items())[:32]:
+            if not str(name).strip() or not isinstance(raw, Mapping):
+                continue
+            entry: dict[str, Any] = {"ok": bool(raw.get("ok"))}
+            for field in ("adapter", "executable", "version", "merv_mcp", "skills"):
+                text = raw.get(field)
+                if isinstance(text, str) and text.strip():
+                    entry[field] = text.strip()[:1024 if field == "executable" else 120]
+            if isinstance(raw.get("enabled"), bool):
+                entry["enabled"] = raw["enabled"]
+            problems = raw.get("problems")
+            if isinstance(problems, list):
+                entry["problems"] = [
+                    str(item).strip()[:240] for item in problems[:8] if str(item).strip()
+                ]
+            entries[str(name)[:80]] = entry
+        if entries:
+            result["platforms"] = entries
+    error = value.get("error")
+    if isinstance(error, str) and error.strip():
+        result["error"] = error.strip()[:240]
     return result
 
 

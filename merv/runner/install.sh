@@ -80,6 +80,10 @@ write_launcher merv-client client
 
 echo "Installed Merv runner in $RUNNER_HOME"
 echo "Runner command: $BIN_DIR/merv-agent-runner"
+# Install the Merv skills every auto-run child reads and show, per configured
+# agent, whether its harness is ready. Advisory here: an unconfigured machine
+# has no platforms yet, and the runner repeats the check in its heartbeat.
+"$BIN_DIR/merv-client" harness || true
 
 if [ "${1:-}" = "--install-only" ]; then
   exit 0

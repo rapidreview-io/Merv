@@ -155,6 +155,16 @@ def _parser() -> argparse.ArgumentParser:
     storage_upload.add_argument("--target-url", required=True)
     storage_upload.add_argument("--workers", type=int, default=4)
     storage_upload.set_defaults(func=_cmd_storage_upload)
+
+    harness = sub.add_parser(
+        "harness",
+        help=(
+            "Install the Merv skills for auto-run children and report whether "
+            "each configured agent harness is ready to reach Merv."
+        ),
+    )
+    harness.add_argument("--json", action="store_true", help="Machine-readable report.")
+    harness.set_defaults(func=_cmd_harness)
     return parser
 
 
@@ -292,6 +302,55 @@ def _cmd_workspace(args: argparse.Namespace) -> int:
     )
     print(json.dumps(config["agent_workspace"], indent=2))
     return 0
+
+
+def _cmd_harness(args: argparse.Namespace) -> int:
+    """Setup-time check: skills installed, executables answer, routes known.
+
+    Exit status is non-zero when any enabled platform is not ready, so an
+    installer or wizard can gate on it. No model is called.
+    """
+    # Lazy: the runner module is heavy and this command must stay cheap.
+    from . import harness as kit
+    from .agent_runner import _runtime_paths, load_platforms
+
+    config_path = _config_path(args)
+    _, trace_dir = _runtime_paths(config_path)
+    error = ""
+    install = None
+    try:
+        install = kit.install_skills(trace_dir.parent)
+    except kit.HarnessError as exc:
+        error = str(exc)
+    platforms = load_platforms(config_path, include_disabled=True)
+    report = kit.readiness(platforms=platforms, install=install)
+    if error:
+        report["error"] = error
+    ready = not error and all(
+        entry["ok"] for entry in report["platforms"].values() if entry["enabled"]
+    )
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return 0 if ready else 1
+    skills = report["skills"]
+    if install is not None:
+        print(f"skills: {skills['count']} installed at {skills['root']}")
+    else:
+        print(f"skills: NOT installed ({error})")
+    if not report["platforms"]:
+        print("platforms: none configured (merv-client agent <name> --enable)")
+    for name, entry in report["platforms"].items():
+        state = "ready" if entry["ok"] else "NOT ready"
+        if not entry["enabled"]:
+            state += " (disabled)"
+        detail = entry["version"] or entry["executable"] or "no executable"
+        print(
+            f"{name}: {state}; {detail}; Merv tools via {entry['merv_mcp']}; "
+            f"skills {entry['skills']}"
+        )
+        for problem in entry.get("problems", ()):
+            print(f"  - {problem}")
+    return 0 if ready else 1
 
 
 def _cmd_storage_upload(args: argparse.Namespace) -> int:

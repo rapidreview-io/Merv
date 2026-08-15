@@ -389,6 +389,25 @@ class AgentSessionsTest(unittest.TestCase):
                 "available_commands": {"codex": True, "claude": False},
                 "local_sessions": {"running": 0, "uncertain": 0},
                 "secret": "discard me too",
+                "harness": {
+                    "skills": {"root": "/home/r/.merv/skills", "count": 8, "digest": "abc"},
+                    "platforms": {
+                        "Codex": {
+                            "adapter": "codex",
+                            "executable": "/usr/local/bin/codex",
+                            "version": "codex-cli 0.144.4",
+                            "merv_mcp": "native",
+                            "skills": "mounted",
+                            "ok": True,
+                            "argv": ["must", "not", "leave"],
+                        },
+                        "Hermes": {
+                            "adapter": "hermes",
+                            "ok": False,
+                            "problems": ["'hermes' is not on PATH"],
+                        },
+                    },
+                },
             },
             applied_version=0,
         )
@@ -402,6 +421,13 @@ class AgentSessionsTest(unittest.TestCase):
         self.assertEqual(presence["capacity"], 2)
         self.assertEqual(presence["inventory"]["available_commands"], {"claude": False, "codex": True})
         self.assertNotIn("secret", presence["inventory"])
+        harness = presence["inventory"]["harness"]
+        self.assertEqual(harness["skills"], {"root": "/home/r/.merv/skills", "count": 8, "digest": "abc"})
+        self.assertEqual(harness["platforms"]["Codex"]["version"], "codex-cli 0.144.4")
+        self.assertEqual(harness["platforms"]["Codex"]["merv_mcp"], "native")
+        self.assertTrue(harness["platforms"]["Codex"]["ok"])
+        self.assertNotIn("argv", harness["platforms"]["Codex"])
+        self.assertEqual(harness["platforms"]["Hermes"]["problems"], ["'hermes' is not on PATH"])
         self.assertEqual(response["desired_version"], 0)
         self.assertEqual(response["desired_settings"], {})
         listing = self.sessions.list(project_id="proj_1")
