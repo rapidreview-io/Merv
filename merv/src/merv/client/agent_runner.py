@@ -43,25 +43,40 @@ from merv.shared.client_config import (
     resolve_client_config_path,
     resolve_client_control_url,
 )
-from .local_control import (
-    DEFAULT_PORT,
-    LocalControlError,
-    local_control,
-    pairing_token,
-    private_token,
-    start_in_background,
+from merv.shared.runner_settings import (
+    DEFAULT_PLATFORM_EXECUTABLES,
+    RunnerSettingsError,
+    validate_desired_settings,
 )
+from .private_files import (
+    PrivateFileError,
+    private_token,
+    read_json_document,
+    replace_json_document,
+)
+from .runner_pairing import PairingError, credential_path, pair as pair_runner
 
 
 MCP_KEY_ENV_VAR = "MERV_MCP_KEY"
 SESSION_KEY_PREFIX = "mas_"
+# Reported in the heartbeat inventory so Settings can tell an old runner
+# archive from a current one; the runner is brain-free and has no package
+# version of its own. Bump when the runner/brain contract changes.
+RUNNER_VERSION = "2026.08.15"
 DEFAULT_POLL_SECONDS = 10.0
 RAPID_STOP_SECONDS = 30.0
 CRASH_LOOP_WINDOW_SECONDS = 2 * 60.0
+# client.json key that remembers which brain-held settings version this
+# machine last applied, so a restart does not re-report "pending".
+SETTINGS_VERSION_KEY = "desired_settings_version"
 
 
 class RunnerError(Exception):
     """A configuration, protocol, or local-launch failure."""
+
+
+class RunnerCredentialError(RunnerError):
+    """The brain rejected this runner's credential; the owner must re-pair."""
 
 
 @dataclass(frozen=True)
@@ -1424,15 +1439,23 @@ class AgentSessionsClient:
         machine: Mapping[str, Any],
         platforms: Sequence[Mapping[str, Any]],
         capacity: int,
-    ) -> None:
-        self._post(
-            f"/api/projects/{project_id}/agent-runners/heartbeat",
-            {
-                "runner_id": runner_id,
-                "machine": dict(machine),
-                "platforms": [dict(item) for item in platforms],
-                "capacity": max(int(capacity), 0),
-            },
+        inventory: Mapping[str, Any] | None = None,
+        applied_version: int | None = None,
+    ) -> dict[str, Any]:
+        """Report presence; the answer carries this runner's desired tuning."""
+        payload: dict[str, Any] = {
+            "runner_id": runner_id,
+            "machine": dict(machine),
+            "platforms": [dict(item) for item in platforms],
+            "capacity": max(int(capacity), 0),
+        }
+        if inventory is not None:
+            payload["inventory"] = dict(inventory)
+        if applied_version is not None:
+            payload["applied_version"] = max(int(applied_version), 0)
+        return (
+            self._post(f"/api/projects/{project_id}/agent-runners/heartbeat", payload)
+            or {}
         )
 
     def _get(self, path: str) -> dict[str, Any]:
@@ -1482,6 +1505,14 @@ class AgentSessionsClient:
         except urllib.error.HTTPError as exc:
             if allow_empty and exc.code in {204, 404, 409}:
                 return None
+            if exc.code == 401 and self.runner_key:
+                # The paired credential was revoked or never registered. Do
+                # not re-pair silently: that would let a revoked machine
+                # re-enrol without an owner. Stop and say what to do.
+                raise RunnerCredentialError(
+                    "Merv rejected this runner's credential; run "
+                    "`merv-agent-runner pair` to pair the machine again"
+                ) from exc
             raise RunnerError(f"Merv returned HTTP {exc.code} for {path}") from exc
         except (urllib.error.URLError, OSError) as exc:
             raise RunnerError(f"could not reach Merv at {self.control_url}") from exc
@@ -1510,6 +1541,8 @@ class AgentRunner:
         trace_dir: Path,
         runner_secret: bytes,
         environment: Mapping[str, str] | None = None,
+        config_path: Path | None = None,
+        applied_settings_version: int = 0,
     ):
         self.project_id = project_id
         self.platforms = tuple(platforms)
@@ -1522,32 +1555,150 @@ class AgentRunner:
         self.runner_secret = runner_secret
         self.environment = environment if environment is not None else os.environ
         self._idle_reason = ""
+        # Brain-held tuning: which desired version this machine has fully
+        # applied, what is still waiting on idle, and the last rejection.
+        self.config_path = config_path
+        self.applied_settings_version = max(int(applied_settings_version), 0)
+        self.pending_workspace: WorkspaceSettings | None = None
+        self.pending_workspace_version = 0
+        self.settings_error = ""
 
-    def apply_platform_tuning(self, platforms: Sequence[Platform]) -> bool:
-        """Apply model/effort-only edits for future launches without a restart."""
-        updated = tuple(platforms)
-        current_by_name = {item.name: item for item in self.platforms}
-        updated_by_name = {item.name: item for item in updated}
-        if current_by_name.keys() != updated_by_name.keys():
-            return False
-        for name, current in current_by_name.items():
-            candidate = updated_by_name[name]
-            if (
-                current.adapter,
-                current.command,
-                current.enabled,
-                current.parallelism,
-            ) != (
-                candidate.adapter,
-                candidate.command,
-                candidate.enabled,
-                candidate.parallelism,
-            ):
-                return False
-        # Tuple replacement is atomic in CPython. A launch already in progress
-        # retains its Platform value; the next claim sees the new tuning.
-        self.platforms = updated
-        return True
+    # -- brain-held settings ---------------------------------------------
+
+    def apply_platforms(self, platforms: Sequence[Platform]) -> None:
+        """Replace the platform set for future launches; live ones drain.
+
+        Tuple replacement is atomic in CPython. A launch already in progress
+        retains its Platform value; the next claim sees the new tuning. An
+        entry that disappeared from configuration while it still has live
+        sessions is retained as a draining ``enabled=False`` platform so
+        ``_platform()`` keeps resolving it until those sessions close.
+        """
+        updated = list(platforms)
+        names = {item.name for item in updated}
+        for current in self.platforms:
+            if current.name not in names and self.ledger.running_count(current.name):
+                updated.append(
+                    Platform(
+                        name=current.name,
+                        adapter=current.adapter,
+                        command=current.command,
+                        enabled=False,
+                        model=current.model,
+                        effort=current.effort,
+                        parallelism=current.parallelism,
+                    )
+                )
+        self.platforms = tuple(updated)
+
+    def apply_desired(self, response: Mapping[str, Any]) -> None:
+        """Apply the brain's desired tuning if it is newer than what we hold."""
+        if self.config_path is None:
+            return
+        version = response.get("desired_version")
+        if not isinstance(version, int) or isinstance(version, bool):
+            return
+        if version <= self.applied_settings_version and self.pending_workspace is None:
+            return
+        desired = response.get("desired_settings")
+        if not isinstance(desired, Mapping):
+            return
+        if version > max(self.applied_settings_version, self.pending_workspace_version):
+            self._apply_desired_settings(desired, version)
+        self._apply_pending_workspace()
+
+    def _apply_desired_settings(self, desired: Mapping[str, Any], version: int) -> None:
+        assert self.config_path is not None
+        try:
+            normalized = validate_desired_settings(desired)
+        except RunnerSettingsError as exc:
+            self.settings_error = str(exc)
+            print(f"settings v{version} rejected: {exc}", file=sys.stderr)
+            return
+        try:
+            document = read_json_document(self.config_path)
+            merged = merge_desired_settings(document, normalized)
+            merged[SETTINGS_VERSION_KEY] = version
+            replace_json_document(self.config_path, merged, validate=_validate_settings)
+        except (PrivateFileError, RunnerError, RunnerSettingsError) as exc:
+            self.settings_error = str(exc)
+            print(f"settings v{version} could not be applied: {exc}", file=sys.stderr)
+            return
+        self.settings_error = ""
+        self.apply_platforms(load_platforms(self.config_path, include_disabled=True))
+        workspace = load_workspace_settings(self.config_path)
+        if workspace == self.workspaces.settings:
+            self.pending_workspace = None
+            self.pending_workspace_version = 0
+            self.applied_settings_version = version
+            print(f"applied settings v{version}")
+        else:
+            # Ledger rows do not carry the WorkspaceSettings that created
+            # their worktrees and consolidation advances go through the one
+            # manager, so a workspace change waits for an idle cycle.
+            self.pending_workspace = workspace
+            self.pending_workspace_version = version
+
+    def _apply_pending_workspace(self) -> None:
+        if self.pending_workspace is None:
+            return
+        if self._live_local_sessions() or self._advance_pending():
+            return
+        self.workspaces = WorkspaceManager(self.pending_workspace)
+        self.applied_settings_version = self.pending_workspace_version
+        print(f"applied settings v{self.pending_workspace_version} (workspace)")
+        self.pending_workspace = None
+        self.pending_workspace_version = 0
+
+    def _live_local_sessions(self) -> int:
+        return sum(
+            session.status in {"launching", "running", "uncertain"}
+            for session in self.ledger.sessions.values()
+        )
+
+    def _advance_pending(self) -> bool:
+        try:
+            return self.client.pending_advance(project_id=self.project_id) is not None
+        except RunnerError:
+            return True  # unknown → hold the workspace swap one more cycle
+
+    def _pending_reason(self) -> str:
+        if self.pending_workspace is None:
+            return ""
+        live = self._live_local_sessions()
+        if live:
+            return f"workspace change waits for {live} running job{'s' if live != 1 else ''}"
+        return "workspace change waits for the pending consolidation advance"
+
+    def inventory(self) -> dict[str, Any]:
+        """Non-secret self-report for the Settings page; never argv."""
+        counts = {"running": 0, "uncertain": 0}
+        for session in self.ledger.sessions.values():
+            if session.status in {"launching", "running"}:
+                counts["running"] += 1
+            elif session.status == "uncertain":
+                counts["uncertain"] += 1
+        result: dict[str, Any] = {
+            "local_sessions": counts,
+            "runner_version": RUNNER_VERSION,
+        }
+        workspace = getattr(self.workspaces, "settings", None)
+        if isinstance(workspace, WorkspaceSettings):
+            result["workspace"] = {
+                "repository": str(workspace.repository),
+                "root": str(workspace.root or ""),
+                "base_ref": workspace.base_ref,
+            }
+        if self.config_path is not None:
+            result["available_commands"] = _detected_commands(self.config_path)
+        reason = self._pending_reason()
+        if reason:
+            result["pending"] = {"reason": reason}
+        if self.settings_error:
+            result["settings_error"] = self.settings_error
+        return result
+
+    # -- the cycle ---------------------------------------------------------
 
     def reconcile(self) -> None:
         remote = {
@@ -1569,10 +1720,38 @@ class AgentRunner:
                     f"{session.session_id}: reconciliation failed: {exc}",
                     file=sys.stderr,
                 )
+        self._prune_uncertain(remote)
         self.ledger.save()
 
-    def report_presence(self) -> None:
-        self.client.heartbeat_runner(
+    def _prune_uncertain(self, remote: Mapping[str, Mapping[str, Any]]) -> None:
+        """Free slots held by sessions that are closed remotely and dead locally.
+
+        ``uncertain`` exists to avoid a duplicate child while a process might
+        still be alive. Once the brain has closed the row and no live process
+        can be found for it, keeping the slot only starves the platform.
+        """
+        for session in self.ledger.sessions.values():
+            if session.status != "uncertain":
+                continue
+            remote_status = str((remote.get(session.session_id) or {}).get("status") or "")
+            # Only a row the brain has *visibly* closed qualifies. An absent
+            # row (pre-PID crash window, or not yet listed) keeps the slot: the
+            # offer lease, not this pass, is what retires a possible duplicate.
+            if remote_status not in {"released", "expired"}:
+                continue
+            host_session = session.host_session()
+            if host_session is not None:
+                try:
+                    adapter = session.adapter or self._platform(session.platform).adapter
+                    if HOSTS[adapter].inspect(host_session) != "stopped":
+                        continue
+                except (RunnerError, KeyError):
+                    continue
+            session.status = remote_status
+
+    def report_presence(self) -> dict[str, Any]:
+        """Heartbeat this machine; the reply carries its desired tuning."""
+        return self.client.heartbeat_runner(
             project_id=self.project_id,
             runner_id=self.ledger.runner_id,
             machine={
@@ -1587,10 +1766,16 @@ class AgentRunner:
                     "model": configured.model or "",
                     "effort": configured.effort or "",
                     "parallelism": configured.parallelism,
+                    "enabled": configured.enabled,
+                    "managed": configured.adapter != "command",
                 }
                 for configured in self.platforms
             ],
-            capacity=sum(configured.parallelism for configured in self.platforms),
+            capacity=sum(
+                configured.parallelism for configured in self.platforms if configured.enabled
+            ),
+            inventory=self.inventory(),
+            applied_version=self.applied_settings_version,
         )
 
     def _reconcile_session(
@@ -1828,9 +2013,10 @@ class AgentRunner:
     def fill_available_slots(self) -> int:
         launched = 0
         remaining = {
-            platform.name: max(
-                platform.parallelism - self.ledger.running_count(platform.name),
-                0,
+            platform.name: (
+                max(platform.parallelism - self.ledger.running_count(platform.name), 0)
+                if platform.enabled
+                else 0  # disabled or draining: never claim, keep resolving
             )
             for platform in self.platforms
         }
@@ -1996,18 +2182,34 @@ class AgentRunner:
         raise RunnerError(f"platform {name!r} is no longer configured")
 
 
-def load_platforms(config_path: Path) -> tuple[Platform, ...]:
-    """Enabled agent platforms from the machine client settings."""
+def load_platforms(
+    config_path: Path, *, include_disabled: bool = False
+) -> tuple[Platform, ...]:
+    """Agent platforms from the machine client settings.
+
+    Enabled entries only by default; ``include_disabled`` returns every
+    configured entry with its ``enabled`` flag so the runner can drain and
+    report the ones an owner switched off.
+    """
     try:
         document = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         document = {}
-    configured = document.get("agent_platforms") if isinstance(document, dict) else {}
+    # A clean machine file has no agent_platforms yet: that is zero platforms,
+    # not an error — the paired runner heartbeats until Settings enables one.
+    configured = (
+        document.get("agent_platforms") if isinstance(document, dict) else None
+    )
+    if configured is None:
+        configured = {}
     if not isinstance(configured, dict):
         raise RunnerError("agent_platforms must be an object")
     platforms: list[Platform] = []
     for name, raw in configured.items():
-        if not isinstance(raw, dict) or not raw.get("enabled", True):
+        if not isinstance(raw, dict):
+            continue
+        enabled = bool(raw.get("enabled", True))
+        if not enabled and not include_disabled:
             continue
         if str(name).lower() == "aider":
             raise RunnerError(
@@ -2019,7 +2221,9 @@ def load_platforms(config_path: Path) -> tuple[Platform, ...]:
             raise RunnerError(
                 f"{name}: adapter must be one of {', '.join(sorted(HOSTS))}"
             )
-        command = raw.get("command") or [name]
+        # A native entry without an explicit command resolves its adapter's
+        # default executable (``cursor`` → ``cursor-agent``), not its name.
+        command = raw.get("command") or [DEFAULT_PLATFORM_EXECUTABLES.get(adapter, name)]
         if (
             not isinstance(command, list)
             or not command
@@ -2036,13 +2240,65 @@ def load_platforms(config_path: Path) -> tuple[Platform, ...]:
                 name=str(name),
                 adapter=adapter,
                 command=tuple(command),
-                enabled=True,
+                enabled=enabled,
                 model=_optional_text(raw.get("model")),
                 effort=_optional_text(raw.get("effort")),
                 parallelism=parallelism,
             )
         )
     return tuple(platforms)
+
+
+def merge_desired_settings(
+    document: Mapping[str, Any], desired: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Fold a validated desired document into ``client.json`` per entry.
+
+    Never a map replace: a ``command``-adapter (custom, CLI-only) entry is
+    left byte-identical; a native entry updates only its four tuning fields
+    and keeps its ``command``; a native entry that does not exist yet is
+    created with the adapter's default executable; native entries the desired
+    map does not mention are untouched. Workspace replaces its three fields
+    and keeps the strategy.
+    """
+    result = dict(document)
+    existing = result.get("agent_platforms")
+    platforms: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
+    for name, entry in (desired.get("platforms") or {}).items():
+        current = platforms.get(name)
+        if isinstance(current, dict) and str(current.get("adapter") or name) == "command":
+            continue
+        if not isinstance(current, dict):
+            current = {
+                "adapter": name,
+                "command": [DEFAULT_PLATFORM_EXECUTABLES[name]],
+                "enabled": False,
+            }
+        updated = dict(current)
+        for field in ("enabled", "model", "effort", "parallelism"):
+            if field in entry:
+                if field in ("model", "effort") and not entry[field]:
+                    updated.pop(field, None)
+                else:
+                    updated[field] = entry[field]
+        platforms[name] = updated
+    if "platforms" in desired:
+        result["agent_platforms"] = platforms
+    if "workspace" in desired:
+        current_workspace = result.get("agent_workspace")
+        workspace = (
+            dict(current_workspace) if isinstance(current_workspace, dict) else {}
+        )
+        for field in ("repository", "root", "base_ref"):
+            if field in desired["workspace"]:
+                value = desired["workspace"][field]
+                if value:
+                    workspace[field] = value
+                else:
+                    workspace.pop(field, None)
+        workspace["strategy"] = "git_worktree"
+        result["agent_workspace"] = workspace
+    return result
 
 
 def load_workspace_settings(
@@ -2543,7 +2799,8 @@ def _runtime_paths(config_path: Path) -> tuple[Path, Path]:
 
 
 def _credential_path(config_path: Path) -> Path:
-    return config_path.parent / "agent-runner.key"
+    # One definition, shared with pairing, so promotion and lookup agree.
+    return credential_path(config_path)
 
 
 def _stored_runner_key(config_path: Path) -> str | None:
@@ -2568,40 +2825,18 @@ def _runner_key(config_path: Path) -> str | None:
     return _stored_runner_key(config_path) or dual_env_value(MCP_KEY_ENV_VAR)
 
 
-def _has_runner_credential(config_path: Path) -> bool:
-    try:
-        return bool(
-            _stored_runner_key(config_path)
-            or dual_env_value(MCP_KEY_ENV_VAR)
-        )
-    except RunnerError:
-        return False
-
-
 def _validate_settings(config_path: Path) -> None:
-    load_platforms(config_path)
+    """Every configured entry must load, enabled or not, before a write lands."""
+    load_platforms(config_path, include_disabled=True)
     load_workspace_settings(config_path)
-
-
-# Default executable per native adapter, for Settings-side detection of which
-# agents this machine can actually launch. The command adapter has no default.
-DEFAULT_PLATFORM_EXECUTABLES: dict[str, str] = {
-    "codex": "codex",
-    "claude": "claude",
-    "gemini": "gemini",
-    "cursor": "cursor-agent",
-    "opencode": "opencode",
-    "copilot": "copilot",
-    "qwen": "qwen",
-    "hermes": "hermes",
-}
 
 
 def _detected_commands(config_path: Path) -> dict[str, bool]:
     """Which agent executables resolve on this machine's PATH.
 
-    Covers every adapter default plus the first argument of each configured
-    platform command, so custom executables are probed too.
+    Covers every native adapter default plus the first argument of each
+    configured platform command, so custom executables are probed too. Reported
+    in the heartbeat inventory so Settings can mark agents installed or not.
     """
     names = set(DEFAULT_PLATFORM_EXECUTABLES.values())
     try:
@@ -2619,49 +2854,19 @@ def _detected_commands(config_path: Path) -> dict[str, bool]:
     }
 
 
-def _local_status(
-    *,
-    project_id: str | None,
-    runner_active: bool,
-    ledger: SessionLedger | None,
-    config_path: Path | None = None,
-) -> dict[str, Any]:
-    sessions = []
-    if ledger is not None:
-        sessions = [
-            {
-                "id": item.session_id,
-                "project_id": item.project_id,
-                "experiment_id": item.experiment_id,
-                "platform": item.platform,
-                "status": item.status,
-                "kind": item.kind,
-                "review_request_id": item.review_request_id,
-                "pid": item.pid,
-                "cwd": item.cwd,
-                "branch": item.branch,
-            }
-            for item in ledger.sessions.values()
-        ]
-    status: dict[str, Any] = {
-        "runner_active": runner_active,
-        "project_id": project_id,
-        "machine": {
-            "hostname": socket.gethostname(),
-            "system": platform.system(),
-            "release": platform.release(),
-            "architecture": platform.machine(),
-            "runner_id": ledger.runner_id if ledger is not None else None,
-        },
-        "sessions": sessions,
-    }
-    if config_path is not None:
-        status["available_commands"] = _detected_commands(config_path)
-        status["credential_configured"] = _has_runner_credential(config_path)
-        status["credential_required"] = not _is_loopback_url(
-            resolve_client_control_url(config_path=config_path)
-        )
-    return status
+def _stored_settings_version(config_path: Path) -> int:
+    try:
+        raw = read_json_document(config_path).get(SETTINGS_VERSION_KEY)
+    except PrivateFileError:
+        return 0
+    return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0 else 0
+
+
+def _stored_project_id(config_path: Path) -> str:
+    try:
+        return str(read_json_document(config_path).get("project_id") or "").strip()
+    except PrivateFileError:
+        return ""
 
 
 def _run_runner(
@@ -2675,10 +2880,13 @@ def _run_runner(
     failures = 0
     while True:
         try:
-            runner.report_presence()
+            response = runner.report_presence()
+            runner.apply_desired(response)
             runner.reconcile()
             runner.advance_ready()
             runner.fill_available_slots()
+        except RunnerCredentialError:
+            raise
         except RunnerError as exc:
             if once:
                 raise
@@ -2702,35 +2910,27 @@ def _run_runner(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="merv-agent-runner",
-        description="Run Merv experiments in configured local coding agents.",
+        description=(
+            "Run Merv experiments in configured local coding agents. Pairs this "
+            "machine with a project on first run; `pair` starts a fresh pairing."
+        ),
     )
-    parser.add_argument("--project", help="Merv project id")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=("run", "pair"),
+        default="run",
+        help="run (default): pair if needed, then dispatch; pair: pair again.",
+    )
+    parser.add_argument(
+        "--project",
+        help="Merv project id (default: the project this machine paired with)",
+    )
     parser.add_argument("--config", help="Machine client settings path")
     parser.add_argument(
         "--once",
         action="store_true",
         help="Reconcile and fill available slots once, then exit.",
-    )
-    parser.add_argument(
-        "--settings-only",
-        action="store_true",
-        help="Serve the paired loopback settings API without dispatching.",
-    )
-    parser.add_argument(
-        "--settings-port",
-        type=int,
-        default=DEFAULT_PORT,
-        help=f"Loopback settings port (default: {DEFAULT_PORT}).",
-    )
-    parser.add_argument(
-        "--no-local-control",
-        action="store_true",
-        help="Do not serve the loopback Settings integration.",
-    )
-    parser.add_argument(
-        "--show-pairing-token",
-        action="store_true",
-        help="Print the private local Settings pairing token and exit.",
     )
     parser.add_argument(
         "--poll-seconds",
@@ -2749,99 +2949,77 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.config
             else resolve_client_config_path()
         )
-        token_path = config_path.parent / "agent-control.token"
-        token, _ = pairing_token(token_path)
-        if args.show_pairing_token:
-            print(token)
-            return 0
-        if args.settings_only:
-            ledger_path, _ = _runtime_paths(config_path)
-            settings_ledger = SessionLedger(ledger_path)
-            handoff_projects: list[str] = []
-            server_ref: dict[str, Any] = {}
-
-            def start_runner(project_id: str) -> None:
-                handoff_projects.append(project_id)
-                server_ref["server"].shutdown()
-
-            server = local_control(
-                config_path=config_path,
-                token=token,
-                validate=_validate_settings,
-                credential_path=_credential_path(config_path),
-                status=lambda: _local_status(
-                    project_id=None,
-                    runner_active=False,
-                    ledger=settings_ledger,
-                    config_path=config_path,
-                ),
-                start=start_runner,
-                port=args.settings_port,
-            )
-            server_ref["server"] = server
-            print(f"local settings: http://127.0.0.1:{args.settings_port}")
-            print(f"pairing token: {token}")
-            try:
-                server.serve_forever()
-            finally:
-                server.server_close()
-            if not handoff_projects:
-                return 0
-            args.project = handoff_projects[0]
-            args.settings_only = False
-            print(f"starting runner for project: {args.project}")
-        if not args.project:
-            raise RunnerError("--project is required unless --settings-only is used")
-        platforms = load_platforms(config_path)
-        if not platforms:
-            raise RunnerError(
-                "no enabled agent platforms; configure one with merv-client agent"
-            )
         control_url = resolve_client_control_url(config_path=config_path)
-        runner_key = _runner_key(config_path)
-        if not runner_key and not _is_loopback_url(control_url):
-            raise RunnerError(f"{MCP_KEY_ENV_VAR} is required")
-        ledger_path, trace_dir = _runtime_paths(config_path)
-        ledger = SessionLedger(ledger_path)
-        runner_secret, _ = private_token(config_path.parent / "agent-runner.secret")
-        workspace_settings = load_workspace_settings(config_path)
-        runner = AgentRunner(
-            project_id=args.project,
-            platforms=platforms,
-            client=AgentSessionsClient(
-                control_url=control_url,
-                runner_key=runner_key,
-            ),
-            ledger=ledger,
-            workspaces=WorkspaceManager(workspace_settings),
-            trace_dir=trace_dir,
-            runner_secret=runner_secret.encode("utf-8"),
-        )
+        loopback = _is_loopback_url(control_url)
+        # Only one process may pair or dispatch for a config dir; the lock is
+        # taken before any file under it is written.
         lock = RunnerLock(config_path.parent / "agent-runner.lock")
-        server = None
         try:
-            if not args.no_local_control:
-                def settings_changed(path: Path) -> bool:
-                    if load_workspace_settings(path) != workspace_settings:
-                        return True
-                    return not runner.apply_platform_tuning(load_platforms(path))
-
-                server = local_control(
-                    config_path=config_path,
-                    token=token,
-                    validate=_validate_settings,
-                    credential_path=_credential_path(config_path),
-                    status=lambda: _local_status(
-                        project_id=args.project,
-                        runner_active=True,
-                        ledger=ledger,
+            ledger_path, trace_dir = _runtime_paths(config_path)
+            ledger = SessionLedger(ledger_path)
+            project_id = str(args.project or "").strip() or _stored_project_id(config_path)
+            runner_key = _runner_key(config_path)
+            needs_pairing = args.command == "pair" or (
+                not loopback and not runner_key
+            )
+            if needs_pairing:
+                if loopback:
+                    raise RunnerError(
+                        "a loopback brain needs no pairing; run merv-agent-runner "
+                        "--project <id> against it directly"
+                    )
+                if args.command == "pair" and runner_key:
+                    print(
+                        "pairing again: the previous credential stays registered "
+                        "until you revoke it in Settings → MCP keys",
+                        file=sys.stderr,
+                    )
+                try:
+                    project_id = pair_runner(
                         config_path=config_path,
-                    ),
-                    settings_changed=settings_changed,
-                    port=args.settings_port,
+                        control_url=control_url,
+                        runner_id=ledger.runner_id,
+                        machine={
+                            "hostname": socket.gethostname(),
+                            "system": platform.system(),
+                            "architecture": platform.machine(),
+                        },
+                    )
+                except PairingError as exc:
+                    raise RunnerError(str(exc)) from exc
+                runner_key = _runner_key(config_path)
+            if not project_id:
+                raise RunnerError(
+                    "--project is required until this machine is paired with a project"
                 )
-                start_in_background(server)
-                print(f"local settings: http://127.0.0.1:{args.settings_port}")
+            if not runner_key and not loopback:
+                raise RunnerError(f"{MCP_KEY_ENV_VAR} is required")
+            platforms = load_platforms(config_path, include_disabled=True)
+            if not any(item.enabled for item in platforms):
+                # A paired machine with nothing enabled yet is the normal
+                # first-run state: heartbeat, report inventory, claim nothing,
+                # and pick up agents as soon as Settings saves them.
+                print(
+                    "no agents enabled yet; this machine will heartbeat and "
+                    "start claiming once Settings → Auto running enables one"
+                )
+            runner_secret, _ = private_token(config_path.parent / "agent-runner.secret")
+            workspace_settings = load_workspace_settings(config_path)
+            runner = AgentRunner(
+                project_id=project_id,
+                platforms=platforms,
+                client=AgentSessionsClient(
+                    control_url=control_url,
+                    runner_key=runner_key,
+                ),
+                ledger=ledger,
+                workspaces=WorkspaceManager(workspace_settings),
+                trace_dir=trace_dir,
+                runner_secret=runner_secret.encode("utf-8"),
+                config_path=config_path,
+                applied_settings_version=_stored_settings_version(config_path),
+            )
+            print(f"merv-agent-runner: dispatching for project {project_id}")
             _run_runner(
                 runner,
                 once=args.once,
@@ -2849,11 +3027,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
         finally:
-            if server is not None:
-                server.shutdown()
-                server.server_close()
             lock.close()
-    except (RunnerError, LocalControlError) as exc:
+    except RunnerCredentialError as exc:
+        print(f"merv-agent-runner: {exc}", file=sys.stderr)
+        return 2
+    except (RunnerError, PrivateFileError) as exc:
         print(f"merv-agent-runner: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:

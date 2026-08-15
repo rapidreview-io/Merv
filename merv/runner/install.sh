@@ -1,5 +1,7 @@
 #!/bin/sh
-# Install the standalone Merv auto-run client, then start its pairing service.
+# Install the standalone Merv auto-run client, then start it. On a machine
+# that is not yet paired, the runner prints a short code to enter in Merv
+# Settings → Auto running and begins dispatching as soon as it is approved.
 set -eu
 
 BASE_URL="${MERV_RUNNER_BASE_URL:-https://rapidreview.io/merv/runner}"
@@ -82,4 +84,7 @@ echo "Runner command: $BIN_DIR/merv-agent-runner"
 if [ "${1:-}" = "--install-only" ]; then
   exit 0
 fi
-exec "$BIN_DIR/merv-agent-runner" --settings-only "$@"
+# Pairs on first run (prints the code for Settings → Auto running), then keeps
+# dispatching for the paired project. Extra arguments pass through, e.g. a
+# `--project` for a headless MERV_MCP_KEY setup.
+exec "$BIN_DIR/merv-agent-runner" "$@"

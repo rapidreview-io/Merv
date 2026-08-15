@@ -25,12 +25,14 @@ INCLUDE = (
     "merv/client/__init__.py",
     "merv/client/agent_runner.py",
     "merv/client/cli.py",
-    "merv/client/local_control.py",
+    "merv/client/private_files.py",
     "merv/client/runner_entry.py",
+    "merv/client/runner_pairing.py",
     "merv/client/storage_upload.py",
     "merv/shared/__init__.py",
     "merv/shared/client_config.py",
     "merv/shared/machine_dirs.py",
+    "merv/shared/runner_settings.py",
 )
 
 

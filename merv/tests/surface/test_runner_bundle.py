@@ -34,7 +34,10 @@ class RunnerBundleTest(unittest.TestCase):
         manifest = build_runner_bundle.manifest()
         self.assertIn("merv/client/agent_runner.py", manifest)
         self.assertIn("merv/client/runner_entry.py", manifest)
+        self.assertIn("merv/client/runner_pairing.py", manifest)
         self.assertIn("merv/shared/client_config.py", manifest)
+        self.assertIn("merv/shared/runner_settings.py", manifest)
+        self.assertNotIn("merv/client/local_control.py", manifest)
         self.assertFalse(any("brain" in Path(path).parts for path in manifest))
         self.assertFalse(any("tests" in Path(path).parts for path in manifest))
 
@@ -60,22 +63,16 @@ class RunnerBundleTest(unittest.TestCase):
                 json.loads(client.stdout)["mcpServers"]["merv"]["type"],
                 "http",
             )
-            token = subprocess.run(
-                [
-                    sys.executable,
-                    str(archive),
-                    "runner",
-                    "--config",
-                    str(root / "client.json"),
-                    "--show-pairing-token",
-                ],
+            runner = subprocess.run(
+                [sys.executable, str(archive), "runner", "--help"],
                 env=environment,
                 capture_output=True,
                 text=True,
                 timeout=30,
             )
-            self.assertEqual(token.returncode, 0, token.stderr)
-            self.assertGreaterEqual(len(token.stdout.strip()), 32)
+            self.assertEqual(runner.returncode, 0, runner.stderr)
+            self.assertIn("pair", runner.stdout)
+            self.assertNotIn("settings-only", runner.stdout)
 
     def test_installer_is_idempotent_and_launchers_use_the_archive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
