@@ -499,6 +499,21 @@ class RunnerMainTest(unittest.TestCase):
         self.assertEqual(paired.call_count, 1)
         self.assertEqual(run.call_args.args[0].project_id, "proj_resumed")
 
+    def test_explicit_project_is_remembered_for_a_key_that_predates_pairing(self) -> None:
+        # Old loopback pairing left a key file and no project in client.json.
+        credential_path(self.config).write_text("mk_" + "g" * 43 + "\n")
+        with (
+            patch("merv.client.agent_runner.pair_runner") as paired,
+            patch("merv.client.agent_runner._run_runner") as run,
+            redirect_stdout(io.StringIO()),
+        ):
+            first = runner_main(["--config", str(self.config), "--project", "proj_legacy"])
+            second = runner_main(["--config", str(self.config)])
+        self.assertEqual((first, second), (0, 0))
+        self.assertEqual(paired.call_count, 0)
+        self.assertEqual(json.loads(self.config.read_text())["project_id"], "proj_legacy")
+        self.assertEqual(run.call_args.args[0].project_id, "proj_legacy")
+
     def test_pair_command_forces_a_new_exchange_even_when_paired(self) -> None:
         credential_path(self.config).write_text("mk_" + "d" * 43 + "\n")
         with (

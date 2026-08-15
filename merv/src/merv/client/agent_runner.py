@@ -3357,6 +3357,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             if not runner_key and not loopback:
                 raise RunnerError(f"{MCP_KEY_ENV_VAR} is required")
+            if args.project and _stored_project_id(config_path) != project_id:
+                # A machine credentialed before device-code pairing (or headless
+                # with MERV_MCP_KEY) has a key but no remembered project. Remember
+                # the explicit choice so the next start needs no flag.
+                try:
+                    replace_json_document(
+                        config_path,
+                        {**read_json_document(config_path), "project_id": project_id},
+                    )
+                except PrivateFileError as exc:
+                    print(f"could not remember --project: {exc}", file=sys.stderr)
             platforms = load_platforms(config_path, include_disabled=True)
             if not any(item.enabled for item in platforms):
                 # A paired machine with nothing enabled yet is the normal
