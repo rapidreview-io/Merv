@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ReactFlow, Background, Controls, Handle, Position, MarkerType, BaseEdge, getSmoothStepPath, useStoreApi } from '@xyflow/react';
+import { ReactFlow, Background, Controls, Handle, Position, MarkerType, useStoreApi } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api } from '../api';
 import StatusPill from './StatusPill';
@@ -54,34 +54,43 @@ function statusClass(node) {
 // file or the sandbox simply sits next to the beat it trails. Evidence edges
 // (`feeds`) ARE drawn — files lead into the marker they were submitted with.
 const ATTACHMENT_EDGES = new Set(['produced', 'ran_on']);
+const ROUND_TYPES = new Set(['attempt', 'submission']);
+
+/**
+ * What is drawn. Every arrow is a plain "next": the backbone marker → marker,
+ * a round straight down to its verdict, files into the marker they were
+ * submitted with, the last round on to the conclusion, and the conclusion to
+ * the claims it tests. A verdict's own consequences are not drawn as lines —
+ * that it sent the round back is on the round itself (amber, "sent back") and
+ * the next round sits to the right — so edges the server states from a review
+ * to another round are dropped, and edges from a review to what follows the
+ * spine (conclusion, claims) are carried by the round the review hangs under.
+ */
+function drawnEdges(nodes, edges) {
+  const at = new Map(nodes.map(n => [n.id, n]));
+  const roundOf = (review) => nodes.find(n => ROUND_TYPES.has(n.type) && n.x === review.x) || null;
+  const seen = new Set();
+  const out = [];
+  for (const e of edges) {
+    if (ATTACHMENT_EDGES.has(e.type)) continue;
+    let from = at.get(e.from);
+    const to = at.get(e.to);
+    if (!from || !to) continue;
+    if (from.type === 'review' && to.type !== 'review') {
+      if (ROUND_TYPES.has(to.type)) continue;
+      from = roundOf(from) || from;
+    }
+    const key = `${from.id}→${to.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...e, from: from.id, to: to.id, type: e.type === 'revised_to' ? 'then' : e.type, vertical: from.x === to.x });
+  }
+  return out;
+}
 
 // Where the spine passes through every card: a fixed offset from the top, so
 // cards of slightly different heights still sit on one straight line.
 const HANDLE_TOP = 38;
-
-/**
- * Edges bend late. A verdict hangs under its round, one row below the
- * backbone, and its arrow to the next round has to cross the column of files
- * in between; the rows interleave (verdicts on whole rows, files on half rows)
- * so a level run at the verdict's row passes through a clear channel — as long
- * as the turn up to the marker happens in the gap right before it, not
- * mid-column behind a file card, where react-flow's default step would put it.
- * Verdict arrows turn nearer the marker than file arrows so the two verticals
- * in that gap don't overprint. Level edges (marker → marker) come out straight;
- * within-column edges (marker → its verdict) use the top/bottom handles and
- * drop straight down.
- */
-const BEND_BEFORE_TARGET = { verdict: 22, other: 40 };
-function FigureEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style, data }) {
-  const late = sourcePosition === Position.Right && targetPosition === Position.Left && targetX > sourceX + 40;
-  const [path] = getSmoothStepPath({
-    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition,
-    borderRadius: 6,
-    ...(late ? { centerX: targetX - (data?.bend ?? BEND_BEFORE_TARGET.other) } : {}),
-  });
-  return <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />;
-}
-const edgeTypes = { figure: FigureEdge };
 
 // Which node's detail is open (and how to open one). Read by the card so it
 // can ring itself without recreating node objects (react-flow keys its handle
@@ -178,29 +187,21 @@ function toFlow(figure) {
     draggable: false,
     connectable: false,
   }));
-  const at = new Map(laid.nodes.map(n => [n.id, n]));
-  const edges = laid.edges
-    .filter(e => !ATTACHMENT_EDGES.has(e.type))
-    .map(e => {
-      const from = at.get(e.from);
-      const to = at.get(e.to);
-      // Same column: a round down to its verdict (or verdict to re-verdict).
-      const vertical = from && to && from.x === to.x;
-      return {
-        id: e.id,
-        source: e.from,
-        target: e.to,
-        ...(vertical ? { sourceHandle: 'down', targetHandle: 'up' } : {}),
-        type: 'figure',
-        data: { bend: from?.type === 'review' ? BEND_BEFORE_TARGET.verdict : BEND_BEFORE_TARGET.other },
-        className: `fig-edge fig-edge--${e.type}`,
-        animated: e.type !== 'feeds' && (liveIds.has(e.from) || liveIds.has(e.to)),
-        // Evidence arrows are many and quiet; spine arrows are few and loud.
-        markerEnd: e.type === 'feeds'
-          ? { type: MarkerType.ArrowClosed, width: 10, height: 10 }
-          : { type: MarkerType.ArrowClosed, width: 13, height: 13 },
-      };
-    });
+  const edges = drawnEdges(laid.nodes, laid.edges)
+    .map(e => ({
+      id: `${e.from}→${e.to}`,
+      source: e.from,
+      target: e.to,
+      // Same column: a round straight down to its verdict.
+      ...(e.vertical ? { sourceHandle: 'down', targetHandle: 'up' } : {}),
+      type: 'smoothstep',
+      className: `fig-edge fig-edge--${e.type}`,
+      animated: e.type !== 'feeds' && (liveIds.has(e.from) || liveIds.has(e.to)),
+      // Evidence arrows are many and quiet; spine arrows are few and loud.
+      markerEnd: e.type === 'feeds'
+        ? { type: MarkerType.ArrowClosed, width: 10, height: 10 }
+        : { type: MarkerType.ArrowClosed, width: 13, height: 13 },
+    }));
   // The reader's reference point: the beat the server marks as "now", else
   // the rightmost card on the spine.
   const spine = laid.nodes.filter(n => !n.anchor);
@@ -464,9 +465,6 @@ export default function ExperimentFigure({
             <span className="fig-chip fig-st--revise">needs changes</span>
             <span className="fig-chip fig-st--failed">failed</span>
             <span className="fig-chip fig-st--faded">superseded</span>
-            <span className="fig-legend-sep" aria-hidden="true" />
-            <span className="fig-chip fig-chip--edge fig-chip--edge-then">→ next</span>
-            <span className="fig-chip fig-chip--edge fig-chip--edge-revised">⇢ sent back</span>
           </div>
           <GraphExpandButton expanded={expanded} onToggle={onToggleExpand} label="figure" />
         </div>
@@ -486,7 +484,6 @@ export default function ExperimentFigure({
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
             onInit={inst => { rfRef.current = inst; frame(); }}
             onNodeClick={(event, node) => {
               // Non-draggable nodes get no d3-drag click suppression, so the
