@@ -1,8 +1,8 @@
-// Presentation model for the feed's sense of time. One shared clock drives
-// every relative timestamp so the whole page ages in step (and stale "2m ago"
-// labels can't linger), and day dividers give the stream a calendar rhythm.
+// Presentation model for the feed: one shared clock, day dividers, and the
+// grouping of a flat newest-first post list into cards (a root post with its
+// thread continuations and its replies) plus the client-side filters.
 import { useEffect, useState } from 'react';
-import { fmtAgo } from '../utils/format';
+import { fmtAgo } from '../utils/format.js';
 
 // Shared ticking clock. One instance lives in Feed and flows down as a prop.
 export function useNow(intervalMs = 30000) {
@@ -47,103 +47,142 @@ export function postTime(ts, now) {
   return new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
-// Interleave day dividers into a newest-first post list. The leading "Today"
-// divider is skipped (a feed that opens on today needs no announcement); any
-// other day change gets one, including a non-today first group.
-//
-// lastSeenSeq (optional) marks where the previous visit ended: one `unseen`
-// item lands between the newest already-seen post and everything above it.
-// No marker when nothing is new, or when nothing was seen before (first visit).
-// A post joins the one above it (same author, posted within this window) into
-// a visual run: the newest keeps the byline, continuations drop it.
-const GROUP_WINDOW_MS = 20 * 60_000;
+// -- filters -----------------------------------------------------------------
 
-// Thread the flat newest-first list: replies group directly under the post
-// they answer, roots keep their reverse-chron order. One level of nesting only
-// — a reply to a reply attaches to the thread's root (depth stays 1), replies
-// under a root read oldest-first (conversation order). A reply whose parent
-// isn't in the loaded window stands alone as an `orphan` root (the card shows
-// a small "replying to an earlier post" line instead of silently flattening).
-export function threadPosts(posts) {
+export const FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'results', label: 'Results' },
+  { id: 'ideas', label: 'Ideas & papers' },
+  { id: 'asks', label: 'Asks' },
+  { id: 'reviews', label: 'Reviews' },
+];
+
+const RESULT_KINDS = new Set(['finding', 'kill', 'status', 'bottleneck']);
+const IDEA_KINDS = new Set(['idea', 'hunch', 'paper', 'direction']);
+
+// A question is open until the researcher has answered it.
+export function isOpenQuestion(card) {
+  return card.post.kind === 'question'
+    && !card.replies.some((r) => r.post.author_role === 'researcher');
+}
+
+export function cardMatches(card, filter) {
+  const { post } = card;
+  switch (filter) {
+    case 'results': return RESULT_KINDS.has(post.kind);
+    case 'ideas': return IDEA_KINDS.has(post.kind);
+    case 'asks': return post.kind === 'question';
+    case 'reviews': return post.author_role === 'reviewer' || post.author_role === 'lens';
+    default: return true;
+  }
+}
+
+// -- cards -------------------------------------------------------------------
+
+function seqOf(post) { return Number(post.created_seq) || 0; }
+function tsOf(post) {
+  const ts = post.created_at ? Date.parse(post.created_at) : NaN;
+  return Number.isFinite(ts) ? ts : null;
+}
+
+/**
+ * Group the flat newest-first list into cards. A card is a root post plus:
+ *  - `chain`: the author's own continuations (thread_root → root, or a reply
+ *    the author made to their own post), oldest first;
+ *  - `replies`: posts by other voices answering the root or any chain member,
+ *    oldest first (each reply is itself a card so it can carry attachments).
+ * Cards sort newest-first by their newest member — a live thread that just got
+ * a checkpoint surfaces. A continuation or reply whose root is beyond the
+ * loaded window stands alone as an `orphan` card that says so.
+ */
+export function buildCards(posts) {
   const byId = new Map(posts.map((p) => [p.id, p]));
-  const children = new Map();
-  const roots = [];
+  const cards = new Map(); // root id -> card
+  const rootOf = (post) => {
+    // The card that should hold `post`: walk thread_root / in_reply_to up to a
+    // root that is loaded. Guarded against malformed cycles.
+    let current = post;
+    let guard = 0;
+    while (guard++ < 50) {
+      const up = current.thread_root && byId.has(current.thread_root)
+        ? byId.get(current.thread_root)
+        : current.in_reply_to && byId.has(current.in_reply_to)
+          ? byId.get(current.in_reply_to)
+          : null;
+      if (!up || up.id === current.id) return current;
+      current = up;
+    }
+    return current;
+  };
+  const ensure = (root, orphan = false) => {
+    if (!cards.has(root.id)) {
+      cards.set(root.id, {
+        id: root.id, post: root, chain: [], replies: [], orphan, seq: seqOf(root), ts: tsOf(root),
+      });
+    }
+    return cards.get(root.id);
+  };
+  // Roots first (so continuation/reply lookups always find their card).
   for (const post of posts) {
-    if (post.in_reply_to && byId.has(post.in_reply_to)) {
-      // Walk to the thread root (guarded — a malformed cycle must not hang).
-      let root = byId.get(post.in_reply_to);
-      let guard = 0;
-      while (root.in_reply_to && byId.has(root.in_reply_to) && guard++ < 50) {
-        root = byId.get(root.in_reply_to);
-      }
-      if (root.id !== post.id) {
-        if (!children.has(root.id)) children.set(root.id, []);
-        children.get(root.id).push(post);
-        continue;
-      }
-    }
-    roots.push(post);
+    const isContinuation = Boolean(post.thread_root);
+    const isReply = Boolean(post.in_reply_to);
+    if (!isContinuation && !isReply) ensure(post);
   }
-  const out = [];
-  for (const root of roots) {
-    out.push({
-      post: root,
-      depth: 0,
-      orphan: Boolean(root.in_reply_to && !byId.has(root.in_reply_to)),
-    });
-    const kids = children.get(root.id);
-    if (kids) {
-      kids.sort((a, b) => (a.created_seq || 0) - (b.created_seq || 0));
-      for (const kid of kids) out.push({ post: kid, depth: 1 });
+  for (const post of posts) {
+    if (!post.thread_root && !post.in_reply_to) continue;
+    const root = rootOf(post);
+    if (root.id === post.id) {
+      // Parent not loaded: stand alone, but say what it is.
+      ensure(post, true);
+      continue;
     }
+    const card = ensure(root);
+    // The server marks continuations with thread_root; older rows only have
+    // in_reply_to, so a same-voice self-reply reads as a continuation too.
+    const continues = post.author_role !== 'researcher'
+      && post.author_handle === card.post.author_handle
+      && (Boolean(post.thread_root) || Boolean(post.in_reply_to));
+    if (continues) {
+      card.chain.push(post);
+    } else {
+      card.replies.push({ id: post.id, post, chain: [], replies: [], orphan: false, seq: seqOf(post), ts: tsOf(post) });
+    }
+    card.seq = Math.max(card.seq, seqOf(post));
+    const ts = tsOf(post);
+    if (ts != null && (card.ts == null || ts > card.ts)) card.ts = ts;
   }
+  const out = [...cards.values()];
+  for (const card of out) {
+    card.chain.sort((a, b) => (a.thread_index || 0) - (b.thread_index || 0) || seqOf(a) - seqOf(b));
+    card.replies.sort((a, b) => a.seq - b.seq);
+  }
+  out.sort((a, b) => b.seq - a.seq);
   return out;
 }
 
-export function withDayDividers(posts, now, lastSeenSeq = null) {
-  const threaded = threadPosts(posts);
+/**
+ * Interleave day dividers into the newest-first card list. The leading "Today"
+ * divider is skipped; any other day change gets one. `lastSeenSeq` places one
+ * `unseen` marker between the newest already-seen card and everything above.
+ */
+export function withDayDividers(cards, now, lastSeenSeq = null) {
   const items = [];
   let prevKey = dayKey(now);
-  let prevPost = null; // previous post item, reset by any divider between
-  let unseenPlaced = lastSeenSeq == null || (posts.length > 0 && posts[0].created_seq <= lastSeenSeq);
-  for (const { post, depth, orphan } of threaded) {
-    // Replies live inside their parent's block: no dividers or markers land
-    // between a post and its thread, and a thread interrupts continuation runs.
-    if (depth > 0) {
-      items.push({ type: 'post', id: post.id, post, grouped: false, depth });
-      prevPost = null;
-      continue;
-    }
-    if (!unseenPlaced && post.created_seq <= lastSeenSeq) {
+  let unseenPlaced = lastSeenSeq == null || (cards.length > 0 && cards[0].seq <= lastSeenSeq);
+  for (const card of cards) {
+    if (!unseenPlaced && card.seq <= lastSeenSeq) {
       items.push({ type: 'unseen', id: 'unseen' });
       unseenPlaced = true;
-      prevPost = null;
     }
-    const ts = post.created_at ? Date.parse(post.created_at) : NaN;
-    if (Number.isFinite(ts)) {
-      const key = dayKey(ts);
+    if (card.ts != null) {
+      const key = dayKey(card.ts);
       if (key !== prevKey) {
-        // Key includes the post id: agent clock skew can interleave days
-        // within seq order, and duplicate keys would break reconciliation.
-        items.push({ type: 'day', id: `day-${key}-${post.id}`, ts });
+        items.push({ type: 'day', id: `day-${key}-${card.id}`, ts: card.ts });
         prevKey = key;
-        prevPost = null;
       }
     }
-    // The list is newest-first, so `prevPost` (above on screen) is the newer
-    // one; this post continues its run when the same author posted both
-    // within the window.
-    let grouped = false;
-    if (prevPost && prevPost.post.author_handle === post.author_handle) {
-      const prevTs = Date.parse(prevPost.post.created_at);
-      grouped = Number.isFinite(ts) && Number.isFinite(prevTs) && prevTs - ts <= GROUP_WINDOW_MS;
-    }
-    const item = { type: 'post', id: post.id, post, grouped, depth: 0, orphan };
-    items.push(item);
-    prevPost = item;
+    items.push({ type: 'card', id: card.id, card });
   }
-  // Everything loaded is new (the boundary post is beyond this page): close
-  // the list with the marker so the heaviest backlog still gets its signal.
-  if (!unseenPlaced && posts.length) items.push({ type: 'unseen', id: 'unseen' });
+  if (!unseenPlaced && cards.length) items.push({ type: 'unseen', id: 'unseen' });
   return items;
 }

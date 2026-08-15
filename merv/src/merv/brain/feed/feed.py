@@ -43,17 +43,28 @@ from ..kernel.utils import (
     now_iso,
     parse_iso,
 )
+from .attachments import normalize_attachments
 from .persistence import install_feed_schema
+from .refs import parse_refs
 
-# The product contract is a short editorial note, measured after stripping.
+# The product contract is a short post, measured after stripping. Longer
+# thoughts are threads (chained posts), never longer posts.
 POST_TEXT_MAX = 280
+THREAD_MAX = 8
+BIO_MAX = 80
 
 AUTHOR_ROLES = frozenset({"main", "reviewer", "lens", "researcher"})
+# Roles that share one persistent voice per project: every reviewer session
+# posts as the project's reviewer, so the reader can follow one voice.
+ADOPTABLE_ROLES = frozenset({"reviewer", "lens"})
 
 # Kinds are self-declared, never inferred. `status` is a live checkpoint;
 # `finding` is a landed result.
 POST_KINDS = frozenset(
-    {"finding", "hunch", "bottleneck", "kill", "direction", "status"}
+    {
+        "finding", "hunch", "bottleneck", "kill", "direction", "status",
+        "idea", "paper", "question",
+    }
 )
 
 # Reactions are binary because a project has one researcher.
@@ -88,7 +99,12 @@ class FeedAdvisory(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class PostIntent:
-    """One post request; resolving it fills the project and author role."""
+    """One post request; resolving it fills the project and author role.
+
+    ``attachments`` holds the validated native attachments (stat/chart/table/
+    log). ``thread`` holds continuation posts (each ``{"text", "attachments",
+    "url", "ref"}``) chained under this one. ``chain_root`` is set when a
+    self-reply continues the author's own earlier post."""
 
     handle: str
     text: str
@@ -98,6 +114,10 @@ class PostIntent:
     ref: str = ""
     kind: str = ""
     in_reply_to: str = ""
+    quote_of: str = ""
+    attachments: tuple[dict[str, Any], ...] = ()
+    thread: tuple[dict[str, Any], ...] = ()
+    chain_root: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,28 +173,48 @@ class FeedService:
         role: str = "main",
         session_id: str = "",
         project_id: str | None = None,
+        bio: str = "",
+        new_voice: bool = False,
     ) -> dict[str, Any]:
-        """Claim a self-chosen handle for this project (idempotent per session).
+        """Claim a voice for this project (idempotent per session).
 
         A handle is unique per project so parallel agents post under distinct
         voices. Re-registering the same handle from the same session is a no-op;
         a different session claiming a live handle is rejected so two agents do
-        not collide on one name.
+        not collide on one name. Reviewer and lens sessions adopt the project's
+        existing voice for that role (``adopted``) unless ``new_voice`` is set,
+        so the reader follows one reviewer instead of a new name per review.
+        The response carries the project's roster so an agent can pick up an
+        earlier voice deliberately.
         """
         handle = _validate_handle(handle)
         if role not in AUTHOR_ROLES:
             raise ValidationError(
                 f"unknown author role: {role}. Allowed: {', '.join(sorted(AUTHOR_ROLES))}"
             )
+        bio = (bio or "").strip()
+        if len(bio) > BIO_MAX:
+            raise ValidationError(f"bio must be {BIO_MAX} characters or fewer")
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
+            adopted = False
+            if role in ADOPTABLE_ROLES and not new_voice:
+                voice = conn.execute(
+                    "SELECT handle FROM feed_authors WHERE project_id = ? AND role = ? "
+                    "ORDER BY COALESCE(last_posted_at, registered_at) DESC LIMIT 1",
+                    (project_id, role),
+                ).fetchone()
+                if voice is not None and str(voice["handle"]) != handle:
+                    handle = str(voice["handle"])
+                    adopted = True
             existing = conn.execute(
                 "SELECT * FROM feed_authors WHERE project_id = ? AND handle = ?",
                 (project_id, handle),
             ).fetchone()
             if existing is not None:
                 if (
-                    existing["session_id"]
+                    not adopted
+                    and existing["session_id"]
                     and session_id
                     and existing["session_id"] != session_id
                 ):
@@ -183,34 +223,101 @@ class FeedService:
                         "choose another sci-fi name"
                     )
                 conn.execute(
-                    "UPDATE feed_authors SET role = ?, session_id = ? WHERE project_id = ? AND handle = ?",
-                    (role, session_id or existing["session_id"], project_id, handle),
+                    "UPDATE feed_authors SET role = ?, session_id = ?, bio = ? "
+                    "WHERE project_id = ? AND handle = ?",
+                    (
+                        role,
+                        session_id or existing["session_id"],
+                        bio or (existing["bio"] or ""),
+                        project_id,
+                        handle,
+                    ),
                 )
-                row = conn.execute(
-                    "SELECT * FROM feed_authors WHERE project_id = ? AND handle = ?",
-                    (project_id, handle),
-                ).fetchone()
-                return {"author": row_to_dict(row=row), "created": False}
-            conn.execute(
-                """
-                INSERT INTO feed_authors (project_id, handle, role, session_id, registered_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (project_id, handle, role, session_id, now_iso()),
-            )
-            self.store.record_event(
-                conn=conn,
-                project_id=project_id,
-                event_type="feed.author_registered",
-                target_type="feed_author",
-                target_id=handle,
-                payload={"handle": handle, "role": role},
-            )
+                created = False
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO feed_authors (project_id, handle, role, session_id, bio, registered_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (project_id, handle, role, session_id, bio, now_iso()),
+                )
+                self.store.record_event(
+                    conn=conn,
+                    project_id=project_id,
+                    event_type="feed.author_registered",
+                    target_type="feed_author",
+                    target_id=handle,
+                    payload={"handle": handle, "role": role},
+                )
+                created = True
             row = conn.execute(
                 "SELECT * FROM feed_authors WHERE project_id = ? AND handle = ?",
                 (project_id, handle),
             ).fetchone()
-            return {"author": row_to_dict(row=row), "created": True}
+            author = row_to_dict(row=row) or {}
+            author.pop("session_id", None)
+            result: dict[str, Any] = {
+                "author": author,
+                "created": created,
+                "adopted": adopted,
+                "roster": self._roster(conn=conn, project_id=project_id),
+            }
+            replies = self._recent_researcher_replies(conn=conn, project_id=project_id)
+            if replies:
+                result["researcher_replies"] = replies
+            if adopted:
+                result["note"] = (
+                    f"This project's {role} voice is '{handle}'; post as that handle "
+                    "so the reader follows one voice. Pass new_voice=true to create "
+                    "a distinct one on purpose."
+                )
+            return result
+
+    def _roster(self, *, conn: Any, project_id: str) -> list[dict[str, Any]]:
+        """Every voice in the project with its bio and post count."""
+        rows = conn.execute(
+            """
+            SELECT a.handle, a.role, a.bio, a.last_posted_at,
+                   (SELECT COUNT(*) FROM posts p
+                    WHERE p.project_id = a.project_id AND p.author_handle = a.handle) AS posts
+            FROM feed_authors a
+            WHERE a.project_id = ?
+            ORDER BY COALESCE(a.last_posted_at, a.registered_at) DESC
+            LIMIT 20
+            """,
+            (project_id,),
+        ).fetchall()
+        return [
+            {
+                "handle": str(row["handle"]),
+                "role": str(row["role"] or "main"),
+                "bio": str(row["bio"] or ""),
+                "posts": int(row["posts"] or 0),
+                "last_posted_at": row["last_posted_at"],
+            }
+            for row in rows
+        ]
+
+    def _recent_researcher_replies(
+        self, *, conn: Any, project_id: str, limit: int = 5
+    ) -> list[dict[str, Any]]:
+        """The researcher's latest replies — steering an agent should not miss."""
+        rows = conn.execute(
+            "SELECT id, in_reply_to, text, created_at FROM posts "
+            "WHERE project_id = ? AND author_role = 'researcher' "
+            "ORDER BY created_seq DESC LIMIT ?",
+            (project_id, limit),
+        ).fetchall()
+        return [
+            {
+                "post_id": str(row["id"]),
+                "in_reply_to": str(row["in_reply_to"] or ""),
+                "text": str(row["text"] or ""),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
 
     # -- writing ------------------------------------------------------------
 
@@ -225,39 +332,90 @@ class FeedService:
         ref: str | None = None,
         kind: str | None = None,
         in_reply_to: str | None = None,
+        quote_of: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+        thread: list[dict[str, Any]] | None = None,
         project_id: str | None = None,
         base_url: str = "",
     ) -> dict[str, Any]:
         """Write a post. ``handle`` must already be registered in this project.
 
-        A text/link-only post lands immediately (unchanged shape ``{"post": …}``).
-        A post carrying a visual instead mints a one-time upload token and
-        returns ``{"post_id", "run"}``: the agent runs the ``run`` curl to PUT
-        the local file's bytes to ``/api/feed/u/<token>``, which finalizes the
-        post — so the bytes travel over the agent's own curl, never through MCP
-        (the artifact.submit discipline)."""
+        Entity ids and links in ``text`` are parsed: the first entity id becomes
+        ``ref`` and the first link becomes the unfurled link when those fields
+        are not given explicitly. ``attachments`` are validated typed blocks;
+        ``thread`` chains continuation posts under this one, atomically.
+
+        A post without an upload lands immediately (shape ``{"post": …}``,
+        plus ``"thread"`` when continuations were created). A post carrying an
+        image or embed instead mints a one-time upload token and returns
+        ``{"post_id", "run"}``: the agent runs the ``run`` curl to PUT the local
+        file's bytes to ``/api/feed/u/<token>``, which finalizes the post (and
+        its thread) — the bytes travel over the agent's own curl, never through
+        MCP (the artifact.submit discipline)."""
         if image_path and html_path:
             raise ValidationError("a post may carry an image or an embed, not both")
+        normalized = normalize_attachments(
+            attachments,
+            image_path=str(image_path or ""),
+            html_path=str(html_path or ""),
+            url=str(url or ""),
+        )
         intent = self._resolve_intent(
             PostIntent(
                 handle=handle,
                 text=text,
                 project_id=project_id,
-                url=str(url or ""),
+                url=normalized.link_url,
                 ref=str(ref or ""),
                 kind=str(kind or ""),
                 in_reply_to=str(in_reply_to or ""),
+                quote_of=str(quote_of or ""),
+                attachments=normalized.native,
+                thread=self._validate_thread(thread),
             )
         )
-        media_kind = "image" if image_path else ("embed" if html_path else "")
-        if media_kind:
+        if normalized.media_kind:
             return self._begin_upload(
                 intent=intent,
-                media_kind=media_kind,
-                media_path=str(image_path or html_path or ""),
+                media_kind=normalized.media_kind,
+                media_path=normalized.media_path,
                 base_url=base_url,
             )
         return self._create_post(intent=intent)
+
+    def _validate_thread(self, thread: Any) -> tuple[dict[str, Any], ...]:
+        """Continuation posts: text plus native attachments and at most one link.
+        Uploads are not allowed inside a thread; post them as the root, or reply
+        to your own post afterwards."""
+        if thread is None:
+            return ()
+        if not isinstance(thread, list):
+            raise ValidationError("thread must be a list of {text, attachments?} objects")
+        if len(thread) > THREAD_MAX:
+            raise ValidationError(f"a thread continues for at most {THREAD_MAX} more posts")
+        items: list[dict[str, Any]] = []
+        for index, item in enumerate(thread):
+            if isinstance(item, str):
+                item = {"text": item}
+            if not isinstance(item, dict):
+                raise ValidationError(f"thread[{index}] must be an object with text")
+            text = self._validate_text(str(item.get("text") or ""))
+            normalized = normalize_attachments(item.get("attachments"), url=str(item.get("url") or ""))
+            if normalized.media_kind:
+                raise ValidationError(
+                    "thread posts cannot carry an image or embed upload; put the visual "
+                    "on the root post, or reply to your own post afterwards"
+                )
+            refs = parse_refs(text)
+            items.append(
+                {
+                    "text": text,
+                    "attachments": list(normalized.native),
+                    "url": normalized.link_url or (refs.links[0] if refs.links else ""),
+                    "ref": refs.entities[0] if refs.entities else "",
+                }
+            )
+        return tuple(items)
 
     def _resolve_intent(self, intent: PostIntent) -> PostIntent:
         handle, text, ref, kind = self._validate_post_fields(
@@ -266,6 +424,10 @@ class FeedService:
             ref=intent.ref,
             kind=intent.kind,
         )
+        refs = parse_refs(text)
+        if not ref and refs.entities:
+            ref = refs.entities[0]
+        url = intent.url or (refs.links[0] if refs.links else "")
         with self.store.transaction() as conn:
             resolved_project = self.store.require_project_id(
                 conn=conn, project_id=intent.project_id
@@ -278,19 +440,28 @@ class FeedService:
                 raise ValidationError(
                     f"handle '{handle}' is not registered; call feed.register first"
                 )
-            reply_to = self._validate_in_reply_to(
+            author_role = str(author["role"] or "main")
+            reply_to, chain_root = self._validate_in_reply_to(
                 conn=conn,
                 project_id=resolved_project,
                 in_reply_to=intent.in_reply_to,
+                handle=handle,
+                author_role=author_role,
+            )
+            quote_of = self._validate_quote_of(
+                conn=conn, project_id=resolved_project, quote_of=intent.quote_of
             )
         return replace(
             intent,
             handle=handle,
-            author_role=str(author["role"] or "main"),
+            author_role=author_role,
             text=text,
+            url=url,
             ref=ref,
             kind=kind,
             in_reply_to=reply_to,
+            quote_of=quote_of,
+            chain_root=chain_root,
             project_id=resolved_project,
         )
 
@@ -305,14 +476,20 @@ class FeedService:
         self._sweep_expired_tokens()
         post_id = new_id(prefix="post")
         token = secrets.token_urlsafe(24)
+        extra = {
+            "attachments": list(intent.attachments),
+            "thread": list(intent.thread),
+            "quote_of": intent.quote_of,
+        }
         with self.store.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO feed_upload_tokens (
                     token, project_id, post_id, handle, text, media_kind,
-                    media_path, url, ref, kind, in_reply_to, expires_at, created_at
+                    media_path, url, ref, kind, in_reply_to, extra_json,
+                    expires_at, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     token,
@@ -326,6 +503,7 @@ class FeedService:
                     intent.ref,
                     intent.kind,
                     intent.in_reply_to,
+                    json.dumps(extra, sort_keys=True),
                     iso_after(seconds=FEED_UPLOAD_TOKEN_TTL_SECONDS),
                     now_iso(),
                 ),
@@ -348,6 +526,12 @@ class FeedService:
         """Validate uploaded bytes, then atomically consume the token and post."""
         row = self._pending_upload(token=token)
         media_kind = str(row["media_kind"] or "")
+        try:
+            extra = json.loads(row["extra_json"] or "{}")
+        except (TypeError, ValueError):
+            extra = {}
+        if not isinstance(extra, dict):
+            extra = {}
         intent = self._resolve_intent(
             PostIntent(
                 project_id=str(row["project_id"]),
@@ -357,6 +541,9 @@ class FeedService:
                 ref=str(row["ref"] or ""),
                 kind=str(row["kind"] or ""),
                 in_reply_to=str(row["in_reply_to"] or ""),
+                quote_of=str(extra.get("quote_of") or ""),
+                attachments=tuple(extra.get("attachments") or ()),
+                thread=tuple(extra.get("thread") or ()),
             )
         )
         media = MediaInput(
@@ -423,6 +610,15 @@ class FeedService:
             link_url, link_preview = self._build_link_preview(
                 project_id=intent.project_id, url=intent.url
             )
+        # Unfurl continuation links before the transaction, like the root's.
+        thread_links: list[tuple[str, dict[str, Any]]] = []
+        for item in intent.thread:
+            if item.get("url"):
+                thread_links.append(
+                    self._build_link_preview(project_id=intent.project_id, url=str(item["url"]))
+                )
+            else:
+                thread_links.append(("", {}))
         with self.store.transaction() as conn:
             # Claim the token in the post/event transaction so concurrent or
             # replayed PUTs cannot insert the pre-minted post twice.
@@ -442,62 +638,152 @@ class FeedService:
                 )
             post_id = post_id or new_id(prefix="post")
             created_at = now_iso()
-            seq = next_created_seq(conn=conn, table="posts")
-            conn.execute(
-                """
-                INSERT INTO posts (
-                    id, project_id, author_handle, author_role, text,
-                    image_sha256, image_content_type, link_url, link_preview_json,
-                    ref, kind, in_reply_to, embed_sha256, embed_content_type,
-                    created_at, created_seq
+            # A self-reply continues the author's own chain; a fresh thread
+            # root has no chain of its own until a continuation lands.
+            thread_root, thread_index = "", 0
+            if intent.chain_root:
+                thread_root = intent.chain_root
+                thread_index = self._next_thread_index(
+                    conn=conn, project_id=intent.project_id, root=thread_root
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    post_id,
-                    intent.project_id,
-                    intent.handle,
-                    intent.author_role,
-                    intent.text,
-                    image_sha256,
-                    image_content_type,
-                    link_url,
-                    json.dumps(link_preview, sort_keys=True),
-                    intent.ref,
-                    intent.kind,
-                    intent.in_reply_to,
-                    embed_sha256,
-                    embed_content_type,
-                    created_at,
-                    seq,
-                ),
+            self._insert_post_row(
+                conn=conn,
+                post_id=post_id,
+                intent=intent,
+                text=intent.text,
+                ref=intent.ref,
+                kind=intent.kind,
+                in_reply_to=intent.in_reply_to,
+                quote_of=intent.quote_of,
+                attachments=list(intent.attachments),
+                image=(image_sha256, image_content_type),
+                embed=(embed_sha256, embed_content_type),
+                link=(link_url, link_preview),
+                thread_root=thread_root,
+                thread_index=thread_index,
+                created_at=created_at,
             )
+            thread_ids: list[str] = []
+            for index, item in enumerate(intent.thread):
+                child_id = new_id(prefix="post")
+                self._insert_post_row(
+                    conn=conn,
+                    post_id=child_id,
+                    intent=intent,
+                    text=str(item["text"]),
+                    ref=str(item.get("ref") or ""),
+                    kind="",
+                    in_reply_to=post_id,
+                    quote_of="",
+                    attachments=list(item.get("attachments") or []),
+                    image=("", ""),
+                    embed=("", ""),
+                    link=thread_links[index],
+                    thread_root=thread_root or post_id,
+                    thread_index=(thread_index if thread_root else 0) + index + 1,
+                    created_at=created_at,
+                )
+                thread_ids.append(child_id)
             conn.execute(
                 "UPDATE feed_authors SET last_posted_at = ? WHERE project_id = ? AND handle = ?",
                 (created_at, intent.project_id, intent.handle),
             )
-            self.store.record_event(
-                conn=conn,
-                project_id=intent.project_id,
-                event_type="feed.post_created",
-                target_type="post",
-                target_id=post_id,
-                payload={
-                    "handle": intent.handle,
-                    "has_image": bool(image_sha256),
-                    "has_embed": bool(embed_sha256),
-                    "has_link": bool(link_url),
-                    "ref": intent.ref,
-                },
-            )
-            row = conn.execute(
-                "SELECT * FROM posts WHERE id = ?", (post_id,)
-            ).fetchone()
-            return {
-                "post": self._post_view(
-                    row_to_dict(row=row) or {}, reaction_kinds=set()
-                )
+            root = row_to_dict(
+                row=conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchone()
+            ) or {}
+            result: dict[str, Any] = {
+                "post": self._post_view(root, reaction_kinds=set())
             }
+            if thread_ids:
+                placeholders = ", ".join("?" for _ in thread_ids)
+                rows = conn.execute(
+                    f"SELECT * FROM posts WHERE id IN ({placeholders}) ORDER BY thread_index",
+                    thread_ids,
+                ).fetchall()
+                result["thread"] = [
+                    self._post_view(item, reaction_kinds=set())
+                    for item in rows_to_dicts(rows=rows)
+                ]
+            return result
+
+    def _insert_post_row(
+        self,
+        *,
+        conn: Any,
+        post_id: str,
+        intent: PostIntent,
+        text: str,
+        ref: str,
+        kind: str,
+        in_reply_to: str,
+        quote_of: str,
+        attachments: list[dict[str, Any]],
+        image: tuple[str, str],
+        embed: tuple[str, str],
+        link: tuple[str, dict[str, Any]],
+        thread_root: str,
+        thread_index: int,
+        created_at: str,
+    ) -> None:
+        seq = next_created_seq(conn=conn, table="posts")
+        conn.execute(
+            """
+            INSERT INTO posts (
+                id, project_id, author_handle, author_role, text,
+                image_sha256, image_content_type, link_url, link_preview_json,
+                ref, kind, in_reply_to, embed_sha256, embed_content_type,
+                attachments_json, quote_of, thread_root, thread_index,
+                created_at, created_seq
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                post_id,
+                intent.project_id,
+                intent.handle,
+                intent.author_role,
+                text,
+                image[0],
+                image[1],
+                link[0],
+                json.dumps(link[1], sort_keys=True),
+                ref,
+                kind,
+                in_reply_to,
+                embed[0],
+                embed[1],
+                json.dumps(attachments, sort_keys=True),
+                quote_of,
+                thread_root,
+                int(thread_index),
+                created_at,
+                seq,
+            ),
+        )
+        self.store.record_event(
+            conn=conn,
+            project_id=intent.project_id,
+            event_type="feed.post_created",
+            target_type="post",
+            target_id=post_id,
+            payload={
+                "handle": intent.handle,
+                "has_image": bool(image[0]),
+                "has_embed": bool(embed[0]),
+                "has_link": bool(link[0]),
+                "attachments": [str(a.get("type")) for a in attachments],
+                "ref": ref,
+                "thread_root": thread_root,
+            },
+        )
+
+    def _next_thread_index(self, *, conn: Any, project_id: str, root: str) -> int:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(thread_index), 0) AS n FROM posts "
+            "WHERE project_id = ? AND (thread_root = ? OR id = ?)",
+            (project_id, root, root),
+        ).fetchone()
+        return int(row["n"] or 0) + 1
 
     def researcher_reply(
         self, *, post_id: str, text: str, project_id: str | None = None
@@ -532,31 +818,65 @@ class FeedService:
         return self._create_post(intent=intent)
 
     def _validate_in_reply_to(
-        self, *, conn: Any, project_id: str, in_reply_to: str | None
-    ) -> str:
+        self,
+        *,
+        conn: Any,
+        project_id: str,
+        in_reply_to: str | None,
+        handle: str = "",
+        author_role: str = "",
+    ) -> tuple[str, str]:
+        """Return ``(in_reply_to, chain_root)``. A reply to your own post is a
+        thread continuation: ``chain_root`` names the thread's root so the UI
+        stacks it under one connector instead of nesting it as a reply."""
         in_reply_to = (in_reply_to or "").strip()
         if not in_reply_to:
-            return ""
+            return "", ""
         target = conn.execute(
-            "SELECT 1 FROM posts WHERE id = ? AND project_id = ?",
+            "SELECT id, author_handle, thread_root FROM posts WHERE id = ? AND project_id = ?",
             (in_reply_to, project_id),
         ).fetchone()
         if target is None:
             raise ValidationError(f"in_reply_to post not found: {in_reply_to}")
-        return in_reply_to
+        chain_root = ""
+        if (
+            handle
+            and author_role != "researcher"
+            and str(target["author_handle"]) == handle
+        ):
+            chain_root = str(target["thread_root"] or target["id"])
+        return in_reply_to, chain_root
 
-    def _validate_post_fields(
-        self, *, handle: str, text: str, ref: str | None, kind: str | None = None
-    ) -> tuple[str, str, str, str]:
-        handle = _validate_handle(handle)
+    def _validate_quote_of(
+        self, *, conn: Any, project_id: str, quote_of: str | None
+    ) -> str:
+        quote_of = (quote_of or "").strip()
+        if not quote_of:
+            return ""
+        target = conn.execute(
+            "SELECT 1 FROM posts WHERE id = ? AND project_id = ?",
+            (quote_of, project_id),
+        ).fetchone()
+        if target is None:
+            raise ValidationError(f"quote_of post not found: {quote_of}")
+        return quote_of
+
+    def _validate_text(self, text: str) -> str:
         text = (text or "").strip()
         if not text:
             raise ValidationError("post text is required")
         if len(text) > POST_TEXT_MAX:
             raise ValidationError(
-                f"post text is {len(text)} chars; keep it under {POST_TEXT_MAX} "
-                "(brief, like old Twitter — this is not the place for an essay)"
+                f"post text is {len(text)} chars; keep each post under {POST_TEXT_MAX} "
+                "— continue in a thread instead of writing a longer post"
             )
+        return text
+
+    def _validate_post_fields(
+        self, *, handle: str, text: str, ref: str | None, kind: str | None = None
+    ) -> tuple[str, str, str, str]:
+        handle = _validate_handle(handle)
+        text = self._validate_text(text)
         ref = (ref or "").strip()
         if ref and not ref.startswith(_KNOWN_REF_PREFIXES):
             raise ValidationError(
@@ -672,10 +992,18 @@ class FeedService:
                 project_id=project_id,
                 post_ids=[str(item["id"]) for item in items],
             )
+            bios = self._author_bios(conn=conn, project_id=project_id)
+            quoted = self._quoted_views(
+                conn=conn,
+                project_id=project_id,
+                post_ids=[str(item["quote_of"]) for item in items if item.get("quote_of")],
+            )
             views = [
                 self._post_view(
                     item,
                     reaction_kinds=reactions.get(str(item["id"]), set()),
+                    bios=bios,
+                    quoted=quoted,
                 )
                 for item in items
             ]
@@ -686,6 +1014,7 @@ class FeedService:
             # Keep cadence signaling on Feed's first page so Research does not
             # acquire a Feed dependency.
             if before_seq is None:
+                result["voices"] = self._roster(conn=conn, project_id=project_id)
                 nudge = self._posting_nudge(project_id=project_id, conn=conn)
                 if nudge is not None:
                     result["nudge"] = nudge
@@ -799,8 +1128,47 @@ class FeedService:
                 )
             }
 
+    def _author_bios(self, *, conn: Any, project_id: str) -> dict[str, str]:
+        rows = conn.execute(
+            "SELECT handle, bio FROM feed_authors WHERE project_id = ?", (project_id,)
+        ).fetchall()
+        return {str(row["handle"]): str(row["bio"] or "") for row in rows}
+
+    def _quoted_views(
+        self, *, conn: Any, project_id: str, post_ids: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        """Compact views of quoted posts, one query for the page."""
+        ids = sorted({pid for pid in post_ids if pid})
+        if not ids:
+            return {}
+        placeholders = ", ".join("?" for _ in ids)
+        rows = conn.execute(
+            f"SELECT * FROM posts WHERE project_id = ? AND id IN ({placeholders})",
+            [project_id, *ids],
+        ).fetchall()
+        out: dict[str, dict[str, Any]] = {}
+        for item in rows_to_dicts(rows=rows):
+            attachments = _load_attachments(item)
+            stat = next((a for a in attachments if a.get("type") == "stat"), None)
+            out[str(item["id"])] = {
+                "id": item.get("id"),
+                "author_handle": item.get("author_handle"),
+                "author_role": item.get("author_role"),
+                "text": item.get("text"),
+                "kind": item.get("kind") or None,
+                "has_image": bool(item.get("image_sha256")),
+                "stat": stat,
+                "created_at": item.get("created_at"),
+            }
+        return out
+
     def _post_view(
-        self, item: dict[str, Any], *, reaction_kinds: set[str]
+        self,
+        item: dict[str, Any],
+        *,
+        reaction_kinds: set[str],
+        bios: dict[str, str] | None = None,
+        quoted: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         preview_raw = item.get("link_preview_json") or "{}"
         try:
@@ -821,14 +1189,22 @@ class FeedService:
                 "authors": link_preview.get("authors") or [],
                 "year": link_preview.get("year") or "",
             }
+        handle = str(item.get("author_handle") or "")
+        quote_of = str(item.get("quote_of") or "")
         return {
             "id": item.get("id"),
             "author_handle": item.get("author_handle"),
             "author_role": item.get("author_role"),
+            "author_bio": (bios or {}).get(handle, ""),
             "text": item.get("text"),
             "ref": item.get("ref") or None,
             "kind": item.get("kind") or None,
             "in_reply_to": item.get("in_reply_to") or None,
+            "quote_of": quote_of or None,
+            "quoted": (quoted or {}).get(quote_of) if quote_of else None,
+            "thread_root": item.get("thread_root") or None,
+            "thread_index": int(item.get("thread_index") or 0),
+            "attachments": _load_attachments(item),
             "has_image": bool(item.get("image_sha256")),
             "has_embed": bool(item.get("embed_sha256")),
             "link_url": item.get("link_url") or None,
@@ -971,6 +1347,15 @@ _FEED_NOTE_PHRASES: dict[str, str] = {
     "experiment_review_verdict": "a review verdict just landed on {entity}",
     "mlflow_run_finalized": "an MLflow run for {entity} just finished",
 }
+
+
+def _load_attachments(item: dict[str, Any]) -> list[dict[str, Any]]:
+    """Native attachments stored on a row; malformed JSON reads as none."""
+    try:
+        loaded = json.loads(item.get("attachments_json") or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [a for a in loaded if isinstance(a, dict)] if isinstance(loaded, list) else []
 
 
 def _escape_like(value: str) -> str:

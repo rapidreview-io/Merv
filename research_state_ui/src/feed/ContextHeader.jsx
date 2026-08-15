@@ -6,6 +6,7 @@ import {
   selectSandboxes,
 } from '../store/useProjectStore';
 import { fmtAgo } from '../utils/format';
+import Avatar from './Avatar';
 
 // One key for all projects: "I keep this collapsed" is a reading preference,
 // not per-project state.
@@ -16,11 +17,13 @@ function readCollapsed() {
 }
 
 /**
- * The feed's masthead for a spectator: which project this stream narrates and
- * whether anything is alive right now. One quiet card — name is always
- * visible, the summary and live strip fold away, and the fold persists.
+ * The feed's masthead for a spectator: which project this stream narrates,
+ * whether anything is alive right now, and the voices posting in it — each
+ * with the one-line bio it registered with, so a reader can recognize a voice
+ * across sessions. One quiet card; the summary and strips fold away, and the
+ * fold persists.
  */
-export default function ContextHeader({ posts, now }) {
+export default function ContextHeader({ posts, voices = [], now }) {
   const project = useProjectStore(selectProject);
   const activeExperiments = useProjectStore(selectActiveExperiments);
   const sandboxes = useProjectStore(selectSandboxes);
@@ -30,6 +33,9 @@ export default function ContextHeader({ posts, now }) {
 
   const running = sandboxes.filter((s) => s.status === 'running').length;
   const lastTs = posts[0]?.created_at ? Date.parse(posts[0].created_at) : NaN;
+  const shownVoices = voices
+    .filter((v) => v.role !== 'researcher' && v.posts > 0)
+    .slice(0, 6);
 
   const toggle = () => setCollapsed((c) => {
     const next = !c;
@@ -65,6 +71,18 @@ export default function ContextHeader({ posts, now }) {
               </>
             )}
           </p>
+          {shownVoices.length > 0 && (
+            <ul className="feed-voices" aria-label="Voices in this feed">
+              {shownVoices.map((v) => (
+                <li key={v.handle} className="feed-voice" title={`${v.posts} post${v.posts === 1 ? '' : 's'}`}>
+                  <Avatar handle={v.handle} role={v.role} />
+                  <span className="feed-voice-name">{v.handle}</span>
+                  {v.role && v.role !== 'main' && <span className="feed-voice-role">{v.role}</span>}
+                  {v.bio && <span className="feed-voice-bio">{v.bio}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
         </>
       )}
     </section>

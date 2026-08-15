@@ -373,20 +373,24 @@ def test_schema_installer_converges_legacy_posts_idempotently(tmp_path: Path) ->
 
     with store.transaction() as connection:
         row = connection.execute(
-            "SELECT kind, in_reply_to, embed_sha256, embed_content_type "
+            "SELECT kind, in_reply_to, embed_sha256, embed_content_type, "
+            "attachments_json, quote_of, thread_root, thread_index "
             "FROM posts WHERE id = ?",
             ("post_legacy",),
         ).fetchone()
     assert row is not None
-    assert tuple(row) == ("", "", "", "")
+    assert tuple(row) == ("", "", "", "", "[]", "", "", 0)
 
 
 def test_schema_installer_suppresses_only_a_converged_alter_race() -> None:
     won_elsewhere = _AlterFailingStore()
+    # First probe misses, the ALTER "loses the race", the re-probe finds the
+    # column; every later legacy column probes as present.
+    later = len(feed_persistence._LEGACY_COLUMNS) - 1
     with unittest.mock.patch.object(
         feed_persistence,
         "_column_exists",
-        side_effect=[False, True, True, True, True],
+        side_effect=[False, True, *([True] * later)],
     ):
         feed_persistence.install_feed_schema(won_elsewhere)
     assert won_elsewhere.alter_attempts == 1

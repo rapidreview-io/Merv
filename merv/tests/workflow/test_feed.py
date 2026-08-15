@@ -525,6 +525,297 @@ class FeedEmbedWrapTest(unittest.TestCase):
         self.assertIn("<header>title bar</header>", wrapped)
 
 
+class FeedPostModelTest(FeedServiceTest):
+    """Threads, typed attachments, quotes, parsed references, and voices."""
+
+    def _register(self, handle: str = "Ansible", **kwargs):
+        return self.call("feed.register", project_id=self.pid, handle=handle, **kwargs)
+
+    # -- references parsed from text ------------------------------------------
+
+    def test_parse_refs_finds_entities_and_links_in_order(self) -> None:
+        from merv.brain.feed.refs import parse_refs
+
+        parsed = parse_refs(
+            "See exp_c3b5c69c8039 and claim_54962efed0a3 (arXiv:2401.10774), "
+            "https://github.com/vllm-project/vllm/issues/48503. Also doi:10.1000/xyz123."
+        )
+        self.assertEqual(parsed.entities, ("exp_c3b5c69c8039", "claim_54962efed0a3"))
+        self.assertEqual(
+            parsed.links,
+            (
+                "https://arxiv.org/abs/2401.10774",
+                "https://github.com/vllm-project/vllm/issues/48503",
+                "https://doi.org/10.1000/xyz123",
+            ),
+        )
+        # Word-boundary: an id glued to a longer token is not an entity.
+        self.assertEqual(parse_refs("myexp_c3b5c69c8039x").entities, ())
+
+    def test_entity_id_in_text_sets_ref_and_first_link_becomes_the_card(self) -> None:
+        self._register()
+        exp_id = self.call(
+            "experiment.create",
+            project_id=self.pid,
+            name="Ladder",
+            intent="Speculative ladder.",
+        )["id"]
+        with unittest.mock.patch.object(
+            self.app.feed.web_preview,
+            "unfurl",
+            return_value={"url": "https://arxiv.org/abs/2401.10774", "title": "Medusa"},
+        ):
+            post = self.call(
+                "feed.post",
+                project_id=self.pid,
+                handle="Ansible",
+                text=f"243 tok/s on {exp_id}, see arXiv:2401.10774",
+            )["post"]
+        self.assertEqual(post["ref"], exp_id)
+        self.assertEqual(post["link_url"], "https://arxiv.org/abs/2401.10774")
+        self.assertEqual(post["link_preview"]["title"], "Medusa")
+        # An explicit ref wins over the parsed one.
+        explicit = self.call(
+            "feed.post",
+            project_id=self.pid,
+            handle="Ansible",
+            text=f"mentions {exp_id}",
+            ref="claim_000000000000",
+        )["post"]
+        self.assertEqual(explicit["ref"], "claim_000000000000")
+
+    # -- attachments -----------------------------------------------------------
+
+    def test_native_attachments_are_validated_stored_and_returned(self) -> None:
+        self._register()
+        attachments = [
+            {"type": "stat", "value": 243.2, "unit": "tok/s", "delta": "+73% vs 140.7"},
+            {
+                "type": "chart",
+                "kind": "line",
+                "title": "tok/s by depth",
+                "series": [{"name": "sampling", "points": [[0, 74.7], [4, 127.9]]}],
+                "ref_line": {"value": 74.7, "label": "no-spec"},
+                "hero": {"series": 0, "index": 1},
+            },
+            {"type": "table", "columns": ["arm", "tok/s"], "rows": [["bf16", 82.4], ["W4A16", "125.8"]], "hero_row": 1},
+            {"type": "log", "text": "line one\nRuntimeError: boom\nline three", "highlight": [1]},
+        ]
+        post = self.call(
+            "feed.post", project_id=self.pid, handle="Ansible", text="numbers", attachments=attachments
+        )["post"]
+        kinds = [a["type"] for a in post["attachments"]]
+        self.assertEqual(kinds, ["stat", "chart", "table", "log"])
+        self.assertEqual(post["attachments"][0]["value"], "243.2")
+        self.assertEqual(post["attachments"][2]["rows"][1], ["W4A16", "125.8"])
+        self.assertEqual(post["attachments"][3]["highlight"], [1])
+        listed = self.call("feed.list", project_id=self.pid)["posts"][0]
+        self.assertEqual([a["type"] for a in listed["attachments"]], kinds)
+
+    def test_attachment_validation_rejects_bad_shapes(self) -> None:
+        self._register()
+        bad = [
+            [{"type": "stat"}],  # missing value
+            [{"type": "chart", "kind": "pie", "series": [{"name": "a", "points": [[0, 1]]}]}],
+            [{"type": "chart", "kind": "bars", "series": [{"name": "a", "values": [1, 2]}], "labels": ["x"]}],
+            [{"type": "table", "columns": ["a"], "rows": [["1", "2"]]}],
+            [{"type": "log", "text": ""}],
+            [{"type": "hologram"}],
+            [{"type": "stat", "value": 1}] * 5,
+            [{"type": "image", "path": "a.png"}, {"type": "image", "path": "b.png"}],
+        ]
+        for attachments in bad:
+            with self.assertRaises(ValidationError, msg=str(attachments)):
+                self.call(
+                    "feed.post", project_id=self.pid, handle="Ansible", text="x", attachments=attachments
+                )
+
+    def test_image_attachment_mints_an_upload_and_the_upload_finalizes_thread_and_quote(self) -> None:
+        self._register()
+        quoted = self.call("feed.post", project_id=self.pid, handle="Ansible", text="first")["post"]
+        pending = self.call(
+            "feed.post",
+            project_id=self.pid,
+            handle="Ansible",
+            text="what the drafter accepts",
+            attachments=[{"type": "image", "path": "accept.png"}, {"type": "stat", "value": "3/8"}],
+            thread=[{"text": "second part", "attachments": [{"type": "log", "text": "ok"}]}],
+            quote_of=quoted["id"],
+        )
+        self.assertIn("run", pending)
+        token = pending["run"].rsplit("/", 1)[-1].rstrip("'")
+        done = self.app.upload_feed_bytes(token=token, data=_PNG)
+        root = done["post"]
+        self.assertTrue(root["has_image"])
+        self.assertEqual([a["type"] for a in root["attachments"]], ["stat"])
+        self.assertEqual(root["quote_of"], quoted["id"])
+        self.assertEqual(len(done["thread"]), 1)
+        self.assertEqual(done["thread"][0]["thread_root"], root["id"])
+        self.assertEqual(done["thread"][0]["attachments"][0]["type"], "log")
+
+    # -- threads ---------------------------------------------------------------
+
+    def test_thread_posts_are_chained_atomically_under_the_root(self) -> None:
+        self._register()
+        result = self.call(
+            "feed.post",
+            project_id=self.pid,
+            handle="Ansible",
+            text="Why the floor is 5 ms, in three parts.",
+            kind="direction",
+            thread=[
+                {"text": "Part two, with a table.", "attachments": [{"type": "table", "columns": ["a"], "rows": [["1"]]}]},
+                "Part three, plain text.",
+            ],
+        )
+        root = result["post"]
+        self.assertEqual(root["thread_root"], None)
+        self.assertEqual(root["thread_index"], 0)
+        self.assertEqual([p["thread_index"] for p in result["thread"]], [1, 2])
+        self.assertTrue(all(p["thread_root"] == root["id"] for p in result["thread"]))
+        self.assertTrue(all(p["in_reply_to"] == root["id"] for p in result["thread"]))
+        self.assertEqual(result["thread"][0]["attachments"][0]["type"], "table")
+        listed = self.call("feed.list", project_id=self.pid)["posts"]
+        self.assertEqual(len(listed), 3)
+        # Too long a thread, or an upload inside one, is rejected before anything lands.
+        with self.assertRaises(ValidationError):
+            self.call("feed.post", project_id=self.pid, handle="Ansible", text="x", thread=["y"] * 9)
+        with self.assertRaises(ValidationError):
+            self.call(
+                "feed.post",
+                project_id=self.pid,
+                handle="Ansible",
+                text="x",
+                thread=[{"text": "y", "attachments": [{"type": "image", "path": "p.png"}]}],
+            )
+        self.assertEqual(len(self.call("feed.list", project_id=self.pid)["posts"]), 3)
+
+    def test_replying_to_your_own_post_continues_the_thread(self) -> None:
+        self._register()
+        self._register("Cold Equations", role="reviewer")
+        root = self.call("feed.post", project_id=self.pid, handle="Ansible", text="Depth sweep live.")["post"]
+        cont = self.call(
+            "feed.post", project_id=self.pid, handle="Ansible", text="Depth 4 leads.", in_reply_to=root["id"]
+        )["post"]
+        self.assertEqual(cont["thread_root"], root["id"])
+        self.assertEqual(cont["thread_index"], 1)
+        again = self.call(
+            "feed.post", project_id=self.pid, handle="Ansible", text="Depth 8 disagrees.", in_reply_to=cont["id"]
+        )["post"]
+        self.assertEqual(again["thread_root"], root["id"])
+        self.assertEqual(again["thread_index"], 2)
+        # Another voice replying is a reply, not a continuation.
+        reply = self.call(
+            "feed.post", project_id=self.pid, handle="Cold Equations", text="Check the clocks.", in_reply_to=root["id"]
+        )["post"]
+        self.assertIsNone(reply["thread_root"])
+        self.assertEqual(reply["in_reply_to"], root["id"])
+
+    # -- quotes and kinds -------------------------------------------------------
+
+    def test_quote_of_returns_a_compact_view_and_validates_the_target(self) -> None:
+        self._register()
+        self._register("Cold Equations", role="reviewer")
+        claim = self.call(
+            "feed.post",
+            project_id=self.pid,
+            handle="Ansible",
+            text="243 tok/s.",
+            kind="finding",
+            attachments=[{"type": "stat", "value": "243.2", "unit": "tok/s"}],
+        )["post"]
+        quote = self.call(
+            "feed.post",
+            project_id=self.pid,
+            handle="Cold Equations",
+            text="The 243 holds; the bar does not.",
+            kind="bottleneck",
+            quote_of=claim["id"],
+        )["post"]
+        self.assertEqual(quote["quote_of"], claim["id"])
+        listed = self.call("feed.list", project_id=self.pid)["posts"][0]
+        self.assertEqual(listed["quoted"]["author_handle"], "Ansible")
+        self.assertEqual(listed["quoted"]["stat"]["value"], "243.2")
+        self.assertEqual(listed["quoted"]["kind"], "finding")
+        with self.assertRaises(ValidationError):
+            self.call("feed.post", project_id=self.pid, handle="Ansible", text="x", quote_of="post_nope")
+
+    def test_new_kinds_are_accepted(self) -> None:
+        self._register()
+        for kind in ("idea", "paper", "question"):
+            post = self.call("feed.post", project_id=self.pid, handle="Ansible", text=kind, kind=kind)["post"]
+            self.assertEqual(post["kind"], kind)
+
+    # -- voices ----------------------------------------------------------------
+
+    def test_register_stores_bio_and_returns_the_roster(self) -> None:
+        first = self._register("Ansible", bio="numbers, not adjectives")
+        self.assertTrue(first["created"])
+        self.assertFalse(first["adopted"])
+        self.assertEqual(first["author"]["bio"], "numbers, not adjectives")
+        self.assertNotIn("session_id", first["author"])
+        self.call("feed.post", project_id=self.pid, handle="Ansible", text="hello")
+        second = self._register("Kestrel-9", bio="runs the ladder")
+        handles = {v["handle"]: v for v in second["roster"]}
+        self.assertEqual(set(handles), {"Ansible", "Kestrel-9"})
+        self.assertEqual(handles["Ansible"]["posts"], 1)
+        self.assertEqual(handles["Ansible"]["bio"], "numbers, not adjectives")
+        with self.assertRaises(ValidationError):
+            self._register("Verbose", bio="x" * 81)
+        listed = self.call("feed.list", project_id=self.pid)
+        self.assertEqual({v["handle"] for v in listed["voices"]}, {"Ansible", "Kestrel-9"})
+        self.assertEqual(listed["posts"][0]["author_bio"], "numbers, not adjectives")
+
+    def test_reviewer_sessions_adopt_the_projects_reviewer_voice(self) -> None:
+        first = self.call(
+            "feed.register",
+            project_id=self.pid,
+            handle="Cold Equations",
+            role="reviewer",
+            session_id="s1",
+            bio="reads the plan the way the GPU will",
+        )
+        self.assertTrue(first["created"])
+        second = self.call(
+            "feed.register",
+            project_id=self.pid,
+            handle="Kilobyte Cassandra",
+            role="reviewer",
+            session_id="s2",
+        )
+        self.assertTrue(second["adopted"])
+        self.assertEqual(second["author"]["handle"], "Cold Equations")
+        self.assertIn("note", second)
+        # The adopting session can post as the shared voice.
+        post = self.call(
+            "feed.post", project_id=self.pid, handle="Cold Equations", text="Round two."
+        )["post"]
+        self.assertEqual(post["author_role"], "reviewer")
+        # A deliberate new voice is still possible.
+        third = self.call(
+            "feed.register",
+            project_id=self.pid,
+            handle="Second Opinion",
+            role="reviewer",
+            session_id="s3",
+            new_voice=True,
+        )
+        self.assertFalse(third["adopted"])
+        self.assertEqual(third["author"]["handle"], "Second Opinion")
+        # Main voices are never adopted: a different session cannot take a live handle.
+        self.call("feed.register", project_id=self.pid, handle="Ansible", session_id="m1")
+        with self.assertRaises(ValidationError):
+            self.call("feed.register", project_id=self.pid, handle="Ansible", session_id="m2")
+
+    def test_register_surfaces_the_researchers_latest_replies(self) -> None:
+        self._register()
+        post = self.call("feed.post", project_id=self.pid, handle="Ansible", text="bs=1 or bs=8?", kind="question")["post"]
+        self.app.feed.researcher_reply(project_id=self.pid, post_id=post["id"], text="bs=1 is the record.")
+        again = self._register()
+        self.assertEqual(again["researcher_replies"][0]["in_reply_to"], post["id"])
+        self.assertEqual(again["researcher_replies"][0]["text"], "bs=1 is the record.")
+
+
 class FeedHttpTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()

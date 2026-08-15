@@ -20,6 +20,7 @@ export function useFeedStream(projectId) {
   const [error, setError] = useState('');
   const [retryKey, setRetryKey] = useState(0);
   const [nudge, setNudge] = useState(null);
+  const [voices, setVoices] = useState([]);
   const loadingMoreRef = useRef(null);
   const sentinelRef = useRef(null);
   const topSeqRef = useRef(0);
@@ -56,6 +57,7 @@ export function useFeedStream(projectId) {
       setCursor(null);
       setHasMore(false);
       setNudge(null);
+      setVoices([]);
       setError('');
       setStatus('ready');
       loadingMoreRef.current = null;
@@ -72,6 +74,7 @@ export function useFeedStream(projectId) {
     setCursor(null);
     setHasMore(false);
     setNudge(null);
+    setVoices([]);
     const stored = Number(localStorage.getItem(`rsui:feed:lastSeen:${projectId}`));
     setLastSeenSeq(Number.isFinite(stored) && stored > 0 ? stored : null);
     feedApi.getFeed(projectId, { limit: PAGE_SIZE })
@@ -81,6 +84,7 @@ export function useFeedStream(projectId) {
         setCursor(data.next_cursor ?? null);
         setHasMore(data.next_cursor != null);
         setNudge(data.nudge || null);
+        setVoices(data.voices || []);
         setStatus('ready');
         feedApi.trackFeed(
           projectId,
@@ -113,6 +117,7 @@ export function useFeedStream(projectId) {
         .then((data) => {
           if (cycleRef.current !== requestCycle) return;
           setNudge(data.nudge || null);
+          if (Array.isArray(data.voices)) setVoices(data.voices);
           const fresh = (data.posts || [])
             .filter((post) => post.created_seq > topSeqRef.current);
           if (!fresh.length) return;
@@ -248,6 +253,7 @@ export function useFeedStream(projectId) {
     status: projectId ? (ownsVisibleState ? status : 'loading') : 'ready',
     error: ownsVisibleState ? error : '',
     nudge: ownsVisibleState ? nudge : null,
+    voices: ownsVisibleState ? voices : [],
     hasMore: ownsVisibleState ? hasMore : false,
     sentinelRef,
     revealPending,

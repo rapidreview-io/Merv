@@ -1,8 +1,10 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useProjectStore } from '../store/useProjectStore';
 import ContextHeader from './ContextHeader';
 import PostCard from './PostCard';
-import { useNow, dayLabel, withDayDividers } from './feedModel';
+import {
+  useNow, dayLabel, withDayDividers, buildCards, cardMatches, isOpenQuestion, FILTERS,
+} from './feedModel';
 import { useFeedStream } from './useFeedStream';
 import './feed.css';
 
@@ -34,14 +36,34 @@ function LoadingFeed() {
   );
 }
 
-function FeedItems({
-  items,
-  projectId,
-  now,
-  onView,
-  onReact,
-  onReply,
-}) {
+// Client-side filters over the loaded cards. Counts show only where they
+// change what the reader does: open questions under Asks, everything under All.
+function FilterRow({ filter, setFilter, cards }) {
+  const openAsks = cards.filter(isOpenQuestion).length;
+  return (
+    <div className="feed-filters" role="tablist" aria-label="Filter posts">
+      {FILTERS.map((f) => {
+        const on = f.id === filter;
+        const count = f.id === 'all' ? cards.length : f.id === 'asks' ? openAsks : null;
+        return (
+          <button
+            key={f.id}
+            type="button"
+            role="tab"
+            aria-selected={on}
+            className={`feed-filter${on ? ' on' : ''}${f.id === 'asks' && openAsks ? ' feed-filter--asks' : ''}`}
+            onClick={() => setFilter(f.id)}
+          >
+            {f.label}
+            {count ? <span className="feed-filter-n">{count}</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function FeedItems({ items, projectId, now, onView, onReact, onReply }) {
   return (
     <div className="feed-list">
       {items.map((item) => {
@@ -62,13 +84,10 @@ function FeedItems({
         return (
           <PostCard
             key={item.id}
-            post={item.post}
+            card={item.card}
             projectId={projectId}
             onView={onView}
             now={now}
-            grouped={item.grouped}
-            depth={item.depth || 0}
-            orphan={Boolean(item.orphan)}
             onReact={onReact}
             onReply={onReply}
           />
@@ -86,15 +105,24 @@ export default function Feed() {
   const projectId = useProjectStore((state) => state.projectId);
   const stream = useFeedStream(projectId);
   const now = useNow();
+  const [filter, setFilter] = useState('all');
+  const cards = useMemo(() => buildCards(stream.posts), [stream.posts]);
+  const shown = useMemo(
+    () => (filter === 'all' ? cards : cards.filter((c) => cardMatches(c, filter))),
+    [cards, filter],
+  );
   const items = useMemo(
-    () => withDayDividers(stream.posts, now, stream.lastSeenSeq),
-    [stream.posts, now, stream.lastSeenSeq],
+    () => withDayDividers(shown, now, stream.lastSeenSeq),
+    [shown, now, stream.lastSeenSeq],
   );
 
   return (
     <div className="feed-stage">
       <h1 className="feed-title">Feed</h1>
-      <ContextHeader posts={stream.posts} now={now} />
+      <ContextHeader posts={stream.posts} voices={stream.voices} now={now} />
+      {stream.status === 'ready' && stream.posts.length > 0 && (
+        <FilterRow filter={filter} setFilter={setFilter} cards={cards} />
+      )}
       {stream.status === 'ready' && stream.nudge && (
         <div className="feed-nudge">{nudgeLabel(stream.nudge)}</div>
       )}
@@ -129,11 +157,17 @@ export default function Feed() {
         <div className="feed-empty">
           <p className="feed-empty-title">No posts yet</p>
           <p className="feed-empty-sub">
-            Agents post their findings, hunches, and pivots here as they work.
+            Agents post their findings, kills, ideas, papers, and questions here as they work.
           </p>
         </div>
       )}
-      {stream.posts.length > 0 && (
+      {stream.status === 'ready' && stream.posts.length > 0 && shown.length === 0 && (
+        <div className="feed-empty">
+          <p className="feed-empty-title">Nothing here yet</p>
+          <p className="feed-empty-sub">No loaded posts match this filter.</p>
+        </div>
+      )}
+      {shown.length > 0 && (
         <FeedItems
           items={items}
           projectId={projectId}

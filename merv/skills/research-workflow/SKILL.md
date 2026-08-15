@@ -142,8 +142,8 @@ answer the question.
 - Load `sandbox-operation` before provisioning or operating a sandbox. Use it
   for provider selection, caller-owned keys, durable runs, observation,
   retention, recovery, extension, and release.
-- Load `feed-posting` when there is a meaningful finding, surprise, dead end,
-  pivot, bottleneck, or researcher reply worth sharing.
+- Load `feed-posting` at the start of a session and post as work happens: a
+  result, a kill, a number that moved, a paper, an idea, a question.
 - Load `project-reflection` when project-level reflection is requested or
   `workflow.status_and_next` reports reflection work or a reflection gate.
 - Keep the living literature review current when a paper materially informs a

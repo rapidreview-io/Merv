@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { feedApi } from './feedApi';
-import { postTime } from './feedModel';
+import { postTime, isOpenQuestion } from './feedModel';
+import Attachments from './Attachments';
 import Avatar from './Avatar';
 import EmbedCard from './EmbedCard';
 import Lightbox from './Lightbox';
 import LinkCard from './LinkCard';
 import PdfPageCard, { pdfPageInfo } from './PdfPageCard';
+import PostText from './PostText';
+import QuoteCard from './QuoteCard';
 import ReplyComposer from './ReplyComposer';
 import EntityChip from '../components/EntityChip';
-import { authorHue } from '../utils/authorIdentity';
 
 // Load a feed media path through an authenticated fetch and expose it as a
 // blob: object URL. Needed because hosted control mode serves feed bytes behind
@@ -67,7 +69,7 @@ const GLYPH_SHAPES = {
 
 function ReactGlyph({ kind }) {
   return (
-    <svg viewBox={GLYPH_VIEWBOX} width="16" height="16" aria-hidden="true">
+    <svg viewBox={GLYPH_VIEWBOX} width="15" height="15" aria-hidden="true">
       {GLYPH_SHAPES[kind]}
     </svg>
   );
@@ -77,118 +79,33 @@ const REACT_KINDS = ['fire', 'eyes', 'question'];
 const REACT_LABEL = { fire: 'More like this', eyes: 'Watching this', question: 'Explain this' };
 
 /**
- * One feed post (Feed_PRD.md): identicon + handle + relative time, brief text,
- * an optional single visual (image, static link card, or on-demand interactive
- * embed), a quiet reaction/reply row, and an optional chip linking to the
- * entity it is about. Deliberately low-chrome — content first.
+ * The media a post carries besides its native attachments: one uploaded image
+ * (natural ratio, framed, lightbox on click), one embed, and one link (paper /
+ * repo / page card, or an inline PDF page).
  */
-export default function PostCard({
-  post,
-  projectId,
-  onView,
-  now,
-  grouped = false,
-  depth = 0,
-  orphan = false,
-  onReact,
-  onReply,
-}) {
-  const cardRef = useRef(null);
-  const viewedRef = useRef(false);
-
-  // Fire post_viewed once, when the card first enters the viewport.
-  useEffect(() => {
-    if (!onView || !cardRef.current || viewedRef.current) return;
-    const el = cardRef.current;
-    const io = new IntersectionObserver((entries) => {
-      for (const e of entries) {
-        if (e.isIntersecting && !viewedRef.current) {
-          viewedRef.current = true;
-          onView(post.id);
-          io.disconnect();
-        }
-      }
-    }, { threshold: 0.5 });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [post.id, onView]);
-
-  const ts = post.created_at ? new Date(post.created_at).getTime() : null;
-  const timeLabel = postTime(ts, now);
+function Media({ post, projectId }) {
   const preview = post.link_preview;
   const pdfInfo = pdfPageInfo(post, preview);
   const image = useAuthedImage(post.image_url);
-  const linkThumb = useAuthedImage(
-    preview && preview.has_image ? preview.image_url : null
-  );
+  const linkThumb = useAuthedImage(preview && preview.has_image ? preview.image_url : null);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [zoomed, setZoomed] = useState(false);
-  const [composing, setComposing] = useState(false);
   const mediaBtnRef = useRef(null);
 
   const openZoom = () => {
     setZoomed(true);
     feedApi.trackFeed(projectId, 'image_viewed', { post_id: post.id }).catch(() => {});
   };
-  // Stable identity: it sits in the Lightbox effect deps, and this card
-  // re-renders every clock tick.
   const closeZoom = useCallback(() => {
     setZoomed(false);
     mediaBtnRef.current?.focus();
   }, []);
 
-  const kind = post.kind || null;
-  const researcher = post.author_role === 'researcher';
-  const reactions = post.reactions || {};
-  const cls = [
-    'postcard',
-    grouped ? 'postcard--cont' : '',
-    kind ? `postcard--${kind}` : '',
-    depth > 0 ? 'postcard--child' : '',
-    researcher ? 'postcard--researcher' : '',
-  ].filter(Boolean).join(' ');
-
   return (
-    <article className={cls} ref={cardRef}>
-      {/* A reply whose parent scrolled out of the loaded window still says it
-          is answering something, instead of impersonating a root post. */}
-      {orphan && <p className="postcard-replyctx">replying to an earlier post</p>}
-
-      {/* A continuation post (same author, moments later) visually drops the
-          whole header (avatar + byline) — the missing row is what reads as
-          "…and then they added". It stays in the DOM so the article keeps
-          its attribution for screen readers. */}
-      <header className={`postcard-head${grouped ? ' postcard-head--cont' : ''}`}>
-        <Avatar handle={post.author_handle} role={post.author_role} />
-        <span
-          className="postcard-author"
-          style={{ '--author-hue': authorHue(post.author_handle) }}
-        >
-          {post.author_handle}
-        </span>
-        {post.author_role && post.author_role !== 'main' && (
-          <span className={`postcard-role postcard-role--${post.author_role}`}>{post.author_role}</span>
-        )}
-        {/* The kind names the accent for non-color users; it survives
-            continuation posts because it is per-post, not per-author. */}
-        {kind && <span className={`postcard-kind postcard-kind--${kind}`}>{kind}</span>}
-        {timeLabel && (
-          <span
-            className="postcard-time"
-            title={Number.isFinite(ts) ? new Date(ts).toLocaleString() : undefined}
-          >
-            {timeLabel}
-          </span>
-        )}
-      </header>
-
-      {post.text && <p className="postcard-text">{post.text}</p>}
-
-      {/* The media box is reserved as soon as we know a post has an image, so
-          the stream never jumps when blobs arrive; it collapses only if the
-          fetch actually fails. */}
+    <>
+      <Attachments items={post.attachments} />
       {post.image_url && !image.failed && (
-        <div className="postcard-media">
+        <div className={`postcard-media${imageLoaded ? ' is-loaded' : ''}`}>
           <button
             ref={mediaBtnRef}
             type="button"
@@ -208,53 +125,221 @@ export default function PostCard({
           </button>
         </div>
       )}
-      {zoomed && image.url && (
-        <Lightbox src={image.url} onClose={closeZoom} />
-      )}
-
-      {post.has_embed && post.embed_url && (
-        <EmbedCard post={post} projectId={projectId} />
-      )}
-
+      {zoomed && image.url && <Lightbox src={image.url} onClose={closeZoom} />}
+      {post.has_embed && post.embed_url && <EmbedCard post={post} projectId={projectId} />}
       {post.link_url && (
         pdfInfo
           ? <PdfPageCard post={post} projectId={projectId} info={pdfInfo} />
           : <LinkCard post={post} preview={preview} thumbUrl={linkThumb.url} projectId={projectId} />
       )}
+    </>
+  );
+}
 
-      {post.ref && (
+// The byline: mark · name (bio on hover) · role · kind · time. `askYou` marks
+// an unanswered question — the one accent in a byline, because it is an
+// action for the researcher rather than decoration.
+function Byline({ post, now, askYou, threadLen, withMark = true }) {
+  const ts = post.created_at ? new Date(post.created_at).getTime() : null;
+  const timeLabel = postTime(ts, now);
+  const researcher = post.author_role === 'researcher';
+  return (
+    <header className="postcard-head">
+      {withMark && <Avatar handle={post.author_handle} role={post.author_role} />}
+      <span
+        className={`postcard-author${researcher ? ' postcard-author--human' : ''}`}
+        title={post.author_bio || undefined}
+      >
+        {post.author_handle}
+      </span>
+      {post.author_role && post.author_role !== 'main' && !researcher && (
+        <span className="postcard-role">{post.author_role}</span>
+      )}
+      {post.kind && <span className="postcard-kind">{post.kind}</span>}
+      {threadLen > 0 && <span className="postcard-kind">thread</span>}
+      {askYou && <span className="postcard-asks">asks you</span>}
+      {timeLabel && (
+        <span
+          className="postcard-time"
+          title={Number.isFinite(ts) ? new Date(ts).toLocaleString() : undefined}
+        >
+          {timeLabel}
+        </span>
+      )}
+    </header>
+  );
+}
+
+function ReplyBlock({ card, projectId, now }) {
+  const { post } = card;
+  const researcher = post.author_role === 'researcher';
+  return (
+    <div className={`postcard-reply${researcher ? ' postcard-reply--human' : ''}`}>
+      <Byline post={post} now={now} />
+      <PostText text={post.text} />
+      <Media post={post} projectId={projectId} />
+    </div>
+  );
+}
+
+/**
+ * One feed card: a root post with its own thread continuations (one chain,
+ * one connector), its media, its quoted post, and its replies. Deliberately
+ * one shape for every post — nothing in the chrome encodes the kind; the kind
+ * is a word in the byline and the content carries the rest.
+ */
+export default function PostCard({
+  card,
+  projectId,
+  onView,
+  now,
+  onReact,
+  onReply,
+}) {
+  const { post, chain, replies, orphan } = card;
+  const cardRef = useRef(null);
+  const viewedRef = useRef(false);
+  const [composing, setComposing] = useState(false);
+  const [showReplies, setShowReplies] = useState(false);
+
+  // Fire post_viewed once, when the card first enters the viewport.
+  useEffect(() => {
+    if (!onView || !cardRef.current || viewedRef.current) return undefined;
+    const el = cardRef.current;
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting && !viewedRef.current) {
+          viewedRef.current = true;
+          onView(post.id);
+          io.disconnect();
+        }
+      }
+    }, { threshold: 0.5 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [post.id, onView]);
+
+  const researcher = post.author_role === 'researcher';
+  const reactions = post.reactions || {};
+  const anyOn = REACT_KINDS.some((k) => reactions[k]);
+  const askYou = isOpenQuestion(card);
+  const humanReplies = replies.filter((r) => r.post.author_role === 'researcher');
+  const agentReplies = replies.filter((r) => r.post.author_role !== 'researcher');
+  const showRefChip = Boolean(post.ref) && !(post.text || '').includes(post.ref);
+
+  const cls = [
+    'postcard',
+    researcher ? 'postcard--researcher' : '',
+    chain.length ? 'postcard--thread' : '',
+  ].filter(Boolean).join(' ');
+
+  const actions = (onReact || onReply) && (
+    <div className={`postcard-actions${anyOn ? ' has-on' : ''}`}>
+      {onReact && REACT_KINDS.map((k) => (
+        <button
+          key={k}
+          type="button"
+          className={`postcard-react${reactions[k] ? ' on' : ''}`}
+          aria-pressed={Boolean(reactions[k])}
+          aria-label={REACT_LABEL[k]}
+          data-tip={REACT_LABEL[k]}
+          onClick={() => onReact(post, k)}
+        >
+          <ReactGlyph kind={k} />
+        </button>
+      ))}
+      {onReply && !composing && (
+        <button
+          type="button"
+          className="postcard-replybtn"
+          data-tip="Reply"
+          onClick={() => setComposing(true)}
+        >
+          Reply
+        </button>
+      )}
+    </div>
+  );
+
+  const body = (
+    <>
+      <PostText text={post.text} />
+      {post.quote_of && <QuoteCard quoted={post.quoted} now={now} />}
+      <Media post={post} projectId={projectId} />
+    </>
+  );
+
+  return (
+    <article className={cls} ref={cardRef}>
+      {orphan && (
+        <p className="postcard-replyctx">
+          {post.thread_root ? 'continuing an earlier thread' : 'replying to an earlier post'}
+        </p>
+      )}
+
+      {chain.length === 0 ? (
+        <>
+          <Byline post={post} now={now} askYou={askYou} threadLen={0} />
+          {body}
+        </>
+      ) : (
+        <div className="postcard-chain">
+          <div className="postcard-tp">
+            <div className="postcard-rail"><Avatar handle={post.author_handle} role={post.author_role} /></div>
+            <div className="postcard-tp-body">
+              <Byline post={post} now={now} askYou={askYou} threadLen={chain.length} withMark={false} />
+              {body}
+            </div>
+          </div>
+          {chain.map((item, index) => {
+            const ts = item.created_at ? new Date(item.created_at).getTime() : null;
+            const prev = index === 0 ? post : chain[index - 1];
+            const prevTs = prev.created_at ? new Date(prev.created_at).getTime() : null;
+            const label = postTime(ts, now);
+            // A continuation posted in the same breath as the one above needs
+            // no timestamp; one added hours later says when.
+            const showTime = label && label !== postTime(prevTs, now);
+            return (
+              <div className="postcard-tp" key={item.id}>
+                <div className="postcard-rail"><Avatar handle={item.author_handle} role={item.author_role} /></div>
+                <div className={`postcard-tp-body${showTime ? '' : ' postcard-tp-body--tight'}`}>
+                  {showTime && (
+                    <span className="postcard-tp-time" title={Number.isFinite(ts) ? new Date(ts).toLocaleString() : undefined}>
+                      {label}
+                    </span>
+                  )}
+                  <PostText text={item.text} />
+                  {item.quote_of && <QuoteCard quoted={item.quoted} now={now} />}
+                  <Media post={item} projectId={projectId} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {humanReplies.map((r) => <ReplyBlock key={r.id} card={r} projectId={projectId} now={now} />)}
+      {agentReplies.length > 0 && !showReplies && (
+        <button type="button" className="postcard-replies" onClick={() => setShowReplies(true)}>
+          <span className="postcard-replies-marks">
+            {[...new Set(agentReplies.map((r) => r.post.author_handle))].slice(0, 3).map((h) => (
+              <Avatar key={h} handle={h} role={agentReplies.find((r) => r.post.author_handle === h)?.post.author_role} />
+            ))}
+          </span>
+          {agentReplies.length} {agentReplies.length === 1 ? 'reply' : 'replies'}
+          {' · '}
+          {[...new Set(agentReplies.map((r) => r.post.author_handle))].slice(0, 3).join(', ')}
+        </button>
+      )}
+      {showReplies && agentReplies.map((r) => <ReplyBlock key={r.id} card={r} projectId={projectId} now={now} />)}
+
+      {(showRefChip || actions) && (
         <footer className="postcard-foot">
-          <EntityChip id={post.ref} className="postcard-ref-chip" />
+          {showRefChip && <EntityChip id={post.ref} className="postcard-ref-chip" />}
+          {actions}
         </footer>
       )}
 
-      {(onReact || onReply) && (
-        <div className="postcard-actions">
-          {onReact && REACT_KINDS.map((k) => (
-            <button
-              key={k}
-              type="button"
-              className={`postcard-react${reactions[k] ? ' on' : ''}`}
-              aria-pressed={Boolean(reactions[k])}
-              aria-label={REACT_LABEL[k]}
-              data-tip={REACT_LABEL[k]}
-              onClick={() => onReact(post, k)}
-            >
-              <ReactGlyph kind={k} />
-            </button>
-          ))}
-          {onReply && !composing && (
-            <button
-              type="button"
-              className="postcard-replybtn"
-              data-tip="Reply"
-              onClick={() => setComposing(true)}
-            >
-              Reply
-            </button>
-          )}
-        </div>
-      )}
       {composing && (
         <ReplyComposer
           onSubmit={(text) => onReply(post, text)}

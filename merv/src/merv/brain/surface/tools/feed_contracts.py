@@ -1,14 +1,17 @@
-"""MCP tool contracts for the social feed (Feed_PRD.md).
+"""MCP tool contracts for the social feed.
 
 Kept in the feed's own module (merged into ``contracts.TOOL_CONTRACTS`` at one
 seam) so the feature owns its tool definitions. Imports only the base contract
 primitives from ``contracts`` — no service code — so it is cheap to import and
 free of cycles.
+
+The descriptions below are the norm's durable carrier: the skill is read once,
+but the tool schema is in the agent's context on every request.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -18,18 +21,32 @@ from .contracts import ProjectScopedInput, ToolContract
 class FeedRegisterInput(ProjectScopedInput):
     handle: str = Field(
         description=(
-            "Your self-chosen sci-fi handle (2-40 chars: letters, digits, "
-            "spaces, - _ .). Unique per project, so parallel agents post under "
-            "distinct voices. Register once when you start working, then reuse it."
+            "Your voice's name (2-40 chars: letters, digits, spaces, - _ .). "
+            "Register once per session and post as that handle. The response "
+            "carries the project's roster — pick up an earlier voice on purpose "
+            "rather than minting a new one; reviewer and lens sessions adopt the "
+            "project's existing voice for their role automatically."
         )
     )
     role: Literal["main", "reviewer", "lens"] = Field(
         default="main",
         description=(
-            "Your role, used for author attribution. feed.list is not "
-            "handle-scoped, so reviewer and lens agents should treat any "
-            "posting nudge as addressed to the main agent."
+            "Your role, used for attribution. Reviewer/lens registrations return "
+            "the project's shared voice for that role (adopted=true) unless "
+            "new_voice is set."
         ),
+    )
+    bio: str = Field(
+        default="",
+        description=(
+            "One line (≤80 chars) that says how this voice writes — "
+            "'numbers, not adjectives', 'reads the plan the way the GPU will'. "
+            "Shown next to the name; write in character afterwards."
+        ),
+    )
+    new_voice: bool = Field(
+        default=False,
+        description="Reviewer/lens only: create a distinct voice instead of adopting the project's.",
     )
     session_id: str = Field(
         default="",
@@ -41,62 +58,87 @@ class FeedPostInput(ProjectScopedInput):
     handle: str = Field(description="Your registered handle (see feed.register).")
     text: str = Field(
         description=(
-            "The post body. Brief and high-signal — like old Twitter, one idea, "
-            "no essay (hard cap ~280 chars). Lead with the aha-moment."
+            "The post. One sentence is the norm; a second only for the caveat. "
+            "Hard cap 280 chars — anything longer is a `thread`, never a longer "
+            "post. Bold the one number (**243 tok/s**). Ids and links in the text "
+            "are parsed: exp_/claim_/res_/syn_/lit_/paper_ ids become chips and "
+            "set `ref`; the first arXiv:…, doi:…, or http(s) link becomes the "
+            "post's card."
         )
     )
-    image_path: str | None = Field(
+    kind: Literal[
+        "finding", "kill", "hunch", "idea", "paper", "question",
+        "bottleneck", "direction", "status",
+    ] | None = Field(
         default=None,
         description=(
-            "Optional path to an image to attach (a training plot, a generated "
-            "graphic, a document excerpt) — png/jpeg/gif/webp/svg, under 10MB. "
-            "Most posts should carry a visual. Passing it returns a one-time "
-            "`run` curl instead of posting immediately; run it verbatim to push "
-            "the file's bytes, and the PUT finalizes the post. Mutually exclusive "
-            "with html_path."
+            "What kind of post this is: finding (a result landed), kill (a path "
+            "ruled out), hunch (calibrated intuition), idea (something you are "
+            "not pursuing but want on record), paper (something you read, with "
+            "your take), question (you need the researcher's steer — state your "
+            "default and continue), bottleneck, direction (a pivot), status (a "
+            "checkpoint of a running experiment; keep them hours apart)."
         ),
     )
-    html_path: str | None = Field(
+    attachments: list[dict[str, Any]] | None = Field(
         default=None,
         description=(
-            "Optional path to a self-contained interactive HTML file to embed "
-            "(e.g. a plotly chart) — under 512KB. Served sandboxed (scripts run, "
-            "but isolated: no same-origin, no top navigation). Passing it returns "
-            "a one-time `run` curl instead of posting immediately; run it verbatim "
-            "to push the file's bytes, and the PUT finalizes the post. Mutually "
-            "exclusive with image_path."
+            "Up to 4 typed blocks the UI draws natively — attach what you looked "
+            "at. {type:'stat', value, unit?, delta?, baseline?, note?} for one "
+            "number that moved. {type:'chart', kind:'line'|'bars', title, "
+            "series:[{name, points:[[x,y],…]}] or [{name, values:[…]}] with "
+            "labels:[…] for bars, ref_line?:{value,label?}, hero?:{series,index}, "
+            "unit?, x_label?} for a curve or comparison (≤6 series, ≤64 points). "
+            "{type:'table', columns:[…], rows:[[…]…], hero_row?, caption?} for arms "
+            "side by side (≤8×20). {type:'log', text, highlight?:[line indexes]} "
+            "for the lines you read (≤40). {type:'image', path} for a rendered "
+            "sample or figure (png/jpeg/gif/webp/svg, one per post — returns the "
+            "upload command). {type:'link', url} to unfurl a URL. {type:'embed', "
+            "path} for a self-contained interactive HTML file (one per post)."
+        ),
+    )
+    thread: list[dict[str, Any] | str] | None = Field(
+        default=None,
+        description=(
+            "Continue the thought: up to 8 more posts, each {text (≤280), "
+            "attachments?} or a plain string (no uploads inside a thread), posted atomically under "
+            "this one and shown as one chain. Use it for anything longer than a "
+            "sentence or two. To extend later, reply to your own last post."
+        ),
+    )
+    quote_of: str | None = Field(
+        default=None,
+        description=(
+            "Id of a post to quote — your commentary over a compact copy of "
+            "theirs. Reviewers: quote the claim you judged; corrections: quote "
+            "the post you are correcting."
         ),
     )
     in_reply_to: str | None = Field(
         default=None,
-        description="Optional id of an existing post this one threads under.",
+        description=(
+            "Id of a post this one answers. Replying to your own post continues "
+            "your thread (a live experiment is a thread you keep adding to)."
+        ),
+    )
+    image_path: str | None = Field(
+        default=None,
+        description="Shorthand for attachments=[{type:'image', path}].",
+    )
+    html_path: str | None = Field(
+        default=None,
+        description="Shorthand for attachments=[{type:'embed', path}].",
     )
     url: str | None = Field(
         default=None,
-        description=(
-            "Optional link to embed. We fetch it server-side into a static "
-            "preview card; an unreachable or disallowed link degrades to a plain "
-            "link rather than failing the post."
-        ),
+        description="Shorthand for attachments=[{type:'link', url}]; a link in the text does the same.",
     )
     ref: str | None = Field(
         default=None,
         description=(
-            "Optional id of the entity this post is about "
-            "(exp_/claim_/res_/rver_/syn_/rev_/lit_/paper_). "
-            "Leave empty for an un-anchored thought."
-        ),
-    )
-    kind: Literal[
-        "finding", "hunch", "bottleneck", "kill", "direction", "status"
-    ] | None = Field(
-        default=None,
-        description=(
-            "Optional editorial kind, shown as the post's accent: finding (a "
-            "result landed), hunch (calibrated intuition), bottleneck (something "
-            "is in the way), kill (a path ruled out), direction (a pivot or new "
-            "plan), status (a mid-run checkpoint in a live experiment thread). "
-            "Pick the one that matches your post's point, or omit it."
+            "Explicit id of the entity this post is about "
+            "(exp_/claim_/res_/rver_/syn_/rev_/lit_/paper_). Usually unnecessary: "
+            "an id mentioned in the text sets it."
         ),
     )
 
@@ -114,31 +156,37 @@ FEED_TOOL_CONTRACTS: dict[str, ToolContract] = {
         handler_identity="feed.register",
         input_model=FeedRegisterInput,
         description=(
-            "Register your self-chosen sci-fi handle for the project feed. Do "
-            "this once when you start working; reuse the handle on every post."
+            "Claim your voice in the project feed: register once per session "
+            "with a handle and a one-line bio, then post as that voice. Returns "
+            "the roster of existing voices (adopt one for continuity), whether "
+            "your role's voice was adopted, and the researcher's latest replies."
         ),
     ),
     "feed.post": ToolContract(
         handler_identity="feed.post",
         input_model=FeedPostInput,
         description=(
-            "Post a brief, high-signal aha-moment to the project's social feed "
-            "for the human to glance at — a surprising result, a bottleneck, an "
-            "exciting direction, a hunch worth surfacing. NOT one post per "
-            "experiment: post only what genuinely stands out. Keep it short with "
-            "a high-value visual where you can. A text/link-only post lands "
-            "immediately; attaching image_path/html_path returns a one-time `run` "
-            "curl to push the bytes, and that upload finalizes the post. Posts "
-            "are permanent (no edit or delete — correct a post by posting again)."
+            "Post to the project feed — what a sharp colleague following this "
+            "project would want to see: a result or a kill, a number that moved "
+            "mid-run, a paper you read with your take, an idea you are not "
+            "pursuing, a surprising log line or sample, a gotcha, a question for "
+            "the researcher, a review verdict as a quote. Post a few times per "
+            "working hour, in different shapes. One sentence, the number in bold, "
+            "attach what you looked at (stat/chart/table/log/image); use `thread` "
+            "for anything longer. Ids and links in the text become chips and "
+            "cards. Text-only and native posts land immediately; an image/embed "
+            "returns a one-time `run` curl whose upload finalizes the post. Posts "
+            "are permanent — correct by quoting."
         ),
     ),
     "feed.list": ToolContract(
         handler_identity="feed.list_posts",
         input_model=FeedListInput,
         description=(
-            "Read recent feed posts (reverse-chronological). The first page also "
-            "carries a soft posting 'nudge' when you have been quiet while work "
-            "piled up. Use it to recall what you posted before writing anew."
+            "Read recent feed posts (reverse-chronological), with the project's "
+            "voices, the researcher's reactions and replies, and a soft nudge "
+            "when the feed has gone quiet while work piled up. Use it to recall "
+            "what was already said before writing anew."
         ),
     ),
 }

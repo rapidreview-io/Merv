@@ -29,6 +29,10 @@ _FEED_TABLES: tuple[str, ...] = (
       embed_content_type TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       created_seq INTEGER NOT NULL DEFAULT 0,
+      attachments_json TEXT NOT NULL DEFAULT '[]',
+      quote_of TEXT NOT NULL DEFAULT '',
+      thread_root TEXT NOT NULL DEFAULT '',
+      thread_index INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY(project_id) REFERENCES projects(id)
     )
     """,
@@ -40,6 +44,7 @@ _FEED_TABLES: tuple[str, ...] = (
       session_id TEXT NOT NULL DEFAULT '',
       registered_at TEXT NOT NULL,
       last_posted_at TEXT,
+      bio TEXT NOT NULL DEFAULT '',
       PRIMARY KEY (project_id, handle),
       FOREIGN KEY(project_id) REFERENCES projects(id)
     )
@@ -69,24 +74,53 @@ _FEED_TABLES: tuple[str, ...] = (
       in_reply_to TEXT NOT NULL DEFAULT '',
       expires_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
+      extra_json TEXT NOT NULL DEFAULT '{}',
       FOREIGN KEY(project_id) REFERENCES projects(id)
     )
     """,
 )
 
-_LEGACY_POST_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("kind", "ALTER TABLE posts ADD COLUMN kind TEXT NOT NULL DEFAULT ''"),
+# (table, column, ALTER) for columns added after a table first shipped. Keep
+# them last in the CREATE statements too: SQLite splices an added column in
+# before the table constraints, and a fresh store must hash like a converged one.
+_LEGACY_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("posts", "kind", "ALTER TABLE posts ADD COLUMN kind TEXT NOT NULL DEFAULT ''"),
     (
+        "posts",
         "in_reply_to",
         "ALTER TABLE posts ADD COLUMN in_reply_to TEXT NOT NULL DEFAULT ''",
     ),
     (
+        "posts",
         "embed_sha256",
         "ALTER TABLE posts ADD COLUMN embed_sha256 TEXT NOT NULL DEFAULT ''",
     ),
     (
+        "posts",
         "embed_content_type",
         "ALTER TABLE posts ADD COLUMN embed_content_type TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        "posts",
+        "attachments_json",
+        "ALTER TABLE posts ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'",
+    ),
+    ("posts", "quote_of", "ALTER TABLE posts ADD COLUMN quote_of TEXT NOT NULL DEFAULT ''"),
+    (
+        "posts",
+        "thread_root",
+        "ALTER TABLE posts ADD COLUMN thread_root TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        "posts",
+        "thread_index",
+        "ALTER TABLE posts ADD COLUMN thread_index INTEGER NOT NULL DEFAULT 0",
+    ),
+    ("feed_authors", "bio", "ALTER TABLE feed_authors ADD COLUMN bio TEXT NOT NULL DEFAULT ''"),
+    (
+        "feed_upload_tokens",
+        "extra_json",
+        "ALTER TABLE feed_upload_tokens ADD COLUMN extra_json TEXT NOT NULL DEFAULT '{}'",
     ),
 )
 
@@ -96,8 +130,8 @@ def install_feed_schema(store: BaseStateStore) -> None:
     with store.transaction() as conn:
         for statement in _FEED_TABLES:
             conn.execute(statement)
-    for column, statement in _LEGACY_POST_COLUMNS:
-        if _column_exists(store=store, table="posts", column=column):
+    for table, column, statement in _LEGACY_COLUMNS:
+        if _column_exists(store=store, table=table, column=column):
             continue
         try:
             with store.transaction() as conn:
@@ -105,7 +139,7 @@ def install_feed_schema(store: BaseStateStore) -> None:
         except Exception:
             # Another replica may win the probe/ALTER race. Ignore only that
             # converged outcome; all other operational failures still surface.
-            if not _column_exists(store=store, table="posts", column=column):
+            if not _column_exists(store=store, table=table, column=column):
                 raise
 
 
