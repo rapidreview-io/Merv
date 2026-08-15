@@ -388,13 +388,24 @@ class RunnerSettingsApplyTest(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             runner.report_presence()
         self.assertIn("waits for 1 running job", client.heartbeats[-1]["inventory"]["pending"]["reason"])
-        # client.json already holds the new workspace; the manager swaps once idle.
-        self.assertEqual(json.loads(self.config.read_text())["agent_workspace"]["repository"], str(self.root / "other"))
+        # While draining, client.json still holds the OLD workspace and no new
+        # version marker: a restart must rebuild the manager the surviving
+        # session was created under, and must not claim v5 was applied.
+        on_disk = json.loads(self.config.read_text())
+        self.assertEqual(on_disk["agent_workspace"]["repository"], str(self.root / "repo"))
+        self.assertNotEqual(on_disk.get(SETTINGS_VERSION_KEY), 5)
+        restarted = self._runner(_FakeSettingsClient())
+        self.assertEqual(restarted.workspaces.settings.repository, self.root / "repo")
+        self.assertEqual(restarted.applied_settings_version, 0)
         session.status = "stopped"
         with redirect_stdout(io.StringIO()):
             runner.apply_desired(runner.report_presence())
         self.assertEqual(runner.workspaces.settings.repository, self.root / "other")
         self.assertEqual(runner.applied_settings_version, 5)
+        # Activation is when workspace + version become durable together.
+        on_disk = json.loads(self.config.read_text())
+        self.assertEqual(on_disk["agent_workspace"]["repository"], str(self.root / "other"))
+        self.assertEqual(on_disk[SETTINGS_VERSION_KEY], 5)
 
     def test_prune_frees_a_slot_only_for_a_visibly_closed_dead_session(self) -> None:
         client = _FakeSettingsClient()
@@ -452,6 +463,41 @@ class RunnerMainTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(paired.call_count, 0)
         self.assertEqual(run.call_args.args[0].project_id, "proj_paired")
+
+    def test_a_surviving_pairing_file_is_resumed_even_when_the_key_exists(self) -> None:
+        # Crash between writing agent-runner.key and recording the project:
+        # the key file exists, client.json has no project, the pairing file
+        # remembers the project. A normal start must finish promotion.
+        credential_path(self.config).write_text("mk_" + "f" * 43 + "\n")
+        save_pairing(
+            pairing_path(self.config),
+            PairingState(
+                key="mk_" + "f" * 43,
+                key_digest=hashlib.sha256(("mk_" + "f" * 43).encode()).hexdigest(),
+                device_code="device-secret",
+                user_code="7Q2KM4B9",
+                control_url="https://merv.test",
+                expires_at=9e12,
+                project_id="proj_resumed",
+            ),
+        )
+
+        def fake_pair(**kwargs):
+            document = json.loads(kwargs["config_path"].read_text())
+            document["project_id"] = "proj_resumed"
+            kwargs["config_path"].write_text(json.dumps(document))
+            pairing_path(kwargs["config_path"]).unlink()
+            return "proj_resumed"
+
+        with (
+            patch("merv.client.agent_runner.pair_runner", side_effect=fake_pair) as paired,
+            patch("merv.client.agent_runner._run_runner") as run,
+            redirect_stdout(io.StringIO()),
+        ):
+            code = runner_main(["--config", str(self.config)])
+        self.assertEqual(code, 0)
+        self.assertEqual(paired.call_count, 1)
+        self.assertEqual(run.call_args.args[0].project_id, "proj_resumed")
 
     def test_pair_command_forces_a_new_exchange_even_when_paired(self) -> None:
         credential_path(self.config).write_text("mk_" + "d" * 43 + "\n")

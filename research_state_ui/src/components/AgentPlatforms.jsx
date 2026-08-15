@@ -244,10 +244,15 @@ export default function AgentPlatforms({ projectId }) {
   );
   const liveSessionCount = liveSessions.length;
 
+  // The clock feeds both job elapsed times (1 s while anything runs) and
+  // runner presence ages (must keep moving while idle, or a machine that
+  // stops heartbeating would read as Live against a frozen "now").
   useEffect(() => {
-    if (liveSessionCount === 0) return undefined;
     setClock(Date.now());
-    const timer = setInterval(() => setClock(Date.now()), 1_000);
+    const timer = setInterval(
+      () => setClock(Date.now()),
+      liveSessionCount > 0 ? 1_000 : 5_000,
+    );
     return () => clearInterval(timer);
   }, [liveSessionCount]);
 

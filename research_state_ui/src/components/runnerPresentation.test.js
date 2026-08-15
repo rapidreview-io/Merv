@@ -43,6 +43,14 @@ test('a runner unseen for a few minutes is stale, then offline', () => {
   assert.equal(offline.tone, 'error');
 });
 
+test('a stale timestamp wins over a remembered live flag as the clock moves on', () => {
+  // The brain said live at fetch time; two minutes later without a new
+  // heartbeat the page must not keep calling the machine Live.
+  const later = runnerPresentation(row({ live: true }), NOW + 120_000);
+  assert.equal(later.state, 'Stale');
+  assert.equal(later.live, false);
+});
+
 test('no runner at all reads as not connected', () => {
   const view = runnerPresentation(null, NOW);
   assert.equal(view.state, 'Not connected');

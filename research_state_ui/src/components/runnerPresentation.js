@@ -14,7 +14,9 @@ export function runnerPresentation(runner, now = Date.now()) {
   const machine = runner?.machine || {};
   const seenAt = Date.parse(runner?.last_seen_at || '');
   const age = Number.isFinite(seenAt) ? Math.max(now - seenAt, 0) : Number.POSITIVE_INFINITY;
-  const live = runner?.live === true || age <= RUNNER_LIVE_MS;
+  // The age against the caller's clock is authoritative; the brain's own
+  // `live` flag only fills in when the timestamp is unreadable.
+  const live = Number.isFinite(seenAt) ? age <= RUNNER_LIVE_MS : runner?.live === true;
 
   let state = 'Offline';
   let tone = 'error';
