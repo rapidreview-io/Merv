@@ -127,13 +127,17 @@ export default function AutoRun() {
     return out;
   }, [sessions, queue]);
 
-  const headline = autorunHeadline({
-    dispatch,
-    runners,
-    sessions: sessions || [],
-    waiting: queue ? queue.length : null,
-    now,
-  });
+  // Say nothing until the first answer lands: an empty runner list before
+  // the fetch is not "no machine paired".
+  const headline = sessions === null
+    ? { text: '', tone: '' }
+    : autorunHeadline({
+      dispatch,
+      runners,
+      sessions,
+      waiting: queue ? queue.length : null,
+      now,
+    });
   const noMachines = sessions !== null && runners.length === 0;
 
   return (
