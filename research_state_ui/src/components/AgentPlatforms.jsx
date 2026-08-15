@@ -1,8 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api';
 import AutorunSetupWizard from './AutorunSetupWizard';
 import Switch from './Switch';
 import { runnerPresentation } from './runnerPresentation';
+import {
+  assignmentFor,
+  formatDuration,
+  formatTokens,
+  friendlyPacket,
+  isLiveSession,
+  sessionAgent,
+  sessionDestination,
+  sessionDurationMs,
+  sessionOutcome,
+} from './agentSessionPresentation';
 import {
   connectFailureMessage,
   ensureRunnerTransport,
@@ -67,13 +79,65 @@ function platformSummary(platform) {
   ].filter(Boolean).join(' · ');
 }
 
-function ScopeHead({ title, tag, children }) {
+function JobCard({ session, projectId, now, open, onToggle }) {
+  const assignment = assignmentFor(session);
+  const packet = friendlyPacket(session);
+  const destination = sessionDestination(projectId, session);
+  const outcome = sessionOutcome(session);
+  const tokens = formatTokens(session?.telemetry?.total_tokens);
+  const tools = Number(session?.telemetry?.tool_calls || 0);
+  const attempt = Number(packet.attempt || session?.attempt_index || 0);
+
   return (
-    <header className="aru-scope-head">
-      <h2 className="aru-scope-title">{title}</h2>
-      <span className="aru-scope-tag">{tag}</span>
-      {children}
-    </header>
+    <article className={[
+      'aru-job',
+      open ? 'aru-job--open' : '',
+      outcome.tone === 'live' || outcome.tone === 'starting' ? 'aru-job--working' : '',
+    ].filter(Boolean).join(' ')}>
+      <button
+        type="button"
+        className="aru-job-summary"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <span className={`aru-job-dot aru-job-dot--${outcome.tone}`} aria-hidden="true" />
+        <span className="aru-job-name">
+          <strong>{assignment.title || 'Agent task'}</strong>
+          <small>
+            {assignment.subtitle || 'Experiment'}
+            {attempt > 0 && ` · attempt ${attempt}`}
+          </small>
+        </span>
+        <span className="aru-job-agent">{sessionAgent(session)}</span>
+        <span className="aru-job-metrics">
+          <span>{formatDuration(sessionDurationMs(session, now))}</span>
+          {tokens && <span>{tokens} tokens</span>}
+          <span className={`aru-job-state aru-job-state--${outcome.tone}`}>
+            {outcome.label}
+          </span>
+        </span>
+        <span className="aru-job-chevron" aria-hidden="true">⌄</span>
+      </button>
+      {open && (
+        <div className="aru-job-body">
+          <div className="aru-job-detail-bar">
+            <span>
+              {sessionAgent(session)}
+              {tools > 0 && ` · ${tools} ${tools === 1 ? 'tool call' : 'tool calls'}`}
+            </span>
+            {destination && (
+              <Link className="btn btn--primary btn--sm" to={destination.to}>
+                {destination.label}
+              </Link>
+            )}
+          </div>
+          <div className="aru-packet">
+            <span className="aru-label">Assignment</span>
+            <pre><code>{JSON.stringify(packet, null, 2)}</code></pre>
+          </div>
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -83,13 +147,14 @@ export default function AgentPlatforms({ projectId }) {
   const [copied, setCopied] = useState('');
   const [expanded, setExpanded] = useState('');
   const [sessions, setSessions] = useState(null);
+  const [runnerPresence, setRunnerPresence] = useState(null);
   const [sessionError, setSessionError] = useState('');
   const [runnerUrl, setRunnerUrl] = useState(LOCAL_RUNNER_URL);
   const [pairingToken, setPairingToken] = useState('');
   const [runnerConnection, setRunnerConnection] = useState('idle');
   const [runnerMessage, setRunnerMessage] = useState('');
   const [runnerStatus, setRunnerStatus] = useState(null);
-  const [runnerLastSeen, setRunnerLastSeen] = useState(null);
+  const [, setRunnerLastSeen] = useState(null);
   const [machineBaseline, setMachineBaseline] = useState(null);
   const [restartNeeded, setRestartNeeded] = useState(false);
   const [dispatch, setDispatch] = useState(null);
@@ -97,6 +162,8 @@ export default function AgentPlatforms({ projectId }) {
   const [dispatchError, setDispatchError] = useState('');
   const [halting, setHalting] = useState(false);
   const [showHaltPrompt, setShowHaltPrompt] = useState(false);
+  const [expandedSession, setExpandedSession] = useState('');
+  const [clock, setClock] = useState(Date.now());
   const [wizardOpen, setWizardOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   // Unpaired, the guided setup is the page; manual pairing is an explicit
@@ -127,6 +194,7 @@ export default function AgentPlatforms({ projectId }) {
         const response = await api.listAgentSessions(projectId);
         if (!disposed) {
           setSessions(response?.sessions || []);
+          setRunnerPresence(response?.runner || null);
           setSessionError('');
         }
       } catch {
@@ -134,7 +202,7 @@ export default function AgentPlatforms({ projectId }) {
       }
     }
     load();
-    const timer = setInterval(load, 15_000);
+    const timer = setInterval(load, 10_000);
     return () => {
       disposed = true;
       clearInterval(timer);
@@ -200,11 +268,25 @@ export default function AgentPlatforms({ projectId }) {
   const installCommand = 'curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh';
   const runCommand = `${runnerBin} --project ${projectId || 'PROJECT_ID'}`;
   const liveSessions = useMemo(
-    () => (sessions || []).filter(
-      (session) => session.status === 'offered' || session.status === 'active',
-    ),
+    () => (sessions || []).filter(isLiveSession),
     [sessions],
   );
+  const recentSessions = useMemo(
+    () => (sessions || []).filter((session) => !isLiveSession(session)).slice(0, 6),
+    [sessions],
+  );
+
+  useEffect(() => {
+    if (liveSessions.length === 0) return undefined;
+    setExpandedSession((current) => (
+      liveSessions.some((session) => session.id === current)
+        ? current
+        : liveSessions[0].id
+    ));
+    setClock(Date.now());
+    const timer = setInterval(() => setClock(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [liveSessions]);
   const enabledPlatforms = platforms.filter(
     (platform) => platform.present !== false && platform.enabled,
   );
@@ -213,6 +295,23 @@ export default function AgentPlatforms({ projectId }) {
     (total, platform) => total + (Number(platform.parallelism) || 0),
     0,
   );
+  const sessionMachine = liveSessions.find((session) => (
+    session?.agent_setup?.machine
+    && Date.now() - Date.parse(session?.last_activity_at || session?.activated_at || '') < 45_000
+  ));
+  const effectivePresence = runnerPresence || (sessionMachine ? {
+    live: true,
+    machine: { hostname: sessionMachine.agent_setup.machine },
+    platforms: liveSessions.map((session) => ({ name: session.agent_setup?.platform || session.platform })),
+    capacity,
+  } : null);
+  const observedCapacity = Number(effectivePresence?.capacity);
+  const shownCapacity = Number.isFinite(observedCapacity) && observedCapacity > 0
+    ? observedCapacity
+    : capacity;
+  const observedPlatforms = Array.isArray(effectivePresence?.platforms)
+    ? [...new Set(effectivePresence.platforms.map((item) => item?.name).filter(Boolean))]
+    : [];
 
   function update(id, patch) {
     setPlatforms((current) => current.map((platform) => (
@@ -427,31 +526,39 @@ export default function AgentPlatforms({ projectId }) {
     status: runnerStatus,
     projectId,
   });
-  const lastChecked = runnerLastSeen
-    ? new Date(runnerLastSeen).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-    : '';
-
+  const observedMachine = effectivePresence?.machine || {};
+  const runnerKnown = paired || Boolean(effectivePresence);
+  const machineName = effectivePresence
+    ? (observedMachine.hostname || 'Runner')
+    : runnerView.machineName;
+  const machineDetails = effectivePresence
+    ? [
+      observedMachine.system === 'Darwin' ? 'macOS' : observedMachine.system,
+      observedMachine.architecture,
+    ].filter(Boolean).join(' · ')
+    : runnerView.machineDetails;
+  const machineTone = effectivePresence
+    ? (effectivePresence.live ? 'live' : 'error')
+    : runnerView.tone;
+  const machineState = effectivePresence
+    ? (effectivePresence.live ? 'Live' : 'Offline')
+    : runnerView.state;
   return (
     <>
       <section className="aru-scope" aria-label="Auto-run status">
-        <ScopeHead title="Auto-run" tag="This project" />
+        <header className="aru-scope-head">
+          <h2 className="aru-scope-title">Auto-run</h2>
+        </header>
         <div className="aru-card aru-overview">
           <div className="aru-machine">
-            <span className={`aru-live-dot aru-live-dot--${runnerView.tone}`} aria-hidden="true" />
+            <span className={`aru-live-dot aru-live-dot--${machineTone}`} aria-hidden="true" />
             <div className="aru-machine-name">
-              <strong>{runnerView.machineName}</strong>
-              <span>
-                {runnerView.machineDetails
-                  || (connected && !runnerStatus?.machine ? 'Update runner to show machine identity' : 'Runner machine')}
-                {lastChecked && ` · checked ${lastChecked}`}
-              </span>
+              <strong>{runnerKnown ? machineName : 'Connect a runner'}</strong>
+              {runnerKnown && machineDetails && <span>{machineDetails}</span>}
             </div>
-            <span className={`aru-status aru-status--${runnerView.tone}`}>
-              {runnerView.state}
-            </span>
-            {runnerView.project && (
-              <span className={`aru-status aru-status--${runnerView.projectMatches ? 'quiet' : 'warning'}`}>
-                {runnerView.project}
+            {runnerKnown && (
+              <span className={`aru-status aru-status--${machineTone}`}>
+                {machineState}
               </span>
             )}
           </div>
@@ -472,6 +579,26 @@ export default function AgentPlatforms({ projectId }) {
                   onClick={() => setConfigOpen((open) => !open)}
                 >
                   Settings
+                </button>
+              </>
+            ) : effectivePresence ? (
+              <>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => {
+                    setManualOpen(true);
+                    setConfigOpen(true);
+                  }}
+                >
+                  Settings
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => setWizardOpen(true)}
+                >
+                  Setup guide
                 </button>
               </>
             ) : (
@@ -514,11 +641,15 @@ export default function AgentPlatforms({ projectId }) {
               <small>running</small>
             </span>
             <span className="aru-fact">
-              <strong>{capacity}</strong>
-              <small>{capacity === 1 ? 'slot' : 'slots'}</small>
+              <strong>{shownCapacity}</strong>
+              <small>{shownCapacity === 1 ? 'slot' : 'slots'}</small>
             </span>
             <span className="aru-fact aru-fact--wide">
-              <strong>{enabledPlatforms.map((platform) => platform.name).join(', ') || 'No agents'}</strong>
+              <strong>
+                {observedPlatforms.join(', ')
+                  || enabledPlatforms.map((platform) => platform.name).join(', ')
+                  || 'No agents'}
+              </strong>
               <small>enabled</small>
             </span>
           </div>
@@ -526,13 +657,7 @@ export default function AgentPlatforms({ projectId }) {
 
         {showHaltPrompt && liveSessions.length > 0 && (
           <div className="aru-card aru-halt" role="status">
-            <p>
-              {liveSessions.length === 1
-                ? '1 session is still running.'
-                : `${liveSessions.length} sessions are still running.`}
-              {' '}
-              Stop them now to end their agent processes; committed work is kept.
-            </p>
+            <p>{liveSessions.length} {liveSessions.length === 1 ? 'job is' : 'jobs are'} still running.</p>
             <div className="page-actions">
               <button
                 type="button"
@@ -540,7 +665,7 @@ export default function AgentPlatforms({ projectId }) {
                 onClick={haltSessions}
                 disabled={halting}
               >
-                {halting ? 'Stopping…' : 'Stop them now'}
+                {halting ? 'Stopping…' : 'Stop now'}
               </button>
               <button
                 type="button"
@@ -548,7 +673,7 @@ export default function AgentPlatforms({ projectId }) {
                 onClick={() => setShowHaltPrompt(false)}
                 disabled={halting}
               >
-                Let them finish
+                Keep running
               </button>
             </div>
           </div>
@@ -558,10 +683,10 @@ export default function AgentPlatforms({ projectId }) {
           <p className="aru-error" role="alert">{dispatchError}</p>
         )}
 
-        {(sessionError || (sessions && sessions.length > 0)) && (
-          <div className="aru-workers">
-            <div className="aru-workers-head">
-              <span className="aru-label">Recent sessions</span>
+        {(sessionError || liveSessions.length > 0) && (
+          <section className="aru-jobs" aria-label="Running jobs">
+            <div className="aru-section-head">
+              <span className="aru-section-title">Running</span>
               {liveSessions.length > 0 && !showHaltPrompt && (
                 <button
                   type="button"
@@ -569,28 +694,51 @@ export default function AgentPlatforms({ projectId }) {
                   onClick={haltSessions}
                   disabled={halting}
                 >
-                  {halting ? 'Stopping…' : `Stop ${liveSessions.length}`}
+                  {halting ? 'Stopping…' : 'Stop'}
                 </button>
               )}
             </div>
             {sessionError ? (
               <span className="aru-note">{sessionError}</span>
             ) : (
-              <div className="aru-worker-list">
-                {sessions.slice(0, 8).map((session) => (
-                  <div className="aru-worker-row" key={session.id}>
-                    <span>
-                      <strong>{session.platform}</strong>
-                      <small className="mono">{session.experiment_id}</small>
-                    </span>
-                    <span className={`mcpk-state mcpk-state--${session.status}`}>
-                      {session.status}
-                    </span>
-                  </div>
+              <div className="aru-job-list">
+                {liveSessions.map((session) => (
+                  <JobCard
+                    key={session.id}
+                    session={session}
+                    projectId={projectId}
+                    now={clock}
+                    open={expandedSession === session.id}
+                    onToggle={() => setExpandedSession((current) => (
+                      current === session.id ? '' : session.id
+                    ))}
+                  />
                 ))}
               </div>
             )}
-          </div>
+          </section>
+        )}
+
+        {!sessionError && recentSessions.length > 0 && (
+          <section className="aru-jobs aru-jobs--recent" aria-label="Recent jobs">
+            <div className="aru-section-head">
+              <span className="aru-section-title">Recent</span>
+            </div>
+            <div className="aru-job-list">
+              {recentSessions.map((session) => (
+                <JobCard
+                  key={session.id}
+                  session={session}
+                  projectId={projectId}
+                  now={clock}
+                  open={expandedSession === session.id}
+                  onToggle={() => setExpandedSession((current) => (
+                    current === session.id ? '' : session.id
+                  ))}
+                />
+              ))}
+            </div>
+          </section>
         )}
 
         <details

@@ -41,6 +41,7 @@ from merv.client.agent_runner import (
     _detected_commands,
     _local_status,
     _runner_key,
+    _read_trace_telemetry,
     _run_runner,
     _safe_control_url,
     _session_key,
@@ -1130,6 +1131,85 @@ class AgentSessionProtocolTest(unittest.TestCase):
             ],
         )
 
+    def test_jsonl_telemetry_is_incremental_and_deduplicates_tool_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            trace = Path(tmp) / "trace.jsonl"
+            trace.write_text(
+                "\n".join(
+                    json.dumps(event)
+                    for event in (
+                        {
+                            "type": "item.started",
+                            "item": {"id": "tool_1", "type": "command_execution"},
+                        },
+                        {
+                            "type": "item.completed",
+                            "item": {"id": "tool_1", "type": "command_execution"},
+                        },
+                        {
+                            "type": "turn.completed",
+                            "usage": {
+                                "input_tokens": 900,
+                                "output_tokens": 300,
+                                "cached_input_tokens": 100,
+                            },
+                        },
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            offset, state = _read_trace_telemetry(
+                path=trace, offset=0, state=None, adapter="codex"
+            )
+            self.assertEqual(state["tool_calls"], 1)
+            self.assertEqual(state["total_tokens"], 1200)
+            self.assertEqual(state["cached_tokens"], 100)
+
+            with trace.open("a", encoding="utf-8") as output:
+                output.write(
+                    json.dumps(
+                        {
+                            "type": "tool_use",
+                            "tool_id": "tool_2",
+                            "tool_name": "read_file",
+                        }
+                    )
+                    + "\n"
+                )
+                output.write('{"type":"message"')
+            next_offset, state = _read_trace_telemetry(
+                path=trace, offset=offset, state=state, adapter="codex"
+            )
+            self.assertEqual(state["tool_calls"], 2)
+            self.assertGreater(next_offset, offset)
+            self.assertLess(next_offset, trace.stat().st_size)
+
+    def test_runner_presence_wire_contract_contains_no_command(self) -> None:
+        client = _CapturingClient()
+        client.heartbeat_runner(
+            project_id="proj_1",
+            runner_id="runner_1",
+            machine={"hostname": "research-mac"},
+            platforms=[
+                {
+                    "name": "Codex",
+                    "harness": "codex",
+                    "model": "gpt-5.6-sol",
+                    "parallelism": 2,
+                }
+            ],
+            capacity=2,
+        )
+
+        path, payload, _ = client.calls[-1]
+        self.assertEqual(
+            path, "/api/projects/proj_1/agent-runners/heartbeat"
+        )
+        self.assertEqual(payload["machine"], {"hostname": "research-mac"})
+        self.assertEqual(payload["capacity"], 2)
+        self.assertNotIn("command", payload["platforms"][0])
+
     def test_closed_idempotent_claim_is_never_launched(self) -> None:
         client = _CapturingClient()
 
@@ -1298,6 +1378,7 @@ class AgentRunnerTest(unittest.TestCase):
             _run_runner(runner, once=False, poll_seconds=1)
 
         self.assertEqual(runner.reconcile.call_count, 2)
+        self.assertEqual(runner.report_presence.call_count, 2)
         runner.advance_ready.assert_called_once_with()
         runner.fill_available_slots.assert_called_once_with()
 

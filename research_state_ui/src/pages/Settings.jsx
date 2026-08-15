@@ -16,7 +16,7 @@ const TABS = [
   { id: 'connect', label: 'Connect an agent', scope: 'This machine + your agent' },
   { id: 'people', label: 'People', scope: 'This project', needsDirectory: true },
   { id: 'keys', label: 'MCP keys', scope: 'This project' },
-  { id: 'auto', label: 'Auto running', scope: 'This project + a runner machine' },
+  { id: 'auto', label: 'Auto running', scope: '' },
   { id: 'compute', label: 'Compute', scope: 'This project' },
   { id: 'storage', label: 'Storage', scope: 'This project', needsStorage: true },
   { id: 'huggingface', label: 'Hugging Face', scope: 'Your account' },
@@ -54,10 +54,12 @@ export default function Settings() {
     <div className="page-stage">
       <div className="page-header">
         <h1 className="page-title">Settings</h1>
-        <p className="page-summary page-summary--lead">
-          Connect clients, run agents automatically, and manage the credentials
-          Merv uses on your behalf.
-        </p>
+        {active !== 'auto' && (
+          <p className="page-summary page-summary--lead">
+            Connect clients, run agents automatically, and manage the credentials
+            Merv uses on your behalf.
+          </p>
+        )}
         <div className="settings-tabs">
           <div className="settings-tab-row" role="tablist" aria-label="Settings sections">
             {tabs.map((tab) => (
@@ -75,7 +77,7 @@ export default function Settings() {
               </button>
             ))}
           </div>
-          <span className="settings-tabs-scope">{current.scope}</span>
+          {current.scope && <span className="settings-tabs-scope">{current.scope}</span>}
         </div>
       </div>
 

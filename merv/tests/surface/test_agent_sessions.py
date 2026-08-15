@@ -221,6 +221,19 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         )
 
         self.assertEqual(session["kind"], "experiment")
+        self.assertEqual(session["assignment"]["title"], "Run experiment")
+        self.assertEqual(
+            session["assignment"]["subtitle"], "parallel-agent"
+        )
+        self.assertEqual(
+            session["assignment"]["packet"],
+            {
+                "task": "Run experiment",
+                "project": "Agent sessions",
+                "attempt": 1,
+                "experiment": "parallel-agent",
+            },
+        )
         self.assertIn(
             "call review.request, then end this host session", session["instruction"]
         )
@@ -235,6 +248,38 @@ class AgentSessionSurfaceTest(unittest.TestCase):
             forbidden_tool.json()["error_code"],
             "agent_session_scope_forbidden",
         )
+
+    def test_idle_runner_presence_is_visible_without_exposing_runner_identity(self) -> None:
+        reported = self.client.post(
+            f"/api/projects/{self.project_id}/agent-runners/heartbeat",
+            json={
+                "runner_id": "machine-secret-id",
+                "machine": {
+                    "hostname": "research-mac",
+                    "system": "Darwin",
+                    "architecture": "arm64",
+                },
+                "platforms": [
+                    {
+                        "name": "Codex",
+                        "harness": "codex",
+                        "model": "gpt-5.6-sol",
+                        "parallelism": 2,
+                    }
+                ],
+                "capacity": 2,
+            },
+        )
+        listed = self.client.get(
+            f"/api/projects/{self.project_id}/agent-sessions"
+        )
+
+        self.assertEqual(reported.status_code, 200, reported.text)
+        self.assertEqual(listed.status_code, 200, listed.text)
+        runner = listed.json()["runner"]
+        self.assertTrue(runner["live"])
+        self.assertEqual(runner["machine"]["hostname"], "research-mac")
+        self.assertNotIn("runner_id", runner)
 
     def test_merv_dispatches_a_separate_reviewer_session(self) -> None:
         owner_secret = self.secret()

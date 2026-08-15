@@ -281,6 +281,7 @@ class Application:
         )
         if target is None or session["status"] not in {"offered", "active"}:
             return {"session": session, "reason": "idempotent_session_closed"}
+        request: dict[str, Any] | None = None
         if session["kind"] == "review":
             request = next(
                 (
@@ -342,7 +343,126 @@ class Application:
                 "If this platform has no native MCP support, invoke tools with "
                 "`merv-client call TOOL --arguments JSON`."
             )
+        instruction = str(session["instruction"])
+        assignment = self._agent_assignment(
+            project_id=project_id,
+            project=snapshot.project,
+            session=session,
+            target=target,
+            request=request,
+            instruction=instruction,
+        )
+        session = self.agent_sessions.set_assignment(
+            session_id=str(session["id"]),
+            assignment=assignment,
+        )
+        session["instruction"] = instruction
         return {"session": session}
+
+    def _agent_assignment(
+        self,
+        *,
+        project_id: str,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        target: dict[str, Any],
+        request: dict[str, Any] | None,
+        instruction: str,
+    ) -> dict[str, Any]:
+        """Build the immutable, human-readable packet shown in Auto-run."""
+        kind = str(session.get("kind") or "experiment")
+        target_type = str(session.get("target_type") or "experiment")
+        attempt = max(int(session.get("attempt_index") or 0), 0)
+        project_name = str(project.get("name") or "Project")
+        target_name = (
+            str(target.get("name") or "Experiment")
+            if target_type == "experiment"
+            else "Project reflection"
+        )
+        role = str((request or {}).get("role") or "")
+        title = "Run experiment"
+        task = "Run experiment"
+        section = "execution"
+        artifact_label = ""
+        artifact_id = ""
+        if kind == "consolidation":
+            title = task = "Consolidate reflection"
+            section = ""
+        elif kind == "review":
+            title, task, section, artifact_role = {
+                "design_reviewer": (
+                    "Review plan",
+                    "Review experiment plan",
+                    "design",
+                    "plan",
+                ),
+                "attempt_reviewer": (
+                    "Review results",
+                    "Review experiment results",
+                    "report",
+                    "report",
+                ),
+                "reflection_reviewer": (
+                    "Review reflection",
+                    "Review project reflection",
+                    "",
+                    "reflection_doc",
+                ),
+                "consolidation_reviewer": (
+                    "Review consolidation",
+                    "Review code consolidation",
+                    "",
+                    "change_spec",
+                ),
+            }.get(role, ("Review work", "Review assigned work", "", ""))
+            snapshot_artifacts = (request or {}).get("target_snapshot", {}).get(
+                "artifacts", []
+            )
+            artifact_ref = next(
+                (
+                    str(item.get("artifact_id") or "")
+                    for item in snapshot_artifacts
+                    if str(item.get("role") or "") == artifact_role
+                ),
+                "",
+            )
+            if artifact_ref:
+                found = self.artifacts.get(
+                    artifact_ids=(artifact_ref,),
+                    project_id=project_id,
+                )
+                if found:
+                    artifact = found[0]
+                    artifact_id = artifact.id
+                    artifact_label = artifact.title or {
+                        "plan": "Experiment plan",
+                        "report": "Results report",
+                        "reflection_doc": "Project reflection",
+                        "change_spec": "Change specification",
+                    }.get(artifact.role, artifact.path)
+
+        packet: dict[str, Any] = {
+            "task": task,
+            "project": project_name,
+            "attempt": attempt,
+        }
+        packet["experiment" if target_type == "experiment" else "reflection"] = (
+            target_name
+        )
+        if artifact_label:
+            packet["artifact"] = artifact_label
+        return {
+            "schema_version": 1,
+            "title": title,
+            "subtitle": target_name,
+            "packet": packet,
+            "navigation": {
+                "type": target_type,
+                "target_id": str(session.get("target_id") or ""),
+                "section": section,
+                "artifact_id": artifact_id,
+            },
+        }
 
     def attach_agent_session(
         self,
@@ -354,6 +474,8 @@ class Application:
         base_sha: str = "",
         head_sha: str = "",
         workspace_stats: dict[str, Any] | None = None,
+        agent_setup: dict[str, Any] | None = None,
+        telemetry: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return {
             "session": self.agent_sessions.attach(
@@ -364,6 +486,8 @@ class Application:
                 base_sha=base_sha,
                 head_sha=head_sha,
                 workspace_stats=workspace_stats,
+                agent_setup=agent_setup,
+                telemetry=telemetry,
             )
         }
 
@@ -384,6 +508,7 @@ class Application:
         reason: str,
         head_sha: str = "",
         workspace_stats: dict[str, Any] | None = None,
+        telemetry: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return {
             "session": self.agent_sessions.release(
@@ -392,6 +517,7 @@ class Application:
                 reason=reason,
                 head_sha=head_sha,
                 workspace_stats=workspace_stats,
+                telemetry=telemetry,
             )
         }
 
@@ -402,6 +528,7 @@ class Application:
         runner_id: str,
         head_sha: str = "",
         workspace_stats: dict[str, Any] | None = None,
+        telemetry: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return {
             "session": self.agent_sessions.heartbeat(
@@ -409,6 +536,26 @@ class Application:
                 runner_id=runner_id,
                 head_sha=head_sha,
                 workspace_stats=workspace_stats,
+                telemetry=telemetry,
+            )
+        }
+
+    def heartbeat_agent_runner(
+        self,
+        *,
+        project_id: str,
+        runner_id: str,
+        machine: dict[str, Any],
+        platforms: list[dict[str, Any]],
+        capacity: int,
+    ) -> dict[str, Any]:
+        return {
+            "runner": self.agent_sessions.heartbeat_runner(
+                project_id=project_id,
+                runner_id=runner_id,
+                machine=machine,
+                platforms=platforms,
+                capacity=capacity,
             )
         }
 

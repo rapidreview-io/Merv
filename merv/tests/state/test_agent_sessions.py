@@ -293,6 +293,106 @@ class AgentSessionsTest(unittest.TestCase):
         self.assertEqual(repeated["host_session_ref"], "pid:1:birth")
         self.assertEqual(repeated["workspace_ref"], "merv/proj_1/exp_1/ags_1")
 
+    def test_assignment_setup_and_live_telemetry_are_public_but_bounded(self) -> None:
+        session = self.claim()
+        assignment = {
+            "title": "Run experiment",
+            "subtitle": "Experiment",
+            "packet": {
+                "task": "Run experiment",
+                "project": "Project",
+                "experiment": "Experiment",
+                "attempt": 1,
+            },
+            "navigation": {
+                "type": "experiment",
+                "target_id": "exp_1",
+                "section": "execution",
+            },
+        }
+        self.sessions.set_assignment(session_id=session["id"], assignment=assignment)
+        self.sessions.authenticate(session_secret=self.secret("r"))
+        self.sessions.attach(
+            session_id=session["id"],
+            runner_id="runner",
+            host_session_ref="pid:1:birth",
+            agent_setup={
+                "platform": "Codex",
+                "harness": "codex",
+                "model": "gpt-5.6-sol",
+                "effort": "high",
+                "machine": "research-mac",
+            },
+            telemetry={"total_tokens": 1200, "tool_calls": 3},
+        )
+        self.sessions.heartbeat(
+            session_id=session["id"],
+            runner_id="runner",
+            telemetry={
+                "input_tokens": 1400,
+                "output_tokens": 600,
+                "total_tokens": 2000,
+                "tool_calls": 5,
+                "raw_event": {"must": "not leave the runner"},
+            },
+        )
+
+        current = self.sessions.list(project_id="proj_1")["sessions"][0]
+        self.assertEqual(current["assignment"], assignment)
+        self.assertEqual(current["agent_setup"]["machine"], "research-mac")
+        self.assertEqual(
+            current["telemetry"],
+            {
+                "input_tokens": 1400,
+                "output_tokens": 600,
+                "total_tokens": 2000,
+                "tool_calls": 5,
+            },
+        )
+        self.assertTrue(current["telemetry_at"])
+        with self.assertRaisesRegex(ValidationError, "assignment is immutable"):
+            self.sessions.set_assignment(
+                session_id=session["id"], assignment={**assignment, "title": "Changed"}
+            )
+        with self.assertRaisesRegex(ValidationError, "setup is immutable"):
+            self.sessions.attach(
+                session_id=session["id"],
+                runner_id="runner",
+                host_session_ref="pid:1:birth",
+                agent_setup={"platform": "Claude"},
+            )
+
+    def test_idle_runner_presence_names_the_live_machine(self) -> None:
+        presence = self.sessions.heartbeat_runner(
+            project_id="proj_1",
+            runner_id="runner",
+            machine={
+                "hostname": "research-mac",
+                "system": "Darwin",
+                "architecture": "arm64",
+                "secret": "discard me",
+            },
+            platforms=[
+                {
+                    "name": "Codex",
+                    "harness": "codex",
+                    "model": "gpt-5.6-sol",
+                    "parallelism": 2,
+                    "command": ["must", "not", "leave"],
+                }
+            ],
+            capacity=2,
+        )
+
+        self.assertTrue(presence["live"])
+        self.assertEqual(presence["machine"]["hostname"], "research-mac")
+        self.assertNotIn("secret", presence["machine"])
+        self.assertEqual(presence["capacity"], 2)
+        self.assertEqual(
+            self.sessions.list(project_id="proj_1")["runner"], presence
+        )
+        self.assertNotIn("command", presence["platforms"][0])
+
     def test_heartbeat_rejects_an_offer_until_the_agent_authenticates(self) -> None:
         session = self.claim()
 

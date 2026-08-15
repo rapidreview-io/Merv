@@ -246,6 +246,10 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   workspace_ref TEXT NOT NULL DEFAULT '',
   base_sha TEXT NOT NULL DEFAULT '',
   head_sha TEXT NOT NULL DEFAULT '',
+  assignment_json TEXT NOT NULL DEFAULT '{}',
+  agent_setup_json TEXT NOT NULL DEFAULT '{}',
+  telemetry_json TEXT NOT NULL DEFAULT '{}',
+  telemetry_at TEXT,
   created_at TEXT NOT NULL,
   activated_at TEXT,
   last_activity_at TEXT,
@@ -255,6 +259,21 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   close_reason TEXT NOT NULL DEFAULT '',
   source_key_id TEXT,
   source_user_id TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY(project_id) REFERENCES projects(id)
+);
+
+-- One small, non-secret liveness record per project runner. The daemon renews
+-- it every poll even while idle, so the UI can distinguish a ready machine
+-- from a remembered or disconnected one without dialing the user's network.
+CREATE TABLE IF NOT EXISTS agent_runners (
+  project_id TEXT NOT NULL,
+  runner_id TEXT NOT NULL,
+  machine_json TEXT NOT NULL DEFAULT '{}',
+  platforms_json TEXT NOT NULL DEFAULT '{}',
+  capacity INTEGER NOT NULL DEFAULT 0,
+  started_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  PRIMARY KEY(project_id, runner_id),
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
@@ -1232,6 +1251,13 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     # append-only staging/promotion receipts in the existing event ledger.
     # Candidate bytes stay in Artifacts, Object Storage, or evaluator custody.
     (45, "add_project_candidates", ""),
+    # Auto-run observability (August 2026): the immutable human-readable work
+    # packet, the exact non-secret harness setup, and a small mutable telemetry
+    # summary. Full provider traces remain on the runner machine.
+    (46, "add_agent_session_observability", ""),
+    # Idle runner presence (August 2026): one non-secret machine heartbeat lets
+    # Auto-run show which executor is ready even before it claims its first job.
+    (47, "add_agent_runners", ""),
 )
 
 CANDIDATE_INDEXES = (
@@ -1568,8 +1594,25 @@ class BaseStateStore:
             self._add_user_provider_caps(conn=conn)
         elif name == "add_project_candidates":
             self._add_project_candidates(conn=conn)
+        elif name == "add_agent_session_observability":
+            self._add_agent_session_observability(conn=conn)
+        elif name == "add_agent_runners":
+            if not self._has_table(conn=conn, table="agent_runners"):
+                conn.execute(_schema_table_ddl(table="agent_runners"))
         else:
             conn.execute(statement)
+
+    def _add_agent_session_observability(self, *, conn: Connection) -> None:
+        """Migration 46: bounded assignment/setup/telemetry session state."""
+        columns = {
+            "assignment_json": "TEXT NOT NULL DEFAULT '{}'",
+            "agent_setup_json": "TEXT NOT NULL DEFAULT '{}'",
+            "telemetry_json": "TEXT NOT NULL DEFAULT '{}'",
+            "telemetry_at": "TEXT",
+        }
+        for column, ddl in columns.items():
+            if not self._has_column(conn=conn, table="agent_sessions", column=column):
+                conn.execute(f"ALTER TABLE agent_sessions ADD COLUMN {column} {ddl}")
 
     def _add_project_candidates(self, *, conn: Connection) -> None:
         """Migration 45: immutable project candidates and champion history."""

@@ -89,3 +89,9 @@ they cannot corrupt the structured stream. Hermes creates the same trace file
 through its session export after the process stops. Interactive sessions do not
 use this path. Aider is not an auto-run adapter because it cannot provide a
 complete structured interaction trace.
+
+The server keeps only the immutable human-readable assignment, non-secret agent
+setup, and aggregate token/tool/message counters needed by Auto-run. Raw events
+never leave the runner. A separate non-secret heartbeat names the runner machine
+and marks it live even while it has no job; commands and runner identity stay
+private.

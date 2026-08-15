@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
+import json
 from typing import Any, Iterable, Mapping
 
 from ..kernel.secret_tokens import hash_secret, secret_digest_matches
@@ -36,9 +37,16 @@ _PUBLIC_COLUMNS = """
 id, project_id, target_type, target_id, attempt_index, kind, review_request_id,
 source_sha, runner_id, platform, status, host_session_ref,
 workspace_ref, base_sha, head_sha,
+assignment_json, agent_setup_json, telemetry_json, telemetry_at,
 created_at, activated_at, last_activity_at, lease_expires_at, hard_deadline_at,
 closed_at, close_reason
 """
+
+MAX_ASSIGNMENT_BYTES = 64 * 1024
+MAX_AGENT_SETUP_BYTES = 8 * 1024
+MAX_TELEMETRY_BYTES = 8 * 1024
+MAX_RUNNER_PRESENCE_BYTES = 16 * 1024
+RUNNER_LIVE_SECONDS = 45
 
 
 class AgentSessions:
@@ -212,6 +220,31 @@ class AgentSessions:
                 return self._find(tx=tx, session_id=session_id)
         return None
 
+    def set_assignment(
+        self, *, session_id: str, assignment: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Freeze the human-readable packet Application assigned this session."""
+        encoded = _bounded_json_object(
+            assignment,
+            field="assignment",
+            limit=MAX_ASSIGNMENT_BYTES,
+        )
+        with self.store.transaction() as tx:
+            row = tx.execute(
+                "SELECT assignment_json FROM agent_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError(f"agent session not found: {session_id}")
+            existing = str(row["assignment_json"] or "{}")
+            if existing not in {"", "{}"} and existing != encoded:
+                raise ValidationError("agent session assignment is immutable")
+            tx.execute(
+                "UPDATE agent_sessions SET assignment_json = ? WHERE id = ?",
+                (encoded, session_id),
+            )
+            return self._find(tx=tx, session_id=session_id)
+
     def authenticate(self, *, session_secret: str) -> dict[str, Any] | None:
         """Validate, activate, and touch a session credential in one write."""
         digest = hash_secret(session_secret)
@@ -275,6 +308,8 @@ class AgentSessions:
         base_sha: str = "",
         head_sha: str = "",
         workspace_stats: Mapping[str, Any] | None = None,
+        agent_setup: Mapping[str, Any] | None = None,
+        telemetry: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         host_session_ref = _required(host_session_ref, "host_session_ref", limit=500)
         workspace_ref = str(workspace_ref or "").strip()[:500]
@@ -288,6 +323,12 @@ class AgentSessions:
             existing = str(row["host_session_ref"] or "")
             existing_workspace = str(row["workspace_ref"] or "")
             if existing == host_session_ref and existing_workspace == workspace_ref:
+                self._record_observability(
+                    tx=tx,
+                    row=row,
+                    agent_setup=agent_setup,
+                    telemetry=telemetry,
+                )
                 self._record_workspace(
                     tx=tx,
                     row=row,
@@ -310,6 +351,12 @@ class AgentSessions:
                 """,
                 (host_session_ref, workspace_ref, base_sha, head_sha, session_id),
             )
+            self._record_observability(
+                tx=tx,
+                row=row,
+                agent_setup=agent_setup,
+                telemetry=telemetry,
+            )
             self._record_workspace(
                 tx=tx,
                 row=row,
@@ -327,6 +374,7 @@ class AgentSessions:
         runner_id: str,
         head_sha: str = "",
         workspace_stats: Mapping[str, Any] | None = None,
+        telemetry: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Renew a lease only after the owning runner confirms a live child."""
         now = datetime.now(UTC)
@@ -357,6 +405,11 @@ class AgentSessions:
                     session_id,
                 ),
             )
+            self._record_observability(
+                tx=tx,
+                row=row,
+                telemetry=telemetry,
+            )
             self._record_workspace(
                 tx=tx,
                 row=row,
@@ -375,6 +428,7 @@ class AgentSessions:
         reason: str = "runner_released",
         head_sha: str = "",
         workspace_stats: Mapping[str, Any] | None = None,
+        telemetry: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         reason = (reason or "runner_released").strip()[:200]
         head_sha = _sha(head_sha, allow_empty=True)
@@ -397,6 +451,11 @@ class AgentSessions:
                     """,
                     (format_iso(now), reason, head_sha, head_sha, session_id),
                 )
+                self._record_observability(
+                    tx=tx,
+                    row=row,
+                    telemetry=telemetry,
+                )
                 self._record_workspace(
                     tx=tx,
                     row=row,
@@ -407,14 +466,89 @@ class AgentSessions:
                 )
             return self._find(tx=tx, session_id=session_id)
 
+    def heartbeat_runner(
+        self,
+        *,
+        project_id: str,
+        runner_id: str,
+        machine: Mapping[str, Any],
+        platforms: Iterable[Mapping[str, Any]],
+        capacity: int,
+    ) -> dict[str, Any]:
+        """Remember a polling runner without exposing credentials or commands."""
+        runner_id = _required(runner_id, "runner_id", limit=240)
+        machine_payload = {
+            name: str(machine.get(name) or "").strip()[:240]
+            for name in ("hostname", "system", "architecture")
+            if str(machine.get(name) or "").strip()
+        }
+        platform_items: list[dict[str, Any]] = []
+        for item in platforms:
+            if not isinstance(item, Mapping):
+                continue
+            projected: dict[str, Any] = {}
+            for name in ("name", "harness", "model", "effort"):
+                text = str(item.get(name) or "").strip()
+                if text:
+                    projected[name] = text[:240]
+            parallelism = item.get("parallelism")
+            if isinstance(parallelism, int) and not isinstance(parallelism, bool):
+                projected["parallelism"] = max(parallelism, 0)
+            platform_items.append(projected)
+        encoded_machine = _bounded_json_object(
+            machine_payload,
+            field="machine",
+            limit=MAX_RUNNER_PRESENCE_BYTES,
+        )
+        encoded_platforms = _bounded_json_object(
+            {"items": platform_items[:32]},
+            field="platforms",
+            limit=MAX_RUNNER_PRESENCE_BYTES,
+        )
+        now = format_iso(datetime.now(UTC))
+        with self.store.transaction() as tx:
+            self.store.require_project_id(conn=tx, project_id=project_id)
+            tx.execute(
+                """
+                INSERT INTO agent_runners (
+                  project_id, runner_id, machine_json, platforms_json,
+                  capacity, started_at, last_seen_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (project_id, runner_id) DO UPDATE SET
+                  machine_json = excluded.machine_json,
+                  platforms_json = excluded.platforms_json,
+                  capacity = excluded.capacity,
+                  last_seen_at = excluded.last_seen_at
+                """,
+                (
+                    project_id,
+                    runner_id,
+                    encoded_machine,
+                    encoded_platforms,
+                    max(int(capacity), 0),
+                    now,
+                    now,
+                ),
+            )
+            return self._runner_presence(tx=tx, project_id=project_id) or {}
+
     def list(self, *, project_id: str) -> dict[str, Any]:
         with self.store.transaction() as tx:
             self.store.require_project_id(conn=tx, project_id=project_id)
-            self._close_invalid_targets(tx=tx, now=datetime.now(UTC))
-            self._expire_due(tx=tx, now=datetime.now(UTC))
+            now = datetime.now(UTC)
+            self._close_invalid_targets(tx=tx, now=now)
+            self._expire_due(tx=tx, now=now)
             rows = tx.execute(
                 f"""
-                SELECT {_PUBLIC_COLUMNS}
+                SELECT {_PUBLIC_COLUMNS},
+                  (SELECT name FROM experiments
+                   WHERE id = agent_sessions.target_id
+                     AND agent_sessions.target_type = 'experiment') AS target_name,
+                  (SELECT role FROM review_requests
+                   WHERE id = agent_sessions.review_request_id) AS review_role,
+                  (SELECT name FROM projects
+                   WHERE id = agent_sessions.project_id) AS project_name
                 FROM agent_sessions
                 WHERE project_id = ?
                 ORDER BY
@@ -424,7 +558,79 @@ class AgentSessions:
                 """,
                 (project_id,),
             ).fetchall()
-            return {"sessions": [_public_row(row) for row in rows]}
+            return {
+                "sessions": [_public_row(row) for row in rows],
+                "runner": self._runner_presence(
+                    tx=tx, project_id=project_id, now=now
+                ),
+            }
+
+    @staticmethod
+    def _runner_presence(
+        *, tx: Any, project_id: str, now: datetime | None = None
+    ) -> dict[str, Any] | None:
+        row = tx.execute(
+            """
+            SELECT machine_json, platforms_json, capacity, started_at, last_seen_at
+            FROM agent_runners
+            WHERE project_id = ?
+            ORDER BY last_seen_at DESC
+            LIMIT 1
+            """,
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        seen = parse_iso(row["last_seen_at"])
+        current = now or datetime.now(UTC)
+        platforms = _json_column(row["platforms_json"]).get("items")
+        return {
+            "machine": _json_column(row["machine_json"]),
+            "platforms": platforms if isinstance(platforms, list) else [],
+            "capacity": max(int(row["capacity"] or 0), 0),
+            "started_at": str(row["started_at"]),
+            "last_seen_at": str(row["last_seen_at"]),
+            "live": bool(
+                seen is not None
+                and (current - seen).total_seconds() <= RUNNER_LIVE_SECONDS
+            ),
+        }
+
+    @staticmethod
+    def _record_observability(
+        *,
+        tx: Any,
+        row: Any,
+        agent_setup: Mapping[str, Any] | None = None,
+        telemetry: Mapping[str, Any] | None = None,
+    ) -> None:
+        if agent_setup is not None:
+            encoded_setup = _bounded_json_object(
+                agent_setup,
+                field="agent_setup",
+                limit=MAX_AGENT_SETUP_BYTES,
+            )
+            existing = str(row["agent_setup_json"] or "{}")
+            if existing not in {"", "{}"} and existing != encoded_setup:
+                raise ValidationError("agent session setup is immutable")
+            tx.execute(
+                "UPDATE agent_sessions SET agent_setup_json = ? WHERE id = ?",
+                (encoded_setup, row["id"]),
+            )
+        if telemetry is not None:
+            encoded_telemetry = _bounded_json_object(
+                _telemetry_projection(telemetry),
+                field="telemetry",
+                limit=MAX_TELEMETRY_BYTES,
+            )
+            tx.execute(
+                """
+                UPDATE agent_sessions
+                SET telemetry_json = ?, telemetry_at = ?
+                WHERE id = ?
+                """,
+                (encoded_telemetry, format_iso(datetime.now(UTC)), row["id"]),
+            )
 
     def workspaces(
         self, *, project_id: str, experiment_ids: Iterable[str] = ()
@@ -781,8 +987,94 @@ def _sha(value: Any, *, allow_empty: bool = False) -> str:
     return clean
 
 
+def _bounded_json_object(
+    value: Mapping[str, Any], *, field: str, limit: int
+) -> str:
+    if not isinstance(value, Mapping):
+        raise ValidationError(f"{field} must be an object", details={"field": field})
+    try:
+        encoded = json.dumps(
+            dict(value),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(
+            f"{field} must contain JSON values", details={"field": field}
+        ) from exc
+    if len(encoded.encode("utf-8")) > limit:
+        raise ValidationError(
+            f"{field} is too large",
+            details={"field": field, "max_bytes": limit},
+        )
+    return encoded
+
+
+def _telemetry_projection(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep aggregate counters only; provider events stay on the runner."""
+    result: dict[str, Any] = {}
+    for name in (
+        "input_tokens",
+        "output_tokens",
+        "cached_tokens",
+        "total_tokens",
+        "tool_calls",
+        "messages",
+    ):
+        raw = value.get(name)
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            result[name] = max(raw, 0)
+    for name in ("last_event_at", "provider_session", "reporting"):
+        raw = value.get(name)
+        if isinstance(raw, str) and raw.strip():
+            result[name] = raw.strip()[:240]
+    if isinstance(value.get("final"), bool):
+        result["final"] = value["final"]
+    return result
+
+
+def _json_column(value: Any) -> dict[str, Any]:
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _fallback_assignment(result: Mapping[str, Any]) -> dict[str, Any]:
+    kind = str(result.get("kind") or "experiment")
+    role = str(result.get("review_role") or "")
+    target_type = str(result.get("target_type") or "")
+    target_name = str(result.get("target_name") or "").strip()
+    project_name = str(result.get("project_name") or "").strip()
+    title = "Run experiment"
+    if kind == "consolidation":
+        title = "Consolidate reflection"
+    elif kind == "review":
+        title = {
+            "design_reviewer": "Review plan",
+            "attempt_reviewer": "Review results",
+            "reflection_reviewer": "Review reflection",
+            "consolidation_reviewer": "Review consolidation",
+        }.get(role, "Review work")
+    subtitle = target_name or ("Project reflection" if target_type == "reflection" else "Experiment")
+    packet: dict[str, Any] = {
+        "task": title,
+        "attempt": max(int(result.get("attempt_index") or 0), 0),
+    }
+    if project_name:
+        packet["project"] = project_name
+    packet["reflection" if target_type == "reflection" else "experiment"] = subtitle
+    return {"title": title, "subtitle": subtitle, "packet": packet}
+
+
 def _public_row(row: Any) -> dict[str, Any]:
     result = row_to_dict(row=row) or {}
+    assignment = _json_column(result.pop("assignment_json", "{}"))
+    result["assignment"] = assignment or _fallback_assignment(result)
+    result["agent_setup"] = _json_column(result.pop("agent_setup_json", "{}"))
+    result["telemetry"] = _json_column(result.pop("telemetry_json", "{}"))
     target_type = str(result.get("target_type") or "")
     target_id = str(result.get("target_id") or "")
     result["experiment_id"] = target_id if target_type == "experiment" else ""

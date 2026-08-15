@@ -91,6 +91,7 @@ class Claim:
     kind: str = "experiment"
     review_request_id: str | None = None
     attempt_index: int = 0
+    assignment: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.target_id:
@@ -636,6 +637,8 @@ class LocalSession:
     review_request_id: str | None = None
     attempt_index: int = 0
     trace_dir: str | None = None
+    trace_offset: int = 0
+    telemetry: dict[str, Any] | None = None
 
     def host_session(self) -> HostSession | None:
         if not self.host_ref or not self.pid:
@@ -1280,6 +1283,11 @@ class AgentSessionsClient:
                     session.get("review_request_id") or result.get("review_request_id")
                 ),
                 attempt_index=int(session.get("attempt_index") or 0),
+                assignment=(
+                    dict(session.get("assignment") or {})
+                    if isinstance(session.get("assignment"), dict)
+                    else None
+                ),
             )
         except KeyError as exc:
             raise RunnerError(
@@ -1296,6 +1304,8 @@ class AgentSessionsClient:
         base_sha: str = "",
         head_sha: str = "",
         workspace_stats: Mapping[str, Any] | None = None,
+        agent_setup: Mapping[str, Any] | None = None,
+        telemetry: Mapping[str, Any] | None = None,
     ) -> None:
         self._post(
             f"/api/agent-sessions/{session_id}/attach",
@@ -1306,6 +1316,8 @@ class AgentSessionsClient:
                 "base_sha": base_sha,
                 "head_sha": head_sha,
                 "workspace_stats": dict(workspace_stats or {}),
+                "agent_setup": dict(agent_setup or {}),
+                "telemetry": dict(telemetry or {}),
             },
         )
 
@@ -1317,6 +1329,7 @@ class AgentSessionsClient:
         reason: str,
         head_sha: str = "",
         workspace_stats: Mapping[str, Any] | None = None,
+        telemetry: Mapping[str, Any] | None = None,
     ) -> None:
         self._post(
             f"/api/agent-sessions/{session_id}/release",
@@ -1325,6 +1338,7 @@ class AgentSessionsClient:
                 "reason": reason,
                 "head_sha": head_sha,
                 "workspace_stats": dict(workspace_stats or {}),
+                "telemetry": dict(telemetry or {}),
             },
         )
 
@@ -1335,6 +1349,7 @@ class AgentSessionsClient:
         runner_id: str,
         head_sha: str = "",
         workspace_stats: Mapping[str, Any] | None = None,
+        telemetry: Mapping[str, Any] | None = None,
     ) -> None:
         self._post(
             f"/api/agent-sessions/{session_id}/heartbeat",
@@ -1342,6 +1357,7 @@ class AgentSessionsClient:
                 "runner_id": runner_id,
                 "head_sha": head_sha,
                 "workspace_stats": dict(workspace_stats or {}),
+                "telemetry": dict(telemetry or {}),
             },
         )
 
@@ -1399,6 +1415,25 @@ class AgentSessionsClient:
         ):
             raise RunnerError("malformed agent session list")
         return sessions
+
+    def heartbeat_runner(
+        self,
+        *,
+        project_id: str,
+        runner_id: str,
+        machine: Mapping[str, Any],
+        platforms: Sequence[Mapping[str, Any]],
+        capacity: int,
+    ) -> None:
+        self._post(
+            f"/api/projects/{project_id}/agent-runners/heartbeat",
+            {
+                "runner_id": runner_id,
+                "machine": dict(machine),
+                "platforms": [dict(item) for item in platforms],
+                "capacity": max(int(capacity), 0),
+            },
+        )
 
     def _get(self, path: str) -> dict[str, Any]:
         return self._request(path, method="GET", payload=None) or {}
@@ -1510,6 +1545,28 @@ class AgentRunner:
                 )
         self.ledger.save()
 
+    def report_presence(self) -> None:
+        self.client.heartbeat_runner(
+            project_id=self.project_id,
+            runner_id=self.ledger.runner_id,
+            machine={
+                "hostname": socket.gethostname(),
+                "system": platform.system(),
+                "architecture": platform.machine(),
+            },
+            platforms=[
+                {
+                    "name": configured.name,
+                    "harness": configured.adapter,
+                    "model": configured.model or "",
+                    "effort": configured.effort or "",
+                    "parallelism": configured.parallelism,
+                }
+                for configured in self.platforms
+            ],
+            capacity=sum(configured.parallelism for configured in self.platforms),
+        )
+
     def _reconcile_session(
         self,
         *,
@@ -1532,6 +1589,7 @@ class AgentRunner:
         if remote_status and remote_status not in {"offered", "active"}:
             host.stop(host_session)
             self._finalize_trace(session=session, host=host)
+            telemetry = self._observe_telemetry(session)
             workspace = self._capture_after_stop(session)
             self.client.release(
                 session_id=session.session_id,
@@ -1539,6 +1597,7 @@ class AgentRunner:
                 reason=f"remote_{remote_status}",
                 head_sha=workspace.head_sha if workspace else "",
                 workspace_stats=workspace.stats if workspace else None,
+                telemetry=telemetry,
             )
             if workspace is not None:
                 self.workspaces.close(workspace)
@@ -1548,6 +1607,7 @@ class AgentRunner:
         state = host.inspect(host_session)
         if state == "stopped":
             self._finalize_trace(session=session, host=host)
+            telemetry = self._observe_telemetry(session)
             workspace = self._capture_after_stop(session)
             reason = (
                 "host_process_crash_loop"
@@ -1560,6 +1620,7 @@ class AgentRunner:
                 reason=reason,
                 head_sha=workspace.head_sha if workspace else "",
                 workspace_stats=workspace.stats if workspace else None,
+                telemetry=telemetry,
             )
             if workspace is not None:
                 self.workspaces.close(workspace)
@@ -1570,6 +1631,7 @@ class AgentRunner:
             return
 
         session.status = "running"
+        telemetry = self._observe_telemetry(session)
         workspace = self._observe_workspace(session)
         if remote_session.get("host_session_ref") == host_session.ref:
             session.attached = True
@@ -1582,6 +1644,8 @@ class AgentRunner:
                 base_sha=session.base_sha,
                 head_sha=session.head_sha,
                 workspace_stats=session.workspace_stats,
+                agent_setup=self._agent_setup(session),
+                telemetry=telemetry,
             )
             session.attached = True
         if remote_status == "active":
@@ -1590,6 +1654,7 @@ class AgentRunner:
                 runner_id=self.ledger.runner_id,
                 head_sha=workspace.head_sha if workspace else "",
                 workspace_stats=workspace.stats if workspace else None,
+                telemetry=telemetry,
             )
 
     def _is_repeated_rapid_stop(self, session: LocalSession) -> bool:
@@ -1831,6 +1896,7 @@ class AgentRunner:
                 session_id=claim.session_id,
                 runner_id=self.ledger.runner_id,
                 reason=session.status,
+                telemetry=self._observe_telemetry(session),
             )
             if workspace is not None:
                 self.workspaces.close(workspace)
@@ -1848,6 +1914,8 @@ class AgentRunner:
             base_sha=workspace.base_sha,
             head_sha=workspace.head_sha,
             workspace_stats=workspace.stats,
+            agent_setup=self._agent_setup(session),
+            telemetry=self._observe_telemetry(session),
         )
         session.attached = True
         self.ledger.save()
@@ -1867,6 +1935,33 @@ class AgentRunner:
                 f"{self.project_id}: automatic dispatch is off for this "
                 "project; turn it on in project settings to claim work"
             )
+
+    def _agent_setup(self, session: LocalSession) -> dict[str, Any]:
+        platform = self._platform(session.platform)
+        return {
+            "platform": platform.name,
+            "harness": platform.adapter,
+            "model": platform.model or "",
+            "effort": platform.effort or "",
+            "machine": socket.gethostname(),
+        }
+
+    def _observe_telemetry(self, session: LocalSession) -> dict[str, Any]:
+        if not session.trace_dir:
+            return _public_telemetry(session.telemetry or {})
+        platform = self._platform(session.platform)
+        host = HOSTS[session.adapter or platform.adapter]
+        filename = str(getattr(host, "trace_filename", "trace.jsonl") or "")
+        if not filename:
+            return _public_telemetry(session.telemetry or {})
+        path = Path(session.trace_dir) / filename
+        session.trace_offset, session.telemetry = _read_trace_telemetry(
+            path=path,
+            offset=session.trace_offset,
+            state=session.telemetry,
+            adapter=platform.adapter,
+        )
+        return _public_telemetry(session.telemetry)
 
     def _platform(self, name: str) -> Platform:
         for platform in self.platforms:
@@ -2015,6 +2110,7 @@ def _prepare_trace(
     metadata = {
         "schema_version": 1,
         "merv_agent_session_id": claim.session_id,
+        "assignment": dict(claim.assignment or {}),
         "work_item": {
             "project_id": claim.project_id,
             "experiment_id": claim.experiment_id,
@@ -2050,6 +2146,241 @@ def _prepare_trace(
         stdout=directory / stdout_filename,
         stderr=directory / "stderr.log",
     )
+
+
+def _read_trace_telemetry(
+    *,
+    path: Path,
+    offset: int,
+    state: Mapping[str, Any] | None,
+    adapter: str,
+) -> tuple[int, dict[str, Any]]:
+    """Incrementally normalize aggregate usage from an append-only JSONL trace."""
+    current = dict(state or {})
+    current.setdefault("reporting", "provider")
+    current.setdefault("tool_calls", 0)
+    current.setdefault("messages", 0)
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return offset, current
+    if size < offset:
+        offset = 0
+        current = {"reporting": "provider", "tool_calls": 0, "messages": 0}
+    try:
+        with path.open("rb") as source:
+            source.seek(offset)
+            raw = source.read()
+    except OSError:
+        return offset, current
+    if not raw:
+        return offset, current
+    complete_at = raw.rfind(b"\n")
+    if complete_at < 0:
+        return offset, current
+    complete = raw[: complete_at + 1]
+    next_offset = offset + len(complete)
+    for index, line in enumerate(complete.splitlines()):
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if isinstance(event, dict):
+            _apply_trace_event(
+                state=current,
+                event=event,
+                adapter=adapter,
+                fallback_id=f"{offset}:{index}",
+            )
+    return next_offset, current
+
+
+def _apply_trace_event(
+    *, state: dict[str, Any], event: Mapping[str, Any], adapter: str, fallback_id: str
+) -> None:
+    event_type = str(event.get("type") or "").lower()
+    usage = _event_usage(event)
+    if usage:
+        final_usage = event_type in {
+            "result",
+            "turn.completed",
+            "turn_completed",
+            "session_end",
+            "final",
+        }
+        usage_id = _event_identity(event) or fallback_id
+        seen_usage = set(str(item) for item in state.get("_usage_ids") or [])
+        if usage_id not in seen_usage:
+            seen_usage.add(usage_id)
+            state["_usage_ids"] = sorted(seen_usage)
+            for name, amount in usage.items():
+                if final_usage:
+                    state[name] = max(int(state.get(name) or 0), amount)
+                else:
+                    state[name] = int(state.get(name) or 0) + amount
+        if final_usage:
+            state["final"] = True
+
+    seen_tools = set(str(item) for item in state.get("_tool_ids") or [])
+    for tool_id in _tool_call_ids(event, fallback_id=fallback_id):
+        seen_tools.add(tool_id)
+    state["_tool_ids"] = sorted(seen_tools)
+    state["tool_calls"] = len(seen_tools)
+
+    message_id = _assistant_message_id(event)
+    if message_id:
+        seen_messages = set(str(item) for item in state.get("_message_ids") or [])
+        seen_messages.add(message_id)
+        state["_message_ids"] = sorted(seen_messages)
+        state["messages"] = len(seen_messages)
+
+    provider_session = (
+        event.get("session_id")
+        or event.get("sessionID")
+        or (
+            event.get("session", {}).get("id")
+            if isinstance(event.get("session"), dict)
+            else ""
+        )
+    )
+    if provider_session:
+        state["provider_session"] = str(provider_session)[:240]
+    timestamp = event.get("timestamp") or event.get("created_at")
+    if timestamp:
+        state["last_event_at"] = str(timestamp)[:240]
+    if event_type in {"result", "turn.completed", "turn_completed", "session_end"}:
+        state["final"] = True
+    state["adapter"] = adapter
+
+
+def _event_usage(event: Mapping[str, Any]) -> dict[str, int]:
+    candidates: list[Mapping[str, Any]] = []
+    for value in (event.get("usage"), event.get("stats"), event.get("tokens")):
+        if isinstance(value, Mapping):
+            candidates.append(value)
+    message = event.get("message")
+    if isinstance(message, Mapping) and isinstance(message.get("usage"), Mapping):
+        candidates.append(message["usage"])
+    part = event.get("part")
+    if isinstance(part, Mapping):
+        for value in (part.get("usage"), part.get("tokens")):
+            if isinstance(value, Mapping):
+                candidates.append(value)
+    if not candidates:
+        return {}
+    source = candidates[0]
+
+    def count(*names: str) -> int:
+        for name in names:
+            raw = source.get(name)
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                return max(int(raw), 0)
+        return 0
+
+    cache = source.get("cache") if isinstance(source.get("cache"), Mapping) else {}
+
+    def cache_count(name: str) -> int:
+        raw = cache.get(name)
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            return max(int(raw), 0)
+        return 0
+
+    values = {
+        "input_tokens": count("input_tokens", "input"),
+        "output_tokens": count("output_tokens", "output"),
+        "cached_tokens": max(
+            count(
+                "cached_input_tokens",
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+                "cached",
+            ),
+            cache_count("read") + cache_count("write"),
+        ),
+        "total_tokens": count("total_tokens", "total"),
+    }
+    if not values["total_tokens"]:
+        values["total_tokens"] = values["input_tokens"] + values["output_tokens"]
+    return {name: amount for name, amount in values.items() if amount}
+
+
+def _event_identity(event: Mapping[str, Any]) -> str:
+    message = event.get("message")
+    return str(
+        event.get("id")
+        or event.get("event_id")
+        or (message.get("id") if isinstance(message, Mapping) else "")
+        or ""
+    )
+
+
+def _tool_call_ids(event: Mapping[str, Any], *, fallback_id: str) -> set[str]:
+    found: set[str] = set()
+
+    def visit(value: Any, path: str) -> None:
+        if isinstance(value, Mapping):
+            kind = str(value.get("type") or "").lower()
+            item = value.get("item")
+            if kind in {"tool_use", "tool_call", "function_call"}:
+                identifier = (
+                    value.get("id")
+                    or value.get("tool_id")
+                    or value.get("call_id")
+                    or f"{fallback_id}:{path}"
+                )
+                found.add(str(identifier))
+            elif kind in {"item.started", "item.completed"} and isinstance(
+                item, Mapping
+            ):
+                item_type = str(item.get("type") or "").lower()
+                if item_type in {
+                    "command_execution",
+                    "mcp_tool_call",
+                    "function_call",
+                    "web_search",
+                }:
+                    identifier = item.get("id") or item.get("call_id")
+                    if identifier:
+                        found.add(str(identifier))
+            for key, child in value.items():
+                if key not in {"output", "result"}:
+                    visit(child, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                visit(child, f"{path}[{index}]")
+
+    visit(event, "event")
+    return found
+
+
+def _assistant_message_id(event: Mapping[str, Any]) -> str:
+    event_type = str(event.get("type") or "").lower()
+    role = str(event.get("role") or "").lower()
+    message = event.get("message")
+    if isinstance(message, Mapping):
+        role = str(message.get("role") or role).lower()
+    if role != "assistant" and event_type not in {"assistant", "agent_message"}:
+        return ""
+    return _event_identity(event) or str(event.get("timestamp") or "")
+
+
+def _public_telemetry(state: Mapping[str, Any] | None) -> dict[str, Any]:
+    current = dict(state or {})
+    allowed = {
+        "input_tokens",
+        "output_tokens",
+        "cached_tokens",
+        "total_tokens",
+        "tool_calls",
+        "messages",
+        "last_event_at",
+        "provider_session",
+        "reporting",
+        "final",
+    }
+    return {name: current[name] for name in allowed if name in current}
 
 
 def _sanitized_command(command: Sequence[str]) -> list[str]:
@@ -2313,6 +2644,7 @@ def _run_runner(
     failures = 0
     while True:
         try:
+            runner.report_presence()
             runner.reconcile()
             runner.advance_ready()
             runner.fill_available_slots()

@@ -32,7 +32,8 @@ spans them. Research remains the public owner of its event ledger reads.
   consolidation, then experiments from the latest published wave and other
   active experiments. Owners request review and exit; Merv dispatches a
   separately authenticated reviewer. After consolidation review, the runner
-  advances central before Application permits reflection publication.
+  advances central before Application permits reflection publication. Each
+  claim also freezes a name-first assignment snapshot for the Auto-run UI.
 
 ## Files
 

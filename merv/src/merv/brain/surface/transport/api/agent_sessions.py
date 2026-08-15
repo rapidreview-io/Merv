@@ -87,6 +87,16 @@ def build_router(
                 if isinstance(payload.get("workspace_stats"), dict)
                 else {}
             ),
+            agent_setup=(
+                payload.get("agent_setup")
+                if isinstance(payload.get("agent_setup"), dict)
+                else None
+            ),
+            telemetry=(
+                payload.get("telemetry")
+                if isinstance(payload.get("telemetry"), dict)
+                else None
+            ),
         )
 
     @router.post("/api/agent-sessions/{session_id}/release")
@@ -105,6 +115,11 @@ def build_router(
                 if isinstance(payload.get("workspace_stats"), dict)
                 else {}
             ),
+            telemetry=(
+                payload.get("telemetry")
+                if isinstance(payload.get("telemetry"), dict)
+                else None
+            ),
         )
 
     @router.post("/api/agent-sessions/{session_id}/heartbeat")
@@ -121,6 +136,11 @@ def build_router(
                 payload.get("workspace_stats")
                 if isinstance(payload.get("workspace_stats"), dict)
                 else {}
+            ),
+            telemetry=(
+                payload.get("telemetry")
+                if isinstance(payload.get("telemetry"), dict)
+                else None
             ),
         )
 
@@ -183,6 +203,38 @@ def build_router(
     def list_sessions(project_id: str, request: Request) -> dict[str, Any]:
         gateway.authorize_project(request, project_id)
         return application.agent_sessions.list(project_id=project_id)
+
+    @router.post("/api/projects/{project_id}/agent-runners/heartbeat")
+    def heartbeat_runner(
+        project_id: str, request: Request, body: JsonBody = Body(default=None)
+    ) -> dict[str, Any]:
+        payload = dict(body or {})
+        gateway.authorize_project(request, project_id)
+        principal = getattr(request.state, "principal", LOCAL_PRINCIPAL)
+        if getattr(principal, "agent_session_id", None):
+            raise PermissionDeniedError(
+                "an agent session credential cannot report runner presence"
+            )
+        capacity = payload.get("capacity", 0)
+        if not isinstance(capacity, int) or isinstance(capacity, bool):
+            raise ValidationError(
+                "capacity must be an integer", details={"field": "capacity"}
+            )
+        return application.heartbeat_agent_runner(
+            project_id=project_id,
+            runner_id=owner(request, payload),
+            machine=(
+                payload.get("machine")
+                if isinstance(payload.get("machine"), dict)
+                else {}
+            ),
+            platforms=(
+                [item for item in payload.get("platforms", []) if isinstance(item, dict)]
+                if isinstance(payload.get("platforms"), list)
+                else []
+            ),
+            capacity=capacity,
+        )
 
     @router.post("/api/projects/{project_id}/agent-sessions/halt")
     def halt_sessions(project_id: str, request: Request) -> dict[str, Any]:

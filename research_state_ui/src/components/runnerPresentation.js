@@ -1,8 +1,3 @@
-function shortId(value) {
-  const text = String(value || '');
-  return text.length > 14 ? `${text.slice(0, 6)}…${text.slice(-5)}` : text;
-}
-
 function systemName(value) {
   if (value === 'Darwin') return 'macOS';
   return value || '';
@@ -37,16 +32,13 @@ export function runnerPresentation({ connection, status, projectId }) {
   const details = [
     systemName(machine.system),
     machine.architecture,
-    machine.runner_id ? `runner ${shortId(machine.runner_id)}` : '',
   ].filter(Boolean);
 
   return {
     active,
-    machineName: machine.hostname || (reachable ? 'Unknown machine' : 'No runner paired'),
+    machineName: machine.hostname || 'Runner',
     machineDetails: details.join(' · '),
-    project: active
-      ? (projectMatches ? 'This project' : shortId(status?.project_id || 'Unknown project'))
-      : '',
+    project: active && !projectMatches ? 'Different project' : '',
     projectMatches,
     reachable,
     state,
