@@ -5672,6 +5672,7 @@ a.spend-row-name:hover { color: var(--active); }
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .aru-settings {
+  scroll-margin-top: 20px;
   margin-top: 32px;
   border: 1px solid var(--line-soft); border-radius: var(--radius-lg);
   background: var(--bg-elev); overflow: hidden;

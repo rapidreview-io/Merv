@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import AutorunSetupWizard from './AutorunSetupWizard';
@@ -166,6 +166,7 @@ export default function AgentPlatforms({ projectId }) {
   const [clock, setClock] = useState(Date.now());
   const [wizardOpen, setWizardOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const settingsRef = useRef(null);
   // Unpaired, the guided setup is the page; manual pairing is an explicit
   // opt-in so a fresh project is not greeted with raw fields and a draft.
   const [manualOpen, setManualOpen] = useState(false);
@@ -521,6 +522,14 @@ export default function AgentPlatforms({ projectId }) {
     setRunnerConnection('connected');
   }
 
+  function showAgentSettings({ manual = false } = {}) {
+    if (manual) setManualOpen(true);
+    setConfigOpen(true);
+    window.requestAnimationFrame(() => {
+      settingsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
   const runnerView = runnerPresentation({
     connection: runnerConnection,
     status: runnerStatus,
@@ -576,9 +585,9 @@ export default function AgentPlatforms({ projectId }) {
                 <button
                   type="button"
                   className="btn btn--ghost btn--sm"
-                  onClick={() => setConfigOpen((open) => !open)}
+                  onClick={() => showAgentSettings()}
                 >
-                  Settings
+                  Agent settings
                 </button>
               </>
             ) : effectivePresence ? (
@@ -586,12 +595,9 @@ export default function AgentPlatforms({ projectId }) {
                 <button
                   type="button"
                   className="btn btn--ghost btn--sm"
-                  onClick={() => {
-                    setManualOpen(true);
-                    setConfigOpen(true);
-                  }}
+                  onClick={() => showAgentSettings({ manual: true })}
                 >
-                  Settings
+                  Agent settings
                 </button>
                 <button
                   type="button"
@@ -613,12 +619,9 @@ export default function AgentPlatforms({ projectId }) {
                 <button
                   type="button"
                   className="btn btn--ghost btn--sm"
-                  onClick={() => {
-                    setManualOpen(true);
-                    setConfigOpen(true);
-                  }}
+                  onClick={() => showAgentSettings({ manual: true })}
                 >
-                  Pair manually
+                  Agent settings
                 </button>
               </>
             )}
@@ -742,6 +745,7 @@ export default function AgentPlatforms({ projectId }) {
         )}
 
         <details
+          ref={settingsRef}
           className="aru-settings"
           open={configOpen}
           onToggle={(event) => setConfigOpen(event.currentTarget.open)}
