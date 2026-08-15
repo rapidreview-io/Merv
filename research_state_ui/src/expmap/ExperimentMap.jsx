@@ -10,7 +10,7 @@ import GraphExpandButton from '../components/GraphExpandButton';
 import GraphDrawer from '../components/GraphDrawer';
 import { panExtentFor } from '../utils/graphCamera';
 import { motionMs } from '../utils/motion';
-import { usePanelWidth } from '../store/usePanelWidth';
+import { effectivePanelWidth, usePanelWidth } from '../store/usePanelWidth';
 import { useMapModel } from './useMapModel';
 import { CARD_W, CARD_H } from './mapLayout';
 import MapPanel from './MapPanel';
@@ -303,7 +303,8 @@ function MapCanvas({ model, wrapRef, size, initialViewport, onCollapse }) {
     const el = wrapRef.current;
     if (!p || !el) return;
     const s = Math.max(rf.getZoom(), 0.95);
-    const vw = el.clientWidth - panelWidth, vh = el.clientHeight;
+    // The band left of the panel, at the width the panel actually renders.
+    const vw = el.clientWidth - effectivePanelWidth(panelWidth, el.clientWidth), vh = el.clientHeight;
     setSel({ type: 'exp', id });
     rf.setViewport(
       { x: vw / 2 - (p.x + CARD_W / 2) * s, y: vh / 2 - (p.y + CARD_H / 2) * s, zoom: s },

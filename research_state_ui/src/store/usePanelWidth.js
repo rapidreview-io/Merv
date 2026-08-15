@@ -20,8 +20,21 @@ const DEFAULT = 380;
 export const PANEL_MIN = MIN;
 export const PANEL_DEFAULT = DEFAULT;
 export const CANVAS_MIN = 300;
+// The panel never takes more than this share of the graph that hosts it. The
+// width is ONE persisted number shared by every graph: dragged wide on an
+// expanded, viewport-sized graph, it would otherwise come back on an inline
+// graph wider than the graph itself. The CSS caps the drawer with the same
+// fraction (min(--fig-panel-w, 75%)); this is the JS side of that contract,
+// for the drag clamp and for camera math that reserves the panel's gutter.
+export const PANEL_MAX_FRACTION = 0.75;
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+/** The width the drawer actually renders at inside a host of `hostWidth`. */
+export function effectivePanelWidth(stored, hostWidth) {
+  if (!Number.isFinite(hostWidth) || hostWidth <= 0) return stored;
+  return Math.min(stored, hostWidth * PANEL_MAX_FRACTION);
+}
 
 function load() {
   try {
@@ -67,8 +80,12 @@ export function usePanelWidth() {
     // graphs, the project braid, and the experiment map.
     const body = e.currentTarget.closest('.fig-body, .wflow, .xmap');
     const bodyW = body ? body.clientWidth : 960;
-    // Never let the panel eat the whole canvas: leave the graph ~300px.
-    drag.current = { startX: e.clientX, startW: width, maxW: Math.max(MIN, bodyW - CANVAS_MIN) };
+    // Never let the panel eat the whole canvas: leave the graph ~300px, and
+    // never more than the fraction the CSS caps the drawer at.
+    const maxW = Math.max(MIN, Math.min(bodyW - CANVAS_MIN, bodyW * PANEL_MAX_FRACTION));
+    // A stored width past the cap renders capped; start the drag from what
+    // is on screen, not from the number, so the handle doesn't jump.
+    drag.current = { startX: e.clientX, startW: Math.min(width, maxW), maxW };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     document.body.style.cursor = 'col-resize';

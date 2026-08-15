@@ -4227,12 +4227,12 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 
 /* Drag handle straddling the canvas/panel seam. A wide invisible hit area with
    a hairline that lights up on hover/drag; its position rides the same
-   --fig-panel-w the panel does, so it always sits on the boundary. */
+   capped --fig-panel-w the drawer does, so it always sits on the boundary. */
 .fig-resizer {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: var(--fig-panel-w, 380px);
+  right: min(var(--fig-panel-w, 380px), 75%);
   width: 11px;
   transform: translateX(50%);
   cursor: col-resize;
@@ -4442,7 +4442,13 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
   position: absolute;
   top: 0; right: 0; bottom: 0;
   z-index: 6;
-  width: var(--fig-panel-w, 380px);
+  /* The stored width, but never more than three quarters of the graph. The
+     width is one shared, persisted number: dragged wide on an expanded
+     (viewport-sized) graph, it used to come back on an inline graph wider
+     than the graph itself and cover it whole. The cap is a percentage of
+     the host, so it holds on every graph at every size; the resizer rides
+     the same expression, and the drag clamp in usePanelWidth agrees. */
+  width: min(var(--fig-panel-w, 380px), 75%);
   display: flex;
   background: var(--bg-elev);
   border-left: 1px solid var(--line);
