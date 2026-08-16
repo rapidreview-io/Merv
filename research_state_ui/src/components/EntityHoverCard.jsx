@@ -1,5 +1,6 @@
 import StatusPill from './StatusPill';
 import { TYPE_GLYPH, TYPE_LABEL } from '../utils/entityResolve';
+import { authorLine } from '../utils/litreview';
 import { fmtAgo } from '../utils/format';
 
 function ago(iso) {
@@ -87,30 +88,72 @@ function ReflectionBody({ d }) {
   );
 }
 
+const FLAG_LABEL = { manual: 'manual entry', failed: 'fetch failed' };
+
+// Two section titles, then a count — a card lists where a paper is cited, it
+// does not reproduce the ledger's back-links.
+function citedLine(sections) {
+  const s = sections || [];
+  if (!s.length) return null;
+  return s.length > 2 ? `${s.slice(0, 2).join(' · ')} +${s.length - 2}` : s.join(' · ');
+}
+
+// A cited paper: the ledger row, minus the link the entry itself carries. The
+// abstract leads because it is what tells the reader whether to go read it.
+function PaperBody({ d }) {
+  return (
+    <>
+      {d.description && <p className="ehover-lead ehover-clamp3">{d.description}</p>}
+      <Row label="authors">{authorLine(d.authors)}</Row>
+      <Row label="year">{d.year}</Row>
+      <Row label="source">{d.source}</Row>
+      <Row label="cited in">{citedLine(d.sections)}</Row>
+      <Row label="metadata">{d.flag ? (FLAG_LABEL[d.flag] || d.flag) : null}</Row>
+    </>
+  );
+}
+
+function SectionBody({ d }) {
+  return (
+    <>
+      {d.tldr && <p className="ehover-lead ehover-clamp3">{d.tldr}</p>}
+      <Row label="references">{d.refs ? `${d.refs} paper${d.refs === 1 ? '' : 's'}` : null}</Row>
+    </>
+  );
+}
+
 const BODY = {
   experiment: ExperimentBody,
   claim: ClaimBody,
   artifact: ArtifactBody,
   review: ReviewBody,
   reflection: ReflectionBody,
+  paper: PaperBody,
+  litreview_section: SectionBody,
 };
 
 /**
  * The floating detail card's inner content. The positioned wrapper (ref, style,
  * hover-bridge handlers) lives in EntityChip; this is purely what fills it.
+ *
+ * The name comes from `detail` when it has one: the chip's label is already
+ * clipped to fit a line of prose, and the card exists to un-clip it. `hint`
+ * (from an EntityRefScope) tells the reader what the click will do.
  */
-export default function EntityHoverCard({ resolved, loading }) {
+export default function EntityHoverCard({ resolved, loading, hint }) {
   const { type, label, detail, notFound } = resolved;
   const Body = detail ? BODY[type] : null;
+  const name = detail?.name || detail?.title || label;
 
   return (
     <div className="ehover-inner">
       <div className="ehover-head">
         <span className="ehover-glyph" aria-hidden="true">{TYPE_GLYPH[type] || '•'}</span>
         <span className="ehover-type">{TYPE_LABEL[type] || 'reference'}</span>
+        {detail?.num ? <span className="ehover-num">[{detail.num}]</span> : null}
         {loading && <span className="ehover-load" aria-label="loading" />}
       </div>
-      <div className="ehover-name">{label}</div>
+      <div className="ehover-name">{name}</div>
       {Body && <Body d={detail} />}
       {!detail && !loading && notFound && (
         <div className="ehover-missing">
@@ -118,6 +161,7 @@ export default function EntityHoverCard({ resolved, loading }) {
           <span className="ehover-note">not found in this project</span>
         </div>
       )}
+      {hint ? <div className="ehover-hint">{hint}</div> : null}
     </div>
   );
 }

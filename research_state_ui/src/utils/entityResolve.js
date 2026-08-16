@@ -12,6 +12,7 @@
  */
 import { api } from '../api';
 import { expName } from './experiment';
+import { citedSections, paperRoute, paperSeed, sectionRoute, sectionSeed } from './litreview';
 
 // The prefix is the token before the first underscore.
 const PREFIX_TYPE = {
@@ -52,9 +53,10 @@ const ROUTE = {
   experiment: (id) => `/experiments/${id}`,
   claim: (id) => `/claims/${id}`,
   artifact: (id) => `/artifacts/${id}`,
-  // Sections and papers live on the one lit-review screen (no per-id page).
-  litreview_section: () => '/litreview',
-  paper: () => '/litreview',
+  // Sections and papers live on the one lit-review screen (no per-id page),
+  // deep-linked to the entry so the page can land on it and highlight it.
+  litreview_section: sectionRoute,
+  paper: paperRoute,
 };
 
 // Matches a bare entity id in prose. `\b` at the head keeps `myexp_1` from
@@ -327,24 +329,21 @@ export async function fetchEntity(id, pid) {
         detail: { type, status: w.status, decision: w.decision },
       };
     } else if (type === 'litreview_section' || type === 'paper') {
+      // One read answers both: the ledger's citation numbers are positions in
+      // it, and a paper's "cited in" needs the section titles beside it.
       const s = await api.getLitReview(pid);
+      const sections = [s?.summary, ...(s?.sections || [])].filter(Boolean);
       if (type === 'litreview_section') {
-        const sec = [s?.summary, ...(s?.sections || [])].find((x) => x && x.id === id);
-        if (sec) {
-          out = {
-            id, type, label: sec.title || 'lit review section',
-            route: ROUTE.litreview_section(id), navigable: true,
-            detail: { type, title: sec.title || '', tldr: sec.tldr || '' },
-          };
-        }
+        const sec = sections.find((x) => x.id === id);
+        if (sec) out = sectionSeed(sec);
       } else {
-        const p = (s?.papers || []).find((x) => x.id === id);
-        if (p) {
-          out = {
-            id, type, label: clamp(p.title, 44) || shortId(id),
-            route: ROUTE.paper(id), navigable: true,
-            detail: { type, title: p.title || '', url: p.url || '', year: p.year || '', authors: p.authors || [] },
-          };
+        const papers = s?.papers || [];
+        const i = papers.findIndex((x) => x.id === id);
+        if (i >= 0) {
+          const byId = new Map(sections.map((x) => [x.id, x]));
+          out = paperSeed({
+            paper: papers[i], num: i + 1, sections: citedSections(papers[i], byId),
+          });
         }
       }
     }

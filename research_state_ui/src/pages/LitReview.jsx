@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useProjectStore } from '../store/useProjectStore';
 import { useStreamAwarePoll } from '../store/useEventStream';
 import { api } from '../api';
 import MarkdownView from '../components/MarkdownView';
 import EntityChip from '../components/EntityChip';
+import { EntityRefScope } from '../components/EntityRefScope';
+import { citedSections, paperSeed, sectionSeed, sourceLabel } from '../utils/litreview';
 
 /**
  * The living literature review: one continuous document in the product's
@@ -11,8 +14,10 @@ import EntityChip from '../components/EntityChip';
  * screens) that tracks where the reader is, the General Summary as unframed
  * prose, hairline-separated theme sections (each ending in its own reference
  * list), then the Papers ledger. Citation numbers are stable ledger positions;
- * clicking a reference jumps to its Papers entry, and a paper's section links
- * jump back up. Agents write it through litreview.* tools; this is the read.
+ * every citation — the reference lists, and the `paper_…` chips the agents
+ * write inline — jumps to its Papers entry and flashes it, and a paper's
+ * section links jump back up. Agents write it through litreview.* tools;
+ * this is the read.
  */
 export default function LitReview() {
   const projectId = useProjectStore(s => s.projectId);
@@ -86,7 +91,7 @@ export default function LitReview() {
   const allClosed = sections.length > 0 && sections.every((s) => closed.has(s.id));
   const toggleAll = () => setClosed(allClosed ? new Set() : new Set(sections.map((s) => s.id)));
 
-  const jumpToPaper = (id) => {
+  const jumpToPaper = useCallback((id) => {
     const el = document.getElementById(`paper-${id}`);
     if (el) {
       scrollToEl(el, 'center');
@@ -95,10 +100,10 @@ export default function LitReview() {
     }
     setFlash(id);
     clearTimeout(flashTimer.current);
-    flashTimer.current = setTimeout(() => setFlash(null), 1700);
-  };
+    flashTimer.current = setTimeout(() => setFlash(null), FLASH_MS);
+  }, []);
 
-  const jumpToSection = (id) => {
+  const jumpToSection = useCallback((id) => {
     setClosed((prev) => { const next = new Set(prev); next.delete(id); return next; });
     requestAnimationFrame(() => {
       const el = document.getElementById(`lit-${id}`);
@@ -106,7 +111,57 @@ export default function LitReview() {
       scrollToEl(el, 'start');
       document.getElementById(`lit-head-${id}`)?.focus({ preventScroll: true });
     });
-  };
+  }, []);
+
+  // The ids agents write inline in the prose (`paper_…`, `lit_…`) resolve
+  // against the document already on screen: each chip shows its citation
+  // number and title with no fetch, its hover card carries the ledger facts,
+  // and clicking lands on the entry here instead of navigating to this page.
+  const refScope = useMemo(() => ({
+    resolve: (id) => {
+      const p = papersById.get(id);
+      if (p) {
+        return paperSeed({
+          paper: p, num: numById.get(id), sections: citedSections(p, sectionsById),
+        });
+      }
+      const s = sectionsById.get(id);
+      return s ? sectionSeed(s) : null;
+    },
+    activate: (id) => {
+      const p = papersById.get(id);
+      if (p) {
+        return {
+          onClick: () => jumpToPaper(id),
+          label: `Reference ${numById.get(id)}, ${p.title || p.url} — go to its entry in the papers ledger`,
+          hint: 'Click for its entry in the papers ledger',
+        };
+      }
+      const s = sectionsById.get(id);
+      if (!s) return null;
+      return {
+        onClick: () => jumpToSection(id),
+        label: `Go to the section ${s.title}`,
+        hint: 'Click to go to this section',
+      };
+    },
+  }), [papersById, numById, sectionsById, jumpToPaper, jumpToSection]);
+
+  // A deep link from another screen (`/litreview#paper-paper_…`) gets the same
+  // landing an in-page citation gives — once, and only after the document the
+  // target lives in has loaded.
+  const { hash } = useLocation();
+  const landedFor = useRef(null);
+  useEffect(() => {
+    if (!hash || landedFor.current === hash) return;
+    if (hash.startsWith('#paper-') && papersById.has(hash.slice(7))) {
+      landedFor.current = hash;
+      jumpToPaper(hash.slice(7));
+    } else if (hash.startsWith('#lit-') && sectionsById.has(hash.slice(5))) {
+      landedFor.current = hash;
+      jumpToSection(hash.slice(5));
+    }
+  }, [hash, papersById, sectionsById, jumpToPaper, jumpToSection]);
 
   const jumpTo = (id, focusId) => {
     const el = document.getElementById(id);
@@ -162,164 +217,166 @@ export default function LitReview() {
           ) : null}
         </header>
 
-        <div className={'litreview-columns' + (railed ? ' litreview-columns--railed' : '')}>
-          {railed && (
-            <aside className="litreview-rail">
-              <nav className="litreview-toc" aria-labelledby="litreview-toc-label">
-                <p className="spotlight-eyebrow" id="litreview-toc-label">Contents</p>
-                <div className="litreview-toc-body">
-                  <button
-                    type="button"
-                    className="litreview-toc-item"
-                    aria-current={active === 'litreview-summary' ? 'true' : undefined}
-                    onClick={jumpToSummary}
-                  >
-                    <span className="litreview-toc-num" aria-hidden="true" />
-                    <span className="litreview-toc-title">Summary</span>
-                  </button>
-                  <ol className="litreview-toc-list">
-                    {sections.map((s, i) => (
-                      <li key={s.id}>
-                        <button
-                          type="button"
-                          className="litreview-toc-item"
-                          aria-current={active === `lit-${s.id}` ? 'true' : undefined}
-                          onClick={() => jumpToSection(s.id)}
-                        >
-                          <span className="litreview-toc-num" aria-hidden="true">{i + 1}</span>
-                          <span className="litreview-toc-title">{s.title}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ol>
-                  {papers.length > 0 && (
+        <EntityRefScope value={refScope}>
+          <div className={'litreview-columns' + (railed ? ' litreview-columns--railed' : '')}>
+            {railed && (
+              <aside className="litreview-rail">
+                <nav className="litreview-toc" aria-labelledby="litreview-toc-label">
+                  <p className="spotlight-eyebrow" id="litreview-toc-label">Contents</p>
+                  <div className="litreview-toc-body">
                     <button
                       type="button"
                       className="litreview-toc-item"
-                      aria-current={active === 'litreview-papers' ? 'true' : undefined}
-                      onClick={jumpToPapers}
+                      aria-current={active === 'litreview-summary' ? 'true' : undefined}
+                      onClick={jumpToSummary}
                     >
                       <span className="litreview-toc-num" aria-hidden="true" />
-                      <span className="litreview-toc-title">Papers ledger</span>
+                      <span className="litreview-toc-title">Summary</span>
                     </button>
-                  )}
-                </div>
-              </nav>
-              {sections.length > 1 && (
-                <div className="litreview-rail-actions">
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--sm"
-                    aria-label={allClosed ? 'Expand all sections' : 'Collapse all sections'}
-                    onClick={toggleAll}
-                  >
-                    {allClosed ? 'Expand all' : 'Collapse all'}
-                  </button>
-                </div>
-              )}
-            </aside>
-          )}
-
-          <div className="litreview-doc">
-            <section
-              className="litreview-summary"
-              id="litreview-summary"
-              aria-labelledby="litreview-summary-h"
-              tabIndex={-1}
-            >
-              <h2 className="litreview-sr" id="litreview-summary-h">General summary</h2>
-              {data.summary?.exists === false ? (
-                <p className="muted">Not written yet.</p>
-              ) : (
-                <>
-                  {data.summary?.tldr ? <p className="litreview-lede">{data.summary.tldr}</p> : null}
-                  {data.summary?.body ? <MarkdownView text={data.summary.body} /> : null}
-                </>
-              )}
-            </section>
-
-            {sections.length > 0 && (
-              <section className="litreview-zone litreview-themes" aria-labelledby="litreview-themes-h">
-                <h2 className="litreview-zone-title" id="litreview-themes-h">
-                  Themes <span className="litreview-count">{sections.length}</span>
-                </h2>
-
-                {sections.map((s, i) => {
-                  const isOpen = !closed.has(s.id);
-                  const refs = (s.cited_papers || []).length;
-                  return (
-                    <section
-                      key={s.id}
-                      id={`lit-${s.id}`}
-                      className={'litreview-section' + (isOpen ? '' : ' is-closed')}
-                      aria-labelledby={`lit-head-${s.id}`}
+                    <ol className="litreview-toc-list">
+                      {sections.map((s, i) => (
+                        <li key={s.id}>
+                          <button
+                            type="button"
+                            className="litreview-toc-item"
+                            aria-current={active === `lit-${s.id}` ? 'true' : undefined}
+                            onClick={() => jumpToSection(s.id)}
+                          >
+                            <span className="litreview-toc-num" aria-hidden="true">{i + 1}</span>
+                            <span className="litreview-toc-title">{s.title}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ol>
+                    {papers.length > 0 && (
+                      <button
+                        type="button"
+                        className="litreview-toc-item"
+                        aria-current={active === 'litreview-papers' ? 'true' : undefined}
+                        onClick={jumpToPapers}
+                      >
+                        <span className="litreview-toc-num" aria-hidden="true" />
+                        <span className="litreview-toc-title">Papers ledger</span>
+                      </button>
+                    )}
+                  </div>
+                </nav>
+                {sections.length > 1 && (
+                  <div className="litreview-rail-actions">
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--sm"
+                      aria-label={allClosed ? 'Expand all sections' : 'Collapse all sections'}
+                      onClick={toggleAll}
                     >
-                      <h3 className="litreview-section-h">
-                        <button
-                          type="button"
-                          id={`lit-head-${s.id}`}
-                          className="litreview-section-head"
-                          aria-expanded={isOpen}
-                          aria-controls={isOpen ? `lit-body-${s.id}` : undefined}
-                          onClick={() => toggle(s.id)}
-                        >
-                          <span className="litreview-section-num" aria-hidden="true">{i + 1}</span>
-                          <span className="litreview-section-title">{s.title}</span>
-                          {refs > 0 && (
-                            <span className="litreview-section-refs">{countLabel(refs, 'reference')}</span>
-                          )}
-                          <span className={'litreview-chevron' + (isOpen ? ' open' : '')} aria-hidden="true">›</span>
-                        </button>
-                      </h3>
-                      <p className="litreview-tldr">{s.tldr}</p>
-                      {isOpen && (
-                        <div className="litreview-body" id={`lit-body-${s.id}`}>
-                          {s.body ? <MarkdownView text={s.body} /> : <p className="muted">No body yet.</p>}
-                          <SectionRefs
-                            cited={s.cited_papers || []}
-                            papersById={papersById}
-                            numById={numById}
-                            onJump={jumpToPaper}
-                          />
-                        </div>
-                      )}
-                    </section>
-                  );
-                })}
-              </section>
+                      {allClosed ? 'Expand all' : 'Collapse all'}
+                    </button>
+                  </div>
+                )}
+              </aside>
             )}
 
-            {papers.length > 0 && (
+            <div className="litreview-doc">
               <section
-                id="litreview-papers"
-                className="litreview-zone litreview-papers"
-                aria-labelledby="litreview-papers-h"
+                className="litreview-summary"
+                id="litreview-summary"
+                aria-labelledby="litreview-summary-h"
+                tabIndex={-1}
               >
-                <div className="litreview-zone-head">
-                  <h2 className="litreview-zone-title" id="litreview-papers-h" tabIndex={-1}>
-                    Papers <span className="litreview-count">{papers.length}</span>
-                  </h2>
-                </div>
-                <p className="litreview-zone-note">
-                  Every paper the review cites, numbered in the order it entered the
-                  project — the same number used by the references above.
-                </p>
-                <ol className="litreview-paper-list">
-                  {papers.map((p) => (
-                    <PaperEntry
-                      key={p.id}
-                      paper={p}
-                      num={numById.get(p.id)}
-                      sectionsById={sectionsById}
-                      flash={flash === p.id}
-                      onJumpToSection={jumpToSection}
-                    />
-                  ))}
-                </ol>
+                <h2 className="litreview-sr" id="litreview-summary-h">General summary</h2>
+                {data.summary?.exists === false ? (
+                  <p className="muted">Not written yet.</p>
+                ) : (
+                  <>
+                    {data.summary?.tldr ? <p className="litreview-lede">{data.summary.tldr}</p> : null}
+                    {data.summary?.body ? <MarkdownView text={data.summary.body} /> : null}
+                  </>
+                )}
               </section>
-            )}
+
+              {sections.length > 0 && (
+                <section className="litreview-zone litreview-themes" aria-labelledby="litreview-themes-h">
+                  <h2 className="litreview-zone-title" id="litreview-themes-h">
+                    Themes <span className="litreview-count">{sections.length}</span>
+                  </h2>
+
+                  {sections.map((s, i) => {
+                    const isOpen = !closed.has(s.id);
+                    const refs = (s.cited_papers || []).length;
+                    return (
+                      <section
+                        key={s.id}
+                        id={`lit-${s.id}`}
+                        className={'litreview-section' + (isOpen ? '' : ' is-closed')}
+                        aria-labelledby={`lit-head-${s.id}`}
+                      >
+                        <h3 className="litreview-section-h">
+                          <button
+                            type="button"
+                            id={`lit-head-${s.id}`}
+                            className="litreview-section-head"
+                            aria-expanded={isOpen}
+                            aria-controls={isOpen ? `lit-body-${s.id}` : undefined}
+                            onClick={() => toggle(s.id)}
+                          >
+                            <span className="litreview-section-num" aria-hidden="true">{i + 1}</span>
+                            <span className="litreview-section-title">{s.title}</span>
+                            {refs > 0 && (
+                              <span className="litreview-section-refs">{countLabel(refs, 'reference')}</span>
+                            )}
+                            <span className={'litreview-chevron' + (isOpen ? ' open' : '')} aria-hidden="true">›</span>
+                          </button>
+                        </h3>
+                        <p className="litreview-tldr">{s.tldr}</p>
+                        {isOpen && (
+                          <div className="litreview-body" id={`lit-body-${s.id}`}>
+                            {s.body ? <MarkdownView text={s.body} /> : <p className="muted">No body yet.</p>}
+                            <SectionRefs
+                              cited={s.cited_papers || []}
+                              papersById={papersById}
+                              numById={numById}
+                              onJump={jumpToPaper}
+                            />
+                          </div>
+                        )}
+                      </section>
+                    );
+                  })}
+                </section>
+              )}
+
+              {papers.length > 0 && (
+                <section
+                  id="litreview-papers"
+                  className="litreview-zone litreview-papers"
+                  aria-labelledby="litreview-papers-h"
+                >
+                  <div className="litreview-zone-head">
+                    <h2 className="litreview-zone-title" id="litreview-papers-h" tabIndex={-1}>
+                      Papers <span className="litreview-count">{papers.length}</span>
+                    </h2>
+                  </div>
+                  <p className="litreview-zone-note">
+                    Every paper the review cites, numbered in the order it entered the
+                    project — the same number used by the references above.
+                  </p>
+                  <ol className="litreview-paper-list">
+                    {papers.map((p) => (
+                      <PaperEntry
+                        key={p.id}
+                        paper={p}
+                        num={numById.get(p.id)}
+                        sectionsById={sectionsById}
+                        flash={flash === p.id}
+                        onJumpToSection={jumpToSection}
+                      />
+                    ))}
+                  </ol>
+                </section>
+              )}
+            </div>
           </div>
-        </div>
+        </EntityRefScope>
       </article>
     </div>
   );
@@ -358,6 +415,10 @@ function SectionRefs({ cited, papersById, numById, onJump }) {
   );
 }
 
+// How long a jumped-to ledger entry stays lit (kept in step with the
+// litreview-flash keyframes).
+const FLASH_MS = 1700;
+
 function countLabel(n, noun) {
   return `${n} ${noun}${n === 1 ? '' : 's'}`;
 }
@@ -376,7 +437,6 @@ function scrollToEl(el, block) {
   el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block });
 }
 
-const SOURCE_LABEL = { arxiv: 'arXiv', doi: 'DOI' };
 const FLAG_LABEL = { manual: 'manual entry', failed: 'fetch failed' };
 
 function PaperEntry({ paper: p, num, sectionsById, flash, onJumpToSection }) {
@@ -385,7 +445,7 @@ function PaperEntry({ paper: p, num, sectionsById, flash, onJumpToSection }) {
   const entityLinks = links.filter((l) => l.target_type !== 'litreview_section');
   // The cite note repeats on every link it was recorded with — show it once.
   const notes = [...new Set(links.map((l) => (l.note || '').trim()).filter(Boolean))];
-  const source = SOURCE_LABEL[p.source_kind] || hostOf(p.url);
+  const source = sourceLabel(p);
   // Authors / year / source read as one citation line, not as three chips.
   const byline = [(p.authors || []).join(' · '), p.year].filter(Boolean).join(' — ');
 
@@ -441,8 +501,4 @@ function PaperEntry({ paper: p, num, sectionsById, flash, onJumpToSection }) {
       </div>
     </li>
   );
-}
-
-function hostOf(url) {
-  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 }

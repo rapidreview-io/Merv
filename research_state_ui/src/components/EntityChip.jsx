@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { useProjectStore, projectPath } from '../store/useProjectStore';
 import { resolveEntity, fetchEntity, TYPE_GLYPH } from '../utils/entityResolve';
 import { useEntityHover } from './useEntityHover';
+import { useEntityRefScope } from './EntityRefScope';
 import EntityHoverCard from './EntityHoverCard';
 
 /**
@@ -14,22 +15,29 @@ import EntityHoverCard from './EntityHoverCard';
  *
  * `seed` lets a caller that already resolved the id (e.g. the logic graph's
  * server-provided ref_index) skip both the snapshot lookup and any fetch.
+ * An EntityRefScope does the same for every chip on a surface, and may also
+ * take the click (the lit review scrolls to the cited paper in place).
  */
 export default function EntityChip({ id, label: labelOverride, seed = null, compact = false, className = '' }) {
   const home = useProjectStore((s) => s.home);
   const pid = useProjectStore((s) => s.projectId);
+  const scope = useEntityRefScope();
   const [fetched, setFetched] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const resolved = seed || fetched || resolveEntity(id, home);
+  const scoped = scope?.resolve ? scope.resolve(id) : null;
+  const resolved = seed || scoped || fetched || resolveEntity(id, home);
+  const action = scope?.activate ? scope.activate(id, resolved) : null;
+  const canFetch = !seed && !scoped && !fetched && resolved.needsFetch;
 
-  // Fetch only on the first hover-intent, and only when the snapshot missed —
-  // a report full of ids must cost zero requests until one is hovered.
+  // Fetch only on the first hover-intent, and only when nothing already
+  // answered — a report full of ids must cost zero requests until one is
+  // hovered, and a scoped surface must cost none at all.
   const load = useCallback(() => {
-    if (seed || fetched || loading || !resolved.needsFetch) return;
+    if (!canFetch || loading) return;
     setLoading(true);
     fetchEntity(id, pid).then(setFetched).finally(() => setLoading(false));
-  }, [seed, fetched, loading, resolved.needsFetch, id, pid]);
+  }, [canFetch, loading, id, pid]);
 
   const {
     enabled, open, isPositioned, setReference, setFloating, floatingStyles,
@@ -42,13 +50,14 @@ export default function EntityChip({ id, label: labelOverride, seed = null, comp
   const label = labelOverride || resolved.label;
   const cls = ['echip'];
   if (compact) cls.push('echip--compact');
-  if (!resolved.navigable) cls.push('echip--static');
+  if (!action && !(resolved.navigable && resolved.route)) cls.push('echip--static');
   if (resolved.unresolved) cls.push('echip--dead');
   if (className) cls.push(className);
 
   const inner = (
     <>
       <span className="echip-glyph" aria-hidden="true">{glyph}</span>
+      {resolved.badge ? <span className="echip-num">{resolved.badge}</span> : null}
       <span className={`echip-name${resolved.unresolved ? ' echip-id' : ''}`}>{label}</span>
     </>
   );
@@ -61,11 +70,32 @@ export default function EntityChip({ id, label: labelOverride, seed = null, comp
           style={{ ...floatingStyles, visibility: isPositioned ? 'visible' : 'hidden' }}
           {...getFloatingProps()}
         >
-          <EntityHoverCard resolved={resolved} loading={loading} />
+          <EntityHoverCard resolved={resolved} loading={loading} hint={action?.hint} />
         </div>,
         document.body,
       )
     : null;
+
+  // A surface that takes the click wins over the route: staying here and
+  // scrolling beats navigating to the page the reader is already reading.
+  if (action) {
+    return (
+      <>
+        <button
+          ref={setReference}
+          type="button"
+          {...getReferenceProps({
+            className: cls.join(' '),
+            'aria-label': action.label,
+            onClick: action.onClick,
+          })}
+        >
+          {inner}
+        </button>
+        {card}
+      </>
+    );
+  }
 
   if (resolved.navigable && resolved.route) {
     return (

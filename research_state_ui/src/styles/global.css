@@ -5537,6 +5537,12 @@ html[data-theme="dark"] .app-bg { opacity: 0.3; }
 }
 .echip--compact { gap: 3px; padding: 0 5px; }
 .echip-glyph { color: var(--faint); font-size: 0.9em; line-height: 1; flex: none; }
+/* A citation number ([7]) sits outside the clipped name — the one part of a
+   paper chip that must never be the thing an ellipsis eats. */
+.echip-num {
+  flex: none; color: var(--faint);
+  font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+}
 .echip-name {
   max-width: 22ch;
   overflow: hidden;
@@ -5582,6 +5588,11 @@ a.echip--dead, button.echip--dead { color: var(--faint); }
   font-size: var(--text-xs);
   letter-spacing: 0.04em;
 }
+.ehover-num {
+  color: var(--faint);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
 .ehover-load {
   width: 6px;
   height: 6px;
@@ -5617,6 +5628,9 @@ a.echip--dead, button.echip--dead { color: var(--faint); }
 .ehover-val {
   display: flex;
   align-items: center;
+  /* A long value (authors, the sections a paper is cited in) wraps under its
+     own label instead of forcing the card wider. */
+  flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
   color: var(--text);
@@ -5624,6 +5638,14 @@ a.echip--dead, button.echip--dead { color: var(--faint); }
 }
 .ehover-missing { display: flex; flex-direction: column; gap: 3px; }
 .ehover-note { color: var(--faint); font-style: italic; font-size: var(--text-xs); }
+/* What the click does — only on surfaces that take the click (the lit review
+   scrolls to the cited paper), so it never promises a jump that won't happen. */
+.ehover-hint {
+  padding-top: 5px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
 
 /* Logic-panel refs stack one chip per line. */
 .lgr-refs { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
@@ -5910,9 +5932,11 @@ a.spend-row-name:hover { color: var(--active); }
   scroll-margin-top: 96px;
 }
 .litreview-paper-list > .litreview-paper:first-child { border-top: none; }
+/* A jumped-to entry holds its highlight, then releases it — the reader who
+   travelled from a citation halfway up the document needs time to land. */
 .litreview-paper.flash { animation: litreview-flash 1.7s ease-out; }
 @keyframes litreview-flash {
-  0% { background: var(--select); }
+  0%, 55% { background: var(--select); }
   100% { background: transparent; }
 }
 .litreview-paper-num {
