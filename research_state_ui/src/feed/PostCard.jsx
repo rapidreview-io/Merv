@@ -52,15 +52,13 @@ const REACT_KINDS = ['fire', 'eyes', 'question'];
 const REACT_LABEL = { fire: 'More like this', eyes: 'Watching this', question: 'Explain this' };
 
 /**
- * The media a post carries besides its native attachments: one uploaded image
- * (natural ratio, framed, lightbox on click), one embed, and one link (paper /
- * repo / page card, or an inline PDF page).
+ * What a post shows: its native attachments, one uploaded image (natural
+ * ratio, framed, lightbox on click), and one embed. Visuals lead the post —
+ * they sit above the text — while the link card (paper / repo / page, or an
+ * inline PDF page) is a reference and stays below it.
  */
-function Media({ post, projectId }) {
-  const preview = post.link_preview;
-  const pdfInfo = pdfPageInfo(post, preview);
+function Visuals({ post, projectId }) {
   const image = useAuthedImage(post.image_url);
-  const linkThumb = useAuthedImage(preview && preview.has_image ? preview.image_url : null);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [zoomed, setZoomed] = useState(false);
   const mediaBtnRef = useRef(null);
@@ -74,8 +72,12 @@ function Media({ post, projectId }) {
     mediaBtnRef.current?.focus();
   }, []);
 
+  const hasVisual = (post.attachments && post.attachments.length > 0)
+    || (post.image_url && !image.failed)
+    || (post.has_embed && post.embed_url);
+  if (!hasVisual) return null;
   return (
-    <>
+    <div className="postcard-visuals">
       <Attachments items={post.attachments} />
       {post.image_url && !image.failed && (
         <div className={`postcard-media${imageLoaded ? ' is-loaded' : ''}`}>
@@ -100,13 +102,19 @@ function Media({ post, projectId }) {
       )}
       {zoomed && image.url && <Lightbox src={image.url} onClose={closeZoom} />}
       {post.has_embed && post.embed_url && <EmbedCard post={post} projectId={projectId} />}
-      {post.link_url && (
-        pdfInfo
-          ? <PdfPageCard post={post} projectId={projectId} info={pdfInfo} />
-          : <LinkCard post={post} preview={preview} thumbUrl={linkThumb.url} projectId={projectId} />
-      )}
-    </>
+    </div>
   );
+}
+
+// The link card: a reference, so it follows the text.
+function LinkRef({ post, projectId }) {
+  const preview = post.link_preview;
+  const pdfInfo = pdfPageInfo(post, preview);
+  const linkThumb = useAuthedImage(preview && preview.has_image ? preview.image_url : null);
+  if (!post.link_url) return null;
+  return pdfInfo
+    ? <PdfPageCard post={post} projectId={projectId} info={pdfInfo} />
+    : <LinkCard post={post} preview={preview} thumbUrl={linkThumb.url} projectId={projectId} />;
 }
 
 // The byline: mark · name (bio on hover) · role · kind · time. `askYou` marks
@@ -128,7 +136,7 @@ function Byline({ post, now, askYou, threadLen, withMark = true }) {
       {post.author_role && post.author_role !== 'main' && !researcher && (
         <span className="postcard-role">{post.author_role}</span>
       )}
-      {post.kind && <span className="postcard-kind">{post.kind}</span>}
+      {post.kind && <span className={`postcard-kind postcard-kind--${post.kind}`}>{post.kind}</span>}
       {threadLen > 0 && <span className="postcard-kind">thread</span>}
       {askYou && <span className="postcard-asks">asks you</span>}
       {timeLabel && (
@@ -149,8 +157,9 @@ function ReplyBlock({ card, projectId, now }) {
   return (
     <div className={`postcard-reply${researcher ? ' postcard-reply--human' : ''}`}>
       <Byline post={post} now={now} />
+      <Visuals post={post} projectId={projectId} />
       <PostText text={post.text} />
-      <Media post={post} projectId={projectId} />
+      <LinkRef post={post} projectId={projectId} />
     </div>
   );
 }
@@ -236,14 +245,15 @@ export default function PostCard({
 
   const body = (
     <>
+      <Visuals post={post} projectId={projectId} />
       <PostText text={post.text} />
       {post.quote_of && <QuoteCard quoted={post.quoted} now={now} />}
-      <Media post={post} projectId={projectId} />
+      <LinkRef post={post} projectId={projectId} />
     </>
   );
 
   return (
-    <article className={cls} ref={cardRef}>
+    <article className={cls} ref={cardRef} data-kind={post.kind || undefined}>
       {orphan && (
         <p className="postcard-replyctx">
           {post.thread_root ? 'continuing an earlier thread' : 'replying to an earlier post'}
@@ -281,9 +291,10 @@ export default function PostCard({
                       {label}
                     </span>
                   )}
+                  <Visuals post={item} projectId={projectId} />
                   <PostText text={item.text} />
                   {item.quote_of && <QuoteCard quoted={item.quoted} now={now} />}
-                  <Media post={item} projectId={projectId} />
+                  <LinkRef post={item} projectId={projectId} />
                 </div>
               </div>
             );

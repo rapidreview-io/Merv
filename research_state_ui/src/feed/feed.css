@@ -150,7 +150,9 @@
 }
 
 /* ---------------------------------------------------------------------
-   The card. One shape. No kind rail, no per-type framing.
+   The card. One shape for every post; the one piece of color chrome is the
+   kind rail — a 3px inset on the left edge in the kind's token — and the
+   kind word wears the same color. Marks stay monochrome.
    --------------------------------------------------------------------- */
 .postcard {
   position: relative;
@@ -159,6 +161,25 @@
   border-radius: var(--radius-lg);
   padding: 13px 18px 8px;
   box-shadow: var(--shadow-sm);
+}
+/* Kind → token: finding=supports, kill=refutes, bottleneck=qualifies,
+   direction/question=active, hunch/idea=mcp, paper=steel, status=faint. */
+.postcard[data-kind="finding"] { --kind-c: var(--supports); }
+.postcard[data-kind="kill"] { --kind-c: var(--refutes); }
+.postcard[data-kind="bottleneck"] { --kind-c: var(--qualifies); }
+.postcard[data-kind="direction"] { --kind-c: var(--active); }
+.postcard[data-kind="question"] { --kind-c: var(--active); }
+.postcard[data-kind="hunch"], .postcard[data-kind="idea"] { --kind-c: var(--mcp); }
+.postcard[data-kind="paper"] { --kind-c: var(--steel); }
+.postcard[data-kind="status"] { --kind-c: var(--faint); }
+.postcard[data-kind] {
+  box-shadow: var(--shadow-sm), inset 3px 0 0 color-mix(in oklab, var(--kind-c) 72%, transparent);
+}
+.postcard[data-kind] .postcard-kind--finding, .postcard[data-kind] .postcard-kind--kill,
+.postcard[data-kind] .postcard-kind--bottleneck, .postcard[data-kind] .postcard-kind--direction,
+.postcard[data-kind] .postcard-kind--question, .postcard[data-kind] .postcard-kind--hunch,
+.postcard[data-kind] .postcard-kind--idea, .postcard[data-kind] .postcard-kind--paper {
+  color: var(--kind-c);
 }
 /* The human's posts carry a faint accent wash — "the researcher spoke" reads
    at a glance among the agent stream, without a heavier border. */
@@ -196,6 +217,14 @@
 
 /* Orphaned continuation/reply says what it is. */
 .postcard-replyctx { margin: 0 0 4px; font-size: var(--text-xs); color: var(--faint); }
+
+/* Visuals lead: attachments, image, embed sit above the text. */
+.postcard-visuals { display: flex; flex-direction: column; margin: 2px 0 0; }
+.postcard-visuals > .pa:first-child,
+.postcard-visuals > .postcard-media:first-child,
+.postcard-visuals > .pa-figure:first-child .postcard-media { margin-top: 0; }
+.postcard-visuals + .postcard-text { margin-top: 10px; }
+.postcard-tp-body .postcard-visuals { margin-top: 0; }
 
 /* Text — with the structure the parser found in it. */
 .postcard-text {
@@ -642,6 +671,10 @@ html[data-surface="mobile"] .postcard {
   padding: 14px 0 4px;
 }
 html[data-surface="mobile"] .postcard--researcher { background: none; }
+html[data-surface="mobile"] .postcard[data-kind] {
+  box-shadow: inset 2px 0 0 color-mix(in oklab, var(--kind-c) 72%, transparent);
+  padding-left: 11px;
+}
 html[data-surface="mobile"] .postcard-head { gap: 7px; margin-bottom: 6px; }
 html[data-surface="mobile"] .postcard-author { font-size: 13px; }
 html[data-surface="mobile"] .postcard-role,
