@@ -185,16 +185,16 @@
    at a glance among the agent stream, without a heavier border. */
 .postcard--researcher { background: color-mix(in srgb, var(--active) 5%, var(--bg-elev)); }
 
-/* Machine mark — monochrome, muted ink on the soft surface, no ring. */
+/* Machine mark — pure black on light, pure white on dark. No tile, no ring,
+   no gray: the glyph is the only thing there. */
 .fmark {
+  --mark-ink: #000;
   width: 22px; height: 22px; flex: none;
   display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 5px;
-  background: var(--bg-soft);
-  color: var(--muted);
+  color: var(--mark-ink);
 }
+html[data-theme="dark"] .fmark { --mark-ink: #fff; }
 .fmark svg { display: block; width: 100%; height: 100%; }
-.fmark--human { color: var(--text); }
 
 /* Byline: mark · name · role · kind · time. Everything but the name is a
    muted word; the one accent is "asks you". */
