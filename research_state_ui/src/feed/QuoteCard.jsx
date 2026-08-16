@@ -8,13 +8,13 @@ import { postTime } from './feedModel';
  * if it carried a stat. Missing quoted views (a post from beyond the loaded
  * project, or deleted rows) degrade to a quiet "quoting an earlier post".
  */
-export default function QuoteCard({ quoted, now }) {
+export default function QuoteCard({ quoted, now, inline = false }) {
   if (!quoted) return <p className="postcard-replyctx">quoting an earlier post</p>;
   const ts = quoted.created_at ? new Date(quoted.created_at).getTime() : null;
   return (
-    <div className="postcard-quote">
+    <div className={`postcard-quote${inline ? ' postcard-quote--inline' : ''}`}>
       <div className="postcard-quote-by">
-        <Avatar handle={quoted.author_handle} role={quoted.author_role} />
+        {!inline && <Avatar handle={quoted.author_handle} role={quoted.author_role} />}
         <span className="postcard-quote-name">{quoted.author_handle}</span>
         {quoted.author_role && quoted.author_role !== 'main' && (
           <span className="postcard-role">{quoted.author_role}</span>

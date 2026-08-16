@@ -709,8 +709,13 @@ class FeedPostModelTest(FeedServiceTest):
         self.assertTrue(root["has_image"])
         self.assertEqual([a["type"] for a in root["attachments"]], ["stat"])
         self.assertEqual(root["quote_of"], quoted["id"])
+        # Quoting your own earlier post continues that chain, so the root and
+        # its thread items hang under the quoted post.
+        self.assertEqual(root["thread_root"], quoted["id"])
+        self.assertEqual(root["thread_index"], 1)
         self.assertEqual(len(done["thread"]), 1)
-        self.assertEqual(done["thread"][0]["thread_root"], root["id"])
+        self.assertEqual(done["thread"][0]["thread_root"], quoted["id"])
+        self.assertEqual(done["thread"][0]["thread_index"], 2)
         self.assertEqual(done["thread"][0]["attachments"][0]["type"], "log")
 
     # -- threads ---------------------------------------------------------------
@@ -799,6 +804,21 @@ class FeedPostModelTest(FeedServiceTest):
         self.assertEqual(listed["quoted"]["kind"], "finding")
         with self.assertRaises(ValidationError):
             self.call("feed.post", project_id=self.pid, handle="Ansible", text="x", quote_of="post_nope")
+        # One relation: a post follows at most one previous post.
+        other = self.call("feed.post", project_id=self.pid, handle="Ansible", text="another")["post"]
+        with self.assertRaises(ValidationError):
+            self.call(
+                "feed.post", project_id=self.pid, handle="Ansible", text="x",
+                quote_of=claim["id"], in_reply_to=other["id"],
+            )
+        # quote_of alone still sets the reply link, so old and new clients thread alike;
+        # a self-quote continues the author's own chain.
+        selfq = self.call(
+            "feed.post", project_id=self.pid, handle="Ansible", text="callback", quote_of=claim["id"]
+        )["post"]
+        self.assertEqual(selfq["in_reply_to"], claim["id"])
+        self.assertEqual(selfq["thread_root"], claim["id"])
+        self.assertEqual(selfq["thread_index"], 1)
 
     def test_new_kinds_are_accepted(self) -> None:
         self._register()

@@ -27,7 +27,6 @@ test('root posts become cards, newest first', () => {
   const cards = buildCards([a, b]);
   assert.deepEqual(cards.map((c) => c.id), ['a', 'b']);
   assert.equal(cards[0].chain.length, 0);
-  assert.equal(cards[0].replies.length, 0);
 });
 
 test('thread continuations chain under their root, oldest first, and lift the card', () => {
@@ -42,14 +41,15 @@ test('thread continuations chain under their root, oldest first, and lift the ca
   assert.equal(cards[0].ts, Date.parse(at(5)));
 });
 
-test('a same-voice self-reply without thread_root still chains; another voice is a reply', () => {
+test('every follower — self-reply, another voice, a quote, the human — joins one chain, oldest first', () => {
   const root = post({ id: 'root', created_seq: 1 });
   const selfReply = post({ id: 's', created_seq: 2, in_reply_to: 'root' });
   const reply = post({ id: 'r', created_seq: 3, in_reply_to: 'root', author_handle: 'Cold Equations', author_role: 'reviewer' });
+  const quote = post({ id: 'q', created_seq: 5, quote_of: 'r', author_handle: 'Tannhauser Gate', author_role: 'lens' });
   const human = post({ id: 'h', created_seq: 4, in_reply_to: 's', author_handle: 'Researcher', author_role: 'researcher' });
-  const [card] = buildCards([human, reply, selfReply, root]);
-  assert.deepEqual(card.chain.map((p) => p.id), ['s']);
-  assert.deepEqual(card.replies.map((r) => r.id), ['r', 'h']);
+  const [card] = buildCards([quote, human, reply, selfReply, root]);
+  assert.deepEqual(card.chain.map((p) => p.id), ['s', 'r', 'h', 'q']);
+  assert.equal(card.seq, 5);
 });
 
 test('a continuation whose root is not loaded stands alone as an orphan', () => {

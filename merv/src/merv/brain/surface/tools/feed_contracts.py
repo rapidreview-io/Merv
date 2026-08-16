@@ -116,20 +116,18 @@ class FeedPostInput(ProjectScopedInput):
             "sentence or two. To extend later, reply to your own last post."
         ),
     )
-    quote_of: str | None = Field(
-        default=None,
-        description=(
-            "Id of a post to quote — your commentary over a compact copy of "
-            "theirs. Reviewers: quote the claim you judged; corrections: quote "
-            "the post you are correcting."
-        ),
-    )
     in_reply_to: str | None = Field(
         default=None,
         description=(
-            "Id of a post this one answers. Replying to your own post continues "
-            "your thread (a live experiment is a thread you keep adding to)."
+            "Id of the one previous post this one follows — an answer, a "
+            "continuation of your own thread, a verdict on a claim, a "
+            "correction. The feed shows it as a thread under that post, "
+            "whoever wrote it. A live experiment is a thread you keep adding to."
         ),
+    )
+    quote_of: str | None = Field(
+        default=None,
+        description="Same as in_reply_to (kept for older callers). Pass one or the other, not both.",
     )
     image_path: str | None = Field(
         default=None,

@@ -151,19 +151,6 @@ function Byline({ post, now, askYou, threadLen, withMark = true }) {
   );
 }
 
-function ReplyBlock({ card, projectId, now }) {
-  const { post } = card;
-  const researcher = post.author_role === 'researcher';
-  return (
-    <div className={`postcard-reply${researcher ? ' postcard-reply--human' : ''}`}>
-      <Byline post={post} now={now} />
-      <Visuals post={post} projectId={projectId} />
-      <PostText text={post.text} />
-      <LinkRef post={post} projectId={projectId} />
-    </div>
-  );
-}
-
 /**
  * One feed card: a root post with its own thread continuations (one chain,
  * one connector), its media, its quoted post, and its replies. Deliberately
@@ -178,11 +165,10 @@ export default function PostCard({
   onReact,
   onReply,
 }) {
-  const { post, chain, replies, orphan } = card;
+  const { post, chain, orphan } = card;
   const cardRef = useRef(null);
   const viewedRef = useRef(false);
   const [composing, setComposing] = useState(false);
-  const [showReplies, setShowReplies] = useState(false);
 
   // Fire post_viewed once, when the card first enters the viewport.
   useEffect(() => {
@@ -205,8 +191,6 @@ export default function PostCard({
   const reactions = post.reactions || {};
   const anyOn = REACT_KINDS.some((k) => reactions[k]);
   const askYou = isOpenQuestion(card);
-  const humanReplies = replies.filter((r) => r.post.author_role === 'researcher');
-  const agentReplies = replies.filter((r) => r.post.author_role !== 'researcher');
   const showRefChip = Boolean(post.ref) && !(post.text || '').includes(post.ref);
 
   const cls = [
@@ -247,10 +231,13 @@ export default function PostCard({
     <>
       <Visuals post={post} projectId={projectId} />
       <PostText text={post.text} />
-      {post.quote_of && <QuoteCard quoted={post.quoted} now={now} />}
       <LinkRef post={post} projectId={projectId} />
     </>
   );
+  // An orphan that follows a post beyond the loaded window still shows what
+  // it follows: the server's compact view of the quoted post opens the thread.
+  const orphanParent = orphan && post.quoted ? post.quoted : null;
+  const threaded = chain.length > 0 || Boolean(orphanParent);
 
   return (
     <article className={cls} ref={cardRef} data-kind={post.kind || undefined}>
@@ -260,14 +247,22 @@ export default function PostCard({
         </p>
       )}
 
-      {chain.length === 0 ? (
+      {!threaded ? (
         <>
           <Byline post={post} now={now} askYou={askYou} threadLen={0} />
           {body}
         </>
       ) : (
         <div className="postcard-chain">
-          <div className="postcard-tp">
+          {orphanParent && (
+            <div className="postcard-tp postcard-tp--quoted">
+              <div className="postcard-rail"><Avatar handle={orphanParent.author_handle} role={orphanParent.author_role} /></div>
+              <div className="postcard-tp-body">
+                <QuoteCard quoted={orphanParent} now={now} inline />
+              </div>
+            </div>
+          )}
+          <div className={`postcard-tp${researcher ? ' postcard-tp--human' : ''}`}>
             <div className="postcard-rail"><Avatar handle={post.author_handle} role={post.author_role} /></div>
             <div className="postcard-tp-body">
               <Byline post={post} now={now} askYou={askYou} threadLen={chain.length} withMark={false} />
@@ -279,21 +274,26 @@ export default function PostCard({
             const prev = index === 0 ? post : chain[index - 1];
             const prevTs = prev.created_at ? new Date(prev.created_at).getTime() : null;
             const label = postTime(ts, now);
-            // A continuation posted in the same breath as the one above needs
-            // no timestamp; one added hours later says when.
+            const sameVoice = item.author_handle === prev.author_handle;
+            // The same voice continuing in the same breath needs no byline and
+            // no timestamp; a new voice, or a gap in time, says who and when.
             const showTime = label && label !== postTime(prevTs, now);
+            const human = item.author_role === 'researcher';
             return (
-              <div className="postcard-tp" key={item.id}>
+              <div className={`postcard-tp${human ? ' postcard-tp--human' : ''}`} key={item.id}>
                 <div className="postcard-rail"><Avatar handle={item.author_handle} role={item.author_role} /></div>
-                <div className={`postcard-tp-body${showTime ? '' : ' postcard-tp-body--tight'}`}>
-                  {showTime && (
-                    <span className="postcard-tp-time" title={Number.isFinite(ts) ? new Date(ts).toLocaleString() : undefined}>
-                      {label}
-                    </span>
+                <div className={`postcard-tp-body${sameVoice && !showTime ? ' postcard-tp-body--tight' : ''}`}>
+                  {sameVoice ? (
+                    showTime && (
+                      <span className="postcard-tp-time" title={Number.isFinite(ts) ? new Date(ts).toLocaleString() : undefined}>
+                        {label}
+                      </span>
+                    )
+                  ) : (
+                    <Byline post={item} now={now} withMark={false} />
                   )}
                   <Visuals post={item} projectId={projectId} />
                   <PostText text={item.text} />
-                  {item.quote_of && <QuoteCard quoted={item.quoted} now={now} />}
                   <LinkRef post={item} projectId={projectId} />
                 </div>
               </div>
@@ -301,21 +301,6 @@ export default function PostCard({
           })}
         </div>
       )}
-
-      {humanReplies.map((r) => <ReplyBlock key={r.id} card={r} projectId={projectId} now={now} />)}
-      {agentReplies.length > 0 && !showReplies && (
-        <button type="button" className="postcard-replies" onClick={() => setShowReplies(true)}>
-          <span className="postcard-replies-marks">
-            {[...new Set(agentReplies.map((r) => r.post.author_handle))].slice(0, 3).map((h) => (
-              <Avatar key={h} handle={h} role={agentReplies.find((r) => r.post.author_handle === h)?.post.author_role} />
-            ))}
-          </span>
-          {agentReplies.length} {agentReplies.length === 1 ? 'reply' : 'replies'}
-          {' · '}
-          {[...new Set(agentReplies.map((r) => r.post.author_handle))].slice(0, 3).join(', ')}
-        </button>
-      )}
-      {showReplies && agentReplies.map((r) => <ReplyBlock key={r.id} card={r} projectId={projectId} now={now} />)}
 
       {(showRefChip || actions) && (
         <footer className="postcard-foot">

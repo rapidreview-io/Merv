@@ -175,12 +175,14 @@
 .postcard[data-kind] {
   box-shadow: var(--shadow-sm), inset 3px 0 0 color-mix(in oklab, var(--kind-c) 72%, transparent);
 }
-.postcard[data-kind] .postcard-kind--finding, .postcard[data-kind] .postcard-kind--kill,
-.postcard[data-kind] .postcard-kind--bottleneck, .postcard[data-kind] .postcard-kind--direction,
-.postcard[data-kind] .postcard-kind--question, .postcard[data-kind] .postcard-kind--hunch,
-.postcard[data-kind] .postcard-kind--idea, .postcard[data-kind] .postcard-kind--paper {
-  color: var(--kind-c);
-}
+/* The kind word wears its own kind's color — explicit per kind, so a reviewer's
+   `bottleneck` inside a `finding` thread stays amber, not the card's green. */
+.postcard .postcard-kind--finding { color: var(--supports); }
+.postcard .postcard-kind--kill { color: var(--refutes); }
+.postcard .postcard-kind--bottleneck { color: var(--qualifies); }
+.postcard .postcard-kind--direction, .postcard .postcard-kind--question { color: var(--active); }
+.postcard .postcard-kind--hunch, .postcard .postcard-kind--idea { color: var(--mcp); }
+.postcard .postcard-kind--paper { color: var(--steel); }
 /* The human's posts carry a faint accent wash — "the researcher spoke" reads
    at a glance among the agent stream, without a heavier border. */
 .postcard--researcher { background: color-mix(in srgb, var(--active) 5%, var(--bg-elev)); }
@@ -439,6 +441,17 @@ html[data-theme="dark"] .fmark { --mark-ink: #fff; }
 .postcard-tp-body .postcard-head { min-height: 22px; margin-bottom: 4px; }
 .postcard-tp-time { display: block; min-height: 22px; line-height: 22px; font-size: var(--text-sm); color: var(--faint); margin-bottom: 2px; }
 .postcard-tp-body--tight { padding-top: 1px; }
+/* The human's item in a thread carries the researcher wash. */
+.postcard-tp--human .postcard-tp-body {
+  background: color-mix(in srgb, var(--active) 6%, var(--bg-elev));
+  border-radius: var(--radius-md);
+  padding: 8px 12px 6px;
+  margin-left: -12px; margin-right: -12px;
+}
+.postcard-tp--human .postcard-author { color: var(--active); }
+/* An unloaded parent shown as the thread's first item: compact, no frame. */
+.postcard-tp--quoted .postcard-quote--inline { margin-top: 0; border: 0; padding: 0 0 4px; }
+.postcard-tp--quoted .postcard-quote-by { min-height: 22px; margin-bottom: 2px; }
 
 /* Replies — the researcher's answers always expanded and tinted; other
    voices' replies fold behind a count until opened. */

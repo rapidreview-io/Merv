@@ -60,10 +60,10 @@ export const FILTERS = [
 const RESULT_KINDS = new Set(['finding', 'kill', 'status', 'bottleneck']);
 const IDEA_KINDS = new Set(['idea', 'hunch', 'paper', 'direction']);
 
-// A question is open until the researcher has answered it.
+// A question is open until the researcher has answered it in the thread.
 export function isOpenQuestion(card) {
   return card.post.kind === 'question'
-    && !card.replies.some((r) => r.post.author_role === 'researcher');
+    && !card.chain.some((p) => p.author_role === 'researcher');
 }
 
 export function cardMatches(card, filter) {
@@ -85,30 +85,30 @@ function tsOf(post) {
   return Number.isFinite(ts) ? ts : null;
 }
 
+// The one previous post this post follows: a reply, a continuation, or a
+// quote — one relation, rendered one way.
+export function parentOf(post) {
+  return post.in_reply_to || post.quote_of || null;
+}
+
 /**
- * Group the flat newest-first list into cards. A card is a root post plus:
- *  - `chain`: the author's own continuations (thread_root → root, or a reply
- *    the author made to their own post), oldest first;
- *  - `replies`: posts by other voices answering the root or any chain member,
- *    oldest first (each reply is itself a card so it can carry attachments).
- * Cards sort newest-first by their newest member — a live thread that just got
- * a checkpoint surfaces. A continuation or reply whose root is beyond the
- * loaded window stands alone as an `orphan` card that says so.
+ * Group the flat newest-first list into cards. A card is a root post plus
+ * `chain`: every loaded post that follows it (directly or through another
+ * follower), by any voice, oldest first — the UI draws the whole card as one
+ * thread under a single connector. Cards sort newest-first by their newest
+ * member, so a thread that just got a reply or a checkpoint surfaces. A post
+ * whose parent is beyond the loaded window stands alone as an `orphan` card
+ * (it still carries the server's compact `quoted` view of what it follows).
  */
 export function buildCards(posts) {
   const byId = new Map(posts.map((p) => [p.id, p]));
   const cards = new Map(); // root id -> card
   const rootOf = (post) => {
-    // The card that should hold `post`: walk thread_root / in_reply_to up to a
-    // root that is loaded. Guarded against malformed cycles.
     let current = post;
     let guard = 0;
     while (guard++ < 50) {
-      const up = current.thread_root && byId.has(current.thread_root)
-        ? byId.get(current.thread_root)
-        : current.in_reply_to && byId.has(current.in_reply_to)
-          ? byId.get(current.in_reply_to)
-          : null;
+      const parent = parentOf(current);
+      const up = parent && byId.has(parent) ? byId.get(parent) : null;
       if (!up || up.id === current.id) return current;
       current = up;
     }
@@ -116,46 +116,28 @@ export function buildCards(posts) {
   };
   const ensure = (root, orphan = false) => {
     if (!cards.has(root.id)) {
-      cards.set(root.id, {
-        id: root.id, post: root, chain: [], replies: [], orphan, seq: seqOf(root), ts: tsOf(root),
-      });
+      cards.set(root.id, { id: root.id, post: root, chain: [], orphan, seq: seqOf(root), ts: tsOf(root) });
     }
     return cards.get(root.id);
   };
-  // Roots first (so continuation/reply lookups always find their card).
   for (const post of posts) {
-    const isContinuation = Boolean(post.thread_root);
-    const isReply = Boolean(post.in_reply_to);
-    if (!isContinuation && !isReply) ensure(post);
+    if (!parentOf(post)) ensure(post);
   }
   for (const post of posts) {
-    if (!post.thread_root && !post.in_reply_to) continue;
+    if (!parentOf(post)) continue;
     const root = rootOf(post);
     if (root.id === post.id) {
-      // Parent not loaded: stand alone, but say what it is.
       ensure(post, true);
       continue;
     }
     const card = ensure(root);
-    // The server marks continuations with thread_root; older rows only have
-    // in_reply_to, so a same-voice self-reply reads as a continuation too.
-    const continues = post.author_role !== 'researcher'
-      && post.author_handle === card.post.author_handle
-      && (Boolean(post.thread_root) || Boolean(post.in_reply_to));
-    if (continues) {
-      card.chain.push(post);
-    } else {
-      card.replies.push({ id: post.id, post, chain: [], replies: [], orphan: false, seq: seqOf(post), ts: tsOf(post) });
-    }
+    card.chain.push(post);
     card.seq = Math.max(card.seq, seqOf(post));
     const ts = tsOf(post);
     if (ts != null && (card.ts == null || ts > card.ts)) card.ts = ts;
   }
   const out = [...cards.values()];
-  for (const card of out) {
-    card.chain.sort((a, b) => (a.thread_index || 0) - (b.thread_index || 0) || seqOf(a) - seqOf(b));
-    card.replies.sort((a, b) => a.seq - b.seq);
-  }
+  for (const card of out) card.chain.sort((a, b) => seqOf(a) - seqOf(b));
   out.sort((a, b) => b.seq - a.seq);
   return out;
 }

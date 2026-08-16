@@ -452,10 +452,19 @@ class FeedService:
                     f"handle '{handle}' is not registered; call feed.register first"
                 )
             author_role = str(author["role"] or "main")
+            # A post follows at most one previous post; `quote_of` and
+            # `in_reply_to` name the same relation and render as one thread.
+            reply_ref = (intent.in_reply_to or "").strip()
+            quote_ref = (intent.quote_of or "").strip()
+            if reply_ref and quote_ref and reply_ref != quote_ref:
+                raise ValidationError(
+                    "a post follows at most one previous post — pass in_reply_to "
+                    "or quote_of, not both"
+                )
             reply_to, chain_root = self._validate_in_reply_to(
                 conn=conn,
                 project_id=resolved_project,
-                in_reply_to=intent.in_reply_to,
+                in_reply_to=reply_ref or quote_ref,
                 handle=handle,
                 author_role=author_role,
             )
