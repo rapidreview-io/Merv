@@ -10,6 +10,7 @@ and activity sink used by these routes.
 
 from __future__ import annotations
 
+import urllib.parse
 from typing import Any, Protocol
 
 from fastapi import Body, Query, Request
@@ -103,6 +104,13 @@ def _enrich_post_urls(post: dict[str, Any], project_id: str) -> None:
     preview = post.get("link_preview")
     if preview and preview.get("has_image"):
         preview["image_url"] = f"/api/projects/{project_id}/feed/{post_id}/link-image"
+    for attachment in post.get("attachments") or []:
+        if isinstance(attachment, dict) and attachment.get("type") == "figure":
+            rel = urllib.parse.quote(str(attachment.get("path") or ""), safe="")
+            artifact_id = urllib.parse.quote(str(attachment.get("artifact_id") or ""), safe="")
+            attachment["url"] = (
+                f"/api/projects/{project_id}/artifacts/{artifact_id}/figure?rel={rel}"
+            )
 
 
 def register_feed_routes(

@@ -87,6 +87,15 @@ _LOCAL_API_BASE = "http://127.0.0.1:8787"
 
 # -- Public application boundary and post values ---------------------------
 
+@runtime_checkable
+class FigureLookup(Protocol):
+    """Whether a figure submitted with an artifact exists in a project.
+
+    Injected by the surface so the feed can reference artifact figures without
+    reading artifact tables itself."""
+
+    def __call__(self, project_id: str, artifact_id: str, link_path: str) -> bool: ...
+
 
 @runtime_checkable
 class FeedAdvisory(Protocol):
@@ -158,10 +167,12 @@ class FeedService:
         store: BaseStateStore,
         blobs: EvidenceBlobStore,
         web_preview: WebPreview,
+        figure_lookup: FigureLookup | None = None,
     ) -> None:
         self.store = store
         self.blobs = blobs
         self.web_preview = web_preview
+        self.figure_lookup = figure_lookup
         install_feed_schema(store)
 
     # -- identity -----------------------------------------------------------
@@ -451,6 +462,7 @@ class FeedService:
             quote_of = self._validate_quote_of(
                 conn=conn, project_id=resolved_project, quote_of=intent.quote_of
             )
+        self._validate_figures(project_id=resolved_project, intent=intent)
         return replace(
             intent,
             handle=handle,
@@ -846,6 +858,24 @@ class FeedService:
         ):
             chain_root = str(target["thread_root"] or target["id"])
         return in_reply_to, chain_root
+
+    def _validate_figures(self, *, project_id: str, intent: PostIntent) -> None:
+        """A ``figure`` attachment must name a figure already submitted with an
+        artifact in this project; the lookup is the surface's, not the feed's."""
+        groups = [intent.attachments, *(tuple(item.get("attachments") or ()) for item in intent.thread)]
+        for group in groups:
+            for attachment in group:
+                if not isinstance(attachment, dict) or attachment.get("type") != "figure":
+                    continue
+                if self.figure_lookup is None:
+                    raise ValidationError("figure attachments are not available on this brain")
+                artifact_id = str(attachment.get("artifact_id") or "")
+                path = str(attachment.get("path") or "")
+                if not self.figure_lookup(project_id, artifact_id, path):
+                    raise ValidationError(
+                        f"figure not found in this project: {artifact_id} {path} — "
+                        "use artifact.find to list submitted figures"
+                    )
 
     def _validate_quote_of(
         self, *, conn: Any, project_id: str, quote_of: str | None

@@ -22,9 +22,12 @@ workflow policy, and blob implementation remain outside this package.
 
 A post is `text` (≤280 chars) plus an optional `kind`, up to four typed
 attachments, an optional `quote_of`, and threading. Native attachments
-(`stat`, `chart`, `table`, `log`) are validated JSON documents the UI draws;
-`image`/`embed` name one local file uploaded through a one-time token;
-`link` names one URL to unfurl. `refs.parse_refs` pulls structure out of the
+(`stat`, `chart` line/bars/scatter, `heatmap`, `table`, `log`, `diagram` as
+Mermaid text, `vega` as an inline-data Vega-Lite spec with no `url`/`href`)
+are validated JSON documents the UI draws; `figure` references a figure
+already submitted with an artifact, checked through the injected
+`FigureLookup` port; `image`/`embed` name one local file uploaded through a
+one-time token; `link` names one URL to unfurl. `refs.parse_refs` pulls structure out of the
 prose: the first entity id becomes `ref` and the first arXiv id, DOI, or URL
 becomes the unfurled link when those were not passed explicitly. A `thread`
 is up to eight continuation posts created atomically under the root, and a

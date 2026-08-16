@@ -612,6 +612,66 @@ class FeedPostModelTest(FeedServiceTest):
         listed = self.call("feed.list", project_id=self.pid)["posts"][0]
         self.assertEqual([a["type"] for a in listed["attachments"]], kinds)
 
+    def test_heatmap_scatter_diagram_and_vega_attachments_are_validated(self) -> None:
+        self._register()
+        attachments = [
+            {"type": "heatmap", "title": "acceptance", "rows": ["d1", "d2"], "cols": ["code", "prose"], "values": [[0.9, 0.7], [0.5, 0.2]], "annotate": True},
+            {"type": "chart", "kind": "scatter", "title": "loss vs lr", "series": [{"name": "runs", "points": [[1e-4, 2.1], [3e-4, 1.9], [1e-3, 2.4]]}], "hero": {"series": 0, "index": 1}},
+            {"type": "diagram", "text": "flowchart LR\n  A[prompt] --> B[drafter]\n  B --> C[verify]"},
+            {"type": "vega", "title": "loss", "spec": {"$schema": "https://vega.github.io/schema/vega-lite/v6.json", "data": {"values": [{"x": 1, "y": 2}]}, "mark": "line", "encoding": {"x": {"field": "x", "type": "quantitative"}, "y": {"field": "y", "type": "quantitative"}}}},
+        ]
+        post = self.call("feed.post", project_id=self.pid, handle="Ansible", text="four ways to see it", attachments=attachments)["post"]
+        self.assertEqual([a["type"] for a in post["attachments"]], ["heatmap", "chart", "diagram", "vega"])
+        self.assertEqual(post["attachments"][0]["values"][1], [0.5, 0.2])
+        self.assertEqual(post["attachments"][1]["kind"], "scatter")
+        self.assertEqual(post["attachments"][3]["spec"]["mark"], "line")
+        bad = [
+            [{"type": "heatmap", "rows": ["a"], "cols": ["x", "y"], "values": [[1]]}],
+            [{"type": "heatmap", "rows": ["a"] * 21, "cols": ["x"], "values": [[1]] * 21}],
+            [{"type": "diagram", "text": "   "}],
+            [{"type": "diagram", "text": "\n".join(["a --> b"] * 81)}],
+            [{"type": "vega", "spec": {"data": {"url": "https://evil.example/data.json"}, "mark": "line"}}],
+            [{"type": "vega", "spec": {"mark": {"type": "text", "href": "https://evil.example"}}}],
+            [{"type": "vega", "spec": {"$schema": "https://vega.github.io/schema/vega/v5.json", "marks": []}}],
+            [{"type": "vega", "spec": {"data": {"values": [{"x": i} for i in range(4000)]}, "mark": "line"}}],
+        ]
+        for attachments in bad:
+            with self.assertRaises(ValidationError, msg=str(attachments)[:80]):
+                self.call("feed.post", project_id=self.pid, handle="Ansible", text="x", attachments=attachments)
+
+    def test_figure_attachment_must_name_a_figure_in_the_project(self) -> None:
+        self._register()
+        seen = []
+        def lookup(project_id, artifact_id, path):
+            seen.append((project_id, artifact_id, path))
+            return artifact_id == "art_ok" and path == "figures/curve.png"
+        self.app.feed.figure_lookup = lookup
+        try:
+            post = self.call(
+                "feed.post", project_id=self.pid, handle="Ansible", text="the curve I already made",
+                attachments=[{"type": "figure", "artifact_id": "art_ok", "path": "figures/curve.png", "caption": "val loss"}],
+            )["post"]
+            self.assertEqual(post["attachments"][0], {"type": "figure", "artifact_id": "art_ok", "path": "figures/curve.png", "caption": "val loss"})
+            self.assertEqual(seen[-1], (self.pid, "art_ok", "figures/curve.png"))
+            with self.assertRaises(ValidationError):
+                self.call(
+                    "feed.post", project_id=self.pid, handle="Ansible", text="x",
+                    attachments=[{"type": "figure", "artifact_id": "art_missing", "path": "figures/curve.png"}],
+                )
+            # Inside a thread too.
+            with self.assertRaises(ValidationError):
+                self.call(
+                    "feed.post", project_id=self.pid, handle="Ansible", text="x",
+                    thread=[{"text": "y", "attachments": [{"type": "figure", "artifact_id": "nope", "path": "p.png"}]}],
+                )
+        finally:
+            self.app.feed.figure_lookup = None
+        with self.assertRaises(ValidationError):
+            self.call(
+                "feed.post", project_id=self.pid, handle="Ansible", text="x",
+                attachments=[{"type": "figure", "artifact_id": "art_ok", "path": "figures/curve.png"}],
+            )
+
     def test_attachment_validation_rejects_bad_shapes(self) -> None:
         self._register()
         bad = [
@@ -834,6 +894,53 @@ class FeedHttpTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+
+    def test_figure_attachment_reuses_a_submitted_artifact_figure_end_to_end(self) -> None:
+        from tests.support.brain import upload_token
+
+        exp = self.app.call_tool(
+            "experiment.create",
+            {"project_id": self.pid, "name": "figure-reuse", "intent": "Feed figure reuse."},
+        )
+        plan = self.app.submit_artifact(
+            project_id=self.pid,
+            target_type="experiment",
+            target_id=exp["id"],
+            role="plan",
+            path="plans/plan.md",
+            body=(
+                "## Summary\nPlan with a curve.\n\n![curve](figures/curve.png)\n\n"
+                "## Objective & hypothesis\nReuse the figure in the feed.\n\n"
+                "## Evaluation\nThe feed serves the same bytes.\n"
+            ),
+        )
+        figure = plan["figures"][0]
+        # Before the bytes land the figure is unavailable, so the post is refused.
+        with self.assertRaises(ValidationError):
+            self.app.call_tool(
+                "feed.post",
+                {
+                    "project_id": self.pid, "handle": "Nova-7", "text": "the curve",
+                    "attachments": [{"type": "figure", "artifact_id": plan["artifact_id"], "path": "figures/curve.png"}],
+                },
+            )
+        self.app.upload_artifact_bytes(token=upload_token(figure["run"]), data=_PNG, kind="f")
+        post = self.app.call_tool(
+            "feed.post",
+            {
+                "project_id": self.pid, "handle": "Nova-7", "text": "the curve I already made",
+                "attachments": [{"type": "figure", "artifact_id": plan["artifact_id"], "path": "figures/curve.png"}],
+            },
+        )["post"]
+        listed = self.client.get(f"/api/projects/{self.pid}/feed").json()["posts"][0]
+        self.assertEqual(listed["id"], post["id"])
+        url = listed["attachments"][0]["url"]
+        self.assertEqual(
+            url, f"/api/projects/{self.pid}/artifacts/{plan['artifact_id']}/figure?rel=figures%2Fcurve.png"
+        )
+        served = self.client.get(url)
+        self.assertEqual(served.status_code, 200)
+        self.assertEqual(served.content, _PNG)
 
     def test_reaction_endpoint_returns_updated_post_view(self) -> None:
         post_id = self.app.call_tool(

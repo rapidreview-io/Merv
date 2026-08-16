@@ -119,6 +119,9 @@ class Surface:
             store=store,
             blobs=blobs,
             web_preview=NetworkWebPreview(),
+            figure_lookup=lambda project_id, artifact_id, path: self.artifacts.figure(
+                project_id=project_id, artifact_id=artifact_id, link_path=path
+            ) is not None,
         )
         self.literature = Literature(store=store, unfurl=AllowlistedPaperPreview())
         self.agent_sessions = AgentSessions(

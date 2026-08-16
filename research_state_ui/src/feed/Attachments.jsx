@@ -1,9 +1,16 @@
+import { lazy, Suspense } from 'react';
+import { useAuthedImage } from './useAuthedImage';
+
 /**
  * Native post attachments, drawn by the UI from the data in the post so they
  * sit in the design system on both themes: a stat (one number), a chart
- * (line/bars), a table, and a log block. Every attachment lives in the same
- * soft well; the type decides the renderer, not the frame.
+ * (line/bars/scatter), a heatmap, a table, a log block, a Mermaid diagram, a
+ * Vega-Lite chart, and a figure reused from an artifact. Every attachment
+ * lives in the same soft well; the type decides the renderer, not the frame.
+ * Vega and Mermaid load lazily — the feed pays for them only when needed.
  */
+const VegaBlock = lazy(() => import('./VegaBlock'));
+const DiagramBlock = lazy(() => import('./DiagramBlock'));
 
 function Stat({ a }) {
   return (
@@ -73,7 +80,7 @@ function Legend({ series }) {
   );
 }
 
-function LineChart({ a }) {
+function LineChart({ a, scatter = false }) {
   const series = a.series || [];
   const xs = series.flatMap((s) => s.points.map((p) => p[0]));
   const ys = series.flatMap((s) => s.points.map((p) => p[1]));
@@ -100,6 +107,7 @@ function LineChart({ a }) {
         <text key={`x${t}`} className="pa-ax" x={sx(t)} y={H - PAD.b + 14} textAnchor="middle">{fmt(t)}</text>
       ))}
       {a.x_label && <text className="pa-ax" x={(PAD.l + W - PAD.r) / 2} y={H - 4} textAnchor="middle">{a.x_label}</text>}
+      {a.y_label && <text className="pa-ax" x={10} y={PAD.t + 4} textAnchor="start">{a.y_label}</text>}
       {a.ref_line && (
         <g>
           <line className="pa-ref" x1={PAD.l} x2={W - PAD.r} y1={sy(a.ref_line.value)} y2={sy(a.ref_line.value)} />
@@ -110,9 +118,9 @@ function LineChart({ a }) {
       )}
       {series.map((s, i) => (
         <g key={i} className={SERIES_CLASS[i % SERIES_CLASS.length]}>
-          <polyline className="pa-line" points={s.points.map((p) => `${sx(p[0])},${sy(p[1])}`).join(' ')} />
-          {s.points.length <= 24 && s.points.map((p, j) => (
-            <circle key={j} className="pa-dot" cx={sx(p[0])} cy={sy(p[1])} r="2.6" />
+          {!scatter && <polyline className="pa-line" points={s.points.map((p) => `${sx(p[0])},${sy(p[1])}`).join(' ')} />}
+          {(scatter || s.points.length <= 24) && s.points.map((p, j) => (
+            <circle key={j} className={scatter ? 'pa-dot pa-dot--scatter' : 'pa-dot'} cx={sx(p[0])} cy={sy(p[1])} r={scatter ? 3.4 : 2.6} />
           ))}
         </g>
       ))}
@@ -193,7 +201,7 @@ function Chart({ a }) {
           {a.unit && <span>{a.unit}</span>}
         </p>
       )}
-      {a.kind === 'bars' ? <BarsChart a={a} /> : <LineChart a={a} />}
+      {a.kind === 'bars' ? <BarsChart a={a} /> : <LineChart a={a} scatter={a.kind === 'scatter'} />}
       <Legend series={a.series || []} />
     </div>
   );
@@ -228,7 +236,90 @@ function Log({ a }) {
   );
 }
 
-const RENDERERS = { stat: Stat, chart: Chart, table: Table, log: Log };
+// A matrix as cells on a single-hue ramp: the design system's steel mixed
+// into the well's surface, so it reads on both themes without a colormap.
+function Heatmap({ a }) {
+  const flat = a.values.flat();
+  const vmin = a.vmin ?? Math.min(...flat);
+  const vmax = a.vmax ?? Math.max(...flat);
+  const span = vmax - vmin || 1;
+  const cols = a.cols.length;
+  const rows = a.rows.length;
+  const labelW = 64;
+  const cellW = Math.max(28, Math.min(64, (W - labelW - 8) / cols));
+  const cellH = cols > 12 || rows > 12 ? 20 : 26;
+  const width = labelW + cellW * cols + 8;
+  const height = 22 + cellH * rows;
+  const annotate = a.annotate ?? (cols <= 10 && rows <= 10);
+  return (
+    <div className="pa pa-chart pa-heatmap">
+      {(a.title || a.unit) && (
+        <p className="pa-chart-t"><b>{a.title}</b>{a.unit && <span>{a.unit}</span>}</p>
+      )}
+      <svg viewBox={`0 0 ${width} ${height}`} className="pa-chart-svg" role="img" aria-label={a.title || 'heatmap'}>
+        {a.cols.map((c, ci) => (
+          <text key={`c${ci}`} className="pa-ax" x={labelW + cellW * (ci + 0.5)} y={13} textAnchor="middle">{c}</text>
+        ))}
+        {a.rows.map((r, ri) => (
+          <g key={`r${ri}`}>
+            <text className="pa-ax" x={labelW - 8} y={22 + cellH * (ri + 0.5) + 3.5} textAnchor="end">{r}</text>
+            {a.values[ri].map((v, ci) => {
+              const t = Math.max(0, Math.min(1, (v - vmin) / span));
+              const pct = Math.round(8 + t * 84);
+              return (
+                <g key={`c${ci}`}>
+                  <rect
+                    className="pa-cell"
+                    x={labelW + cellW * ci + 1} y={22 + cellH * ri + 1} width={cellW - 2} height={cellH - 2} rx="2"
+                    style={{ fill: `color-mix(in oklab, var(--steel) ${pct}%, var(--bg-soft))` }}
+                  />
+                  {annotate && (
+                    <text
+                      className={`pa-cell-v${t > 0.55 ? ' pa-cell-v--light' : ''}`}
+                      x={labelW + cellW * (ci + 0.5)} y={22 + cellH * (ri + 0.5) + 3.5} textAnchor="middle"
+                    >
+                      {fmt(v)}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+// A figure already submitted with an artifact, served through the artifact
+// figure route the brain enriched onto the attachment (authed fetch).
+function Figure({ a }) {
+  const image = useAuthedImage(a.url);
+  if (image.failed) return <p className="pa-vega-note">figure unavailable: {a.path}</p>;
+  return (
+    <figure className="pa-figure">
+      <div className="postcard-media">
+        {image.url && <img src={image.url} alt={a.caption || a.path} className="postcard-image is-loaded" />}
+      </div>
+      <figcaption className="pa-cap">{a.caption || a.path}</figcaption>
+    </figure>
+  );
+}
+
+function Lazy({ children }) {
+  return <Suspense fallback={<div className="pa"><p className="pa-vega-note">loading…</p></div>}>{children}</Suspense>;
+}
+
+const RENDERERS = {
+  stat: Stat,
+  chart: Chart,
+  heatmap: Heatmap,
+  table: Table,
+  log: Log,
+  figure: Figure,
+  diagram: (props) => <Lazy><DiagramBlock {...props} /></Lazy>,
+  vega: (props) => <Lazy><VegaBlock {...props} /></Lazy>,
+};
 
 export default function Attachments({ items }) {
   if (!items || !items.length) return null;

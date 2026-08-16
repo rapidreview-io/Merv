@@ -18,14 +18,22 @@ from ..kernel.utils import ValidationError
 
 MAX_ATTACHMENTS = 4
 MAX_NATIVE_BYTES = 4096
-NATIVE_TYPES = frozenset({"stat", "chart", "table", "log"})
+# A Vega-Lite spec carries its data inline, so it gets a bigger budget.
+MAX_VEGA_BYTES = 20_000
+NATIVE_TYPES = frozenset({"stat", "chart", "table", "log", "heatmap", "diagram", "vega"})
 UPLOAD_TYPES = frozenset({"image", "embed"})
-ATTACHMENT_TYPES = NATIVE_TYPES | UPLOAD_TYPES | {"link"}
-CHART_KINDS = frozenset({"line", "bars"})
+# `figure` references a figure already submitted with an artifact; the feed
+# service checks it exists in the project before accepting the post.
+ATTACHMENT_TYPES = NATIVE_TYPES | UPLOAD_TYPES | {"link", "figure"}
+CHART_KINDS = frozenset({"line", "bars", "scatter"})
 
 _MAX_SERIES = 6
 _MAX_POINTS = 64
+_MAX_SCATTER_POINTS = 200
 _MAX_BARS = 12
+_MAX_HEATMAP_SIDE = 20
+_MAX_DIAGRAM_CHARS = 4000
+_MAX_DIAGRAM_LINES = 80
 _MAX_TABLE_COLUMNS = 8
 _MAX_TABLE_ROWS = 20
 _MAX_LOG_LINES = 40
@@ -89,12 +97,13 @@ def _chart(raw: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(item, dict):
             raise ValidationError(f"chart.series[{index}] must be an object")
         name = _text(item.get("name"), field=f"chart.series[{index}].name", limit=40)
-        if kind == "line":
+        if kind in ("line", "scatter"):
             points_raw = item.get("points")
             if not isinstance(points_raw, list) or not points_raw:
                 raise ValidationError(f"chart.series[{index}].points must be a non-empty list of [x, y]")
-            if len(points_raw) > _MAX_POINTS:
-                raise ValidationError(f"a line series holds at most {_MAX_POINTS} points")
+            cap = _MAX_SCATTER_POINTS if kind == "scatter" else _MAX_POINTS
+            if len(points_raw) > cap:
+                raise ValidationError(f"a {kind} series holds at most {cap} points")
             points = []
             for point in points_raw:
                 if not isinstance(point, (list, tuple)) or len(point) != 2:
@@ -128,7 +137,7 @@ def _chart(raw: dict[str, Any]) -> dict[str, Any]:
         if any(len(s["values"]) != len(labels) for s in series):
             raise ValidationError("every bars series must have one value per label")
         out["labels"] = labels
-    for key, limit in (("unit", 12), ("x_label", 24)):
+    for key, limit in (("unit", 12), ("x_label", 24), ("y_label", 24)):
         text = _text(raw.get(key), field=f"chart.{key}", limit=limit)
         if text:
             out[key] = text
@@ -148,7 +157,7 @@ def _chart(raw: dict[str, Any]) -> dict[str, Any]:
         p_idx = int(_number(hero.get("index"), field="chart.hero.index"))
         if not 0 <= s_idx < len(series):
             raise ValidationError("chart.hero.series is out of range")
-        length = len(series[s_idx]["points" if kind == "line" else "values"])
+        length = len(series[s_idx]["points" if kind in ("line", "scatter") else "values"])
         if not 0 <= p_idx < length:
             raise ValidationError("chart.hero.index is out of range")
         out["hero"] = {"series": s_idx, "index": p_idx}
@@ -207,6 +216,90 @@ def _log(raw: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _heatmap(raw: dict[str, Any]) -> dict[str, Any]:
+    rows_raw, cols_raw, values_raw = raw.get("rows"), raw.get("cols"), raw.get("values")
+    if not isinstance(rows_raw, list) or not rows_raw or not isinstance(cols_raw, list) or not cols_raw:
+        raise ValidationError("heatmap.rows and heatmap.cols must be non-empty lists of labels")
+    if len(rows_raw) > _MAX_HEATMAP_SIDE or len(cols_raw) > _MAX_HEATMAP_SIDE:
+        raise ValidationError(f"a heatmap holds at most {_MAX_HEATMAP_SIDE}×{_MAX_HEATMAP_SIDE} cells")
+    rows = [_text(v, field="heatmap.rows", limit=24, required=True) for v in rows_raw]
+    cols = [_text(v, field="heatmap.cols", limit=24, required=True) for v in cols_raw]
+    if not isinstance(values_raw, list) or len(values_raw) != len(rows):
+        raise ValidationError("heatmap.values must hold one list of numbers per row")
+    values = []
+    for row in values_raw:
+        if not isinstance(row, list) or len(row) != len(cols):
+            raise ValidationError("every heatmap.values row must have one number per column")
+        values.append([_number(v, field="heatmap.values") for v in row])
+    out: dict[str, Any] = {"type": "heatmap", "rows": rows, "cols": cols, "values": values}
+    for key, limit in (("title", 80), ("unit", 12)):
+        text = _text(raw.get(key), field=f"heatmap.{key}", limit=limit)
+        if text:
+            out[key] = text
+    for key in ("vmin", "vmax"):
+        if raw.get(key) is not None:
+            out[key] = _number(raw.get(key), field=f"heatmap.{key}")
+    if raw.get("annotate") is not None:
+        out["annotate"] = bool(raw.get("annotate"))
+    return out
+
+
+def _diagram(raw: dict[str, Any]) -> dict[str, Any]:
+    text = raw.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise ValidationError("diagram.text (Mermaid source) is required")
+    text = text.strip()
+    if len(text) > _MAX_DIAGRAM_CHARS:
+        raise ValidationError(f"diagram.text is over {_MAX_DIAGRAM_CHARS} characters")
+    if text.count("\n") + 1 > _MAX_DIAGRAM_LINES:
+        raise ValidationError(f"diagram.text holds at most {_MAX_DIAGRAM_LINES} lines")
+    return {"type": "diagram", "text": text}
+
+
+_VEGA_FORBIDDEN_KEYS = frozenset({"url", "href", "usermeta", "loader"})
+
+
+def _vega_scan(node: Any, path: str = "spec") -> None:
+    """Refuse anything that would reach outside the spec: remote data or
+    images (``url``), click-outs (``href``), and loader hooks."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in _VEGA_FORBIDDEN_KEYS:
+                raise ValidationError(
+                    f"vega spec may not use '{key}' ({path}.{key}); inline the data with data.values"
+                )
+            _vega_scan(value, f"{path}.{key}")
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            _vega_scan(value, f"{path}[{index}]")
+
+
+def _vega(raw: dict[str, Any]) -> dict[str, Any]:
+    spec = raw.get("spec")
+    if not isinstance(spec, dict) or not spec:
+        raise ValidationError("vega.spec must be a Vega-Lite spec object with inline data.values")
+    schema = str(spec.get("$schema") or "")
+    if schema and "vega-lite" not in schema:
+        raise ValidationError("vega.spec must be a Vega-Lite spec (schema vega-lite/v5 or v6)")
+    if len(json.dumps(spec, separators=(",", ":"))) > MAX_VEGA_BYTES:
+        raise ValidationError(f"vega.spec is over {MAX_VEGA_BYTES} bytes; thin the data")
+    _vega_scan(spec)
+    out: dict[str, Any] = {"type": "vega", "spec": spec}
+    title = _text(raw.get("title"), field="vega.title", limit=80)
+    if title:
+        out["title"] = title
+    return out
+
+
+def _figure(raw: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "figure",
+        "artifact_id": _text(raw.get("artifact_id"), field="figure.artifact_id", limit=64, required=True),
+        "path": _text(raw.get("path"), field="figure.path", limit=512, required=True),
+        "caption": _text(raw.get("caption"), field="figure.caption", limit=120),
+    }
+
+
 def normalize_attachments(
     raw: Any,
     *,
@@ -246,10 +339,14 @@ def normalize_attachments(
                 raise ValidationError("a post may carry one link; put more in a thread")
             link_url = link
         else:
-            builder = {"stat": _stat, "chart": _chart, "table": _table, "log": _log}[kind]
+            builder = {
+                "stat": _stat, "chart": _chart, "table": _table, "log": _log,
+                "heatmap": _heatmap, "diagram": _diagram, "vega": _vega, "figure": _figure,
+            }[kind]
             built = builder(item)
-            if len(json.dumps(built, separators=(",", ":"))) > MAX_NATIVE_BYTES:
-                raise ValidationError(f"attachments[{index}] is over {MAX_NATIVE_BYTES} bytes")
+            cap = MAX_VEGA_BYTES if kind == "vega" else MAX_NATIVE_BYTES
+            if len(json.dumps(built, separators=(",", ":"))) > cap:
+                raise ValidationError(f"attachments[{index}] is over {cap} bytes")
             native.append(built)
     return NormalizedAttachments(
         native=tuple(native),
