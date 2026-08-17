@@ -39,6 +39,7 @@ from merv.brain.surface.tools.dispatcher import ToolDispatcher
 
 BASE_PUBLIC_TOOLS = frozenset(
     {
+        "agent.hello",
         "artifact.find",
         "artifact.submit",
         "candidate.list",
@@ -102,6 +103,7 @@ TRACKING_PUBLIC_TOOLS = frozenset({"mlflow.context", "mlflow.finalize_run"})
 # position, and strict additional-property behavior remain part of the wire
 # contract.
 TOOL_INPUT_SCHEMA_SHA256 = {
+    "agent.hello": "cb3195328ef9d7ec6b078452696b790e81e25d84b559f0cb97a08668213aec3c",
     "artifact.find": "ac17e7ab19d57565b569c8fac1b0d3cb7558d6707ba134bf4148262b9e7361e2",
     "artifact.submit": "6a0d7b13ad955492a130b31655449efa534ed3cf3316c50053bfa70278da9b2e",
     "candidate.list": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
@@ -269,7 +271,9 @@ class ToolContractRegistryTest(unittest.TestCase):
         }
         self.assertEqual(by_scope["caller-selected"], {"project"})
         self.assertEqual(by_scope["capability"], {"review.start", "review.submit"})
-        self.assertEqual(by_scope["none"], {"project.list", "sandbox.health"})
+        self.assertEqual(
+            by_scope["none"], {"agent.hello", "project.list", "sandbox.health"}
+        )
         self.assertEqual(
             by_scope["linked-project"],
             set(TOOL_MANIFEST)

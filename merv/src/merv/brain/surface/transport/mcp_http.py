@@ -22,7 +22,9 @@ from .mcp_streamable_http import (
     RefusalLedger,
     RequestBodyTooLarge,
     ScopeAuthorizer,
+    SessionRecorder,
     read_limited_mcp_body,
+    with_agent_id_argument,
 )
 
 ToolCatalog = Callable[[], list[dict[str, Any]]]
@@ -43,6 +45,8 @@ def register_mcp_routes(
     authorize: Authorizer | None = None,
     authorize_scope: ScopeAuthorizer | None = None,
     ledger: RefusalLedger | None = None,
+    record_session: SessionRecorder | None = None,
+    agent_identity: str | None = None,
 ) -> None:
     def check_authorized(authorization: str | None) -> None:
         if authorize is not None:
@@ -52,7 +56,10 @@ def register_mcp_routes(
         tools = list_tools()
         if allow_tool is not None:
             tools = [tool for tool in tools if allow_tool(tool)]
-        return [tool for tool in tools if not tool.get("hidden")]
+        visible = [tool for tool in tools if not tool.get("hidden")]
+        if agent_identity is None:
+            return visible
+        return with_agent_id_argument(visible, required=agent_identity == "required")
 
     @http.get("/mcp/tools")
     def mcp_tools_list(
@@ -121,4 +128,6 @@ def register_mcp_routes(
         authorize=authorize,
         authorize_scope=authorize_scope,
         ledger=ledger,
+        record_session=record_session,
+        agent_identity=agent_identity,
     ).register(http)

@@ -122,6 +122,43 @@ class WorkflowStatusAndNextInput(ProjectScopedInput):
     experiment_id: str | None = None
 
 
+class AgentHelloInput(ContractModel):
+    """Mint (or confirm) the agent_id this context window carries on every call.
+
+    Kept tiny on purpose: the whole point of the id is that carrying it costs
+    the model a handful of tokens per call.
+    """
+
+    agent_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Only if this context window already has an agent_id: pass it to "
+            "confirm it instead of minting a second one."
+        ),
+    )
+    role: str = Field(
+        default="",
+        max_length=64,
+        description=(
+            "Optional self-description: main, subagent, reviewer, lens, worker."
+        ),
+    )
+    parent_agent_id: str = Field(
+        default="",
+        max_length=64,
+        description=(
+            "Optional: the agent_id of the context that spawned this one, if "
+            "it told you."
+        ),
+    )
+    note: str = Field(
+        default="",
+        max_length=200,
+        description="Optional one-line note about what this context is doing.",
+    )
+
+
 class ProjectInput(ContractModel):
     """The one agent-facing project tool: list / current / create / overview."""
 
@@ -1212,6 +1249,22 @@ class LitreviewCiteInput(ProjectScopedInput):
 
 
 TOOL_MANIFEST: dict[str, ToolManifest] = {
+    "agent.hello": ToolContract(
+        handler_identity="agents.hello",
+        scope_strategy="none",
+        input_model=AgentHelloInput,
+        description=(
+            "Call ONCE at the start of a context window, before any other Merv "
+            "call: returns the short agent_id that identifies this context "
+            "window (this conversation, or this subagent) to Merv. Every other "
+            "Merv tool requires that agent_id as an argument, so Merv can "
+            "attribute what each agent did and was told. Never share an "
+            "agent_id across contexts; a subagent must call agent.hello "
+            "itself. If you already have one from earlier in this context, "
+            "keep using it (or pass it here to confirm) instead of minting "
+            "another."
+        ),
+    ),
     "workflow.status_and_next": ToolContract(
         handler_identity="application.status_for_agent",
         input_model=WorkflowStatusAndNextInput,

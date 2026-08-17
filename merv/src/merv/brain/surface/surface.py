@@ -55,7 +55,11 @@ from ..kernel.ports.blob_store import BlobStore, EvidenceBlobStore
 from ..kernel.ports.mgmt_keys import MgmtKeyStore
 from ..kernel.secret_tokens import load_wait_secret
 from ..kernel.state import BaseStateStore
-from ..kernel.state.tool_call_ledger import ToolCallLedger
+from ..kernel.state.tool_call_ledger import (
+    ToolCallLedger,
+    configured_retention_days,
+)
+from ..kernel.state.tool_call_payloads import ToolCallPayloadStore
 from ..kernel.utils import ValidationError
 from ..object_storage import ObjectStorage
 from ..sandbox import DisabledSandboxBackend, SandboxBackend, SandboxEngine
@@ -66,6 +70,7 @@ from ..sandbox.adapters import (
     configured_backend_names,
 )
 from ..sandbox.keys import LocalMgmtKeyStore, MountedMgmtKeyStore
+from .agent_identity import AgentIdentities, resolve_agent_identity_mode
 from .artifacts import ArtifactTools
 from .auth import SupabaseVerifier
 from .oauth import OAuthService
@@ -97,6 +102,7 @@ class Surface:
         sandbox_enabled: bool = True,
         force_expiry_reaper: bool = False,
         structured_logging: bool = False,
+        agent_identity_mode: str = "required",
     ) -> None:
         self._store = store
         self._blobs = blobs
@@ -105,8 +111,19 @@ class Surface:
         self.storage = storage if storage.enabled else None
         self.activity = ControlActivitySink()
         self.tool_calls = ControlToolCallSink()
-        self.tool_ledger = ToolCallLedger(store=store, on_failure=self._ledger_dropped)
+        # Agent-attributed request/response records ride the same blob store
+        # as Artifacts and Feed bytes (disk or bucket, never RAM), and expire on
+        # the ledger's horizon.
+        self.tool_payloads = ToolCallPayloadStore(
+            blobs=blobs, retention_days=configured_retention_days()
+        )
+        self.tool_ledger = ToolCallLedger(
+            store=store, on_failure=self._ledger_dropped, payloads=self.tool_payloads
+        )
         self.tool_ledger.start_retention()
+        self.agent_identities = AgentIdentities(
+            store=store, mode=agent_identity_mode, payloads=self.tool_payloads
+        )
         self.structured_log = StructuredLogger(enabled=structured_logging)
 
         self.artifacts = Artifacts(
@@ -164,6 +181,7 @@ class Surface:
             sandbox_enabled=sandbox_enabled,
         )
         tool_owners = {
+            "agents": self.agent_identities,
             "application": self.application,
             "research": self.research,
             "artifact_submissions": self.artifact_tools,
@@ -303,6 +321,7 @@ def build_control_app(
         # forces the expiry reaper on in both deployment presets.
         force_expiry_reaper=True,
         structured_logging=not local_deployment,
+        agent_identity_mode=resolve_agent_identity_mode(env),
     )
     # A brain restart with live VMs must re-acquire reaping. Surface has
     # already started its SandboxEngine; this reconciles rows left running.

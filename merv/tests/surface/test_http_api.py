@@ -23,6 +23,7 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
         self.backend = FakeSandboxBackend()
+        # Not an identity test: agent_id is merely recorded here (see test_agent_identity.py).
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
@@ -30,6 +31,7 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
             # This legacy compatibility suite explicitly opts into the dormant
             # adapter. Product/default composition intentionally does not.
             mlflow_tracking=CentralMlflowService(),
+            env={"MERV_AGENT_IDENTITY": "optional"},
         )
         self.client = TestClient(create_fastapi_app(self.app))
 

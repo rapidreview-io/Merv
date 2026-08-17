@@ -160,6 +160,10 @@ FILE_LAYERS = {
     "surface/runner_pairing.py": APPLICATION_LAYER,
     "surface/oauth.py": APPLICATION_LAYER,
     "surface/oauth_store.py": ADAPTER,
+    # Agent context-window identity (agent.hello ids, per-call attribution,
+    # trace reads): the analog of project_keys.py — surface-owned rows, one
+    # writer, injected into the gateway and the operator router.
+    "surface/agent_identity.py": APPLICATION_LAYER,
     # Write-only per-user HF-token facade over the KERNEL-owned user_hf_tokens
     # store methods (no-dataplane Phase C); the analog of project_keys.py.
     "surface/user_settings.py": APPLICATION_LAYER,
@@ -212,6 +216,11 @@ TABLE_OWNERS = {
     "oauth_clients": SURFACE,
     "oauth_authorization_codes": SURFACE,
     "oauth_refresh_tokens": SURFACE,
+    # Agent context-window identities and the MCP transport sessions they
+    # were minted under: surface-owned like project_api_keys, read (never
+    # written) beside the kernel tool_calls ledger for traces.
+    "agent_identities": SURFACE,
+    "mcp_sessions": SURFACE,
     "events": KERNEL,
     # Written from the surface dispatcher through a kernel-owned ledger, the
     # same shape as events: kernel owns the table, everyone feeds it.

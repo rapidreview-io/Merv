@@ -93,6 +93,15 @@ sandboxes, expires submitted blobs and heavy objects, and recovers stale
 provisioning records. It does not discover arbitrary provider VMs that have no
 durable Merv row.
 
+The tool-call ledger and its per-call payload records (see
+[AGENT_IDENTITY.md](AGENT_IDENTITY.md)) prune themselves on the brain's own
+hourly timer at `MERV_TOOL_CALL_RETENTION_DAYS` (default 180); the cleanup
+pass is a second net for their blobs. Agent traces are read at
+`GET /api/admin/agents` and `GET /api/admin/agents/{agent_id}?payloads=true`
+with the operator token. `MERV_AGENT_IDENTITY=optional` stops the brain from
+demanding an `agent_id` on MCP calls (it still records one when supplied);
+leave it unset in production.
+
 Sandbox admission and spend policy can enforce concurrency, duration, price,
 GPU-hour, and USD limits. Keep the provider consoles and billing alerts as an
 independent safety net.

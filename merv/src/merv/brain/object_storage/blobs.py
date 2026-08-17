@@ -59,6 +59,10 @@ class LocalDirBlobStore:
             raise NotFoundError(f"blob not found: {namespace}/{sha256}")
         return blob_path.read_bytes()
 
+    def delete(self, *, namespace: str, sha256: str) -> bool:
+        """Remove one blob (and its metadata); True if it existed."""
+        return self._delete(namespace=namespace, sha256=sha256)
+
     def _delete(self, *, namespace: str, sha256: str) -> bool:
         validate_blob_keys(namespace=namespace, sha256=sha256)
         blob_path = self._blob_path(namespace=namespace, sha256=sha256)

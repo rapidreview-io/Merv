@@ -233,6 +233,7 @@ off cloud providers.
 - [docs/MCP_SERVER_CONTRACT.md](docs/MCP_SERVER_CONTRACT.md) - MCP tools and contracts
 - [docs/WORKFLOW_AND_REVIEW.md](docs/WORKFLOW_AND_REVIEW.md) - workflow gates and reviews
 - [docs/REVIEW_IDENTITY.md](docs/REVIEW_IDENTITY.md) - reviewer session and capability boundary
+- [docs/AGENT_IDENTITY.md](docs/AGENT_IDENTITY.md) - per-context-window `agent_id`, attributed tool-call ledger, and payload traces
 - [src/merv/brain/artifacts/artifacts.md](src/merv/brain/artifacts/artifacts.md) - submitted-artifact lifecycle
 - [src/merv/brain/object_storage/object_storage.md](src/merv/brain/object_storage/object_storage.md) - durable heavy-object storage
 - [docs/UI_API.md](docs/UI_API.md) - frontend HTTP API

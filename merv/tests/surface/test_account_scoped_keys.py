@@ -153,10 +153,12 @@ class AccountKeyOverTheWireTest(unittest.TestCase):
         self._bearer = _bearer
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
+        # Not an identity test: agent_id is merely recorded here (see test_agent_identity.py).
         self.app = TestBrain(
             repo_root=root,
             db_path=root / "state.sqlite",
             execution_backend=FakeSandboxBackend(),
+            env={"MERV_AGENT_IDENTITY": "optional"},
         )
         self.keys = ProjectKeys(store=self.app.store)
         self.verifier = SupabaseVerifier(

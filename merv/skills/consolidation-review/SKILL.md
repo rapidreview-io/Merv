@@ -14,6 +14,9 @@ is authoritative and cannot be reopened from this gate.
 
 ## Start the pinned review
 
+Call `agent.hello` once first — this review is its own context window — and pass
+the returned `agent_id` in every Merv call that follows.
+
 Use the assigned `review_request_id` with `review.start`. In an assigned agent
 session, pass `reviewer_capability="assigned"` and
 `caller_session_id="assigned"`. Otherwise use the exact handoff values and a

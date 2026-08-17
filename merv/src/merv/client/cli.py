@@ -23,6 +23,10 @@ from merv.shared.client_config import (
 )
 from .storage_upload import StorageUploadError, upload_storage_file
 
+# The context window's agent_id (from agent.hello), for `merv call` from a
+# shell that cannot carry it any other way.
+AGENT_ID_ENV_VAR = "MERV_AGENT_ID"
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
@@ -74,6 +78,14 @@ def _parser() -> argparse.ArgumentParser:
         "--arguments",
         default="{}",
         help="Tool arguments as one JSON object.",
+    )
+    call.add_argument(
+        "--agent-id",
+        default=None,
+        help=(
+            "This context window's agent_id from agent.hello (defaults to "
+            f"${AGENT_ID_ENV_VAR}); required by every tool but agent.hello."
+        ),
     )
     call.set_defaults(func=_cmd_call)
 
@@ -214,6 +226,10 @@ def _cmd_call(args: argparse.Namespace) -> int:
         raise ClientError("--arguments must be valid JSON") from exc
     if not isinstance(arguments, dict):
         raise ClientError("--arguments must be a JSON object")
+    # The agent_id rides as an ordinary argument; the brain lifts it out.
+    agent_id = args.agent_id or os.environ.get(AGENT_ID_ENV_VAR) or ""
+    if agent_id and args.tool != "agent.hello":
+        arguments.setdefault("agent_id", agent_id)
     secret = (
         os.environ.get(AGENT_SESSION_KEY_ENV_VAR)
         or os.environ.get("MERV_MCP_KEY")

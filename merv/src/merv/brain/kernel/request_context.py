@@ -19,10 +19,18 @@ from dataclasses import dataclass, replace
 
 @dataclass(frozen=True, slots=True)
 class RequestContext:
-    """Who is calling and under which request, for telemetry attribution."""
+    """Who is calling and under which request, for telemetry attribution.
+
+    ``agent_id`` names the agent context window (one model conversation) the
+    call came from — the short id minted by ``agent.hello`` — and
+    ``mcp_session_id`` the MCP transport session it rode in on. Both are
+    empty for HTTP/UI calls and for MCP calls that never identified.
+    """
 
     request_id: str = ""
     principal_id: str = ""
+    agent_id: str = ""
+    mcp_session_id: str = ""
 
 
 _EMPTY = RequestContext()
@@ -46,6 +54,24 @@ def bind_principal(*, principal_id: str) -> None:
     _CURRENT.set(replace(_CURRENT.get(), principal_id=principal_id))
 
 
+def bind_agent(*, agent_id: str = "", mcp_session_id: str = "") -> None:
+    """Name the agent context window (and transport session) behind this call.
+
+    Bound by the tool gateway once the call's ``agent_id`` has been resolved,
+    on the same thread that goes on to dispatch it, so the ledger writing the
+    call's row — and the payload record beside it — sees the attribution.
+    Empty values leave the current binding untouched.
+    """
+    current = _CURRENT.get()
+    _CURRENT.set(
+        replace(
+            current,
+            agent_id=agent_id or current.agent_id,
+            mcp_session_id=mcp_session_id or current.mcp_session_id,
+        )
+    )
+
+
 def reset_request(token: Token[RequestContext]) -> None:
     # A token minted in another Context cannot be reset; that is a torn-down
     # scope, not an error worth propagating out of a telemetry helper.
@@ -56,6 +82,7 @@ def reset_request(token: Token[RequestContext]) -> None:
 __all__ = [
     "RequestContext",
     "begin_request",
+    "bind_agent",
     "bind_principal",
     "current_request_context",
     "reset_request",

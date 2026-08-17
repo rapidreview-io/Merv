@@ -1,10 +1,14 @@
 """Durable tool-call ledger: one row per call and per pre-dispatch refusal.
 
-Sizes, digests, and outcomes ONLY. The in-memory rings keep serving the debug
-UI the raw request/response it drills into; this table exists so agent friction
-— retry loops, gate bounces, poll churn, per-tool latency and context bloat —
-survives a restart, and it must never grow into a second payload store
-(BACKEND_AUDIT §15.2).
+Sizes, digests, and outcomes ONLY in the table. The in-memory rings keep
+serving the debug UI the raw request/response it drills into; this table exists
+so agent friction — retry loops, gate bounces, poll churn, per-tool latency and
+context bloat — survives a restart, and it must never grow into a second
+payload store (BACKEND_AUDIT §15.2). The payload a call carried is instead
+written beside the row, as one blob in the content-addressed store
+(``tool_call_payloads``), and only for calls attributed to an agent context
+window; the row keeps its key in ``payload_ref`` and the retention sweep
+deletes blob and row together.
 
 Every write is fail-safe: a ledger failure is counted and announced through
 ``on_failure``, never raised into the call it was observing.
@@ -21,12 +25,15 @@ from typing import Any, Protocol
 
 from .activity import args_digest, error_head, ledger_label, payload_chars, target_of
 from .store import Connection
+from .tool_call_payloads import ToolCallPayloadStore
 from ..env import env_int
 from ..request_context import current_request_context
 from ..utils import format_iso, now_iso
 
 TOOL_CALL_RETENTION_DAYS_ENV_VAR = "MERV_TOOL_CALL_RETENTION_DAYS"
-DEFAULT_RETENTION_DAYS = 30
+# Rows and their payload records share one horizon: an agent's trace is kept
+# for half a year, then row and blob go together.
+DEFAULT_RETENTION_DAYS = 180
 # One DELETE removes at most this many rows, so retention never holds the write
 # lock for an unbounded span; one sweep runs at most this many of them, so a
 # backlog is actually cleared instead of merely reported as `more`.
@@ -57,6 +64,23 @@ LEDGER_MAX_CACHED_CONNECTIONS = 64
 LEDGER_CLOSE_TIMEOUT_SECONDS = 5.0
 
 _STATUSES = frozenset({"ok", "error", "rejected"})
+
+
+def configured_retention_days(*, env: Mapping[str, str] | None = None) -> int:
+    """The ledger horizon, shared by rows and their payload records.
+
+    A zero or negative horizon would delete the ledger it is protecting, so
+    the floor is one day.
+    """
+    return max(
+        1,
+        env_int(
+            TOOL_CALL_RETENTION_DAYS_ENV_VAR,
+            DEFAULT_RETENTION_DAYS,
+            env=env,
+            strict=False,
+        ),
+    )
 
 
 class LedgerBusy(RuntimeError):
@@ -145,20 +169,17 @@ class ToolCallLedger:
         retention_days: int | None = None,
         env: Mapping[str, str] | None = None,
         on_failure: DroppedRowSink | None = None,
+        payloads: ToolCallPayloadStore | None = None,
     ) -> None:
         self._store = store
-        configured = (
-            int(retention_days)
+        # Where an agent-attributed call's request/response record goes.
+        # Absent in narrow compositions: rows are still written, without refs.
+        self.payloads = payloads
+        self.retention_days = (
+            max(1, int(retention_days))
             if retention_days is not None
-            else env_int(
-                TOOL_CALL_RETENTION_DAYS_ENV_VAR,
-                DEFAULT_RETENTION_DAYS,
-                env=env,
-                strict=False,
-            )
+            else configured_retention_days(env=env)
         )
-        # A zero or negative horizon would delete the ledger it is protecting.
-        self.retention_days = max(1, configured)
         self._on_failure = on_failure
         self.failures = 0
         # The writer lock is also the handle-cache lock. That is the whole
@@ -348,6 +369,25 @@ class ToolCallLedger:
         received = (
             len(error or "") if status != "ok" else payload_chars(value=result)
         )
+        ts = now_iso()
+        agent_id = ledger_label(context.agent_id)
+        mcp_session_id = ledger_label(context.mcp_session_id)
+        payload_ref = self._write_payload(
+            ts=ts,
+            agent_id=agent_id,
+            request_id=ledger_label(context.request_id),
+            principal_id=ledger_label(context.principal_id),
+            mcp_session_id=mcp_session_id,
+            tool=ledger_label(tool),
+            source=ledger_label(source),
+            project_id=ledger_label(scope),
+            status=status,
+            duration_ms=duration_ms,
+            arguments=arguments,
+            result=result,
+            error=error,
+            error_code=ledger_label(error_code),
+        )
         # Every label is capped and scrubbed HERE, at the one writer, so no
         # transport can put a multi-kilobyte or token-bearing value into an
         # indexed column by forgetting to sanitize its own call site.
@@ -356,11 +396,12 @@ class ToolCallLedger:
             INSERT INTO tool_calls
               (ts, request_id, principal_id, tool, source, project_id,
                target_type, target_id, status, error_code, error_head,
-               duration_ms, sent_chars, received_chars, args_digest)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               duration_ms, sent_chars, received_chars, args_digest,
+               agent_id, mcp_session_id, payload_ref)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                now_iso(),
+                ts,
                 ledger_label(context.request_id),
                 ledger_label(context.principal_id),
                 ledger_label(tool),
@@ -375,8 +416,32 @@ class ToolCallLedger:
                 payload_chars(value=arguments),
                 int(received),
                 args_digest(arguments=arguments),
+                agent_id,
+                mcp_session_id,
+                payload_ref,
             ),
         )
+
+    def _write_payload(self, **facts: Any) -> str:
+        """The payload record's blob key, or "" when none is written.
+
+        Only agent-attributed calls get a record, and a payload failure never
+        costs the row: it is counted like a dropped row and the row goes in
+        with an empty ref, so the trace shows the call happened even when
+        what it carried could not be kept.
+        """
+        if self.payloads is None or not facts.get("agent_id"):
+            return ""
+        try:
+            return str(self.payloads.write(**facts) or "")
+        except Exception as exc:  # noqa: BLE001 -- the row must still be written
+            self.failures += 1
+            if self._on_failure is not None:
+                with suppress(Exception):
+                    self._on_failure(
+                        "payload: " + (error_head(error=str(exc)) or type(exc).__name__)
+                    )
+            return ""
 
     def _write(self, sql: str, params: tuple[Any, ...]) -> None:
         """One append, serialized and time-bounded.
@@ -508,6 +573,10 @@ class ToolCallLedger:
         deleted = int((row["expiring"] if row else 0) or 0)
         if boundary <= 0 or deleted <= 0:
             return 0, False
+        # Payload blobs go first, keyed straight off the rows about to leave:
+        # the rows are the only index to them, so a row deleted before its
+        # blob would orphan the blob until the namespace sweep found it.
+        self._delete_payloads(conn=conn, boundary=boundary, cutoff=cutoff)
         conn.execute(
             "DELETE FROM tool_calls WHERE id <= ? AND ts < ?", (boundary, cutoff)
         )
@@ -522,6 +591,31 @@ class ToolCallLedger:
         ).fetchone()
         return deleted, remaining is not None
 
+    def _delete_payloads(self, *, conn: Connection, boundary: int, cutoff: str) -> None:
+        """Delete every payload blob the expiring batch references.
+
+        Best-effort per blob: a store that cannot delete one key today must
+        not keep the whole batch of rows alive; the blob's own ``expires_at``
+        still gets it in the namespace sweep.
+        """
+        if self.payloads is None:
+            return
+        rows = conn.execute(
+            """
+            SELECT payload_ref FROM tool_calls
+            WHERE id <= ? AND ts < ? AND payload_ref <> ''
+            """,
+            (boundary, cutoff),
+        ).fetchall()
+        for row in rows:
+            ref = str(row["payload_ref"] or "")
+            if not ref:
+                continue
+            try:
+                self.payloads.delete(ref=ref)
+            except Exception:  # noqa: BLE001 -- one blob must not stall the sweep
+                self.failures += 1
+
 
 __all__ = [
     "DEFAULT_RETENTION_DAYS",
@@ -534,4 +628,5 @@ __all__ = [
     "TOOL_CALL_RETENTION_DAYS_ENV_VAR",
     "LedgerBusy",
     "ToolCallLedger",
+    "configured_retention_days",
 ]

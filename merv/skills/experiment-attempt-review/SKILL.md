@@ -13,6 +13,9 @@ plan. Treat the plan's Evaluation section as the pre-registered contract.
 
 ## Start read-only
 
+Call `agent.hello` once first — this review is its own context window — and pass
+the returned `agent_id` in every Merv call that follows.
+
 Require the handoff's `experiment_id`, `review_request_id`, and
 `reviewer_capability`. If one is missing, ask the producer for it.
 

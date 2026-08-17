@@ -161,6 +161,8 @@ class Migration37Test(unittest.TestCase):
                         "project_id", "target_type", "target_id", "status",
                         "error_code", "error_head", "duration_ms", "sent_chars",
                         "received_chars", "args_digest",
+                        # Migration 50: agent attribution + payload key.
+                        "agent_id", "mcp_session_id", "payload_ref",
                     },
                 )
                 self.assertLessEqual(LEDGER_INDEX_NAMES, _indexes(conn))

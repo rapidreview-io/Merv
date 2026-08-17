@@ -703,10 +703,12 @@ class RunsWaitUrlTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
         self.fake = FakeSandboxBackend()
+        # Not an identity test: agent_id is merely recorded here (see test_agent_identity.py).
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
             execution_backend=self.fake,
+            env={"MERV_AGENT_IDENTITY": "optional"},
         )
         self.client = TestClient(
             create_fastapi_app(self.app, wait_secret=SECRET)

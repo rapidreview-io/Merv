@@ -71,6 +71,15 @@ class S3BlobStore:
             raise
         return obj["Body"].read()
 
+    def delete(self, *, namespace: str, sha256: str) -> bool:
+        """Remove one blob; True if it existed."""
+        validate_blob_keys(namespace=namespace, sha256=sha256)
+        key = self._key(namespace=namespace, sha256=sha256)
+        if self._head(key=key) is None:
+            return False
+        self._s3.delete_object(Bucket=self.bucket, Key=key)
+        return True
+
     def sweep_expired(self, *, now: str | None = None) -> int:
         cutoff = now or now_iso()
         swept = 0

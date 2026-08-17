@@ -40,7 +40,20 @@ class ExpiringBlobStore(Protocol):
     def sweep_expired(self, *, now: str | None = None) -> int: ...
 
 
-class BlobStore(EvidenceBlobStore, ExpiringBlobStore, Protocol):
+class DeletableBlobStore(Protocol):
+    """Targeted removal of one blob, for owners that track their own horizon.
+
+    The tool-call payload ledger uses it: its rows know exactly which blobs
+    have aged out, so it deletes them by key instead of waiting for the
+    whole-namespace sweep to find them.
+    """
+
+    def delete(self, *, namespace: str, sha256: str) -> bool: ...
+
+
+class BlobStore(
+    EvidenceBlobStore, ExpiringBlobStore, DeletableBlobStore, Protocol
+):
     """Composition-time submitted-byte provider."""
 
 
@@ -55,6 +68,7 @@ def validate_blob_keys(*, namespace: str, sha256: str | None = None) -> None:
 
 __all__ = [
     "BlobStore",
+    "DeletableBlobStore",
     "EvidenceBlobStore",
     "ExpiringBlobStore",
     "validate_blob_keys",

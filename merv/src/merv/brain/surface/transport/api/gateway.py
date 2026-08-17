@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError as PydanticValidationError
 
 from ....kernel.env import mlflow_suspended
+from ....kernel.request_context import bind_agent
 from ....agent_sessions import AGENT_SESSION_SECRET_PREFIX, AgentSessions
 from ....kernel.utils import (
     NotFoundError,
@@ -19,6 +20,7 @@ from ....kernel.utils import (
     ValidationError,
 )
 from ....kernel.version import CLIENT_VERSION_HEADER, MIN_PROXY_VERSION, is_below_floor
+from ...agent_identity import HELLO_TOOL, AgentIdentities, CallerFacts
 from ...auth import UnauthorizedError
 from ...identity import (
     AgentSessionScopeError,
@@ -27,6 +29,7 @@ from ...identity import (
     ProjectKeyScopeError,
     is_external_key,
     is_local_principal,
+    principal_label,
 )
 from ...tools.contracts import TOOL_MANIFEST
 from ...tools.dispatcher import ToolDispatcher
@@ -319,6 +322,22 @@ class ProjectAuthorizer:
         return None
 
 
+def caller_facts(principal: Any, *, mcp_session_id: str = "") -> CallerFacts:
+    """The non-secret caller facts an agent identity is bound to and stored with.
+
+    Lives here, beside the principal vocabulary, so the identity service never
+    has to know what a principal is.
+    """
+    return CallerFacts(
+        tenant_id=str(getattr(principal, "tenant_id", "") or ""),
+        user_id=str(getattr(principal, "user_id", "") or ""),
+        principal_id=principal_label(principal),
+        oauth_family_id=str(getattr(principal, "oauth_family_id", "") or ""),
+        agent_session_id=str(getattr(principal, "agent_session_id", "") or ""),
+        mcp_session_id=str(mcp_session_id or ""),
+    )
+
+
 @dataclass(frozen=True)
 class ToolInvocationGateway:
     """Apply hosted-tool policy before delegating to application commands."""
@@ -330,6 +349,10 @@ class ToolInvocationGateway:
     projects: ProjectAuthorizer
     ledger: CallLedger | None = None
     agent_sessions: AgentSessions | None = None
+    # Who the agent context window behind an MCP call is (agent.hello ids).
+    # None only in narrow test compositions: then agent_id is neither
+    # demanded nor recorded.
+    agent_identities: AgentIdentities | None = None
     # Per-composition: the SAME key this app's /wait route verifies with, so
     # two apps over one backend each sign only what their own route accepts.
     wait_secret: bytes | None = None
@@ -345,6 +368,7 @@ class ToolInvocationGateway:
         activity_source: str = "http",
         principal: Any | None = None,
         base_url: str = "",  # renders upload one-liners and run wait URLs
+        mcp_session_id: str = "",  # the transport session header, if any
     ) -> dict[str, Any]:
         arguments = dict(arguments or {})
         scope = str(arguments.get("project_id") or project_scope or "")
@@ -357,6 +381,7 @@ class ToolInvocationGateway:
                 activity_source=activity_source,
                 principal=principal,
                 base_url=base_url,
+                mcp_session_id=mcp_session_id,
             )
         except ResearchPluginError as exc:
             # Only PRE-dispatch refusals reach here — repo_root, membership, the
@@ -393,13 +418,70 @@ class ToolInvocationGateway:
         activity_source: str,
         principal: Any | None,
         base_url: str,
+        mcp_session_id: str = "",
     ) -> tuple[Any, Any, dict[str, Any] | None, dict[str, Any]]:
         """Every denial a call can earn before dispatch, plus the kwargs it needs.
 
         Split from dispatch so one ``except`` owns the durable refusal row: past
         this point the dispatcher and the hosted sandbox route each mint their
         own, and a blanket handler would double-count them.
+
+        Agent identity wraps the scope checks: the model-supplied ``agent_id``
+        is lifted out of the arguments FIRST (every contract forbids extras,
+        and no handler wants it), an already-valid one is bound before the
+        checks so even a denial is attributed, and the identity requirement
+        itself is asked LAST — a call that is out of scope is refused for that
+        reason, not for a missing id.
         """
+        supplied_agent_id = (
+            str(arguments.get("agent_id") or "")
+            if name == HELLO_TOOL
+            else str(arguments.pop("agent_id", "") or "")
+        )
+        identities = self.agent_identities if activity_source == "mcp" else None
+        caller = caller_facts(principal, mcp_session_id=mcp_session_id)
+        if identities is not None:
+            bind_agent(
+                agent_id=(
+                    identities.peek(agent_id=supplied_agent_id, caller=caller)
+                    if supplied_agent_id
+                    else ""
+                ),
+                mcp_session_id=mcp_session_id,
+            )
+        contract, policy, internal_kwargs, call_kwargs = self._preflight_scope(
+            name=name,
+            arguments=arguments,
+            context=context,
+            project_scope=project_scope,
+            activity_source=activity_source,
+            principal=principal,
+            base_url=base_url,
+        )
+        if identities is None:
+            return contract, policy, internal_kwargs, call_kwargs
+        if name == HELLO_TOOL:
+            # The tool sees who is calling from the credential, never the model.
+            internal_kwargs = {**(internal_kwargs or {}), "caller": caller.as_dict()}
+            return contract, policy, internal_kwargs, call_kwargs
+        agent_id = identities.resolve(
+            agent_id=supplied_agent_id, caller=caller, tool=name
+        )
+        bind_agent(agent_id=agent_id, mcp_session_id=mcp_session_id)
+        return contract, policy, internal_kwargs, call_kwargs
+
+    def _preflight_scope(
+        self,
+        *,
+        name: str,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+        project_scope: str | None,
+        activity_source: str,
+        principal: Any | None,
+        base_url: str,
+    ) -> tuple[Any, Any, dict[str, Any] | None, dict[str, Any]]:
+        """The scope/visibility/membership half of pre-flight (see _preflight)."""
         contract = TOOL_MANIFEST.get(name)
         # INV-5: an MCP call from any non-local principal (mk_/rr_sk_/JWT) is
         # confined to public tools by the dispatcher; local composition is not.
@@ -740,6 +822,7 @@ class ToolInvocationGateway:
             activity_source="mcp",
             principal=getattr(request.state, "principal", LOCAL_PRINCIPAL),
             base_url=str(request.base_url).rstrip("/"),  # caller-reachable base
+            mcp_session_id=str(request.headers.get("mcp-session-id") or ""),
         )
 
     def call_http(

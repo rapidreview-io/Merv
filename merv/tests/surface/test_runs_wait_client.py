@@ -782,10 +782,12 @@ class RunsWaitEndToEndTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         repo = Path(self.tmp.name)
         self.fake = FakeSandboxBackend()
+        # Not an identity test: agent_id is merely recorded here (see test_agent_identity.py).
         self.brain = TestBrain(
             repo_root=repo,
             db_path=repo / ".research_plugin" / "state.sqlite",
             execution_backend=self.fake,
+            env={"MERV_AGENT_IDENTITY": "optional"},
         )
         self.addCleanup(self.tmp.cleanup)
         self.addCleanup(self.brain.shutdown)

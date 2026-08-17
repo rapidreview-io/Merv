@@ -31,7 +31,8 @@ attempt and requires all five lenses again.
 
 Pass the selected `project_id` to every project-scoped operation. If the
 project is unknown, call `project(action="list")` and choose the one the user
-means. Never guess an id.
+means. Never guess an id. If this context window has no `agent_id` yet, call
+`agent.hello` once first and pass the returned `agent_id` in every Merv call.
 
 ## Create the wave
 
@@ -57,7 +58,9 @@ each agent:
   wave rather than the only evidence worth reading;
 - its previous reflection summary when the snapshot provides one;
 - the reflection id, project id, and instruction to use the snapshotted corpus;
-  and
+- the instruction to call `agent.hello` itself first (passing your `agent_id`
+  as `parent_agent_id`) and carry its own `agent_id` in every Merv call — a
+  lens agent is its own context window and never borrows yours; and
 - the requirement to write and submit its own `reflection_lens_doc` with its
   exact `lens_id`, following
   [reflection-artifacts-template.md](reflection-artifacts-template.md).

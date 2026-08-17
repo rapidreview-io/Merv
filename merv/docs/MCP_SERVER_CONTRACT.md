@@ -30,9 +30,16 @@ never send `repo_root`; the brain never receives a checkout root.
 The normal session bootstrap is:
 
 ```text
-project(action="list")               # choose one reachable project
-workflow.status_and_next(project_id, experiment_id?)
+agent.hello()                        # once per context window: returns agent_id
+project(action="list", agent_id)     # choose one reachable project
+workflow.status_and_next(project_id, experiment_id?, agent_id)
 ```
+
+`agent.hello` mints the short `agent_id` that names this context window (this
+conversation, or this subagent) to Merv; every other tool advertises
+`agent_id` as a required argument and the gateway refuses a call without a
+valid one — with the fix in the message. Never reuse another context's id, and
+have each subagent call `agent.hello` itself. See `docs/AGENT_IDENTITY.md`.
 
 For a credential confined to one project, `action="current"` returns that
 project without a `project_id`. An account-scoped credential has no single
@@ -45,6 +52,7 @@ macro context. `action="create"` is forbidden to a project-bound key.
 The agent-visible control tools are:
 
 ```text
+agent.hello
 workflow.status_and_next
 project
 claim.create                 claim.update

@@ -45,8 +45,11 @@ class ToolCallLedgerOverHttpTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
+        # Not an identity test: agent_id is merely recorded here (see test_agent_identity.py).
         self.brain = TestBrain(
-            repo_root=root, db_path=root / ".merv" / "state.sqlite"
+            repo_root=root,
+            db_path=root / ".merv" / "state.sqlite",
+            env={"MERV_AGENT_IDENTITY": "optional"},
         )
         self.client = TestClient(self.brain.fastapi_app, raise_server_exceptions=False)
         self.project_id = self.brain.current_project()["project"]["id"]
@@ -296,7 +299,12 @@ class OpenHostedLabelTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.brain = TestBrain(repo_root=root, db_path=root / ".merv" / "state.sqlite")
+        # Not an identity test: agent_id is merely recorded here (see test_agent_identity.py).
+        self.brain = TestBrain(
+            repo_root=root,
+            db_path=root / ".merv" / "state.sqlite",
+            env={"MERV_AGENT_IDENTITY": "optional"},
+        )
         self.client = TestClient(
             create_fastapi_app(
                 self.brain,

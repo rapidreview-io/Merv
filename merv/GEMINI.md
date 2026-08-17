@@ -10,6 +10,16 @@ credentials, blobs, and optional heavy storage.
 The brain never receives a checkout root and never reads the agent's filesystem.
 The agent submits explicit metadata and selected evidence bytes through MCP.
 
+## Identify this context window first
+
+Call `agent.hello` once at the start of a context window — before any other
+Merv call — and pass the returned `agent_id` in every Merv tool call after
+that. The id names THIS conversation (or this subagent) to Merv so it can
+attribute what each agent did and was told; a call without a valid `agent_id`
+is refused with instructions. Never reuse another context's id, and tell each
+subagent you spawn to call `agent.hello` itself (it may pass your id as
+`parent_agent_id`).
+
 ## Project scope
 
 Call `project(action="list")` to see every project this key can reach, with

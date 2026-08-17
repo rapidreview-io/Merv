@@ -29,6 +29,9 @@ transition from memory.
 
 Operate in this loop:
 
+0. If this context window has no `agent_id` yet, call `agent.hello` once and
+   pass the returned `agent_id` in every Merv call below. Subagents call it
+   themselves (with your id as `parent_agent_id`); never share an id.
 1. If the project is unknown, call `project(action="list")` and select the one
    the user means. Never guess an id. Use `current` only when the credential is
    known to be bound to exactly one project.

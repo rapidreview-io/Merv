@@ -357,10 +357,12 @@ class TransitionDeliveryAndLedgerTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def _brain(self, tracking: RecordingTracking) -> TestBrain:
+        # Not an identity test: agent_id is merely recorded here (see test_agent_identity.py).
         return TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
             mlflow_tracking=tracking,
+            env={"MERV_AGENT_IDENTITY": "optional"},
         )
 
     def _register(
@@ -893,10 +895,12 @@ class LostTrackingWriteOverMcpTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
         self.tracking = RecordingTracking()
+        # Not an identity test: agent_id is merely recorded here (see test_agent_identity.py).
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
             mlflow_tracking=self.tracking,
+            env={"MERV_AGENT_IDENTITY": "optional"},
         )
         self.project_id = self.app.call_tool(
             "project", {"action": "create", "name": "Lost Tracking Write"}

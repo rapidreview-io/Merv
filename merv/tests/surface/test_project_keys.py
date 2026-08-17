@@ -62,10 +62,12 @@ class ProjectKeySurfaceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
+        # Not an identity test: agent_id is merely recorded here (see test_agent_identity.py).
         self.app = TestBrain(
             repo_root=self.root,
             db_path=self.root / "state.sqlite",
             execution_backend=FakeSandboxBackend(),
+            env={"MERV_AGENT_IDENTITY": "optional"},
         )
         self.keys = ProjectKeys(store=self.app.store)
         self.verifier = SupabaseVerifier(

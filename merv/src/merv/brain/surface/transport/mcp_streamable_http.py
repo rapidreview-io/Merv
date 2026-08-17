@@ -3,11 +3,15 @@
 ``POST /mcp`` speaks the streamable-HTTP MCP transport: ``initialize``,
 ``notifications/initialized``, ``tools/list`` and ``tools/call`` (with SSE
 progress for slow calls). The transport is STATELESS — every request is
-authenticated on its own bearer by the request middleware, no session is
-stored, and ``Mcp-Session-Id`` is an opaque echo kept only for client
-conformance. The catalog is ``tool_visible_over_mcp AND not hidden`` with no
-profile filter; internal tools 403 for any non-local caller (enforced in the
-tool dispatcher and mapped back to a 403 here).
+authenticated on its own bearer by the request middleware and no session
+state gates a request. ``Mcp-Session-Id`` is minted at initialize and merely
+RECORDED (with the client's declared name/version) so agent identities and
+ledger rows can name the transport session they rode in on; a request without
+it is never refused. The catalog is ``tool_visible_over_mcp AND not hidden``
+with no profile filter, and every tool but ``agent.hello`` advertises the
+required ``agent_id`` argument the gateway lifts out before dispatch; internal
+tools 403 for any non-local caller (enforced in the tool dispatcher and mapped
+back to a 403 here).
 """
 
 from __future__ import annotations
@@ -25,11 +29,13 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ... import __version__
 from ...kernel.utils import NotFoundError, ResearchPluginError, ValidationError
+from ..agent_identity import HELLO_TOOL
 from ..identity import (
     LOCAL_PRINCIPAL,
     ProjectKeyScopeError,
     ToolVisibilityError,
     is_local_principal,
+    principal_label,
 )
 from ..tools.contracts import TOOL_MANIFEST
 from .request_body import RequestBodyTooLarge, read_limited_body
@@ -44,7 +50,12 @@ MCP_PROTOCOL_VERSION = "2025-06-18"
 SERVER_INSTRUCTIONS = (
     "Merv is a research-suite backend. Work is organized into projects, and "
     "one credential may reach several of them.\n\n"
-    'Call project(action="list") first when you do not already know which '
+    "Before anything else, call agent.hello once: it returns the short "
+    "agent_id that identifies THIS context window to Merv. Pass that "
+    "agent_id in every other Merv call. Never reuse another context's id, "
+    "and have each subagent call agent.hello itself. A call without a valid "
+    "agent_id is refused with instructions.\n\n"
+    'Then call project(action="list") when you do not already know which '
     "project the user means: it returns every project you can work in with "
     "its id, name, summary, and creation date. Most other tools require an "
     "explicit project_id, so carry the id from that list into each call. "
@@ -52,6 +63,7 @@ SERVER_INSTRUCTIONS = (
     'If your credential is bound to a single project, project(action="current") '
     "returns it and that id is the only one you may pass."
 )
+
 # The streamable-HTTP protocol revisions this stateless server actually speaks;
 # initialize only ever negotiates MCP_PROTOCOL_VERSION, so that is the sole
 # version served. A supplied-but-unsupported MCP-Protocol-Version header is a
@@ -68,6 +80,41 @@ _PROGRESS_INTERVAL_SECONDS = 10.0
 JsonObject = dict[str, Any]
 RequestId = str | int
 ProgressToken = str | int
+
+# The one argument every tool but agent.hello gains over MCP. Injected into the
+# advertised schema here (not into the pydantic contracts, which forbid extras
+# and whose handlers never want it) and lifted back out by the gateway.
+AGENT_ID_PROPERTY: JsonObject = {
+    "type": "string",
+    "description": "This context window's agent_id from agent.hello.",
+}
+
+
+def with_agent_id_argument(
+    tools: list[JsonObject], *, required: bool = True
+) -> list[JsonObject]:
+    """The catalog with ``agent_id`` advertised on every tool but agent.hello —
+    as a required argument where the composition demands identity, as an
+    optional one where it merely records it. Copies, never mutates, the
+    dispatcher's schemas."""
+    advertised: list[JsonObject] = []
+    for tool in tools:
+        if tool.get("name") == HELLO_TOOL:
+            advertised.append(tool)
+            continue
+        schema = dict(tool.get("inputSchema") or {"type": "object"})
+        properties = dict(schema.get("properties") or {})
+        properties["agent_id"] = dict(AGENT_ID_PROPERTY)
+        schema["properties"] = properties
+        names = [
+            name for name in list(schema.get("required") or []) if name != "agent_id"
+        ]
+        if required:
+            names.append("agent_id")
+        if names or "required" in schema:
+            schema["required"] = names
+        advertised.append({**tool, "inputSchema": schema})
+    return advertised
 
 
 async def read_limited_mcp_body(request: Request) -> bytes:
@@ -91,6 +138,21 @@ class ToolCaller(Protocol):
         context: JsonObject,
         request: Request,
     ) -> JsonObject: ...
+
+
+class SessionRecorder(Protocol):
+    """Told about each successful initialize: the minted session id, the
+    principal it authenticated as, and what the client called itself."""
+
+    def __call__(
+        self,
+        *,
+        session_id: str,
+        principal_id: str,
+        client_name: str,
+        client_version: str,
+        protocol_version: str,
+    ) -> None: ...
 
 
 class Authorizer(Protocol):
@@ -228,6 +290,8 @@ class McpStreamableHttp:
         authorize: Authorizer | None,
         authorize_scope: ScopeAuthorizer | None = None,
         ledger: RefusalLedger | None = None,
+        record_session: SessionRecorder | None = None,
+        agent_identity: str | None = None,
     ) -> None:
         self._list_tools = list_tools
         self._call_tool = call_tool
@@ -235,6 +299,11 @@ class McpStreamableHttp:
         self._authorize = authorize
         self._authorize_scope = authorize_scope
         self._ledger = ledger
+        self._record_session = record_session
+        # None: no agent identity wired (narrow compositions), catalog untouched.
+        # "required" / "optional": the catalog advertises agent_id on every
+        # tool but agent.hello, required or not accordingly.
+        self._agent_identity = agent_identity
 
     async def _protocol_error(
         self,
@@ -354,7 +423,9 @@ class McpStreamableHttp:
                     status_code=400,
                     tool=method,
                 )
-            return await self._initialize(request_id=request_id, params=params)
+            return await self._initialize(
+                request=request, request_id=request_id, params=params
+            )
 
         if method == "notifications/initialized":
             # Stateless: accept the handshake completion without tracking it.
@@ -389,7 +460,7 @@ class McpStreamableHttp:
         )
 
     async def _initialize(
-        self, *, request_id: RequestId, params: JsonObject
+        self, *, request: Request, request_id: RequestId, params: JsonObject
     ) -> JSONResponse:
         requested_version = params.get("protocolVersion")
         capabilities = params.get("capabilities")
@@ -411,6 +482,20 @@ class McpStreamableHttp:
                 message="Invalid initialize params",
                 tool="initialize",
             )
+        session_id = uuid.uuid4().hex
+        if self._record_session is not None:
+            # Off the loop, and never fatal: the handshake is not gated on the
+            # record, the record just lets a later agent.hello name the client.
+            principal = getattr(request.state, "principal", LOCAL_PRINCIPAL)
+            with suppress(Exception):
+                await run_in_threadpool(
+                    self._record_session,
+                    session_id=session_id,
+                    principal_id=principal_label(principal),
+                    client_name=str(client_info.get("name") or ""),
+                    client_version=str(client_info.get("version") or ""),
+                    protocol_version=str(requested_version),
+                )
         return _json_response(
             _result(
                 request_id,
@@ -421,20 +506,26 @@ class McpStreamableHttp:
                     "instructions": SERVER_INSTRUCTIONS,
                 },
             ),
-            # Opaque, unstored session id for client conformance only.
-            headers={"Mcp-Session-Id": uuid.uuid4().hex},
+            # Minted here, recorded above, echoed back by conformant clients on
+            # every later request; never required.
+            headers={"Mcp-Session-Id": session_id},
         )
 
     def _catalog(self) -> list[JsonObject]:
         tools = self._list_tools()
         if self._allow_tool is not None:
             tools = [tool for tool in tools if self._allow_tool(tool)]
-        return [
+        visible = [
             tool
             for tool in tools
             if tool_visible_over_mcp(name=str(tool.get("name") or ""))
             and not tool.get("hidden")
         ]
+        if self._agent_identity is None:
+            return visible
+        return with_agent_id_argument(
+            visible, required=self._agent_identity == "required"
+        )
 
     async def _tools_list(
         self, *, request_id: RequestId, params: JsonObject

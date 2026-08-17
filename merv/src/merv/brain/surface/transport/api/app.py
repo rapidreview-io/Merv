@@ -16,6 +16,7 @@ from ..http_policy import HttpSurfacePolicy
 from ..mcp_http import register_mcp_routes
 from . import (
     agent_sessions,
+    agents,
     artifacts,
     claims,
     events,
@@ -80,6 +81,9 @@ def create_fastapi_app(
     authorizer = ProjectAuthorizer(research=api.research)
     # One key, both directions: the gateway signs sandbox.runs wait URLs with
     # exactly what the route below verifies, per composition — never shared.
+    # Agent context-window identity: present on the full Surface, absent in
+    # narrow test compositions that build the app around a lighter object.
+    agent_identities = getattr(api, "agent_identities", None)
     gateway = ToolInvocationGateway(
         tools=api.tools,
         research=api.research,
@@ -88,6 +92,7 @@ def create_fastapi_app(
         projects=authorizer,
         ledger=api.tool_ledger,
         agent_sessions=api.agent_sessions,
+        agent_identities=agent_identities,
         wait_secret=wait_secret,
         auth_meta=auth.meta() if auth is not None else None,
     )
@@ -194,7 +199,16 @@ def create_fastapi_app(
             authorize_agent_session=gateway.authorize_agent_session,
         ),
         ledger=api.tool_ledger,
+        record_session=(
+            agent_identities.record_mcp_session if agent_identities is not None else None
+        ),
+        agent_identity=(
+            agent_identities.mode if agent_identities is not None else None
+        ),
     )
+    if agent_identities is not None:
+        http.include_router(agents.build_router(identities=agent_identities))
+
     @http.get("/api/projects/{project_id}/litreview")
     def litreview(project_id: str, request: Request) -> Response:
         return conditional_json(

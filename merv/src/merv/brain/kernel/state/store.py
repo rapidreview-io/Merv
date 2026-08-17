@@ -1074,7 +1074,52 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   sent_chars INTEGER NOT NULL DEFAULT 0,
   received_chars INTEGER NOT NULL DEFAULT 0,
   -- sha256 prefix of the redacted arguments: a retry loop repeats one digest.
-  args_digest TEXT NOT NULL DEFAULT ''
+  args_digest TEXT NOT NULL DEFAULT '',
+  -- Agent attribution (August 2026, migration 50). agent_id is the short id
+  -- of the agent context window (one model conversation) that made the call,
+  -- minted by agent.hello. mcp_session_id is the transport session header it
+  -- arrived under. payload_ref names the redacted request/response record in
+  -- the blob store (namespace tool-calls) — the row stays sizes-and-digests,
+  -- the payload lives on disk beside artifacts, and both expire together.
+  agent_id TEXT NOT NULL DEFAULT '',
+  mcp_session_id TEXT NOT NULL DEFAULT '',
+  payload_ref TEXT NOT NULL DEFAULT ''
+);
+
+-- Agent context-window identities (August 2026, migration 50). One row per
+-- agent.hello: the short random agent_id a model carries for the rest of its
+-- context window, bound to the credential's user/tenant so another caller
+-- cannot ride it, plus the non-secret facts known at hello time. A coding-
+-- agent session credential (mas_) is bound to exactly one identity through
+-- agent_session_id, minted lazily. Never a token, never a digest of one.
+CREATE TABLE IF NOT EXISTS agent_identities (
+  agent_id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT '',
+  user_id TEXT NOT NULL DEFAULT '',
+  principal_id TEXT NOT NULL DEFAULT '',
+  oauth_family_id TEXT NOT NULL DEFAULT '',
+  agent_session_id TEXT NOT NULL DEFAULT '',
+  mcp_session_id TEXT NOT NULL DEFAULT '',
+  client_name TEXT NOT NULL DEFAULT '',
+  client_version TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT '',
+  parent_agent_id TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+-- MCP transport sessions (August 2026, migration 50). One row per successful
+-- initialize: the server-minted Mcp-Session-Id, the client that spoke it, and
+-- the principal it authenticated as. Lets a later agent.hello attach client
+-- name/version to an identity without the model typing it, and lets an
+-- operator see several agent_ids sharing one client process.
+CREATE TABLE IF NOT EXISTS mcp_sessions (
+  session_id TEXT PRIMARY KEY,
+  principal_id TEXT NOT NULL DEFAULT '',
+  client_name TEXT NOT NULL DEFAULT '',
+  client_version TEXT NOT NULL DEFAULT '',
+  protocol_version TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
 );
 """
 
@@ -1327,6 +1372,29 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     # session so the page can show recent events and stderr without the raw
     # trace ever leaving the runner.
     (49, "add_agent_session_traces", ""),
+    # Agent context-window identity (August 2026): the agent_identities and
+    # mcp_sessions tables, plus agent_id / mcp_session_id / payload_ref on the
+    # tool-call ledger so every call is attributable to the model conversation
+    # that made it and its redacted payload record. Additive; the agent index
+    # lives in the handler because it names a ladder-added column.
+    (50, "add_agent_identity", ""),
+)
+
+# Migration 50 columns on tool_calls — mirrors the SCHEMA block for stores
+# that predate the agent-identity ledger columns.
+AGENT_IDENTITY_TOOL_CALL_COLUMNS = {
+    "agent_id": "TEXT NOT NULL DEFAULT ''",
+    "mcp_session_id": "TEXT NOT NULL DEFAULT ''",
+    "payload_ref": "TEXT NOT NULL DEFAULT ''",
+}
+AGENT_IDENTITY_INDEXES = (
+    # The trace read: one agent's calls in append order.
+    "CREATE INDEX IF NOT EXISTS idx_tool_calls_agent ON tool_calls(agent_id, id)",
+    # mas_ credential -> its one bound identity, resolved on every call.
+    "CREATE INDEX IF NOT EXISTS idx_agent_identities_session"
+    "  ON agent_identities(agent_session_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_identities_user"
+    "  ON agent_identities(user_id, created_at)",
 )
 
 # Migration 48 indexes — handler-only (they name ladder-added tables/columns).
@@ -1695,7 +1763,25 @@ class BaseStateStore:
                 "CREATE INDEX IF NOT EXISTS idx_agent_session_traces_project"
                 "  ON agent_session_traces(project_id, updated_at)"
             )
+        elif name == "add_agent_identity":
+            self._add_agent_identity(conn=conn)
         else:
+            conn.execute(statement)
+
+    def _add_agent_identity(self, *, conn: Connection) -> None:
+        """Migration 50: identity tables, ledger attribution columns, indexes.
+
+        Additive and idempotent on both dialects. The table guards are
+        belt-and-braces (SCHEMA creates them first); the ALTERs and the agent
+        index genuinely need to run here, after tool_calls exists."""
+        for table in ("agent_identities", "mcp_sessions"):
+            if not self._has_table(conn=conn, table=table):
+                conn.execute(_schema_table_ddl(table=table))
+        if self._has_table(conn=conn, table="tool_calls"):
+            for column, ddl in AGENT_IDENTITY_TOOL_CALL_COLUMNS.items():
+                if not self._has_column(conn=conn, table="tool_calls", column=column):
+                    conn.execute(f"ALTER TABLE tool_calls ADD COLUMN {column} {ddl}")
+        for statement in AGENT_IDENTITY_INDEXES:
             conn.execute(statement)
 
     def _add_agent_runner_pairing(self, *, conn: Connection) -> None:

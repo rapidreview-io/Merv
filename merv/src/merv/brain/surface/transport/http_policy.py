@@ -48,6 +48,7 @@ HOSTED_CONTROL_TOOL_POLICIES = {
 # every mutation and sandbox operation to that exact experiment.
 AGENT_EXPERIMENT_SESSION_TOOLS = frozenset(
     {
+        "agent.hello",
         "artifact.find",
         "artifact.submit",
         "claim.list",
@@ -86,6 +87,7 @@ AGENT_EXPERIMENT_SESSION_TOOLS = frozenset(
 
 AGENT_REVIEW_SESSION_TOOLS = frozenset(
     {
+        "agent.hello",
         "artifact.find",
         "claim.list",
         "consolidation.get",
@@ -104,6 +106,7 @@ AGENT_REVIEW_SESSION_TOOLS = frozenset(
 
 AGENT_CONSOLIDATION_SESSION_TOOLS = frozenset(
     {
+        "agent.hello",
         "consolidation.get",
         "consolidation.submit",
         "experiment.get_state",

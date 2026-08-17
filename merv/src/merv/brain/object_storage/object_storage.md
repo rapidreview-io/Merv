@@ -54,11 +54,14 @@ for the genuine cross-module experiment projection.
 ## Binary blob boundary
 
 Artifacts and Feed consume only `EvidenceBlobStore.put/get`; cleanup consumes
-`ExpiringBlobStore.sweep_expired`. Local and S3 implementations preserve
-content addressing, namespace isolation, idempotent writes, content type, and
-extend-only expiry. They do not expose a second presigned upload lifecycle.
-Bounded Artifact/Feed uploads are authenticated and capped by their owning
-modules before those modules write bytes.
+`ExpiringBlobStore.sweep_expired`; the tool-call payload ledger
+(`kernel/state/tool_call_payloads.py`, namespace `tool-calls`) additionally
+uses `DeletableBlobStore.delete` to drop each record by key when its ledger
+row ages out. Local and S3 implementations preserve content addressing,
+namespace isolation, idempotent writes, content type, and extend-only expiry.
+They do not expose a second presigned upload lifecycle. Bounded Artifact/Feed
+uploads are authenticated and capped by their owning modules before those
+modules write bytes.
 
 ## Invariants
 

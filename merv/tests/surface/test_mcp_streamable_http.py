@@ -105,10 +105,13 @@ class McpStreamableHttpProtocolTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
+        # Protocol parity, not identity: agent_id is merely recorded here (the
+        # required flow is pinned in test_agent_identity.py).
         self.brain = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
             execution_backend=FakeSandboxBackend(),
+            env={"MERV_AGENT_IDENTITY": "optional"},
         )
         self.http = TestClient(create_fastapi_app(self.brain))
 
