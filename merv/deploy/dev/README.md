@@ -77,11 +77,18 @@ http://127.0.0.1:55433.
   `{"mcpServers":{"merv":{"type":"http","url":"https://<host>/mcp"}}}`
   (the repo's `merv/.mcp.json` is prod). Sign in through the normal MCP OAuth
   prompt; the consent page is the dev UI.
-- Runner / `merv-client`: `~/.merv/bin/merv-client configure --control-url
-  https://<host>`; install the runner from
-  `https://<host>/merv/runner/install.sh` so the machine gets the skills of the
-  deployed branch. A machine is paired with one brain (`~/.merv` is per user),
-  so keep dev runners on dev machines.
+- Runner / `merv-client` on a harness machine (install the dev build so the
+  machine carries the deployed branch's skills, then point it at dev):
+
+  ```sh
+  curl -fsSL https://<host>/merv/runner/install.sh \
+    | MERV_RUNNER_BASE_URL=https://<host>/merv/runner sh -s -- --install-only
+  ~/.merv/bin/merv-client configure --control-url https://<host>
+  ~/.merv/bin/merv-agent-runner pair      # code → dev Auto-run page
+  ```
+
+  A machine is paired with one brain (`~/.merv` is per user), so keep dev
+  runners on dev machines.
 - Kilo / OpenCode plugins still hard-code the prod URL (`clients/*/plugin.js`).
 
 ## Moving to a real hostname
