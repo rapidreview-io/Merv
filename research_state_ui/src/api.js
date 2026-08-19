@@ -286,6 +286,22 @@ export const api = {
       body: { transition, ...(evidence ? { evidence } : {}) },
     }),
 
+  // Tasks (scoped non-experiment work: brief in, delivery out, one review).
+  createTask: (pid, { name, goal, depends_on }) =>
+    request(`/api/projects/${encodeURIComponent(pid)}/tasks`, {
+      method: 'POST',
+      body: { name, goal, depends_on: depends_on || [] },
+    }),
+  getTask: (pid, tid) =>
+    request(`/api/projects/${encodeURIComponent(pid)}/tasks/${encodeURIComponent(tid)}`),
+  getTaskStatus: (pid, tid) =>
+    request(`/api/projects/${encodeURIComponent(pid)}/tasks/${encodeURIComponent(tid)}/status`),
+  transitionTask: (pid, tid, transition, evidence) =>
+    request(`/api/projects/${encodeURIComponent(pid)}/tasks/${encodeURIComponent(tid)}/transition`, {
+      method: 'POST',
+      body: { transition, ...(evidence ? { evidence } : {}) },
+    }),
+
   // Reflections (project reflection waves).
   // List + staleness/coverage signal for the Home panel. Each entry is the
   // full wave state (roster, artifacts, reviews, reflection_coverage), so the

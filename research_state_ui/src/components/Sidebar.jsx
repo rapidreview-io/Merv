@@ -156,6 +156,10 @@ export default function Sidebar({ onHide }) {
           <span>Experiments</span>
           <span className="sidebar-link-count">{stats.experiments ?? home?.experiments?.length ?? 0}</span>
         </NavLink>
+        <NavLink to={px('/tasks')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
+          <span>Tasks</span>
+          <span className="sidebar-link-count">{stats.tasks ?? home?.tasks?.length ?? 0}</span>
+        </NavLink>
         <NavLink to={px('/reflection')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
           Reflection
         </NavLink>

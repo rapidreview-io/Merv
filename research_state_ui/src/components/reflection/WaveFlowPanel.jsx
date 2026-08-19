@@ -91,13 +91,14 @@ function NodeRow({ lead, name, sub, meta, onClick, pending }) {
 }
 
 function StrandRow({ strand, intent, onSelectNode }) {
+  const isTask = strand.kind === 'task';
   return (
     <NodeRow
       lead={<span className={`wflow-item-dot wflow-item-dot--${strand.tone}`} />}
       name={strand.name}
       sub={intent}
-      meta={statusWord(strand.status) || null}
-      onClick={() => onSelectNode({ kind: 'exp', id: strand.id })}
+      meta={(isTask ? 'task · ' : '') + (statusWord(strand.status) || '')}
+      onClick={() => onSelectNode({ kind: isTask ? 'task' : 'exp', id: strand.id })}
     />
   );
 }
@@ -327,6 +328,68 @@ function ExpPanel({ strand, row, braid, intents, onClose, onOpenExp, onSelectNod
   );
 }
 
+function TaskPanel({ strand, row, braid, intents, onClose, onOpenTask, onSelectNode }) {
+  const task = row || {};
+  const outcome = outcomeOf(strand, task);
+  const finished = TERMINAL_TONES.has(strand.tone);
+  const gate = finished ? null : gateSummary(task.gate_checklist);
+  const tl = expTimeline(strand, task);
+  const goal = String(task.goal || intents.get(strand.id) || '').trim();
+  const checks = Array.isArray(task.checks) ? task.checks : [];
+  const deps = Array.isArray(task.dependencies) ? task.dependencies : [];
+  return (
+    <DetailPanelShell
+      typeLabel="task"
+      title={strand.name}
+      status={<StatusPill value={String(strand.status || 'unknown')} />}
+      onClose={onClose}
+    >
+      {goal ? <p className="wflow-intent">{goal}</p> : null}
+      <button type="button" className="btn graph-open" onClick={() => onOpenTask(strand.id)}>
+        Open task <span aria-hidden="true">→</span>
+      </button>
+      <Verdict outcome={outcome} />
+      <Gate gate={gate} />
+      {checks.length > 0 && (
+        <>
+          <Eyebrow>Done when · {checks.length}</Eyebrow>
+          <ol className="task-checks" style={{ fontSize: 'var(--text-sm)' }}>
+            {checks.map((c, i) => <li key={i}>{c}</li>)}
+          </ol>
+        </>
+      )}
+      {deps.length > 0 && (
+        <>
+          <Eyebrow>Waits on · {deps.length}</Eyebrow>
+          {deps.map(d => (
+            <NodeRow
+              key={d.id}
+              lead={<span className={`wflow-item-dot wflow-item-dot--${d.settled ? 'done' : d.failed ? 'failed' : 'queued'}`} />}
+              name={d.name || d.id}
+              meta={`${d.node_type} · ${statusWord(d.status)}`}
+              onClick={() => onSelectNode({ kind: d.node_type === 'task' ? 'task' : 'exp', id: d.id })}
+            />
+          ))}
+        </>
+      )}
+      <Eyebrow>Position</Eyebrow>
+      <Lineage strand={strand} braid={braid} onSelectNode={onSelectNode} />
+      {(task.reviews || []).length > 1 && (
+        <>
+          <Eyebrow>Reviews · {task.reviews.length}</Eyebrow>
+          <ReviewRows reviews={task.reviews} />
+        </>
+      )}
+      <RecordChips current={task.current_attempt_artifacts} all={task.artifacts} />
+      <Eyebrow>Details</Eyebrow>
+      <MetaRow label="created" value={dayAgo(tl.created)} />
+      {tl.ended
+        ? <MetaRow label={tl.endWord} value={`${fmtDay(tl.ended)}${tl.spanMs != null ? ` · after ${fmtSpan(tl.spanMs)}` : ''}`} />
+        : <MetaRow label={statusWord(strand.status) || 'status'} value={tl.sinceMs != null ? `for ${fmtSpan(tl.sinceMs)}` : null} />}
+    </DetailPanelShell>
+  );
+}
+
 function LensChips({ lenses }) {
   const px = useProjectHref();
   if (!lenses.length) return null;
@@ -445,11 +508,11 @@ function GroupPanel({ ids, braid, intents, onClose, onSelectNode }) {
   const nA = members.length - nF;
   const label = [nF && `${nF} failed`, nA && `${nA} abandoned`].filter(Boolean).join(' · ');
   return (
-    <DetailPanelShell typeLabel="set aside" title={label || `${members.length} experiments`} onClose={onClose}>
+    <DetailPanelShell typeLabel="set aside" title={label || `${members.length} nodes`} onClose={onClose}>
       <p className="wflow-intent">
         Work that ended without a result, stacked so the column stays short. Pick one to open it.
       </p>
-      <Eyebrow>Experiments · {members.length}</Eyebrow>
+      <Eyebrow>{members.every(m => m.kind === 'task') ? 'Tasks' : members.some(m => m.kind === 'task') ? 'Nodes' : 'Experiments'} · {members.length}</Eyebrow>
       {members.map(s => <StrandRow key={s.id} strand={s} intent={intents.get(s.id)} onSelectNode={onSelectNode} />)}
       {members[0] ? (
         <>
@@ -585,12 +648,12 @@ function GhostPanel({ braid, signal, intents, onClose, onOpenWave, onSelectNode 
 }
 
 export default function WaveFlowPanel({
-  sel, braid, waves, experiments, signal, project,
-  onClose, onOpenExp, onOpenWave, onSelectNode,
+  sel, braid, waves, experiments, tasks = [], signal, project,
+  onClose, onOpenExp, onOpenTask, onOpenWave, onSelectNode,
 }) {
-  // Intent lines for every experiment the panel may list, from whichever
-  // source names it — the live rows first, then what the waves recorded.
-  const intents = useMemo(() => buildIntentIndex(experiments, waves), [experiments, waves]);
+  // Intent lines for every node the panel may list, from whichever source
+  // names it — the live rows first, then what the waves recorded.
+  const intents = useMemo(() => buildIntentIndex(experiments, waves, tasks), [experiments, waves, tasks]);
   if (!sel) return null;
   const { epochs, strands } = braid;
   let body = null;
@@ -626,6 +689,21 @@ export default function WaveFlowPanel({
         intents={intents}
         onClose={onClose}
         onOpenExp={onOpenExp}
+        onSelectNode={onSelectNode}
+      />
+    );
+  } else if (sel.kind === 'task') {
+    const strand = strands.find(s => s.id === sel.id);
+    if (!strand) return null;
+    const row = (tasks || []).find(t => t.id === sel.id) || null;
+    body = (
+      <TaskPanel
+        strand={strand}
+        row={row}
+        braid={braid}
+        intents={intents}
+        onClose={onClose}
+        onOpenTask={onOpenTask || (() => {})}
         onSelectNode={onSelectNode}
       />
     );

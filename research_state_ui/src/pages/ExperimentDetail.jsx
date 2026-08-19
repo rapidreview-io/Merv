@@ -11,6 +11,7 @@ import ExperimentGraphs from '../components/ExperimentGraphs';
 import SandboxTerminal from '../components/SandboxTerminal';
 import ArtifactList from '../components/ArtifactList';
 import IndependentRead from '../components/IndependentRead';
+import StatusPill from '../components/StatusPill';
 import TerminalTransitionConfirm from '../components/TerminalTransitionConfirm';
 import { expName } from '../utils/experiment';
 import { pickIndependentRead } from '../utils/independentRead';
@@ -239,6 +240,32 @@ export default function ExperimentDetail() {
           The reviewer's plain-language TLDR leads the page, falling back to
           the experiment's intent line until a review carries a synopsis. */}
       <IndependentRead read={independentRead} />
+
+      {/* ─────────────  WAVE DAG (what this experiment waits on)  ─────── */}
+      {Array.isArray(experiment.dependencies) && experiment.dependencies.length > 0 && (
+        <section className="spotlight" id="dependencies">
+          <header className="spotlight-head spotlight-head--row">
+            <div className="spotlight-head-left">
+              <span className="spotlight-eyebrow">Waits on</span>
+              <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>
+                start_running opens once every dependency has succeeded
+              </span>
+            </div>
+          </header>
+          <div className="spotlight-body stack stack--sm">
+            {experiment.dependencies.map(dep => (
+              <div key={dep.id} className="cluster">
+                <StatusPill value={dep.status} />
+                <Link to={px(dep.node_type === 'task' ? `/tasks/${dep.id}` : `/experiments/${dep.id}`)}>
+                  {dep.name || dep.id}
+                </Link>
+                <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>{dep.node_type}</span>
+                {dep.failed && <span className="error-message" style={{ fontSize: 'var(--text-xs)' }}>ended without succeeding</span>}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ─────────────  MAP (pinned overview: figure ⇄ logic graph)  ── */}
       <ExperimentGraphs

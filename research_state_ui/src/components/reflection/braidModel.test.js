@@ -102,3 +102,26 @@ test('openAnatomy summarizes lens fan-in and gates', () => {
   assert.equal(a.consolidation.advanceStatus, 'bound');
   assert.equal(openAnatomy(null), null);
 });
+
+test('buildBraid carries task strands beside experiments', () => {
+  const w1 = {
+    id: 'w1', status: 'published',
+    materialized_experiments: [{ experiment_id: 'exp_a', name: 'a', status: 'complete' }],
+    materialized_tasks: [{ task_id: 'task_p', name: 'prep-data', status: 'in_progress' }],
+    corpus: { new_terminal_experiments: [], new_terminal_tasks: [{ id: 'task_0', name: 'seed', status: 'done' }] },
+  };
+  const { strands } = buildBraid([w1], [{ id: 'exp_a', status: 'complete' }], [
+    { id: 'task_p', name: 'prep-data', status: 'in_review' },
+    { id: 'task_live', name: 'lit-sweep', status: 'in_progress' },
+  ]);
+  const byId = Object.fromEntries(strands.map(s => [s.id, s]));
+  assert.equal(byId.task_p.kind, 'task');
+  assert.equal(byId.task_p.spawnIdx, 0);           // born from wave 1
+  assert.equal(byId.task_p.status, 'in_review');   // live row wins
+  assert.equal(byId.task_p.tone, 'queued');
+  assert.equal(byId.task_0.coverIdx, 0);           // read by wave 1
+  assert.equal(byId.task_0.tone, 'done');
+  assert.equal(byId.task_live.tone, 'live');
+  assert.equal(byId.task_live.coverIdx, -1);
+  assert.equal(byId.exp_a.kind, 'experiment');
+});

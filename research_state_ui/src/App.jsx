@@ -28,6 +28,8 @@ import ClaimDetail from './pages/ClaimDetail';
 import LitReview from './pages/LitReview';
 import Experiments from './pages/Experiments';
 import ExperimentDetail from './pages/ExperimentDetail';
+import Tasks from './pages/Tasks';
+import TaskDetail from './pages/TaskDetail';
 import Reflection from './pages/Reflection';
 import ReflectionDetail from './pages/ReflectionDetail';
 import Artifacts from './pages/Artifacts';
@@ -194,6 +196,8 @@ export default function App() {
             <Route path="litreview" element={<LitReview />} />
             <Route path="experiments" element={<ExperimentCardList />} />
             <Route path="experiments/:experimentId" element={<MobileExperimentDetail />} />
+            <Route path="tasks" element={<Tasks />} />
+            <Route path="tasks/:taskId" element={<TaskDetail />} />
             <Route path="reflection" element={<MobileReflectionScreen />} />
             <Route path="reflection/:reflectionId" element={<MobileReflectionScreen />} />
             <Route path="artifacts" element={<MobileArtifacts />} />
@@ -246,6 +250,8 @@ export default function App() {
             <Route path="litreview" element={<LitReview />} />
             <Route path="experiments" element={<Experiments />} />
             <Route path="experiments/:experimentId" element={<ExperimentDetail />} />
+            <Route path="tasks" element={<Tasks />} />
+            <Route path="tasks/:taskId" element={<TaskDetail />} />
             <Route path="reflection" element={<Reflection />} />
             <Route path="reflection/:reflectionId" element={<ReflectionDetail />} />
             <Route path="artifacts" element={<Artifacts />} />

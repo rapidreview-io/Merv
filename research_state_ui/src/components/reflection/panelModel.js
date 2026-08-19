@@ -12,6 +12,7 @@ const TERMINAL_TONES = new Set(['done', 'failed', 'abandoned']);
 export const ROLE_WORD = {
   design_reviewer: 'design review',
   experiment_reviewer: 'experiment review',
+  task_reviewer: 'task review',
   reflection_reviewer: 'reflection review',
   consolidation_reviewer: 'consolidation review',
   human: 'human review',
@@ -36,7 +37,10 @@ export function statusWord(s) {
   return String(s || '').replace(/_/g, ' ');
 }
 
-const byCreated = (a, b) => String(a.created_at || '').localeCompare(String(b.created_at || ''));
+// Second-resolution timestamps tie when two reviews land within one second
+// (a send-back and its fix); the insertion sequence breaks the tie.
+const byCreated = (a, b) => String(a.created_at || '').localeCompare(String(b.created_at || ''))
+  || ((Number(a.created_seq) || 0) - (Number(b.created_seq) || 0));
 
 /** Newest review, optionally restricted to a set of roles. */
 export function latestReview(reviews, roles = null) {
@@ -70,21 +74,30 @@ export function reviewHistory(reviews) {
  */
 export function outcomeOf(strand, row) {
   const reviews = row?.reviews || [];
-  const expRv = latestReview(reviews, ['experiment_reviewer', 'human']);
+  const isTask = strand?.kind === 'task';
+  const expRv = latestReview(
+    reviews,
+    isTask ? ['task_reviewer', 'human'] : ['experiment_reviewer', 'human'],
+  );
   const tone = strand?.tone;
   if (tone === 'done') {
     return {
-      eyebrow: 'Outcome', line: 'passed experiment review', tone: 'supports', glyph: '✓',
-      text: String(expRv?.synopsis || row?.conclusion || '').trim(),
+      eyebrow: 'Outcome',
+      line: isTask ? 'accepted after task review' : 'passed experiment review',
+      tone: 'supports', glyph: '✓',
+      text: String(expRv?.synopsis || row?.outcome || row?.conclusion || '').trim(),
       when: expRv?.created_at || row?.updated_at || null,
     };
   }
   if (tone === 'failed') {
+    const byReviewer = expRv?.verdict === 'fail' || row?.failed_by === 'reviewer';
     return {
       eyebrow: 'Outcome',
-      line: expRv?.verdict === 'fail' ? 'failed experiment review' : 'marked failed',
+      line: isTask
+        ? (byReviewer ? 'ended by task review' : 'ended by its owner')
+        : (expRv?.verdict === 'fail' ? 'failed experiment review' : 'marked failed'),
       tone: 'refutes', glyph: '✗',
-      text: String(expRv?.synopsis || '').trim(),
+      text: String(expRv?.synopsis || (isTask ? row?.outcome : '') || '').trim(),
       when: expRv?.created_at || row?.updated_at || null,
     };
   }
@@ -270,16 +283,24 @@ export function expTimeline(strand, row, now = Date.now()) {
 }
 
 /** Intent lookup across every source that names an experiment. */
-export function buildIntentIndex(experiments, waves) {
+export function buildIntentIndex(experiments, waves, tasks = []) {
   const idx = new Map();
   for (const e of experiments || []) if (e?.id && e.intent) idx.set(e.id, String(e.intent).trim());
+  for (const t of tasks || []) if (t?.id && t.goal) idx.set(t.id, String(t.goal).trim());
   for (const w of waves || []) {
     for (const m of w?.materialized_experiments || []) {
       const id = m?.experiment_id || m?.id;
       if (id && m.intent && !idx.has(id)) idx.set(id, String(m.intent).trim());
     }
+    for (const m of w?.materialized_tasks || []) {
+      const id = m?.task_id || m?.id;
+      if (id && m.goal && !idx.has(id)) idx.set(id, String(m.goal).trim());
+    }
     for (const t of w?.corpus?.terminal_experiments || []) {
       if (t?.id && t.intent && !idx.has(t.id)) idx.set(t.id, String(t.intent).trim());
+    }
+    for (const t of w?.corpus?.terminal_tasks || []) {
+      if (t?.id && t.goal && !idx.has(t.id)) idx.set(t.id, String(t.goal).trim());
     }
   }
   return idx;

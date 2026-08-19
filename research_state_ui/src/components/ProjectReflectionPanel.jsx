@@ -2,6 +2,7 @@ import { useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   useProjectStore, useProjectHref, selectExperiments, selectProject, selectReflections,
+  selectTasks,
 } from '../store/useProjectStore';
 import WaveFlow from './reflection/WaveFlow';
 
@@ -18,6 +19,7 @@ export default function ProjectReflectionPanel({ projectId }) {
   const navigate = useNavigate();
   const px = useProjectHref();
   const experiments = useProjectStore(selectExperiments);
+  const tasks = useProjectStore(selectTasks);
   const project = useProjectStore(selectProject);
   // The waves arrive WITH the home snapshot (refreshHome fetches them for a
   // project's first load), so the graph is built from the whole braid on
@@ -52,6 +54,7 @@ export default function ProjectReflectionPanel({ projectId }) {
       <WaveFlow
         waves={waves}
         experiments={experiments}
+        tasks={tasks}
         signal={signal}
         project={project}
         onSelect={onSelectWave}

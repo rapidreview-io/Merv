@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
-import { useProjectStore, useProjectHref, selectExperiments } from '../store/useProjectStore';
+import { useProjectStore, useProjectHref, selectExperiments, selectTasks } from '../store/useProjectStore';
 import StatusPill from '../components/StatusPill';
 import { buildBraid } from '../components/reflection/braidModel';
 import { TERMINAL_WAVE } from '../components/reflection/waveModel';
@@ -56,6 +56,7 @@ function WhenCell({ parts, title }) {
 export default function Reflection() {
   const projectId = useProjectStore(s => s.projectId);
   const experiments = useProjectStore(selectExperiments);
+  const tasks = useProjectStore(selectTasks);
   const navigate = useNavigate();
   const px = useProjectHref();
   const [data, setData] = useState(null);
@@ -85,7 +86,7 @@ export default function Reflection() {
 
   const rows = useMemo(() => {
     const nowMs = Date.now();
-    const { strands } = buildBraid(waves, experiments);
+    const { strands } = buildBraid(waves, experiments, tasks);
     const list = waves.map((w, i) => ({
       wave: w,
       ordinal: i + 1,
@@ -96,7 +97,7 @@ export default function Reflection() {
     const cmp = SORTS[sortKey] || SORTS.wave;
     list.sort((a, b) => (sortDir === 'asc' ? cmp(a, b) : cmp(b, a)));
     return list;
-  }, [waves, experiments, sortKey, sortDir]);
+  }, [waves, experiments, tasks, sortKey, sortDir]);
 
   function toggleSort(key) {
     if (key === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));

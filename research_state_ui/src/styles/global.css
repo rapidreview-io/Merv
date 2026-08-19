@@ -398,11 +398,11 @@ button.th, [role="button"].th { cursor: pointer; user-select: none; }
   border-radius: var(--radius-pill);
   background: var(--bg-elev);
 }
-.status.supports, .status.complete, .status.completed, .status.pass, .status.supported, .status.accepted {
+.status.supports, .status.complete, .status.completed, .status.done, .status.pass, .status.supported, .status.accepted {
   color: var(--supports);
   border-color: rgba(var(--supports-rgb), 0.35);
 }
-.status.qualified, .status.running, .status.provisioning, .status.needs_changes, .status.design_review, .status.experiment_review, .status.ready_to_run, .status.awaiting {
+.status.qualified, .status.running, .status.in_progress, .status.in_review, .status.provisioning, .status.needs_changes, .status.design_review, .status.experiment_review, .status.ready_to_run, .status.awaiting {
   color: var(--qualifies);
   border-color: rgba(var(--qualifies-rgb), 0.35);
 }
@@ -7099,3 +7099,21 @@ a.wflow-chip { color: var(--text); }
 @media (max-width: 720px) {
   .cnx-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ── Tasks ─────────────────────────────────────────────────────────────── */
+/* The page lede under a title: one measured paragraph, muted. */
+.page-lede {
+  margin: 6px 0 0;
+  max-width: 68ch;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+/* The brief's Done-when checks, numbered as the brief numbers them. */
+.task-checks {
+  margin: 0;
+  padding-left: 1.6em;
+  display: grid;
+  gap: 6px;
+}
+.task-checks li { line-height: 1.45; }

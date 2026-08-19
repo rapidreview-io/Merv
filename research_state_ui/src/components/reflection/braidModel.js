@@ -1,9 +1,10 @@
 /**
  * braidModel — pure join/layout model for the project braid: reflection waves
- * as epochs on a horizontal spine, experiments as strands that fan out of the
- * wave that proposed them (materialized_experiments) and consolidate into the
- * wave whose corpus delta absorbed them. No JSX here — same discipline as
- * waveModel.js so a mobile surface can reuse it later.
+ * as epochs on a horizontal spine, experiments AND tasks as strands that fan
+ * out of the wave that proposed them (materialized_experiments /
+ * materialized_tasks) and consolidate into the wave whose corpus delta
+ * absorbed them. No JSX here — same discipline as waveModel.js so a mobile
+ * surface can reuse it later.
  */
 
 import { TERMINAL_WAVE } from './waveModel.js';
@@ -13,19 +14,26 @@ const TERMINAL_EXP = new Set(['complete', 'failed', 'abandoned']);
 // Strand tone is LIFECYCLE, deliberately not supports/refutes — evidence
 // direction is not a modeled field yet (classifyExperiment's complete→supports
 // mapping is a known lie); when it becomes real data, swap tones here only.
+// Task statuses ride the same vocabulary: done → done, in_progress → live,
+// in_review → queued (a gate wait), failed → failed.
 export function strandTone(status) {
   const s = String(status || '');
-  if (s === 'complete') return 'done';
+  if (s === 'complete' || s === 'done') return 'done';
   if (s === 'failed') return 'failed';
   if (s === 'abandoned') return 'abandoned';
-  if (s === 'running') return 'live';
-  return 'queued'; // planned / ready_to_run / design_review / experiment_review
+  if (s === 'running' || s === 'in_progress') return 'live';
+  return 'queued'; // planned / ready_to_run / design_review / experiment_review / in_review
 }
 
 function idOf(row) {
   if (row == null) return null;
   if (typeof row === 'string') return row;
-  return row.id || row.experiment_id || null;
+  return row.id || row.experiment_id || row.task_id || null;
+}
+
+// The kind a strand id names, from its prefix (task_… vs exp_…).
+export function strandKind(id) {
+  return String(id || '').startsWith('task_') ? 'task' : 'experiment';
 }
 
 // The experiments a wave consolidated = the corpus DELTA, not the cumulative
@@ -36,26 +44,43 @@ function idOf(row) {
 export function coveredDelta(wave, prevWave) {
   const corpus = wave?.corpus || {};
   const delta = corpus.new_terminal_experiments;
-  if (Array.isArray(delta)) return delta.map(idOf).filter(Boolean);
-  const prev = new Set(
-    (prevWave?.corpus?.terminal_experiments || []).map(idOf).filter(Boolean),
-  );
-  return (corpus.terminal_experiments || [])
-    .map(idOf)
-    .filter(id => id && !prev.has(id));
+  const experiments = Array.isArray(delta)
+    ? delta.map(idOf).filter(Boolean)
+    : (() => {
+      const prev = new Set(
+        (prevWave?.corpus?.terminal_experiments || []).map(idOf).filter(Boolean),
+      );
+      return (corpus.terminal_experiments || [])
+        .map(idOf)
+        .filter(id => id && !prev.has(id));
+    })();
+  // Tasks the wave read for the first time: same delta rule, tasks table.
+  const taskDelta = corpus.new_terminal_tasks;
+  const tasks = Array.isArray(taskDelta)
+    ? taskDelta.map(idOf).filter(Boolean)
+    : (() => {
+      const prev = new Set(
+        (prevWave?.corpus?.terminal_tasks || []).map(idOf).filter(Boolean),
+      );
+      return (corpus.terminal_tasks || [])
+        .map(idOf)
+        .filter(id => id && !prev.has(id));
+    })();
+  return [...experiments, ...tasks];
 }
 
 /**
- * Join waves + (optionally) the live experiment list into braid entities.
+ * Join waves + (optionally) the live experiment and task lists into braid
+ * entities.
  *
  * Returns { epochs, strands }:
  *   epochs[i]  = { id, ordinal, status, title, attemptIndex, revisionContext,
  *                  publishedAt, createdAt, isOpen }
- *   strands[j] = { id, name, status, tone, attemptIndex,
- *                  spawnedBy: waveId|null, coveredBy: waveId|null,
+ *   strands[j] = { id, kind: 'experiment'|'task', name, status, tone,
+ *                  attemptIndex, spawnedBy: waveId|null, coveredBy: waveId|null,
  *                  spawnIdx, coverIdx }   (indices into epochs, -1 = none)
  */
-export function buildBraid(waves, experiments) {
+export function buildBraid(waves, experiments, tasks = []) {
   const ws = Array.isArray(waves) ? waves : [];
   const epochs = ws.map((w, i) => ({
     id: w.id,
@@ -75,7 +100,7 @@ export function buildBraid(waves, experiments) {
   const touch = (id) => {
     if (!byId.has(id)) {
       byId.set(id, {
-        id, name: id, status: '', attemptIndex: 1,
+        id, kind: strandKind(id), name: id, status: '', attemptIndex: 1,
         spawnedBy: null, coveredBy: null, createdAt: null,
       });
     }
@@ -83,7 +108,7 @@ export function buildBraid(waves, experiments) {
   };
 
   ws.forEach((w, i) => {
-    for (const m of w.materialized_experiments || []) {
+    for (const m of [...(w.materialized_experiments || []), ...(w.materialized_tasks || [])]) {
       const id = idOf(m);
       if (!id) continue;
       const s = touch(id);
@@ -97,7 +122,13 @@ export function buildBraid(waves, experiments) {
       // First covering wave wins; a snapshot row can't be un-consolidated.
       if (s.coveredBy == null) s.coveredBy = w.id;
     }
-    for (const t of w.corpus?.terminal_experiments || []) {
+    for (const t of [
+      ...(w.corpus?.terminal_experiments || []),
+      ...(w.corpus?.terminal_tasks || []),
+      ...(w.corpus?.new_terminal_experiments || []),
+      ...(w.corpus?.new_terminal_tasks || []),
+    ]) {
+      if (typeof t !== 'object' || t === null) continue;
       const id = idOf(t);
       if (!id || !byId.has(id)) continue;
       const s = byId.get(id);
@@ -107,10 +138,10 @@ export function buildBraid(waves, experiments) {
     }
   });
 
-  // Live experiment rows are the freshest facts and the only source for
-  // experiments no wave has touched yet (user-created, still running, or
+  // Live experiment and task rows are the freshest facts and the only source
+  // for nodes no wave has touched yet (user-created, still running, or
   // terminal-but-uncovered — the reflection debt).
-  for (const e of experiments || []) {
+  for (const e of [...(experiments || []), ...(tasks || [])]) {
     const id = idOf(e);
     if (!id) continue;
     const s = touch(id);
