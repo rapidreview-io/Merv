@@ -2,6 +2,8 @@
 
 Merv is a plugin for agentic coding platforms that helps agents run machine learning research as gated, reviewable experiment workflows.
 
+Documentation: [rapidreview.io/docs/merv](https://rapidreview.io/docs/merv)
+
 It is designed to work with Claude Code, Codex, GitHub Copilot CLI, Cursor,
 Gemini CLI, Qwen Code, Kilo Code, Hermes Agent, OpenCode, OpenHands, Replit
 Agent, and other MCP-capable agent platforms. It includes a
