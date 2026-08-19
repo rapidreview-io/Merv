@@ -1,5 +1,5 @@
 import {
-  createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
+  createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState,
 } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ReactFlow, Background, Handle, Position } from '@xyflow/react';
@@ -340,6 +340,55 @@ const keyActivate = (fn) => (e) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); }
 };
 
+// A task's silhouette is the flowchart "preparation" hexagon — pointed left
+// and right ends exactly where its edges enter and leave — against the
+// experiment's rectangular card. Same 190×70 box (the layout contract), so
+// nothing about lanes or edge geometry changes; only the outline does. It is
+// drawn as SVG rather than a CSS clip-path because a clip-path would also
+// clip off the border, the status tint, the left accent, the selection ring
+// and the live pulse — here each is a polygon that follows the shape.
+const TASK_TIP = 14;
+const TASK_PTS = [
+  [TASK_TIP, 0.5], [EXP_W - TASK_TIP, 0.5], [EXP_W - 0.5, EXP_H / 2],
+  [EXP_W - TASK_TIP, EXP_H - 0.5], [TASK_TIP, EXP_H - 0.5], [0.5, EXP_H / 2],
+].map(p => p.join(',')).join(' ');
+// The left accent: the chevron that stands in for the card's 3px left border.
+const TASK_ACCENT = `${TASK_TIP},0 0,${EXP_H / 2} ${TASK_TIP},${EXP_H}`;
+
+function TaskShape() {
+  const clipId = useId();
+  return (
+    <svg
+      className="fig-task-shape"
+      viewBox={`0 0 ${EXP_W} ${EXP_H}`}
+      width={EXP_W}
+      height={EXP_H}
+      aria-hidden="true"
+      focusable="false"
+    >
+      <defs>
+        <clipPath id={clipId}><polygon points={TASK_PTS} /></clipPath>
+      </defs>
+      {/* Under the fill: only its outer half shows — the selection ring,
+          the focus ring, and the live pulse, in whichever colour applies. */}
+      <polygon className="fig-task-ring" points={TASK_PTS} />
+      <polygon className="fig-task-fill" points={TASK_PTS} />
+      {/* Clipped to the shape, so its inner half is the accent band. */}
+      <polyline className="fig-task-accent" points={TASK_ACCENT} clipPath={`url(#${clipId})`} />
+      <polygon className="fig-task-edge" points={TASK_PTS} />
+    </svg>
+  );
+}
+
+// Legend swatch: the same hexagon, small.
+function TaskSwatch() {
+  return (
+    <svg className="fig-task-swatch" viewBox="0 0 22 12" width="22" height="12" aria-hidden="true" focusable="false">
+      <polygon points="4.5,0.75 17.5,0.75 21.25,6 17.5,11.25 4.5,11.25 0.75,6" />
+    </svg>
+  );
+}
+
 function ExpNode({ data }) {
   const { sel, select } = useContext(FlowCtx);
   const isTask = data.kind === 'task';
@@ -359,6 +408,7 @@ function ExpNode({ data }) {
       aria-label={`${data.name} — ${data.sub}`}
       onKeyDown={keyActivate(() => select({ kind: selKind, id: data.expId }))}
     >
+      {isTask && <TaskShape />}
       <Handle type="target" position={Position.Left} className="fig-handle" />
       <div className="fig-node-head">
         <span className="fig-node-glyph" aria-hidden="true">{isTask ? '◇' : '◈'}</span>
@@ -643,7 +693,7 @@ export default function WaveFlow({
             <div className="wflow-legend" aria-hidden="true">
               <span className="fig-chip fig-st--done">done</span>
               <span className="fig-chip fig-st--open">running</span>
-              <span className="fig-chip">◇ task</span>
+              <span className="fig-chip fig-chip--task"><TaskSwatch /> task</span>
               <span className="fig-chip wflow-chip--failed">failed</span>
               <span className="fig-chip wflow-chip--refl">reflection</span>
               <span className="fig-chip wflow-chip--pending">not yet consolidated</span>

@@ -6739,6 +6739,81 @@ textarea.sbxpw-input { font-family: var(--mono, ui-monospace, monospace); font-s
 .wflow-fig .fig-node-label { -webkit-line-clamp: 1; }
 .fig-node--experiment { border-left-color: var(--line-strong); }
 .fig-node--experiment.fig-st--open { border-left-color: var(--active); }
+/* ---- Task cards: a different SILHOUETTE, not just a different glyph. The
+   card is the flowchart "preparation" hexagon — pointed ends where the edges
+   enter and leave — while experiments stay rectangular. The box is still the
+   190×70 layout contract; the div's own border/background/shadow/outline are
+   switched off and every one of those roles moves to a polygon in the
+   .fig-task-shape SVG, so tint, accent, selection, focus and the live pulse
+   all follow the hexagon instead of a hidden rectangle. ---- */
+.fig-node.wflow-fig.fig-node--task,
+.fig-node.wflow-fig.fig-node--task.fig-st--done,
+.fig-node.wflow-fig.fig-node--task.fig-st--open,
+.fig-node.wflow-fig.fig-node--task.fig-st--failed {
+  border-color: transparent; background: transparent;
+  box-shadow: none; animation: none;
+  overflow: visible;
+  /* The tips eat horizontal room at the corners; the head and meta rows sit
+     inside the sloped ends on every row. */
+  padding-left: 17px; padding-right: 15px;
+}
+.fig-node.wflow-fig.fig-node--task.fig-node--selected,
+.fig-node.wflow-fig.fig-node--task:focus-visible,
+.fig-node.wflow-fig.fig-node--task.fig-node--selected:focus-visible { outline: none; }
+@media (hover: hover) {
+  .fig-node.wflow-fig.fig-node--task:hover { box-shadow: none; }
+  .fig-node.wflow-fig.fig-node--task:hover .fig-task-shape { filter: drop-shadow(var(--shadow-md)); }
+}
+/* The text rows stack above the SVG layer; the handles stay react-flow's. */
+.fig-node--task .fig-node-head,
+.fig-node--task .fig-node-label,
+.fig-node--task .fig-node-sub { position: relative; }
+.fig-task-shape {
+  position: absolute; inset: 0; z-index: 0;
+  width: 100%; height: 100%; overflow: visible;
+  pointer-events: none;
+  filter: drop-shadow(var(--shadow-sm));
+  transition: filter var(--motion-fast);
+}
+/* Fill + 1px edge: the card's background and border. */
+.fig-task-fill { fill: var(--bg-elev); stroke: none; }
+.fig-task-edge { fill: none; stroke: var(--line); stroke-width: 1; stroke-linejoin: miter; }
+/* The accent chevron: the rectangle's 3px left border, bent to the shape.
+   Drawn 6 wide and clipped to the polygon, so 3px shows on the inside. */
+.fig-task-accent { fill: none; stroke: var(--line-strong); stroke-width: 6; stroke-linejoin: miter; }
+/* Ring: under the fill, only its outer half shows. Off until selected,
+   focused, or alive. */
+.fig-task-ring { fill: none; stroke: none; stroke-width: 4; stroke-linejoin: miter; }
+.fig-node--task.fig-node--selected .fig-task-ring { stroke: var(--text); }
+.fig-node--task:focus-visible .fig-task-ring { stroke: var(--active); }
+.fig-node--task.fig-node--selected:focus-visible .fig-task-ring { stroke: var(--text); }
+/* Status tints — the same recipe as .fig-node.fig-st--* above, on polygons. */
+.fig-node--task.fig-st--done .fig-task-fill { fill: rgba(var(--supports-rgb), .04); }
+.fig-node--task.fig-st--done .fig-task-edge { stroke: rgba(var(--supports-rgb), .45); }
+.fig-node--task.fig-st--done .fig-task-accent { stroke: var(--supports); }
+.fig-node--task.fig-st--open .fig-task-fill { fill: rgba(var(--active-rgb), .04); }
+.fig-node--task.fig-st--open .fig-task-edge { stroke: rgba(var(--active-rgb), .45); }
+.fig-node--task.fig-st--open .fig-task-accent { stroke: var(--active); }
+/* Failed stays passive here, like the failed card: plain edge, dimmed. */
+.fig-node--task.fig-st--failed .fig-task-fill { fill: var(--bg-elev); }
+.fig-node--task.fig-st--failed .fig-task-edge { stroke: var(--line); }
+.fig-node--task.fig-st--failed .fig-task-accent { stroke: var(--line-strong); }
+/* Live: the card's breathing box-shadow, as a breathing ring. */
+.fig-node--task.fig-st--open:not(.fig-node--selected) .fig-task-ring {
+  stroke: var(--active);
+  animation: fig-task-live-ring 2.2s ease-in-out infinite;
+}
+@keyframes fig-task-live-ring {
+  0%, 100% { stroke-width: 0; stroke-opacity: .3; }
+  50% { stroke-width: 12; stroke-opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fig-node--task.fig-st--open:not(.fig-node--selected) .fig-task-ring { animation: none; stroke: none; }
+}
+/* The legend's swatch: the same hexagon, small, in the chip's own colours. */
+.fig-chip--task { display: inline-flex; align-items: center; gap: 5px; }
+.fig-task-swatch { display: block; overflow: visible; }
+.fig-task-swatch polygon { fill: var(--bg-elev); stroke: var(--line-strong); stroke-width: 1.25; }
 /* Live border: running experiments breathe (paired with their animated
    marching-dash edge into the open wave). The breathing pauses while the card
    is selected so the selection ring reads clean. */
