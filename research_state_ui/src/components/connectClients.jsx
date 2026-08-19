@@ -14,6 +14,11 @@ export const MERV_REPO_URL = 'https://github.com/rapidreview-io/Merv';
 export const CLIENT_DOCS_URL = `${MERV_REPO_URL}/blob/main/merv/docs/CLIENTS.md`;
 
 const CONSENT_NOTE = 'Approve All my projects in the browser.';
+// Kilo and OpenCode finish sign-in with a browser callback to 127.0.0.1:19876
+// on the machine running the client (see merv/docs/AUTH.md#remote-machines).
+const REMOTE_NOTE = 'On a remote machine, connect with '
+  + 'ssh -o ExitOnForwardFailure=yes -L 19876:127.0.0.1:19876 user@host first '
+  + 'so the browser callback reaches it.';
 
 export const NATIVE_CLIENTS = [
   {
@@ -111,7 +116,7 @@ export const NATIVE_CLIENTS = [
       {
         title: 'Sign in from the terminal',
         commands: ['kilo mcp auth merv'],
-        note: CONSENT_NOTE,
+        note: `${CONSENT_NOTE} ${REMOTE_NOTE}`,
       },
       {
         title: 'Update this session',
@@ -195,7 +200,7 @@ export const NATIVE_CLIENTS = [
       {
         title: 'Sign in from the terminal',
         commands: ['opencode mcp auth merv'],
-        note: CONSENT_NOTE,
+        note: `${CONSENT_NOTE} ${REMOTE_NOTE}`,
       },
       {
         title: 'Updating later',

@@ -116,7 +116,10 @@ kilo mcp auth merv
 ```
 
 Skills update when a new session starts. Run `/reload` to update the current
-session.
+session. On a remote machine over SSH, connect with
+`ssh -o ExitOnForwardFailure=yes -L 19876:127.0.0.1:19876 user@host` first so
+the browser's sign-in callback reaches Kilo there — see
+[Remote machines](merv/docs/AUTH.md#remote-machines).
 
 ### Hermes Agent
 
@@ -135,7 +138,10 @@ opencode mcp auth merv
 ```
 
 Skills update automatically when a session starts. Rerun the install command
-when Merv announces an adapter update.
+when Merv announces an adapter update. On a remote machine over SSH, connect
+with `ssh -o ExitOnForwardFailure=yes -L 19876:127.0.0.1:19876 user@host` first
+so the browser's sign-in callback reaches OpenCode there — see
+[Remote machines](merv/docs/AUTH.md#remote-machines).
 
 Headless runners and CI use `MERV_MCP_KEY`. See
 [Authentication](merv/docs/AUTH.md#when-a-static-key-is-still-required) and

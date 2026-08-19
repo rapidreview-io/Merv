@@ -51,6 +51,13 @@ The bundled MCP entry contains only
 Merv's OAuth endpoints, opens the browser, stores the token, and refreshes it.
 The user never sees or mints the underlying credential.
 
+On a remote machine over SSH, Kilo and OpenCode need the browser's consent
+redirect to reach `127.0.0.1:19876` on that machine. Connect with
+`ssh -o ExitOnForwardFailure=yes -L 19876:127.0.0.1:19876 user@host` from the
+laptop whose browser will approve, run the `mcp auth merv` command inside that
+session, and open the printed URL locally. Details in
+[AUTH.md](AUTH.md#remote-machines).
+
 Enable RapidReview marketplace auto-update once in Claude's `/plugin` screen.
 Gemini's `--auto-update` flag is sufficient. Qwen prompts when the tracked
 branch changes and updates with `qwen extensions update merv`. Codex repository marketplaces

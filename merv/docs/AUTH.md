@@ -103,6 +103,32 @@ grant discovers ids with `project(action="list")`; a project-scoped grant may
 only pass its bound project. Project membership remains the authorization
 boundary.
 
+### Remote machines
+
+Browser consent ends with a redirect to a loopback URL on the machine running
+the client. Kilo and OpenCode register
+`http://127.0.0.1:19876/mcp/oauth/callback` and listen there for the duration
+of `kilo mcp auth merv` / `opencode mcp auth merv`. When that machine is a VM
+you reach over SSH and the browser is on your laptop, the redirect lands on the
+*laptop's* loopback: nothing answers (or a Kilo/OpenCode running locally answers
+with a state error), and the remote client gives up after five minutes with an
+OAuth callback timeout. Forward the port from the laptop before signing in, and
+sign in inside that SSH session:
+
+```bash
+ssh -o ExitOnForwardFailure=yes -L 19876:127.0.0.1:19876 user@remote-host
+kilo mcp auth merv        # or: opencode mcp auth merv
+```
+
+Open the printed URL in the laptop's browser and approve. The callback travels
+through the tunnel to the remote client, which exchanges the code and stores
+the token on the remote machine as usual; refresh needs no tunnel, and no key
+is minted or copied. The forward is only needed while signing in. If `ssh`
+reports it could not bind 19876, another Kilo/OpenCode sign-in on the laptop is
+holding the port — finish or cancel it first. The same technique applies to
+any client whose redirect URI is a loopback address: forward that client's
+callback port instead of 19876.
+
 ## When a static key is still required
 
 Use browser OAuth by default. Mint a static `mk_` key only when there is no
@@ -111,8 +137,9 @@ mint narrower child sessions:
 
 - `merv-agent-runner`, which holds the parent credential and gives each child a
   short-lived `MERV_AGENT_SESSION_KEY`;
-- CI jobs, unattended services, containers, and remote SSH sessions that cannot
-  complete a localhost OAuth callback;
+- CI jobs, unattended services, and containers with no browser and no way to
+  forward the callback port (an interactive SSH session can — see
+  [Remote machines](#remote-machines));
 - a client that does not implement MCP OAuth discovery, DCR, PKCE, and refresh;
 - direct scripts such as `curl` or the full `mcp_conformance.py` keyed probe.
 
