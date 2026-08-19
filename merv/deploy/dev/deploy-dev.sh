@@ -53,7 +53,13 @@ if [ "$SKIP_UI" = 0 ]; then
   if [ "$(git rev-parse HEAD)" != "$SHA" ] || [ -n "$(git status --porcelain -- research_state_ui)" ]; then
     echo "note: the UI is built from the working tree, which differs from $SHA8"
   fi
-  (cd research_state_ui && npm run build --silent)
+  # Same-origin build: the UI calls the brain that serves it. The explicit
+  # empty values beat any laptop .env.local (which may point at prod and may
+  # carry a personal token — neither belongs in a public bundle).
+  (cd research_state_ui && VITE_API_BASE= VITE_API_TOKEN= npm run build --silent)
+  if grep -rlE '(rpt_|rr_sk_|mk_)[A-Za-z0-9_-]{16,}' research_state_ui/dist/assets >/dev/null 2>&1; then
+    echo "refusing to ship: a token-shaped string is baked into research_state_ui/dist"; exit 1
+  fi
   printf '%s\n' "$SHA" > research_state_ui/dist/release.txt
   rsync -a --delete -e "ssh $SSH_OPTS" research_state_ui/dist/ "$SSH_TARGET:/srv/merv-ui/"
   echo "synced research_state_ui/dist → /srv/merv-ui"
