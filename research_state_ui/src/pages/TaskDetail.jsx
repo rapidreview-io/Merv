@@ -6,11 +6,27 @@ import { useStreamAwarePoll } from '../store/useEventStream';
 import FSMStrip from '../components/FSMStrip';
 import GateBanner from '../components/GateBanner';
 import FileRenderer from '../components/FileRenderer';
+import MarkdownView from '../components/MarkdownView';
 import ReviewCard from '../components/ReviewCard';
 import StatusPill from '../components/StatusPill';
 import ObjId from '../components/ObjId';
-import IndependentRead from '../components/IndependentRead';
-import { pickIndependentRead } from '../utils/independentRead';
+import InlineMd from '../components/InlineMd';
+import { fmtAgo, fmtSpan, formatBytes } from '../utils/format';
+
+/*
+ * TaskDetail — a task is scoped work with a verifiable finish line, so the
+ * page is a ledger, not an essay:
+ *
+ *   description   the brief's Goal as structure — headline, deliverables, purpose
+ *   requirements  one row per Done-when check: what must be true · got it? · evidence
+ *   process       the prose — outcome, the delivery's Report and Caveats, the reviews
+ *   rail          status, timeline, unblocks / waits on, files, record
+ *
+ * The strip at the top is still the status truth and the gate panel still
+ * carries the transitions. Everything the table and rail show is parsed
+ * server-side from the brief and delivery (task.description / requirements /
+ * results / report / caveats / dependents) — nothing is re-derived here.
+ */
 
 // The task lifecycle rendered through the shared strip: two working states,
 // two endings (mirrors task_workflow.py; `failed` lands on the last cell).
@@ -39,6 +55,16 @@ function deriveActionButtons(workflow) {
   const inFlight = !['terminal', 'done', 'failed'].includes(workflow.current_gate);
   return { primary, secondary: inFlight ? SECONDARY_TRANSITIONS : [] };
 }
+
+const ago = (iso) => {
+  const t = Date.parse(iso || '');
+  return Number.isFinite(t) ? fmtAgo(Date.now() - t) : null;
+};
+const msBetween = (a, b) => {
+  const t0 = Date.parse(a || ''), t1 = Date.parse(b || '');
+  return Number.isFinite(t0) && Number.isFinite(t1) ? Math.max(0, t1 - t0) : null;
+};
+const nodeHref = (px, node) => px(node.node_type === 'task' ? `/tasks/${node.id}` : `/experiments/${node.id}`);
 
 export default function TaskDetail() {
   const { taskId } = useParams();
@@ -126,14 +152,12 @@ export default function TaskDetail() {
   const current = (task.current_attempt_artifacts || []).slice();
   const briefRes = current.find(r => r.role === 'brief') || null;
   const deliveryRes = current.find(r => r.role === 'delivery') || null;
-  // The backend lists reviews newest-first; the page reads them as a timeline.
+  // The backend lists reviews newest-first; the timeline and the process
+  // section both want them in time order.
   const reviews = (task.reviews || []).slice().reverse();
-  const independentRead = pickIndependentRead(reviews, { ...task, intent: task.goal });
-  const checks = Array.isArray(task.checks) ? task.checks : [];
-  const dependencies = Array.isArray(task.dependencies) ? task.dependencies : [];
 
   return (
-    <div className="page-stage">
+    <div className="page-stage page-stage--wide">
       <section className="exp-fsm">
         <FSMStrip
           status={task.status}
@@ -201,109 +225,265 @@ export default function TaskDetail() {
         </section>
       )}
 
-      <header className="exp-orient">
+      <header className="exp-orient task-orient">
         <div className="page-eyebrow">
           <Link to={px('/tasks')}>Tasks</Link>
           {' · '}<ObjId id={task.id} />
         </div>
         <h1 className="page-title exp-title-name">{task.name || task.id}</h1>
-        {task.goal && <p className="page-lede">{task.goal}</p>}
       </header>
 
-      {/* The reviewer's plain-language read leads the page once one exists;
-          until then the goal in the header already says what this is. */}
-      {independentRead.kind === 'review' && <IndependentRead read={independentRead} />}
-
-      {(task.status === 'failed' || task.outcome) && (
-        <section className="spotlight" id="outcome">
-          <div className="spotlight-eyebrow">
-            {task.status === 'failed' ? `Ended by ${task.failed_by || 'owner'}` : 'Outcome'}
-          </div>
-          <div className="spotlight-body">
-            <p>{task.outcome || 'No note recorded.'}</p>
-          </div>
-        </section>
-      )}
-
-      <section className="spotlight" id="checks">
-        <header className="spotlight-head spotlight-head--row">
-          <div className="spotlight-head-left">
-            <span className="spotlight-eyebrow">Done when</span>
-            <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>
-              {checks.length ? `${checks.length} check${checks.length === 1 ? '' : 's'} from the brief` : 'no brief submitted yet'}
-            </span>
-          </div>
-        </header>
-        {checks.length > 0 && (
-          <ol className="spotlight-body task-checks">
-            {checks.map((check, i) => <li key={i}>{check}</li>)}
-          </ol>
-        )}
-      </section>
-
-      {dependencies.length > 0 && (
-        <section className="spotlight" id="dependencies">
-          <header className="spotlight-head spotlight-head--row">
-            <div className="spotlight-head-left">
-              <span className="spotlight-eyebrow">Waits on</span>
-            </div>
-          </header>
-          <div className="spotlight-body stack stack--sm">
-            {dependencies.map(dep => (
-              <div key={dep.id} className="cluster">
-                <StatusPill value={dep.status} />
-                <Link to={px(dep.node_type === 'task' ? `/tasks/${dep.id}` : `/experiments/${dep.id}`)}>
-                  {dep.name || dep.id}
-                </Link>
-                <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>{dep.node_type}</span>
-                {dep.settled && <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>· done</span>}
-                {dep.failed && <span className="error-message" style={{ fontSize: 'var(--text-xs)' }}>ended without succeeding</span>}
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <TaskDocSpotlight
-        id="delivery"
-        projectId={projectId}
-        eyebrow="Delivery"
-        artifact={deliveryRes}
-        emptyText="No delivery submitted yet."
-        reviews={reviews}
-        defaultOpen
-      />
-      <TaskDocSpotlight
-        id="brief"
-        projectId={projectId}
-        eyebrow="Brief"
-        artifact={briefRes}
-        emptyText="No brief submitted yet — the executor writes tasks/<name>/brief.md."
-        defaultOpen={!deliveryRes}
-      />
+      <div className="task-layout">
+        <main className="task-main">
+          <TaskDescription description={task.description} goal={task.goal} />
+          <RequirementsTable task={task} />
+          <ProcessSection task={task} reviews={reviews} />
+          <TaskDocSpotlight
+            id="delivery"
+            projectId={projectId}
+            eyebrow="Delivery"
+            artifact={deliveryRes}
+            verdict={reviews.length ? reviews[reviews.length - 1].verdict : null}
+            emptyText="No delivery submitted yet."
+          />
+          <TaskDocSpotlight
+            id="brief"
+            projectId={projectId}
+            eyebrow="Brief"
+            artifact={briefRes}
+            emptyText="No brief submitted yet — the executor writes tasks/<name>/brief.md."
+          />
+        </main>
+        <TaskRail task={task} reviews={reviews} px={px} />
+      </div>
     </div>
   );
 }
 
-function TaskDocSpotlight({ id, projectId, eyebrow, artifact, emptyText, reviews = [], defaultOpen = true }) {
+/* ───────────── Description: the brief's Goal as structure ───────────── */
+
+function TaskDescription({ description, goal }) {
+  const d = description || {};
+  if (!d.structured) {
+    const text = String(d.text || goal || '').trim();
+    if (!text) return null;
+    // Plain prose (a task created before the Goal shape, or written without
+    // it): one measured paragraph, still the lead of the page.
+    return (
+      <section className="task-desc">
+        <p className="task-desc-summary task-desc-summary--plain"><InlineMd text={text} /></p>
+      </section>
+    );
+  }
+  return (
+    <section className="task-desc">
+      {d.summary && <p className="task-desc-summary"><InlineMd text={d.summary} /></p>}
+      <dl className="task-desc-grid">
+        {d.deliverables?.length > 0 && (
+          <>
+            <dt>Deliverables</dt>
+            <dd>
+              <ul className="task-deliverables">
+                {d.deliverables.map((item, i) => <li key={i}><InlineMd text={item} /></li>)}
+              </ul>
+            </dd>
+          </>
+        )}
+        {d.purpose && (
+          <>
+            <dt>Purpose</dt>
+            <dd className="task-purpose"><InlineMd text={d.purpose} /></dd>
+          </>
+        )}
+      </dl>
+    </section>
+  );
+}
+
+/* ───────────── Requirements: what must be true · got it? · evidence ───── */
+
+// The per-row state a reader sees, from the delivery entry's claim and the
+// task's status. The claim is the executor's; only acceptance makes it
+// "verified" — one review covers the whole task, there is no per-row verdict.
+function rowState(result, status) {
+  const claim = result?.state || null;
+  if (!claim) {
+    if (status === 'failed') return { tone: 'open', glyph: '○', word: 'not delivered', sub: null };
+    return { tone: 'open', glyph: '○', word: 'not yet', sub: null };
+  }
+  if (claim === 'unmet') {
+    return {
+      tone: 'bad', glyph: '✗', word: 'unmet',
+      sub: status === 'done' ? 'waived in review' : status === 'in_review' ? 'awaiting review' : status === 'failed' ? 'task ended' : 'stated by the executor',
+    };
+  }
+  if (claim === 'partial') {
+    return {
+      tone: 'wait', glyph: '◐', word: 'partial',
+      sub: status === 'done' ? 'accepted in review' : status === 'in_review' ? 'awaiting review' : status === 'failed' ? 'task ended' : 'stated by the executor',
+    };
+  }
+  if (status === 'done') return { tone: 'ok', glyph: '✓', word: 'met', sub: 'verified in review' };
+  if (status === 'in_review') return { tone: 'wait', glyph: '◐', word: 'claimed', sub: 'awaiting review' };
+  if (status === 'failed') return { tone: 'wait', glyph: '◐', word: 'claimed', sub: 'task ended' };
+  return { tone: 'wait', glyph: '◐', word: 'claimed', sub: 'not submitted' };
+}
+
+function RequirementsTable({ task }) {
+  const requirements = Array.isArray(task.requirements) && task.requirements.length
+    ? task.requirements
+    : (task.checks || []).map((text, i) => ({ number: i + 1, statement: text, verify: null, text }));
+  const results = new Map((task.results || []).map(r => [r.number, r]));
+  const total = requirements.length;
+  const status = task.status;
+  const rows = requirements.map(req => ({ req, result: results.get(req.number) || null, state: rowState(results.get(req.number) || null, status) }));
+  const claimed = rows.filter(r => r.result?.state).length;
+  const metCount = rows.filter(r => r.result?.state === 'met').length;
+
+  let countLine = null;
+  if (total) {
+    if (status === 'done') countLine = <><b>{metCount} of {total}</b> met and verified{metCount < total ? ' · the rest waived in review' : ''}</>;
+    else if (status === 'in_review') countLine = <><b>{claimed} of {total}</b> answered · awaiting review</>;
+    else if (status === 'failed') countLine = <><b>{claimed} of {total}</b> answered before the task ended</>;
+    else countLine = claimed ? <><b>{claimed} of {total}</b> evidenced · {total - claimed} to go</> : <>none evidenced yet</>;
+  }
+
+  return (
+    <section className="spotlight" id="requirements">
+      <header className="spotlight-head spotlight-head--row">
+        <div className="spotlight-head-left">
+          <span className="spotlight-eyebrow">Requirements</span>
+          <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>
+            {total ? <>{total} from the brief · {countLine}</> : 'no brief submitted yet'}
+          </span>
+        </div>
+      </header>
+      {total > 0 && (
+        <div className="task-req" role="table" aria-label="Requirements">
+          <div className="task-req-h" role="columnheader" />
+          <div className="task-req-h" role="columnheader">What must be true</div>
+          <div className="task-req-h" role="columnheader">Got it?</div>
+          <div className="task-req-h task-req-h--ev" role="columnheader">Evidence</div>
+          {rows.map(({ req, result, state }, i) => {
+            const last = i === rows.length - 1 ? ' task-req--last' : '';
+            return (
+              <div key={req.number} role="row" className="task-req-row" style={{ display: 'contents' }}>
+                <div className={`task-req-n${last}`} role="cell">{req.number}</div>
+                <div className={`task-req-stmt-cell${last}`} role="cell">
+                  <div className="task-req-stmt"><InlineMd text={req.statement} /></div>
+                  {req.verify && <div className="task-req-verify"><span className="k">verify · </span><InlineMd text={req.verify} /></div>}
+                </div>
+                <div className={`task-req-got-cell${last}`} role="cell">
+                  <div className={`task-got task-got--${state.tone}`}>
+                    <span className="g" aria-hidden="true">{state.glyph}</span>{state.word}
+                    {state.sub && <small>{state.sub}</small>}
+                  </div>
+                </div>
+                <div className={`task-req-ev${last}`} role="cell">
+                  {result?.evidence
+                    ? <>
+                        <InlineMd text={result.evidence} />
+                        {result.how && <span className="task-req-how"><span className="k">check · </span><InlineMd text={result.how} /></span>}
+                      </>
+                    : <span className="task-req-none">— no evidence yet</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ───────────── Process: the prose — outcome, report, caveats, reviews ── */
+
+function ProcessSection({ task, reviews }) {
+  const status = task.status;
+  const report = String(task.report || '').trim();
+  const caveats = String(task.caveats || '').trim();
+  const outcome = String(task.outcome || '').trim();
+  const hasReviews = reviews.length > 0;
+  const showOutcome = status === 'done' || status === 'failed';
+  const nothing = !showOutcome && !report && !caveats && !hasReviews;
+  return (
+    <section className="spotlight task-proc" id="process">
+      <header className="spotlight-head"><span className="spotlight-eyebrow">Process</span></header>
+      {showOutcome && (
+        <div className="task-proc-sec">
+          <h4>{status === 'failed' ? `Ended by ${task.failed_by || 'owner'}` : 'Outcome'}</h4>
+          <p><InlineMd text={outcome || (status === 'failed' ? 'No reason recorded.' : 'No outcome note recorded.')} /></p>
+        </div>
+      )}
+      {report && (
+        <div className="task-proc-sec">
+          <h4>Report <span className="task-proc-from">· from the delivery</span></h4>
+          <div className="task-proc-md"><MarkdownView text={report} /></div>
+        </div>
+      )}
+      {caveats && (
+        <div className="task-proc-sec">
+          <h4>Caveats</h4>
+          <div className="task-proc-md task-proc-md--quiet"><MarkdownView text={caveats} /></div>
+        </div>
+      )}
+      {hasReviews && (
+        <div className="task-proc-sec">
+          <h4>Review{reviews.length > 1 ? 's' : ''}</h4>
+          <div className="stack stack--sm">
+            {reviews.slice().reverse().map((r, i) => (
+              <ReviewQuote key={r.id || i} review={r} round={reviews.length - i} />
+            ))}
+          </div>
+        </div>
+      )}
+      {nothing && (
+        <div className="spotlight-empty">
+          {status === 'in_progress'
+            ? 'Nothing to report yet — the delivery’s Report section and the review rounds appear here.'
+            : 'No report or review recorded.'}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ReviewQuote({ review, round }) {
+  const verdict = String(review.verdict || 'pending').toLowerCase();
+  const synopsis = String(review.synopsis || '').trim();
+  const hasDetail = Boolean(review.notes) || (Array.isArray(review.findings) && review.findings.length > 0);
+  return (
+    <blockquote className={`task-quote task-quote--${verdict}`}>
+      <div className="task-quote-by">
+        <StatusPill value={verdict} />
+        <span>round {round}</span>
+        {review.created_at && <span>· {ago(review.created_at)}</span>}
+      </div>
+      {synopsis ? <p><InlineMd text={synopsis} /></p> : null}
+      {hasDetail && <ReviewCard review={review} bare />}
+    </blockquote>
+  );
+}
+
+/* ───────────── Documents ─────────────────────────────────────────────── */
+
+function TaskDocSpotlight({ id, projectId, eyebrow, artifact, emptyText, verdict = null }) {
   const [content, setContent] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [showBody, setShowBody] = useState(defaultOpen);
-  const [showReview, setShowReview] = useState(false);
+  const [showBody, setShowBody] = useState(false);
 
   useEffect(() => {
-    if (!artifact) return undefined;
+    if (!artifact || !showBody) return undefined;
     let cancelled = false;
     setLoading(true);
     setError(null);
-    setContent(null);
     api.getArtifactContent(projectId, artifact.id)
       .then(d => { if (!cancelled) setContent(d); })
       .catch(e => { if (!cancelled) setError(e.message); })
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
-  }, [projectId, artifact?.id]);
+  }, [projectId, artifact?.id, showBody]);
 
   const artifactId = artifact?.id;
   const resolveImageSrc = useCallback(
@@ -313,37 +493,26 @@ function TaskDocSpotlight({ id, projectId, eyebrow, artifact, emptyText, reviews
 
   if (!artifact) {
     return (
-      <section id={id} className="spotlight">
+      <section id={id} className="spotlight task-doc">
         <div className="spotlight-eyebrow">{eyebrow}</div>
         <div className="spotlight-empty">{emptyText}</div>
       </section>
     );
   }
-  const latest = reviews[reviews.length - 1];
   return (
-    <section id={id} className="spotlight">
-      <header className="spotlight-head spotlight-head--row">
+    <section id={id} className="spotlight task-doc">
+      <header className="spotlight-head spotlight-head--row" style={{ marginBottom: showBody ? 14 : 0 }}>
         <div className="spotlight-head-left">
           <span className="spotlight-eyebrow">{eyebrow}</span>
-          {latest && <StatusPill value={latest.verdict} />}
+          {verdict && <StatusPill value={verdict} />}
         </div>
         <div className="spotlight-head-right">
           <span className="mono spotlight-bar-path">{artifact.path}</span>
-          {reviews.length > 0 && (
-            <button type="button" className="btn btn--sm" onClick={() => setShowReview(v => !v)}>
-              <span className="toggle-verb">{showReview ? 'Hide' : 'Show'}</span>{` review${reviews.length === 1 ? '' : 's'}`}
-            </button>
-          )}
           <button type="button" className="btn btn--sm" onClick={() => setShowBody(v => !v)}>
             <span className="toggle-verb">{showBody ? 'Hide' : 'Show'}</span>{` ${eyebrow.toLowerCase()}`}
           </button>
         </div>
       </header>
-      {showReview && reviews.length > 0 && (
-        <div className="spotlight-review stack stack--sm">
-          {reviews.slice().reverse().map(r => <ReviewCard key={r.id} review={r} />)}
-        </div>
-      )}
       {showBody && (
         <div className="spotlight-body">
           {loading ? (
@@ -362,5 +531,172 @@ function TaskDocSpotlight({ id, projectId, eyebrow, artifact, emptyText, reviews
         </div>
       )}
     </section>
+  );
+}
+
+/* ───────────── Rail: status · timeline · graph · files · record ──────── */
+
+function railStatus(task, reviews) {
+  const s = task.status;
+  const last = reviews[reviews.length - 1];
+  const rounds = reviews.length;
+  if (s === 'done') {
+    return {
+      tone: 'ok', word: '✓ Accepted',
+      sub: `by owner · ${ago(task.updated_at) || ''}${rounds ? ` · after ${rounds} review round${rounds > 1 ? 's' : ''}` : ''}`,
+    };
+  }
+  if (s === 'failed') {
+    return { tone: 'bad', word: '✗ Ended', sub: `by ${task.failed_by || 'owner'} · ${ago(task.updated_at) || ''}` };
+  }
+  if (s === 'in_review') {
+    const pending = !last || last.verdict === 'needs_changes';
+    return {
+      tone: 'wait', word: '◐ Awaiting review',
+      sub: pending ? `round ${rounds + 1} · delivery submitted${task.updated_at ? ` ${ago(task.updated_at)}` : ''}` : 'review submitted · accept to finish',
+    };
+  }
+  return {
+    tone: 'live', word: '● Delivering',
+    sub: rounds ? `sent back in round ${rounds} · fix the delivery and resubmit` : `started ${ago(task.created_at) || ''}`,
+  };
+}
+
+// The record's events in time order, built from what the state already
+// carries: the task row, its artifacts, and its reviews.
+// Timestamps are second-resolution, so events can tie; `rank` orders a tie
+// the way the record actually went — a review before the resubmission that
+// answered it, a first delivery before the review of it, endings last.
+function buildTimeline(task, reviews) {
+  const items = [];
+  if (task.created_at) items.push({ t: task.created_at, rank: 0, tone: null, label: 'created' });
+  const arts = (task.artifacts || []).slice().sort((a, b) =>
+    String(a.created_at || '').localeCompare(String(b.created_at || ''))
+    || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0)));
+  let briefSeen = 0, deliverySeen = 0;
+  for (const a of arts) {
+    if (a.role === 'brief') {
+      briefSeen += 1;
+      items.push({ t: a.created_at, rank: 1, tone: null, label: briefSeen === 1 ? 'brief submitted' : 'brief updated' });
+    } else if (a.role === 'delivery') {
+      deliverySeen += 1;
+      items.push({
+        t: a.created_at, rank: deliverySeen === 1 ? 1 : 3, tone: 'live',
+        label: deliverySeen === 1 ? 'delivery submitted' : 'delivery resubmitted',
+      });
+    }
+  }
+  reviews.forEach((r, i) => {
+    const v = String(r.verdict || '').toLowerCase();
+    items.push({
+      t: r.created_at, rank: 2,
+      tone: v === 'pass' ? 'ok' : v === 'fail' ? 'bad' : 'warn',
+      label: `review round ${i + 1} · ${v.replace(/_/g, ' ') || 'pending'}`,
+    });
+  });
+  if (task.status === 'done' && task.updated_at) {
+    const span = msBetween(task.created_at, task.updated_at);
+    items.push({ t: task.updated_at, rank: 4, tone: 'ok', label: `accepted${span != null ? ` · ${fmtSpan(span)} total` : ''}` });
+  } else if (task.status === 'failed' && task.updated_at) {
+    items.push({ t: task.updated_at, rank: 4, tone: 'bad', label: `ended by ${task.failed_by || 'owner'}` });
+  }
+  return items
+    .filter(i => i.t)
+    .sort((a, b) => String(a.t).localeCompare(String(b.t)) || (a.rank - b.rank));
+}
+
+function TaskRail({ task, reviews, px }) {
+  const st = railStatus(task, reviews);
+  const timeline = buildTimeline(task, reviews);
+  const dependents = Array.isArray(task.dependents) ? task.dependents : [];
+  const dependencies = Array.isArray(task.dependencies) ? task.dependencies : [];
+  const files = (task.current_attempt_artifacts || []).slice()
+    .sort((a, b) => String(a.path || '').localeCompare(String(b.path || '')));
+  const lastVerdict = reviews.length ? String(reviews[reviews.length - 1].verdict || '').toLowerCase() : null;
+  const folder = `tasks/${task.name || task.id}/`;
+  const isOpen = !TASK_TERMINAL.has(task.status);
+  return (
+    <aside className="task-rail" aria-label="Task facts">
+      <div className="task-rail-sec">
+        <div className="spotlight-eyebrow">Status</div>
+        <div className="task-rail-status">
+          <StatusPill value={task.status} />
+          <span className={`task-rail-word task-rail-word--${st.tone}`}>{st.word}</span>
+        </div>
+        {st.sub && <div className="task-rail-sub">{st.sub}</div>}
+      </div>
+
+      {timeline.length > 0 && (
+        <div className="task-rail-sec">
+          <div className="spotlight-eyebrow">Timeline</div>
+          <ul className="task-tl">
+            {timeline.map((item, i) => (
+              <li key={i}>
+                <span className={`task-tl-dot${item.tone ? ` task-tl-dot--${item.tone}` : ''}`} aria-hidden="true" />
+                <span className="task-tl-t" title={item.t}>{ago(item.t)}</span>
+                <span className="task-tl-w">{item.label}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="task-rail-sec">
+        <div className="spotlight-eyebrow">Unblocks{dependents.length ? ` · ${dependents.length}` : ''}</div>
+        {dependents.length === 0
+          ? <div className="task-rail-empty">nothing waits on this task</div>
+          : dependents.map(d => (
+            <div key={d.id} className="task-node-row">
+              <span className="task-node-glyph" aria-hidden="true">{d.node_type === 'task' ? '◇' : '◈'}</span>
+              <Link className="task-node-name" to={nodeHref(px, d)}>{d.name || d.id}</Link>
+              <StatusPill value={d.status} />
+            </div>
+          ))}
+        {dependents.length > 0 && isOpen && (
+          <div className="task-rail-sub">{dependents.length === 1 ? 'it waits' : 'they wait'} until this task is accepted</div>
+        )}
+      </div>
+
+      <div className="task-rail-sec">
+        <div className="spotlight-eyebrow">Waits on{dependencies.length ? ` · ${dependencies.length}` : ''}</div>
+        {dependencies.length === 0
+          ? <div className="task-rail-empty">nothing</div>
+          : dependencies.map(d => (
+            <div key={d.id} className="task-node-row">
+              <span className="task-node-glyph" aria-hidden="true">{d.node_type === 'task' ? '◇' : '◈'}</span>
+              <Link className="task-node-name" to={nodeHref(px, d)}>{d.name || d.id}</Link>
+              <StatusPill value={d.status} />
+              {d.failed && <span className="task-rail-bad">ended without succeeding</span>}
+            </div>
+          ))}
+      </div>
+
+      <div className="task-rail-sec">
+        <div className="spotlight-eyebrow">Files{files.length ? ` · ${files.length}` : ''}</div>
+        {files.length === 0
+          ? <div className="task-rail-empty">nothing submitted yet</div>
+          : files.map(f => {
+            const anchor = f.role === 'brief' ? '#brief' : f.role === 'delivery' ? '#delivery' : null;
+            return (
+              <div key={f.id} className="task-file-row" title={f.path}>
+                {anchor
+                  ? <a className="task-file-path" href={anchor}>{f.path}</a>
+                  : <span className="task-file-path">{f.path}</span>}
+                {f.role === 'delivery' && lastVerdict && <StatusPill value={lastVerdict} />}
+                {f.size_bytes != null && <span className="task-file-size">{formatBytes(f.size_bytes)}</span>}
+              </div>
+            );
+          })}
+      </div>
+
+      <div className="task-rail-sec">
+        <div className="spotlight-eyebrow">Record</div>
+        <dl className="task-kv">
+          <dt>folder</dt><dd className="mono">{folder}</dd>
+          <dt>attempt</dt><dd>{task.attempt_index ?? 1}</dd>
+          {task.created_at && <><dt>created</dt><dd title={task.created_at}>{ago(task.created_at)}</dd></>}
+        </dl>
+      </div>
+    </aside>
   );
 }

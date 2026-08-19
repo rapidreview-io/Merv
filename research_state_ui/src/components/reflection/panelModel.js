@@ -286,7 +286,7 @@ export function expTimeline(strand, row, now = Date.now()) {
 export function buildIntentIndex(experiments, waves, tasks = []) {
   const idx = new Map();
   for (const e of experiments || []) if (e?.id && e.intent) idx.set(e.id, String(e.intent).trim());
-  for (const t of tasks || []) if (t?.id && t.goal) idx.set(t.id, String(t.goal).trim());
+  for (const t of tasks || []) if (t?.id && (t.summary || t.goal)) idx.set(t.id, String(t.summary || t.goal).trim());
   for (const w of waves || []) {
     for (const m of w?.materialized_experiments || []) {
       const id = m?.experiment_id || m?.id;

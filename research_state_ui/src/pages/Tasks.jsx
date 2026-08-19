@@ -8,6 +8,7 @@ import ObjId from '../components/ObjId';
 import StatusPill from '../components/StatusPill';
 import { expName } from '../utils/experiment';
 import { fmtDayTime, fmtDuration } from '../utils/format';
+import { composeGoal } from '../utils/taskGoal';
 
 // Task lifecycle: two working states, two endings (mirrors task_workflow.py).
 const LIFECYCLE = ['in_progress', 'in_review', 'done'];
@@ -153,6 +154,7 @@ function TaskTable({ rows, sortKey, sortDir, onSort }) {
         {rows.map(({ task: t, title, facts }) => {
           const checkCount = Array.isArray(t.checks) ? t.checks.length : 0;
           const depCount = Array.isArray(t.dependencies) ? t.dependencies.length : 0;
+          const unblockCount = Array.isArray(t.dependents) ? t.dependents.length : 0;
           const reviewCount = Array.isArray(t.reviews) ? t.reviews.length : 0;
           const created = fmtDayTime(t.created_at);
           const finished = facts.settled ? fmtDayTime(t.updated_at) : null;
@@ -167,10 +169,13 @@ function TaskTable({ rows, sortKey, sortDir, onSort }) {
             >
               <div className="expt-main">
                 <div className="expt-title" title={title}>{title}</div>
-                {t.goal && <div className="expt-desc" title={t.goal}>{t.goal}</div>}
+                {(t.summary || t.goal) && (
+                  <div className="expt-desc" title={t.summary || t.goal}>{t.summary || t.goal}</div>
+                )}
                 <div className="expt-sub">
-                  {checkCount > 0 ? `${checkCount} check${checkCount === 1 ? '' : 's'}` : 'no brief yet'}
+                  {checkCount > 0 ? `${checkCount} requirement${checkCount === 1 ? '' : 's'}` : 'no brief yet'}
                   {depCount > 0 && <> · waits on {depCount}</>}
+                  {unblockCount > 0 && <> · unblocks {unblockCount}</>}
                   {reviewCount > 0 && <> · {reviewCount} review{reviewCount === 1 ? '' : 's'}</>}
                   {t.status === 'failed' && t.failed_by && <> · ended by {t.failed_by}</>}
                 </div>
@@ -204,12 +209,16 @@ const OPEN_TASK = new Set(['in_progress', 'in_review']);
 
 function NewTaskForm({ projectId, tasks, experiments, onCancel, onCreated }) {
   const [name, setName] = useState('');
-  const [goal, setGoal] = useState('');
+  const [summary, setSummary] = useState('');
+  const [deliverables, setDeliverables] = useState('');
+  const [purpose, setPurpose] = useState('');
   const [deps, setDeps] = useState(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
   const nameOk = NAME_RE.test(name);
+  const deliverableLines = deliverables.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const goalOk = summary.trim().length > 0 && deliverableLines.length > 0 && purpose.trim().length > 0;
   // Only live nodes are sensible dependencies: a finished one is already met,
   // a failed one would block this task from the start.
   const candidates = [
@@ -227,13 +236,13 @@ function NewTaskForm({ projectId, tasks, experiments, onCancel, onCreated }) {
 
   async function submit(e) {
     e.preventDefault();
-    if (!nameOk || !goal.trim()) return;
+    if (!nameOk || !goalOk) return;
     setBusy(true);
     setError(null);
     try {
       await api.createTask(projectId, {
         name: name.trim(),
-        goal: goal.trim(),
+        goal: composeGoal({ summary, deliverables, purpose }),
         depends_on: Array.from(deps),
       });
       onCreated();
@@ -269,17 +278,40 @@ function NewTaskForm({ projectId, tasks, experiments, onCancel, onCreated }) {
         )}
       </div>
       <div className="form-row">
-        <label className="label">Goal</label>
+        <label className="label">What this task builds</label>
+        <input
+          className="input"
+          value={summary}
+          onChange={e => setSummary(e.target.value)}
+          placeholder="Build the wave's shared modular-addition dataset and evaluation harness."
+          maxLength={200}
+          required
+        />
+        <div className="form-hint">One line — the headline of the task.</div>
+      </div>
+      <div className="form-row">
+        <label className="label">Deliverables</label>
         <textarea
           className="textarea"
-          value={goal}
-          onChange={e => setGoal(e.target.value)}
-          placeholder="Prepare dataset D so the wave's experiments train on clean, deduplicated splits."
+          value={deliverables}
+          onChange={e => setDeliverables(e.target.value)}
+          placeholder={'the complete dataset of ordered (a,b) pairs modulo p, with a fixed train/validation split\na tiny reusable PyTorch evaluation harness\na shared model definition'}
+          required
+        />
+        <div className="form-hint">One per line — the things that will exist when it is done. Not how to make them.</div>
+      </div>
+      <div className="form-row">
+        <label className="label">So that…</label>
+        <input
+          className="input"
+          value={purpose}
+          onChange={e => setPurpose(e.target.value)}
+          placeholder="every experiment in this wave trains and evaluates on identical, correct data and code."
           required
         />
         <div className="form-hint">
-          What must be true when it is done and why the project needs it — not how to do it.
-          The numbered Done-when checks go in the brief the executor submits.
+          Why the project needs it — which experiments or decisions wait on it. The numbered
+          Done-when checks go in the brief the executor submits.
         </div>
       </div>
       {candidates.length > 0 && (
@@ -307,7 +339,7 @@ function NewTaskForm({ projectId, tasks, experiments, onCancel, onCreated }) {
       {error && <div className="error-message">{error}</div>}
       <div className="form-actions">
         <button type="button" className="btn btn--ghost" onClick={onCancel}>Cancel</button>
-        <button type="submit" className="btn btn--primary" disabled={busy || !nameOk || !goal.trim()}>
+        <button type="submit" className="btn btn--primary" disabled={busy || !nameOk || !goalOk}>
           {busy ? 'Creating…' : 'Create task'}
         </button>
       </div>

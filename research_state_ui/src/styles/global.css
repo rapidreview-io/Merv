@@ -7192,3 +7192,139 @@ a.wflow-chip { color: var(--text); }
   gap: 6px;
 }
 .task-checks li { line-height: 1.45; }
+
+/* ── Task detail: description · requirements · process · rail ──────────────
+   A task is a ledger, not an essay (see TaskDetail.jsx). The stage widens so
+   the two columns breathe; under 960px the rail stacks beneath the main
+   column and the table folds evidence under its requirement. ── */
+.page-stage--wide { max-width: 1240px; }
+.task-orient { border-bottom: 0; margin-bottom: 12px; padding-bottom: 0; }
+.task-layout {
+  display: grid; grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 0 36px; align-items: start;
+}
+.task-main { min-width: 0; }
+
+/* Description: the brief's Goal as structure — headline, deliverables, purpose. */
+.task-desc { margin: 0 0 22px; padding-bottom: 18px; border-bottom: 1px solid var(--line-soft); }
+.task-desc-summary { margin: 0; font-size: var(--text-lg); line-height: 1.45; color: var(--text); max-width: 70ch; }
+.task-desc-summary--plain { font-size: var(--text-base); line-height: 1.55; max-width: 78ch; white-space: pre-wrap; }
+.task-desc-grid {
+  display: grid; grid-template-columns: 104px minmax(0, 1fr);
+  gap: 10px 16px; margin: 14px 0 0; max-width: 80ch;
+}
+.task-desc-grid dt {
+  font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--faint); padding-top: 4px;
+}
+.task-desc-grid dd { margin: 0; }
+.task-deliverables { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.task-deliverables li {
+  display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 8px;
+  font-size: var(--text-base); line-height: 1.45; color: var(--text);
+}
+.task-deliverables li::before { content: "▸"; color: var(--active); font-size: 12px; padding-top: 2px; }
+.task-purpose { font-size: var(--text-base); line-height: 1.5; color: var(--text); }
+
+/* Requirements table: # · what must be true (+ verify) · got it? · evidence (+ check). */
+.task-req { display: grid; grid-template-columns: 28px minmax(0, 2fr) 118px minmax(0, 2fr); }
+.task-req > *, .task-req-row > * { padding: 10px 12px 11px 0; border-bottom: 1px solid var(--line-soft); min-width: 0; }
+.task-req-h {
+  padding-top: 0 !important; padding-bottom: 8px !important; border-bottom-color: var(--line) !important;
+  font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
+}
+.task-req-row > .task-req--last { border-bottom: 0; }
+.task-req-n { color: var(--faint); font-variant-numeric: tabular-nums; font-size: var(--text-sm); padding-top: 11px; }
+.task-req-stmt { font-size: var(--text-sm); line-height: 1.45; color: var(--text); }
+.task-req-verify { margin-top: 3px; font-size: var(--text-xs); line-height: 1.45; color: var(--muted); }
+.task-req-verify .k, .task-req-how .k { color: var(--faint); }
+.inline-md-code { font-family: var(--font-mono); font-size: .92em; }
+.task-got { font-size: var(--text-sm); line-height: 1.45; font-weight: 600; white-space: nowrap; }
+.task-got .g { display: inline-block; width: 14px; }
+.task-got small { display: block; font-weight: 400; color: var(--faint); font-size: var(--text-xs); white-space: normal; }
+.task-got--ok { color: var(--supports); }
+.task-got--wait { color: var(--qualifies); }
+.task-got--bad { color: var(--refutes); }
+.task-got--open { color: var(--faint); font-weight: 500; }
+.task-req-ev { font-size: var(--text-sm); line-height: 1.45; color: var(--text); }
+.task-req-how { display: block; margin-top: 3px; font-size: var(--text-xs); color: var(--muted); }
+.task-req-none { color: var(--faint); }
+
+/* Process: outcome, the delivery's Report and Caveats, the review rounds. */
+.task-proc h4 {
+  margin: 0 0 4px; font-size: 10px; font-weight: 700; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--faint);
+}
+.task-proc-from { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--faint); }
+.task-proc-sec { padding: 12px 0; border-top: 1px solid var(--line-soft); }
+.task-proc-sec:first-of-type { border-top: 0; padding-top: 0; }
+.task-proc-sec:last-child { padding-bottom: 0; }
+.task-proc p { margin: 0; font-size: var(--text-base); line-height: 1.55; color: var(--text); max-width: 78ch; }
+.task-proc-md { max-width: 78ch; font-size: var(--text-base); line-height: 1.55; }
+.task-proc-md--quiet { color: var(--muted); font-size: var(--text-sm); }
+.task-quote {
+  --q: var(--qualifies); --q-rgb: var(--qualifies-rgb);
+  margin: 0; padding: 8px 12px; border-left: 2px solid var(--q);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: rgba(var(--q-rgb), .06);
+}
+.task-quote--pass { --q: var(--supports); --q-rgb: var(--supports-rgb); }
+.task-quote--fail { --q: var(--refutes); --q-rgb: var(--refutes-rgb); }
+.task-quote-by { display: flex; gap: 8px; align-items: center; font-size: var(--text-xs); color: var(--muted); margin-bottom: 4px; }
+.task-quote p { margin: 0; }
+.task-quote .review-card--bare { margin-top: 8px; }
+
+/* Documents sit last, collapsed: the table and the process already carry their content. */
+.task-doc { padding: 12px 18px; margin-bottom: 10px; }
+.task-doc .spotlight-head { margin-bottom: 0; }
+
+/* Rail */
+.task-rail { position: sticky; top: 12px; min-width: 0; }
+.task-rail-sec { padding: 12px 0; border-top: 1px solid var(--line-soft); }
+.task-rail-sec:first-child { border-top: 0; padding-top: 0; }
+.task-rail-sec .spotlight-eyebrow { margin-bottom: 6px; }
+.task-rail-status { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.task-rail-word { font-weight: 620; }
+.task-rail-word--ok { color: var(--supports); }
+.task-rail-word--wait { color: var(--qualifies); }
+.task-rail-word--live { color: var(--active); }
+.task-rail-word--bad { color: var(--refutes); }
+.task-rail-sub { font-size: var(--text-xs); color: var(--muted); line-height: 1.5; margin-top: 2px; }
+.task-rail-empty { color: var(--faint); font-size: var(--text-sm); padding: 4px 0; }
+.task-rail-bad { color: var(--refutes); font-size: var(--text-xs); }
+.task-tl { list-style: none; margin: 4px 0 0; padding: 0; }
+.task-tl li {
+  display: grid; grid-template-columns: 10px 64px minmax(0, 1fr); gap: 8px;
+  align-items: baseline; padding: 2px 0; font-size: var(--text-sm);
+}
+.task-tl-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); position: relative; top: -1px; }
+.task-tl-dot--ok { background: var(--supports); }
+.task-tl-dot--warn { background: var(--qualifies); }
+.task-tl-dot--bad { background: var(--refutes); }
+.task-tl-dot--live { background: var(--active); }
+.task-tl-t { color: var(--faint); font-size: var(--text-xs); white-space: nowrap; }
+.task-tl-w { color: var(--text); }
+.task-node-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: var(--text-sm); min-width: 0; }
+.task-node-glyph { color: var(--faint); font-size: 11px; width: 12px; text-align: center; flex: none; }
+.task-node-name { color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-node-row .status { font-size: 11px; padding: 1px 7px; white-space: nowrap; flex: none; }
+.task-file-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; min-width: 0; }
+.task-file-row .status { font-size: 11px; padding: 1px 7px; white-space: nowrap; flex: none; }
+.task-file-path { font-family: var(--font-mono); font-size: 12px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
+a.task-file-path:hover { text-decoration: underline; }
+.task-file-size { color: var(--faint); font-size: var(--text-xs); white-space: nowrap; flex: none; }
+.task-kv { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 5px 10px; margin: 0; font-size: var(--text-sm); }
+.task-kv dt { color: var(--faint); }
+.task-kv dd { margin: 0; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+.task-kv dd.mono { font-family: var(--font-mono); font-size: 12px; }
+.task-kv .status { font-size: 11px; padding: 1px 7px; }
+
+@media (max-width: 960px) {
+  .task-layout { grid-template-columns: minmax(0, 1fr); }
+  .task-rail { position: static; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .task-req { grid-template-columns: 24px minmax(0, 1fr) 104px; }
+  .task-req-h--ev { display: none; }
+  .task-req-row > .task-req-ev { grid-column: 2 / 4; padding-top: 0; }
+  .task-req-row > .task-req-stmt-cell, .task-req-row > .task-req-got-cell { border-bottom: 0; padding-bottom: 4px; }
+  .task-req-row > .task-req-n { border-bottom: 0; }
+}
