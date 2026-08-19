@@ -77,6 +77,8 @@ no design review. Its gates are:
 
 Tasks are uncapped. A task's attempt index never advances; the review return
 keeps the same attempt so the artifact and review machinery stays uniform.
+Auto-run does not yet dispatch task work or task reviews to local runners;
+agents work tasks directly over MCP and hand the reviewer prompt off themselves.
 
 ## The wave DAG
 
