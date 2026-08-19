@@ -31,7 +31,8 @@ SHA8="${SHA:0:8}"
 REL="\$HOME/releases/merv-${SHA8}"
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
-remote() { ssh -o BatchMode=yes "$SSH_TARGET" "$@"; }
+SSH_OPTS="-o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+remote() { ssh $SSH_OPTS "$SSH_TARGET" "$@"; }
 
 say "target $SSH_TARGET, commit $SHA"
 HOST="$(remote "grep -E '^MERV_DEV_HOST=' $VM_DIR/dev.env | cut -d= -f2-")"
@@ -54,7 +55,7 @@ if [ "$SKIP_UI" = 0 ]; then
   fi
   (cd research_state_ui && npm run build --silent)
   printf '%s\n' "$SHA" > research_state_ui/dist/release.txt
-  rsync -a --delete -e "ssh -o BatchMode=yes" research_state_ui/dist/ "$SSH_TARGET:/srv/merv-ui/"
+  rsync -a --delete -e "ssh $SSH_OPTS" research_state_ui/dist/ "$SSH_TARGET:/srv/merv-ui/"
   echo "synced research_state_ui/dist → /srv/merv-ui"
 fi
 
