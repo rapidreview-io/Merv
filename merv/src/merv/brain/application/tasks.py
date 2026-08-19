@@ -85,6 +85,9 @@ def slim_task_state(full: TaskState) -> SlimTaskState:
         "dependencies": project_rows(
             rich.get("dependencies", []), _SLIM_DEPENDENCY_FIELDS
         ),
+        "dependents": project_rows(
+            rich.get("dependents", []), _SLIM_DEPENDENCY_FIELDS
+        ),
         "allowed_transitions": rich.get("allowed_transitions", []),
         "gate_checklist": rich.get("gate_checklist", {}),
         "current_attempt_artifacts": project_rows(current, _SLIM_ARTIFACT_FIELDS),

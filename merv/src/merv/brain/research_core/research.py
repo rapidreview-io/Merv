@@ -1393,7 +1393,9 @@ class Research:
             experiments = cast(list[ExperimentState], [state for state, _ in evaluated])
             gates = {str(state["id"]): evaluation for state, evaluation in evaluated}
             evaluated_tasks = self._tasks.list_states_with_gates(
-                conn=conn, project_id=project_id
+                conn=conn,
+                project_id=project_id,
+                detail_ids=(task_id,) if task_id else (),
             )
             tasks = cast(list[TaskState], [state for state, _ in evaluated_tasks])
             gates.update(

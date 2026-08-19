@@ -97,6 +97,47 @@ def dependency_rows(
     return result
 
 
+def dependent_rows(
+    *, conn, project_id: str, node_ids: tuple[str, ...]
+) -> dict[str, list[dict[str, Any]]]:
+    """Per node: the nodes that wait on it (the reverse of ``dependency_rows``),
+    in the same row shape, so a page can show "unblocks" beside "waits on"."""
+    result: dict[str, list[dict[str, Any]]] = {node_id: [] for node_id in node_ids}
+    if not node_ids:
+        return result
+    placeholders = ", ".join("?" for _ in node_ids)
+    edges = conn.execute(
+        f"""
+        SELECT node_id, depends_on_id FROM node_dependencies
+        WHERE project_id = ? AND depends_on_id IN ({placeholders})
+        ORDER BY created_at, node_id
+        """,
+        (project_id, *node_ids),
+    ).fetchall()
+    for edge in edges:
+        source_id = str(edge["depends_on_id"])
+        node_id = str(edge["node_id"])
+        try:
+            node_type = node_type_of(node_id)
+        except ValidationError:
+            continue
+        node = _node_row(conn=conn, project_id=project_id, node_id=node_id)
+        if node is None:
+            continue
+        status = str(node.get("status") or "")
+        result.setdefault(source_id, []).append(
+            {
+                "id": node_id,
+                "node_type": node_type,
+                "name": str(node.get("name") or ""),
+                "status": status,
+                "settled": _settled(node_type, status),
+                "failed": _failed(node_type, status),
+            }
+        )
+    return result
+
+
 def dependents_of(*, conn, project_id: str, node_id: str) -> list[str]:
     rows = conn.execute(
         """
@@ -176,6 +217,7 @@ def record_dependencies(
 __all__ = [
     "NODE_PREFIXES",
     "dependency_rows",
+    "dependent_rows",
     "dependents_of",
     "node_type_of",
     "record_dependencies",

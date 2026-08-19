@@ -4,6 +4,13 @@ import json
 
 from merv.brain.kernel.utils import NotFoundError, ValidationError, WorkflowError
 from merv.brain.research_core.dependencies import record_dependencies
+from merv.brain.research_core.evidence import (
+    delivery_entry_parts,
+    delivery_results,
+    delivery_section,
+    goal_parts,
+    requirement_parts,
+)
 from merv.brain.research_core.task_workflow import TASK_WORKFLOW
 
 from .scenarios import VALID_CHANGE_SPEC, VALID_PLAN, ResearchCase
@@ -42,6 +49,39 @@ SHORT_DELIVERY = """\
 
 ## Caveats
 none
+"""
+
+STRUCTURED_BRIEF = """\
+# Brief: prep-data
+
+## Goal
+Build the wave's shared splits and data card.
+
+Deliver:
+- clean, deduplicated train/val/test splits under out/
+- a data card with source, license, and preprocessing
+
+So that every experiment in the wave trains on the same data.
+
+## Done when
+1. train/val/test parquet files exist under out/ — verify: row counts match the data card
+2. no id appears in more than one split — verify: run check_overlap.py, expect 0
+3. a data card records source, license, and preprocessing — verify: read out/DATA_CARD.md
+"""
+
+STRUCTURED_DELIVERY = """\
+# Delivery: prep-data
+
+## Checks
+1. [x] out/{train,val,test}.parquet with 41 200 / 5 150 / 5 150 rows — how to check: ls out/
+2. [ ] check_overlap.py could not run: the receipt is missing — how to check: rerun it from the task folder
+3. out/DATA_CARD.md written — how to check: open it
+
+## Report
+Splits were drawn with a seeded permutation; the card lists the seed.
+
+## Caveats
+The val/test split was drawn before the dedup fix.
 """
 
 
@@ -389,6 +429,108 @@ class TaskWorkflowTest(ResearchCase):
             self.transition_experiment(experiment_id, "start_running")["status"],
             "running",
         )
+
+    # ---- document structure ----
+
+    def test_goal_requirement_and_delivery_parsers(self) -> None:
+        parts = goal_parts(STRUCTURED_BRIEF.split("## Goal", 1)[1].split("## Done when")[0])
+        self.assertTrue(parts["structured"])
+        self.assertEqual(parts["summary"], "Build the wave's shared splits and data card.")
+        self.assertEqual(len(parts["deliverables"]), 2)
+        self.assertTrue(parts["deliverables"][1].startswith("a data card"))
+        self.assertEqual(
+            parts["purpose"], "Every experiment in the wave trains on the same data."
+        )
+        plain = goal_parts("Prepare dataset D for the wave.")
+        self.assertFalse(plain["structured"])
+        self.assertIsNone(plain["summary"])
+        self.assertEqual(plain["text"], "Prepare dataset D for the wave.")
+
+        req = requirement_parts(2, "no id appears in more than one split — verify: run check_overlap.py, expect 0")
+        self.assertEqual(req["statement"], "no id appears in more than one split")
+        self.assertEqual(req["verify"], "run check_overlap.py, expect 0")
+        bare = requirement_parts(1, "a data card exists")
+        self.assertEqual((bare["statement"], bare["verify"]), ("a data card exists", None))
+        semi = requirement_parts(3, "eval prints both metrics; verify by running it on CPU")
+        self.assertEqual(semi["statement"], "eval prints both metrics")
+        self.assertEqual(semi["verify"], "running it on CPU")
+
+        met = delivery_entry_parts(1, "[x] 9,409 rows — how to check: python check.py")
+        self.assertEqual((met["state"], met["evidence"], met["how"]), ("met", "9,409 rows", "python check.py"))
+        unmet = delivery_entry_parts(2, "UNMET: the license forbids it — how to check: read LICENSE")
+        self.assertEqual((unmet["state"], unmet["evidence"]), ("unmet", "the license forbids it"))
+        partial = delivery_entry_parts(3, "[~] two of three widths build")
+        self.assertEqual((partial["state"], partial["how"]), ("partial", None))
+        implicit = delivery_entry_parts(4, "out/DATA_CARD.md written")
+        self.assertEqual(implicit["state"], "met")
+
+        results = delivery_results(STRUCTURED_DELIVERY, count=4)
+        self.assertEqual([r["state"] for r in results], ["met", "unmet", "met", None])
+        self.assertEqual(results[3]["evidence"], None)
+        self.assertTrue(delivery_section(STRUCTURED_DELIVERY, "report").startswith("Splits were drawn"))
+        self.assertIsNone(delivery_section(VALID_DELIVERY, "report"))
+
+    def test_state_carries_description_requirements_results_and_dependents(self) -> None:
+        task_id = self.create_task("prep-data")
+        downstream = self.create_task("train-on-splits", depends_on=[task_id])
+        rich = self.app.application.task(
+            task_id=task_id, project_id=self.project_id, rich=True
+        )
+        # Before any brief the description is the creation goal, plain.
+        self.assertEqual(rich["description"]["source"], "goal")
+        self.assertFalse(rich["description"]["structured"])
+        self.assertIsNone(rich["summary"])
+        self.assertEqual(rich["requirements"], [])
+        self.assertEqual(rich["results"], [])
+        self.assertEqual([d["id"] for d in rich["dependents"]], [downstream])
+        self.assertEqual(rich["dependents"][0]["node_type"], "task")
+
+        self.submit(
+            target_type="task", target_id=task_id, role="brief",
+            path="tasks/prep-data/brief.md", body=STRUCTURED_BRIEF,
+        )
+        rich = self.app.application.task(
+            task_id=task_id, project_id=self.project_id, rich=True
+        )
+        self.assertEqual(rich["description"]["source"], "brief")
+        self.assertEqual(rich["summary"], "Build the wave's shared splits and data card.")
+        self.assertEqual(len(rich["description"]["deliverables"]), 2)
+        self.assertEqual(len(rich["requirements"]), 3)
+        self.assertEqual(rich["requirements"][0]["verify"], "row counts match the data card")
+        self.assertEqual(rich["checks"][0], rich["requirements"][0]["text"])
+
+        self.submit(
+            target_type="task", target_id=task_id, role="delivery",
+            path="tasks/prep-data/delivery.md", body=STRUCTURED_DELIVERY,
+        )
+        rich = self.app.application.task(
+            task_id=task_id, project_id=self.project_id, rich=True
+        )
+        self.assertEqual([r["state"] for r in rich["results"]], ["met", "unmet", "met"])
+        self.assertEqual(rich["results"][0]["how"], "ls out/")
+        # The UI's task-scoped status read carries the same detail; the agent's
+        # slim status does not pay for it.
+        status = self.app.application.status(project_id=self.project_id, task_id=task_id)
+        self.assertEqual([r["state"] for r in status["task"]["results"]], ["met", "unmet", "met"])
+        self.assertTrue(status["task"]["report"].startswith("Splits were drawn"))
+        self.assertNotIn("results", self.task_status(task_id)["task"])
+        self.assertTrue(rich["report"].startswith("Splits were drawn"))
+        self.assertTrue(rich["caveats"].startswith("The val/test split"))
+        # The agent-facing slim state keeps checks and gains dependents only.
+        slim = self.call("task.get_state", project_id=self.project_id, task_id=task_id)
+        self.assertEqual(len(slim["checks"]), 3)
+        self.assertEqual([d["id"] for d in slim["dependents"]], [downstream])
+        self.assertNotIn("results", slim)
+        # Lists (the /home snapshot) carry description and requirements but do
+        # not pay for the delivery read.
+        listed = next(
+            t for t in self.app.application.tasks(project_id=self.project_id, rich=True)
+            if t["id"] == task_id
+        )
+        self.assertEqual(listed["summary"], rich["summary"])
+        self.assertEqual(len(listed["requirements"]), 3)
+        self.assertNotIn("results", listed)
+        self.assertEqual([d["id"] for d in listed["dependents"]], [downstream])
 
     # ---- reflection ----
 

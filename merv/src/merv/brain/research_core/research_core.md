@@ -7,37 +7,35 @@ owns projects, claims, experiments, tasks, the wave DAG between them, reflection
 waves, reviews, lifecycle gates, candidates/champion lineage, and the
 transactions that keep those records consistent: what research state exists and
 whether a state change is legal. The workflow declarations also name the agent
-action, tools, template, and review skill for each gate. Application
-orchestrates across modules and formats that guidance; Surface owns auth and
-wire presentation; Sandbox executes work, Artifacts owns evidence, Feed
-publishes observations, Object Storage owns heavy bytes, Literature literature.
+action, tools, template, and review skill for each gate. Application orchestrates
+across modules and formats that guidance; Surface owns auth and wire presentation;
+Sandbox executes work, Artifacts owns evidence, Feed publishes observations,
+Object Storage owns heavy bytes, Literature literature.
 
 `Research` is the one concrete public root, built from a `BaseStateStore` and
 `Artifacts` and imported from `research_core`, never from implementation files;
-experiment, task, reflection, and review services are private collaborators.
+the experiment, task, reflection, and review services are private collaborators.
 
 ## Files
 
-- `research.py`: public root; project, claim, and candidate writes, workflow
-  delegation, snapshots, project context, membership, events, and graph refs.
-- `experiments.py`: experiment creation invariants, state machine, gates,
-  sealing, attempts, MLflow run state, idempotent tracking-delivery ledger.
-- `tasks.py`: task creation invariants, state machine, gates, review routing.
-- `dependencies.py`: the wave DAG (`node_dependencies`): edge recording with
-  cycle checks and per-node dependency status for the shared gate.
+- `research.py`: public root; project, claim, candidate writes, workflow delegation,
+  snapshots, project context, membership, events, graph refs.
+- `experiments.py`: experiment creation invariants, state machine, gates, sealing,
+  attempts, MLflow run state, idempotent tracking-delivery ledger. `tasks.py`: the
+  same for tasks (creation invariants, state machine, gates, review routing).
+- `dependencies.py`: the wave DAG (`node_dependencies`): edges with cycle
+  checks, per-node dependency and dependent rows for the shared gate and UI.
 - `reflections.py`: reflection state machine, corpus snapshots, lens coverage,
   graph comparison, change-spec validation/materialization, drift signal.
-- `reviews.py`: review requests, one-time capabilities, isolated sessions,
-  pinned snapshots, verdict submission, and return routing.
-- `association_targets.py`: target resolution and publication protection.
-- `experiment_workflow.py`, `task_workflow.py`, `reflection_workflow.py`: the
-  three lifecycles; the experiment file also declares the shared dependency need.
+- `reviews.py`: review requests, one-time capabilities, isolated sessions, pinned
+  snapshots, verdict submission, return routing. `association_targets.py`: target
+  resolution and publication protection.
+- `experiment_workflow.py`, `task_workflow.py`, `reflection_workflow.py`: the three
+  lifecycles; the experiment file also declares the shared dependency need.
 - `workflow_schema.py`: passive workflow values and declaration validation.
-- `policy.py`: vocabulary, validation, gate evaluation, snapshot identity,
-  reflection signal, and limits.
-- `evidence.py`: evidence selection, document envelope checks, brief rendering.
-- `models.py`: shared immutable results and typed state shapes.
-- `__init__.py`: deliberately narrow package import surface.
+- `policy.py`: vocabulary, validation, gate evaluation, snapshot identity, reflection
+  signal, limits. `evidence.py`: evidence selection, document checks and parsing,
+  brief rendering. `models.py`: typed state shapes. `__init__.py`: narrow imports.
 
 ## Experiment lifecycle
 
@@ -55,10 +53,12 @@ the delivery committed and prevents duplicate external runs.
 A task is scoped non-experiment work with no claim: `in_progress -> in_review
 -> done`, `failed` the only other ending. The brief (Goal, numbered Done-when
 checks) is the contract, the delivery answers one entry per check, one review
-verifies them: `needs_changes` returns to `in_progress` (same attempt); `fail`
-ends the task, as does the owner's `mark_failed`. Experiments and tasks share
-`node_dependencies`: an experiment waits at `ready_to_run`, a task before
-`submit_delivery`, until every dependency succeeded (`dependency_failed` else).
+verifies them: `needs_changes` returns to `in_progress`; `fail` or the owner's
+`mark_failed` ends it. State parses both documents into structure (evidence.py:
+goal → summary/deliverables/purpose, check → statement/verify, entry → state/
+evidence/how, Report, Caveats) and lists `dependents` beside `dependencies`.
+Experiments and tasks share `node_dependencies`: an experiment waits at `ready_to_run`,
+a task before `submit_delivery`, until every dependency succeeded (else `dependency_failed`).
 
 ## Reflection and review lifecycle
 

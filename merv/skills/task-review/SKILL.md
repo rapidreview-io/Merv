@@ -45,18 +45,19 @@ Go check by check, in the brief's numbering:
    object. If you cannot verify a check with what you were given, that check
    is not met — say so and send it back; "couldn't verify" is a legitimate
    finding.
-3. **Unmet checks:** an entry that says a check is unmet is honest, not
-   automatically fatal. Decide whether the goal survives without it and
-   whether the reason is real; the reviewer may waive a check on the record
-   in `notes`, and only the reviewer may.
+3. **Unmet checks:** an entry that says a check is unmet (`[ ]`, or `[~]` for
+   partial) is honest, not automatically fatal. Decide whether the goal
+   survives without it and whether the reason is real; the reviewer may waive
+   a check on the record in `notes`, and only the reviewer may. An entry with
+   no box claims met — hold it to that.
 4. **Do the checks, met, mean the goal is achieved?** This is the design
    review a task never had. If the brief's checks were too weak to secure the
    goal — a leak between splits nobody checked, a survey that counts papers
    but covers one venue — name the missing check and send it back.
 5. **Is it safe to build on?** Look for what a downstream experiment would
    inherit: wrong dataset version, leakage, an unpinned dependency, coverage
-   that is three papers and a shrug. Read the Caveats as claims to check, not
-   as disclosures that settle the matter.
+   that is three papers and a shrug. Read the Report and the Caveats as claims
+   to check, not as disclosures that settle the matter.
 
 ## Choose the verdict
 

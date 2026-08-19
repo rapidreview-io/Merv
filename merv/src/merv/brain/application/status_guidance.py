@@ -262,14 +262,15 @@ class StatusGuidancePolicy:
                 "template": "skills/research-workflow/brief-template.md",
                 "guidance": (
                     f"Write the task brief as one markdown file at {folder}brief.md "
-                    "with the sections Goal (what and why, one paragraph); Done "
-                    "when (a numbered list of checks — each states what must be "
-                    "true when the task is done and how it can be verified; "
-                    "checks, not steps); optionally Scope (in/out, constraints, "
-                    "limits) and Context (what to read, what this depends on). "
-                    "Say what must be true, not how to do it. Then submit the "
-                    "file with artifact.submit (role 'brief') and run the "
-                    "returned upload command verbatim."
+                    "with the sections Goal (one headline line; 'Deliver:' with "
+                    "a bullet per thing that will exist; 'So that <why the "
+                    "project needs it>'); Done when (a numbered list of checks, "
+                    "each '<what must be true> — verify: <how>'; checks, not "
+                    "steps); optionally Scope (in/out, constraints, limits) and "
+                    "Context (what to read, what this depends on). Say what must "
+                    "be true, not how to do it. Then submit the file with "
+                    "artifact.submit (role 'brief') and run the returned upload "
+                    "command verbatim."
                 ),
             }
         if key == "delivery":
@@ -282,13 +283,14 @@ class StatusGuidancePolicy:
                 "guidance": (
                     f"Write the delivery as one markdown file at {folder}delivery.md: "
                     "a Checks section with one numbered entry per brief check, "
-                    "same numbering — the evidence (files, receipts, numbers) "
-                    "and, in prose, how the reviewer can check it; state plainly "
-                    "when a check is unmet and why. Then Caveats. Evidence, not "
-                    "narrative: point at files in the task folder, storage "
-                    "objects, run receipts. Then submit the file with "
-                    "artifact.submit (role 'delivery') and run the returned "
-                    "upload command verbatim."
+                    "same numbering — '[x]' met / '[ ]' unmet / '[~]' partial, "
+                    "the evidence (files, receipts, numbers), then ' — how to "
+                    "check: ' and how the reviewer can verify it; state plainly "
+                    "when a check is unmet and why. Then Report (a few sentences "
+                    "on the process) and Caveats. Evidence, not narrative: point "
+                    "at files in the task folder, storage objects, run receipts. "
+                    "Then submit the file with artifact.submit (role 'delivery') "
+                    "and run the returned upload command verbatim."
                 ),
             }
         return None

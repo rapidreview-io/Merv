@@ -25,12 +25,31 @@
 # Brief: <task name>
 
 ## Goal
-<!-- One paragraph: what this task must achieve and why the project needs it.
-     Which experiments or decisions wait on it? -->
+<!-- Three parts, in this order — the UI renders them as a headline, a list,
+     and a purpose line; one dense paragraph is hard to read:
+       1. ONE line: what this task builds, as a headline.
+       2. "Deliver:" then a bullet per thing that will exist when it is done.
+       3. "So that <why the project needs it — which experiments or decisions
+          wait on it>."
+     Example:
+       Build the wave's shared modular-addition dataset and evaluation harness.
+
+       Deliver:
+       - the complete dataset of ordered (a,b) pairs modulo p, with a fixed train/validation split
+       - a tiny reusable PyTorch evaluation harness
+       - a shared model definition
+
+       So that every experiment in this wave trains and evaluates on identical data and code. -->
+
+Deliver:
+-
+
+So that
 
 ## Done when
 <!-- Numbered checks. Each one names a fact that must be true when the task is
-     done, plus how it can be verified. Examples:
+     done, then " — verify: " and how it can be verified (Merv splits the two
+     halves on that marker; the UI shows them as a requirements table). Examples:
      1. train/val/test parquet files exist under out/ — verify: row counts match the data card
      2. no id appears in more than one split — verify: run scripts/check_overlap.py, expect 0
      3. the survey covers at least 15 papers from 2023 on — verify: count the References section

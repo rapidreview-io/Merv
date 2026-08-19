@@ -175,8 +175,14 @@ POST /api/projects/{project_id}/tasks/{task_id}/transition
 Create a task with `name`, `goal`, and optional `depends_on` (exp_/task_ ids).
 A task carries `goal`, `status` (`in_progress`, `in_review`, `done`,
 `failed`), `checks` (the brief's Done-when list), `dependencies`,
-`current_attempt_artifacts` (`brief`, `delivery`), `reviews`, `outcome`, and
-`failed_by`. Transitions accept `{"transition": "...", "evidence": {...}}`
+`dependents` (the nodes that wait on it), `current_attempt_artifacts`
+(`brief`, `delivery`), `reviews`, `outcome`, and `failed_by` — plus the
+documents as structure: `summary` and `description` (`summary`,
+`deliverables[]`, `purpose`, `structured`, `text`, `source` = `brief`|`goal`),
+`requirements[]` (`number`, `statement`, `verify`, `text`). The single-task
+reads (`/tasks/{id}`, `/status`) add the delivery side: `results[]` (`number`,
+`state` = `met`|`unmet`|`partial`|null, `evidence`, `how`, `text`), `report`,
+`caveats`; the list omits them. Transitions accept `{"transition": "...", "evidence": {...}}`
 (`submit_delivery`, `accept`, `mark_failed`); render the server-provided
 `allowed_transitions` and `workflow.next_action`. `/status` is the task-scoped
 `workflow.status_and_next` view.

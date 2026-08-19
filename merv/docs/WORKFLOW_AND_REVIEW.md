@@ -62,15 +62,17 @@ failed is also the owner's explicit exit (mark_failed with a reason).
 A task is created straight into `in_progress`: there is no planning stage and
 no design review. Its gates are:
 
-1. **Brief** — `brief.md` (role `brief`) with a Goal and a numbered
-   **Done when** list of checks, each stating what must be true when the task
-   is done and how it can be verified. Checks, not steps. A reflection-proposed
-   task arrives with its brief pinned from the change spec.
+1. **Brief** — `brief.md` (role `brief`) with a Goal (a headline line,
+   `Deliver:` bullets, `So that <why>`) and a numbered **Done when** list of
+   checks, each `<what must be true> — verify: <how>`. Checks, not steps. A
+   reflection-proposed task arrives with its brief pinned from the change spec.
 2. **Dependencies** — every node the task depends on has succeeded.
 3. **Delivery** — `delivery.md` (role `delivery`) with a **Checks** section
-   holding one numbered entry per brief check: the evidence, and in prose how
-   the reviewer can check it; unmet checks stated with a reason. Merv enforces
-   the shape only; the reviewer verifies the substance.
+   holding one numbered entry per brief check: `[x]`/`[ ]`/`[~]` (met / unmet /
+   partial), the evidence, ` — how to check: ` how the reviewer can verify it;
+   then an optional Report (process prose) and Caveats. Merv enforces the
+   shape only (one entry per check) and parses the structure for the UI; the
+   reviewer verifies the substance.
 4. **Task review** — a passing independent `task_reviewer` review pinned to
    that delivery. `needs_changes` returns the task to `in_progress` on the
    same attempt; `fail` ends it (`failed_by = reviewer`).

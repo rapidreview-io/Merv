@@ -82,18 +82,23 @@ review. A reflection-proposed task arrives with its brief already pinned; an
 ad-hoc task needs one written first.
 
 1. **Brief** (`tasks/<name>/brief.md`, role `brief`,
-   [brief-template.md](brief-template.md)): Goal; **Done when** — a numbered
-   list of checks, each stating what must be true when the task is done and
-   how it can be verified; optional Scope and Context. Checks, not steps. Say
-   what must be true, not how to do it; the how belongs to whoever executes.
+   [brief-template.md](brief-template.md)): **Goal** in three parts — one
+   headline line, `Deliver:` with a bullet per thing that will exist, and a
+   `So that …` purpose sentence; **Done when** — a numbered list of checks,
+   each `<what must be true> — verify: <how>`; optional Scope and Context.
+   Checks, not steps. Say what must be true, not how to do it; the how belongs
+   to whoever executes. Merv reads the shape into the task page (headline,
+   deliverables, purpose, a requirements table), so keep the markers.
 2. **Do the work** however fits — locally, in a sandbox, in the task folder.
    Keep evidence as you go: files, run receipts, storage objects.
 3. **Delivery** (`tasks/<name>/delivery.md`, role `delivery`,
    [delivery-template.md](delivery-template.md)): a **Checks** section with
-   one numbered entry per brief check, same numbering — the evidence and, in
-   prose, how the reviewer can check it; state plainly when a check is unmet
-   and why. Then Caveats. Evidence, not narrative. Merv enforces only the
-   shape (every check has an entry); the reviewer verifies the substance.
+   one numbered entry per brief check, same numbering — `[x]`/`[ ]`/`[~]` for
+   met / unmet / partial, the evidence, then ` — how to check: ` and how the
+   reviewer can verify it; state plainly when a check is unmet and why. Then
+   **Report** (a few sentences on the process) and Caveats. Evidence, not
+   narrative. Merv enforces only the shape (every check has an entry); the
+   reviewer verifies the substance.
 4. `task.transition(submit_delivery)` → `review.request(target_type="task",
    role="task_reviewer")` → hand the returned handoff to a separate read-only
    agent running `task-review`. `needs_changes` sends the task back to

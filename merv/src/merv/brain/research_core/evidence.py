@@ -451,6 +451,191 @@ def delivery_problems(delivery_text: str, *, checks: list[str]) -> list[str]:
     return problems
 
 
+# ---- task documents as structure ------------------------------------------
+# The brief's Goal, each Done-when check, and each delivery entry carry a
+# light shape the UI renders natively (goal → summary / deliverables /
+# purpose; check → statement / verify; entry → state / evidence / how).
+# Every parser is tolerant: prose that follows none of it still reads as a
+# single field, so older documents never break the page.
+
+_DELIVER_HEAD_RE = re.compile(
+    r"^\s*(?:\*\*)?(?:deliver(?:able)?s?|produces?|outputs?)(?:\*\*)?\s*:\s*(.*?)\s*$",
+    re.IGNORECASE,
+)
+# "So that <why>" as a sentence, or an explicit "Purpose:" / "Why:" label.
+_PURPOSE_HEAD_RE = re.compile(
+    r"^\s*(?:\*\*)?(?:so that\b(?:\*\*)?\s*:?\s*(?P<a>.*?)|(?:purpose|why)(?:\*\*)?\s*:\s*(?P<b>.*?))\s*$",
+    re.IGNORECASE,
+)
+_BULLET_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+(.*\S)\s*$")
+# "<statement> — verify: <how>" (also "; verify by", " - verified by", or the
+# bare keyword); the last separator wins so a statement may mention verifying.
+_VERIFY_PUNCT_RE = re.compile(
+    r"^(?P<statement>.+)(?:\s*[—–;]\s*|\s+-\s+)"
+    r"(?:verify(?:\s+by)?|verified\s+by|verification|how\s+to\s+verify)\s*:?\s+"
+    r"(?P<verify>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+_VERIFY_BARE_RE = re.compile(
+    r"^(?P<statement>.+?)\s+(?:verify(?:\s+by)?|verified\s+by)\s*:?\s+(?P<verify>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+# Delivery entry state: "[x] …", "[ ] …", "[~] …", "[met] …", or "UNMET: …".
+_RESULT_MARKER_RE = re.compile(
+    r"^\s*(?:\[(?P<box>[xX✓ ~]|met|unmet|partial(?:ly met)?|not met|yes|no)\]"
+    r"|(?P<word>unmet|not met|met|partial(?:ly met)?)\b)\s*[:—–-]?\s*",
+    re.IGNORECASE,
+)
+_HOW_SPLIT_RE = re.compile(
+    r"^(?P<evidence>.+?)(?:\s*[—–;]\s*|\s+-\s+|\s+)"
+    r"(?:how\s+to\s+(?:check|verify)(?:\s+it)?|to\s+(?:check|verify)|check|verify)\s*:\s*(?P<how>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def goal_parts(goal_text: str) -> dict[str, Any]:
+    """Summary / deliverables / purpose from a Goal written in the brief shape.
+
+    Returns ``{"summary", "deliverables", "purpose", "structured", "text"}``;
+    ``structured`` is False (and summary/purpose None) for plain prose.
+    """
+    text = _HTML_COMMENT_RE.sub("", goal_text or "").strip()
+    summary_lines: list[str] = []
+    deliverables: list[str] = []
+    purpose_lines: list[str] = []
+    mode = "summary"
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        head = _DELIVER_HEAD_RE.match(line)
+        if head:
+            mode = "deliver"
+            if head.group(1):
+                deliverables.append(head.group(1))
+            continue
+        purpose = _PURPOSE_HEAD_RE.match(line)
+        if purpose:
+            mode = "purpose"
+            lead = purpose.group("a") if purpose.group("a") is not None else purpose.group("b")
+            if lead:
+                purpose_lines.append(lead)
+            continue
+        if not line.strip():
+            if mode == "summary" and summary_lines:
+                mode = "after-summary"
+            elif mode == "purpose" and purpose_lines:
+                mode = "done"
+            continue
+        if mode == "deliver":
+            bullet = _BULLET_RE.match(line)
+            if bullet:
+                deliverables.append(bullet.group(1))
+            elif deliverables and line[:1] in (" ", "\t"):
+                deliverables[-1] = (deliverables[-1] + " " + line.strip()).strip()
+            else:
+                deliverables.append(line.strip())
+        elif mode == "purpose":
+            purpose_lines.append(line.strip())
+        elif mode == "summary":
+            summary_lines.append(line.strip())
+        # text after the summary paragraph that is neither a Deliver list nor
+        # a purpose sentence is left to the plain-prose fallback below
+    structured = bool(deliverables or purpose_lines)
+    if not structured:
+        return {
+            "summary": None,
+            "deliverables": [],
+            "purpose": None,
+            "structured": False,
+            "text": text,
+        }
+    purpose = " ".join(purpose_lines).strip() or None
+    if purpose:
+        purpose = purpose[:1].upper() + purpose[1:]
+    summary = " ".join(summary_lines).strip() or None
+    return {
+        "summary": summary,
+        "deliverables": deliverables,
+        "purpose": purpose,
+        "structured": True,
+        "text": text,
+    }
+
+
+def requirement_parts(number: int, check_text: str) -> dict[str, Any]:
+    """One Done-when check as ``{number, statement, verify, text}``."""
+    text = (check_text or "").strip()
+    match = _VERIFY_PUNCT_RE.match(text) or _VERIFY_BARE_RE.match(text)
+    if match is None:
+        return {"number": number, "statement": text, "verify": None, "text": text}
+    statement = match.group("statement").strip().rstrip("—–-;,: ").strip()
+    verify = match.group("verify").strip()
+    return {"number": number, "statement": statement or text, "verify": verify or None, "text": text}
+
+
+def brief_requirements(brief_text: str) -> list[dict[str, Any]]:
+    return [
+        requirement_parts(number, check)
+        for number, check in enumerate(brief_checks(brief_text), start=1)
+    ]
+
+
+def brief_goal_text(brief_text: str) -> str | None:
+    body = markdown_section_body(brief_text, "goal")
+    return None if body is None else body.strip()
+
+
+def delivery_entry_parts(number: int, entry_text: str) -> dict[str, Any]:
+    """One delivery entry as ``{number, state, evidence, how, text}``.
+
+    ``state`` is the executor's claim — met | unmet | partial — read from a
+    leading ``[x]``/``[ ]``/``[~]`` box or an ``UNMET:`` word; an unmarked
+    entry claims met (the template says unmet must be stated).
+    """
+    text = (entry_text or "").strip()
+    state = "met"
+    body = text
+    marker = _RESULT_MARKER_RE.match(text)
+    if marker:
+        token = (marker.group("box") or marker.group("word") or "").strip().lower()
+        if token in ("", "unmet", "not met", "no"):
+            state = "unmet"
+        elif token.startswith("partial") or token == "~":
+            state = "partial"
+        else:
+            state = "met"
+        body = text[marker.end():].strip()
+    how = None
+    evidence = body
+    split = _HOW_SPLIT_RE.match(body)
+    if split:
+        evidence = split.group("evidence").strip().rstrip("—–-;,: ").strip() or body
+        how = split.group("how").strip() or None
+    return {"number": number, "state": state, "evidence": evidence, "how": how, "text": text}
+
+
+def delivery_results(delivery_text: str, *, count: int) -> list[dict[str, Any]]:
+    """The delivery's Checks entries, one per brief check (missing ones None-filled)."""
+    body = markdown_section_body(delivery_text, "checks")
+    entries = {} if body is None else numbered_items(body)
+    results: list[dict[str, Any]] = []
+    numbers = sorted(set(range(1, count + 1)) | set(entries))
+    for number in numbers:
+        if number in entries and entries[number]:
+            results.append(delivery_entry_parts(number, entries[number]))
+        else:
+            results.append({"number": number, "state": None, "evidence": None, "how": None, "text": ""})
+    return results
+
+
+def delivery_section(delivery_text: str, key: str) -> str | None:
+    """A delivery section's prose (Report, Caveats) or None when absent/empty."""
+    body = markdown_section_body(delivery_text, key)
+    if body is None:
+        return None
+    body = _HTML_COMMENT_RE.sub("", body).strip()
+    return body or None
+
+
 def render_task_brief(proposal: dict[str, Any]) -> str:
     """The brief.md a reflection's task proposal pins at publish.
 

@@ -43,6 +43,10 @@ from merv.brain.research_core.models import (
     ExperimentState,
     ExperimentSummary,
     PersistedRunState,
+    DependencyNode,
+    TaskDescription,
+    TaskRequirement,
+    TaskResult,
     TaskState,
     TaskSummary,
 )
@@ -268,6 +272,35 @@ SAMPLES: dict[type, object] = {
     CommittedExperimentUpdate: CommittedExperimentUpdate(
         state={"id": "exp_1", "status": "running"}, event=EVENT
     ),
+    TaskDescription: {
+        "summary": "Prepare the dataset",
+        "deliverables": ["clean splits under out/"],
+        "purpose": "Every experiment trains on the same data.",
+        "structured": True,
+        "text": "Prepare the dataset\n\nDeliver:\n- clean splits under out/\n\nSo that every experiment trains on the same data.",
+        "source": "brief",
+    },
+    TaskRequirement: {
+        "number": 1,
+        "statement": "splits exist under out/",
+        "verify": "row counts match the data card",
+        "text": "splits exist under out/ — verify: row counts match the data card",
+    },
+    TaskResult: {
+        "number": 1,
+        "state": "met",
+        "evidence": "out/train.parquet with 41 200 rows",
+        "how": "ls out/",
+        "text": "[x] out/train.parquet with 41 200 rows — how to check: ls out/",
+    },
+    DependencyNode: {
+        "id": "exp_1",
+        "node_type": "experiment",
+        "name": "distill",
+        "status": "ready_to_run",
+        "settled": False,
+        "failed": False,
+    },
     TaskState: {
         "id": "task_1",
         "project_id": "proj_1",
@@ -277,6 +310,46 @@ SAMPLES: dict[type, object] = {
         "attempt_index": 1,
         "outcome": "",
         "failed_by": "",
+        "summary": "Prepare the dataset",
+        "description": {
+            "summary": "Prepare the dataset",
+            "deliverables": ["clean splits under out/"],
+            "purpose": "Every experiment trains on the same data.",
+            "structured": True,
+            "text": "Prepare the dataset",
+            "source": "goal",
+        },
+        "checks": ["splits exist under out/ — verify: row counts match the data card"],
+        "requirements": [
+            {
+                "number": 1,
+                "statement": "splits exist under out/",
+                "verify": "row counts match the data card",
+                "text": "splits exist under out/ — verify: row counts match the data card",
+            }
+        ],
+        "results": [
+            {
+                "number": 1,
+                "state": "met",
+                "evidence": "out/train.parquet with 41 200 rows",
+                "how": "ls out/",
+                "text": "[x] out/train.parquet with 41 200 rows — how to check: ls out/",
+            }
+        ],
+        "report": "Generated the splits with a seeded permutation.",
+        "caveats": None,
+        "dependencies": [],
+        "dependents": [
+            {
+                "id": "exp_1",
+                "node_type": "experiment",
+                "name": "distill",
+                "status": "ready_to_run",
+                "settled": False,
+                "failed": False,
+            }
+        ],
     },
     SlimTaskState: {
         "id": "task_1",
@@ -287,6 +360,22 @@ SAMPLES: dict[type, object] = {
         "attempt_index": 1,
         "outcome": "",
         "failed_by": "",
+        "summary": None,
+        "description": {
+            "summary": None,
+            "deliverables": [],
+            "purpose": None,
+            "structured": False,
+            "text": "Prepare the dataset",
+            "source": "goal",
+        },
+        "checks": [],
+        "requirements": [],
+        "results": [],
+        "report": None,
+        "caveats": None,
+        "dependencies": [],
+        "dependents": [],
     },
     TaskTransitionReceipt: {
         "task_id": "task_1",

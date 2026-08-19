@@ -227,8 +227,8 @@ A task review `needs_changes` returns to `in_progress` on the same attempt
 `reviewer`); `return_to` must be omitted or `failed`.
 
 `workflow.status_and_next(project_id, task_id)` returns the task scope: the
-slim task (goal, status, checks, dependencies, artifacts, reviews), the
-workflow guidance, and a bounded context with the brief and delivery content.
+slim task (goal, status, checks, dependencies, dependents, artifacts, reviews),
+the workflow guidance, and a bounded context with the brief and delivery content.
 `task.transition` returns a compact acknowledgement.
 
 ## Reflection workflow

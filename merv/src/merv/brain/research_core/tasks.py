@@ -9,16 +9,21 @@ from typing import Any
 
 from merv.shared.artifact_roles import TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE
 
-from .dependencies import dependency_rows, record_dependencies
+from .dependencies import dependency_rows, dependent_rows, record_dependencies
 from .evidence import (
     ArtifactDocument,
     artifact_state_record,
     brief_checks,
+    brief_goal_text,
     brief_problems,
     current_slot_artifacts,
     delivery_problems,
+    delivery_results,
+    delivery_section,
+    goal_parts,
     preferred_artifact,
     require_artifact_document,
+    requirement_parts,
     submission_state_record,
 )
 from .policy import (
@@ -110,8 +115,8 @@ class TaskService:
         name = validate_task_name(name)
         if not (goal or "").strip():
             raise ValidationError(
-                "goal is required: one paragraph on what this task must achieve "
-                "and why the project needs it"
+                "goal is required: a headline line, 'Deliver:' with a bullet per "
+                "thing that will exist, and 'So that <why the project needs it>'"
             )
         if not source_reflection_id:
             self._reject_reserved_wave_name(conn=conn, project_id=project_id, name=name)
@@ -231,15 +236,23 @@ class TaskService:
                     project_id=str(data["project_id"]),
                     node_ids=(task_id,),
                 )[task_id],
+                dependents=dependent_rows(
+                    conn=conn,
+                    project_id=str(data["project_id"]),
+                    node_ids=(task_id,),
+                )[task_id],
+                detail=True,
             )
         finally:
             if owns_conn:
                 conn.close()
 
     def list_states_with_gates(
-        self, *, conn, project_id: str
+        self, *, conn, project_id: str, detail_ids: tuple[str, ...] = ()
     ) -> list[tuple[dict[str, Any], GateEvaluation]]:
-        """Hydrate a project's task states with one read per child table."""
+        """Hydrate a project's task states with one read per child table.
+        ``detail_ids`` name the tasks that also get the delivery read (the
+        one a status call was asked about)."""
         task_rows = _query(
             conn,
             "SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at, id",
@@ -265,6 +278,7 @@ class TaskService:
             summarize=True,
         )
         dependencies = dependency_rows(conn=conn, project_id=project_id, node_ids=task_ids)
+        dependents = dependent_rows(conn=conn, project_id=project_id, node_ids=task_ids)
         return [
             self._assemble_state_with_gate(
                 conn=conn,
@@ -273,6 +287,8 @@ class TaskService:
                 reviews=reviews.get(str(task["id"]), []),
                 submissions=history[str(task["id"])].submissions,
                 dependencies=dependencies.get(str(task["id"]), []),
+                dependents=dependents.get(str(task["id"]), []),
+                detail=str(task["id"]) in detail_ids,
             )
             for task in task_rows
         ]
@@ -286,7 +302,11 @@ class TaskService:
         reviews: list[dict[str, Any]],
         submissions: tuple[Submission, ...],
         dependencies: list[dict[str, Any]],
+        dependents: list[dict[str, Any]] | None = None,
+        detail: bool = False,
     ) -> tuple[dict[str, Any], GateEvaluation]:
+        """Hydrate one task. ``detail`` also reads the delivery document (results,
+        report, caveats) — one extra blob read that lists do not pay for."""
         data = dict(task)
         data["artifacts"] = [artifact_state_record(item) for item in evidence]
         data["current_attempt_artifacts"] = current_slot_artifacts(
@@ -300,7 +320,8 @@ class TaskService:
             review["evidence"] = json.loads(review.pop("evidence_json", "{}"))
         data["reviews"] = reviews
         data["dependencies"] = dependencies
-        data["checks"] = self._brief_checks(task=data)
+        data["dependents"] = list(dependents or [])
+        self._attach_documents(task=data, detail=detail)
         evaluation = self._evaluate_gate(conn=conn, task=data)
         data["allowed_transitions"] = [dict(x) for x in evaluation.legal_transitions]
         data["gate_checklist"] = evaluation.checklist()
@@ -395,14 +416,40 @@ class TaskService:
             found[0] if found else None, artifact_id=artifact_id, what=what
         )
 
-    def _brief_checks(self, *, task: dict[str, Any]) -> list[str]:
+    def _document_or_none(self, *, task: dict[str, Any], role: str, what: str):
         try:
-            document = self._submitted_document(
-                task=task, role=TASK_BRIEF_ROLE, what="task brief"
-            )
+            return self._submitted_document(task=task, role=role, what=what)
         except WorkflowError:
-            return []
-        return [] if document is None else brief_checks(document.text)
+            return None
+
+    def _attach_documents(self, *, task: dict[str, Any], detail: bool) -> None:
+        """The structure the UI renders: checks + requirements + description from
+        the brief (one read, shared with the gate), and — for detail reads —
+        results/report/caveats from the delivery."""
+        brief = self._document_or_none(task=task, role=TASK_BRIEF_ROLE, what="task brief")
+        checks = [] if brief is None else brief_checks(brief.text)
+        task["checks"] = checks
+        task["requirements"] = [
+            requirement_parts(number, check) for number, check in enumerate(checks, start=1)
+        ]
+        goal_text = None if brief is None else brief_goal_text(brief.text)
+        description = goal_parts(goal_text if goal_text else str(task.get("goal") or ""))
+        description["source"] = "brief" if goal_text else "goal"
+        task["description"] = description
+        task["summary"] = description.get("summary")
+        if not detail:
+            return
+        task["results"] = []
+        task["report"] = None
+        task["caveats"] = None
+        delivery = self._document_or_none(
+            task=task, role=TASK_DELIVERY_ROLE, what="task delivery"
+        )
+        if delivery is None:
+            return
+        task["results"] = delivery_results(delivery.text, count=len(checks))
+        task["report"] = delivery_section(delivery.text, "report")
+        task["caveats"] = delivery_section(delivery.text, "caveats")
 
     def _validate_brief(self, *, task: dict[str, Any]) -> None:
         document = self._submitted_document(
