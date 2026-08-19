@@ -12,7 +12,7 @@
 # One-time VM setup (Docker, Caddy, the three env files) is in README.md.
 set -euo pipefail
 
-SSH_TARGET="${MERV_DEV_SSH:-azureuser@rp-control-dev.eastus2.cloudapp.azure.com}"
+SSH_TARGET="${MERV_DEV_SSH:-azureuser@dev-experiments.rapidreview.io}"
 VM_DIR='$HOME/research-suite-vm'
 SKIP_UI=0
 COMMITISH=HEAD

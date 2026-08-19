@@ -12,10 +12,10 @@ sandbox provider accounts (same quota and billing, separate bookkeeping).
 | | |
 |---|---|
 | VM | `rp-control-dev` in resource group `MERV-DEV-RG` (eastus2, Standard_D2s_v3, Ubuntu 24.04) |
-| Host | `https://rp-control-dev.eastus2.cloudapp.azure.com` (static IP 20.110.24.126, Azure DNS label) |
-| UI | `https://rp-control-dev.eastus2.cloudapp.azure.com/merv/` |
-| MCP | `https://rp-control-dev.eastus2.cloudapp.azure.com/mcp` |
-| SSH | `azureuser@rp-control-dev.eastus2.cloudapp.azure.com` (same key as prod) |
+| Host | `https://dev-experiments.rapidreview.io` (IONOS A record → static IP 20.110.24.126; the Azure label `rp-control-dev.eastus2.cloudapp.azure.com` still points at the VM but Caddy no longer serves it) |
+| UI | `https://dev-experiments.rapidreview.io/merv/` |
+| MCP | `https://dev-experiments.rapidreview.io/mcp` |
+| SSH | `azureuser@dev-experiments.rapidreview.io` (same key as prod) |
 
 ## Deploy a commit
 
@@ -91,15 +91,15 @@ http://127.0.0.1:55433.
   runners on dev machines.
 - Kilo / OpenCode plugins still hard-code the prod URL (`clients/*/plugin.js`).
 
-## Moving to a real hostname
+## Changing the hostname
 
-Add an A record (IONOS DNS) for e.g. `dev-experiments.rapidreview.io` →
-20.110.24.126, set `MERV_DEV_HOST` in `dev.env` to the new name, and redeploy:
-the Caddyfile, OAuth resource URI, UI base URL, CORS origins, and presigned
-storage host all follow `MERV_DEV_HOST`. MCP clients re-authenticate once
-(the resource URI changed). Google sign-in on the dev UI additionally needs the
-dev origin in the auth project's Supabase *Redirect URLs*; email + password
-sign-in needs nothing.
+Set `MERV_DEV_HOST` in `dev.env` to the new name (DNS must already resolve)
+and redeploy: the Caddyfile, OAuth resource URI, UI base URL, CORS origins,
+and presigned storage host all follow `MERV_DEV_HOST` (done once on
+2026-08-19: Azure label → `dev-experiments.rapidreview.io`). MCP clients
+re-authenticate once (the resource URI changed). Google sign-in on the dev UI
+additionally needs the dev origin in the auth project's Supabase *Redirect
+URLs*; email + password sign-in needs nothing.
 
 ## Migrations and resets
 
