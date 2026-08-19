@@ -1,10 +1,10 @@
 ---
 name: research-workflow
 description: >-
-  Operate the Merv experiment workflow: select a project, follow
-  workflow.status_and_next, create and run experiments, submit evidence, and
-  coordinate required design or attempt reviews. Use for experiment-level
-  research work and for resuming an experiment already in progress.
+  Operate the Merv research workflow: select a project, follow
+  workflow.status_and_next, create and run experiments and tasks, submit
+  evidence, and coordinate required design, attempt, or task reviews. Use for
+  experiment- and task-level work and for resuming work already in progress.
 ---
 
 # Research Workflow
@@ -43,8 +43,68 @@ Operate in this loop:
 
 Pass the selected `project_id` explicitly to every project-scoped operation.
 Use `project(action="overview", project_id=...)` when you need the whole
-project picture or must check that a proposed claim or experiment is not a
-duplicate of settled work.
+project picture or must check that a proposed claim, experiment, or task is
+not a duplicate of settled work.
+
+## Experiment or task?
+
+Two kinds of work node exist, and the line between them is one question: does
+this work exist to change confidence in a research claim?
+
+- Yes → an **experiment**: a claim, a pre-registered plan, adversarial design
+  and attempt reviews, evidence. It can succeed by failing — a refuted claim
+  is a good experiment.
+- No → a **task**: scoped work with a verifiable finish line — a literature
+  sweep, data acquisition and preparation, an evaluation harness, a memo, a
+  write-up. It succeeds only if the thing it promised exists. Tasks never carry
+  a claim and never move claim status; the reflection reads their outcomes.
+
+Tasks are uncapped; experiments keep their cap. Both may depend on other wave
+nodes (`depends_on`): an experiment does not start running, and a task does not
+deliver, until every dependency has succeeded. A failed dependency shows up as
+`dependency_failed` — end the dependent node with a reason, or leave it for the
+next reflection to replan.
+
+## Run a task
+
+The task lifecycle is:
+
+```text
+in_progress → submit delivery → in_review → accept → done
+     ↑                              │
+     └───── needs_changes ──────────┤
+                                    └── fail ──→ failed
+```
+
+Two working states, two endings. `task.create(name, goal, depends_on?)` puts a
+task straight into `in_progress`; there is no planning stage and no design
+review. A reflection-proposed task arrives with its brief already pinned; an
+ad-hoc task needs one written first.
+
+1. **Brief** (`tasks/<name>/brief.md`, role `brief`,
+   [brief-template.md](brief-template.md)): Goal; **Done when** — a numbered
+   list of checks, each stating what must be true when the task is done and
+   how it can be verified; optional Scope and Context. Checks, not steps. Say
+   what must be true, not how to do it; the how belongs to whoever executes.
+2. **Do the work** however fits — locally, in a sandbox, in the task folder.
+   Keep evidence as you go: files, run receipts, storage objects.
+3. **Delivery** (`tasks/<name>/delivery.md`, role `delivery`,
+   [delivery-template.md](delivery-template.md)): a **Checks** section with
+   one numbered entry per brief check, same numbering — the evidence and, in
+   prose, how the reviewer can check it; state plainly when a check is unmet
+   and why. Then Caveats. Evidence, not narrative. Merv enforces only the
+   shape (every check has an entry); the reviewer verifies the substance.
+4. `task.transition(submit_delivery)` → `review.request(target_type="task",
+   role="task_reviewer")` → hand the returned handoff to a separate read-only
+   agent running `task-review`. `needs_changes` sends the task back to
+   `in_progress` with the reviewer's notes in `revision_context`: fix the
+   delivery and resubmit. A `fail` verdict ends the task.
+5. After a passing review, `task.transition(accept, evidence={"outcome": ...})`.
+   The owner may end a task at any point with
+   `task.transition(mark_failed, evidence={"reason": ...})`.
+
+Use `workflow.status_and_next(project_id, task_id=...)` for the task's gate,
+checks, brief, delivery, and dependencies. A closed task refuses new artifacts.
 
 ## Keep one experiment folder
 
@@ -163,6 +223,7 @@ handoff unchanged to a separate read-only agent:
 
 - `experiment-design-review` before execution.
 - `experiment-attempt-review` after result submission.
+- `task-review` after a task's delivery is submitted.
 
 The reviewer owns `review.start` and `review.submit`; the producing agent must
 not review its own work. Preserve the capability long enough to hand it off,

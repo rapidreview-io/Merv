@@ -234,7 +234,7 @@ agent is spawned with that prompt:
 
 - **Claude Code**: Agent tool with `subagent_type` set to
   `merv:experiment-design-review` / `merv:experiment-attempt-review` /
-  `merv:project-reflection-review`.
+  `merv:task-review` / `merv:project-reflection-review`.
 - **Codex**: spawn a reviewer agent with the matching review skill.
 - **Cursor**: delegate to the plugin subagent (`/experiment-design-review`, or natural
   language); subagents run with a clean context window.

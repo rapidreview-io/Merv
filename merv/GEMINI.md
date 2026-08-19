@@ -41,8 +41,10 @@ There is no linking step and no `connect` action. Use
 - Local edits are not research state. Use `artifact.submit` to contribute
   evidence; it returns a presigned upload command for the bytes, and the
   submitted version can be associated with a target and role.
-- Load `research-workflow` for experiment work and `project-reflection` for a
-  five-lens reflection wave.
+- Load `research-workflow` for experiment and task work and
+  `project-reflection` for a five-lens reflection wave. Work that tests a
+  claim is an experiment; scoped work with a verifiable finish line and no
+  claim (a lit review, data preparation, a harness, a memo) is a task.
 - Use a sandbox for long or expensive work; lightweight checks may run locally.
   Load `sandbox-operation` before requesting or operating one. Do not assume a
   provider; choose from `sandbox.options` when hardware selection is needed.
@@ -57,8 +59,9 @@ There is no linking step and no `connect` action. Use
 ## Review boundary
 
 When a gate requests review, call `review.request` and delegate its handoff to a
-separate agent using `experiment-design-review`, `experiment-attempt-review`, or
-`project-reflection-review`. That reviewer calls `review.start` with its own
+separate agent using `experiment-design-review`, `experiment-attempt-review`,
+`task-review`, or `project-reflection-review`. That reviewer calls
+`review.start` with its own
 `caller_session_id` and submits the verdict through `review.submit`.
 
 The capability is tied to a role and immutable target snapshot. At

@@ -88,6 +88,7 @@ class KiloAdapterTest(unittest.TestCase):
                 "experiment-attempt-review",
                 "experiment-design-review",
                 "project-reflection-review",
+                "task-review",
             },
         )
         for agent in config["agent"].values():

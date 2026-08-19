@@ -7,7 +7,7 @@ a Merv key.
 Start with `agent.hello` (once per context window; pass its `agent_id` in every
 Merv call after that), then `project(action="list")`, choose the project the
 user means, then call `workflow.status_and_next` with its project id. Follow that response's gate
-and next action. Load the matching Merv skill before experiment, review,
+and next action. Load the matching Merv skill before experiment, task, review,
 reflection, consolidation, or sandbox work.
 
 When Merv requests an independent review, delegate the returned handoff prompt

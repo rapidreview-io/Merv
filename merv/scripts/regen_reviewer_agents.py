@@ -20,6 +20,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 REVIEWER_NAMES = (
     "experiment-design-review",
     "experiment-attempt-review",
+    "task-review",
     "project-reflection-review",
     "consolidation-review",
 )
