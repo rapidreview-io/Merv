@@ -51,6 +51,12 @@ from .reviews import (
     start_review,
 )
 from .status_guidance import StatusGuidancePolicy
+from .tasks import (
+    TaskContextQuery,
+    TransitionTask,
+    rich_task_state,
+    slim_task_state,
+)
 from .workflow import (
     StatusAndNextQuery,
     artifact_list_record,
@@ -90,6 +96,8 @@ class Application:
             artifacts=artifacts,
         )
         self._experiment_context = ExperimentContextQuery(artifacts=artifacts)
+        self._task_context = TaskContextQuery(artifacts=artifacts)
+        self._task_transition = TransitionTask(research=research, feed=feed)
         self._exhibits = ExperimentExhibits(
             research=research,
             artifacts=artifacts,
@@ -116,6 +124,7 @@ class Application:
             objects=objects,
             context=self._experiment_context,
             project_context=self._project_context,
+            task_context=self._task_context,
         )
         self._graphs = LogicGraphQuery(research=research, artifacts=artifacts)
 
@@ -690,19 +699,29 @@ class Application:
     # Workflow and context -------------------------------------------------
 
     def status(
-        self, *, project_id: str | None = None, experiment_id: str | None = None
+        self,
+        *,
+        project_id: str | None = None,
+        experiment_id: str | None = None,
+        task_id: str | None = None,
     ) -> dict[str, Any]:
         return self._workflow.status_and_next(
             project_id=project_id,
             experiment_id=experiment_id,
+            task_id=task_id,
         )
 
     def status_for_agent(
-        self, *, project_id: str | None = None, experiment_id: str | None = None
+        self,
+        *,
+        project_id: str | None = None,
+        experiment_id: str | None = None,
+        task_id: str | None = None,
     ) -> dict[str, Any]:
         return self._workflow.status_and_next_agent(
             project_id=project_id,
             experiment_id=experiment_id,
+            task_id=task_id,
         )
 
     def project_context(self, *, project_id: str | None = None) -> dict[str, Any]:
@@ -1049,6 +1068,77 @@ class Application:
             experiment_id=experiment_id,
         )
 
+    # Tasks ----------------------------------------------------------------
+
+    def create_task(
+        self,
+        *,
+        name: str,
+        goal: str,
+        depends_on: list[str] | str | None = None,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        state = self.research.create_task(
+            name=name, goal=goal, depends_on=depends_on, project_id=project_id
+        )
+        return dict(slim_task_state(state))
+
+    def tasks(
+        self, *, project_id: str | None = None, rich: bool = False
+    ) -> dict[str, Any] | list[dict[str, Any]]:
+        states = self.research.project_tasks(project_id=project_id)
+        presented = [
+            dict((rich_task_state if rich else slim_task_state)(state))
+            for state in states
+        ]
+        return presented if rich else {"tasks": presented}
+
+    def list_tasks(self, *, project_id: str | None = None) -> dict[str, Any]:
+        return self.tasks(project_id=project_id, rich=False)
+
+    def task(
+        self,
+        *,
+        task_id: str,
+        project_id: str | None = None,
+        review_id: str = "",
+        rich: bool = False,
+    ) -> dict[str, Any]:
+        state = self.research.task_state(task_id=task_id, project_id=project_id)
+        if rich:
+            return dict(rich_task_state(state))
+        response = dict(slim_task_state(state))
+        if review_id:
+            body = review_body(state.get("reviews", []), review_id=review_id)
+            if body is None:
+                known = [
+                    str(review.get("id") or "") for review in state.get("reviews", [])
+                ]
+                raise ValidationError(
+                    f"no review {review_id} on this task. Reviews here: "
+                    f"{', '.join(known) or 'none yet'}.",
+                    details={"field": "review_id", "review_ids": known},
+                )
+            response["review"] = body
+        return response
+
+    def transition_task(
+        self,
+        *,
+        task_id: str,
+        transition: str,
+        evidence: dict[str, Any] | None = None,
+        project_id: str | None = None,
+        rich: bool = False,
+    ) -> dict[str, Any]:
+        operation = self._task_transition.execute if rich else self._task_transition.agent
+        return operation(
+            task_id=task_id,
+            transition=transition,
+            evidence=evidence,
+            project_id=project_id,
+        )
+
     # Reviews and reflections ---------------------------------------------
 
     def request_review(
@@ -1086,6 +1176,7 @@ class Application:
             artifacts=self.artifacts,
             experiment_context=self._experiment_context,
             project_context=self._project_context,
+            task_context=self._task_context,
             review_request_id=review_request_id,
             reviewer_capability=reviewer_capability,
             declared_agent=declared_agent,
@@ -1360,13 +1451,16 @@ class Application:
         reviews = self.review_queue(project_id=project_id)
         claims = status["project"]["active_claims"]
         active_experiments = work["active_experiments"]
+        active_tasks = work.get("active_tasks", [])
         active_processes = work["active_processes"]
         active = active_experiments[0] if active_experiments else None
         result = {
             "project": status["project"],
             "claims": claims,
             "experiments": experiments,
+            "tasks": [dict(rich_task_state(task)) for task in snapshot.tasks],
             "active_experiments": active_experiments,
+            "active_tasks": active_tasks,
             "active_processes": active_processes,
             "artifacts": artifacts,
             "reviews": reviews,
@@ -1378,7 +1472,9 @@ class Application:
             "stats": {
                 "claims": len(claims),
                 "experiments": len(experiments),
+                "tasks": len(snapshot.tasks),
                 "active_experiments": len(active_experiments),
+                "active_tasks": len(active_tasks),
                 "active_processes": len(active_processes),
                 "artifacts": len(artifacts),
                 "open_reviews": len(reviews["requests"]),

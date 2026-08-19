@@ -36,6 +36,7 @@ _PRIOR_ARTIFACT_FIELDS = (
     "tldr",
 )
 _SLIM_CLAIM_FIELDS = ("id", "statement", "confidence", "status", "scope")
+_SLIM_DEPENDENCY_FIELDS = ("id", "node_type", "name", "status", "settled", "failed")
 _SLIM_REVIEW_FIELDS = (
     "id",
     "role",
@@ -228,6 +229,9 @@ def slim_experiment_state(
             "claim_update_suggestions": rich.get("claim_update_suggestions", []),
             "tested_claims": project_rows(
                 rich.get("tested_claims", []), _SLIM_CLAIM_FIELDS
+            ),
+            "dependencies": project_rows(
+                rich.get("dependencies", []), _SLIM_DEPENDENCY_FIELDS
             ),
             "current_attempt_artifacts": project_rows(current, _SLIM_ARTIFACT_FIELDS),
             "storage_objects": project_rows(

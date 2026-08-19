@@ -32,10 +32,19 @@ from .policy import (
 )
 from .experiment_workflow import EXPERIMENT_WORKFLOW
 from .reflection_workflow import REFLECTION_WORKFLOW
+from .task_workflow import TASK_WORKFLOW
 from .workflow_schema import resolve_review_return
 from ..kernel.state.store import BaseStateStore, next_created_seq, row_to_dict
 from .experiments import ExperimentService
 from .reflections import ReflectionService
+from .tasks import TaskService
+
+
+_WORKFLOW_BY_TARGET = {
+    EXPERIMENT_WORKFLOW.target_type: EXPERIMENT_WORKFLOW,
+    REFLECTION_WORKFLOW.target_type: REFLECTION_WORKFLOW,
+    TASK_WORKFLOW.target_type: TASK_WORKFLOW,
+}
 
 
 class ReviewService:
@@ -56,11 +65,13 @@ class ReviewService:
         experiments: ExperimentService,
         reflections: ReflectionService,
         artifacts: Artifacts,
+        tasks: TaskService | None = None,
     ) -> None:
         self.store = store
         self.experiments = experiments
         self.reflections = reflections
         self.artifacts = artifacts
+        self.tasks = tasks if tasks is not None else TaskService(store=store, artifacts=artifacts)
 
     def request(
         self,
@@ -73,8 +84,10 @@ class ReviewService:
         project_id: str | None = None,
     ) -> dict[str, Any]:
         validate_review_role(role=role)
-        if target_type not in {"experiment", "reflection"}:
-            raise ValidationError("review targets must be 'experiment' or 'reflection'")
+        if target_type not in {"experiment", "reflection", "task"}:
+            raise ValidationError(
+                "review targets must be 'experiment', 'reflection', or 'task'"
+            )
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             target, gate = self._target_with_gate(
@@ -318,11 +331,7 @@ class ReviewService:
                     "target changed after this review started; the verdict no "
                     "longer applies — request a fresh review"
                 )
-            workflow = (
-                EXPERIMENT_WORKFLOW
-                if req["target_type"] == "experiment"
-                else REFLECTION_WORKFLOW if req["target_type"] == "reflection" else None
-            )
+            workflow = _WORKFLOW_BY_TARGET.get(str(req["target_type"]))
             if workflow is None:
                 raise ValidationError(
                     f"unknown review target type: {req['target_type']}"
@@ -430,6 +439,13 @@ class ReviewService:
                     self.reflections.return_from_review(
                         conn=conn,
                         reflection_id=req["target_id"],
+                        route=route,
+                        revision_context=revision_context,
+                    )
+                elif req["target_type"] == "task":
+                    self.tasks.return_from_review(
+                        conn=conn,
+                        task_id=req["target_id"],
                         route=route,
                         revision_context=revision_context,
                     )
@@ -718,6 +734,12 @@ class ReviewService:
         if target_type == "reflection":
             return self.reflections.get_state_with_gate(
                 reflection_id=target_id,
+                project_id=project_id,
+                conn=conn,
+            )
+        if target_type == "task":
+            return self.tasks.get_state_with_gate(
+                task_id=target_id,
                 project_id=project_id,
                 conn=conn,
             )

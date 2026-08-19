@@ -31,6 +31,7 @@ from . import (
     sandbox_providers,
     sandboxes,
     storage,
+    tasks,
     user_settings,
 )
 from .gateway import (
@@ -167,6 +168,7 @@ def create_fastapi_app(
         ),
         claims.build_router(gateway),
         experiments.build_router(gateway, application=api.application),
+        tasks.build_router(gateway, application=api.application),
         reflections.build_router(application=api.application),
         artifacts.build_router(artifacts=api.artifacts),
         storage.build_router(storage=api.storage),

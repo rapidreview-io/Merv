@@ -11,17 +11,24 @@ from ..artifacts import ArtifactTarget
 from ..kernel.utils import NotFoundError, ValidationError
 from .experiment_workflow import EXPERIMENT_TERMINAL_STATUSES
 from .reflection_workflow import REFLECTION_TERMINAL_STATUSES
+from .task_workflow import TASK_TERMINAL_STATUSES
 
 _TABLE_BY_TYPE = {
     "experiment": "experiments",
     "reflection": "reflections",
+    "task": "tasks",
     "claim": "claims",
     "review": "reviews",
 }
-# Experiments and reflections scope associations to their current attempt, so
-# a review rejection that bumps the attempt naturally invalidates stale
-# associations for either target kind.
-_ATTEMPT_TABLE_BY_TYPE = {"experiment": "experiments", "reflection": "reflections"}
+# Experiments, reflections, and tasks scope associations to their current
+# attempt, so a review rejection that bumps the attempt naturally invalidates
+# stale associations for any of them (a task's attempt never bumps — its one
+# review return keeps the same attempt — but the scoping is uniform).
+_ATTEMPT_TABLE_BY_TYPE = {
+    "experiment": "experiments",
+    "reflection": "reflections",
+    "task": "tasks",
+}
 # A published wave is frozen — its pinned graph is the project's comparison
 # base — and an abandoned one is closed; neither accepts new artifacts.
 _TERMINAL_REFLECTION_STATUSES = REFLECTION_TERMINAL_STATUSES
@@ -32,6 +39,8 @@ _TERMINAL_REFLECTION_STATUSES = REFLECTION_TERMINAL_STATUSES
 # the snapshot and invalidates the pinned verdict, which is the designed way to
 # correct work under review, and the next transition seals it.
 _CLOSED_EXPERIMENT_STATUSES = EXPERIMENT_TERMINAL_STATUSES
+# Same rule for tasks: done or failed, the record is closed.
+_CLOSED_TASK_STATUSES = TASK_TERMINAL_STATUSES
 
 
 class AssociationTargets:
@@ -48,7 +57,7 @@ class AssociationTargets:
         if table is None:
             raise ValidationError(f"unsupported target type: {kind}")
         attempt = ", attempt_index" if kind in _ATTEMPT_TABLE_BY_TYPE else ""
-        status = ", status" if kind in ("reflection", "experiment") else ""
+        status = ", status" if kind in ("reflection", "experiment", "task") else ""
         row = tx.execute(
             f"SELECT project_id{attempt}{status} FROM {table} WHERE id = ?",
             (target_id,),
@@ -90,6 +99,11 @@ class AssociationTargets:
                 f"experiment {target_id} is {row['status']} — it is not "
                 "accepting artifact submissions right now; wait for the "
                 "review verdict, then submit against the next round"
+            )
+        if kind == "task" and str(row["status"]) in _CLOSED_TASK_STATUSES:
+            raise ValidationError(
+                f"task {target_id} is {row['status']} — it is closed and no "
+                "longer accepts artifact submissions"
             )
         return ArtifactTarget(
             target_type=kind,

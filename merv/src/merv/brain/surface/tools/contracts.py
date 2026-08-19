@@ -17,18 +17,25 @@ from ...research_core import (
     REFLECTION_WORKFLOW,
     REVIEW_ROLE_VALUES,
     REVIEW_VERDICT_VALUES,
+    TASK_TRANSITION_VALUES,
+    TASK_WORKFLOW,
 )
 
 REVIEW_RETURN_VALUES = (
     "",
     *EXPERIMENT_WORKFLOW.review_return_statuses,
     *REFLECTION_WORKFLOW.review_return_statuses,
+    *TASK_WORKFLOW.review_return_statuses,
+    *TASK_WORKFLOW.review_fail_statuses,
 )
 EXPERIMENT_INITIAL_VALUES = (EXPERIMENT_WORKFLOW.initial,)
 REVIEW_TARGET_VALUES = (
     EXPERIMENT_WORKFLOW.target_type,
     REFLECTION_WORKFLOW.target_type,
+    TASK_WORKFLOW.target_type,
 )
+_TASK_REVIEW_RETURN = next(iter(TASK_WORKFLOW.review_returns))
+_TASK_FAIL_STATUS = next(iter(TASK_WORKFLOW.review_fail_statuses))
 _EXPERIMENT_RESULT_TRANSITION = next(
     transition.name
     for transition in EXPERIMENT_WORKFLOW.transitions
@@ -120,6 +127,19 @@ class ProjectScopedInput(ContractModel):
 
 class WorkflowStatusAndNextInput(ProjectScopedInput):
     experiment_id: str | None = None
+    task_id: str | None = Field(
+        default=None,
+        description=(
+            "Scope the status to one task (task_… id) instead of an experiment; "
+            "returns the task's workflow guidance, brief, delivery, and checks."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _one_scope(self) -> "WorkflowStatusAndNextInput":
+        if self.experiment_id and self.task_id:
+            raise ValueError("pass experiment_id or task_id, not both")
+        return self
 
 
 class AgentHelloInput(ContractModel):
@@ -375,6 +395,14 @@ class ExperimentCreateInput(ProjectScopedInput):
     claim_ids: list[str] | str | None = Field(
         default=None, description="Alias for tested_claim_ids."
     )
+    depends_on: list[str] | str | None = Field(
+        default_factory=list,
+        description=(
+            "Optional exp_/task_ ids of the same project this experiment must "
+            "not start running before (e.g. the data-preparation task it "
+            "trains on); they become wave DAG edges."
+        ),
+    )
     title: str = Field(
         default="",
         description="Deprecated; back-compat fallback for intent. Put design detail in plan.md.",
@@ -425,6 +453,61 @@ class ExperimentTransitionInput(ProjectScopedInput):
     experiment_id: str
     transition: Literal[*EXPERIMENT_TRANSITION_VALUES]
     evidence: dict[str, Any] | None = None
+
+
+class TaskCreateInput(ProjectScopedInput):
+    name: str = Field(
+        default="",
+        description=(
+            "REQUIRED. Short folder-safe name, unique among the project's tasks "
+            "— it becomes the task folder tasks/<name>/. Letters, digits, '.', "
+            "'_', '-' only; 3-48 characters. Name the deliverable, not the "
+            "project ('prep-cifar-splits', 'lit-sweep-distillation')."
+        ),
+    )
+    goal: str = Field(
+        default="",
+        description=(
+            "REQUIRED. One paragraph: what this task must achieve and why the "
+            "project needs it. Say what must be true when it is done, not how "
+            "to do it — the how is the executor's. The numbered Done-when "
+            "checks belong in the brief.md artifact (role 'brief')."
+        ),
+    )
+    depends_on: list[str] | str | None = Field(
+        default_factory=list,
+        description=(
+            "Optional exp_/task_ ids of the same project this task must not "
+            "deliver before; they become wave DAG edges. Empty for ad-hoc work."
+        ),
+    )
+
+
+class TaskListInput(ProjectScopedInput):
+    pass
+
+
+class TaskGetStateInput(ProjectScopedInput):
+    task_id: str
+    review_id: str = Field(
+        default="",
+        description=(
+            "Optional review id taken from this task's 'reviews' list; pass it "
+            "to also receive that review's full body under 'review'."
+        ),
+    )
+
+
+class TaskTransitionInput(ProjectScopedInput):
+    task_id: str
+    transition: Literal[*TASK_TRANSITION_VALUES]
+    evidence: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Optional. On accept, {'outcome': ...} is the accepted outcome note; "
+            "on mark_failed, {'reason': ...} says why the owner ended it."
+        ),
+    )
 
 
 class MlflowContextInput(ProjectScopedInput):
@@ -561,13 +644,14 @@ class ArtifactSubmitInput(ProjectScopedInput):
         json_schema_extra={"enum": sorted(ARTIFACT_TARGET_TYPES)},
     )
     target_id: str = Field(
-        description="Id of the experiment, reflection, claim, or review."
+        description="Id of the experiment, task, reflection, claim, or review."
     )
     role: str = Field(
         description=(
             "Artifact role. Gated docs (plan, report, graph, project_graph, "
-            "reflection_lens_doc, reflection_doc, change_spec) and metrics "
-            "'result' JSON only — all size-capped at 16 KB."
+            "reflection_lens_doc, reflection_doc, change_spec; for tasks: "
+            "brief, delivery) and metrics 'result' JSON only — all size-capped "
+            "at 16 KB."
         ),
         json_schema_extra={"enum": sorted(SUBMITTABLE_ROLES)},
     )
@@ -827,7 +911,11 @@ class ReviewSubmitInput(ContractModel):
             "fan-out (every lens re-submits for the new attempt), or "
             f"{_REFLECTION_REVISION_RETURN.to_status!r} if the reflections "
             "stand but the reflection artifacts (project graph, reflection "
-            "doc, and/or change spec) must be revised."
+            "doc, and/or change spec) must be revised. Task-review rejections: "
+            f"needs_changes returns to {_TASK_REVIEW_RETURN.to_status!r} (the "
+            "default; omit return_to) — the executor fixes the delivery; a "
+            f"fail verdict ENDS the task ({_TASK_FAIL_STATUS!r}) — reserve it "
+            "for a goal that cannot be met within the task's scope."
         ),
         json_schema_extra={
             "enum": [value for value in REVIEW_RETURN_VALUES if value]
@@ -1270,15 +1358,17 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         input_model=WorkflowStatusAndNextInput,
         description=(
             "The canonical entrypoint for starting or resuming work. Without "
-            "experiment_id, returns workflow guidance plus the bounded project "
-            "context: project metadata, latest published reflection, General "
-            "Summary of the literature, every claim, and one status-dependent "
-            "summary for every experiment. With experiment_id, returns the "
-            "four-section experiment context: experiment, latest plan, latest "
-            "report, and all other current-attempt artifact references. Live "
-            "experiments receive the full latest plan; terminal experiments "
-            "receive its Summary; the latest report is full when present. "
-            "Use artifact.find with one id or an ordered id batch for deeper "
+            "experiment_id or task_id, returns workflow guidance plus the "
+            "bounded project context: project metadata, latest published "
+            "reflection, General Summary of the literature, every claim, and "
+            "one status-dependent summary for every experiment and task. With "
+            "experiment_id, returns the four-section experiment context: "
+            "experiment, latest plan, latest report, and all other "
+            "current-attempt artifact references. Live experiments receive the "
+            "full latest plan; terminal experiments receive its Summary; the "
+            "latest report is full when present. With task_id, returns the "
+            "task's guidance, brief, delivery, checks, and dependencies. Use "
+            "artifact.find with one id or an ordered id batch for deeper "
             "artifact reads."
         ),
     ),
@@ -1443,6 +1533,48 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             "results/*.json associated with role 'result'). Call it before "
             "writing report.md. When pinned, the report must "
             "reference and interpret it rather than hand-copy numbers."
+        ),
+    ),
+    "task.create": ToolContract(
+        handler_identity="application.create_task",
+        input_model=TaskCreateInput,
+        description=(
+            f"Create a {TASK_WORKFLOW.initial} task: scoped non-experiment work "
+            "with a verifiable finish line and no claim (lit review, data "
+            "preparation, harness building, memos). Requires a goal and a short "
+            "folder-safe 'name' unique among the project's tasks; the name "
+            "becomes the task folder tasks/<name>/. Then write the brief "
+            "(role 'brief': Goal + numbered Done-when checks) and, when the "
+            "work is done, the delivery (role 'delivery': evidence per check). "
+            "Has a claim to test? Create an experiment instead."
+        ),
+    ),
+    "task.list": ToolContract(
+        handler_identity="application.list_tasks",
+        visibility="internal",
+        input_model=TaskListInput,
+        description="List tasks with state.",
+    ),
+    "task.get_state": ToolContract(
+        handler_identity="application.task",
+        visibility="internal",
+        input_model=TaskGetStateInput,
+        description=(
+            "Compatibility-only singular internal task state projection. "
+            "Agents use workflow.status_and_next(task_id=...) for context."
+        ),
+    ),
+    "task.transition": ToolContract(
+        handler_identity="application.transition_task",
+        input_model=TaskTransitionInput,
+        description=(
+            "Apply a task transition allowed by workflow.status_and_next: "
+            "submit_delivery (in_progress → in_review, needs a valid brief and "
+            "delivery and every dependency done), accept (after a passing "
+            "task_reviewer review → done), or mark_failed (the owner ends the "
+            "task with evidence={'reason': ...}). Returns a compact "
+            "acknowledgement; call workflow.status_and_next(task_id=...) "
+            "afterward to continue."
         ),
     ),
     "mlflow.context": ToolContract(

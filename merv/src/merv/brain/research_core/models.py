@@ -55,6 +55,36 @@ class CommittedExperimentUpdate:
     event: StoredEvent
 
 
+class TaskState(TypedDict, total=False):
+    id: str
+    project_id: str
+    name: str
+    goal: str
+    status: str
+    attempt_index: int
+    outcome: str
+    failed_by: str
+
+
+class TaskSummary(TypedDict):
+    id: str
+    project_id: str
+    name: str
+    goal: str
+    status: str
+    attempt_index: int
+    outcome: str
+    failed_by: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CommittedTaskUpdate:
+    state: TaskState
+    event: StoredEvent
+
+
 class LiteratureSignal(TypedDict):
     papers_total: int
     papers_unreviewed: int
@@ -73,6 +103,8 @@ class ResearchSnapshot:
     latest_published_reflection: dict[str, Any] | None
     reflection_signal: dict[str, Any]
     gate_evaluations: dict[str, Any]
+    tasks: list[TaskState] = field(default_factory=list)
+    requested_task_id: str | None = None
     recent_claims: list[dict[str, Any]] = field(default_factory=list)
     claim_events_since_reflection: list[dict[str, Any]] = field(
         default_factory=list
@@ -82,6 +114,20 @@ class ResearchSnapshot:
             papers_total=0, papers_unreviewed=0
         )
     )
+
+    @property
+    def selected_task(self) -> TaskState | None:
+        selected_id = self.requested_task_id
+        if selected_id is None:
+            return None
+        return next(
+            (
+                task
+                for task in self.tasks
+                if str(task.get("id") or "") == selected_id
+            ),
+            None,
+        )
 
     @property
     def selected_experiment(self) -> ExperimentState | None:
@@ -100,10 +146,13 @@ class ResearchSnapshot:
 
 __all__ = [
     "CommittedExperimentUpdate",
+    "CommittedTaskUpdate",
     "ExhibitVerdict",
     "ExperimentState",
     "ExperimentSummary",
     "LiteratureSignal",
     "PersistedRunState",
     "ResearchSnapshot",
+    "TaskState",
+    "TaskSummary",
 ]

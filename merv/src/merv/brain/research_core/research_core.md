@@ -3,44 +3,39 @@
 ## Purpose and boundary
 
 `research_core` is the authoritative domain center for a research project. It
-owns projects, claims, experiments, reflection waves, reviews, lifecycle gates,
-project candidates/champion lineage, and the transactions that keep those
-records consistent. It answers what research state exists and whether a state
-change is legal.
+owns projects, claims, experiments, tasks, the wave DAG between them, reflection
+waves, reviews, lifecycle gates, candidates/champion lineage, and the
+transactions that keep those records consistent: what research state exists and
+whether a state change is legal. The workflow declarations also name the agent
+action, tools, template, and review skill for each gate. Application
+orchestrates across modules and formats that guidance; Surface owns auth and
+wire presentation; Sandbox executes work, Artifacts owns evidence, Feed
+publishes observations, Object Storage owns heavy bytes, Literature literature.
 
-The workflow declarations also name the agent action, tools, template, and
-review skill for each gate. Application owns cross-module orchestration and
-formats that guidance. Surface owns authentication, access checks, and wire
-presentation. Sandbox executes work, Artifacts owns evidence, Feed publishes
-observations, Object Storage owns heavy bytes, and Literature owns literature.
-
-## Public boundary
-
-`Research` is the one concrete public root. Composition constructs it with a
-`BaseStateStore` and `Artifacts`; callers import it from `research_core`, not
-from implementation files. Experiment, reflection, and review services are
-private collaborators selected by `Research`, never an alternate public path.
+`Research` is the one concrete public root, built from a `BaseStateStore` and
+`Artifacts` and imported from `research_core`, never from implementation files;
+experiment, task, reflection, and review services are private collaborators.
 
 ## Files
 
 - `research.py`: public root; project, claim, and candidate writes, workflow
   delegation, snapshots, project context, membership, events, and graph refs.
-- `experiments.py`: shared experiment-creation invariants, experiment state
-  machine, gate evaluation, artifact sealing, attempt handling, MLflow run
-  state, and idempotent tracking-delivery ledger.
+- `experiments.py`: experiment creation invariants, state machine, gates,
+  sealing, attempts, MLflow run state, idempotent tracking-delivery ledger.
+- `tasks.py`: task creation invariants, state machine, gates, review routing.
+- `dependencies.py`: the wave DAG (`node_dependencies`): edge recording with
+  cycle checks and per-node dependency status for the shared gate.
 - `reflections.py`: reflection state machine, corpus snapshots, lens coverage,
   graph comparison, change-spec validation/materialization, drift signal.
 - `reviews.py`: review requests, one-time capabilities, isolated sessions,
   pinned snapshots, verdict submission, and return routing.
-- `association_targets.py`: Research-owned target resolution and publication
-  protection used by Artifacts.
-- `experiment_workflow.py`: the complete experiment lifecycle and guidance.
-- `reflection_workflow.py`: the complete reflection lifecycle and start policy.
-- `workflow_schema.py`: passive workflow values and declaration validation;
-  persisted workflow states and transitions live only in those declarations.
-- `policy.py`: pure vocabulary, validation, gate evaluation, snapshot identity,
+- `association_targets.py`: target resolution and publication protection.
+- `experiment_workflow.py`, `task_workflow.py`, `reflection_workflow.py`: the
+  three lifecycles; the experiment file also declares the shared dependency need.
+- `workflow_schema.py`: passive workflow values and declaration validation.
+- `policy.py`: vocabulary, validation, gate evaluation, snapshot identity,
   reflection signal, and limits.
-- `evidence.py`: pure evidence selection and document/graph envelope checks.
+- `evidence.py`: evidence selection, document envelope checks, brief rendering.
 - `models.py`: shared immutable results and typed state shapes.
 - `__init__.py`: deliberately narrow package import surface.
 
@@ -48,15 +43,22 @@ private collaborators selected by `Research`, never an alternate public path.
 
 The forward path is `planned -> design_review -> ready_to_run -> running ->
 experiment_review -> complete`; failure and abandonment are terminal exits.
-Every forward transition evaluates the declared gate and seals the current
-artifact composition on the same database transaction as the state change.
-Rejected design work returns to `planned` and increments the attempt. A rejected
-execution review returns to `planned` for a new plan attempt or to `running` to
-revise execution without invalidating the approved plan.
+Every forward transition evaluates the declared gate and seals the artifact
+composition in the same transaction as the state change. Rejected design work
+returns to `planned` and increments the attempt; a rejected execution review
+returns to `planned` (new attempt) or `running` (keep the approved plan).
 
-Tracking outcomes update experiment state and append an event atomically. A
-keyed delivery also writes `tracking_deliveries` in that transaction; its unique
-key proves that a delivery committed and prevents duplicate external runs.
+Tracking outcomes update experiment state and append an event atomically; a
+keyed delivery also writes `tracking_deliveries` there, so its unique key proves
+the delivery committed and prevents duplicate external runs.
+
+A task is scoped non-experiment work with no claim: `in_progress -> in_review
+-> done`, `failed` the only other ending. The brief (Goal, numbered Done-when
+checks) is the contract, the delivery answers one entry per check, one review
+verifies them: `needs_changes` returns to `in_progress` (same attempt); `fail`
+ends the task, as does the owner's `mark_failed`. Experiments and tasks share
+`node_dependencies`: an experiment waits at `ready_to_run`, a task before
+`submit_delivery`, until every dependency succeeded (`dependency_failed` else).
 
 ## Reflection and review lifecycle
 
@@ -64,35 +66,33 @@ A reflection moves `reflecting -> synthesizing -> reflection_review ->
 consolidating -> published`. Reflection review makes its research artifacts
 authoritative. A separate consolidator covers every experiment, a separate
 reviewer approves the exact code proposal, and the runner binds it to the
-Merv-owned central Git ref. Only then does publication atomically materialize
-the change spec and pin the graph. Code review can return only to consolidation;
-it can never reopen reflection.
+Merv-owned central Git ref; only then does publication atomically materialize
+the change spec and pin the graph. Code review returns only to consolidation.
 
 A review capability is random, expiring, returned once, and stored only as a
-hash. A new request supersedes older open requests for the same gate. Review
+hash; a new request supersedes older open requests for the same gate. Review
 start enforces tenant scope, producer/reviewer separation, an unchanged target
-snapshot, and either the one-time capability or an exact assigned reviewer
-session. Submission rechecks that snapshot before a verdict can route a workflow.
+snapshot, and the one-time capability or an exact assigned reviewer session;
+submission rechecks that snapshot before a verdict can route a workflow.
 
 ## Read model and invariants
 
-`Research.snapshot` is the canonical transaction-consistent project read. It
-hydrates experiment and reflection state in batches and returns gate evaluations
-with the records they govern. Focused reads may be smaller but must preserve the
-same project scope, attempt rules, and snapshot identity.
-
-Candidates point to an Artifact, Object Storage object, or pathless experiment
-workspace awaiting evaluator staging. Staging and promotions are append-only;
-promotion requires durable bytes, a reason, and compare-and-swap against the
-observed champion. Overview is bounded; `candidate.list` retains full history.
+`Research.snapshot` is the canonical transaction-consistent project read: it
+hydrates experiment, task, and reflection state in batches and returns gate
+evaluations with the records they govern. Focused reads may be smaller but keep
+the same project scope, attempt rules, and snapshot identity. Candidates point
+to an Artifact, Object Storage object, or pathless experiment workspace awaiting
+evaluator staging; staging and promotions are append-only, and promotion needs
+durable bytes, a reason, and compare-and-swap against the observed champion.
 
 All writes resolve a project through `BaseStateStore`; target lookups include
 project ownership. Events commit with their state mutations. Review snapshots
 are byte-stable identities of the target state and submitted evidence. Artifact
 sealing uses the caller's Research transaction. Reflection publication is the
-only path that materializes its reviewed change spec, and its experiments pass
-through the same creation invariants as direct experiments. Compatibility reads
-may hydrate older rows; new writes follow the current invariants.
+only path that materializes its reviewed change spec; its experiments and tasks
+pass through the same creation invariants as direct ones, a proposed task's
+brief is pinned from the spec, and `depends_on` becomes DAG edges.
+Compatibility reads may hydrate older rows; new writes follow current invariants.
 
 ## Maintenance rule
 

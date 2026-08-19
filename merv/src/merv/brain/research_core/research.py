@@ -13,6 +13,7 @@ from merv.shared.storage_guidance import STORAGE_MAX_UPLOAD_BYTES_SETTING
 
 from .experiment_workflow import EXPERIMENT_TERMINAL_STATUSES
 from .reflection_workflow import REFLECTION_WORKFLOW
+from .task_workflow import TASK_TERMINAL_STATUSES
 from .policy import (
     AGENT_DISPATCH_SETTING,
     CLAIM_CONFIDENCES,
@@ -25,15 +26,19 @@ from .policy import (
 from .experiments import ExperimentService
 from .models import (
     CommittedExperimentUpdate,
+    CommittedTaskUpdate,
     ExhibitVerdict,
     ExperimentState,
     ExperimentSummary,
     LiteratureSignal,
     PersistedRunState,
     ResearchSnapshot,
+    TaskState,
+    TaskSummary,
 )
 from .reflections import ReflectionService
 from .reviews import ReviewService
+from .tasks import TaskService
 from ..artifacts import Artifacts
 from ..kernel.events import StoredEvent
 from ..kernel.state.store import (
@@ -57,6 +62,7 @@ _GRAPH_REFS = (
     ("rev_", "review", "review_id", "reviews", ("role", "verdict", "created_at")),
     ("claim_", "claim", "claim_id", "claims", ("statement", "status")),
     ("exp_", "experiment", "experiment_id", "experiments", ("intent", "status")),
+    ("task_", "task", "task_id", "tasks", ("goal", "status")),
     (
         "syn_",
         "reflection",
@@ -89,6 +95,7 @@ class Research:
         "store",
         "artifacts",
         "_experiments",
+        "_tasks",
         "_reflections",
         "_reviews",
     )
@@ -97,16 +104,19 @@ class Research:
         self.store = store
         self.artifacts = artifacts
         self._experiments = ExperimentService(store=store, artifacts=artifacts)
+        self._tasks = TaskService(store=store, artifacts=artifacts)
         self._reflections = ReflectionService(
             store=store,
             artifacts=artifacts,
             experiments=self._experiments,
+            tasks=self._tasks,
         )
         self._reviews = ReviewService(
             store=store,
             experiments=self._experiments,
             reflections=self._reflections,
             artifacts=artifacts,
+            tasks=self._tasks,
         )
 
     # Projects -------------------------------------------------------------
@@ -895,6 +905,7 @@ class Research:
         name: str,
         intent: str,
         tested_claim_ids: list[str] | str | None = None,
+        depends_on: list[str] | str | None = None,
         project_id: str | None = None,
     ) -> ExperimentState:
         return cast(
@@ -903,6 +914,7 @@ class Research:
                 name=name,
                 intent=intent,
                 tested_claim_ids=tested_claim_ids,
+                depends_on=depends_on,
                 project_id=project_id,
             ),
         )
@@ -1014,6 +1026,69 @@ class Research:
         )
 
     # Reflections ----------------------------------------------------------
+
+    # Tasks ----------------------------------------------------------------
+
+    def create_task(
+        self,
+        *,
+        name: str,
+        goal: str,
+        depends_on: list[str] | str | None = None,
+        project_id: str | None = None,
+    ) -> TaskState:
+        return cast(
+            TaskState,
+            self._tasks.create(
+                name=name,
+                goal=goal,
+                depends_on=depends_on,
+                project_id=project_id,
+            ),
+        )
+
+    def task_state(
+        self, *, task_id: str, project_id: str | None = None
+    ) -> TaskState:
+        return cast(
+            TaskState,
+            self._tasks.get_state(task_id=task_id, project_id=project_id),
+        )
+
+    def project_tasks(self, *, project_id: str | None) -> list[TaskState]:
+        with closing(self.store.connect()) as conn:
+            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
+            evaluated = self._tasks.list_states_with_gates(
+                conn=conn, project_id=project_id
+            )
+            return cast(list[TaskState], [state for state, _gate in evaluated])
+
+    def project_task_summaries(self, *, project_id: str | None) -> list[TaskSummary]:
+        return cast(
+            list[TaskSummary],
+            self._tasks.list_task_summaries(project_id=project_id),
+        )
+
+    def transition_task(
+        self,
+        *,
+        task_id: str,
+        transition: str,
+        evidence: dict[str, object] | None = None,
+        project_id: str | None = None,
+    ) -> CommittedTaskUpdate:
+        return cast(
+            CommittedTaskUpdate,
+            self._tasks.transition_with_event(
+                task_id=task_id,
+                transition=transition,
+                evidence=evidence,
+                project_id=project_id,
+            ),
+        )
+
+    def assert_task_in_project(self, *, task_id: str, project_id: str) -> None:
+        self._tasks.assert_in_project(task_id=task_id, project_id=project_id)
 
     def create_reflection(
         self,
@@ -1288,6 +1363,7 @@ class Research:
         *,
         project_id: str | None = None,
         experiment_id: str | None = None,
+        task_id: str | None = None,
     ) -> ResearchSnapshot:
         """Read all project research once; no caller-selected hydration shape."""
         with self.store.transaction() as conn:
@@ -1316,6 +1392,13 @@ class Research:
             )
             experiments = cast(list[ExperimentState], [state for state, _ in evaluated])
             gates = {str(state["id"]): evaluation for state, evaluation in evaluated}
+            evaluated_tasks = self._tasks.list_states_with_gates(
+                conn=conn, project_id=project_id
+            )
+            tasks = cast(list[TaskState], [state for state, _ in evaluated_tasks])
+            gates.update(
+                {str(state["id"]): evaluation for state, evaluation in evaluated_tasks}
+            )
             open_reflection, open_gate = self._reflection(
                 conn=conn, project_id=project_id, terminal=False
             )
@@ -1339,6 +1422,11 @@ class Research:
                 },
                 published=published,
                 open_wave=open_reflection,
+                current_terminal_tasks={
+                    str(row["id"]): str(row["status"])
+                    for row in tasks
+                    if str(row["status"]) in TASK_TERMINAL_STATUSES
+                },
             )
             recent_claims, claim_events = self._dashboard_facts(
                 conn=conn, project_id=project_id, published=published
@@ -1353,6 +1441,8 @@ class Research:
                 latest_published_reflection=published,
                 reflection_signal=signal,
                 gate_evaluations=gates,
+                tasks=tasks,
+                requested_task_id=task_id,
                 recent_claims=recent_claims,
                 claim_events_since_reflection=claim_events,
                 literature_signal=self._literature_signal(
@@ -1416,6 +1506,18 @@ class Research:
                 experiment["tested_claim_ids"] = claims_by_experiment.get(
                     str(experiment["id"]), []
                 )
+            tasks = rows_to_dicts(
+                rows=conn.execute(
+                    """
+                    SELECT id, name, goal, status, attempt_index, outcome,
+                           failed_by, created_at, updated_at
+                    FROM tasks
+                    WHERE project_id = ?
+                    ORDER BY created_at, id
+                    """,
+                    (project_id,),
+                ).fetchall()
+            )
             reflection_terminal = tuple(sorted(REFLECTION_WORKFLOW.terminal_statuses))
             reflection_placeholders = ", ".join("?" for _ in reflection_terminal)
             latest = row_to_dict(
@@ -1463,6 +1565,7 @@ class Research:
             "project": project,
             "claims": claims,
             "experiments": experiments,
+            "tasks": tasks,
             "latest_published_reflection": latest,
             "open_reflection": open_wave,
             "literature_summary": literature_summary,

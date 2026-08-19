@@ -323,76 +323,97 @@ class Artifacts:
         path: str,
         data: bytes,
         title: str = "",
+        tx: Connection | None = None,
     ) -> None:
-        """Write a complete system-created artifact without an upload token."""
-        path = _clean_path(path)
-        with self._store.transaction() as tx:
-            target = self._resolve_target(tx=tx, target=target)
-            project_id = str(target.project_id)
-            content_type = _content_type(path)
-            sha256 = self._blobs.put(
-                namespace=project_id,
-                data=data,
-                content_type=content_type,
-            )
-            artifact_id = new_id(prefix="art")
-            now = now_iso()
-            order = next_created_seq(conn=tx, table="artifacts")
+        """Write a complete system-created artifact without an upload token.
 
-            # Keep sealed rounds; replace only the live system artifact.
-            tx.execute(
-                """
-                DELETE FROM artifacts
-                WHERE project_id = ? AND target_type = ? AND target_id = ?
-                  AND role = ? AND attempt_index = ? AND submission_id = ''
-                """,
-                (
-                    project_id,
-                    target.target_type,
-                    target.target_id,
-                    role,
-                    target.attempt_index,
-                ),
+        Pass ``tx`` to pin inside a caller's open transaction (a reflection
+        publish pins each proposed task's brief this way); otherwise the pin
+        runs in its own transaction.
+        """
+        path = _clean_path(path)
+        if tx is not None:
+            self._pin(tx=tx, target=target, role=role, path=path, data=data, title=title)
+            return
+        with self._store.transaction() as tx:
+            self._pin(tx=tx, target=target, role=role, path=path, data=data, title=title)
+
+    def _pin(
+        self,
+        *,
+        tx: Connection,
+        target: ArtifactTarget,
+        role: str,
+        path: str,
+        data: bytes,
+        title: str,
+    ) -> None:
+        target = self._resolve_target(tx=tx, target=target)
+        project_id = str(target.project_id)
+        content_type = _content_type(path)
+        sha256 = self._blobs.put(
+            namespace=project_id,
+            data=data,
+            content_type=content_type,
+        )
+        artifact_id = new_id(prefix="art")
+        now = now_iso()
+        order = next_created_seq(conn=tx, table="artifacts")
+
+        # Keep sealed rounds; replace only the live system artifact.
+        tx.execute(
+            """
+            DELETE FROM artifacts
+            WHERE project_id = ? AND target_type = ? AND target_id = ?
+              AND role = ? AND attempt_index = ? AND submission_id = ''
+            """,
+            (
+                project_id,
+                target.target_type,
+                target.target_id,
+                role,
+                target.attempt_index,
+            ),
+        )
+        tx.execute(
+            """
+            INSERT INTO artifacts (
+              id, project_id, target_type, target_id, role, attempt_index,
+              lens_id, path, title, content_sha256, size_bytes, content_type,
+              status, upload_token, created_by, created_at, updated_at, created_seq
             )
-            tx.execute(
-                """
-                INSERT INTO artifacts (
-                  id, project_id, target_type, target_id, role, attempt_index,
-                  lens_id, path, title, content_sha256, size_bytes, content_type,
-                  status, upload_token, created_by, created_at, updated_at, created_seq
-                )
-                VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, 'complete', '', ?, ?, ?, ?)
-                """,
-                (
-                    artifact_id,
-                    project_id,
-                    target.target_type,
-                    target.target_id,
-                    role,
-                    target.attempt_index,
-                    path,
-                    title,
-                    sha256,
-                    len(data),
-                    content_type,
-                    roles.SYSTEM_CREATED_BY,
-                    now,
-                    now,
-                    order,
-                ),
-            )
-            self._store.record_event(
-                conn=tx,
-                project_id=project_id,
-                event_type="artifact.pinned",
-                target_type=target.target_type,
-                target_id=target.target_id,
-                payload={
-                    "artifact_id": artifact_id,
-                    "role": role,
-                    "path": path,
-                },
-            )
+            VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, 'complete', '', ?, ?, ?, ?)
+            """,
+            (
+                artifact_id,
+                project_id,
+                target.target_type,
+                target.target_id,
+                role,
+                target.attempt_index,
+                path,
+                title,
+                sha256,
+                len(data),
+                content_type,
+                roles.SYSTEM_CREATED_BY,
+                now,
+                now,
+                order,
+            ),
+        )
+        self._store.record_event(
+            conn=tx,
+            project_id=project_id,
+            event_type="artifact.pinned",
+            target_type=target.target_type,
+            target_id=target.target_id,
+            payload={
+                "artifact_id": artifact_id,
+                "role": role,
+                "path": path,
+            },
+        )
 
     def seal(
         self,

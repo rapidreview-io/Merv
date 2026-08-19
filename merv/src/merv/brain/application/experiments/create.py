@@ -24,6 +24,7 @@ class ExperimentCreateArgs(TypedDict, total=False):
     success_criteria: str
     risks: str
     status: str
+    depends_on: list[str] | str | None
     project_id: str | None
 
 
@@ -71,6 +72,7 @@ def create_experiment(
         name=str(kwargs.pop("name", "") or ""),
         intent=intent,
         tested_claim_ids=claim_ids,
+        depends_on=kwargs.pop("depends_on", None),
         project_id=kwargs.pop("project_id", None),
     )
     if kwargs:

@@ -553,6 +553,49 @@ CREATE TABLE IF NOT EXISTS reflection_experiments (
   FOREIGN KEY(experiment_id) REFERENCES experiments(id)
 );
 
+-- A task is scoped non-experiment work with a verifiable finish line and no
+-- claim (migration 51). Its brief and delivery are artifacts; the row carries
+-- only lifecycle. attempt_index is fixed at 1 (the one review return keeps
+-- the same attempt) so the artifact and review machinery stays uniform.
+CREATE TABLE IF NOT EXISTS tasks (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  goal TEXT NOT NULL,
+  status TEXT NOT NULL,
+  attempt_index INTEGER NOT NULL DEFAULT 1,
+  revision_context TEXT NOT NULL DEFAULT '',
+  -- On done: the accepted outcome note; on failed: the recorded reason.
+  outcome TEXT NOT NULL DEFAULT '',
+  -- Who ended a failed task: 'reviewer' (fail verdict) or 'owner' (withdrawn).
+  failed_by TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(project_id) REFERENCES projects(id)
+);
+
+CREATE TABLE IF NOT EXISTS reflection_tasks (
+  reflection_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  proposal_key TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(reflection_id, task_id),
+  FOREIGN KEY(reflection_id) REFERENCES reflections(id),
+  FOREIGN KEY(task_id) REFERENCES tasks(id)
+);
+
+-- The wave DAG: a node (exp_ or task_) that must not start or deliver before
+-- another node (exp_ or task_) is done. Edges only ever point at nodes of the
+-- same project; the workflow gates read them, the reflection writes them.
+CREATE TABLE IF NOT EXISTS node_dependencies (
+  project_id TEXT NOT NULL,
+  node_id TEXT NOT NULL,
+  depends_on_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(node_id, depends_on_id),
+  FOREIGN KEY(project_id) REFERENCES projects(id)
+);
+
 -- One immutable proposal per consolidation revision. The reflection is already
 -- authoritative when these rows are written; this is code integration history,
 -- never another research-belief workflow.
@@ -1378,6 +1421,20 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     # that made it and its redacted payload record. Additive; the agent index
     # lives in the handler because it names a ladder-added column.
     (50, "add_agent_identity", ""),
+    # Tasks (August 2026): the flat non-experiment work node beside
+    # experiments — tasks, the reflection→task join, and the wave DAG edges.
+    # Additive; fresh schemas already carry the tables, the handler adds the
+    # indexes on both paths.
+    (51, "add_tasks", ""),
+)
+
+# Migration 51 indexes — handler-only (they name ladder-added tables).
+TASK_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_node_dependencies_project"
+    "  ON node_dependencies(project_id, node_id)",
+    "CREATE INDEX IF NOT EXISTS idx_node_dependencies_target"
+    "  ON node_dependencies(depends_on_id)",
 )
 
 # Migration 50 columns on tool_calls — mirrors the SCHEMA block for stores
@@ -1765,7 +1822,17 @@ class BaseStateStore:
             )
         elif name == "add_agent_identity":
             self._add_agent_identity(conn=conn)
+        elif name == "add_tasks":
+            self._add_tasks(conn=conn)
         else:
+            conn.execute(statement)
+
+    def _add_tasks(self, *, conn: Connection) -> None:
+        """Migration 51: task nodes, their reflection join, and the wave DAG."""
+        for table in ("tasks", "reflection_tasks", "node_dependencies"):
+            if not self._has_table(conn=conn, table=table):
+                conn.execute(_schema_table_ddl(table=table))
+        for statement in TASK_INDEXES:
             conn.execute(statement)
 
     def _add_agent_identity(self, *, conn: Connection) -> None:

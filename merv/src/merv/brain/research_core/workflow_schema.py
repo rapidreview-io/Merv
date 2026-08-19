@@ -61,6 +61,10 @@ class ReviewGate:
     return_choice_required: bool = False
     return_required_error: str = ""
     forbidden_returns: tuple[tuple[str, str], ...] = ()
+    # A verdict of ``fail`` may end the target instead of sending it back: the
+    # route's destination is a terminal status, so it is deliberately kept
+    # out of ``returns`` (which are working states a rejection reopens).
+    fail_route: ReviewReturn | None = None
 
     @property
     def action_name(self) -> str:
@@ -239,6 +243,18 @@ class Workflow:
     def review_return_statuses(self) -> tuple[str, ...]:
         return tuple(route.to_status for route in self.review_returns)
 
+    @property
+    def fail_routes(self) -> tuple[ReviewReturn, ...]:
+        return tuple(
+            state.review.fail_route
+            for state in self.states
+            if state.review is not None and state.review.fail_route is not None
+        )
+
+    @property
+    def review_fail_statuses(self) -> tuple[str, ...]:
+        return tuple(route.to_status for route in self.fail_routes)
+
 
 PASS_RETURN_TO_ERROR = (
     "return_to only applies when the verdict is needs_changes or fail"
@@ -261,6 +277,16 @@ def resolve_review_return(
         return None
 
     review = workflow.review(role)
+    if verdict == "fail" and review is not None and review.fail_route is not None:
+        # This gate ends the target on ``fail``; a caller may name the
+        # terminal destination or omit it, but cannot reopen a working state.
+        if value and value != review.fail_route.to_status:
+            raise ValueError(
+                f"a fail verdict from {role} ends the {workflow.subject}: "
+                f"return_to must be omitted or {review.fail_route.to_status!r}"
+                "; use needs_changes to send it back"
+            )
+        return review.fail_route
     routes = (
         review.returns
         if review is not None and review.returns
@@ -327,6 +353,14 @@ def validate_workflow(workflow: Workflow) -> None:
             raise ValueError(f"{review.role!r} uses an undeclared review return")
         if review.return_choice_required and not review.return_required_error:
             raise ValueError(f"{review.role!r} needs a return-choice error")
+        if review.fail_route is not None:
+            route = review.fail_route
+            if route.to_status not in workflow.terminal_statuses:
+                raise ValueError(
+                    f"{review.role!r} fail route must end on a terminal status"
+                )
+            if not (route.event_type and route.choose_when):
+                raise ValueError(f"{review.role!r} has an incomplete fail route")
     review_roles = [review.role for review in reviews]
     if len(review_roles) != len(set(review_roles)):
         raise ValueError(f"{workflow.target_type} has duplicate review roles")

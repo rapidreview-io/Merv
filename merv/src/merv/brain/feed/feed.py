@@ -72,7 +72,9 @@ REACTION_KINDS = frozenset({"fire", "eyes", "question"})
 
 RESEARCHER_HANDLE = "Researcher"
 
-_KNOWN_REF_PREFIXES = ("exp_", "claim_", "res_", "rver_", "syn_", "rev_", "lit_", "paper_")
+_KNOWN_REF_PREFIXES = (
+    "exp_", "task_", "claim_", "res_", "rver_", "syn_", "rev_", "lit_", "paper_"
+)
 
 # Backup cadence policy. The agent skill remains the primary editorial policy;
 # these values only decide whether page one carries a soft reminder.
@@ -1383,6 +1385,8 @@ _FEED_NOTE_PHRASES: dict[str, str] = {
     "experiment_complete": "{entity} just completed",
     "experiment_failed": "{entity} just failed",
     "experiment_abandoned": "{entity} was just abandoned",
+    "task_done": "task {entity} was just accepted",
+    "task_failed": "task {entity} just failed",
     "experiment_review_verdict": "a review verdict just landed on {entity}",
     "mlflow_run_finalized": "an MLflow run for {entity} just finished",
 }

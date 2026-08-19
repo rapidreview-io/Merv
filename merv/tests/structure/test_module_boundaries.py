@@ -240,6 +240,11 @@ TABLE_OWNERS = {
     "reflections": RESEARCH_CORE,
     "reflection_claim_changes": RESEARCH_CORE,
     "reflection_experiments": RESEARCH_CORE,
+    # Tasks: the flat non-experiment work node, its reflection join, and the
+    # wave DAG edges experiments and tasks gate on.
+    "tasks": RESEARCH_CORE,
+    "reflection_tasks": RESEARCH_CORE,
+    "node_dependencies": RESEARCH_CORE,
     # Written by the wave lifecycle (spec validation reserves and pins,
     # publish or abandon releases); read by the tool create path to refuse
     # name races and by the cap check to hold the wave's slots.

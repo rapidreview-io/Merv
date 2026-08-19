@@ -21,6 +21,7 @@ from .evidence import (
     require_artifact_document,
     submission_state_record,
 )
+from .dependencies import dependency_rows, record_dependencies
 from .experiment_workflow import EXPERIMENT_WORKFLOW
 from .reflection_workflow import REFLECTION_WORKFLOW
 from .policy import (
@@ -30,6 +31,7 @@ from .policy import (
     active_experiment_cap_reached_message,
     covered_terminal_ids,
     evaluate_artifact_requirement,
+    evaluate_dependency_requirement,
     evaluate_review_gate,
     reflection_create_block_message,
     validate_experiment_name,
@@ -41,7 +43,7 @@ from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
 from ..kernel.utils import new_id
 from ..kernel.utils import now_iso
 from .models import CommittedExperimentUpdate
-from .workflow_schema import ReviewReturn
+from .workflow_schema import ArtifactNeed, RecordNeed, ReviewReturn
 
 
 def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
@@ -104,6 +106,7 @@ class ExperimentService:
         name: str,
         intent: str,
         tested_claim_ids: list[str] | str | None = None,
+        depends_on: list[str] | str | None = None,
         project_id: str | None = None,
     ) -> dict[str, Any]:
         with self.store.transaction() as conn:
@@ -114,6 +117,7 @@ class ExperimentService:
                 name=name,
                 intent=intent,
                 tested_claim_ids=tested_claim_ids,
+                depends_on=depends_on,
             )
 
     def create_from_reflection(
@@ -127,6 +131,7 @@ class ExperimentService:
         tested_claim_ids: list[str] | str | None = None,
         proposal_key: str = "",
         parallelism: str = "",
+        depends_on: list[str] | str | None = None,
     ) -> dict[str, Any]:
         """Create one reviewed reflection proposal through normal invariants."""
         reflection_id = str(reflection_id or "").strip()
@@ -145,6 +150,7 @@ class ExperimentService:
             source_reflection_id=reflection_id,
             proposal_key=proposal_key,
             parallelism=parallelism,
+            depends_on=depends_on,
         )
 
     def _create_in_transaction(
@@ -158,6 +164,7 @@ class ExperimentService:
         source_reflection_id: str = "",
         proposal_key: str = "",
         parallelism: str = "",
+        depends_on: list[str] | str | None = None,
     ) -> dict[str, Any]:
         # Order-preserving dedupe: distinct refs (a create key and a literal
         # claim id) can resolve to one claim, and experiment_claims has a
@@ -223,7 +230,18 @@ class ExperimentService:
                 "INSERT INTO experiment_claims (experiment_id, claim_id) VALUES (?, ?)",
                 (experiment_id, claim_id),
             )
-        event_payload = {"name": name, "intent": intent}
+        depends_on_ids = (
+            [depends_on] if isinstance(depends_on, str) else list(depends_on or [])
+        )
+        recorded = record_dependencies(
+            conn=conn,
+            project_id=project_id,
+            node_id=experiment_id,
+            depends_on_ids=depends_on_ids,
+        )
+        event_payload: dict[str, Any] = {"name": name, "intent": intent}
+        if recorded:
+            event_payload["depends_on"] = recorded
         if source_reflection_id:
             event_payload.update(
                 source_reflection_id=source_reflection_id,
@@ -399,6 +417,11 @@ class ExperimentService:
             return self._assemble_state_with_gate(
                 conn=conn,
                 experiment=data,
+                dependencies=dependency_rows(
+                    conn=conn,
+                    project_id=str(data["project_id"]),
+                    node_ids=(experiment_id,),
+                )[experiment_id],
                 tested_claims=_query(
                     conn,
                     """
@@ -495,10 +518,14 @@ class ExperimentService:
                 (project_id, project_id),
             ).fetchall():
                 delivery_ids[str(row["target_id"])] = int(row["delivery_id"])
+        dependencies = dependency_rows(
+            conn=conn, project_id=project_id, node_ids=experiment_ids
+        )
         return [
             self._assemble_state_with_gate(
                 conn=conn,
                 experiment=experiment,
+                dependencies=dependencies.get(str(experiment["id"]), []),
                 tested_claims=claims.get(str(experiment["id"]), []),
                 evidence=history[str(experiment["id"])].artifacts,
                 reviews=reviews.get(str(experiment["id"]), []),
@@ -520,9 +547,11 @@ class ExperimentService:
         reviews: list[dict[str, Any]],
         submissions: tuple[Submission, ...],
         tracking_delivery_id: int | None,
+        dependencies: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], GateEvaluation]:
         data = dict(experiment)
         data["tested_claims"] = tested_claims
+        data["dependencies"] = list(dependencies or [])
         data["artifacts"] = [artifact_state_record(item) for item in evidence]
         # Newest row per slot, not every row: sealed rounds leave the
         # superseded report alive as history, and only the current one is
@@ -838,6 +867,15 @@ class ExperimentService:
         for requirement in (
             () if workflow_state is None else workflow_state.requirements
         ):
+            if isinstance(requirement, RecordNeed):
+                requirements.append(
+                    evaluate_dependency_requirement(
+                        requirement,
+                        dependencies=experiment.get("dependencies") or [],
+                    )
+                )
+                continue
+            assert isinstance(requirement, ArtifactNeed)
             present = requirement.role in present_roles
             problems: tuple[str, ...] = ()
             if present and requirement.validator:

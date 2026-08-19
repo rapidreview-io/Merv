@@ -243,6 +243,7 @@ class WorkflowSlimTest(unittest.TestCase):
                 "claims",
                 "candidates",
                 "experiments",
+                "tasks",
             },
         )
         self.assertEqual(slim["workflow"]["current_gate"], "project_setup")

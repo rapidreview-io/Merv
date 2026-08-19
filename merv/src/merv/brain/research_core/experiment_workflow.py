@@ -5,12 +5,32 @@ from __future__ import annotations
 
 from .workflow_schema import (
     ArtifactNeed,
+    RecordNeed,
     ReviewGate,
     ReviewReturn,
     State,
     Transition,
     Workflow,
     validate_workflow,
+)
+
+
+# The wave DAG gate shared by experiments and tasks: a node whose
+# ``node_dependencies`` targets are not all done (task) / complete
+# (experiment) does not proceed. Experiments wait at ready_to_run; tasks wait
+# before submit_delivery.
+DEPENDENCIES_NEED = RecordNeed(
+    name="dependencies",
+    error=(
+        "every node this one depends on must be done before it proceeds; a "
+        "failed dependency means this node should be abandoned/marked failed, "
+        "or wait for the next reflection to replan the wave"
+    ),
+    gate="dependencies_pending",
+    action="wait_for_dependencies",
+    tools=("workflow.status_and_next",),
+    label="Dependencies done",
+    missing="unfinished dependencies",
 )
 
 
@@ -102,6 +122,7 @@ EXPERIMENT_WORKFLOW = Workflow(
         ),
         State(
             name="ready_to_run",
+            requirements=(DEPENDENCIES_NEED,),
             forward=Transition(
                 name="start_running",
                 to_status="running",
@@ -291,6 +312,7 @@ EXPERIMENT_TRANSITION_VALUES = EXPERIMENT_WORKFLOW.transition_names
 
 
 __all__ = [
+    "DEPENDENCIES_NEED",
     "EXPERIMENT_TERMINAL_STATUSES",
     "EXPERIMENT_TRANSITION_VALUES",
     "EXPERIMENT_WORKFLOW",

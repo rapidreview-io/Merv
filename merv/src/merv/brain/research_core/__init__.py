@@ -10,11 +10,14 @@ from .evidence import (
 )
 from .models import (
     CommittedExperimentUpdate,
+    CommittedTaskUpdate,
     ExhibitVerdict,
     ExperimentState,
     ExperimentSummary,
     PersistedRunState,
     ResearchSnapshot,
+    TaskState,
+    TaskSummary,
 )
 from .experiment_workflow import (
     EXPERIMENT_TERMINAL_STATUSES,
@@ -24,6 +27,11 @@ from .experiment_workflow import (
 from .reflection_workflow import (
     REFLECTION_TRANSITION_VALUES,
     REFLECTION_WORKFLOW,
+)
+from .task_workflow import (
+    TASK_TERMINAL_STATUSES,
+    TASK_TRANSITION_VALUES,
+    TASK_WORKFLOW,
 )
 from .policy import (
     AGENT_DISPATCH_SETTING,
@@ -40,6 +48,7 @@ from .research import Research
 __all__ = [
     "AGENT_DISPATCH_SETTING",
     "CommittedExperimentUpdate",
+    "CommittedTaskUpdate",
     "ExhibitVerdict",
     "ExperimentState",
     "ExperimentSummary",
@@ -59,6 +68,11 @@ __all__ = [
     "RequirementEvaluation",
     "REVIEW_ROLE_VALUES",
     "SYNOPSIS_MAX_LEN",
+    "TASK_TERMINAL_STATUSES",
+    "TASK_TRANSITION_VALUES",
+    "TASK_WORKFLOW",
+    "TaskState",
+    "TaskSummary",
     "agent_dispatch_enabled",
     "graph_problems",
     "historical_latest_artifacts",
