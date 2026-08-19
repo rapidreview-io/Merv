@@ -41,11 +41,11 @@ echo "public host: $HOST"
 
 say "ship source"
 if remote "[ -f $REL/merv/pyproject.toml ]"; then
-  echo "release already present at $REL"
+  echo "release already present at ~/releases/merv-${SHA8}"
 else
   git archive --format=tar "$SHA" \
     | remote "set -e; rm -rf $REL.tmp; mkdir -p $REL.tmp; tar -x -C $REL.tmp; mv $REL.tmp $REL"
-  echo "unpacked into $REL"
+  echo "unpacked into ~/releases/merv-${SHA8}"
 fi
 
 if [ "$SKIP_UI" = 0 ]; then
@@ -105,7 +105,11 @@ remote "set -e
     status=\$(sudo docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}' deploy-control-1 2>/dev/null || echo missing)
     if [ \"\$status\" = healthy ]; then
       curl -fsS http://127.0.0.1:8787/api/meta | head -c 300; echo
-      echo \"control healthy, release \$(sudo docker inspect deploy-control-1 --format '{{index .Config.Labels \"com.docker.compose.project.working_dir\"}}')\"
+      live=\$(sudo docker inspect deploy-control-1 --format '{{index .Config.Labels \"com.docker.compose.project.working_dir\"}}')
+      case \"\$live\" in
+        */merv-${SHA8}/*) echo \"control healthy, container created from this release\" ;;
+        *) echo \"control healthy; image unchanged since \$live so the container was not recreated\" ;;
+      esac
       exit 0
     fi
     sleep 2
