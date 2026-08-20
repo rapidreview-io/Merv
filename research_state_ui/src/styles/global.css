@@ -7242,8 +7242,7 @@ a.wflow-chip { color: var(--text); }
 .task-req-row > .task-req-stmt-cell { padding-right: 18px; }
 .task-req-tally {
   grid-column: 1 / -1; text-align: right;
-  border-top: 1px solid var(--line);
-  padding: 8px 0 2px; font-size: var(--text-xs); color: var(--muted);
+  padding: 6px 0 2px; font-size: var(--text-xs); color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 .task-req > *, .task-req-row > * { padding: 10px 12px 11px 0; border-bottom: 1px solid var(--line-soft); min-width: 0; }
