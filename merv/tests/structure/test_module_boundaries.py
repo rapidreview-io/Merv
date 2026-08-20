@@ -216,6 +216,10 @@ TABLE_OWNERS = {
     "oauth_clients": SURFACE,
     "oauth_authorization_codes": SURFACE,
     "oauth_refresh_tokens": SURFACE,
+    # RFC 8628 device grants: the surface's oauth_store owns the exchange rows
+    # and the miss counter exactly as it owns codes and refresh tokens.
+    "oauth_device_grants": SURFACE,
+    "oauth_device_grant_attempts": SURFACE,
     # Agent context-window identities and the MCP transport sessions they
     # were minted under: surface-owned like project_api_keys, read (never
     # written) beside the kernel tool_calls ledger for traces.
