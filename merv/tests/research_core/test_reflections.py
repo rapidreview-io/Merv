@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import unittest
 from unittest import mock
 
+from merv.brain.research_core.evidence import decision_problems
 from merv.brain.kernel.utils import (
     PermissionDeniedError,
     ValidationError,
@@ -1031,6 +1033,80 @@ class ReflectionWorkflowTest(ResearchCase):
             "reflecting",
             {transition["leads_to"] for transition in state["allowed_transitions"]},
         )
+
+
+class ChangeSpecWaveDagTest(unittest.TestCase):
+    """The spec's DAG typing: tasks follow anything; experiments never sit
+    downstream of a sibling experiment, tasks in between included."""
+
+    @staticmethod
+    def _problems(experiments, tasks):
+        problems: list[str] = []
+        decision_problems(
+            {
+                "decision": {
+                    "type": "create_experiments",
+                    "experiments": experiments,
+                    "tasks": tasks,
+                }
+            },
+            problems=problems,
+            claim_keys={},
+        )
+        return problems
+
+    @staticmethod
+    def _exp(key, depends_on=()):
+        return {
+            "key": key,
+            "name": f"{key}-exp",
+            "intent": f"Test what {key} tests.",
+            "depends_on": list(depends_on),
+        }
+
+    @staticmethod
+    def _task(key, depends_on=()):
+        return {
+            "key": key,
+            "name": f"{key}-task",
+            "goal": f"Do the {key} work.",
+            "deliverables": ["one verifiable thing exists"],
+            "depends_on": list(depends_on),
+        }
+
+    def test_experiment_directly_after_experiment_is_refused(self) -> None:
+        problems = self._problems(
+            [self._exp("first"), self._exp("second", ["first"])], []
+        )
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("depends on experiment first", problems[0])
+        self.assertIn("no sequential experiments in one wave", problems[0])
+
+    def test_experiment_after_experiment_through_tasks_is_refused(self) -> None:
+        problems = self._problems(
+            [self._exp("first"), self._exp("second", ["wrap"])],
+            [self._task("extract", ["first"]), self._task("wrap", ["extract"])],
+        )
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("depends on experiment first", problems[0])
+        self.assertIn("through wrap -> extract", problems[0])
+
+    def test_tasks_follow_anything_and_experiments_follow_tasks(self) -> None:
+        problems = self._problems(
+            [self._exp("probe"), self._exp("after-prep", ["prep"])],
+            [
+                self._task("prep"),
+                self._task("extract", ["probe"]),
+                self._task("archive", ["extract", "prep"]),
+            ],
+        )
+        self.assertEqual(problems, [])
+
+    def test_prior_wave_experiment_ids_stay_lineage_not_dependency(self) -> None:
+        problems = self._problems(
+            [self._exp("probe", ["exp_000000000000"])], []
+        )
+        self.assertEqual(problems, [])
 
 
 if __name__ == "__main__":

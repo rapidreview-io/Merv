@@ -991,6 +991,7 @@ def decision_problems(
             )
     seen_names: set[str] = set()
     node_keys: dict[str, str] = {}
+    experiment_nodes: set[str] = set()
     edges: list[tuple[str, str]] = []
 
     def check_key(label: str, proposal: dict[str, Any]) -> str:
@@ -1023,6 +1024,7 @@ def decision_problems(
             problems.append(f"{label} must be an object")
             continue
         key = check_key(label, proposal)
+        experiment_nodes.add(key or label)
         name = str(proposal.get("name") or "").strip()
         try:
             name = validate_experiment_name(name)
@@ -1114,6 +1116,44 @@ def decision_problems(
     )
     if cycle:
         problems.append("depends_on " + cycle)
+
+    # No sequential experiments inside one wave: an experiment may not run
+    # after another experiment — directly or through any chain of tasks. An
+    # experiment that builds on a sibling's results is the next reflection's
+    # proposal. Edges onto existing exp_/task_ ids are lineage to earlier
+    # waves and stay outside this rule.
+    adjacency: dict[str, set[str]] = {}
+    for source, ref in edges:
+        if ref in node_keys and ref != source:
+            adjacency.setdefault(source, set()).add(ref)
+    experiment_keys = {key for key in experiment_nodes if key in node_keys}
+    for origin in sorted(experiment_nodes):
+        parent: dict[str, str] = {ref: "" for ref in adjacency.get(origin, ())}
+        queue = sorted(parent)
+        found = ""
+        while queue:
+            node = queue.pop(0)
+            if node in experiment_keys:
+                found = node
+                break
+            for nxt in sorted(adjacency.get(node, ())):
+                if nxt not in parent:
+                    parent[nxt] = node
+                    queue.append(nxt)
+        if found:
+            chain: list[str] = []
+            walk = parent[found]
+            while walk:
+                chain.append(walk)
+                walk = parent[walk]
+            chain.reverse()
+            via = f" through {' -> '.join(chain)}" if chain else ""
+            problems.append(
+                f"{node_keys.get(origin, origin)} depends on experiment "
+                f"{found}{via}: no sequential experiments in one wave — an "
+                "experiment that builds on another experiment's results is "
+                "the next reflection's proposal"
+            )
 
 
 def parse_change_spec(

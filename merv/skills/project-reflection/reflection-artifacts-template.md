@@ -83,7 +83,10 @@ three experiments (tasks are uncapped; a wave may be tasks only — the project'
 first wave usually is). Use `depends_on` — keys from this spec, or existing
 `exp_`/`task_` ids — when a node must not start before another has succeeded:
 an experiment waits at `ready_to_run`, a task before it delivers. Node names
-must be unique across the wave.
+must be unique across the wave. Tasks may follow anything; an experiment may
+follow tasks only — never another experiment of this spec, directly or through
+a chain of tasks. Sequential experiments belong to the next reflection, after
+the first one's results are in.
 
 A task is scoped work with a verifiable finish line and no claim: a literature
 sweep, data acquisition and preparation, an evaluation harness, a memo. Be

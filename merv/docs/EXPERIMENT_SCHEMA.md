@@ -27,7 +27,10 @@ experiment:
            warnings — up to a full sketch of the design. Empty is fine;
            intent alone is a complete create.
   tested_claims: [ claim_… ]
-  depends_on:    [ exp_… | task_… ]   # wave DAG edges, e.g. the prep task
+  depends_on:    [ exp_… | task_… ]   # wave DAG edges, e.g. the prep task;
+                                      # within one wave an experiment never
+                                      # sits downstream of another experiment
+                                      # (tasks in between included)
 
   # ── plan (the contract; versioned through design review) ──
   plan:

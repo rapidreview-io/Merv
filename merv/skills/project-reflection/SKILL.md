@@ -101,7 +101,7 @@ Produce the three artifacts defined in the template:
    remains uncertain, and why the direction follows.
 3. `change_spec`: the reviewed claim updates and the next wave — up to three
    proposed experiments plus any number of tasks (lit review, data prep,
-   harness work, memos), with `depends_on` edges between them.
+   harness work, memos), with `depends_on` edges between them. An experiment may sit downstream of tasks only, never of another proposed experiment (through tasks included) — sequential experiments are the next wave's proposal.
 
 Do not create or modify claims, experiments, or tasks directly. Successful publication
 materializes the reviewed change spec. Follow the artifact and reflection tool
