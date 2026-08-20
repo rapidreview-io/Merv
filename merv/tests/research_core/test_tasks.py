@@ -532,6 +532,22 @@ class TaskWorkflowTest(ResearchCase):
         self.assertNotIn("results", listed)
         self.assertEqual([d["id"] for d in listed["dependents"]], [downstream])
 
+        # Experiments carry the same reverse edges.
+        exp_id = str(
+            self.call(
+                "experiment.create",
+                project_id=self.project_id,
+                name="uses-prep",
+                intent="Consume the prepared splits.",
+                depends_on=[task_id],
+            )["id"]
+        )
+        exp_rich = self.app.application.experiment(
+            experiment_id=exp_id, project_id=self.project_id, rich=True
+        )
+        self.assertEqual([d["id"] for d in exp_rich["dependencies"]], [task_id])
+        self.assertEqual(exp_rich.get("dependents", []), [])
+
     # ---- reflection ----
 
     def test_publish_materializes_tasks_with_pinned_briefs_and_edges(self) -> None:

@@ -21,7 +21,7 @@ from .evidence import (
     require_artifact_document,
     submission_state_record,
 )
-from .dependencies import dependency_rows, record_dependencies
+from .dependencies import dependency_rows, dependent_rows, record_dependencies
 from .experiment_workflow import EXPERIMENT_WORKFLOW
 from .reflection_workflow import REFLECTION_WORKFLOW
 from .policy import (
@@ -422,6 +422,11 @@ class ExperimentService:
                     project_id=str(data["project_id"]),
                     node_ids=(experiment_id,),
                 )[experiment_id],
+                dependents=dependent_rows(
+                    conn=conn,
+                    project_id=str(data["project_id"]),
+                    node_ids=(experiment_id,),
+                )[experiment_id],
                 tested_claims=_query(
                     conn,
                     """
@@ -521,11 +526,15 @@ class ExperimentService:
         dependencies = dependency_rows(
             conn=conn, project_id=project_id, node_ids=experiment_ids
         )
+        dependents = dependent_rows(
+            conn=conn, project_id=project_id, node_ids=experiment_ids
+        )
         return [
             self._assemble_state_with_gate(
                 conn=conn,
                 experiment=experiment,
                 dependencies=dependencies.get(str(experiment["id"]), []),
+                dependents=dependents.get(str(experiment["id"]), []),
                 tested_claims=claims.get(str(experiment["id"]), []),
                 evidence=history[str(experiment["id"])].artifacts,
                 reviews=reviews.get(str(experiment["id"]), []),
@@ -548,10 +557,12 @@ class ExperimentService:
         submissions: tuple[Submission, ...],
         tracking_delivery_id: int | None,
         dependencies: list[dict[str, Any]] | None = None,
+        dependents: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], GateEvaluation]:
         data = dict(experiment)
         data["tested_claims"] = tested_claims
         data["dependencies"] = list(dependencies or [])
+        data["dependents"] = list(dependents or [])
         data["artifacts"] = [artifact_state_record(item) for item in evidence]
         # Newest row per slot, not every row: sealed rounds leave the
         # superseded report alive as history, and only the current one is
