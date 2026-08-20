@@ -10,12 +10,10 @@ import ReportSpotlight from '../components/ReportSpotlight';
 import ExperimentGraphs from '../components/ExperimentGraphs';
 import SandboxTerminal from '../components/SandboxTerminal';
 import ArtifactList from '../components/ArtifactList';
-import IndependentRead from '../components/IndependentRead';
 import TerminalTransitionConfirm from '../components/TerminalTransitionConfirm';
 import DetailsDrawer, { DetailsButton, OpsTimeline, OpsVersions, OpsPosition } from '../components/DetailsDrawer';
 import { expName } from '../utils/experiment';
 import { fmtAgo, formatBytes } from '../utils/format';
-import { pickIndependentRead } from '../utils/independentRead';
 import { gateToSectionId, useScrollToHash } from '../utils/useScrollToHash';
 import InlineMd from '../components/InlineMd';
 
@@ -192,10 +190,6 @@ export default function ExperimentDetail() {
   const designReviews = allReviews.filter(r => (r.role || '').toLowerCase().includes('design'));
   const experimentReviews = allReviews.filter(r => !(r.role || '').toLowerCase().includes('design'));
 
-  // The page's lede: the independent reviewer's synopsis when one exists,
-  // else the experiment's own intent line.
-  const independentRead = pickIndependentRead(allReviews, experiment);
-
   return (
     <div className="page-stage">
       {/* ─────────────  STAGE  ──────────────────────────────────────── */}
@@ -260,9 +254,6 @@ export default function ExperimentDetail() {
           Both are immutable — the approved plan below supersedes the details
           on anything about how. */}
       <AskCard experiment={experiment} />
-
-      {/* The reviewer's plain-language TLDR, once a review carries one. */}
-      {independentRead?.kind === 'review' && <IndependentRead read={independentRead} />}
 
       {/* ─────────────  MAP (pinned overview: figure ⇄ logic graph)  ── */}
       <ExperimentGraphs

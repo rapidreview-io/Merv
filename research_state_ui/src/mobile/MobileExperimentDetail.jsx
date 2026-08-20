@@ -7,7 +7,6 @@ import MobileGraphSection from './MobileGraphSection';
 import MobileDoc from './MobileDoc';
 import { Skeleton } from './Skeleton';
 import { expName, statusColor, statusLine, TERMINAL_STATUSES } from '../utils/experiment';
-import { pickIndependentRead } from '../utils/independentRead';
 
 /**
  * Mobile experiment detail — one continuous scroll. Status → Plan → Run →
@@ -31,6 +30,7 @@ export default function MobileExperimentDetail() {
   const [error, setError] = useState(null);
   const [termOpen, setTermOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
+  const [askOpen, setAskOpen] = useState(false);
 
   // Run only exists while a sandbox is attached — a terminal with nothing
   // to attach to is dead chrome.
@@ -115,11 +115,10 @@ export default function MobileExperimentDetail() {
   const designReviews = allReviews.filter(r => (r.role || '').toLowerCase().includes('design'));
   const experimentReviews = allReviews.filter(r => !(r.role || '').toLowerCase().includes('design'));
 
-  // The lede: the reviewer's synopsis when one exists, else the intent line.
-  const read = pickIndependentRead(allReviews, experiment);
-  const readByline = read.kind === 'review'
-    ? `independent read · ${read.review.role === 'experiment_reviewer' ? 'experiment review' : 'design review'}`
-    : null;
+  // The lede is the ask the experiment was created with; reviewer synopses
+  // live with their reviews below.
+  const intent = String(experiment.intent || '').trim();
+  const askDetails = String(experiment.details || '').trim();
 
   return (
     <div className="mdetail">
@@ -135,10 +134,12 @@ export default function MobileExperimentDetail() {
       <section className="mdetail-section">
         <div className="mml">Status</div>
         <StatusStatement experiment={experiment} workflow={isClosed ? null : workflow} />
-        {readByline && <div className="mquiet">{readByline}</div>}
-        {read.kind === 'review'
-          ? <p className="mdetail-lead">{read.review.synopsis}</p>
-          : read.text && <p className="mdetail-lead">{read.text}</p>}
+        {intent && <p className="mdetail-lead">{intent}</p>}
+        {askDetails && (
+          <LazyRow open={askOpen} onOpen={() => setAskOpen(true)} label="details">
+            <p className="mdetail-lead mdetail-ask-details">{askDetails}</p>
+          </LazyRow>
+        )}
         <LazyRow open={graphOpen} onOpen={() => setGraphOpen(true)} label="graph">
           <MobileGraphSection
             projectId={projectId}

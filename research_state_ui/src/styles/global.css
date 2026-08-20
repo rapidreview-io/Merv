@@ -2280,50 +2280,6 @@ html { scroll-behavior: smooth; }
 .exp-footer { margin-top: 28px; }
 
 /* =====================================================================
-   Independent read — the page's lede (reviewer synopsis, or intent
-   fallback). One-Surface: no card chrome, flush on the canvas, a hairline
-   marks where the lede ends and the thread begins.
-   ===================================================================== */
-.ind-read {
-  margin: 0 0 26px;
-  padding-bottom: 22px;
-  border-bottom: 1px solid var(--line-soft);
-}
-.ind-read-byline {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-bottom: 8px;
-  font-size: var(--text-xs);
-  color: var(--muted);
-}
-.ind-read-sep { color: var(--faint); }
-/* Verdict pill — same visual language as the review stepper's pills, minus
-   the button affordance (this one isn't interactive). */
-.ind-read-verdict {
-  display: inline-flex;
-  align-items: center;
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  font-weight: 600;
-  padding: 2px 9px;
-  border-radius: var(--radius-pill);
-  border: 1px solid;
-  margin-left: 2px;
-}
-/* The lede paragraph: larger and more comfortable than body copy — this is
-   the first thing a researcher reads on the page. */
-.ind-read-lede {
-  margin: 0;
-  max-width: 860px;
-  font-size: var(--text-lg);
-  line-height: 1.55;
-  color: var(--text);
-  white-space: pre-wrap;
-}
-
-/* =====================================================================
    Spotlight container (used by Plan, Execution, Outcomes)
    ===================================================================== */
 .spotlight {
