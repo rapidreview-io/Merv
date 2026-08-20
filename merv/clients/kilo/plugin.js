@@ -76,7 +76,11 @@ export async function mervPlugin() {
   return {
     config: async (config) => {
       config.mcp = config.mcp || {};
+      // Merge, never replace: a user's own merv entry may carry headers or
+      // oauth overrides (redirectUri, callbackPort). Only the fields the
+      // plugin is authoritative for are pinned.
       config.mcp.merv = {
+        ...(config.mcp.merv || {}),
         type: 'remote',
         url: MERV_MCP_URL,
         enabled: true,
