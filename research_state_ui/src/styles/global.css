@@ -7193,17 +7193,17 @@ a.wflow-chip { color: var(--text); }
 }
 .task-checks li { line-height: 1.45; }
 
-/* ── Task detail: description · requirements · process · rail ──────────────
-   A task is a ledger, not an essay (see TaskDetail.jsx). The stage widens so
-   the two columns breathe; under 960px the rail stacks beneath the main
-   column and the table folds evidence under its requirement. ── */
-.page-stage--wide { max-width: 1240px; }
+/* ── Task detail: description · requirements · process ─────────────────────
+   A task is a ledger, not an essay (see TaskDetail.jsx). One reading column;
+   the operational facts live in the shared details drawer (.dtl-*). Under
+   960px the requirements table folds evidence under its requirement. ── */
 .task-orient { border-bottom: 0; margin-bottom: 12px; padding-bottom: 0; }
-.task-layout {
-  display: grid; grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 0 36px; align-items: start;
-}
-.task-main { min-width: 0; }
+/* Orient header row: identity left, the Details toggle right — both the
+   experiment and the task page put the drawer's button here, directly under
+   the status strip. */
+.orient-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.orient-row > :first-child { min-width: 0; }
+.orient-row .dtl-toggle { margin-top: 2px; flex: none; }
 
 /* Description: the brief's Goal as structure — headline, deliverables, purpose. */
 .task-desc { margin: 0 0 22px; padding-bottom: 18px; border-bottom: 1px solid var(--line-soft); }
@@ -7278,53 +7278,94 @@ a.wflow-chip { color: var(--text); }
 .task-doc { padding: 12px 18px; margin-bottom: 10px; }
 .task-doc .spotlight-head { margin-bottom: 0; }
 
-/* Rail */
-.task-rail { position: sticky; top: 12px; min-width: 0; }
-.task-rail-sec { padding: 12px 0; border-top: 1px solid var(--line-soft); }
-.task-rail-sec:first-child { border-top: 0; padding-top: 0; }
-.task-rail-sec .spotlight-eyebrow { margin-bottom: 6px; }
-.task-rail-status { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.task-rail-word { font-weight: 620; }
-.task-rail-word--ok { color: var(--supports); }
-.task-rail-word--wait { color: var(--qualifies); }
-.task-rail-word--live { color: var(--active); }
-.task-rail-word--bad { color: var(--refutes); }
-.task-rail-sub { font-size: var(--text-xs); color: var(--muted); line-height: 1.5; margin-top: 2px; }
-.task-rail-empty { color: var(--faint); font-size: var(--text-sm); padding: 4px 0; }
-.task-rail-bad { color: var(--refutes); font-size: var(--text-xs); }
-.task-tl { list-style: none; margin: 4px 0 0; padding: 0; }
-.task-tl li {
-  display: grid; grid-template-columns: 10px 64px minmax(0, 1fr); gap: 8px;
-  align-items: baseline; padding: 2px 0; font-size: var(--text-sm);
-}
-.task-tl-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); position: relative; top: -1px; }
-.task-tl-dot--ok { background: var(--supports); }
-.task-tl-dot--warn { background: var(--qualifies); }
-.task-tl-dot--bad { background: var(--refutes); }
-.task-tl-dot--live { background: var(--active); }
-.task-tl-t { color: var(--faint); font-size: var(--text-xs); white-space: nowrap; }
-.task-tl-w { color: var(--text); }
-.task-node-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: var(--text-sm); min-width: 0; }
-.task-node-glyph { color: var(--faint); font-size: 11px; width: 12px; text-align: center; flex: none; }
-.task-node-name { color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-node-row .status { font-size: 11px; padding: 1px 7px; white-space: nowrap; flex: none; }
-.task-file-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; min-width: 0; }
-.task-file-row .status { font-size: 11px; padding: 1px 7px; white-space: nowrap; flex: none; }
-.task-file-path { font-family: var(--font-mono); font-size: 12px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
-a.task-file-path:hover { text-decoration: underline; }
-.task-file-size { color: var(--faint); font-size: var(--text-xs); white-space: nowrap; flex: none; }
-.task-kv { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 5px 10px; margin: 0; font-size: var(--text-sm); }
-.task-kv dt { color: var(--faint); }
-.task-kv dd { margin: 0; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
-.task-kv dd.mono { font-family: var(--font-mono); font-size: 12px; }
-.task-kv .status { font-size: 11px; padding: 1px 7px; }
-
 @media (max-width: 960px) {
-  .task-layout { grid-template-columns: minmax(0, 1fr); }
-  .task-rail { position: static; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
   .task-req { grid-template-columns: 24px minmax(0, 1fr) 104px; }
   .task-req-h--ev { display: none; }
   .task-req-row > .task-req-ev { grid-column: 2 / 4; padding-top: 0; }
   .task-req-row > .task-req-stmt-cell, .task-req-row > .task-req-got-cell { border-bottom: 0; padding-bottom: 4px; }
   .task-req-row > .task-req-n { border-bottom: 0; }
 }
+
+/* ── Details drawer: the operational sidecar shared by the experiment and
+   task pages. Never a layout column — it slides over the right edge on the
+   Details toggle and stays light: page background, one hairline, a faint
+   lift, quiet type. ── */
+.dtl-toggle { gap: 6px; display: inline-flex; align-items: center; color: var(--muted); }
+.dtl-toggle--open { color: var(--text); border-color: var(--line-strong); background: var(--bg-soft); }
+.dtl-toggle-glyph { font-size: 11px; line-height: 1; }
+/* Click-away without dimming: the scrim is invisible but catches the click. */
+.dtl-scrim { position: fixed; inset: 0; z-index: 69; display: none; background: transparent; }
+.dtl-scrim--open { display: block; }
+.dtl-drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 70;
+  width: min(324px, 92vw); box-sizing: border-box;
+  padding: 14px 20px 28px; overflow-y: auto;
+  background: var(--bg);
+  border-left: 1px solid var(--line-soft);
+  box-shadow: -14px 0 36px rgba(20, 20, 20, 0.07);
+  transform: translateX(calc(100% + 40px));
+  visibility: hidden;
+  transition: transform .26s cubic-bezier(0.32, 0.72, 0.36, 1),
+              visibility 0s linear .3s;
+}
+.dtl-drawer--open {
+  transform: none; visibility: visible;
+  transition: transform .26s cubic-bezier(0.32, 0.72, 0.36, 1);
+}
+.dtl-drawer:focus { outline: none; }
+html[data-theme="dark"] .dtl-drawer { box-shadow: -14px 0 36px rgba(0, 0, 0, 0.5); }
+@media (prefers-reduced-motion: reduce) {
+  .dtl-drawer, .dtl-drawer--open { transition: none; }
+}
+.dtl-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+.dtl-title {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--faint);
+}
+.dtl-close {
+  border: 0; background: none; cursor: pointer;
+  color: var(--faint); font-size: 12px; line-height: 1;
+  padding: 5px 7px; border-radius: var(--radius-sm);
+}
+.dtl-close:hover { color: var(--text); background: var(--bg-soft); }
+/* The facts grammar (used by both pages' drawer bodies). */
+.dtl-eyebrow {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--faint); margin-bottom: 6px;
+}
+.dtl-sec { padding: 12px 0; border-top: 1px solid var(--line-soft); }
+.dtl-sec:first-child { border-top: 0; }
+.dtl-status { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.dtl-word { font-weight: 620; }
+.dtl-word--ok { color: var(--supports); }
+.dtl-word--wait { color: var(--qualifies); }
+.dtl-word--live { color: var(--active); }
+.dtl-word--bad { color: var(--refutes); }
+.dtl-sub { font-size: var(--text-xs); color: var(--muted); line-height: 1.5; margin-top: 2px; }
+.dtl-empty { color: var(--faint); font-size: var(--text-sm); padding: 4px 0; }
+.dtl-bad { color: var(--refutes); font-size: var(--text-xs); }
+.dtl-tl { list-style: none; margin: 4px 0 0; padding: 0; }
+.dtl-tl li {
+  display: grid; grid-template-columns: 10px 64px minmax(0, 1fr); gap: 8px;
+  align-items: baseline; padding: 2px 0; font-size: var(--text-sm);
+}
+.dtl-tl-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); position: relative; top: -1px; }
+.dtl-tl-dot--ok { background: var(--supports); }
+.dtl-tl-dot--warn { background: var(--qualifies); }
+.dtl-tl-dot--bad { background: var(--refutes); }
+.dtl-tl-dot--live { background: var(--active); }
+.dtl-tl-t { color: var(--faint); font-size: var(--text-xs); white-space: nowrap; }
+.dtl-tl-w { color: var(--text); }
+.dtl-node-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: var(--text-sm); min-width: 0; }
+.dtl-node-glyph { color: var(--faint); font-size: 11px; width: 12px; text-align: center; flex: none; }
+.dtl-node-name { color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dtl-node-row .status { font-size: 11px; padding: 1px 7px; white-space: nowrap; flex: none; }
+.dtl-file-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; min-width: 0; }
+.dtl-file-row .status { font-size: 11px; padding: 1px 7px; white-space: nowrap; flex: none; }
+.dtl-file-path { font-family: var(--font-mono); font-size: 12px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
+a.dtl-file-path:hover { text-decoration: underline; }
+.dtl-file-size { color: var(--faint); font-size: var(--text-xs); white-space: nowrap; flex: none; }
+.dtl-kv { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 5px 10px; margin: 0; font-size: var(--text-sm); }
+.dtl-kv dt { color: var(--faint); }
+.dtl-kv dd { margin: 0; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+.dtl-kv dd.mono { font-family: var(--font-mono); font-size: 12px; }
