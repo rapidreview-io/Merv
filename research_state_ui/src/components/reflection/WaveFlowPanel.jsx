@@ -352,7 +352,7 @@ function TaskPanel({ strand, row, braid, intents, onClose, onOpenTask, onSelectN
       <Gate gate={gate} />
       {checks.length > 0 && (
         <>
-          <Eyebrow>Done when · {checks.length}</Eyebrow>
+          <Eyebrow>Deliverables · {checks.length}</Eyebrow>
           <ol className="task-checks" style={{ fontSize: 'var(--text-sm)' }}>
             {checks.map((c, i) => <li key={i}>{c}</li>)}
           </ol>

@@ -5,7 +5,6 @@ import { useProjectStore, useProjectHref } from '../store/useProjectStore';
 import { useStreamAwarePoll } from '../store/useEventStream';
 import FSMStrip from '../components/FSMStrip';
 import GateBanner from '../components/GateBanner';
-import FileRenderer from '../components/FileRenderer';
 import MarkdownView from '../components/MarkdownView';
 import ReviewCard from '../components/ReviewCard';
 import StatusPill from '../components/StatusPill';
@@ -157,10 +156,7 @@ export default function TaskDetail() {
   }
 
   const isClosed = TASK_TERMINAL.has(task.status);
-  const current = (task.current_attempt_artifacts || []).slice();
-  const briefRes = current.find(r => r.role === 'brief') || null;
-  const deliveryRes = current.find(r => r.role === 'delivery') || null;
-  // The backend lists reviews newest-first; the timeline and the process
+  // The backend lists reviews newest-first; the timeline and the notes
   // section both want them in time order.
   const reviews = (task.reviews || []).slice().reverse();
 
@@ -251,24 +247,8 @@ export default function TaskDetail() {
         <h1 className="page-title exp-title-name">{task.name || task.id}</h1>
       </header>
 
-      <TaskGoal goal={task.goal} />
-      <RequirementsTable task={task} />
-      <ProcessSection task={task} reviews={reviews} />
-      <TaskDocSpotlight
-        id="delivery"
-        projectId={projectId}
-        eyebrow="Delivery"
-        artifact={deliveryRes}
-        verdict={reviews.length ? reviews[reviews.length - 1].verdict : null}
-        emptyText="No delivery submitted yet."
-      />
-      <TaskDocSpotlight
-        id="brief"
-        projectId={projectId}
-        eyebrow="Brief"
-        artifact={briefRes}
-        emptyText="No brief submitted yet — the executor writes tasks/<name>/brief.md."
-      />
+      <TaskCore task={task} />
+      <NotesSection task={task} reviews={reviews} />
 
       <DetailsDrawer id="task-details" open={detailsOpen} onClose={closeDetails}>
         <TaskFacts task={task} reviews={reviews} px={px} />
@@ -277,20 +257,10 @@ export default function TaskDetail() {
   );
 }
 
-/* ───────────── Goal: the immutable prose, the page's lead ───────────── */
-
-function TaskGoal({ goal }) {
-  const text = String(goal || '').trim();
-  if (!text) return null;
-  return (
-    <section className="task-desc">
-      <p className="task-desc-summary task-desc-summary--plain"><InlineMd text={text} /></p>
-    </section>
-  );
-}
-
-/* ───────────── Deliverables: the contract, one row per item ──────────── */
-
+/* ───────────── The task card: goal, then its deliverables ─────────────
+   The goal is what the user injects, so it leads inside the same white card
+   as everything else and flows straight into the table it promises: one row
+   per deliverable beside its confirmation, marks only after review. ── */
 
 // The per-row mark. Confirmations fill the second column as the result comes
 // in; checkmarks appear only after review — ✓ verified / ✗ not delivered
@@ -310,7 +280,7 @@ function rowState(result, status) {
   return { tone: 'open', glyph: '', word: claim ? 'confirmation submitted, awaiting review' : 'no confirmation yet' };
 }
 
-function RequirementsTable({ task }) {
+function TaskCore({ task }) {
   const deliverables = ((task.deliverables && task.deliverables.length ? task.deliverables : task.checks) || [])
     .map((text, i) => ({ number: i + 1, text: String(text) }));
   const results = new Map((task.results || []).map(r => [r.number, r]));
@@ -320,29 +290,28 @@ function RequirementsTable({ task }) {
   const claimed = rows.filter(r => r.result?.state).length;
   const metCount = rows.filter(r => r.result?.state === 'met').length;
 
+  // One count, one font, one place: the right end of the table's header row.
   let countLine = null;
   if (total) {
-    if (status === 'done') countLine = <><b>{metCount} of {total}</b> verified{metCount < total ? ' · the rest waived in review' : ''}</>;
-    else if (status === 'in_review') countLine = <><b>{claimed} of {total}</b> confirmed · awaiting review</>;
-    else if (status === 'failed') countLine = <><b>{claimed} of {total}</b> confirmed before the task ended</>;
-    else countLine = claimed ? <><b>{claimed} of {total}</b> confirmed · {total - claimed} to go</> : <>no confirmations yet</>;
+    if (status === 'done') countLine = `${metCount} of ${total} verified${metCount < total ? ' · rest waived' : ''}`;
+    else if (status === 'in_review') countLine = `${claimed} of ${total} confirmed · awaiting review`;
+    else if (status === 'failed') countLine = `${claimed} of ${total} confirmed before the task ended`;
+    else countLine = claimed ? `${claimed} of ${total} confirmed` : 'no result yet';
   }
 
+  const goal = String(task.goal || '').trim();
   return (
-    <section className="spotlight" id="requirements">
-      <header className="spotlight-head spotlight-head--row">
-        <div className="spotlight-head-left">
-          <span className="spotlight-eyebrow">Deliverables</span>
-          <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>
-            {total ? <>{total} · {countLine}</> : 'none recorded — this task predates structured goals'}
-          </span>
-        </div>
-      </header>
-      {total > 0 && (
+    <section className="spotlight task-core" id="task">
+      {goal && <p className="task-goal"><InlineMd text={goal} /></p>}
+      {total > 0 ? (
         <div className="task-req" role="table" aria-label="Deliverables">
           <div className="task-req-h" role="columnheader" />
+          <div className="task-req-h" role="columnheader" />
           <div className="task-req-h" role="columnheader">Deliverable</div>
-          <div className="task-req-h task-req-h--ev" role="columnheader">Confirmation</div>
+          <div className="task-req-h task-req-h--ev" role="columnheader">
+            <span>Confirmation</span>
+            {countLine && <span className="task-req-count">{countLine}</span>}
+          </div>
           {rows.map(({ req, result, state }, i) => {
             const last = i === rows.length - 1 ? ' task-req--last' : '';
             return (
@@ -355,8 +324,9 @@ function RequirementsTable({ task }) {
                   <span aria-hidden="true">{state.glyph}</span>
                   <span className="visually-hidden">{state.word}</span>
                 </div>
+                <div className={`task-req-num${last}`} role="cell">{req.number}</div>
                 <div className={`task-req-stmt-cell${last}`} role="cell">
-                  <div className="task-req-stmt"><span className="task-req-n">{req.number}</span><InlineMd text={req.text} /></div>
+                  <div className="task-req-stmt"><InlineMd text={req.text} /></div>
                 </div>
                 <div className={`task-req-ev${last}`} role="cell">
                   {result?.evidence
@@ -373,6 +343,8 @@ function RequirementsTable({ task }) {
             );
           })}
         </div>
+      ) : (
+        <div className="task-req-empty">No deliverables recorded — this task predates structured goals.</div>
       )}
     </section>
   );
@@ -380,14 +352,15 @@ function RequirementsTable({ task }) {
 
 /* ───────────── Process: the prose — outcome, report, caveats, reviews ── */
 
-function ProcessSection({ task, reviews }) {
+function NotesSection({ task, reviews }) {
   const status = task.status;
   const report = String(task.report || '').trim();
   const caveats = String(task.caveats || '').trim();
   const outcome = String(task.outcome || '').trim();
   const latest = reviews.length ? reviews[reviews.length - 1] : null;
   const showOutcome = status === 'done' || status === 'failed';
-  const nothing = !showOutcome && !report && !caveats && !latest;
+  // Nothing to say yet → no card at all; the goal card carries the page.
+  if (!showOutcome && !report && !caveats && !latest) return null;
   return (
     <section className="spotlight task-proc" id="notes">
       <header className="spotlight-head"><span className="spotlight-eyebrow">Notes</span></header>
@@ -399,7 +372,7 @@ function ProcessSection({ task, reviews }) {
       )}
       {report && (
         <div className="task-proc-sec">
-          <h4>How it was done <span className="task-proc-from">· the delivery&#39;s Notes</span></h4>
+          <h4>How it was done <span className="task-proc-from">· from the result</span></h4>
           <div className="task-proc-md"><MarkdownView text={report} /></div>
         </div>
       )}
@@ -418,13 +391,6 @@ function ProcessSection({ task, reviews }) {
             )}
           </h4>
           <ReviewQuote review={latest} round={reviews.length} />
-        </div>
-      )}
-      {nothing && (
-        <div className="spotlight-empty">
-          {status === 'in_progress'
-            ? 'Nothing to report yet — the delivery’s Report section and the review appear here.'
-            : 'No report or review recorded.'}
         </div>
       )}
     </section>
@@ -448,75 +414,6 @@ function ReviewQuote({ review, round }) {
   );
 }
 
-/* ───────────── Documents ─────────────────────────────────────────────── */
-
-function TaskDocSpotlight({ id, projectId, eyebrow, artifact, emptyText, verdict = null }) {
-  const [content, setContent] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [showBody, setShowBody] = useState(false);
-
-  useEffect(() => {
-    if (!artifact || !showBody) return undefined;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    api.getArtifactContent(projectId, artifact.id)
-      .then(d => { if (!cancelled) setContent(d); })
-      .catch(e => { if (!cancelled) setError(e.message); })
-      .finally(() => !cancelled && setLoading(false));
-    return () => { cancelled = true; };
-  }, [projectId, artifact?.id, showBody]);
-
-  const artifactId = artifact?.id;
-  const resolveImageSrc = useCallback(
-    (src) => api.artifactFigureUrl(projectId, artifactId, src),
-    [projectId, artifactId],
-  );
-
-  if (!artifact) {
-    return (
-      <section id={id} className="spotlight task-doc">
-        <div className="spotlight-eyebrow">{eyebrow}</div>
-        <div className="spotlight-empty">{emptyText}</div>
-      </section>
-    );
-  }
-  return (
-    <section id={id} className="spotlight task-doc">
-      <header className="spotlight-head spotlight-head--row" style={{ marginBottom: showBody ? 14 : 0 }}>
-        <div className="spotlight-head-left">
-          <span className="spotlight-eyebrow">{eyebrow}</span>
-          {verdict && <StatusPill value={verdict} />}
-        </div>
-        <div className="spotlight-head-right">
-          <span className="mono spotlight-bar-path">{artifact.path}</span>
-          <button type="button" className="btn btn--sm" onClick={() => setShowBody(v => !v)}>
-            <span className="toggle-verb">{showBody ? 'Hide' : 'Show'}</span>{` ${eyebrow.toLowerCase()}`}
-          </button>
-        </div>
-      </header>
-      {showBody && (
-        <div className="spotlight-body">
-          {loading ? (
-            <div className="empty">Loading…</div>
-          ) : error ? (
-            <div className="error-message">{error}</div>
-          ) : content ? (
-            content.available === false ? (
-              <div className="empty">No submitted content is available.</div>
-            ) : content.is_binary ? (
-              <div className="empty">Binary file</div>
-            ) : (
-              <FileRenderer text={content.content ?? ''} path={artifact.path} resolveImageSrc={resolveImageSrc} />
-            )
-          ) : null}
-        </div>
-      )}
-    </section>
-  );
-}
-
 /* ───────────── Details drawer body: pure operations ─────────────────────
    Nothing here repeats the page. Three sections:
      Timeline — every step with how long it took (durations between events);
@@ -532,16 +429,13 @@ function buildTimeline(task, reviews) {
   const arts = (task.artifacts || []).slice().sort((a, b) =>
     String(a.created_at || '').localeCompare(String(b.created_at || ''))
     || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0)));
-  let briefSeen = 0, deliverySeen = 0;
+  let resultSeen = 0;
   for (const a of arts) {
-    if (a.role === 'brief') {
-      briefSeen += 1;
-      items.push({ t: a.created_at, rank: 1, tone: null, label: briefSeen === 1 ? 'brief submitted' : 'brief updated' });
-    } else if (a.role === 'delivery') {
-      deliverySeen += 1;
+    if (a.role === 'delivery') {
+      resultSeen += 1;
       items.push({
-        t: a.created_at, rank: 2 * deliverySeen, tone: 'live',
-        label: deliverySeen === 1 ? 'delivery submitted' : 'delivery resubmitted',
+        t: a.created_at, rank: 2 * resultSeen, tone: 'live',
+        label: resultSeen === 1 ? 'result submitted' : 'result resubmitted',
       });
     }
   }
@@ -589,8 +483,7 @@ function TaskFacts({ task, reviews, px }) {
     <>
       <OpsTimeline items={timeline} done={done} createdAt={task.created_at} endedAt={task.updated_at} />
       <OpsVersions groups={[
-        { label: 'brief', rows: versionsOf('brief') },
-        { label: 'delivery', rows: versionsOf('delivery') },
+        { label: 'result', rows: versionsOf('delivery') },
         { label: 'reviews', rows: reviewRows },
       ]} />
       <OpsPosition

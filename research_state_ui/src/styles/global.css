@@ -7207,13 +7207,20 @@ a.wflow-chip { color: var(--text); }
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
 }
 
-/* Description: the brief's Goal as structure — headline, deliverables, purpose. */
-.task-desc { margin: 0 0 22px; padding-bottom: 18px; border-bottom: 1px solid var(--line-soft); }
-.task-desc-summary { margin: 0; font-size: var(--text-lg); line-height: 1.45; color: var(--text); max-width: 70ch; }
-.task-desc-summary--plain { font-size: var(--text-base); line-height: 1.55; max-width: 78ch; white-space: pre-wrap; }
+/* The task card: the goal leads inside the same white card as the rest of
+   the page and flows straight into its deliverables table. */
+.task-core { padding: 20px 22px 8px; }
+.task-goal {
+  margin: 0 0 16px; font-size: var(--text-lg); line-height: 1.55;
+  color: var(--text); max-width: 74ch; white-space: pre-wrap;
+}
+.task-req-empty { color: var(--faint); font-size: var(--text-sm); padding: 4px 0 12px; }
 
-/* Requirements table: # · what must be true (+ verify) · got it? · evidence (+ check). */
-.task-req { display: grid; grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1fr); }
+/* The deliverables table: mark · number · deliverable · confirmation. The
+   numbers get their own column so every row and the header align; the only
+   count lives at the right end of the header row. The goal above hands off
+   over one full-width hairline (the header row's border). */
+.task-req { display: grid; grid-template-columns: 24px 22px minmax(0, 1fr) minmax(0, 1fr); }
 .task-req > *, .task-req-row > * { padding: 10px 12px 11px 0; border-bottom: 1px solid var(--line-soft); min-width: 0; }
 .task-req-h {
   padding-top: 0 !important; padding-bottom: 8px !important; border-bottom-color: var(--line) !important;
@@ -7221,7 +7228,15 @@ a.wflow-chip { color: var(--text); }
 }
 .task-req-row > .task-req--last { border-bottom: 0; }
 .task-req-mark { font-weight: 700; font-size: 13px; line-height: 1.45; }
-.task-req-n { color: var(--faint); font-variant-numeric: tabular-nums; font-size: var(--text-xs); margin-right: 7px; }
+.task-req-num {
+  color: var(--faint); font-variant-numeric: tabular-nums;
+  font-size: var(--text-sm); line-height: 1.45;
+}
+.task-req-h--ev { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.task-req-count {
+  font-weight: 500; letter-spacing: 0; text-transform: none;
+  color: var(--muted); font-variant-numeric: tabular-nums;
+}
 .task-req-word { font-weight: 600; }
 .task-req-word--bad { color: var(--refutes); }
 .task-req-word--wait { color: var(--qualifies); }
@@ -7265,11 +7280,11 @@ a.wflow-chip { color: var(--text); }
 .task-doc .spotlight-head { margin-bottom: 0; }
 
 @media (max-width: 820px) {
-  .task-req { grid-template-columns: 24px minmax(0, 1fr); }
+  .task-req { grid-template-columns: 24px 22px minmax(0, 1fr); }
   .task-req-h--ev { display: none; }
-  .task-req-row > .task-req-ev { grid-column: 2; padding-top: 0; }
+  .task-req-row > .task-req-ev { grid-column: 3; padding-top: 0; }
   .task-req-row > .task-req-stmt-cell { border-bottom: 0; padding-bottom: 4px; }
-  .task-req-row > .task-req-mark { border-bottom: 0; }
+  .task-req-row > .task-req-mark, .task-req-row > .task-req-num { border-bottom: 0; }
 }
 
 /* ── Details drawer: the operational sidecar shared by the experiment and
