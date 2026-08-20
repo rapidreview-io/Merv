@@ -468,6 +468,15 @@ class ToolInvocationGateway:
             agent_id=supplied_agent_id, caller=caller, tool=name
         )
         bind_agent(agent_id=agent_id, mcp_session_id=mcp_session_id)
+        if agent_id and not caller.agent_session_id and name == "consolidation.submit":
+            # The proposal must record its producer, but only Merv-dispatched
+            # mas_ sessions carry a session id and the contract accepts none
+            # from the model. The verified context-window id is the paired
+            # credential's provenance equivalent.
+            internal_kwargs = {
+                **(internal_kwargs or {}),
+                "producer_session_id": agent_id,
+            }
         return contract, policy, internal_kwargs, call_kwargs
 
     def _preflight_scope(
