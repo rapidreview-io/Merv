@@ -257,7 +257,9 @@ CREATE TABLE IF NOT EXISTS experiments (
   mlflow_run_created_at TEXT,
   mlflow_run_error TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
+  -- Migration 54 appended this column, so it stays last to keep a migrated
+  -- schema and this fresh DDL byte-identical after normalization.
+  updated_at TEXT NOT NULL, details TEXT NOT NULL DEFAULT '',
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
@@ -1473,6 +1475,7 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     # Task deliverables (August 2026): the goal's contract as a structured
     # column. Additive; fresh schemas already carry it.
     (53, "add_task_deliverables", ""),
+    (54, "add_experiment_details", ""),
 )
 
 # Migration 52 indexes — handler-only (they name ladder-added tables).
@@ -1887,6 +1890,8 @@ class BaseStateStore:
             self._ensure_task_deliverables(conn=conn)
         elif name == "add_oauth_device_grants":
             self._add_oauth_device_grants(conn=conn)
+        elif name == "add_experiment_details":
+            self._ensure_experiment_details(conn=conn)
         else:
             conn.execute(statement)
 
@@ -1895,6 +1900,13 @@ class BaseStateStore:
         if not self._has_column(conn=conn, table="tasks", column="deliverables_json"):
             conn.execute(
                 "ALTER TABLE tasks ADD COLUMN deliverables_json TEXT NOT NULL DEFAULT '[]'"
+            )
+
+    def _ensure_experiment_details(self, *, conn: Connection) -> None:
+        """Migration 54: the creator's ask beyond the intent line."""
+        if not self._has_column(conn=conn, table="experiments", column="details"):
+            conn.execute(
+                "ALTER TABLE experiments ADD COLUMN details TEXT NOT NULL DEFAULT ''"
             )
 
     def _add_tasks(self, *, conn: Connection) -> None:

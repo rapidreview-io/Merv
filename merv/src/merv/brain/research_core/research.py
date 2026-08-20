@@ -904,6 +904,7 @@ class Research:
         *,
         name: str,
         intent: str,
+        details: str = "",
         tested_claim_ids: list[str] | str | None = None,
         depends_on: list[str] | str | None = None,
         project_id: str | None = None,
@@ -913,6 +914,7 @@ class Research:
             self._experiments.create(
                 name=name,
                 intent=intent,
+                details=details,
                 tested_claim_ids=tested_claim_ids,
                 depends_on=depends_on,
                 project_id=project_id,

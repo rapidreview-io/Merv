@@ -118,8 +118,14 @@ checks, brief, delivery, and dependencies. A closed task refuses new artifacts.
 Create the folder returned by `experiment.create`, normally
 `experiments/<name>/`, before writing experiment files. Keep its plan, code,
 configuration, compact results, figures, report, and logic graph together.
-Choose a short experiment name that distinguishes it from sibling experiments
-and a one-line `intent` that states what it tests.
+Choose a short experiment name that distinguishes it from sibling
+experiments. Write the `intent` as the ask, standalone: what this tests and
+why the project needs it, naming the datasets, tasks, and sibling experiments
+involved by their own names — another agent may write the plan from it alone.
+Put anything else the planner should have — givens, boundaries with siblings,
+preferences, budgets, warnings — in the optional `details` field. Both are
+immutable once created; the approved plan supersedes `details` on anything
+about how.
 
 There is no automatic synchronization between the checkout, a sandbox, and
 Merv. Pull remote outputs into the experiment folder before submitting them.

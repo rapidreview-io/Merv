@@ -112,6 +112,30 @@ class ExperimentWorkflowTest(ResearchCase):
         )
         self.assertGreater(sealed, 0)
 
+    def test_create_carries_the_ask_details_through_to_state(self) -> None:
+        ask = "Hold the optimizer at the harness default; budget one GPU-day."
+        created = self.call(
+            "experiment.create",
+            project_id=self.project_id,
+            name="wd-sweep",
+            intent="Establish whether weight decay moves grokking timing.",
+            details=ask,
+        )
+        self.assertEqual(created["details"], ask)
+        state = self.call(
+            "experiment.get_state",
+            project_id=self.project_id,
+            experiment_id=str(created["id"]),
+        )
+        self.assertEqual(state["details"], ask)
+        bare = self.call(
+            "experiment.create",
+            project_id=self.project_id,
+            name="width-sweep",
+            intent="Establish whether width moves grokking timing.",
+        )
+        self.assertEqual(bare["details"], "")
+
     def test_reflection_sourced_create_dedupes_tested_claims(self) -> None:
         # Two refs (a change-spec key and a literal id) can resolve to one
         # claim at materialization; experiment_claims' composite primary key

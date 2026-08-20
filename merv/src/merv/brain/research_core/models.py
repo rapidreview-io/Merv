@@ -25,6 +25,7 @@ class ExperimentState(TypedDict, total=False):
     project_id: str
     name: str
     intent: str
+    details: str
     status: str
     attempt_index: int
     mlflow_run: PersistedRunState | None

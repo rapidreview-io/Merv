@@ -2531,6 +2531,7 @@ class ReflectionService:
                 reflection_id=reflection_id,
                 name=str(proposal.get("name") or ""),
                 intent=str(proposal.get("intent") or ""),
+                details=str(proposal.get("details") or ""),
                 tested_claim_ids=claim_ids,
                 proposal_key=proposal_key,
                 parallelism=str(proposal.get("parallelism") or ""),

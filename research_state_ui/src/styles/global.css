@@ -7207,6 +7207,24 @@ a.wflow-chip { color: var(--text); }
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
 }
 
+/* The experiment's ask: the intent line as the permanent lede, the
+   creator's optional details behind the header's disclosure — the same
+   quiet grammar as the task goal card. */
+.exp-ask .ask-prose {
+  margin: 0; font-size: var(--text-lg); line-height: 1.55;
+  color: var(--text); max-width: 74ch; white-space: pre-wrap;
+}
+.exp-ask .ask-prose .md-inline-code { font-size: 0.85em; }
+.ask-details {
+  border-top: 1px solid var(--line-soft);
+  margin-top: 14px; padding-top: 12px;
+}
+.ask-details-prose {
+  margin: 0; font-size: var(--text-base); line-height: 1.55;
+  color: var(--text); max-width: 78ch; white-space: pre-wrap;
+}
+.ask-details .md-inline-code { font-size: 0.86em; }
+
 /* The task card: the goal leads inside the same white card as the rest of
    the page and flows straight into its deliverables table. */
 .task-core { padding: 20px 22px 8px; }

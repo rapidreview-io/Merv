@@ -17,6 +17,7 @@ import { expName } from '../utils/experiment';
 import { fmtAgo, formatBytes } from '../utils/format';
 import { pickIndependentRead } from '../utils/independentRead';
 import { gateToSectionId, useScrollToHash } from '../utils/useScrollToHash';
+import InlineMd from '../components/InlineMd';
 
 const NEXT_ACTION_TO_TRANSITION = {
   submit_design_for_review:  { transition: 'submit_design',     label: 'Submit for design review' },
@@ -253,10 +254,15 @@ export default function ExperimentDetail() {
         <h1 className="page-title exp-title-name">{expName(experiment)}</h1>
       </header>
 
-      {/* ─────────────  INDEPENDENT READ (lede)  ────────────────────────
-          The reviewer's plain-language TLDR leads the page, falling back to
-          the experiment's intent line until a review carries a synopsis. */}
-      <IndependentRead read={independentRead} />
+      {/* ─────────────  THE ASK (permanent lede)  ───────────────────────
+          The intent line the experiment was created with, always visible;
+          the creator's optional details sit behind the header's disclosure.
+          Both are immutable — the approved plan below supersedes the details
+          on anything about how. */}
+      <AskCard experiment={experiment} />
+
+      {/* The reviewer's plain-language TLDR, once a review carries one. */}
+      {independentRead?.kind === 'review' && <IndependentRead read={independentRead} />}
 
       {/* ─────────────  MAP (pinned overview: figure ⇄ logic graph)  ── */}
       <ExperimentGraphs
@@ -319,6 +325,38 @@ export default function ExperimentDetail() {
         />
       </DetailsDrawer>
     </div>
+  );
+}
+
+function AskCard({ experiment }) {
+  const intent = String(experiment.intent || '').trim();
+  const details = String(experiment.details || '').trim();
+  const [open, setOpen] = useState(false);
+  if (!intent && !details) return null;
+  return (
+    <section id="ask" className="spotlight exp-ask">
+      <header className="spotlight-head spotlight-head--row">
+        <div className="spotlight-head-left">
+          <span className="spotlight-eyebrow">Intent</span>
+        </div>
+        {details && (
+          <div className="spotlight-head-right">
+            <button
+              type="button"
+              className="btn btn--sm"
+              aria-expanded={open}
+              onClick={() => setOpen(v => !v)}
+            >
+              <span className="toggle-verb">{open ? 'Hide' : 'Show'}</span>{' details'}
+            </button>
+          </div>
+        )}
+      </header>
+      {intent && <p className="ask-prose"><InlineMd text={intent} /></p>}
+      {open && details && (
+        <div className="ask-details"><p className="ask-details-prose"><InlineMd text={details} /></p></div>
+      )}
+    </section>
   );
 }
 

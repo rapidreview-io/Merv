@@ -111,7 +111,7 @@ def _schema_sha256(db_path: Path) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _data_snapshot(db_path: Path) -> dict[str, list[tuple[Any, ...]]]:
+def _data_snapshot(db_path: Path) -> dict[str, dict[str, Any]]:
     conn = sqlite3.connect(db_path)
     try:
         tables = [
@@ -125,20 +125,41 @@ def _data_snapshot(db_path: Path) -> dict[str, list[tuple[Any, ...]]]:
                 """
             ).fetchall()
         ]
-        return {
-            table: sorted(
+        snapshot: dict[str, dict[str, Any]] = {}
+        for table in tables:
+            quoted = _quoted_identifier(table)
+            columns = [
+                str(row[1])
+                for row in conn.execute(f"PRAGMA table_info({quoted})").fetchall()
+            ]
+            rows = sorted(
                 (
                     tuple(row)
-                    for row in conn.execute(
-                        f"SELECT * FROM {_quoted_identifier(table)}"
-                    ).fetchall()
+                    for row in conn.execute(f"SELECT * FROM {quoted}").fetchall()
                 ),
                 key=repr,
             )
-            for table in tables
-        }
+            snapshot[table] = {"columns": columns, "rows": rows}
+        return snapshot
     finally:
         conn.close()
+
+
+def _projected_rows(
+    snapshot: dict[str, Any], columns: list[str]
+) -> list[tuple[Any, ...]]:
+    """Rows narrowed to `columns`, so an additive migration still compares.
+
+    The ladder widens released tables (first populated hit: migration 54's
+    experiments.details); released values must survive unchanged under their
+    original columns, while the new columns' defaults are covered by the
+    fresh-vs-migrated schema hash equality below.
+    """
+    indexes = [snapshot["columns"].index(name) for name in columns]
+    return sorted(
+        (tuple(row[i] for i in indexes) for row in snapshot["rows"]),
+        key=repr,
+    )
 
 
 def _restore_fixture(db_path: Path) -> None:
@@ -163,27 +184,38 @@ class ReleaseDatabaseCompatibilityTest(unittest.TestCase):
 
             store = StateStore(db_path=release_db)
             migrated_data = _data_snapshot(release_db)
-            for table, rows in data_before.items():
-                if table != "schema_migrations":
-                    self.assertEqual(migrated_data[table], rows)
-            self.assertEqual(migrated_data["agent_sessions"], [])
+            for table, snap in data_before.items():
+                if table == "schema_migrations":
+                    continue
+                self.assertLessEqual(
+                    set(snap["columns"]), set(migrated_data[table]["columns"])
+                )
+                self.assertEqual(
+                    _projected_rows(migrated_data[table], snap["columns"]),
+                    snap["rows"],
+                )
+            self.assertEqual(migrated_data["agent_sessions"]["rows"], [])
             for table in (
                 "experiment_workspaces",
                 "consolidation_proposals",
                 "consolidation_decisions",
                 "reflection_advances",
             ):
-                self.assertEqual(migrated_data[table], [])
+                self.assertEqual(migrated_data[table]["rows"], [])
             self.assertIn(
                 42,
-                [int(row[0]) for row in migrated_data["schema_migrations"]],
+                [int(row[0]) for row in migrated_data["schema_migrations"]["rows"]],
             )
             install_feed_schema(store)
             composed_schema = _schema_sha256(release_db)
             composed_data = _data_snapshot(release_db)
-            for table, rows in data_before.items():
-                if table != "schema_migrations":
-                    self.assertEqual(composed_data[table], rows)
+            for table, snap in data_before.items():
+                if table == "schema_migrations":
+                    continue
+                self.assertEqual(
+                    _projected_rows(composed_data[table], snap["columns"]),
+                    snap["rows"],
+                )
 
             reopened = StateStore(db_path=release_db)
             install_feed_schema(reopened)

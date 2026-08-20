@@ -215,6 +215,7 @@ def slim_experiment_state(
         "status": rich.get("status"),
         "attempt_index": attempt,
         "intent": rich.get("intent"),
+        "details": rich.get("details"),
         "conclusion": rich.get("conclusion"),
         "revision_context": rich.get("revision_context"),
         "created_at": rich.get("created_at"),

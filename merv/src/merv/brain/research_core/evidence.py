@@ -1032,6 +1032,9 @@ def decision_problems(
         check_name(label, name, taken=experiment_name_taken, subject="experiment")
         if not str(proposal.get("intent") or "").strip():
             problems.append(f"{label}.intent is required")
+        details_value = proposal.get("details")
+        if details_value is not None and not isinstance(details_value, str):
+            problems.append(f"{label}.details must be prose (a string)")
         refs = claim_refs(proposal)
         seen_refs: set[str] = set()
         for ref in refs:

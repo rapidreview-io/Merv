@@ -137,6 +137,7 @@ executor starts from the contract you wrote.
         "key": "experiment_key",
         "name": "folder-safe-name",
         "intent": "The precise question this experiment will test.",
+        "details": "Optional: givens, boundaries, preferences, budgets for whoever plans it.",
         "tested_claim_refs": ["new_claim_key"],
         "depends_on": ["prep_data"]
       }

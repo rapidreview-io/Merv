@@ -105,6 +105,7 @@ class ExperimentService:
         *,
         name: str,
         intent: str,
+        details: str = "",
         tested_claim_ids: list[str] | str | None = None,
         depends_on: list[str] | str | None = None,
         project_id: str | None = None,
@@ -116,6 +117,7 @@ class ExperimentService:
                 project_id=project_id,
                 name=name,
                 intent=intent,
+                details=details,
                 tested_claim_ids=tested_claim_ids,
                 depends_on=depends_on,
             )
@@ -128,6 +130,7 @@ class ExperimentService:
         reflection_id: str,
         name: str,
         intent: str,
+        details: str = "",
         tested_claim_ids: list[str] | str | None = None,
         proposal_key: str = "",
         parallelism: str = "",
@@ -146,6 +149,7 @@ class ExperimentService:
             project_id=project_id,
             name=name,
             intent=intent,
+            details=details,
             tested_claim_ids=tested_claim_ids,
             source_reflection_id=reflection_id,
             proposal_key=proposal_key,
@@ -160,7 +164,8 @@ class ExperimentService:
         project_id: str,
         name: str,
         intent: str,
-        tested_claim_ids: list[str] | str | None,
+        details: str = "",
+        tested_claim_ids: list[str] | str | None = None,
         source_reflection_id: str = "",
         proposal_key: str = "",
         parallelism: str = "",
@@ -212,14 +217,15 @@ class ExperimentService:
         conn.execute(
             """
             INSERT INTO experiments
-              (id, project_id, name, intent, status, attempt_index, revision_context, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 1, '', ?, ?)
+              (id, project_id, name, intent, details, status, attempt_index, revision_context, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 1, '', ?, ?)
             """,
             (
                 experiment_id,
                 project_id,
                 name,
                 intent.strip(),
+                details.strip(),
                 EXPERIMENT_WORKFLOW.initial,
                 now,
                 now,

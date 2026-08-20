@@ -386,7 +386,11 @@ class ExperimentCreateInput(ProjectScopedInput):
     )
     intent: str = Field(
         default="",
-        description="Durable one-line headline for the experiment (its UI title). The full design belongs in the plan.md artifact.",
+        description="REQUIRED. The ask, in one standalone line: what this experiment tests and why the project needs it — written so a stranger plans the experiment you meant. Name the datasets, harness tasks, and sibling experiments involved by their own names; never 'the wave' or 'this reflection'. Doubles as the UI title. How to test it — method, metrics, thresholds — belongs in the plan.md artifact.",
+    )
+    details: str = Field(
+        default="",
+        description="Optional free prose addressed to whoever writes the plan: givens, boundaries with sibling experiments, preferences, budgets, warnings — up to a full design sketch. Immutable once created, and advice rather than contract: the approved plan supersedes it on anything about how. Empty is fine — the intent alone is a complete create.",
     )
     tested_claim_ids: list[str] | str | None = Field(default_factory=list)
     claim_id: str | None = Field(
@@ -1500,9 +1504,11 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         handler_identity="application.create_experiment",
         input_model=ExperimentCreateInput,
         description=(
-            f"Create a {EXPERIMENT_WORKFLOW.initial} experiment. Requires an intent and a short "
-            "folder-safe 'name' unique within the project; the name becomes "
-            "the experiment folder experiments/<name>/."
+            f"Create a {EXPERIMENT_WORKFLOW.initial} experiment. Requires an intent (the "
+            "ask, one standalone line: what this tests and why, standalone) and a "
+            "short folder-safe 'name' unique within the project; the name becomes "
+            "the experiment folder experiments/<name>/. Optional 'details' carries "
+            "everything else the planner should have."
         ),
     ),
     "experiment.list": ToolContract(
