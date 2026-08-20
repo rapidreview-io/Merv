@@ -105,15 +105,35 @@ boundary.
 
 ### Remote machines
 
-Browser consent ends with a redirect to a loopback URL on the machine running
-the client. Kilo and OpenCode register
+Browser consent normally ends with a redirect to a loopback URL on the machine
+running the client. Kilo and OpenCode register
 `http://127.0.0.1:19876/mcp/oauth/callback` and listen there for the duration
 of `kilo mcp auth merv` / `opencode mcp auth merv`. When that machine is a VM
-you reach over SSH and the browser is on your laptop, the redirect lands on the
-*laptop's* loopback: nothing answers (or a Kilo/OpenCode running locally answers
-with a state error), and the remote client gives up after five minutes with an
-OAuth callback timeout. Forward the port from the laptop before signing in, and
-sign in inside that SSH session:
+you reach over SSH and the browser is on your laptop, the redirect lands on
+the *laptop's* loopback: nothing answers, and the remote client gives up after
+five minutes with an OAuth callback timeout.
+
+**Device pairing (preferred).** Merv's token endpoint implements the RFC 8628
+device authorization grant, and the pairing script drives it end to end: it
+prints a short code and a link, you approve in any signed-in browser, and the
+minted tokens are written straight into the client's own MCP token store
+(`mcp-auth.json`), which the client then refreshes natively. The browser talks
+only to Merv — nothing ever addresses the remote machine, so this works from
+any network with no tunnel. On the remote machine:
+
+```bash
+curl -fsSL https://rapidreview.io/merv/pair_mcp.py -o /tmp/pair_mcp.py && python3 /tmp/pair_mcp.py
+```
+
+The script autodetects a Kilo or OpenCode install (`--client kilo|opencode` to
+pick, `--store PATH` for anything else that keeps an `mcp-auth.json`), needs
+only Python 3, and mints the same rotating `mk_`/`mrt_` pair browser consent
+mints — nothing static, revocable from the same keys page. Restart the client
+afterwards; codes expire after ten minutes, so approve promptly.
+
+**SSH port forward (fallback).** Against a brain that predates the device
+grant, forward the callback port from the laptop before signing in, and sign
+in inside that SSH session:
 
 ```bash
 ssh -o ExitOnForwardFailure=yes -L 19876:127.0.0.1:19876 user@remote-host

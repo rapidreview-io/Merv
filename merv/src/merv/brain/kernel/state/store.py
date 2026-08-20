@@ -195,6 +195,41 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
   FOREIGN KEY(parent_token_id) REFERENCES oauth_refresh_tokens(id)
 );
 
+-- OAuth device authorization grants (August 2026, RFC 8628). The lane for a
+-- client on a machine whose loopback a browser can never reach (a VM over
+-- SSH): the client polls /oauth/token with the device_code it alone holds
+-- while a signed-in owner approves the short user_code on the UI. Approval
+-- stamps the consent (owner, project, scope) onto the row; the next poll
+-- consumes it and mints the same mk_/mrt_ pair the redirect flow mints.
+-- Secrets are digests only, exactly like authorization codes.
+CREATE TABLE IF NOT EXISTS oauth_device_grants (
+  id TEXT PRIMARY KEY,
+  device_code_digest TEXT NOT NULL UNIQUE,
+  user_code TEXT NOT NULL UNIQUE,
+  client_id TEXT NOT NULL,
+  resource TEXT NOT NULL,
+  status TEXT NOT NULL
+    CHECK (status IN ('pending', 'approved', 'denied', 'consumed', 'expired')),
+  owner_user_id TEXT,
+  project_id TEXT,
+  grant_scope TEXT CHECK (grant_scope IN ('project', 'account')),
+  client_ip TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  last_polled_at TEXT,
+  decided_at TEXT,
+  consumed_at TEXT,
+  FOREIGN KEY(client_id) REFERENCES oauth_clients(client_id),
+  FOREIGN KEY(project_id) REFERENCES projects(id)
+);
+
+-- Wrong-code misses per principal, so a signed-in user cannot spray the
+-- device user-code space. Mirrors agent_runner_pairing_attempts.
+CREATE TABLE IF NOT EXISTS oauth_device_grant_attempts (
+  principal TEXT NOT NULL,
+  attempted_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS claims (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
@@ -562,6 +597,10 @@ CREATE TABLE IF NOT EXISTS tasks (
   project_id TEXT NOT NULL,
   name TEXT NOT NULL DEFAULT '',
   goal TEXT NOT NULL,
+  -- The contract (migration 53): the goal's deliverables as a JSON list of
+  -- strings, immutable with the rest of the goal from creation. Pre-53 rows
+  -- keep '[]' and fall back to the brief's Done-when checks on read.
+  deliverables_json TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL,
   attempt_index INTEGER NOT NULL DEFAULT 1,
   revision_context TEXT NOT NULL DEFAULT '',
@@ -1426,6 +1465,26 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     # Additive; fresh schemas already carry the tables, the handler adds the
     # indexes on both paths.
     (51, "add_tasks", ""),
+    # OAuth device authorization (August 2026, RFC 8628): the browserless-
+    # callback lane for MCP clients on remote machines. Additive — two new
+    # tables; fresh schemas already carry them, the handler adds both plus the
+    # indexes on both paths via the SCHEMA-extracted DDL.
+    (52, "add_oauth_device_grants", ""),
+    # Task deliverables (August 2026): the goal's contract as a structured
+    # column. Additive; fresh schemas already carry it.
+    (53, "add_task_deliverables", ""),
+)
+
+# Migration 52 indexes — handler-only (they name ladder-added tables).
+OAUTH_DEVICE_GRANT_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_expiry"
+    "  ON oauth_device_grants(status, expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_ip"
+    "  ON oauth_device_grants(client_ip, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_client"
+    "  ON oauth_device_grants(client_id)",
+    "CREATE INDEX IF NOT EXISTS idx_oauth_device_grant_attempts_principal"
+    "  ON oauth_device_grant_attempts(principal, attempted_at)",
 )
 
 # Migration 51 indexes — handler-only (they name ladder-added tables).
@@ -1824,8 +1883,19 @@ class BaseStateStore:
             self._add_agent_identity(conn=conn)
         elif name == "add_tasks":
             self._add_tasks(conn=conn)
+        elif name == "add_task_deliverables":
+            self._ensure_task_deliverables(conn=conn)
+        elif name == "add_oauth_device_grants":
+            self._add_oauth_device_grants(conn=conn)
         else:
             conn.execute(statement)
+
+    def _ensure_task_deliverables(self, *, conn: Connection) -> None:
+        """Migration 53: the goal's deliverables as a structured column."""
+        if not self._has_column(conn=conn, table="tasks", column="deliverables_json"):
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN deliverables_json TEXT NOT NULL DEFAULT '[]'"
+            )
 
     def _add_tasks(self, *, conn: Connection) -> None:
         """Migration 51: task nodes, their reflection join, and the wave DAG."""
@@ -1865,6 +1935,14 @@ class BaseStateStore:
         ):
             conn.execute("ALTER TABLE project_api_keys ADD COLUMN label TEXT")
         for statement in AGENT_RUNNER_PAIRING_INDEXES:
+            conn.execute(statement)
+
+    def _add_oauth_device_grants(self, *, conn: Connection) -> None:
+        """Migration 52: RFC 8628 device authorization for MCP OAuth."""
+        for table in ("oauth_device_grants", "oauth_device_grant_attempts"):
+            if not self._has_table(conn=conn, table=table):
+                conn.execute(_schema_table_ddl(table=table))
+        for statement in OAUTH_DEVICE_GRANT_INDEXES:
             conn.execute(statement)
 
     def _add_agent_session_observability(self, *, conn: Connection) -> None:

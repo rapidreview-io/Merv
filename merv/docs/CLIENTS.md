@@ -490,11 +490,11 @@ Notes:
   `verified_agent_review` status.
 - The generated `merv-client` branch is rebuilt after every `main` update; the
   OpenCode source entrypoint remains under `clients/opencode/` in `main`.
-- On a remote machine over SSH, the browser's consent redirect must reach
-  OpenCode's callback listener at `127.0.0.1:19876` on that machine. Connect
-  with `ssh -o ExitOnForwardFailure=yes -L 19876:127.0.0.1:19876 user@host`
-  from the laptop whose browser will approve, run `opencode mcp auth merv`
-  inside that session, and open the printed URL locally. See
+- On a remote machine over SSH, the browser's consent redirect cannot reach
+  OpenCode's loopback listener. Pair with the device grant instead: run
+  `curl -fsSL https://rapidreview.io/merv/pair_mcp.py -o /tmp/pair_mcp.py &&
+  python3 /tmp/pair_mcp.py` on that machine and approve the printed code in
+  any signed-in browser. Details and the SSH port-forward fallback in
   [Remote machines](AUTH.md#remote-machines).
 
 ## Use with Kilo
@@ -529,11 +529,11 @@ Notes:
   install.
 - The current unified Kilo CLI is required. If `kilo plugin` is unavailable,
   update Kilo before installing Merv.
-- On a remote machine over SSH, the browser's consent redirect must reach
-  Kilo's callback listener at `127.0.0.1:19876` on that machine. Connect with
-  `ssh -o ExitOnForwardFailure=yes -L 19876:127.0.0.1:19876 user@host` from
-  the laptop whose browser will approve, run `kilo mcp auth merv` inside that
-  session, and open the printed URL locally. See
+- On a remote machine over SSH, the browser's consent redirect cannot reach
+  Kilo's loopback listener. Pair with the device grant instead: run
+  `curl -fsSL https://rapidreview.io/merv/pair_mcp.py -o /tmp/pair_mcp.py &&
+  python3 /tmp/pair_mcp.py` on that machine and approve the printed code in
+  any signed-in browser. Details and the SSH port-forward fallback in
   [Remote machines](AUTH.md#remote-machines).
 
 ## Use with Hermes Agent

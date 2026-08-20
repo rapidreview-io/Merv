@@ -149,7 +149,7 @@ export default function OAuthConsent() {
   );
 }
 
-function ScopeChoice({ checked, disabled, onSelect, title, detail }) {
+export function ScopeChoice({ checked, disabled, onSelect, title, detail }) {
   return (
     <label className={`oauth-scope-choice${checked ? ' is-selected' : ''}`}>
       <input
@@ -167,7 +167,7 @@ function ScopeChoice({ checked, disabled, onSelect, title, detail }) {
   );
 }
 
-function ConsentFrame({ children }) {
+export function ConsentFrame({ children }) {
   return (
     <div className="auth-gate">
       <div className="auth-modal oauth-consent">{children}</div>
