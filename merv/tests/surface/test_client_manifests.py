@@ -73,7 +73,10 @@ class HttpMcpManifestTest(unittest.TestCase):
         self.assertIn(HOSTED_MCP_URL, plugin)
         self.assertIn("https://rapidreview.io/merv/.well-known/skills/", plugin)
         self.assertIn("type: 'remote'", plugin)
-        self.assertNotIn("headers", plugin)
+        # The object-key form, not the bare word: the plugin must never WIRE
+        # a static headers field into the entry, but its merge comment may
+        # name headers as something the user's own entry is allowed to carry.
+        self.assertNotIn("headers:", plugin)
         self.assertNotIn("MERV_MCP_KEY", plugin)
         self.assertNotIn("mk_", plugin)
 
