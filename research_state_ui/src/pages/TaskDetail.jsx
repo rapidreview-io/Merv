@@ -306,13 +306,8 @@ function TaskCore({ task }) {
       {goal && total > 0 && <hr className="task-goal-rule" />}
       {total > 0 ? (
         <div className="task-req" role="table" aria-label="Deliverables">
-          <div className="task-req-h" role="columnheader" />
-          <div className="task-req-h" role="columnheader" />
-          <div className="task-req-h" role="columnheader">Deliverable</div>
-          <div className="task-req-h task-req-h--ev" role="columnheader">
-            <span>Confirmation</span>
-            {countLine && <span className="task-req-count">{countLine}</span>}
-          </div>
+          <div className="task-req-h task-req-h--first" role="columnheader">Deliverable</div>
+          <div className="task-req-h task-req-h--ev" role="columnheader">Confirmation</div>
           {rows.map(({ req, result, state }, i) => {
             const last = i === rows.length - 1 ? ' task-req--last' : '';
             return (
@@ -343,6 +338,7 @@ function TaskCore({ task }) {
               </div>
             );
           })}
+          {countLine && <div className="task-req-tally">{countLine}</div>}
         </div>
       ) : (
         <div className="task-req-empty">No deliverables recorded — this task predates structured goals.</div>
