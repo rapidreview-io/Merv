@@ -7198,12 +7198,14 @@ a.wflow-chip { color: var(--text); }
    the operational facts live in the shared details drawer (.dtl-*). Under
    960px the requirements table folds evidence under its requirement. ── */
 .task-orient { border-bottom: 0; margin-bottom: 12px; padding-bottom: 0; }
-/* Orient header row: identity left, the Details toggle right — both the
-   experiment and the task page put the drawer's button here, directly under
-   the status strip. */
-.orient-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.orient-row > :first-child { min-width: 0; }
-.orient-row .dtl-toggle { margin-top: 2px; flex: none; }
+/* The status row: the FSM strip takes the width; the Details toggle sits at
+   its height on the far right — the mirror of the left sidebar's button. */
+.fsm-row { display: flex; align-items: flex-start; gap: 10px; }
+.fsm-row-strip { flex: 1; min-width: 0; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
 
 /* Description: the brief's Goal as structure — headline, deliverables, purpose. */
 .task-desc { margin: 0 0 22px; padding-bottom: 18px; border-bottom: 1px solid var(--line-soft); }
@@ -7227,21 +7229,22 @@ a.wflow-chip { color: var(--text); }
 .task-purpose { font-size: var(--text-base); line-height: 1.5; color: var(--text); }
 
 /* Requirements table: # · what must be true (+ verify) · got it? · evidence (+ check). */
-.task-req { display: grid; grid-template-columns: 28px minmax(0, 2fr) 118px minmax(0, 2fr); }
+.task-req { display: grid; grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1fr); }
 .task-req > *, .task-req-row > * { padding: 10px 12px 11px 0; border-bottom: 1px solid var(--line-soft); min-width: 0; }
 .task-req-h {
   padding-top: 0 !important; padding-bottom: 8px !important; border-bottom-color: var(--line) !important;
   font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
 }
 .task-req-row > .task-req--last { border-bottom: 0; }
-.task-req-n { color: var(--faint); font-variant-numeric: tabular-nums; font-size: var(--text-sm); padding-top: 11px; }
+.task-req-mark { font-weight: 700; font-size: 13px; line-height: 1.45; }
+.task-req-n { color: var(--faint); font-variant-numeric: tabular-nums; font-size: var(--text-xs); margin-right: 7px; }
+.task-req-word { font-weight: 600; }
+.task-req-word--bad { color: var(--refutes); }
+.task-req-word--wait { color: var(--qualifies); }
 .task-req-stmt { font-size: var(--text-sm); line-height: 1.45; color: var(--text); }
 .task-req-verify { margin-top: 3px; font-size: var(--text-xs); line-height: 1.45; color: var(--muted); }
 .task-req-verify .k, .task-req-how .k { color: var(--faint); }
 .inline-md-code { font-family: var(--font-mono); font-size: .92em; }
-.task-got { font-size: var(--text-sm); line-height: 1.45; font-weight: 600; white-space: nowrap; }
-.task-got .g { display: inline-block; width: 14px; }
-.task-got small { display: block; font-weight: 400; color: var(--faint); font-size: var(--text-xs); white-space: normal; }
 .task-got--ok { color: var(--supports); }
 .task-got--wait { color: var(--qualifies); }
 .task-got--bad { color: var(--refutes); }
@@ -7278,21 +7281,29 @@ a.wflow-chip { color: var(--text); }
 .task-doc { padding: 12px 18px; margin-bottom: 10px; }
 .task-doc .spotlight-head { margin-bottom: 0; }
 
-@media (max-width: 960px) {
-  .task-req { grid-template-columns: 24px minmax(0, 1fr) 104px; }
+@media (max-width: 820px) {
+  .task-req { grid-template-columns: 24px minmax(0, 1fr); }
   .task-req-h--ev { display: none; }
-  .task-req-row > .task-req-ev { grid-column: 2 / 4; padding-top: 0; }
-  .task-req-row > .task-req-stmt-cell, .task-req-row > .task-req-got-cell { border-bottom: 0; padding-bottom: 4px; }
-  .task-req-row > .task-req-n { border-bottom: 0; }
+  .task-req-row > .task-req-ev { grid-column: 2; padding-top: 0; }
+  .task-req-row > .task-req-stmt-cell { border-bottom: 0; padding-bottom: 4px; }
+  .task-req-row > .task-req-mark { border-bottom: 0; }
 }
 
 /* ── Details drawer: the operational sidecar shared by the experiment and
    task pages. Never a layout column — it slides over the right edge on the
    Details toggle and stays light: page background, one hairline, a faint
    lift, quiet type. ── */
-.dtl-toggle { gap: 6px; display: inline-flex; align-items: center; color: var(--muted); }
-.dtl-toggle--open { color: var(--text); border-color: var(--line-strong); background: var(--bg-soft); }
-.dtl-toggle-glyph { font-size: 11px; line-height: 1; }
+/* Icon-only toggle at the strip's height (Sidebar's hide button, mirrored). */
+.dtl-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; margin-top: 4px; flex: none;
+  border: 0; border-radius: var(--radius-md);
+  background: none; color: var(--faint); cursor: pointer;
+  transition: color var(--motion-fast), background var(--motion-fast);
+}
+.dtl-toggle:hover { color: var(--text); background: var(--bg-soft); }
+.dtl-toggle--open { color: var(--text); background: var(--bg-soft); }
+.dtl-toggle:focus-visible { outline: 2px solid var(--active); outline-offset: -2px; }
 /* Click-away without dimming: the scrim is invisible but catches the click. */
 .dtl-scrim { position: fixed; inset: 0; z-index: 69; display: none; background: transparent; }
 .dtl-scrim--open { display: block; }
@@ -7335,12 +7346,6 @@ html[data-theme="dark"] .dtl-drawer { box-shadow: -14px 0 36px rgba(0, 0, 0, 0.5
 }
 .dtl-sec { padding: 12px 0; border-top: 1px solid var(--line-soft); }
 .dtl-sec:first-child { border-top: 0; }
-.dtl-status { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.dtl-word { font-weight: 620; }
-.dtl-word--ok { color: var(--supports); }
-.dtl-word--wait { color: var(--qualifies); }
-.dtl-word--live { color: var(--active); }
-.dtl-word--bad { color: var(--refutes); }
 .dtl-sub { font-size: var(--text-xs); color: var(--muted); line-height: 1.5; margin-top: 2px; }
 .dtl-empty { color: var(--faint); font-size: var(--text-sm); padding: 4px 0; }
 .dtl-bad { color: var(--refutes); font-size: var(--text-xs); }
@@ -7360,12 +7365,11 @@ html[data-theme="dark"] .dtl-drawer { box-shadow: -14px 0 36px rgba(0, 0, 0, 0.5
 .dtl-node-glyph { color: var(--faint); font-size: 11px; width: 12px; text-align: center; flex: none; }
 .dtl-node-name { color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dtl-node-row .status { font-size: 11px; padding: 1px 7px; white-space: nowrap; flex: none; }
-.dtl-file-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; min-width: 0; }
-.dtl-file-row .status { font-size: 11px; padding: 1px 7px; white-space: nowrap; flex: none; }
-.dtl-file-path { font-family: var(--font-mono); font-size: 12px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
-a.dtl-file-path:hover { text-decoration: underline; }
-.dtl-file-size { color: var(--faint); font-size: var(--text-xs); white-space: nowrap; flex: none; }
-.dtl-kv { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 5px 10px; margin: 0; font-size: var(--text-sm); }
-.dtl-kv dt { color: var(--faint); }
-.dtl-kv dd { margin: 0; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
-.dtl-kv dd.mono { font-family: var(--font-mono); font-size: 12px; }
+/* Versions: submission history per document, review rounds beside them. */
+.dtl-vgroup { margin-bottom: 10px; }
+.dtl-vgroup:last-child { margin-bottom: 0; }
+.dtl-vlabel { font-size: var(--text-xs); color: var(--faint); margin-bottom: 2px; }
+.dtl-vrow { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: var(--text-sm); min-width: 0; }
+.dtl-vname { color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dtl-vrow .status { font-size: 11px; padding: 1px 7px; white-space: nowrap; flex: none; }
+.dtl-vmeta { color: var(--faint); font-size: var(--text-xs); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: auto; }

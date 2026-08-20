@@ -11,7 +11,7 @@ import ReviewCard from '../components/ReviewCard';
 import StatusPill from '../components/StatusPill';
 import ObjId from '../components/ObjId';
 import InlineMd from '../components/InlineMd';
-import DetailsDrawer, { DetailsButton } from '../components/DetailsDrawer';
+import DetailsDrawer, { DetailsButton, OpsTimeline, OpsVersions, OpsPosition } from '../components/DetailsDrawer';
 import { fmtAgo, fmtSpan, formatBytes } from '../utils/format';
 
 /*
@@ -167,6 +167,8 @@ export default function TaskDetail() {
   return (
     <div className="page-stage">
       <section className="exp-fsm">
+        <div className="fsm-row">
+          <div className="fsm-row-strip">
         <FSMStrip
           status={task.status}
           stages={TASK_STAGES}
@@ -198,6 +200,14 @@ export default function TaskDetail() {
             )}
           </div>
         </FSMStrip>
+          </div>
+          <DetailsButton
+            open={detailsOpen}
+            onToggle={() => setDetailsOpen(v => !v)}
+            controls="task-details"
+            buttonRef={detailsBtnRef}
+          />
+        </div>
         {actionError && <div className="error-message">{actionError}</div>}
       </section>
 
@@ -234,21 +244,11 @@ export default function TaskDetail() {
       )}
 
       <header className="exp-orient task-orient">
-        <div className="orient-row">
-          <div>
-            <div className="page-eyebrow">
-              <Link to={px('/tasks')}>Tasks</Link>
-              {' · '}<ObjId id={task.id} />
-            </div>
-            <h1 className="page-title exp-title-name">{task.name || task.id}</h1>
-          </div>
-          <DetailsButton
-            open={detailsOpen}
-            onToggle={() => setDetailsOpen(v => !v)}
-            controls="task-details"
-            buttonRef={detailsBtnRef}
-          />
+        <div className="page-eyebrow">
+          <Link to={px('/tasks')}>Tasks</Link>
+          {' · '}<ObjId id={task.id} />
         </div>
+        <h1 className="page-title exp-title-name">{task.name || task.id}</h1>
       </header>
 
       <TaskDescription description={task.description} goal={task.goal} />
@@ -369,9 +369,9 @@ function RequirementsTable({ task }) {
     <section className="spotlight" id="requirements">
       <header className="spotlight-head spotlight-head--row">
         <div className="spotlight-head-left">
-          <span className="spotlight-eyebrow">Requirements</span>
+          <span className="spotlight-eyebrow">Done when</span>
           <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>
-            {total ? <>{total} from the brief · {countLine}</> : 'no brief submitted yet'}
+            {total ? <>{total} requirement{total === 1 ? '' : 's'} from the brief · {countLine}</> : 'no brief submitted yet'}
           </span>
         </div>
       </header>
@@ -379,26 +379,28 @@ function RequirementsTable({ task }) {
         <div className="task-req" role="table" aria-label="Requirements">
           <div className="task-req-h" role="columnheader" />
           <div className="task-req-h" role="columnheader">What must be true</div>
-          <div className="task-req-h" role="columnheader">Got it?</div>
           <div className="task-req-h task-req-h--ev" role="columnheader">Evidence</div>
           {rows.map(({ req, result, state }, i) => {
             const last = i === rows.length - 1 ? ' task-req--last' : '';
             return (
               <div key={req.number} role="row" className="task-req-row" style={{ display: 'contents' }}>
-                <div className={`task-req-n${last}`} role="cell">{req.number}</div>
-                <div className={`task-req-stmt-cell${last}`} role="cell">
-                  <div className="task-req-stmt"><InlineMd text={req.statement} /></div>
-                  {req.verify && <div className="task-req-verify"><span className="k">verify · </span><InlineMd text={req.verify} /></div>}
+                <div
+                  className={`task-req-mark task-got--${state.tone}${last}`}
+                  role="cell"
+                  title={state.word + (state.sub ? ` — ${state.sub}` : '')}
+                >
+                  <span aria-hidden="true">{state.glyph}</span>
+                  <span className="visually-hidden">{state.word}{state.sub ? ` — ${state.sub}` : ''}</span>
                 </div>
-                <div className={`task-req-got-cell${last}`} role="cell">
-                  <div className={`task-got task-got--${state.tone}`}>
-                    <span className="g" aria-hidden="true">{state.glyph}</span>{state.word}
-                    {state.sub && <small>{state.sub}</small>}
-                  </div>
+                <div className={`task-req-stmt-cell${last}`} role="cell">
+                  <div className="task-req-stmt"><span className="task-req-n">{req.number}</span><InlineMd text={req.statement} /></div>
+                  {req.verify && <div className="task-req-verify"><span className="k">verify · </span><InlineMd text={req.verify} /></div>}
                 </div>
                 <div className={`task-req-ev${last}`} role="cell">
                   {result?.evidence
                     ? <>
+                        {result.state === 'unmet' && <span className="task-req-word task-req-word--bad">unmet · </span>}
+                        {result.state === 'partial' && <span className="task-req-word task-req-word--wait">partial · </span>}
                         <InlineMd text={result.evidence} />
                         {result.how && <span className="task-req-how"><span className="k">check · </span><InlineMd text={result.how} /></span>}
                       </>
@@ -420,12 +422,12 @@ function ProcessSection({ task, reviews }) {
   const report = String(task.report || '').trim();
   const caveats = String(task.caveats || '').trim();
   const outcome = String(task.outcome || '').trim();
-  const hasReviews = reviews.length > 0;
+  const latest = reviews.length ? reviews[reviews.length - 1] : null;
   const showOutcome = status === 'done' || status === 'failed';
-  const nothing = !showOutcome && !report && !caveats && !hasReviews;
+  const nothing = !showOutcome && !report && !caveats && !latest;
   return (
-    <section className="spotlight task-proc" id="process">
-      <header className="spotlight-head"><span className="spotlight-eyebrow">Process</span></header>
+    <section className="spotlight task-proc" id="notes">
+      <header className="spotlight-head"><span className="spotlight-eyebrow">Notes</span></header>
       {showOutcome && (
         <div className="task-proc-sec">
           <h4>{status === 'failed' ? `Ended by ${task.failed_by || 'owner'}` : 'Outcome'}</h4>
@@ -444,20 +446,21 @@ function ProcessSection({ task, reviews }) {
           <div className="task-proc-md task-proc-md--quiet"><MarkdownView text={caveats} /></div>
         </div>
       )}
-      {hasReviews && (
+      {latest && (
         <div className="task-proc-sec">
-          <h4>Review{reviews.length > 1 ? 's' : ''}</h4>
-          <div className="stack stack--sm">
-            {reviews.slice().reverse().map((r, i) => (
-              <ReviewQuote key={r.id || i} review={r} round={reviews.length - i} />
-            ))}
-          </div>
+          <h4>
+            Review
+            {reviews.length > 1 && (
+              <span className="task-proc-from"> · round {reviews.length} of {reviews.length} — earlier rounds in Details</span>
+            )}
+          </h4>
+          <ReviewQuote review={latest} round={reviews.length} />
         </div>
       )}
       {nothing && (
         <div className="spotlight-empty">
           {status === 'in_progress'
-            ? 'Nothing to report yet — the delivery’s Report section and the review rounds appear here.'
+            ? 'Nothing to report yet — the delivery’s Report section and the review appear here.'
             : 'No report or review recorded.'}
         </div>
       )}
@@ -551,39 +554,15 @@ function TaskDocSpotlight({ id, projectId, eyebrow, artifact, emptyText, verdict
   );
 }
 
-/* ───────────── Details drawer body: status · timeline · graph · files ── */
+/* ───────────── Details drawer body: pure operations ─────────────────────
+   Nothing here repeats the page. Three sections:
+     Timeline — every step with how long it took (durations between events);
+     Versions — the submission history: brief/delivery versions, review rounds;
+     Position — what this task is connected to (waits on / unblocks).       */
 
-function railStatus(task, reviews) {
-  const s = task.status;
-  const last = reviews[reviews.length - 1];
-  const rounds = reviews.length;
-  if (s === 'done') {
-    return {
-      tone: 'ok', word: '✓ Accepted',
-      sub: `by owner · ${ago(task.updated_at) || ''}${rounds ? ` · after ${rounds} review round${rounds > 1 ? 's' : ''}` : ''}`,
-    };
-  }
-  if (s === 'failed') {
-    return { tone: 'bad', word: '✗ Ended', sub: `by ${task.failed_by || 'owner'} · ${ago(task.updated_at) || ''}` };
-  }
-  if (s === 'in_review') {
-    const pending = !last || last.verdict === 'needs_changes';
-    return {
-      tone: 'wait', word: '◐ Awaiting review',
-      sub: pending ? `round ${rounds + 1} · delivery submitted${task.updated_at ? ` ${ago(task.updated_at)}` : ''}` : 'review submitted · accept to finish',
-    };
-  }
-  return {
-    tone: 'live', word: '● Delivering',
-    sub: rounds ? `sent back in round ${rounds} · fix the delivery and resubmit` : `started ${ago(task.created_at) || ''}`,
-  };
-}
-
-// The record's events in time order, built from what the state already
-// carries: the task row, its artifacts, and its reviews.
-// Timestamps are second-resolution, so events can tie; `rank` orders a tie
-// the way the record actually goes — delivery k, then review round k, then
-// delivery k+1 (the resubmission that answers it), endings last.
+// The record's events in time order with per-step durations. Timestamps are
+// second-resolution, so ties order the way the record actually goes —
+// delivery k, then review round k, then delivery k+1, endings last.
 function buildTimeline(task, reviews) {
   const items = [];
   if (task.created_at) items.push({ t: task.created_at, rank: 0, tone: null, label: 'created' });
@@ -612,8 +591,7 @@ function buildTimeline(task, reviews) {
     });
   });
   if (task.status === 'done' && task.updated_at) {
-    const span = msBetween(task.created_at, task.updated_at);
-    items.push({ t: task.updated_at, rank: 99, tone: 'ok', label: `accepted${span != null ? ` · ${fmtSpan(span)} total` : ''}` });
+    items.push({ t: task.updated_at, rank: 99, tone: 'ok', label: 'accepted' });
   } else if (task.status === 'failed' && task.updated_at) {
     items.push({ t: task.updated_at, rank: 99, tone: 'bad', label: `ended by ${task.failed_by || 'owner'}` });
   }
@@ -623,97 +601,42 @@ function buildTimeline(task, reviews) {
 }
 
 function TaskFacts({ task, reviews, px }) {
-  const st = railStatus(task, reviews);
   const timeline = buildTimeline(task, reviews);
-  const dependents = Array.isArray(task.dependents) ? task.dependents : [];
-  const dependencies = Array.isArray(task.dependencies) ? task.dependencies : [];
-  const files = (task.current_attempt_artifacts || []).slice()
-    .sort((a, b) => String(a.path || '').localeCompare(String(b.path || '')));
-  const lastVerdict = reviews.length ? String(reviews[reviews.length - 1].verdict || '').toLowerCase() : null;
-  const folder = `tasks/${task.name || task.id}/`;
+  const done = task.status === 'done' || task.status === 'failed';
+  const arts = (task.artifacts || []).slice().sort((a, b) =>
+    String(a.created_at || '').localeCompare(String(b.created_at || ''))
+    || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0)));
+  const versionsOf = (role) => arts.filter(a => a.role === role).map((a, i) => ({
+    id: a.id,
+    name: `v${i + 1}`,
+    meta: [a.size_bytes != null ? formatBytes(a.size_bytes) : null, ago(a.created_at)].filter(Boolean).join(' · '),
+    title: a.path,
+  }));
+  const reviewRows = reviews.map((r, i) => ({
+    id: r.id,
+    name: `round ${i + 1}`,
+    pill: String(r.verdict || 'pending').toLowerCase(),
+    meta: ago(r.created_at) || '',
+  }));
+  const withHref = (d) => ({ ...d, href: nodeHref(px, d) });
+  const upstream = (task.dependencies || []).map(withHref);
+  const downstream = (task.dependents || []).map(withHref);
   const isOpen = !TASK_TERMINAL.has(task.status);
   return (
     <>
-      <div className="dtl-sec">
-        <div className="dtl-eyebrow">Status</div>
-        <div className="dtl-status">
-          <StatusPill value={task.status} />
-          <span className={`dtl-word dtl-word--${st.tone}`}>{st.word}</span>
-        </div>
-        {st.sub && <div className="dtl-sub">{st.sub}</div>}
-      </div>
-
-      {timeline.length > 0 && (
-        <div className="dtl-sec">
-          <div className="dtl-eyebrow">Timeline</div>
-          <ul className="dtl-tl">
-            {timeline.map((item, i) => (
-              <li key={i}>
-                <span className={`dtl-tl-dot${item.tone ? ` dtl-tl-dot--${item.tone}` : ''}`} aria-hidden="true" />
-                <span className="dtl-tl-t" title={item.t}>{ago(item.t)}</span>
-                <span className="dtl-tl-w">{item.label}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="dtl-sec">
-        <div className="dtl-eyebrow">Unblocks{dependents.length ? ` · ${dependents.length}` : ''}</div>
-        {dependents.length === 0
-          ? <div className="dtl-empty">nothing waits on this task</div>
-          : dependents.map(d => (
-            <div key={d.id} className="dtl-node-row">
-              <span className="dtl-node-glyph" aria-hidden="true">{d.node_type === 'task' ? '◇' : '◈'}</span>
-              <Link className="dtl-node-name" to={nodeHref(px, d)}>{d.name || d.id}</Link>
-              <StatusPill value={d.status} />
-            </div>
-          ))}
-        {dependents.length > 0 && isOpen && (
-          <div className="dtl-sub">{dependents.length === 1 ? 'it waits' : 'they wait'} until this task is accepted</div>
-        )}
-      </div>
-
-      <div className="dtl-sec">
-        <div className="dtl-eyebrow">Waits on{dependencies.length ? ` · ${dependencies.length}` : ''}</div>
-        {dependencies.length === 0
-          ? <div className="dtl-empty">nothing</div>
-          : dependencies.map(d => (
-            <div key={d.id} className="dtl-node-row">
-              <span className="dtl-node-glyph" aria-hidden="true">{d.node_type === 'task' ? '◇' : '◈'}</span>
-              <Link className="dtl-node-name" to={nodeHref(px, d)}>{d.name || d.id}</Link>
-              <StatusPill value={d.status} />
-              {d.failed && <span className="dtl-bad">ended without succeeding</span>}
-            </div>
-          ))}
-      </div>
-
-      <div className="dtl-sec">
-        <div className="dtl-eyebrow">Files{files.length ? ` · ${files.length}` : ''}</div>
-        {files.length === 0
-          ? <div className="dtl-empty">nothing submitted yet</div>
-          : files.map(f => {
-            const anchor = f.role === 'brief' ? '#brief' : f.role === 'delivery' ? '#delivery' : null;
-            return (
-              <div key={f.id} className="dtl-file-row" title={f.path}>
-                {anchor
-                  ? <a className="dtl-file-path" href={anchor}>{f.path}</a>
-                  : <span className="dtl-file-path">{f.path}</span>}
-                {f.role === 'delivery' && lastVerdict && <StatusPill value={lastVerdict} />}
-                {f.size_bytes != null && <span className="dtl-file-size">{formatBytes(f.size_bytes)}</span>}
-              </div>
-            );
-          })}
-      </div>
-
-      <div className="dtl-sec">
-        <div className="dtl-eyebrow">Record</div>
-        <dl className="dtl-kv">
-          <dt>folder</dt><dd className="mono">{folder}</dd>
-          <dt>attempt</dt><dd>{task.attempt_index ?? 1}</dd>
-          {task.created_at && <><dt>created</dt><dd title={task.created_at}>{ago(task.created_at)}</dd></>}
-        </dl>
-      </div>
+      <OpsTimeline items={timeline} done={done} createdAt={task.created_at} endedAt={task.updated_at} />
+      <OpsVersions groups={[
+        { label: 'brief', rows: versionsOf('brief') },
+        { label: 'delivery', rows: versionsOf('delivery') },
+        { label: 'reviews', rows: reviewRows },
+      ]} />
+      <OpsPosition
+        upstream={upstream}
+        downstream={downstream}
+        waitNote={downstream.length > 0 && isOpen
+          ? (downstream.length === 1 ? 'it waits until this task is accepted' : 'they wait until this task is accepted')
+          : null}
+      />
     </>
   );
 }
