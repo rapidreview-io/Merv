@@ -1034,6 +1034,7 @@ class Research:
         *,
         name: str,
         goal: str,
+        deliverables: list[str] | str | None = None,
         depends_on: list[str] | str | None = None,
         project_id: str | None = None,
     ) -> TaskState:
@@ -1042,6 +1043,7 @@ class Research:
             self._tasks.create(
                 name=name,
                 goal=goal,
+                deliverables=deliverables,
                 depends_on=depends_on,
                 project_id=project_id,
             ),

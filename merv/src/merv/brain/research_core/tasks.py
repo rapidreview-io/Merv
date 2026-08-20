@@ -14,16 +14,14 @@ from .evidence import (
     ArtifactDocument,
     artifact_state_record,
     brief_checks,
-    brief_goal_text,
     brief_problems,
     current_slot_artifacts,
     delivery_problems,
     delivery_results,
     delivery_section,
-    goal_parts,
     preferred_artifact,
+    render_task_brief,
     require_artifact_document,
-    requirement_parts,
     submission_state_record,
 )
 from .policy import (
@@ -47,6 +45,41 @@ def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
     return rows_to_dicts(rows=conn.execute(sql, parameters).fetchall())
 
 
+_MAX_DELIVERABLES = 12
+_MAX_DELIVERABLE_CHARS = 500
+
+
+def _validate_deliverables(value: Any) -> list[str]:
+    """The goal's contract: 1..N deliverables, each verifiable as written."""
+    if isinstance(value, str):
+        value = [value]
+    if value is None or not isinstance(value, (list, tuple)):
+        raise ValidationError(
+            "deliverables is required: a list of the things that must exist "
+            "when the task is done — each one thing, verifiable as written"
+        )
+    items = [str(item or "").strip() for item in value]
+    items = [item for item in items if item]
+    if not items:
+        raise ValidationError(
+            "deliverables needs at least one item — a thing that must exist "
+            "when the task is done, verifiable as written"
+        )
+    if len(items) > _MAX_DELIVERABLES:
+        raise ValidationError(
+            f"{len(items)} deliverables is too many (max {_MAX_DELIVERABLES}; "
+            "the rule of thumb is 1-7) — this is probably two tasks"
+        )
+    for index, item in enumerate(items, start=1):
+        if len(item) > _MAX_DELIVERABLE_CHARS:
+            raise ValidationError(
+                f"deliverable {index} is {len(item)} characters; keep each "
+                f"under {_MAX_DELIVERABLE_CHARS} — one thing, stated so it "
+                "can be checked"
+            )
+    return items
+
+
 class TaskService:
     def __init__(self, *, store: BaseStateStore, artifacts: Artifacts) -> None:
         self.store = store
@@ -59,6 +92,7 @@ class TaskService:
         *,
         name: str,
         goal: str,
+        deliverables: list[str] | tuple[str, ...] | str | None = None,
         depends_on: list[str] | str | None = None,
         project_id: str | None = None,
     ) -> dict[str, Any]:
@@ -69,6 +103,7 @@ class TaskService:
                 project_id=project_id,
                 name=name,
                 goal=goal,
+                deliverables=deliverables,
                 depends_on=depends_on,
             )
 
@@ -80,6 +115,7 @@ class TaskService:
         reflection_id: str,
         name: str,
         goal: str,
+        deliverables: list[str] | tuple[str, ...] | None = None,
         proposal_key: str = "",
         depends_on: list[str] | str | None = None,
     ) -> dict[str, Any]:
@@ -96,6 +132,7 @@ class TaskService:
             project_id=project_id,
             name=name,
             goal=goal,
+            deliverables=deliverables,
             depends_on=depends_on,
             source_reflection_id=reflection_id,
             proposal_key=proposal_key,
@@ -108,6 +145,7 @@ class TaskService:
         project_id: str,
         name: str,
         goal: str,
+        deliverables: list[str] | tuple[str, ...] | str | None,
         depends_on: list[str] | str | None,
         source_reflection_id: str = "",
         proposal_key: str = "",
@@ -115,9 +153,10 @@ class TaskService:
         name = validate_task_name(name)
         if not (goal or "").strip():
             raise ValidationError(
-                "goal is required: a headline line, 'Deliver:' with a bullet per "
-                "thing that will exist, and 'So that <why the project needs it>'"
+                "goal is required: short prose — what needs to be done and why "
+                "— readable standalone by someone who just opened the task"
             )
+        deliverables = _validate_deliverables(deliverables)
         if not source_reflection_id:
             self._reject_reserved_wave_name(conn=conn, project_id=project_id, name=name)
         duplicate = conn.execute(
@@ -134,11 +173,33 @@ class TaskService:
         conn.execute(
             """
             INSERT INTO tasks
-              (id, project_id, name, goal, status, attempt_index, revision_context,
-               outcome, failed_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 1, '', '', '', ?, ?)
+              (id, project_id, name, goal, deliverables_json, status,
+               attempt_index, revision_context, outcome, failed_by,
+               created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 1, '', '', '', ?, ?)
             """,
-            (task_id, project_id, name, goal.strip(), TASK_WORKFLOW.initial, now, now),
+            (
+                task_id,
+                project_id,
+                name,
+                goal.strip(),
+                json.dumps(deliverables),
+                TASK_WORKFLOW.initial,
+                now,
+                now,
+            ),
+        )
+        # The goal is immutable: Merv renders and pins the brief here, once;
+        # brief submissions against tasks are refused (see artifacts).
+        self.artifacts.pin(
+            target=ArtifactTarget("task", task_id, project_id),
+            role=TASK_BRIEF_ROLE,
+            path=f"tasks/{name}/brief.md",
+            data=render_task_brief(
+                {"name": name, "goal": goal.strip(), "deliverables": deliverables}
+            ).encode("utf-8"),
+            title=f"Brief: {name}",
+            tx=conn,
         )
         depends_on_ids = (
             [depends_on] if isinstance(depends_on, str) else list(depends_on or [])
@@ -149,7 +210,11 @@ class TaskService:
             node_id=task_id,
             depends_on_ids=depends_on_ids,
         )
-        event_payload: dict[str, Any] = {"name": name, "goal": goal.strip()}
+        event_payload: dict[str, Any] = {
+            "name": name,
+            "goal": goal.strip(),
+            "deliverables": deliverables,
+        }
         if recorded:
             event_payload["depends_on"] = recorded
         if source_reflection_id:
@@ -423,20 +488,22 @@ class TaskService:
             return None
 
     def _attach_documents(self, *, task: dict[str, Any], detail: bool) -> None:
-        """The structure the UI renders: checks + requirements + description from
-        the brief (one read, shared with the gate), and — for detail reads —
-        results/report/caveats from the delivery."""
-        brief = self._document_or_none(task=task, role=TASK_BRIEF_ROLE, what="task brief")
-        checks = [] if brief is None else brief_checks(brief.text)
-        task["checks"] = checks
-        task["requirements"] = [
-            requirement_parts(number, check) for number, check in enumerate(checks, start=1)
-        ]
-        goal_text = None if brief is None else brief_goal_text(brief.text)
-        description = goal_parts(goal_text if goal_text else str(task.get("goal") or ""))
-        description["source"] = "brief" if goal_text else "goal"
-        task["description"] = description
-        task["summary"] = description.get("summary")
+        """The structure the UI renders: the goal's deliverables (the column;
+        pre-53 rows fall back to the brief's list) and — for detail reads —
+        the delivery's confirmations, Notes prose, and legacy Caveats."""
+        raw = task.pop("deliverables_json", None)
+        try:
+            deliverables = [str(x) for x in json.loads(raw or "[]")]
+        except (TypeError, ValueError):
+            deliverables = []
+        if not deliverables:
+            brief = self._document_or_none(
+                task=task, role=TASK_BRIEF_ROLE, what="task brief"
+            )
+            deliverables = [] if brief is None else brief_checks(brief.text)
+        task["deliverables"] = deliverables
+        # `checks` stays as the agent-facing alias for the same list.
+        task["checks"] = list(deliverables)
         if not detail:
             return
         task["results"] = []
@@ -447,8 +514,10 @@ class TaskService:
         )
         if delivery is None:
             return
-        task["results"] = delivery_results(delivery.text, count=len(checks))
-        task["report"] = delivery_section(delivery.text, "report")
+        task["results"] = delivery_results(delivery.text, count=len(deliverables))
+        task["report"] = delivery_section(delivery.text, "notes") or delivery_section(
+            delivery.text, "report"
+        )
         task["caveats"] = delivery_section(delivery.text, "caveats")
 
     def _validate_brief(self, *, task: dict[str, Any]) -> None:
@@ -467,19 +536,12 @@ class TaskService:
             )
 
     def _validate_delivery(self, *, task: dict[str, Any]) -> None:
-        brief = self._submitted_document(
-            task=task, role=TASK_BRIEF_ROLE, what="task brief"
-        )
-        if brief is None:
-            raise WorkflowError(
-                "the delivery cannot be checked without a submitted brief: "
-                "submit brief.md (role 'brief') first"
-            )
-        checks = brief_checks(brief.text)
+        checks = [str(x) for x in task.get("deliverables") or []]
         if not checks:
             raise WorkflowError(
-                "the brief's Done when section has no valid numbered checks; fix "
-                "the brief before submitting the delivery"
+                "this task has no deliverables to confirm — it predates "
+                "structured goals and its brief lists none; the owner should "
+                "end it (mark_failed) and create a task with deliverables"
             )
         document = self._submitted_document(
             task=task, role=TASK_DELIVERY_ROLE, what="task delivery"

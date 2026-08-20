@@ -1075,11 +1075,16 @@ class Application:
         *,
         name: str,
         goal: str,
+        deliverables: list[str] | str | None = None,
         depends_on: list[str] | str | None = None,
         project_id: str | None = None,
     ) -> dict[str, Any]:
         state = self.research.create_task(
-            name=name, goal=goal, depends_on=depends_on, project_id=project_id
+            name=name,
+            goal=goal,
+            deliverables=deliverables,
+            depends_on=depends_on,
+            project_id=project_id,
         )
         return dict(slim_task_state(state))
 

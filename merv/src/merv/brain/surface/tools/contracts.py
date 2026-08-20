@@ -468,15 +468,25 @@ class TaskCreateInput(ProjectScopedInput):
     goal: str = Field(
         default="",
         description=(
-            "REQUIRED. What this task must achieve and why the project needs "
-            "it, in the brief's Goal shape: one headline line; 'Deliver:' with "
-            "a bullet per thing that will exist when it is done; 'So that "
-            "<why>'. Write it STANDALONE — a task is read on its own page, so "
-            "name concrete datasets, tools, and experiments ('the wd-sweep "
-            "experiment'), never context the reader cannot see ('the wave', "
-            "'this reflection'). Say what must be true, not how to do it — the "
-            "how is the executor's. The numbered Done-when checks belong in "
-            "the brief.md artifact (role 'brief')."
+            "REQUIRED. Short prose — what needs to be done and why the "
+            "project needs it. Write it STANDALONE: a person just opening the "
+            "task must understand it, so name concrete datasets, tools, and "
+            "experiments ('the wd-sweep experiment'), never context the "
+            "reader cannot see ('the wave', 'this reflection'). No method — "
+            "how is the executor's. The goal and deliverables are IMMUTABLE "
+            "after creation."
+        ),
+    )
+    deliverables: list[str] | str | None = Field(
+        default=None,
+        description=(
+            "REQUIRED. The things that must exist when the task is done — "
+            "one item per thing, each verifiable AS WRITTEN (carry the "
+            "criterion in the sentence: counts, tolerances, required "
+            "sections). No bundles, no vague nouns. Rule of thumb 1-7 items; "
+            "more usually means two tasks. Immutable after creation: a wrong "
+            "deliverable is an honest miss ('not delivered — why') in the "
+            "delivery, or the owner ends the task and creates a better one."
         ),
     )
     depends_on: list[str] | str | None = Field(
@@ -1546,12 +1556,15 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         description=(
             f"Create a {TASK_WORKFLOW.initial} task: scoped non-experiment work "
             "with a verifiable finish line and no claim (lit review, data "
-            "preparation, harness building, memos). Requires a goal and a short "
-            "folder-safe 'name' unique among the project's tasks; the name "
-            "becomes the task folder tasks/<name>/. Then write the brief "
-            "(role 'brief': Goal + numbered Done-when checks) and, when the "
-            "work is done, the delivery (role 'delivery': evidence per check). "
-            "Has a claim to test? Create an experiment instead."
+            "preparation, harness building, memos). Requires a goal (short "
+            "standalone prose), deliverables (the things that must exist, each "
+            "verifiable as written), and a short folder-safe 'name' unique "
+            "among the project's tasks; the name becomes the task folder "
+            "tasks/<name>/. Goal and deliverables are IMMUTABLE — Merv renders "
+            "and pins brief.md from them. When the work is done, submit the "
+            "delivery (role 'delivery': one confirmation per deliverable, "
+            "then Notes prose). Has a claim to test? Create an experiment "
+            "instead."
         ),
     ),
     "task.list": ToolContract(

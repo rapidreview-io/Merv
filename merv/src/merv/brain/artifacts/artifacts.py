@@ -892,6 +892,13 @@ def _validate_association(*, target_type: str, role: str) -> None:
                 "replacement_role": roles.PROJECT_GRAPH_ROLE,
             },
         )
+    if target_type == "task" and role == roles.TASK_BRIEF_ROLE:
+        raise ValidationError(
+            "a task's brief is rendered by Merv from the immutable goal at "
+            "creation and cannot be submitted or replaced; a wrong goal is an "
+            "honest miss in the delivery, or the owner ends the task "
+            "(mark_failed) and creates a better one"
+        )
     if role not in roles.SUBMITTABLE_ROLES:
         allowed = sorted(roles.SUBMITTABLE_ROLES)
         raise ValidationError(

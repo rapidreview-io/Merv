@@ -31,7 +31,6 @@ from .evidence import (
     artifact_submission_recency_key,
     claim_refs,
     depends_on_refs,
-    render_task_brief,
     current_slot_artifacts,
     current_reflection_requirement_artifact,
     graph_diff,
@@ -2500,6 +2499,14 @@ class ReflectionService:
                 reflection_id=reflection_id,
                 name=str(proposal.get("name") or ""),
                 goal=str(proposal.get("goal") or ""),
+                deliverables=[
+                    str(item)
+                    for item in (
+                        proposal.get("deliverables")
+                        if proposal.get("deliverables") is not None
+                        else proposal.get("done_when") or []
+                    )
+                ],
                 proposal_key=proposal_key,
             )
             task_id = str(task["id"])
@@ -2513,14 +2520,7 @@ class ReflectionService:
                 """,
                 (reflection_id, task_id, proposal_key, now_iso()),
             )
-            self.artifacts.pin(
-                target=ArtifactTarget("task", task_id, project_id),
-                role=TASK_BRIEF_ROLE,
-                path=f"tasks/{task['name']}/brief.md",
-                data=render_task_brief(proposal).encode("utf-8"),
-                title=f"Brief: {task['name']}",
-                tx=conn,
-            )
+            # create_from_reflection pinned the rendered brief already.
             pending_edges.append((task_id, depends_on_refs(proposal)))
         for proposal in experiments:
             claim_ids = [key_to_claim_id.get(ref, ref) for ref in claim_refs(proposal)]

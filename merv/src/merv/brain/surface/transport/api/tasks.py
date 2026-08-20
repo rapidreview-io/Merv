@@ -39,6 +39,7 @@ def build_router(
                 "project_id": project_id,
                 "name": payload.get("name") or "",
                 "goal": payload.get("goal") or "",
+                "deliverables": payload.get("deliverables") or [],
                 "depends_on": payload.get("depends_on") or [],
             },
         )

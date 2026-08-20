@@ -44,8 +44,6 @@ from merv.brain.research_core.models import (
     ExperimentSummary,
     PersistedRunState,
     DependencyNode,
-    TaskDescription,
-    TaskRequirement,
     TaskResult,
     TaskState,
     TaskSummary,
@@ -272,20 +270,6 @@ SAMPLES: dict[type, object] = {
     CommittedExperimentUpdate: CommittedExperimentUpdate(
         state={"id": "exp_1", "status": "running"}, event=EVENT
     ),
-    TaskDescription: {
-        "summary": "Prepare the dataset",
-        "deliverables": ["clean splits under out/"],
-        "purpose": "Every experiment trains on the same data.",
-        "structured": True,
-        "text": "Prepare the dataset\n\nDeliver:\n- clean splits under out/\n\nSo that every experiment trains on the same data.",
-        "source": "brief",
-    },
-    TaskRequirement: {
-        "number": 1,
-        "statement": "splits exist under out/",
-        "verify": "row counts match the data card",
-        "text": "splits exist under out/ — verify: row counts match the data card",
-    },
     TaskResult: {
         "number": 1,
         "state": "met",
@@ -310,24 +294,8 @@ SAMPLES: dict[type, object] = {
         "attempt_index": 1,
         "outcome": "",
         "failed_by": "",
-        "summary": "Prepare the dataset",
-        "description": {
-            "summary": "Prepare the dataset",
-            "deliverables": ["clean splits under out/"],
-            "purpose": "Every experiment trains on the same data.",
-            "structured": True,
-            "text": "Prepare the dataset",
-            "source": "goal",
-        },
-        "checks": ["splits exist under out/ — verify: row counts match the data card"],
-        "requirements": [
-            {
-                "number": 1,
-                "statement": "splits exist under out/",
-                "verify": "row counts match the data card",
-                "text": "splits exist under out/ — verify: row counts match the data card",
-            }
-        ],
+        "deliverables": ["clean, deduplicated splits exist under out/"],
+        "checks": ["clean, deduplicated splits exist under out/"],
         "results": [
             {
                 "number": 1,
@@ -360,17 +328,8 @@ SAMPLES: dict[type, object] = {
         "attempt_index": 1,
         "outcome": "",
         "failed_by": "",
-        "summary": None,
-        "description": {
-            "summary": None,
-            "deliverables": [],
-            "purpose": None,
-            "structured": False,
-            "text": "Prepare the dataset",
-            "source": "goal",
-        },
+        "deliverables": [],
         "checks": [],
-        "requirements": [],
         "results": [],
         "report": None,
         "caveats": None,

@@ -13,11 +13,10 @@ Sandbox executes work, Artifacts owns evidence, Feed publishes observations,
 Object Storage owns heavy bytes, Literature literature.
 
 `Research` is the one concrete public root, built from a `BaseStateStore` and
-`Artifacts` and imported from `research_core`, never from implementation files;
-the experiment, task, reflection, and review services are private collaborators.
+`Artifacts`, imported from `research_core` only; the experiment, task,
+reflection, and review services are private collaborators.
 
 ## Files
-
 - `research.py`: public root; project, claim, candidate writes, workflow delegation,
   snapshots, project context, membership, events, graph refs.
 - `experiments.py`: experiment creation invariants, state machine, gates, sealing,
@@ -27,11 +26,11 @@ the experiment, task, reflection, and review services are private collaborators.
   checks, per-node dependency and dependent rows for the shared gate and UI.
 - `reflections.py`: reflection state machine, corpus snapshots, lens coverage,
   graph comparison, change-spec validation/materialization, drift signal.
-- `reviews.py`: review requests, one-time capabilities, isolated sessions, pinned
-  snapshots, verdict submission, return routing. `association_targets.py`: target
-  resolution and publication protection.
-- `experiment_workflow.py`, `task_workflow.py`, `reflection_workflow.py`: the three
-  lifecycles; the experiment file also declares the shared dependency need.
+- `reviews.py`: review requests, one-time capabilities, isolated sessions,
+  pinned snapshots, verdicts, return routing. `association_targets.py`:
+  target resolution and publication protection.
+- `experiment_workflow.py`, `task_workflow.py`, `reflection_workflow.py`: the
+  three lifecycles; the shared dependency need lives with the experiment file.
 - `workflow_schema.py`: passive workflow values and declaration validation.
 - `policy.py`: vocabulary, validation, gate evaluation, snapshot identity, reflection
   signal, limits. `evidence.py`: evidence selection, document checks and parsing,
@@ -51,14 +50,15 @@ keyed delivery also writes `tracking_deliveries` there, so its unique key proves
 the delivery committed and prevents duplicate external runs.
 
 A task is scoped non-experiment work with no claim: `in_progress -> in_review
--> done`, `failed` the only other ending. The brief (Goal, numbered Done-when
-checks) is the contract, the delivery answers one entry per check, one review
-verifies them: `needs_changes` returns to `in_progress`; `fail` or the owner's
-`mark_failed` ends it. State parses both documents into structure (evidence.py:
-goal → summary/deliverables/purpose, check → statement/verify, entry → state/
-evidence/how, Report, Caveats) and lists `dependents` beside `dependencies`.
-Experiments and tasks share `node_dependencies`: an experiment waits at `ready_to_run`,
-a task before `submit_delivery`, until every dependency succeeded (else `dependency_failed`).
+-> done`, `failed` the only other ending. Goal prose + deliverables (each
+verifiable as written) are IMMUTABLE structure at create (migration 53),
+rendered and pinned as brief.md; brief submissions are refused. The delivery
+answers one confirmation per deliverable ("not delivered — why" is legal) plus
+Notes; resubmissions are complete versions, one review per version:
+`needs_changes` returns, `fail` or `mark_failed` ends. State parses the
+delivery (entry → state/evidence/how); `dependents` sits beside `dependencies`. Both node kinds share `node_dependencies`: an experiment
+waits at `ready_to_run`, a task before `submit_delivery`, until every dependency
+succeeded (else `dependency_failed`).
 
 ## Reflection and review lifecycle
 
@@ -96,5 +96,5 @@ Compatibility reads may hydrate older rows; new writes follow current invariants
 
 ## Maintenance rule
 
-Keep domain decisions here and connectivity elsewhere. Keep this guide current,
-dense, free of migration history, and at most 100 lines.
+Keep domain decisions here, connectivity elsewhere; stay current, dense, free of
+migration history, and at most 100 lines.

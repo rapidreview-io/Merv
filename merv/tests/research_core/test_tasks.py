@@ -5,85 +5,57 @@ import json
 from merv.brain.kernel.utils import NotFoundError, ValidationError, WorkflowError
 from merv.brain.research_core.dependencies import record_dependencies
 from merv.brain.research_core.evidence import (
+    brief_checks,
     delivery_entry_parts,
     delivery_results,
     delivery_section,
-    goal_parts,
-    requirement_parts,
+    render_task_brief,
 )
 from merv.brain.research_core.task_workflow import TASK_WORKFLOW
 
 from .scenarios import VALID_CHANGE_SPEC, VALID_PLAN, ResearchCase
 
 
-VALID_BRIEF = """\
-# Brief: prep-data
-
-## Goal
-Prepare dataset D so the wave's experiments can train on clean splits.
-
-## Done when
-1. train/val/test parquet files exist under out/ — verify: row counts match the data card
-2. no id appears in more than one split — verify: run check_overlap.py, expect 0
-3. a data card records source, license, and preprocessing — verify: read out/DATA_CARD.md
-
-## Scope
-No new data sources. Keep the raw download outside the repo.
-"""
+DELIVERABLES = [
+    "train/val/test parquet files exist under out/ with row counts matching the data card",
+    'check_overlap.py prints "0 overlapping ids" when run from the task folder',
+    "out/DATA_CARD.md records source, license, and preprocessing",
+]
 
 VALID_DELIVERY = """\
 # Delivery: prep-data
 
-## Checks
+## Confirmations
 1. out/{train,val,test}.parquet with 41 200 / 5 150 / 5 150 rows — how to check: ls out/ and open the data card's row-count table
 2. check_overlap.py printed "0 overlapping ids" (receipt in the sandbox run log) — how to check: rerun it from the task folder
 3. out/DATA_CARD.md written — how to check: open it; source, license, preprocessing sections are filled
 
+## Notes
+Splits drawn with a seeded permutation; the card lists the seed. The val/test
+split predates the dedup fix; see the data card before trusting it downstream.
+"""
+
+# The pre-schema section names still parse (older tasks on real brains).
+LEGACY_DELIVERY = """\
+## Checks
+1. [x] out/train.parquet exists — how to check: ls out/
+2. [ ] overlap receipt missing — how to check: rerun check_overlap.py
+3. not delivered — the data card is blocked on the license question
+
+## Report
+Legacy report prose.
+
 ## Caveats
-The val/test split was drawn before the dedup fix; see the data card.
+Legacy caveat prose.
 """
 
 SHORT_DELIVERY = """\
-## Checks
+## Confirmations
 1. splits exist — how to check: ls out/
 
-## Caveats
+## Notes
 none
 """
-
-STRUCTURED_BRIEF = """\
-# Brief: prep-data
-
-## Goal
-Build the wave's shared splits and data card.
-
-Deliver:
-- clean, deduplicated train/val/test splits under out/
-- a data card with source, license, and preprocessing
-
-So that every experiment in the wave trains on the same data.
-
-## Done when
-1. train/val/test parquet files exist under out/ — verify: row counts match the data card
-2. no id appears in more than one split — verify: run check_overlap.py, expect 0
-3. a data card records source, license, and preprocessing — verify: read out/DATA_CARD.md
-"""
-
-STRUCTURED_DELIVERY = """\
-# Delivery: prep-data
-
-## Checks
-1. [x] out/{train,val,test}.parquet with 41 200 / 5 150 / 5 150 rows — how to check: ls out/
-2. [ ] check_overlap.py could not run: the receipt is missing — how to check: rerun it from the task folder
-3. out/DATA_CARD.md written — how to check: open it
-
-## Report
-Splits were drawn with a seeded permutation; the card lists the seed.
-
-## Caveats
-The val/test split was drawn before the dedup fix.
-"""
-
 
 class TaskWorkflowTest(ResearchCase):
     def create_task(self, name: str = "prep-data", **extra) -> str:
@@ -92,7 +64,9 @@ class TaskWorkflowTest(ResearchCase):
                 "task.create",
                 project_id=self.project_id,
                 name=name,
-                goal="Prepare dataset D for the wave.",
+                goal="Prepare dataset D with clean, deduplicated splits so "
+                "the distill experiments train on identical data.",
+                deliverables=extra.pop("deliverables", None) or DELIVERABLES,
                 **extra,
             )["id"]
         )
@@ -108,13 +82,7 @@ class TaskWorkflowTest(ResearchCase):
         return self.call("task.transition", **arguments)
 
     def submit_task_docs(self, task_id: str, *, delivery: str = VALID_DELIVERY) -> None:
-        self.submit(
-            target_type="task",
-            target_id=task_id,
-            role="brief",
-            path="tasks/prep-data/brief.md",
-            body=VALID_BRIEF,
-        )
+        # The brief is rendered and pinned at create; only the delivery is authored.
         self.submit(
             target_type="task",
             target_id=task_id,
@@ -138,22 +106,8 @@ class TaskWorkflowTest(ResearchCase):
 
         status = self.task_status(task_id)
         self.assertEqual(status["scope"], "task")
-        self.assertEqual(status["workflow"]["current_gate"], "brief_required")
-        self.assertEqual(status["workflow"]["next_action"], "write_and_submit_brief")
-        self.assertEqual(status["workflow"]["artifact_guidance"]["role"], "brief")
-
-        brief_requirement = TASK_WORKFLOW.requirement("brief")
-        with self.assertRaisesRegex(WorkflowError, brief_requirement.error[:40]):
-            self.transition_task(task_id, "submit_delivery")
-
-        self.submit(
-            target_type="task",
-            target_id=task_id,
-            role="brief",
-            path="tasks/prep-data/brief.md",
-            body=VALID_BRIEF,
-        )
-        status = self.task_status(task_id)
+        # The brief is rendered and pinned at create — the first gate is the
+        # delivery, and the goal is immutable: brief submissions are refused.
         self.assertEqual(status["workflow"]["current_gate"], "delivery_required")
         self.assertEqual(
             status["workflow"]["artifact_guidance"]["checks"],
@@ -162,9 +116,21 @@ class TaskWorkflowTest(ResearchCase):
             ],
         )
         self.assertEqual(len(status["task"]["checks"]), 3)
-        self.assertEqual(status["context"]["brief"]["content"], VALID_BRIEF)
+        self.assertEqual(status["task"]["deliverables"], DELIVERABLES)
+        rendered = status["context"]["brief"]["content"]
+        self.assertIn("## Goal", rendered)
+        self.assertIn("## Deliverables", rendered)
+        self.assertIn(DELIVERABLES[0], rendered)
+        with self.assertRaisesRegex(ValidationError, "immutable goal"):
+            self.submit(
+                target_type="task",
+                target_id=task_id,
+                role="brief",
+                path="tasks/prep-data/brief.md",
+                body="# Brief\n\n## Goal\nrewritten\n\n## Deliverables\n1. x\n",
+            )
 
-        # A delivery that skips checks 2 and 3 is shape-invalid.
+        # A delivery that skips deliverables 2 and 3 is shape-invalid.
         self.submit(
             target_type="task",
             target_id=task_id,
@@ -172,7 +138,7 @@ class TaskWorkflowTest(ResearchCase):
             path="tasks/prep-data/delivery.md",
             body=SHORT_DELIVERY,
         )
-        with self.assertRaisesRegex(WorkflowError, "missing entries for check"):
+        with self.assertRaisesRegex(WorkflowError, "missing entries for deliverable"):
             self.transition_task(task_id, "submit_delivery")
         status = self.task_status(task_id)
         self.assertEqual(status["workflow"]["next_action"], "fix_delivery_artifact")
@@ -349,10 +315,6 @@ class TaskWorkflowTest(ResearchCase):
 
         # Finish the upstream task; the downstream gate opens.
         self.submit(
-            target_type="task", target_id=upstream, role="brief",
-            path="tasks/download-raw/brief.md", body=VALID_BRIEF,
-        )
-        self.submit(
             target_type="task", target_id=upstream, role="delivery",
             path="tasks/download-raw/delivery.md", body=VALID_DELIVERY,
         )
@@ -432,103 +394,79 @@ class TaskWorkflowTest(ResearchCase):
 
     # ---- document structure ----
 
-    def test_goal_requirement_and_delivery_parsers(self) -> None:
-        parts = goal_parts(STRUCTURED_BRIEF.split("## Goal", 1)[1].split("## Done when")[0])
-        self.assertTrue(parts["structured"])
-        self.assertEqual(parts["summary"], "Build the wave's shared splits and data card.")
-        self.assertEqual(len(parts["deliverables"]), 2)
-        self.assertTrue(parts["deliverables"][1].startswith("a data card"))
-        self.assertEqual(
-            parts["purpose"], "Every experiment in the wave trains on the same data."
+    def test_document_parsers_and_rendered_brief(self) -> None:
+        # The rendered brief: Goal prose + numbered Deliverables.
+        brief = render_task_brief(
+            {"name": "prep-data", "goal": "Prose goal.", "deliverables": ["a", "b"]}
         )
-        plain = goal_parts("Prepare dataset D for the wave.")
-        self.assertFalse(plain["structured"])
-        self.assertIsNone(plain["summary"])
-        self.assertEqual(plain["text"], "Prepare dataset D for the wave.")
-
-        req = requirement_parts(2, "no id appears in more than one split — verify: run check_overlap.py, expect 0")
-        self.assertEqual(req["statement"], "no id appears in more than one split")
-        self.assertEqual(req["verify"], "run check_overlap.py, expect 0")
-        bare = requirement_parts(1, "a data card exists")
-        self.assertEqual((bare["statement"], bare["verify"]), ("a data card exists", None))
-        semi = requirement_parts(3, "eval prints both metrics; verify by running it on CPU")
-        self.assertEqual(semi["statement"], "eval prints both metrics")
-        self.assertEqual(semi["verify"], "running it on CPU")
+        self.assertIn("## Goal", brief)
+        self.assertIn("## Deliverables", brief)
+        self.assertEqual(brief_checks(brief), ["a", "b"])
+        # Legacy proposals may still carry done_when; legacy briefs still read.
+        legacy = render_task_brief(
+            {"name": "old", "goal": "Prose.", "done_when": ["x"]}
+        )
+        self.assertEqual(brief_checks(legacy), ["x"])
+        self.assertEqual(
+            brief_checks("## Goal\ng\n\n## Done when\n1. legacy check\n"),
+            ["legacy check"],
+        )
 
         met = delivery_entry_parts(1, "[x] 9,409 rows — how to check: python check.py")
         self.assertEqual((met["state"], met["evidence"], met["how"]), ("met", "9,409 rows", "python check.py"))
-        unmet = delivery_entry_parts(2, "UNMET: the license forbids it — how to check: read LICENSE")
-        self.assertEqual((unmet["state"], unmet["evidence"]), ("unmet", "the license forbids it"))
-        partial = delivery_entry_parts(3, "[~] two of three widths build")
-        self.assertEqual((partial["state"], partial["how"]), ("partial", None))
-        implicit = delivery_entry_parts(4, "out/DATA_CARD.md written")
+        miss = delivery_entry_parts(2, "not delivered — the license question is open")
+        self.assertEqual(miss["state"], "unmet")
+        self.assertIn("license question", miss["evidence"])
+        implicit = delivery_entry_parts(3, "out/DATA_CARD.md written")
         self.assertEqual(implicit["state"], "met")
 
-        results = delivery_results(STRUCTURED_DELIVERY, count=4)
-        self.assertEqual([r["state"] for r in results], ["met", "unmet", "met", None])
-        self.assertEqual(results[3]["evidence"], None)
-        self.assertTrue(delivery_section(STRUCTURED_DELIVERY, "report").startswith("Splits were drawn"))
-        self.assertIsNone(delivery_section(VALID_DELIVERY, "report"))
+        # Confirmations is the section; Checks still parses (legacy).
+        results = delivery_results(VALID_DELIVERY, count=3)
+        self.assertEqual([r["state"] for r in results], ["met", "met", "met"])
+        legacy_results = delivery_results(LEGACY_DELIVERY, count=3)
+        self.assertEqual([r["state"] for r in legacy_results], ["met", "unmet", "unmet"])
+        self.assertTrue(delivery_section(VALID_DELIVERY, "notes").startswith("Splits drawn"))
+        self.assertTrue(delivery_section(LEGACY_DELIVERY, "report").startswith("Legacy report"))
+        self.assertTrue(delivery_section(LEGACY_DELIVERY, "caveats").startswith("Legacy caveat"))
 
-    def test_state_carries_description_requirements_results_and_dependents(self) -> None:
+    def test_state_carries_deliverables_results_and_dependents(self) -> None:
         task_id = self.create_task("prep-data")
         downstream = self.create_task("train-on-splits", depends_on=[task_id])
         rich = self.app.application.task(
             task_id=task_id, project_id=self.project_id, rich=True
         )
-        # Before any brief the description is the creation goal, plain.
-        self.assertEqual(rich["description"]["source"], "goal")
-        self.assertFalse(rich["description"]["structured"])
-        self.assertIsNone(rich["summary"])
-        self.assertEqual(rich["requirements"], [])
+        # The goal's contract is structure from creation.
+        self.assertEqual(rich["deliverables"], DELIVERABLES)
+        self.assertEqual(rich["checks"], DELIVERABLES)
+        self.assertNotIn("deliverables_json", rich)
         self.assertEqual(rich["results"], [])
         self.assertEqual([d["id"] for d in rich["dependents"]], [downstream])
         self.assertEqual(rich["dependents"][0]["node_type"], "task")
 
         self.submit(
-            target_type="task", target_id=task_id, role="brief",
-            path="tasks/prep-data/brief.md", body=STRUCTURED_BRIEF,
-        )
-        rich = self.app.application.task(
-            task_id=task_id, project_id=self.project_id, rich=True
-        )
-        self.assertEqual(rich["description"]["source"], "brief")
-        self.assertEqual(rich["summary"], "Build the wave's shared splits and data card.")
-        self.assertEqual(len(rich["description"]["deliverables"]), 2)
-        self.assertEqual(len(rich["requirements"]), 3)
-        self.assertEqual(rich["requirements"][0]["verify"], "row counts match the data card")
-        self.assertEqual(rich["checks"][0], rich["requirements"][0]["text"])
-
-        self.submit(
             target_type="task", target_id=task_id, role="delivery",
-            path="tasks/prep-data/delivery.md", body=STRUCTURED_DELIVERY,
+            path="tasks/prep-data/delivery.md", body=VALID_DELIVERY,
         )
         rich = self.app.application.task(
             task_id=task_id, project_id=self.project_id, rich=True
         )
-        self.assertEqual([r["state"] for r in rich["results"]], ["met", "unmet", "met"])
-        self.assertEqual(rich["results"][0]["how"], "ls out/")
+        self.assertEqual([r["state"] for r in rich["results"]], ["met", "met", "met"])
+        self.assertEqual(rich["results"][0]["how"], "ls out/ and open the data card's row-count table")
+        self.assertTrue(rich["report"].startswith("Splits drawn"))
         # The UI's task-scoped status read carries the same detail; the agent's
         # slim status does not pay for it.
         status = self.app.application.status(project_id=self.project_id, task_id=task_id)
-        self.assertEqual([r["state"] for r in status["task"]["results"]], ["met", "unmet", "met"])
-        self.assertTrue(status["task"]["report"].startswith("Splits were drawn"))
+        self.assertEqual([r["state"] for r in status["task"]["results"]], ["met", "met", "met"])
         self.assertNotIn("results", self.task_status(task_id)["task"])
-        self.assertTrue(rich["report"].startswith("Splits were drawn"))
-        self.assertTrue(rich["caveats"].startswith("The val/test split"))
-        # The agent-facing slim state keeps checks and gains dependents only.
         slim = self.call("task.get_state", project_id=self.project_id, task_id=task_id)
-        self.assertEqual(len(slim["checks"]), 3)
+        self.assertEqual(slim["deliverables"], DELIVERABLES)
         self.assertEqual([d["id"] for d in slim["dependents"]], [downstream])
-        self.assertNotIn("results", slim)
-        # Lists (the /home snapshot) carry description and requirements but do
-        # not pay for the delivery read.
+        # Lists carry the contract but not the delivery read.
         listed = next(
             t for t in self.app.application.tasks(project_id=self.project_id, rich=True)
             if t["id"] == task_id
         )
-        self.assertEqual(listed["summary"], rich["summary"])
-        self.assertEqual(len(listed["requirements"]), 3)
+        self.assertEqual(listed["deliverables"], DELIVERABLES)
         self.assertNotIn("results", listed)
         self.assertEqual([d["id"] for d in listed["dependents"]], [downstream])
 
@@ -547,6 +485,23 @@ class TaskWorkflowTest(ResearchCase):
         )
         self.assertEqual([d["id"] for d in exp_rich["dependencies"]], [task_id])
         self.assertEqual(exp_rich.get("dependents", []), [])
+
+    def test_deliverables_are_required_and_bounded(self) -> None:
+        with self.assertRaisesRegex(ValidationError, "deliverables is required"):
+            self.call(
+                "task.create", project_id=self.project_id,
+                name="no-contract", goal="A goal with no contract.",
+            )
+        with self.assertRaisesRegex(ValidationError, "at least one item"):
+            self.call(
+                "task.create", project_id=self.project_id,
+                name="empty-contract", goal="G.", deliverables=["", "  "],
+            )
+        with self.assertRaisesRegex(ValidationError, "too many"):
+            self.call(
+                "task.create", project_id=self.project_id,
+                name="bloated", goal="G.", deliverables=[f"d{i}" for i in range(13)],
+            )
 
     # ---- reflection ----
 
@@ -625,7 +580,7 @@ class TaskWorkflowTest(ResearchCase):
         # The task-scoped status shows the pinned brief and the delivery gate.
         status = self.task_status(prep["id"])
         self.assertEqual(status["workflow"]["current_gate"], "delivery_required")
-        self.assertIn("## Done when", status["context"]["brief"]["content"])
+        self.assertIn("## Deliverables", status["context"]["brief"]["content"])
 
     def test_change_spec_may_be_tasks_only_and_rejects_bad_task_specs(self) -> None:
         change_spec = json.loads(VALID_CHANGE_SPEC)

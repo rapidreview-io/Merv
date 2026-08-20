@@ -212,11 +212,13 @@ The declaration in `src/merv/brain/research_core/task_workflow.py` drives
 enforcement, `allowed_transitions`, gate checklists, review returns, and
 `workflow.status_and_next(task_id=...)`.
 
-- `task.create(name, goal, depends_on?)` creates the task straight into
-  `in_progress`; the name becomes the folder `tasks/<name>/`.
-- `submit_delivery` requires a pinned `brief` artifact (Goal + numbered
-  `Done when` checks), a pinned `delivery` artifact whose `Checks` section
-  carries one numbered entry per brief check, and every dependency succeeded.
+- `task.create(name, goal, deliverables, depends_on?)` creates the task
+  straight into `in_progress`; the name becomes the folder `tasks/<name>/`.
+  Goal and deliverables are immutable — Merv renders and pins `brief.md` from
+  them, and brief submissions against tasks are refused.
+- `submit_delivery` requires a `delivery` artifact whose `Confirmations`
+  section carries one numbered entry per deliverable, and every dependency
+  succeeded.
 - `accept` requires a passing `task_reviewer` review for the current snapshot;
   `evidence.outcome` is recorded.
 - `mark_failed` is the owner's exit; `evidence.reason` is recorded and
@@ -227,7 +229,7 @@ A task review `needs_changes` returns to `in_progress` on the same attempt
 `reviewer`); `return_to` must be omitted or `failed`.
 
 `workflow.status_and_next(project_id, task_id)` returns the task scope: the
-slim task (goal, status, checks, dependencies, dependents, artifacts, reviews),
+slim task (goal, deliverables, status, dependencies, dependents, artifacts, reviews),
 the workflow guidance, and a bounded context with the brief and delivery content.
 `task.transition` returns a compact acknowledgement.
 

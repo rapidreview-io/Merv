@@ -81,6 +81,7 @@ def slim_task_state(full: TaskState) -> SlimTaskState:
         "revision_context": rich.get("revision_context"),
         "created_at": rich.get("created_at"),
         "updated_at": rich.get("updated_at"),
+        "deliverables": list(rich.get("deliverables") or []),
         "checks": list(rich.get("checks") or []),
         "dependencies": project_rows(
             rich.get("dependencies", []), _SLIM_DEPENDENCY_FIELDS

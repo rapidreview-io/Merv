@@ -161,7 +161,7 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "storage.object": "3fba20bb5e16ab17aa3e96c203332716c9eb3688332c2e11e573d220046451db",
     "storage.put_object": "550c3f55aa135821f658eba9800d062f4e37b4ad3956af523b105be96d7da15a",
     "storage.submit": "074879ce62d47c893a33b707fb7e307d7bb58c9d3aaccf3da66812f52c7e5fe9",
-    "task.create": "4a9ebb4adafab1e027f1fe15feebe978b2939b0f86860d210e70429b1fb42ad4",
+    "task.create": "b7491b256aea7e16230389fff86175c025aeed06db094b688dd6e94bcc7dfa87",
     "task.get_state": "523a5b27c7e96a0548c42aea81d3e841919cbaa7f3d4af34fce688397c656867",
     "task.list": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
     "task.transition": "cf9aa849fb3f049b6ddff39d95b7f56439d0543d3b18f7131b5a4ce6403abac3",

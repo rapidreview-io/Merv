@@ -55,28 +55,8 @@ class CommittedExperimentUpdate:
     event: StoredEvent
 
 
-class TaskDescription(TypedDict):
-    """The brief's Goal as structure: a headline, what gets built, and why."""
-
-    summary: str | None
-    deliverables: list[str]
-    purpose: str | None
-    structured: bool
-    text: str
-    source: str
-
-
-class TaskRequirement(TypedDict):
-    """One Done-when check: what must be true, and how to verify it."""
-
-    number: int
-    statement: str
-    verify: str | None
-    text: str
-
-
 class TaskResult(TypedDict):
-    """One delivery entry: the executor's claim, the evidence, how to check."""
+    """One confirmation: the executor's claim, the pointer, how to check."""
 
     number: int
     state: str | None
@@ -105,12 +85,10 @@ class TaskState(TypedDict, total=False):
     attempt_index: int
     outcome: str
     failed_by: str
-    # Structure parsed from the documents (evidence.goal_parts and friends);
+    # The goal's contract and the delivery parsed to structure;
     # `dependents` mirrors `dependencies` on the other side of the edge.
-    summary: str | None
-    description: TaskDescription
-    checks: list[str]
-    requirements: list[TaskRequirement]
+    deliverables: list[str]
+    checks: list[str]  # agent-facing alias of deliverables
     results: list[TaskResult]
     report: str | None
     caveats: str | None

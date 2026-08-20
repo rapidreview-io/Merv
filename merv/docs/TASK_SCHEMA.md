@@ -1,8 +1,10 @@
 # Task schema
 
-> Settled with the founder 2026-08-20. This is the representation the task
-> feature converges on; implementation on branch `Task` still carries the
-> earlier brief/Done-when form where noted in code.
+> Settled with the founder 2026-08-20 and implemented the same day
+> (structure-canonical): `task.create` takes the immutable goal prose +
+> deliverables (migration 53), `brief.md` is rendered and pinned from them,
+> and the delivery document carries one confirmation per deliverable plus
+> Notes; resubmissions are the result versions.
 
 
 One YAML skeleton, annotated, with field rules and a filled example.
@@ -140,5 +142,5 @@ Derived, never stored: status details, unlocks, timeline, confirmation counts.
 Status itself derives from the pairing: a version awaiting its round = in_review;
 sent back or nothing submitted = in_progress; pass+accept = done; fail = failed.
 
-Open:
-1. canonical form — documents parsed (today) vs this structure first?
+Decided: structure-canonical for the goal (create-time fields, immutable);
+the result stays a submitted document per version, parsed into confirmations.

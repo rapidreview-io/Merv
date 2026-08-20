@@ -61,10 +61,15 @@ REQUIRED_REPORT_SECTIONS: tuple[tuple[str, str], ...] = (
 # answers them one entry per check under "Checks".
 REQUIRED_BRIEF_SECTIONS: tuple[tuple[str, str], ...] = (
     ("Goal", "goal"),
-    ("Done when", "done when"),
 )
+# The contract list section: "Deliverables" is current; "Done when" is the
+# pre-schema name and stays readable.
+BRIEF_LIST_SECTIONS: tuple[str, ...] = ("deliverables", "done when")
+# The delivery's per-deliverable section: "Confirmations" is current;
+# "Checks" is the pre-schema name and stays readable.
+DELIVERY_LIST_SECTIONS: tuple[str, ...] = ("confirmations", "checks")
 REQUIRED_DELIVERY_SECTIONS: tuple[tuple[str, str], ...] = (
-    ("Checks", "checks"),
+    ("Confirmations", "confirmations"),
 )
 MAX_BRIEF_BYTES = 16_000
 MAX_DELIVERY_BYTES = 16_000
@@ -369,8 +374,12 @@ def numbered_items(body: str) -> dict[int, str]:
 
 
 def brief_checks(brief_text: str) -> list[str]:
-    """The brief's Done-when checks in numeric order (empty if malformed)."""
-    body = markdown_section_body(brief_text, "done when")
+    """The brief's deliverables in numeric order (empty if malformed)."""
+    body = None
+    for key in BRIEF_LIST_SECTIONS:
+        body = markdown_section_body(brief_text, key)
+        if body is not None:
+            break
     if body is None:
         return []
     items = numbered_items(body)
@@ -384,23 +393,31 @@ def brief_problems(brief_text: str) -> list[str]:
     missing = required_markdown_sections_missing(brief_text, REQUIRED_BRIEF_SECTIONS)
     if missing:
         problems.append("missing required sections: " + ", ".join(missing))
-    body = markdown_section_body(brief_text, "done when")
-    if body is not None:
+    body = None
+    for key in BRIEF_LIST_SECTIONS:
+        body = markdown_section_body(brief_text, key)
+        if body is not None:
+            break
+    if body is None:
+        problems.append(
+            "missing required sections: Deliverables (a numbered list of the "
+            "things that must exist when the task is done)"
+        )
+    else:
         items = numbered_items(body)
         if not items:
             problems.append(
-                "Done when must be a numbered list of checks (1. ..., 2. ...), "
-                "each stating what must be true when the task is done and how "
-                "it can be verified"
+                "Deliverables must be a numbered list (1. ..., 2. ...), each "
+                "one thing, verifiable as written"
             )
         elif sorted(items) != list(range(1, len(items) + 1)):
             problems.append(
-                "Done when checks must be numbered 1..N without gaps or repeats"
+                "Deliverables must be numbered 1..N without gaps or repeats"
             )
         else:
             for number, text in sorted(items.items()):
                 if not text:
-                    problems.append(f"Done when check {number} is empty")
+                    problems.append(f"Deliverable {number} is empty")
     size = len(brief_text.encode("utf-8"))
     if size > MAX_BRIEF_BYTES:
         problems.append(
@@ -411,36 +428,41 @@ def brief_problems(brief_text: str) -> list[str]:
 
 
 def delivery_problems(delivery_text: str, *, checks: list[str]) -> list[str]:
-    """Shape only: one Checks entry per brief check. Content is the reviewer's."""
+    """Shape only: one confirmation per deliverable. Content is the reviewer's."""
     problems: list[str] = []
-    missing = required_markdown_sections_missing(
-        delivery_text, REQUIRED_DELIVERY_SECTIONS
-    )
-    if missing:
-        problems.append("missing required sections: " + ", ".join(missing))
-    body = markdown_section_body(delivery_text, "checks")
+    body = None
+    for key in DELIVERY_LIST_SECTIONS:
+        body = markdown_section_body(delivery_text, key)
+        if body is not None:
+            break
+    if body is None:
+        problems.append(
+            "missing required sections: Confirmations (one numbered entry per "
+            "deliverable)"
+        )
     if body is not None:
         entries = numbered_items(body)
         expected = list(range(1, len(checks) + 1))
         absent = [number for number in expected if number not in entries]
         if absent:
             problems.append(
-                "Checks needs one numbered entry per brief check; missing "
-                "entries for check(s) " + ", ".join(str(n) for n in absent)
-                + " — give the evidence and how to check it, or state that "
-                "the check is unmet and why"
+                "Confirmations needs one numbered entry per deliverable; "
+                "missing entries for deliverable(s) "
+                + ", ".join(str(n) for n in absent)
+                + " — say where the thing is and how to check it, or state "
+                "plainly 'not delivered — <why>'"
             )
         empty = [number for number in expected if entries.get(number) == ""]
         if empty:
             problems.append(
-                "Checks entries must not be empty: " + ", ".join(str(n) for n in empty)
+                "Confirmations must not be empty: " + ", ".join(str(n) for n in empty)
             )
         extra = sorted(number for number in entries if number not in expected)
         if extra:
             problems.append(
-                "Checks has entries with no matching brief check: "
+                "Confirmations has entries with no matching deliverable: "
                 + ", ".join(str(n) for n in extra)
-                + f" (the brief lists {len(checks)} check(s))"
+                + f" (the goal lists {len(checks)} deliverable(s))"
             )
     size = len(delivery_text.encode("utf-8"))
     if size > MAX_DELIVERY_BYTES:
@@ -452,136 +474,24 @@ def delivery_problems(delivery_text: str, *, checks: list[str]) -> list[str]:
 
 
 # ---- task documents as structure ------------------------------------------
-# The brief's Goal, each Done-when check, and each delivery entry carry a
-# light shape the UI renders natively (goal → summary / deliverables /
-# purpose; check → statement / verify; entry → state / evidence / how).
-# Every parser is tolerant: prose that follows none of it still reads as a
-# single field, so older documents never break the page.
+# The goal (prose + deliverables) is structure at creation; only the delivery
+# still arrives as a document. Each confirmation entry parses into
+# state/evidence/how; the prose sections (Notes, legacy Report/Caveats) come
+# out whole. Parsers stay tolerant: unmarked entries claim met, prose that
+# fits no shape reads as a single field.
 
-_DELIVER_HEAD_RE = re.compile(
-    r"^\s*(?:\*\*)?(?:deliver(?:able)?s?|produces?|outputs?)(?:\*\*)?\s*:\s*(.*?)\s*$",
-    re.IGNORECASE,
-)
-# "So that <why>" as a sentence, or an explicit "Purpose:" / "Why:" label.
-_PURPOSE_HEAD_RE = re.compile(
-    r"^\s*(?:\*\*)?(?:so that\b(?:\*\*)?\s*:?\s*(?P<a>.*?)|(?:purpose|why)(?:\*\*)?\s*:\s*(?P<b>.*?))\s*$",
-    re.IGNORECASE,
-)
-_BULLET_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+(.*\S)\s*$")
-# "<statement> — verify: <how>" (also "; verify by", " - verified by", or the
-# bare keyword); the last separator wins so a statement may mention verifying.
-_VERIFY_PUNCT_RE = re.compile(
-    r"^(?P<statement>.+)(?:\s*[—–;]\s*|\s+-\s+)"
-    r"(?:verify(?:\s+by)?|verified\s+by|verification|how\s+to\s+verify)\s*:?\s+"
-    r"(?P<verify>.+)$",
-    re.IGNORECASE | re.DOTALL,
-)
-_VERIFY_BARE_RE = re.compile(
-    r"^(?P<statement>.+?)\s+(?:verify(?:\s+by)?|verified\s+by)\s*:?\s+(?P<verify>.+)$",
-    re.IGNORECASE | re.DOTALL,
-)
-# Delivery entry state: "[x] …", "[ ] …", "[~] …", "[met] …", or "UNMET: …".
+# Delivery entry state: "[x] …", "[ ] …", "[~] …", "not delivered — …".
 _RESULT_MARKER_RE = re.compile(
     r"^\s*(?:\[(?P<box>[xX✓ ~]|met|unmet|partial(?:ly met)?|not met|yes|no)\]"
-    r"|(?P<word>unmet|not met|met|partial(?:ly met)?)\b)\s*[:—–-]?\s*",
+    r"|(?P<word>not delivered|unmet|not met|met|partial(?:ly met)?)\b)\s*[:—–-]?\s*",
     re.IGNORECASE,
 )
+
 _HOW_SPLIT_RE = re.compile(
     r"^(?P<evidence>.+?)(?:\s*[—–;]\s*|\s+-\s+|\s+)"
     r"(?:how\s+to\s+(?:check|verify)(?:\s+it)?|to\s+(?:check|verify)|check|verify)\s*:\s*(?P<how>.+)$",
     re.IGNORECASE | re.DOTALL,
 )
-
-
-def goal_parts(goal_text: str) -> dict[str, Any]:
-    """Summary / deliverables / purpose from a Goal written in the brief shape.
-
-    Returns ``{"summary", "deliverables", "purpose", "structured", "text"}``;
-    ``structured`` is False (and summary/purpose None) for plain prose.
-    """
-    text = _HTML_COMMENT_RE.sub("", goal_text or "").strip()
-    summary_lines: list[str] = []
-    deliverables: list[str] = []
-    purpose_lines: list[str] = []
-    mode = "summary"
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        head = _DELIVER_HEAD_RE.match(line)
-        if head:
-            mode = "deliver"
-            if head.group(1):
-                deliverables.append(head.group(1))
-            continue
-        purpose = _PURPOSE_HEAD_RE.match(line)
-        if purpose:
-            mode = "purpose"
-            lead = purpose.group("a") if purpose.group("a") is not None else purpose.group("b")
-            if lead:
-                purpose_lines.append(lead)
-            continue
-        if not line.strip():
-            if mode == "summary" and summary_lines:
-                mode = "after-summary"
-            elif mode == "purpose" and purpose_lines:
-                mode = "done"
-            continue
-        if mode == "deliver":
-            bullet = _BULLET_RE.match(line)
-            if bullet:
-                deliverables.append(bullet.group(1))
-            elif deliverables and line[:1] in (" ", "\t"):
-                deliverables[-1] = (deliverables[-1] + " " + line.strip()).strip()
-            else:
-                deliverables.append(line.strip())
-        elif mode == "purpose":
-            purpose_lines.append(line.strip())
-        elif mode == "summary":
-            summary_lines.append(line.strip())
-        # text after the summary paragraph that is neither a Deliver list nor
-        # a purpose sentence is left to the plain-prose fallback below
-    structured = bool(deliverables or purpose_lines)
-    if not structured:
-        return {
-            "summary": None,
-            "deliverables": [],
-            "purpose": None,
-            "structured": False,
-            "text": text,
-        }
-    purpose = " ".join(purpose_lines).strip() or None
-    if purpose:
-        purpose = purpose[:1].upper() + purpose[1:]
-    summary = " ".join(summary_lines).strip() or None
-    return {
-        "summary": summary,
-        "deliverables": deliverables,
-        "purpose": purpose,
-        "structured": True,
-        "text": text,
-    }
-
-
-def requirement_parts(number: int, check_text: str) -> dict[str, Any]:
-    """One Done-when check as ``{number, statement, verify, text}``."""
-    text = (check_text or "").strip()
-    match = _VERIFY_PUNCT_RE.match(text) or _VERIFY_BARE_RE.match(text)
-    if match is None:
-        return {"number": number, "statement": text, "verify": None, "text": text}
-    statement = match.group("statement").strip().rstrip("—–-;,: ").strip()
-    verify = match.group("verify").strip()
-    return {"number": number, "statement": statement or text, "verify": verify or None, "text": text}
-
-
-def brief_requirements(brief_text: str) -> list[dict[str, Any]]:
-    return [
-        requirement_parts(number, check)
-        for number, check in enumerate(brief_checks(brief_text), start=1)
-    ]
-
-
-def brief_goal_text(brief_text: str) -> str | None:
-    body = markdown_section_body(brief_text, "goal")
-    return None if body is None else body.strip()
 
 
 def delivery_entry_parts(number: int, entry_text: str) -> dict[str, Any]:
@@ -597,7 +507,7 @@ def delivery_entry_parts(number: int, entry_text: str) -> dict[str, Any]:
     marker = _RESULT_MARKER_RE.match(text)
     if marker:
         token = (marker.group("box") or marker.group("word") or "").strip().lower()
-        if token in ("", "unmet", "not met", "no"):
+        if token in ("", "unmet", "not met", "not delivered", "no"):
             state = "unmet"
         elif token.startswith("partial") or token == "~":
             state = "partial"
@@ -614,8 +524,12 @@ def delivery_entry_parts(number: int, entry_text: str) -> dict[str, Any]:
 
 
 def delivery_results(delivery_text: str, *, count: int) -> list[dict[str, Any]]:
-    """The delivery's Checks entries, one per brief check (missing ones None-filled)."""
-    body = markdown_section_body(delivery_text, "checks")
+    """The confirmations, one per deliverable (missing ones None-filled)."""
+    body = None
+    for key in DELIVERY_LIST_SECTIONS:
+        body = markdown_section_body(delivery_text, key)
+        if body is not None:
+            break
     entries = {} if body is None else numbered_items(body)
     results: list[dict[str, Any]] = []
     numbers = sorted(set(range(1, count + 1)) | set(entries))
@@ -637,17 +551,21 @@ def delivery_section(delivery_text: str, key: str) -> str | None:
 
 
 def render_task_brief(proposal: dict[str, Any]) -> str:
-    """The brief.md a reflection's task proposal pins at publish.
+    """The brief.md Merv pins at task creation.
 
-    Same shape the executor would write by hand — Goal, numbered Done-when
-    checks, optional Scope and Context — so the delivery gate and the reviewer
-    read one format regardless of who authored the brief.
+    Rendered from the immutable goal — prose plus the numbered deliverables —
+    so the record on disk and the reviewer read one canonical form. Legacy
+    proposals may still carry the list as ``done_when``.
     """
     name = str(proposal.get("name") or "").strip()
     goal = str(proposal.get("goal") or "").strip()
-    checks = _string_list(proposal.get("done_when")) or []
+    checks = (
+        _string_list(proposal.get("deliverables"))
+        or _string_list(proposal.get("done_when"))
+        or []
+    )
     lines = [f"# Brief: {name}" if name else "# Brief", "", "## Goal", goal, ""]
-    lines.append("## Done when")
+    lines.append("## Deliverables")
     for number, check in enumerate(checks, start=1):
         lines.append(f"{number}. {check}")
     lines.append("")
@@ -1147,13 +1065,17 @@ def decision_problems(
         check_name(label, name, taken=task_name_taken, subject="task")
         if not str(proposal.get("goal") or "").strip():
             problems.append(f"{label}.goal is required")
-        checks = _string_list(proposal.get("done_when"))
+        raw = proposal.get("deliverables")
+        legacy = proposal.get("done_when")
+        checks = _string_list(raw if raw is not None else legacy)
         if checks is None:
-            problems.append(f"{label}.done_when must be a list of checks")
+            problems.append(
+                f"{label}.deliverables must be a list of deliverables"
+            )
         elif not checks:
             problems.append(
-                f"{label}.done_when needs at least one check — what must be "
-                "true when the task is done, and how it can be verified"
+                f"{label}.deliverables needs at least one item — a thing that "
+                "must exist when the task is done, verifiable as written"
             )
         for field in ("scope", "context"):
             value = proposal.get(field)
