@@ -90,8 +90,11 @@ sweep, data acquisition and preparation, an evaluation harness, a memo. Be
 specific about outcomes, silent about method: `goal` says what and why,
 `done_when` lists checks — each states what must be true when the task is done
 and how it can be verified — and optional `scope`/`context` bound the work.
-Publication pins each task's brief from these fields, so the executor starts
-from the contract you wrote.
+Write the goal in the brief's shape (one headline line, `Deliver:` bullets,
+`So that <why>`) and STANDALONE: the task is read on its own page, so name the
+experiments and datasets it serves by name, never "the wave" or "this
+reflection". Publication pins each task's brief from these fields, so the
+executor starts from the contract you wrote.
 
 ```json
 {
@@ -119,7 +122,7 @@ from the contract you wrote.
       {
         "key": "prep_data",
         "name": "prep-data",
-        "goal": "Prepare dataset D so the wave's experiments train on clean splits.",
+        "goal": "Prepare dataset D with clean, deduplicated splits.\n\nDeliver:\n- train/val/test parquet files under out/\n- a data card\n\nSo that the distill-resnet18 and scratch-resnet18 experiments train on identical splits.",
         "done_when": [
           "train/val/test parquet files exist under out/ — verify: row counts match the data card",
           "no id appears in more than one split — verify: run check_overlap.py, expect 0"

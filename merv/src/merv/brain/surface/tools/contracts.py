@@ -471,9 +471,12 @@ class TaskCreateInput(ProjectScopedInput):
             "REQUIRED. What this task must achieve and why the project needs "
             "it, in the brief's Goal shape: one headline line; 'Deliver:' with "
             "a bullet per thing that will exist when it is done; 'So that "
-            "<why>'. Say what must be true, not how to do it — the how is the "
-            "executor's. The numbered Done-when checks belong in the brief.md "
-            "artifact (role 'brief')."
+            "<why>'. Write it STANDALONE — a task is read on its own page, so "
+            "name concrete datasets, tools, and experiments ('the wd-sweep "
+            "experiment'), never context the reader cannot see ('the wave', "
+            "'this reflection'). Say what must be true, not how to do it — the "
+            "how is the executor's. The numbered Done-when checks belong in "
+            "the brief.md artifact (role 'brief')."
         ),
     )
     depends_on: list[str] | str | None = Field(

@@ -283,7 +283,7 @@ function NewTaskForm({ projectId, tasks, experiments, onCancel, onCreated }) {
           className="input"
           value={summary}
           onChange={e => setSummary(e.target.value)}
-          placeholder="Build the wave's shared modular-addition dataset and evaluation harness."
+          placeholder="Build one shared modular-addition dataset, model, and evaluation harness."
           maxLength={200}
           required
         />
@@ -306,12 +306,13 @@ function NewTaskForm({ projectId, tasks, experiments, onCancel, onCreated }) {
           className="input"
           value={purpose}
           onChange={e => setPurpose(e.target.value)}
-          placeholder="every experiment in this wave trains and evaluates on identical, correct data and code."
+          placeholder="the wd-sweep and width-sweep experiments train and evaluate on identical data and code."
           required
         />
         <div className="form-hint">
-          Why the project needs it — which experiments or decisions wait on it. The numbered
-          Done-when checks go in the brief the executor submits.
+          Why the project needs it — name the experiments or decisions that wait on it, by
+          their own names: the task must read standalone, so never "the wave" or "this
+          reflection". The numbered Done-when checks go in the brief the executor submits.
         </div>
       </div>
       {candidates.length > 0 && (

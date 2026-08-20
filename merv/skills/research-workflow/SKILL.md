@@ -88,7 +88,10 @@ ad-hoc task needs one written first.
    each `<what must be true> — verify: <how>`; optional Scope and Context.
    Checks, not steps. Say what must be true, not how to do it; the how belongs
    to whoever executes. Merv reads the shape into the task page (headline,
-   deliverables, purpose, a requirements table), so keep the markers.
+   deliverables, purpose, a requirements table), so keep the markers. Write
+   the whole brief STANDALONE: a reader who has never seen this project's
+   waves or reflections must understand it — name concrete datasets, tools,
+   and experiments, never "the wave" or "this reflection".
 2. **Do the work** however fits — locally, in a sandbox, in the task folder.
    Keep evidence as you go: files, run receipts, storage objects.
 3. **Delivery** (`tasks/<name>/delivery.md`, role `delivery`,

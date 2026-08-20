@@ -268,9 +268,11 @@ class StatusGuidancePolicy:
                     "each '<what must be true> — verify: <how>'; checks, not "
                     "steps); optionally Scope (in/out, constraints, limits) and "
                     "Context (what to read, what this depends on). Say what must "
-                    "be true, not how to do it. Then submit the file with "
-                    "artifact.submit (role 'brief') and run the returned upload "
-                    "command verbatim."
+                    "be true, not how to do it, and write it standalone — name "
+                    "concrete datasets and experiments, never 'the wave' or "
+                    "'this reflection'; the task must read on its own. Then "
+                    "submit the file with artifact.submit (role 'brief') and "
+                    "run the returned upload command verbatim."
                 ),
             }
         if key == "delivery":

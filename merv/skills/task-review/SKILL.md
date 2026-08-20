@@ -53,7 +53,10 @@ Go check by check, in the brief's numbering:
 4. **Do the checks, met, mean the goal is achieved?** This is the design
    review a task never had. If the brief's checks were too weak to secure the
    goal — a leak between splits nobody checked, a survey that counts papers
-   but covers one venue — name the missing check and send it back.
+   but covers one venue — name the missing check and send it back. The brief
+   must also read STANDALONE: a goal that only makes sense inside Merv's
+   plumbing ("the wave's experiments", "this reflection") is a defect — send
+   it back to name its consumers and inputs concretely.
 5. **Is it safe to build on?** Look for what a downstream experiment would
    inherit: wrong dataset version, leakage, an unpinned dependency, coverage
    that is three papers and a shrug. Read the Report and the Caveats as claims

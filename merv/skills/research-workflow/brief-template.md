@@ -31,15 +31,20 @@
        2. "Deliver:" then a bullet per thing that will exist when it is done.
        3. "So that <why the project needs it — which experiments or decisions
           wait on it>."
+     STANDALONE: the task is a first-class object a reader may open with no
+     other page — write it so it reads on its own. Name datasets, tools, and
+     experiments by their own names ("the wd-sweep and width-sweep
+     experiments"), never by Merv plumbing the reader cannot see ("the wave",
+     "this reflection", "the current sweep set").
      Example:
-       Build the wave's shared modular-addition dataset and evaluation harness.
+       Build one shared modular-addition dataset, model, and evaluation harness.
 
        Deliver:
-       - the complete dataset of ordered (a,b) pairs modulo p, with a fixed train/validation split
+       - the complete dataset of ordered (a,b) pairs modulo p=97, with a fixed train/validation split
        - a tiny reusable PyTorch evaluation harness
-       - a shared model definition
+       - a shared one-layer Transformer definition
 
-       So that every experiment in this wave trains and evaluates on identical data and code. -->
+       So that the wd-sweep and width-sweep experiments train and evaluate on identical data and code. -->
 
 Deliver:
 -
