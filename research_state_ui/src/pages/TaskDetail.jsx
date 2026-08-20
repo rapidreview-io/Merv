@@ -290,7 +290,7 @@ function TaskCore({ task }) {
   const claimed = rows.filter(r => r.result?.state).length;
   const metCount = rows.filter(r => r.result?.state === 'met').length;
 
-  // One count, one font, one place: the right end of the table's header row.
+  // One count, one font, one place: the quiet footer under the table.
   let countLine = null;
   if (total) {
     if (status === 'done') countLine = `${metCount} of ${total} verified${metCount < total ? ' · rest waived' : ''}`;
@@ -302,6 +302,7 @@ function TaskCore({ task }) {
   const goal = String(task.goal || '').trim();
   return (
     <section className="spotlight task-core" id="task">
+      {goal && <header className="spotlight-head"><span className="spotlight-eyebrow">Goal</span></header>}
       {goal && <p className="task-goal"><InlineMd text={goal} /></p>}
       {goal && total > 0 && <hr className="task-goal-rule" />}
       {total > 0 ? (

@@ -7214,19 +7214,20 @@ a.wflow-chip { color: var(--text); }
   margin: 0 0 16px; font-size: var(--text-lg); line-height: 1.55;
   color: var(--text); max-width: 74ch; white-space: pre-wrap;
 }
-/* The hand-off from promise to contract: one full-bleed rule under the goal
-   (bleeds through the card's padding so it reads as a section break, not a
-   text underline), then the table begins with its header row. */
+/* The hand-off from promise to contract: one content-width hairline — the
+   same section rule the Notes card draws — and the header row opens under
+   it with no second underline. */
 .task-goal-rule {
-  border: 0; border-top: 1px solid var(--line);
-  margin: 0 -22px 14px;
+  border: 0; border-top: 1px solid var(--line-soft);
+  margin: 0 0 14px;
 }
 .task-req-empty { color: var(--faint); font-size: var(--text-sm); padding: 4px 0 12px; }
 
 /* The deliverables table: mark · number · deliverable · confirmation. The
-   numbers get their own column so every row and the header align; the only
-   count lives at the right end of the header row. The goal above hands off
-   over one full-width hairline (the header row's border). */
+   numbers get their own column so every row and the header align. Horizontal
+   rules stay soft and scarce — the section rule above the header, one
+   separator between rows, nothing after the last — while the vertical split
+   carries the table's spine. */
 .task-req { display: grid; grid-template-columns: 24px 22px minmax(0, 1fr) minmax(0, 1fr); }
 /* Bookend headers: Deliverable hugs the table's left edge (spanning the mark
    and number columns), Confirmation hugs the right edge. The tally lives in
@@ -7240,17 +7241,20 @@ a.wflow-chip { color: var(--text); }
   padding-left: 16px;
 }
 .task-req-row > .task-req-stmt-cell { padding-right: 18px; }
-.task-req-tally {
-  grid-column: 1 / -1; text-align: right;
-  padding: 6px 0 2px; font-size: var(--text-xs); color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.task-req > *, .task-req-row > * { padding: 10px 12px 11px 0; border-bottom: 1px solid var(--line-soft); min-width: 0; }
+.task-req > *, .task-req-row > * { padding: 12px 12px 12px 0; border-bottom: 1px solid var(--line-soft); min-width: 0; }
 .task-req-h {
-  padding-top: 0 !important; padding-bottom: 8px !important; border-bottom-color: var(--line) !important;
+  padding-top: 0; padding-bottom: 4px; border-bottom: 0;
   font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
 }
 .task-req-row > .task-req--last { border-bottom: 0; }
+/* The count floats under the table's last row: no rule above it, none below.
+   (Child selector so the generic cell rule above can't hand it a border.) */
+.task-req > .task-req-tally {
+  grid-column: 1 / -1; text-align: right;
+  padding: 6px 0 2px; border-bottom: 0;
+  font-size: var(--text-xs); color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 .task-req-mark { font-weight: 700; font-size: 13px; line-height: 1.45; }
 .task-req-num {
   color: var(--faint); font-variant-numeric: tabular-nums;
