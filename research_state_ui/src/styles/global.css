@@ -7211,22 +7211,6 @@ a.wflow-chip { color: var(--text); }
 .task-desc { margin: 0 0 22px; padding-bottom: 18px; border-bottom: 1px solid var(--line-soft); }
 .task-desc-summary { margin: 0; font-size: var(--text-lg); line-height: 1.45; color: var(--text); max-width: 70ch; }
 .task-desc-summary--plain { font-size: var(--text-base); line-height: 1.55; max-width: 78ch; white-space: pre-wrap; }
-.task-desc-grid {
-  display: grid; grid-template-columns: 104px minmax(0, 1fr);
-  gap: 10px 16px; margin: 14px 0 0; max-width: 80ch;
-}
-.task-desc-grid dt {
-  font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
-  color: var(--faint); padding-top: 4px;
-}
-.task-desc-grid dd { margin: 0; }
-.task-deliverables { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.task-deliverables li {
-  display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 8px;
-  font-size: var(--text-base); line-height: 1.45; color: var(--text);
-}
-.task-deliverables li::before { content: "▸"; color: var(--active); font-size: 12px; padding-top: 2px; }
-.task-purpose { font-size: var(--text-base); line-height: 1.5; color: var(--text); }
 
 /* Requirements table: # · what must be true (+ verify) · got it? · evidence (+ check). */
 .task-req { display: grid; grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1fr); }
@@ -7242,8 +7226,7 @@ a.wflow-chip { color: var(--text); }
 .task-req-word--bad { color: var(--refutes); }
 .task-req-word--wait { color: var(--qualifies); }
 .task-req-stmt { font-size: var(--text-sm); line-height: 1.45; color: var(--text); }
-.task-req-verify { margin-top: 3px; font-size: var(--text-xs); line-height: 1.45; color: var(--muted); }
-.task-req-verify .k, .task-req-how .k { color: var(--faint); }
+.task-req-how .k { color: var(--faint); }
 .inline-md-code { font-family: var(--font-mono); font-size: .92em; }
 .task-got--ok { color: var(--supports); }
 .task-got--wait { color: var(--qualifies); }

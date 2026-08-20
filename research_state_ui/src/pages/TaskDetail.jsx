@@ -251,7 +251,7 @@ export default function TaskDetail() {
         <h1 className="page-title exp-title-name">{task.name || task.id}</h1>
       </header>
 
-      <TaskDescription description={task.description} goal={task.goal} />
+      <TaskGoal goal={task.goal} />
       <RequirementsTable task={task} />
       <ProcessSection task={task} reviews={reviews} />
       <TaskDocSpotlight
@@ -277,109 +277,72 @@ export default function TaskDetail() {
   );
 }
 
-/* ───────────── Description: the brief's Goal as structure ───────────── */
+/* ───────────── Goal: the immutable prose, the page's lead ───────────── */
 
-function TaskDescription({ description, goal }) {
-  const d = description || {};
-  if (!d.structured) {
-    const text = String(d.text || goal || '').trim();
-    if (!text) return null;
-    // Plain prose (a task created before the Goal shape, or written without
-    // it): one measured paragraph, still the lead of the page.
-    return (
-      <section className="task-desc">
-        <p className="task-desc-summary task-desc-summary--plain"><InlineMd text={text} /></p>
-      </section>
-    );
-  }
+function TaskGoal({ goal }) {
+  const text = String(goal || '').trim();
+  if (!text) return null;
   return (
     <section className="task-desc">
-      {d.summary && <p className="task-desc-summary"><InlineMd text={d.summary} /></p>}
-      <dl className="task-desc-grid">
-        {d.deliverables?.length > 0 && (
-          <>
-            <dt>Deliverables</dt>
-            <dd>
-              <ul className="task-deliverables">
-                {d.deliverables.map((item, i) => <li key={i}><InlineMd text={item} /></li>)}
-              </ul>
-            </dd>
-          </>
-        )}
-        {d.purpose && (
-          <>
-            <dt>Purpose</dt>
-            <dd className="task-purpose"><InlineMd text={d.purpose} /></dd>
-          </>
-        )}
-      </dl>
+      <p className="task-desc-summary task-desc-summary--plain"><InlineMd text={text} /></p>
     </section>
   );
 }
 
-/* ───────────── Requirements: what must be true · got it? · evidence ───── */
+/* ───────────── Deliverables: the contract, one row per item ──────────── */
 
-// The per-row state a reader sees, from the delivery entry's claim and the
-// task's status. The claim is the executor's; only acceptance makes it
-// "verified" — one review covers the whole task, there is no per-row verdict.
+
+// The per-row mark. Confirmations fill the second column as the result comes
+// in; checkmarks appear only after review — ✓ verified / ✗ not delivered
+// (waived or fatal, per the one whole-task verdict). Until then the column's
+// text is the signal and the mark stays empty.
 function rowState(result, status) {
   const claim = result?.state || null;
-  if (!claim) {
-    if (status === 'failed') return { tone: 'open', glyph: '○', word: 'not delivered', sub: null };
-    return { tone: 'open', glyph: '○', word: 'not yet', sub: null };
+  if (status === 'done') {
+    if (claim === 'unmet' || claim === 'partial') {
+      return { tone: 'bad', glyph: '✗', word: 'not delivered — waived in review' };
+    }
+    return { tone: 'ok', glyph: '✓', word: 'verified in review' };
   }
-  if (claim === 'unmet') {
-    return {
-      tone: 'bad', glyph: '✗', word: 'unmet',
-      sub: status === 'done' ? 'waived in review' : status === 'in_review' ? 'awaiting review' : status === 'failed' ? 'task ended' : 'stated by the executor',
-    };
+  if (status === 'failed' && (claim === 'unmet' || claim === 'partial')) {
+    return { tone: 'bad', glyph: '✗', word: 'not delivered' };
   }
-  if (claim === 'partial') {
-    return {
-      tone: 'wait', glyph: '◐', word: 'partial',
-      sub: status === 'done' ? 'accepted in review' : status === 'in_review' ? 'awaiting review' : status === 'failed' ? 'task ended' : 'stated by the executor',
-    };
-  }
-  if (status === 'done') return { tone: 'ok', glyph: '✓', word: 'met', sub: 'verified in review' };
-  if (status === 'in_review') return { tone: 'wait', glyph: '◐', word: 'claimed', sub: 'awaiting review' };
-  if (status === 'failed') return { tone: 'wait', glyph: '◐', word: 'claimed', sub: 'task ended' };
-  return { tone: 'wait', glyph: '◐', word: 'claimed', sub: 'not submitted' };
+  return { tone: 'open', glyph: '', word: claim ? 'confirmation submitted, awaiting review' : 'no confirmation yet' };
 }
 
 function RequirementsTable({ task }) {
-  const requirements = Array.isArray(task.requirements) && task.requirements.length
-    ? task.requirements
-    : (task.checks || []).map((text, i) => ({ number: i + 1, statement: text, verify: null, text }));
+  const deliverables = ((task.deliverables && task.deliverables.length ? task.deliverables : task.checks) || [])
+    .map((text, i) => ({ number: i + 1, text: String(text) }));
   const results = new Map((task.results || []).map(r => [r.number, r]));
-  const total = requirements.length;
+  const total = deliverables.length;
   const status = task.status;
-  const rows = requirements.map(req => ({ req, result: results.get(req.number) || null, state: rowState(results.get(req.number) || null, status) }));
+  const rows = deliverables.map(req => ({ req, result: results.get(req.number) || null, state: rowState(results.get(req.number) || null, status) }));
   const claimed = rows.filter(r => r.result?.state).length;
   const metCount = rows.filter(r => r.result?.state === 'met').length;
 
   let countLine = null;
   if (total) {
-    if (status === 'done') countLine = <><b>{metCount} of {total}</b> met and verified{metCount < total ? ' · the rest waived in review' : ''}</>;
-    else if (status === 'in_review') countLine = <><b>{claimed} of {total}</b> answered · awaiting review</>;
-    else if (status === 'failed') countLine = <><b>{claimed} of {total}</b> answered before the task ended</>;
-    else countLine = claimed ? <><b>{claimed} of {total}</b> evidenced · {total - claimed} to go</> : <>none evidenced yet</>;
+    if (status === 'done') countLine = <><b>{metCount} of {total}</b> verified{metCount < total ? ' · the rest waived in review' : ''}</>;
+    else if (status === 'in_review') countLine = <><b>{claimed} of {total}</b> confirmed · awaiting review</>;
+    else if (status === 'failed') countLine = <><b>{claimed} of {total}</b> confirmed before the task ended</>;
+    else countLine = claimed ? <><b>{claimed} of {total}</b> confirmed · {total - claimed} to go</> : <>no confirmations yet</>;
   }
 
   return (
     <section className="spotlight" id="requirements">
       <header className="spotlight-head spotlight-head--row">
         <div className="spotlight-head-left">
-          <span className="spotlight-eyebrow">Done when</span>
+          <span className="spotlight-eyebrow">Deliverables</span>
           <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>
-            {total ? <>{total} requirement{total === 1 ? '' : 's'} from the brief · {countLine}</> : 'no brief submitted yet'}
+            {total ? <>{total} · {countLine}</> : 'none recorded — this task predates structured goals'}
           </span>
         </div>
       </header>
       {total > 0 && (
-        <div className="task-req" role="table" aria-label="Requirements">
+        <div className="task-req" role="table" aria-label="Deliverables">
           <div className="task-req-h" role="columnheader" />
-          <div className="task-req-h" role="columnheader">What must be true</div>
-          <div className="task-req-h task-req-h--ev" role="columnheader">Evidence</div>
+          <div className="task-req-h" role="columnheader">Deliverable</div>
+          <div className="task-req-h task-req-h--ev" role="columnheader">Confirmation</div>
           {rows.map(({ req, result, state }, i) => {
             const last = i === rows.length - 1 ? ' task-req--last' : '';
             return (
@@ -387,24 +350,24 @@ function RequirementsTable({ task }) {
                 <div
                   className={`task-req-mark task-got--${state.tone}${last}`}
                   role="cell"
-                  title={state.word + (state.sub ? ` — ${state.sub}` : '')}
+                  title={state.word}
                 >
                   <span aria-hidden="true">{state.glyph}</span>
-                  <span className="visually-hidden">{state.word}{state.sub ? ` — ${state.sub}` : ''}</span>
+                  <span className="visually-hidden">{state.word}</span>
                 </div>
                 <div className={`task-req-stmt-cell${last}`} role="cell">
-                  <div className="task-req-stmt"><span className="task-req-n">{req.number}</span><InlineMd text={req.statement} /></div>
-                  {req.verify && <div className="task-req-verify"><span className="k">verify · </span><InlineMd text={req.verify} /></div>}
+                  <div className="task-req-stmt"><span className="task-req-n">{req.number}</span><InlineMd text={req.text} /></div>
                 </div>
                 <div className={`task-req-ev${last}`} role="cell">
                   {result?.evidence
                     ? <>
-                        {result.state === 'unmet' && <span className="task-req-word task-req-word--bad">unmet · </span>}
-                        {result.state === 'partial' && <span className="task-req-word task-req-word--wait">partial · </span>}
+                        {(result.state === 'unmet' || result.state === 'partial') && (
+                          <span className="task-req-word task-req-word--bad">not delivered · </span>
+                        )}
                         <InlineMd text={result.evidence} />
                         {result.how && <span className="task-req-how"><span className="k">check · </span><InlineMd text={result.how} /></span>}
                       </>
-                    : <span className="task-req-none">— no evidence yet</span>}
+                    : <span className="task-req-none">— no confirmation yet</span>}
                 </div>
               </div>
             );
@@ -436,7 +399,7 @@ function ProcessSection({ task, reviews }) {
       )}
       {report && (
         <div className="task-proc-sec">
-          <h4>Report <span className="task-proc-from">· from the delivery</span></h4>
+          <h4>How it was done <span className="task-proc-from">· the delivery&#39;s Notes</span></h4>
           <div className="task-proc-md"><MarkdownView text={report} /></div>
         </div>
       )}

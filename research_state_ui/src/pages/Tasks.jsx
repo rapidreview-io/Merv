@@ -8,7 +8,6 @@ import ObjId from '../components/ObjId';
 import StatusPill from '../components/StatusPill';
 import { expName } from '../utils/experiment';
 import { fmtDayTime, fmtDuration } from '../utils/format';
-import { composeGoal } from '../utils/taskGoal';
 
 // Task lifecycle: two working states, two endings (mirrors task_workflow.py).
 const LIFECYCLE = ['in_progress', 'in_review', 'done'];
@@ -169,11 +168,9 @@ function TaskTable({ rows, sortKey, sortDir, onSort }) {
             >
               <div className="expt-main">
                 <div className="expt-title" title={title}>{title}</div>
-                {(t.summary || t.goal) && (
-                  <div className="expt-desc" title={t.summary || t.goal}>{t.summary || t.goal}</div>
-                )}
+                {t.goal && <div className="expt-desc" title={t.goal}>{t.goal}</div>}
                 <div className="expt-sub">
-                  {checkCount > 0 ? `${checkCount} requirement${checkCount === 1 ? '' : 's'}` : 'no brief yet'}
+                  {checkCount > 0 ? `${checkCount} deliverable${checkCount === 1 ? '' : 's'}` : 'no deliverables'}
                   {depCount > 0 && <> · waits on {depCount}</>}
                   {unblockCount > 0 && <> · unblocks {unblockCount}</>}
                   {reviewCount > 0 && <> · {reviewCount} review{reviewCount === 1 ? '' : 's'}</>}
@@ -209,16 +206,18 @@ const OPEN_TASK = new Set(['in_progress', 'in_review']);
 
 function NewTaskForm({ projectId, tasks, experiments, onCancel, onCreated }) {
   const [name, setName] = useState('');
-  const [summary, setSummary] = useState('');
+  const [goal, setGoal] = useState('');
   const [deliverables, setDeliverables] = useState('');
-  const [purpose, setPurpose] = useState('');
   const [deps, setDeps] = useState(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
   const nameOk = NAME_RE.test(name);
-  const deliverableLines = deliverables.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const goalOk = summary.trim().length > 0 && deliverableLines.length > 0 && purpose.trim().length > 0;
+  const deliverableLines = deliverables
+    .split(/\r?\n/)
+    .map(l => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
+    .filter(Boolean);
+  const goalOk = goal.trim().length > 0 && deliverableLines.length > 0;
   // Only live nodes are sensible dependencies: a finished one is already met,
   // a failed one would block this task from the start.
   const candidates = [
@@ -242,7 +241,8 @@ function NewTaskForm({ projectId, tasks, experiments, onCancel, onCreated }) {
     try {
       await api.createTask(projectId, {
         name: name.trim(),
-        goal: composeGoal({ summary, deliverables, purpose }),
+        goal: goal.trim(),
+        deliverables: deliverableLines,
         depends_on: Array.from(deps),
       });
       onCreated();
@@ -278,16 +278,19 @@ function NewTaskForm({ projectId, tasks, experiments, onCancel, onCreated }) {
         )}
       </div>
       <div className="form-row">
-        <label className="label">What this task builds</label>
-        <input
-          className="input"
-          value={summary}
-          onChange={e => setSummary(e.target.value)}
-          placeholder="Build one shared modular-addition dataset, model, and evaluation harness."
-          maxLength={200}
+        <label className="label">Goal</label>
+        <textarea
+          className="textarea"
+          value={goal}
+          onChange={e => setGoal(e.target.value)}
+          placeholder="Build one shared modular-addition dataset, model, and evaluation harness, so the wd-sweep and width-sweep experiments train and evaluate on identical, correct data and code."
           required
         />
-        <div className="form-hint">One line — the headline of the task.</div>
+        <div className="form-hint">
+          Short prose — what needs to be done and why. Standalone: a person just opening
+          the task must understand it, so name datasets and experiments by their own
+          names, never "the wave" or "this reflection". Immutable after creation.
+        </div>
       </div>
       <div className="form-row">
         <label className="label">Deliverables</label>
@@ -295,24 +298,13 @@ function NewTaskForm({ projectId, tasks, experiments, onCancel, onCreated }) {
           className="textarea"
           value={deliverables}
           onChange={e => setDeliverables(e.target.value)}
-          placeholder={'the complete dataset of ordered (a,b) pairs modulo p, with a fixed train/validation split\na tiny reusable PyTorch evaluation harness\na shared model definition'}
-          required
-        />
-        <div className="form-hint">One per line — the things that will exist when it is done. Not how to make them.</div>
-      </div>
-      <div className="form-row">
-        <label className="label">So that…</label>
-        <input
-          className="input"
-          value={purpose}
-          onChange={e => setPurpose(e.target.value)}
-          placeholder="the wd-sweep and width-sweep experiments train and evaluate on identical data and code."
+          placeholder={'data/modadd_p97.npz holds all 9,409 ordered (a,b) pairs modulo 97, split deterministically from a recorded seed\nmodel.py defines a one-layer Transformer with configurable d_model\neval.py prints labelled train and validation accuracy on CPU'}
           required
         />
         <div className="form-hint">
-          Why the project needs it — name the experiments or decisions that wait on it, by
-          their own names: the task must read standalone, so never "the wave" or "this
-          reflection". The numbered Done-when checks go in the brief the executor submits.
+          One per line — the things that must exist when it is done, each verifiable as
+          written (carry the criterion in the sentence). Immutable after creation; the
+          delivery answers them one by one.
         </div>
       </div>
       {candidates.length > 0 && (

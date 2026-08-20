@@ -287,10 +287,10 @@ export const api = {
     }),
 
   // Tasks (scoped non-experiment work: brief in, delivery out, one review).
-  createTask: (pid, { name, goal, depends_on }) =>
+  createTask: (pid, { name, goal, deliverables, depends_on }) =>
     request(`/api/projects/${encodeURIComponent(pid)}/tasks`, {
       method: 'POST',
-      body: { name, goal, depends_on: depends_on || [] },
+      body: { name, goal, deliverables: deliverables || [], depends_on: depends_on || [] },
     }),
   getTask: (pid, tid) =>
     request(`/api/projects/${encodeURIComponent(pid)}/tasks/${encodeURIComponent(tid)}`),
