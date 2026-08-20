@@ -303,6 +303,7 @@ function TaskCore({ task }) {
   return (
     <section className="spotlight task-core" id="task">
       {goal && <p className="task-goal"><InlineMd text={goal} /></p>}
+      {goal && total > 0 && <hr className="task-goal-rule" />}
       {total > 0 ? (
         <div className="task-req" role="table" aria-label="Deliverables">
           <div className="task-req-h" role="columnheader" />

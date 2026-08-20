@@ -7214,6 +7214,13 @@ a.wflow-chip { color: var(--text); }
   margin: 0 0 16px; font-size: var(--text-lg); line-height: 1.55;
   color: var(--text); max-width: 74ch; white-space: pre-wrap;
 }
+/* The hand-off from promise to contract: one full-bleed rule under the goal
+   (bleeds through the card's padding so it reads as a section break, not a
+   text underline), then the table begins with its header row. */
+.task-goal-rule {
+  border: 0; border-top: 1px solid var(--line);
+  margin: 0 -22px 14px;
+}
 .task-req-empty { color: var(--faint); font-size: var(--text-sm); padding: 4px 0 12px; }
 
 /* The deliverables table: mark · number · deliverable · confirmation. The
@@ -7221,6 +7228,12 @@ a.wflow-chip { color: var(--text); }
    count lives at the right end of the header row. The goal above hands off
    over one full-width hairline (the header row's border). */
 .task-req { display: grid; grid-template-columns: 24px 22px minmax(0, 1fr) minmax(0, 1fr); }
+/* The confirmation column is set off by a vertical hairline, so the eye can
+   drop down either column without re-finding the boundary on every row. */
+.task-req > .task-req-ev, .task-req > .task-req-h--ev {
+  border-left: 1px solid var(--line-soft);
+  padding-left: 14px;
+}
 .task-req > *, .task-req-row > * { padding: 10px 12px 11px 0; border-bottom: 1px solid var(--line-soft); min-width: 0; }
 .task-req-h {
   padding-top: 0 !important; padding-bottom: 8px !important; border-bottom-color: var(--line) !important;
@@ -7242,7 +7255,10 @@ a.wflow-chip { color: var(--text); }
 .task-req-word--wait { color: var(--qualifies); }
 .task-req-stmt { font-size: var(--text-sm); line-height: 1.45; color: var(--text); }
 .task-req-how .k { color: var(--faint); }
-.inline-md-code { font-family: var(--font-mono); font-size: .92em; }
+/* Auto-recognized technical tokens (InlineMd) render as the app's standard
+   code chips; in the dense table they drop a step so rows keep their rhythm. */
+.task-req .md-inline-code { font-size: 0.86em; }
+.task-goal .md-inline-code { font-size: 0.85em; }
 .task-got--ok { color: var(--supports); }
 .task-got--wait { color: var(--qualifies); }
 .task-got--bad { color: var(--refutes); }
@@ -7282,7 +7298,7 @@ a.wflow-chip { color: var(--text); }
 @media (max-width: 820px) {
   .task-req { grid-template-columns: 24px 22px minmax(0, 1fr); }
   .task-req-h--ev { display: none; }
-  .task-req-row > .task-req-ev { grid-column: 3; padding-top: 0; }
+  .task-req-row > .task-req-ev { grid-column: 3; padding-top: 0; border-left: 0; padding-left: 0; }
   .task-req-row > .task-req-stmt-cell { border-bottom: 0; padding-bottom: 4px; }
   .task-req-row > .task-req-mark, .task-req-row > .task-req-num { border-bottom: 0; }
 }
