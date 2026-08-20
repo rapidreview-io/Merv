@@ -806,6 +806,56 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.assertEqual(history[-1]["disposition"], "reviewed_not_used")
         self.assertEqual(history[-1]["integration_outcome"], "not_applied")
 
+    def test_a_paired_credential_consolidates_as_its_hello_identity(self) -> None:
+        # A caller with no mas_ session (an externally paired credential) must
+        # still be able to submit the proposal: its agent.hello id is the
+        # producer the proposal records.
+        reflection_id = self.reflection_ready_for_consolidation()
+        hello = self.client.post(
+            "/mcp/call", json={"name": "agent.hello", "arguments": {}}
+        )
+        self.assertEqual(hello.status_code, 200, hello.text)
+        agent_id = hello.json()["result"]["agent_id"]
+        submitted = self.client.post(
+            "/mcp/call",
+            json={
+                "name": "consolidation.submit",
+                "arguments": {
+                    "agent_id": agent_id,
+                    "project_id": self.project_id,
+                    "reflection_id": reflection_id,
+                    "base_sha": "1" * 40,
+                    "proposal_sha": "2" * 40,
+                    "summary": (
+                        "The experiment was reviewed; no code was promotable."
+                    ),
+                    "validation": {"tests": "not_applicable"},
+                    "decisions": [
+                        {
+                            "experiment_id": self.experiment_id,
+                            "disposition": "reviewed_not_used",
+                            "rationale": (
+                                "The abandoned experiment produced no source "
+                                "change."
+                            ),
+                            "integration_kind": "none",
+                        }
+                    ],
+                },
+            },
+        )
+        self.assertEqual(submitted.status_code, 200, submitted.text)
+        conn = self.brain.store.connect()
+        try:
+            row = conn.execute(
+                "SELECT created_by_session_id FROM consolidation_proposals "
+                "WHERE reflection_id = ?",
+                (reflection_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(row["created_by_session_id"], agent_id)
+
 
 class AgentDispatchSwitchTest(unittest.TestCase):
     """The per-project switch gates claims; halting is a separate stop."""
