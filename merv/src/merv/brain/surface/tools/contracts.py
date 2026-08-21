@@ -17,18 +17,25 @@ from ...research_core import (
     REFLECTION_WORKFLOW,
     REVIEW_ROLE_VALUES,
     REVIEW_VERDICT_VALUES,
+    TASK_TRANSITION_VALUES,
+    TASK_WORKFLOW,
 )
 
 REVIEW_RETURN_VALUES = (
     "",
     *EXPERIMENT_WORKFLOW.review_return_statuses,
     *REFLECTION_WORKFLOW.review_return_statuses,
+    *TASK_WORKFLOW.review_return_statuses,
+    *TASK_WORKFLOW.review_fail_statuses,
 )
 EXPERIMENT_INITIAL_VALUES = (EXPERIMENT_WORKFLOW.initial,)
 REVIEW_TARGET_VALUES = (
     EXPERIMENT_WORKFLOW.target_type,
     REFLECTION_WORKFLOW.target_type,
+    TASK_WORKFLOW.target_type,
 )
+_TASK_REVIEW_RETURN = next(iter(TASK_WORKFLOW.review_returns))
+_TASK_FAIL_STATUS = next(iter(TASK_WORKFLOW.review_fail_statuses))
 _EXPERIMENT_RESULT_TRANSITION = next(
     transition.name
     for transition in EXPERIMENT_WORKFLOW.transitions
@@ -120,6 +127,19 @@ class ProjectScopedInput(ContractModel):
 
 class WorkflowStatusAndNextInput(ProjectScopedInput):
     experiment_id: str | None = None
+    task_id: str | None = Field(
+        default=None,
+        description=(
+            "Scope the status to one task (task_… id) instead of an experiment; "
+            "returns the task's workflow guidance, brief, delivery, and checks."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _one_scope(self) -> "WorkflowStatusAndNextInput":
+        if self.experiment_id and self.task_id:
+            raise ValueError("pass experiment_id or task_id, not both")
+        return self
 
 
 class AgentHelloInput(ContractModel):
@@ -366,7 +386,11 @@ class ExperimentCreateInput(ProjectScopedInput):
     )
     intent: str = Field(
         default="",
-        description="Durable one-line headline for the experiment (its UI title). The full design belongs in the plan.md artifact.",
+        description="REQUIRED. The ask, in one standalone line: what this experiment tests and why the project needs it — written so a stranger plans the experiment you meant. Name the datasets, harness tasks, and sibling experiments involved by their own names; never 'the wave' or 'this reflection'. Doubles as the UI title. How to test it — method, metrics, thresholds — belongs in the plan.md artifact.",
+    )
+    details: str = Field(
+        default="",
+        description="Optional free prose addressed to whoever writes the plan: givens, boundaries with sibling experiments, preferences, budgets, warnings — up to a full design sketch. Immutable once created, and advice rather than contract: the approved plan supersedes it on anything about how. Empty is fine — the intent alone is a complete create.",
     )
     tested_claim_ids: list[str] | str | None = Field(default_factory=list)
     claim_id: str | None = Field(
@@ -374,6 +398,14 @@ class ExperimentCreateInput(ProjectScopedInput):
     )
     claim_ids: list[str] | str | None = Field(
         default=None, description="Alias for tested_claim_ids."
+    )
+    depends_on: list[str] | str | None = Field(
+        default_factory=list,
+        description=(
+            "Optional exp_/task_ ids of the same project this experiment must "
+            "not start running before (e.g. the data-preparation task it "
+            "trains on); they become wave DAG edges."
+        ),
     )
     title: str = Field(
         default="",
@@ -425,6 +457,76 @@ class ExperimentTransitionInput(ProjectScopedInput):
     experiment_id: str
     transition: Literal[*EXPERIMENT_TRANSITION_VALUES]
     evidence: dict[str, Any] | None = None
+
+
+class TaskCreateInput(ProjectScopedInput):
+    name: str = Field(
+        default="",
+        description=(
+            "REQUIRED. Short folder-safe name, unique among the project's tasks "
+            "— it becomes the task folder tasks/<name>/. Letters, digits, '.', "
+            "'_', '-' only; 3-48 characters. Name the deliverable, not the "
+            "project ('prep-cifar-splits', 'lit-sweep-distillation')."
+        ),
+    )
+    goal: str = Field(
+        default="",
+        description=(
+            "REQUIRED. Short prose — what needs to be done and why the "
+            "project needs it. Write it STANDALONE: a person just opening the "
+            "task must understand it, so name concrete datasets, tools, and "
+            "experiments ('the wd-sweep experiment'), never context the "
+            "reader cannot see ('the wave', 'this reflection'). No method — "
+            "how is the executor's. The goal and deliverables are IMMUTABLE "
+            "after creation."
+        ),
+    )
+    deliverables: list[str] | str | None = Field(
+        default=None,
+        description=(
+            "REQUIRED. The things that must exist when the task is done — "
+            "one item per thing, each verifiable AS WRITTEN (carry the "
+            "criterion in the sentence: counts, tolerances, required "
+            "sections). No bundles, no vague nouns. Rule of thumb 1-7 items; "
+            "more usually means two tasks. Immutable after creation: a wrong "
+            "deliverable is an honest miss ('not delivered — why') in the "
+            "delivery, or the owner ends the task and creates a better one."
+        ),
+    )
+    depends_on: list[str] | str | None = Field(
+        default_factory=list,
+        description=(
+            "Optional exp_/task_ ids of the same project this task must not "
+            "deliver before; they become wave DAG edges. Empty for ad-hoc work."
+        ),
+    )
+
+
+class TaskListInput(ProjectScopedInput):
+    pass
+
+
+class TaskGetStateInput(ProjectScopedInput):
+    task_id: str
+    review_id: str = Field(
+        default="",
+        description=(
+            "Optional review id taken from this task's 'reviews' list; pass it "
+            "to also receive that review's full body under 'review'."
+        ),
+    )
+
+
+class TaskTransitionInput(ProjectScopedInput):
+    task_id: str
+    transition: Literal[*TASK_TRANSITION_VALUES]
+    evidence: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Optional. On accept, {'outcome': ...} is the accepted outcome note; "
+            "on mark_failed, {'reason': ...} says why the owner ended it."
+        ),
+    )
 
 
 class MlflowContextInput(ProjectScopedInput):
@@ -561,13 +663,14 @@ class ArtifactSubmitInput(ProjectScopedInput):
         json_schema_extra={"enum": sorted(ARTIFACT_TARGET_TYPES)},
     )
     target_id: str = Field(
-        description="Id of the experiment, reflection, claim, or review."
+        description="Id of the experiment, task, reflection, claim, or review."
     )
     role: str = Field(
         description=(
             "Artifact role. Gated docs (plan, report, graph, project_graph, "
-            "reflection_lens_doc, reflection_doc, change_spec) and metrics "
-            "'result' JSON only — all size-capped at 16 KB."
+            "reflection_lens_doc, reflection_doc, change_spec; for tasks: "
+            "brief, delivery) and metrics 'result' JSON only — all size-capped "
+            "at 16 KB."
         ),
         json_schema_extra={"enum": sorted(SUBMITTABLE_ROLES)},
     )
@@ -827,7 +930,11 @@ class ReviewSubmitInput(ContractModel):
             "fan-out (every lens re-submits for the new attempt), or "
             f"{_REFLECTION_REVISION_RETURN.to_status!r} if the reflections "
             "stand but the reflection artifacts (project graph, reflection "
-            "doc, and/or change spec) must be revised."
+            "doc, and/or change spec) must be revised. Task-review rejections: "
+            f"needs_changes returns to {_TASK_REVIEW_RETURN.to_status!r} (the "
+            "default; omit return_to) — the executor fixes the delivery; a "
+            f"fail verdict ENDS the task ({_TASK_FAIL_STATUS!r}) — reserve it "
+            "for a goal that cannot be met within the task's scope."
         ),
         json_schema_extra={
             "enum": [value for value in REVIEW_RETURN_VALUES if value]
@@ -1270,15 +1377,17 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         input_model=WorkflowStatusAndNextInput,
         description=(
             "The canonical entrypoint for starting or resuming work. Without "
-            "experiment_id, returns workflow guidance plus the bounded project "
-            "context: project metadata, latest published reflection, General "
-            "Summary of the literature, every claim, and one status-dependent "
-            "summary for every experiment. With experiment_id, returns the "
-            "four-section experiment context: experiment, latest plan, latest "
-            "report, and all other current-attempt artifact references. Live "
-            "experiments receive the full latest plan; terminal experiments "
-            "receive its Summary; the latest report is full when present. "
-            "Use artifact.find with one id or an ordered id batch for deeper "
+            "experiment_id or task_id, returns workflow guidance plus the "
+            "bounded project context: project metadata, latest published "
+            "reflection, General Summary of the literature, every claim, and "
+            "one status-dependent summary for every experiment and task. With "
+            "experiment_id, returns the four-section experiment context: "
+            "experiment, latest plan, latest report, and all other "
+            "current-attempt artifact references. Live experiments receive the "
+            "full latest plan; terminal experiments receive its Summary; the "
+            "latest report is full when present. With task_id, returns the "
+            "task's guidance, brief, delivery, checks, and dependencies. Use "
+            "artifact.find with one id or an ordered id batch for deeper "
             "artifact reads."
         ),
     ),
@@ -1395,9 +1504,11 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         handler_identity="application.create_experiment",
         input_model=ExperimentCreateInput,
         description=(
-            f"Create a {EXPERIMENT_WORKFLOW.initial} experiment. Requires an intent and a short "
-            "folder-safe 'name' unique within the project; the name becomes "
-            "the experiment folder experiments/<name>/."
+            f"Create a {EXPERIMENT_WORKFLOW.initial} experiment. Requires an intent (the "
+            "ask, one standalone line: what this tests and why, standalone) and a "
+            "short folder-safe 'name' unique within the project; the name becomes "
+            "the experiment folder experiments/<name>/. Optional 'details' carries "
+            "everything else the planner should have."
         ),
     ),
     "experiment.list": ToolContract(
@@ -1443,6 +1554,51 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             "results/*.json associated with role 'result'). Call it before "
             "writing report.md. When pinned, the report must "
             "reference and interpret it rather than hand-copy numbers."
+        ),
+    ),
+    "task.create": ToolContract(
+        handler_identity="application.create_task",
+        input_model=TaskCreateInput,
+        description=(
+            f"Create a {TASK_WORKFLOW.initial} task: scoped non-experiment work "
+            "with a verifiable finish line and no claim (lit review, data "
+            "preparation, harness building, memos). Requires a goal (short "
+            "standalone prose), deliverables (the things that must exist, each "
+            "verifiable as written), and a short folder-safe 'name' unique "
+            "among the project's tasks; the name becomes the task folder "
+            "tasks/<name>/. Goal and deliverables are IMMUTABLE — Merv renders "
+            "and pins brief.md from them. When the work is done, submit the "
+            "delivery (role 'delivery': one confirmation per deliverable, "
+            "then Notes prose). Has a claim to test? Create an experiment "
+            "instead."
+        ),
+    ),
+    "task.list": ToolContract(
+        handler_identity="application.list_tasks",
+        visibility="internal",
+        input_model=TaskListInput,
+        description="List tasks with state.",
+    ),
+    "task.get_state": ToolContract(
+        handler_identity="application.task",
+        visibility="internal",
+        input_model=TaskGetStateInput,
+        description=(
+            "Compatibility-only singular internal task state projection. "
+            "Agents use workflow.status_and_next(task_id=...) for context."
+        ),
+    ),
+    "task.transition": ToolContract(
+        handler_identity="application.transition_task",
+        input_model=TaskTransitionInput,
+        description=(
+            "Apply a task transition allowed by workflow.status_and_next: "
+            "submit_delivery (in_progress → in_review, needs a valid brief and "
+            "delivery and every dependency done), accept (after a passing "
+            "task_reviewer review → done), or mark_failed (the owner ends the "
+            "task with evidence={'reason': ...}). Returns a compact "
+            "acknowledgement; call workflow.status_and_next(task_id=...) "
+            "afterward to continue."
         ),
     ),
     "mlflow.context": ToolContract(

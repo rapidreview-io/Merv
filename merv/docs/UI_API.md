@@ -118,11 +118,12 @@ The deployment ceiling from `/api/meta` remains authoritative; omitting the
 setting uses the 50 GiB project default.
 
 `/home` is the primary UI bootstrap. It returns `project`, `claims`, the full
-`experiments` list, `artifacts`, `reviews`, `recent_events`, `stats`, `workflow`,
-`active_experiment`, `active_experiments`, and `active_processes`.
-`active_experiments` contains non-terminal work with its workflow, sandboxes,
-and active processes. `active_processes` includes both `provisioning` and
-`running` sandboxes.
+`experiments` and `tasks` lists, `artifacts`, `reviews`, `recent_events`,
+`stats`, `workflow`, `active_experiment`, `active_experiments`, `active_tasks`,
+and `active_processes`. `active_experiments` contains non-terminal work with
+its workflow, sandboxes, and active processes; `active_tasks` contains
+non-terminal tasks with their workflow. `active_processes` includes both
+`provisioning` and `running` sandboxes.
 
 ## Claims
 
@@ -157,7 +158,34 @@ Create an experiment with `name`, `intent`, and `claim_ids`. Transitions accept
 workflow table in the UI.
 
 `/figure` is the system-derived experiment view. `/graph` is the submitted,
-agent-authored logic graph plus lint problems and resolved references.
+agent-authored logic graph plus lint problems and resolved references. Each
+experiment carries `dependencies` (the wave DAG nodes it waits on).
+
+## Tasks
+
+```http
+GET  /api/projects/{project_id}/tasks
+GET  /api/projects/{project_id}/tasks?status={status}
+POST /api/projects/{project_id}/tasks
+GET  /api/projects/{project_id}/tasks/{task_id}
+GET  /api/projects/{project_id}/tasks/{task_id}/status
+POST /api/projects/{project_id}/tasks/{task_id}/transition
+```
+
+Create a task with `name`, `goal` (immutable standalone prose),
+`deliverables` (immutable list, each verifiable as written), and optional
+`depends_on` (exp_/task_ ids). A task carries `goal`, `deliverables[]`
+(`checks` is the same list, the agent-facing alias), `status`
+(`in_progress`, `in_review`, `done`, `failed`), `dependencies`, `dependents`
+(the nodes that wait on it), `current_attempt_artifacts` (`brief` — rendered
+and pinned by Merv at create — and `delivery`), `reviews`, `outcome`, and
+`failed_by`. The single-task reads (`/tasks/{id}`, `/status`) add the
+delivery side: `results[]` (`number`, `state` = `met`|`unmet`|`partial`|null,
+`evidence`, `how`, `text` — one confirmation per deliverable), `report` (the
+delivery's Notes), `caveats` (legacy); the list omits them. Transitions accept `{"transition": "...", "evidence": {...}}`
+(`submit_delivery`, `accept`, `mark_failed`); render the server-provided
+`allowed_transitions` and `workflow.next_action`. `/status` is the task-scoped
+`workflow.status_and_next` view.
 
 ## Literature review
 

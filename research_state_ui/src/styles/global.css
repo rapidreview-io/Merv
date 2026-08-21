@@ -398,11 +398,11 @@ button.th, [role="button"].th { cursor: pointer; user-select: none; }
   border-radius: var(--radius-pill);
   background: var(--bg-elev);
 }
-.status.supports, .status.complete, .status.completed, .status.pass, .status.supported, .status.accepted {
+.status.supports, .status.complete, .status.completed, .status.done, .status.pass, .status.supported, .status.accepted {
   color: var(--supports);
   border-color: rgba(var(--supports-rgb), 0.35);
 }
-.status.qualified, .status.running, .status.provisioning, .status.needs_changes, .status.design_review, .status.experiment_review, .status.ready_to_run, .status.awaiting {
+.status.qualified, .status.running, .status.in_progress, .status.in_review, .status.provisioning, .status.needs_changes, .status.design_review, .status.experiment_review, .status.ready_to_run, .status.awaiting {
   color: var(--qualifies);
   border-color: rgba(var(--qualifies-rgb), 0.35);
 }
@@ -2278,50 +2278,6 @@ html { scroll-behavior: smooth; }
 
 .exp-fsm { padding-top: 10px; margin-bottom: 30px; }
 .exp-footer { margin-top: 28px; }
-
-/* =====================================================================
-   Independent read — the page's lede (reviewer synopsis, or intent
-   fallback). One-Surface: no card chrome, flush on the canvas, a hairline
-   marks where the lede ends and the thread begins.
-   ===================================================================== */
-.ind-read {
-  margin: 0 0 26px;
-  padding-bottom: 22px;
-  border-bottom: 1px solid var(--line-soft);
-}
-.ind-read-byline {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-bottom: 8px;
-  font-size: var(--text-xs);
-  color: var(--muted);
-}
-.ind-read-sep { color: var(--faint); }
-/* Verdict pill — same visual language as the review stepper's pills, minus
-   the button affordance (this one isn't interactive). */
-.ind-read-verdict {
-  display: inline-flex;
-  align-items: center;
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  font-weight: 600;
-  padding: 2px 9px;
-  border-radius: var(--radius-pill);
-  border: 1px solid;
-  margin-left: 2px;
-}
-/* The lede paragraph: larger and more comfortable than body copy — this is
-   the first thing a researcher reads on the page. */
-.ind-read-lede {
-  margin: 0;
-  max-width: 860px;
-  font-size: var(--text-lg);
-  line-height: 1.55;
-  color: var(--text);
-  white-space: pre-wrap;
-}
 
 /* =====================================================================
    Spotlight container (used by Plan, Execution, Outcomes)
@@ -6739,6 +6695,81 @@ textarea.sbxpw-input { font-family: var(--mono, ui-monospace, monospace); font-s
 .wflow-fig .fig-node-label { -webkit-line-clamp: 1; }
 .fig-node--experiment { border-left-color: var(--line-strong); }
 .fig-node--experiment.fig-st--open { border-left-color: var(--active); }
+/* ---- Task cards: a different SILHOUETTE, not just a different glyph. The
+   card is the flowchart "preparation" hexagon — pointed ends where the edges
+   enter and leave — while experiments stay rectangular. The box is still the
+   190×70 layout contract; the div's own border/background/shadow/outline are
+   switched off and every one of those roles moves to a polygon in the
+   .fig-task-shape SVG, so tint, accent, selection, focus and the live pulse
+   all follow the hexagon instead of a hidden rectangle. ---- */
+.fig-node.wflow-fig.fig-node--task,
+.fig-node.wflow-fig.fig-node--task.fig-st--done,
+.fig-node.wflow-fig.fig-node--task.fig-st--open,
+.fig-node.wflow-fig.fig-node--task.fig-st--failed {
+  border-color: transparent; background: transparent;
+  box-shadow: none; animation: none;
+  overflow: visible;
+  /* The tips eat horizontal room at the corners; the head and meta rows sit
+     inside the sloped ends on every row. */
+  padding-left: 17px; padding-right: 15px;
+}
+.fig-node.wflow-fig.fig-node--task.fig-node--selected,
+.fig-node.wflow-fig.fig-node--task:focus-visible,
+.fig-node.wflow-fig.fig-node--task.fig-node--selected:focus-visible { outline: none; }
+@media (hover: hover) {
+  .fig-node.wflow-fig.fig-node--task:hover { box-shadow: none; }
+  .fig-node.wflow-fig.fig-node--task:hover .fig-task-shape { filter: drop-shadow(var(--shadow-md)); }
+}
+/* The text rows stack above the SVG layer; the handles stay react-flow's. */
+.fig-node--task .fig-node-head,
+.fig-node--task .fig-node-label,
+.fig-node--task .fig-node-sub { position: relative; }
+.fig-task-shape {
+  position: absolute; inset: 0; z-index: 0;
+  width: 100%; height: 100%; overflow: visible;
+  pointer-events: none;
+  filter: drop-shadow(var(--shadow-sm));
+  transition: filter var(--motion-fast);
+}
+/* Fill + 1px edge: the card's background and border. */
+.fig-task-fill { fill: var(--bg-elev); stroke: none; }
+.fig-task-edge { fill: none; stroke: var(--line); stroke-width: 1; stroke-linejoin: miter; }
+/* The accent chevron: the rectangle's 3px left border, bent to the shape.
+   Drawn 6 wide and clipped to the polygon, so 3px shows on the inside. */
+.fig-task-accent { fill: none; stroke: var(--line-strong); stroke-width: 6; stroke-linejoin: miter; }
+/* Ring: under the fill, only its outer half shows. Off until selected,
+   focused, or alive. */
+.fig-task-ring { fill: none; stroke: none; stroke-width: 4; stroke-linejoin: miter; }
+.fig-node--task.fig-node--selected .fig-task-ring { stroke: var(--text); }
+.fig-node--task:focus-visible .fig-task-ring { stroke: var(--active); }
+.fig-node--task.fig-node--selected:focus-visible .fig-task-ring { stroke: var(--text); }
+/* Status tints — the same recipe as .fig-node.fig-st--* above, on polygons. */
+.fig-node--task.fig-st--done .fig-task-fill { fill: rgba(var(--supports-rgb), .04); }
+.fig-node--task.fig-st--done .fig-task-edge { stroke: rgba(var(--supports-rgb), .45); }
+.fig-node--task.fig-st--done .fig-task-accent { stroke: var(--supports); }
+.fig-node--task.fig-st--open .fig-task-fill { fill: rgba(var(--active-rgb), .04); }
+.fig-node--task.fig-st--open .fig-task-edge { stroke: rgba(var(--active-rgb), .45); }
+.fig-node--task.fig-st--open .fig-task-accent { stroke: var(--active); }
+/* Failed stays passive here, like the failed card: plain edge, dimmed. */
+.fig-node--task.fig-st--failed .fig-task-fill { fill: var(--bg-elev); }
+.fig-node--task.fig-st--failed .fig-task-edge { stroke: var(--line); }
+.fig-node--task.fig-st--failed .fig-task-accent { stroke: var(--line-strong); }
+/* Live: the card's breathing box-shadow, as a breathing ring. */
+.fig-node--task.fig-st--open:not(.fig-node--selected) .fig-task-ring {
+  stroke: var(--active);
+  animation: fig-task-live-ring 2.2s ease-in-out infinite;
+}
+@keyframes fig-task-live-ring {
+  0%, 100% { stroke-width: 0; stroke-opacity: .3; }
+  50% { stroke-width: 12; stroke-opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fig-node--task.fig-st--open:not(.fig-node--selected) .fig-task-ring { animation: none; stroke: none; }
+}
+/* The legend's swatch: the same hexagon, small, in the chip's own colours. */
+.fig-chip--task { display: inline-flex; align-items: center; gap: 5px; }
+.fig-task-swatch { display: block; overflow: visible; }
+.fig-task-swatch polygon { fill: var(--bg-elev); stroke: var(--line-strong); stroke-width: 1.25; }
 /* Live border: running experiments breathe (paired with their animated
    marching-dash edge into the open wave). The breathing pauses while the card
    is selected so the selection ring reads clean. */
@@ -7099,3 +7130,247 @@ a.wflow-chip { color: var(--text); }
 @media (max-width: 720px) {
   .cnx-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ── Tasks ─────────────────────────────────────────────────────────────── */
+/* The page lede under a title: one measured paragraph, muted. */
+.page-lede {
+  margin: 6px 0 0;
+  max-width: 68ch;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+/* The brief's Done-when checks, numbered as the brief numbers them. */
+.task-checks {
+  margin: 0;
+  padding-left: 1.6em;
+  display: grid;
+  gap: 6px;
+}
+.task-checks li { line-height: 1.45; }
+
+/* ── Task detail: description · requirements · process ─────────────────────
+   A task is a ledger, not an essay (see TaskDetail.jsx). One reading column;
+   the operational facts live in the shared details drawer (.dtl-*). Under
+   960px the requirements table folds evidence under its requirement. ── */
+.task-orient { border-bottom: 0; margin-bottom: 12px; padding-bottom: 0; }
+/* The status row: the FSM strip takes the width; the Details toggle sits at
+   its height on the far right — the mirror of the left sidebar's button. */
+.fsm-row { display: flex; align-items: flex-start; gap: 10px; }
+.fsm-row-strip { flex: 1; min-width: 0; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+/* The experiment's ask: the intent line as the permanent lede, the
+   creator's optional details behind the header's disclosure — the same
+   quiet grammar as the task goal card. */
+.exp-ask .ask-prose {
+  margin: 0; font-size: var(--text-lg); line-height: 1.55;
+  color: var(--text); max-width: 74ch; white-space: pre-wrap;
+}
+.exp-ask .ask-prose .md-inline-code { font-size: 0.85em; }
+.ask-details {
+  border-top: 1px solid var(--line-soft);
+  margin-top: 14px; padding-top: 12px;
+}
+.ask-details-prose {
+  margin: 0; font-size: var(--text-base); line-height: 1.55;
+  color: var(--text); max-width: 78ch; white-space: pre-wrap;
+}
+.ask-details .md-inline-code { font-size: 0.86em; }
+
+/* The task card: the goal leads inside the same white card as the rest of
+   the page and flows straight into its deliverables table. */
+.task-core { padding: 20px 22px 8px; }
+.task-goal {
+  margin: 0 0 16px; font-size: var(--text-lg); line-height: 1.55;
+  color: var(--text); max-width: 74ch; white-space: pre-wrap;
+}
+/* The hand-off from promise to contract: one content-width hairline — the
+   same section rule the Notes card draws — and the header row opens under
+   it with no second underline. */
+.task-goal-rule {
+  border: 0; border-top: 1px solid var(--line-soft);
+  margin: 0 0 14px;
+}
+.task-req-empty { color: var(--faint); font-size: var(--text-sm); padding: 4px 0 12px; }
+
+/* The deliverables table: mark · number · deliverable · confirmation. The
+   numbers get their own column so every row and the header align. Horizontal
+   rules stay soft and scarce — the section rule above the header, one
+   separator between rows, nothing after the last — while the vertical split
+   carries the table's spine. */
+.task-req { display: grid; grid-template-columns: 24px 22px minmax(0, 1fr) minmax(0, 1fr); }
+/* Bookend headers: Deliverable hugs the table's left edge (spanning the mark
+   and number columns), Confirmation hugs the right edge. The tally lives in
+   its own footer line, so the header carries exactly two words. */
+.task-req-h--first { grid-column: 1 / 4; }
+/* One vertical rule splits the table: every confirmation cell (the rows sit
+   in display:contents wrappers, so the cells — not `.task-req > *` — carry
+   the border) plus the header cell, continuous from header to last row. */
+.task-req-row > .task-req-ev, .task-req > .task-req-h--ev {
+  border-left: 1px solid var(--line);
+  padding-left: 16px;
+}
+.task-req-row > .task-req-stmt-cell { padding-right: 18px; }
+.task-req > *, .task-req-row > * { padding: 12px 12px 12px 0; border-bottom: 1px solid var(--line-soft); min-width: 0; }
+.task-req-h {
+  padding-top: 0; padding-bottom: 4px; border-bottom: 0;
+  font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
+}
+.task-req-row > .task-req--last { border-bottom: 0; }
+/* The count floats under the table's last row: no rule above it, none below.
+   (Child selector so the generic cell rule above can't hand it a border.) */
+.task-req > .task-req-tally {
+  grid-column: 1 / -1; text-align: right;
+  padding: 6px 0 2px; border-bottom: 0;
+  font-size: var(--text-xs); color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.task-req-mark { font-weight: 700; font-size: 13px; line-height: 1.45; }
+.task-req-num {
+  color: var(--faint); font-variant-numeric: tabular-nums;
+  font-size: var(--text-sm); line-height: 1.45;
+}
+.task-req-h--ev { display: flex; align-items: baseline; justify-content: flex-end; }
+.task-req-word { font-weight: 600; }
+.task-req-word--bad { color: var(--refutes); }
+.task-req-word--wait { color: var(--qualifies); }
+.task-req-stmt { font-size: var(--text-sm); line-height: 1.45; color: var(--text); }
+.task-req-how .k { color: var(--faint); }
+/* Auto-recognized technical tokens (InlineMd) render as the app's standard
+   code chips; in the dense table they drop a step so rows keep their rhythm. */
+.task-req .md-inline-code { font-size: 0.86em; }
+.task-goal .md-inline-code { font-size: 0.85em; }
+.task-got--ok { color: var(--supports); }
+.task-got--wait { color: var(--qualifies); }
+.task-got--bad { color: var(--refutes); }
+.task-got--open { color: var(--faint); font-weight: 500; }
+.task-req-ev { font-size: var(--text-sm); line-height: 1.45; color: var(--text); }
+.task-req-how { display: block; margin-top: 3px; font-size: var(--text-xs); color: var(--muted); }
+.task-req-none { color: var(--faint); }
+
+/* Process: outcome, the delivery's Report and Caveats, the review rounds. */
+.task-proc h4 {
+  margin: 0 0 4px; font-size: 10px; font-weight: 700; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--faint);
+}
+.task-proc-from { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--faint); }
+.task-proc-sec { padding: 12px 0; border-top: 1px solid var(--line-soft); }
+.task-proc-sec:first-of-type { border-top: 0; padding-top: 0; }
+.task-proc-sec:last-child { padding-bottom: 0; }
+.task-proc p { margin: 0; font-size: var(--text-base); line-height: 1.55; color: var(--text); max-width: 78ch; }
+.task-proc-md { max-width: 78ch; font-size: var(--text-base); line-height: 1.55; }
+.task-proc-md--quiet { color: var(--muted); font-size: var(--text-sm); }
+.task-quote {
+  --q: var(--qualifies); --q-rgb: var(--qualifies-rgb);
+  margin: 0; padding: 8px 12px; border-left: 2px solid var(--q);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: rgba(var(--q-rgb), .06);
+}
+.task-quote--pass { --q: var(--supports); --q-rgb: var(--supports-rgb); }
+.task-quote--fail { --q: var(--refutes); --q-rgb: var(--refutes-rgb); }
+.task-quote-by { display: flex; gap: 8px; align-items: center; font-size: var(--text-xs); color: var(--muted); margin-bottom: 4px; }
+.task-quote p { margin: 0; }
+.task-quote .review-card--bare { margin-top: 8px; }
+
+/* Documents sit last, collapsed: the table and the process already carry their content. */
+.task-doc { padding: 12px 18px; margin-bottom: 10px; }
+.task-doc .spotlight-head { margin-bottom: 0; }
+
+@media (max-width: 820px) {
+  .task-req { grid-template-columns: 24px 22px minmax(0, 1fr); }
+  .task-req-h--ev { display: none; }
+  .task-req-h--first { grid-column: 1 / -1; }
+  .task-req-row > .task-req-ev { grid-column: 3; padding-top: 0; border-left: 0; padding-left: 0; }
+  .task-req-row > .task-req-stmt-cell { padding-right: 0; }
+  .task-req-row > .task-req-stmt-cell { border-bottom: 0; padding-bottom: 4px; }
+  .task-req-row > .task-req-mark, .task-req-row > .task-req-num { border-bottom: 0; }
+}
+
+/* ── Details drawer: the operational sidecar shared by the experiment and
+   task pages. Never a layout column — it slides over the right edge on the
+   Details toggle and stays light: page background, one hairline, a faint
+   lift, quiet type. ── */
+/* Icon-only toggle at the strip's height (Sidebar's hide button, mirrored). */
+.dtl-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; margin-top: 4px; flex: none;
+  border: 0; border-radius: var(--radius-md);
+  background: none; color: var(--faint); cursor: pointer;
+  transition: color var(--motion-fast), background var(--motion-fast);
+}
+.dtl-toggle:hover { color: var(--text); background: var(--bg-soft); }
+.dtl-toggle--open { color: var(--text); background: var(--bg-soft); }
+.dtl-toggle:focus-visible { outline: 2px solid var(--active); outline-offset: -2px; }
+/* Click-away without dimming: the scrim is invisible but catches the click. */
+.dtl-scrim { position: fixed; inset: 0; z-index: 69; display: none; background: transparent; }
+.dtl-scrim--open { display: block; }
+.dtl-drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 70;
+  width: min(324px, 92vw); box-sizing: border-box;
+  padding: 14px 20px 28px; overflow-y: auto;
+  background: var(--bg);
+  border-left: 1px solid var(--line-soft);
+  box-shadow: -14px 0 36px rgba(20, 20, 20, 0.07);
+  transform: translateX(calc(100% + 40px));
+  visibility: hidden;
+  transition: transform .26s cubic-bezier(0.32, 0.72, 0.36, 1),
+              visibility 0s linear .3s;
+}
+.dtl-drawer--open {
+  transform: none; visibility: visible;
+  transition: transform .26s cubic-bezier(0.32, 0.72, 0.36, 1);
+}
+.dtl-drawer:focus { outline: none; }
+html[data-theme="dark"] .dtl-drawer { box-shadow: -14px 0 36px rgba(0, 0, 0, 0.5); }
+@media (prefers-reduced-motion: reduce) {
+  .dtl-drawer, .dtl-drawer--open { transition: none; }
+}
+.dtl-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+.dtl-title {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--faint);
+}
+.dtl-close {
+  border: 0; background: none; cursor: pointer;
+  color: var(--faint); font-size: 12px; line-height: 1;
+  padding: 5px 7px; border-radius: var(--radius-sm);
+}
+.dtl-close:hover { color: var(--text); background: var(--bg-soft); }
+/* The facts grammar (used by both pages' drawer bodies). */
+.dtl-eyebrow {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--faint); margin-bottom: 6px;
+}
+.dtl-sec { padding: 12px 0; border-top: 1px solid var(--line-soft); }
+.dtl-sec:first-child { border-top: 0; }
+.dtl-sub { font-size: var(--text-xs); color: var(--muted); line-height: 1.5; margin-top: 2px; }
+.dtl-empty { color: var(--faint); font-size: var(--text-sm); padding: 4px 0; }
+.dtl-bad { color: var(--refutes); font-size: var(--text-xs); }
+.dtl-tl { list-style: none; margin: 4px 0 0; padding: 0; }
+.dtl-tl li {
+  display: grid; grid-template-columns: 10px 64px minmax(0, 1fr); gap: 8px;
+  align-items: baseline; padding: 2px 0; font-size: var(--text-sm);
+}
+.dtl-tl-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); position: relative; top: -1px; }
+.dtl-tl-dot--ok { background: var(--supports); }
+.dtl-tl-dot--warn { background: var(--qualifies); }
+.dtl-tl-dot--bad { background: var(--refutes); }
+.dtl-tl-dot--live { background: var(--active); }
+.dtl-tl-t { color: var(--faint); font-size: var(--text-xs); white-space: nowrap; }
+.dtl-tl-w { color: var(--text); }
+.dtl-node-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: var(--text-sm); min-width: 0; }
+.dtl-node-glyph { color: var(--faint); font-size: 11px; width: 12px; text-align: center; flex: none; }
+.dtl-node-name { color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dtl-node-row .status { font-size: 11px; padding: 1px 7px; white-space: nowrap; flex: none; }
+/* Versions: submission history per document, review rounds beside them. */
+.dtl-vgroup { margin-bottom: 10px; }
+.dtl-vgroup:last-child { margin-bottom: 0; }
+.dtl-vlabel { font-size: var(--text-xs); color: var(--faint); margin-bottom: 2px; }
+.dtl-vrow { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: var(--text-sm); min-width: 0; }
+.dtl-vname { color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dtl-vrow .status { font-size: 11px; padding: 1px 7px; white-space: nowrap; flex: none; }
+.dtl-vmeta { color: var(--faint); font-size: var(--text-xs); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: auto; }

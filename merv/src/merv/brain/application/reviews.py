@@ -11,10 +11,16 @@ from merv.shared.artifact_roles import EXHIBIT_ROLE, GATED_ROLES
 from ..artifacts import Artifacts
 from ..feed import FeedAdvisory
 from ..kernel.utils import parse_iso
-from ..research_core import EXPERIMENT_WORKFLOW, REFLECTION_WORKFLOW, Research
+from ..research_core import (
+    EXPERIMENT_WORKFLOW,
+    REFLECTION_WORKFLOW,
+    Research,
+    TASK_WORKFLOW,
+)
 from .experiments.context import ExperimentContextQuery
 from .project_context import ProjectContextQuery
 from .reflections import present_agent_reflection_state
+from .tasks import TaskContextQuery
 
 
 def request_review(research: Research, **kwargs: Any) -> dict[str, Any]:
@@ -40,11 +46,11 @@ def reviewer_handoff_payload(
     review_request_id: str = "",
     reviewer_capability: str = "",
 ) -> dict[str, Any]:
-    workflow = (
-        REFLECTION_WORKFLOW
-        if target_type == "reflection"
-        else EXPERIMENT_WORKFLOW if target_type == "experiment" else None
-    )
+    workflow = {
+        "reflection": REFLECTION_WORKFLOW,
+        "experiment": EXPERIMENT_WORKFLOW,
+        "task": TASK_WORKFLOW,
+    }.get(target_type)
     review = None if workflow is None else workflow.review(role)
     skill = "" if review is None else review.skill
     handoff: dict[str, Any] = {
@@ -81,6 +87,7 @@ def start_review(
     caller_session_id: str = "",
     assigned_agent_session_id: str = "",
     assigned_review_request_id: str = "",
+    task_context: TaskContextQuery | None = None,
 ) -> dict[str, Any]:
     """Start a pinned review, then attach bounded orientation for its target."""
     result = dict(
@@ -104,6 +111,7 @@ def start_review(
     result["read_scope"] = [
         "claim",
         "experiment",
+        "task",
         "reflection",
         "artifact",
         "review",
@@ -125,6 +133,13 @@ def start_review(
             project_id=project_id,
             pinned_artifacts=submitted_artifacts,
         )
+    elif target_type == "task":
+        result["submitted_artifacts"] = submitted_artifacts
+        live_task = research.task_state(task_id=target_id, project_id=project_id)
+        if task_context is not None:
+            result["context"] = task_context.build(
+                state=dict(live_task), project_id=project_id
+            )
     elif target_type == "reflection":
         result["submitted_artifacts"] = submitted_artifacts
         result["reflection_context"] = present_agent_reflection_state(

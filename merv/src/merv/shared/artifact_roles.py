@@ -9,7 +9,7 @@ artifact upload path can share it without crossing feature boundaries.
 from __future__ import annotations
 
 ARTIFACT_TARGET_TYPES = frozenset(
-    {"experiment", "reflection", "claim", "review", "attempt"}
+    {"experiment", "reflection", "task", "claim", "review", "attempt"}
 )
 
 PROJECT_GRAPH_ROLE = "project_graph"
@@ -35,6 +35,11 @@ SYSTEM_CREATED_BY = "system"
 # Role-'result' artifacts are small metrics JSON files the exhibit ingests.
 METRIC_RESULT_MAX_BYTES = 16_000
 
+# Task documents: the brief (goal + numbered "Done when" checks) goes in, the
+# delivery (evidence per check) comes out.
+TASK_BRIEF_ROLE = "brief"
+TASK_DELIVERY_ROLE = "delivery"
+
 # Roles an agent may submit via artifact.submit: the canonical gated docs plus
 # the metrics-JSON 'result' role.
 SUBMITTABLE_ROLES = frozenset(
@@ -46,6 +51,8 @@ SUBMITTABLE_ROLES = frozenset(
         REFLECTION_LENS_DOC_ROLE,
         "reflection_doc",
         "change_spec",
+        TASK_BRIEF_ROLE,
+        TASK_DELIVERY_ROLE,
         "result",
     }
 )
@@ -69,5 +76,7 @@ GATED_ROLE_BYTE_CAPS: dict[str, int] = {
     REFLECTION_LENS_DOC_ROLE: 16_000,
     "reflection_doc": 16_000,
     "change_spec": 16_000,
+    TASK_BRIEF_ROLE: 16_000,
+    TASK_DELIVERY_ROLE: 16_000,
 }
 GATED_ROLES = frozenset(GATED_ROLE_BYTE_CAPS)

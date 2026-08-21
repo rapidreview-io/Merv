@@ -1,0 +1,67 @@
+# Dev-brain overlay: one public Azure VM that terminates TLS in Caddy,
+# co-hosts the research UI, and keeps every byte (records, blobs, heavy
+# storage) on the box. Layer it LAST, after the base file and the Supabase
+# database overlay:
+#
+#   docker compose --env-file ~/research-suite-vm/provider-secrets.env \
+#     --env-file ~/research-suite-vm/supabase-db.env \
+#     --env-file ~/research-suite-vm/dev.env \
+#     -f deploy/docker-compose.yml -f deploy/docker-compose.supabase.yml \
+#     -f deploy/dev/docker-compose.dev.yml up --build -d
+#
+# Interpolated from ~/research-suite-vm/dev.env on the host (see README.md):
+#   MERV_DEV_HOST            public hostname Caddy serves (also the OAuth
+#                            resource host and the presigned-storage host)
+#   MERV_DEV_MINIO_USER      MinIO root user == the brain's S3 access key
+#   MERV_DEV_MINIO_PASSWORD  MinIO root password == the brain's S3 secret
+#   MERV_PROVIDER_ENV_FILE   provider-secrets.env path (read by the base file)
+#   MERV_WAIT_SECRET         dev-specific run-wait signing secret (base file)
+
+services:
+  minio:
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MERV_DEV_MINIO_USER:?set MERV_DEV_MINIO_USER in dev.env}
+      MINIO_ROOT_PASSWORD: ${MERV_DEV_MINIO_PASSWORD:?set MERV_DEV_MINIO_PASSWORD in dev.env}
+    # Loopback only. Caddy fronts the bucket paths; nothing else on the
+    # Internet reaches MinIO (the NSG allows 22/80/443 only, this is belt
+    # and braces).
+    ports: !override
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+
+  createbucket:
+    environment:
+      MERV_DEV_MINIO_USER: ${MERV_DEV_MINIO_USER:?set MERV_DEV_MINIO_USER in dev.env}
+      MERV_DEV_MINIO_PASSWORD: ${MERV_DEV_MINIO_PASSWORD:?set MERV_DEV_MINIO_PASSWORD in dev.env}
+    # $$ keeps the expansion inside the container shell, so the password
+    # never lands on a command line.
+    entrypoint: !override
+      - /bin/sh
+      - -c
+      - >
+        mc alias set local http://minio:9000 "$$MERV_DEV_MINIO_USER" "$$MERV_DEV_MINIO_PASSWORD" &&
+        mc mb --ignore-existing local/merv-blobs &&
+        mc mb --ignore-existing local/merv-storage &&
+        echo 'bucket ready'
+
+  control:
+    restart: unless-stopped
+    # The brain dials its own public hostname (presigned heavy-storage URLs
+    # go through Caddy to MinIO). Resolve it to the Docker host rather than
+    # relying on the VM hairpinning to its public IP.
+    extra_hosts:
+      - "${MERV_DEV_HOST:?set MERV_DEV_HOST in dev.env}:host-gateway"
+    environment:
+      MERV_REQUIRE_SANDBOX_BACKEND: "1"
+      MERV_OAUTH_RESOURCE_URI: https://${MERV_DEV_HOST}/mcp
+      MERV_UI_BASE_URL: https://${MERV_DEV_HOST}/merv
+      # The co-hosted UI is same-origin; the localhost entries let a laptop
+      # Vite dev server (5173 / 5673) point rsui:apiBase at this brain.
+      MERV_ALLOWED_ORIGINS: https://${MERV_DEV_HOST},http://localhost:5173,http://127.0.0.1:5173,http://localhost:5673,http://127.0.0.1:5673
+      # Heavy storage is the VM's MinIO (bucket merv-storage from the base
+      # file). Presigned URLs must carry the public host so sandboxes and
+      # browsers can use them; Caddy proxies /merv-storage/* to MinIO.
+      MERV_STORAGE_ENDPOINT_URL: https://${MERV_DEV_HOST}
+      AWS_ACCESS_KEY_ID: ${MERV_DEV_MINIO_USER}
+      AWS_SECRET_ACCESS_KEY: ${MERV_DEV_MINIO_PASSWORD}

@@ -5,6 +5,7 @@ import unittest
 from merv.brain.research_core import (
     EXPERIMENT_WORKFLOW,
     REFLECTION_WORKFLOW,
+    TASK_WORKFLOW,
 )
 from merv.brain.research_core.policy import (
     REVIEW_GATE_EXEMPT_ROLES,
@@ -20,7 +21,7 @@ from merv.brain.research_core.workflow_schema import (
 
 class WorkflowSchemaTest(unittest.TestCase):
     def test_declarations_are_complete_and_self_consistent(self) -> None:
-        for workflow in (EXPERIMENT_WORKFLOW, REFLECTION_WORKFLOW):
+        for workflow in (EXPERIMENT_WORKFLOW, REFLECTION_WORKFLOW, TASK_WORKFLOW):
             with self.subTest(workflow=workflow.target_type):
                 validate_workflow(workflow)
                 self.assertTrue(workflow.state(workflow.initial))
@@ -94,6 +95,30 @@ class WorkflowSchemaTest(unittest.TestCase):
             ("consolidating", "same"),
         )
 
+    def test_task_forward_and_review_routes_are_declared(self) -> None:
+        self.assertEqual(
+            TASK_WORKFLOW.forward_path("in_progress"),
+            ("in_progress", "in_review", "done"),
+        )
+        self.assertEqual(TASK_WORKFLOW.terminal_statuses, {"done", "failed"})
+        back = resolve_review_return(
+            workflow=TASK_WORKFLOW,
+            role="task_reviewer",
+            verdict="needs_changes",
+            return_to="",
+        )
+        self.assertEqual((back.to_status, back.attempt), ("in_progress", "same"))
+        for requested in ("", "failed"):
+            ended = resolve_review_return(
+                workflow=TASK_WORKFLOW,
+                role="task_reviewer",
+                verdict="fail",
+                return_to=requested,
+            )
+            self.assertEqual(ended.to_status, "failed")
+        self.assertEqual(TASK_WORKFLOW.review_fail_statuses, ("failed",))
+        self.assertEqual(TASK_WORKFLOW.review_return_statuses, ("in_progress",))
+
     def test_invalid_review_returns_are_rejected_by_the_schema(self) -> None:
         cases = (
             (EXPERIMENT_WORKFLOW, "human", "pass", "planned"),
@@ -106,6 +131,8 @@ class WorkflowSchemaTest(unittest.TestCase):
                 "needs_changes",
                 "reflecting",
             ),
+            (TASK_WORKFLOW, "task_reviewer", "needs_changes", "failed"),
+            (TASK_WORKFLOW, "task_reviewer", "fail", "in_progress"),
         )
         for workflow, role, verdict, destination in cases:
             with self.subTest(role=role, destination=destination):
@@ -181,6 +208,7 @@ class WorkflowSchemaTest(unittest.TestCase):
             ReflectionTransitionInput,
             ReviewRequestInput,
             ReviewSubmitInput,
+            TaskTransitionInput,
         )
 
         def choices(model, field: str) -> tuple[str, ...]:
@@ -194,13 +222,23 @@ class WorkflowSchemaTest(unittest.TestCase):
             choices(ReflectionTransitionInput, "transition"),
             REFLECTION_WORKFLOW.transition_names,
         )
+        self.assertEqual(
+            choices(TaskTransitionInput, "transition"),
+            TASK_WORKFLOW.transition_names,
+        )
         self.assertEqual(choices(ReviewRequestInput, "role"), REVIEW_ROLE_VALUES)
+        self.assertEqual(
+            choices(ReviewRequestInput, "target_type"),
+            ("experiment", "reflection", "task"),
+        )
         self.assertEqual(
             choices(ReviewSubmitInput, "return_to"),
             (
                 "",
                 *EXPERIMENT_WORKFLOW.review_return_statuses,
                 *REFLECTION_WORKFLOW.review_return_statuses,
+                *TASK_WORKFLOW.review_return_statuses,
+                *TASK_WORKFLOW.review_fail_statuses,
             ),
         )
 

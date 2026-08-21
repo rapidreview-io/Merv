@@ -16,6 +16,7 @@ from typing import Any, get_args, get_origin, get_type_hints, is_typeddict
 
 from merv.brain.application.experiments.create import ExperimentCreateArgs
 from merv.brain.application.experiments.presentation import SlimExperimentState
+from merv.brain.application.tasks import SlimTaskState, TaskTransitionReceipt
 from merv.brain.application.experiments.transition import (
     TransitionReceipt,
     TransitionResponse,
@@ -37,10 +38,15 @@ from merv.brain.research_core.models import (
     LiteratureSignal,
     ResearchSnapshot,
     CommittedExperimentUpdate,
+    CommittedTaskUpdate,
     ExhibitVerdict,
     ExperimentState,
     ExperimentSummary,
     PersistedRunState,
+    DependencyNode,
+    TaskResult,
+    TaskState,
+    TaskSummary,
 )
 from tests.paths import BACKEND_ROOT
 
@@ -48,6 +54,8 @@ from tests.paths import BACKEND_ROOT
 APPLICATION_DATACLASS_EXCLUSIONS = frozenset(
     {
         "merv.brain.application.experiments.transition.TransitionExperiment",
+        "merv.brain.application.tasks.TaskContextQuery",
+        "merv.brain.application.tasks.TransitionTask",
         "merv.brain.application.workflow.StatusAndNextQuery",
     }
 )
@@ -182,6 +190,7 @@ SAMPLES: dict[type, object] = {
         "project_id": "proj_1",
         "name": "Example",
         "intent": "Test one claim",
+        "details": "Hold the optimizer fixed; budget one GPU-day.",
         "status": "running",
         "attempt_index": 1,
         "mlflow_run": RUN,
@@ -212,6 +221,7 @@ SAMPLES: dict[type, object] = {
     ExperimentCreateArgs: {
         "name": "example",
         "intent": "Test one claim",
+        "details": "Hold the optimizer fixed; budget one GPU-day.",
         "tested_claim_ids": ["claim_1"],
         "claim_id": None,
         "claim_ids": None,
@@ -221,6 +231,7 @@ SAMPLES: dict[type, object] = {
         "success_criteria": "",
         "risks": "",
         "status": "planned",
+        "depends_on": ["task_1"],
         "project_id": "proj_1",
     },
     ExperimentState: {
@@ -228,6 +239,7 @@ SAMPLES: dict[type, object] = {
         "project_id": "proj_1",
         "name": "Example",
         "intent": "Test one claim",
+        "details": "Hold the optimizer fixed; budget one GPU-day.",
         "status": "running",
         "attempt_index": 1,
         "mlflow_run": RUN,
@@ -247,6 +259,7 @@ SAMPLES: dict[type, object] = {
         "project_id": "proj_1",
         "name": "Example",
         "intent": "Test one claim",
+        "details": "Hold the optimizer fixed; budget one GPU-day.",
         "status": "running",
         "attempt_index": 1,
         "mlflow_run": RUN,
@@ -261,6 +274,98 @@ SAMPLES: dict[type, object] = {
     CommittedExperimentUpdate: CommittedExperimentUpdate(
         state={"id": "exp_1", "status": "running"}, event=EVENT
     ),
+    TaskResult: {
+        "number": 1,
+        "state": "met",
+        "evidence": "out/train.parquet with 41 200 rows",
+        "how": "ls out/",
+        "text": "[x] out/train.parquet with 41 200 rows — how to check: ls out/",
+    },
+    DependencyNode: {
+        "id": "exp_1",
+        "node_type": "experiment",
+        "name": "distill",
+        "status": "ready_to_run",
+        "settled": False,
+        "failed": False,
+    },
+    TaskState: {
+        "id": "task_1",
+        "project_id": "proj_1",
+        "name": "prep-data",
+        "goal": "Prepare the dataset",
+        "status": "in_progress",
+        "attempt_index": 1,
+        "outcome": "",
+        "failed_by": "",
+        "deliverables": ["clean, deduplicated splits exist under out/"],
+        "checks": ["clean, deduplicated splits exist under out/"],
+        "results": [
+            {
+                "number": 1,
+                "state": "met",
+                "evidence": "out/train.parquet with 41 200 rows",
+                "how": "ls out/",
+                "text": "[x] out/train.parquet with 41 200 rows — how to check: ls out/",
+            }
+        ],
+        "report": "Generated the splits with a seeded permutation.",
+        "caveats": None,
+        "dependencies": [],
+        "dependents": [
+            {
+                "id": "exp_1",
+                "node_type": "experiment",
+                "name": "distill",
+                "status": "ready_to_run",
+                "settled": False,
+                "failed": False,
+            }
+        ],
+    },
+    SlimTaskState: {
+        "id": "task_1",
+        "project_id": "proj_1",
+        "name": "prep-data",
+        "goal": "Prepare the dataset",
+        "status": "in_progress",
+        "attempt_index": 1,
+        "outcome": "",
+        "failed_by": "",
+        "deliverables": [],
+        "checks": [],
+        "results": [],
+        "report": None,
+        "caveats": None,
+        "dependencies": [],
+        "dependents": [],
+    },
+    TaskTransitionReceipt: {
+        "task_id": "task_1",
+        "transition": "submit_delivery",
+        "from_status": "in_progress",
+        "to_status": "in_review",
+        "status": "in_review",
+        "attempt_index": 1,
+        "event_id": 7,
+        "accepted_at": "2026-07-21T12:00:00Z",
+        "feed_note": "Task accepted.",
+    },
+    TaskSummary: {
+        "id": "task_1",
+        "project_id": "proj_1",
+        "name": "prep-data",
+        "goal": "Prepare the dataset",
+        "status": "in_progress",
+        "attempt_index": 1,
+        "outcome": "",
+        "failed_by": "",
+        "created_at": "2026-07-21T12:00:00Z",
+        "updated_at": "2026-07-21T12:00:00Z",
+    },
+    CommittedTaskUpdate: CommittedTaskUpdate(
+        state={"id": "task_1", "status": "in_progress"}, event=EVENT
+    ),
     ResearchSnapshot: ResearchSnapshot(
         project_id="proj_1",
         requested_experiment_id="exp_1",
@@ -271,6 +376,8 @@ SAMPLES: dict[type, object] = {
         latest_published_reflection=None,
         reflection_signal={"needed": False},
         gate_evaluations={"exp_1": {"ready": True}},
+        tasks=[{"id": "task_1", "status": "in_progress"}],
+        requested_task_id="task_1",
         recent_claims=[{"id": "clm_1"}],
         claim_events_since_reflection=[],
         literature_signal=LiteratureSignal(papers_total=1, papers_unreviewed=0),

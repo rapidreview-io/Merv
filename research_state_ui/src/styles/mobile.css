@@ -1444,6 +1444,8 @@ html[data-surface="mobile"] .mdetail-lead {
   color: var(--text);
   margin: 0 0 10px;
 }
+/* The ask's details reveal: quieter than the lead line. */
+html[data-surface="mobile"] .mdetail-ask-details { font-size: 12px; color: var(--muted); }
 /* Collapsed heavy pane — mounts (and starts polling) only on tap. */
 html[data-surface="mobile"] .mterm-row {
   display: flex;

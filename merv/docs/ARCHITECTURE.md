@@ -2,7 +2,8 @@
 
 This document describes the architecture implemented by the current codebase.
 The workflow declarations in `research_core/{experiment_workflow,
-reflection_workflow}.py`, the tool manifest in `surface/tools/contracts.py`,
+task_workflow, reflection_workflow}.py`, the tool manifest in
+`surface/tools/contracts.py`,
 and the structural tests under `tests/structure/` are authoritative when prose
 and code disagree.
 
@@ -14,10 +15,14 @@ for machine-learning research. Its durable model is:
 - **Project** — the scope for research state and policy.
 - **Claim** — what the project currently believes.
 - **Experiment** — a planned, executed, and reviewed test of one or more claims.
+- **Task** — scoped non-experiment work with a verifiable finish line and no
+  claim (a brief of checks in, a delivery of evidence out, one review).
+  Experiments and tasks are the nodes of a wave; `depends_on` edges between
+  them form the wave DAG.
 - **Artifact** — a typed document submitted against a workflow target.
 - **Review** — an independent judgment pinned to an immutable target snapshot.
 - **Reflection** — a reviewed project-wide update to the logic graph, claims,
-  and next experiment wave.
+  and next wave of experiments and tasks.
 - **Sandbox** — an ephemeral SSH-reachable machine used for execution.
 - **Storage object** — a durable heavy file kept outside the repo.
 

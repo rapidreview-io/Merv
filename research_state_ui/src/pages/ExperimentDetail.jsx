@@ -10,11 +10,12 @@ import ReportSpotlight from '../components/ReportSpotlight';
 import ExperimentGraphs from '../components/ExperimentGraphs';
 import SandboxTerminal from '../components/SandboxTerminal';
 import ArtifactList from '../components/ArtifactList';
-import IndependentRead from '../components/IndependentRead';
 import TerminalTransitionConfirm from '../components/TerminalTransitionConfirm';
+import DetailsDrawer, { DetailsButton, OpsTimeline, OpsVersions, OpsPosition } from '../components/DetailsDrawer';
 import { expName } from '../utils/experiment';
-import { pickIndependentRead } from '../utils/independentRead';
+import { fmtAgo, formatBytes } from '../utils/format';
 import { gateToSectionId, useScrollToHash } from '../utils/useScrollToHash';
+import InlineMd from '../components/InlineMd';
 
 const NEXT_ACTION_TO_TRANSITION = {
   submit_design_for_review:  { transition: 'submit_design',     label: 'Submit for design review' },
@@ -57,6 +58,12 @@ export default function ExperimentDetail() {
   const [actionError, setActionError] = useState(null);
   const [gateOpen, setGateOpen] = useState(false);
   const [pendingTerminalTransition, setPendingTerminalTransition] = useState(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsBtnRef = useRef(null);
+  const closeDetails = useCallback(() => {
+    setDetailsOpen(false);
+    detailsBtnRef.current?.focus({ preventScroll: true });
+  }, []);
 
   useEffect(() => {
     setPendingTerminalTransition(null);
@@ -183,10 +190,6 @@ export default function ExperimentDetail() {
   const designReviews = allReviews.filter(r => (r.role || '').toLowerCase().includes('design'));
   const experimentReviews = allReviews.filter(r => !(r.role || '').toLowerCase().includes('design'));
 
-  // The page's lede: the independent reviewer's synopsis when one exists,
-  // else the experiment's own intent line.
-  const independentRead = pickIndependentRead(allReviews, experiment);
-
   return (
     <div className="page-stage">
       {/* ─────────────  STAGE  ──────────────────────────────────────── */}
@@ -194,6 +197,8 @@ export default function ExperimentDetail() {
           current step discloses the gate panel (details + transitions);
           closed experiments need no panel — the strip already says it. */}
       <section className="exp-fsm">
+        <div className="fsm-row">
+          <div className="fsm-row-strip">
         <FSMStrip
           status={experiment.status}
           badge={!isClosed && primary ? 'action' : null}
@@ -214,6 +219,14 @@ export default function ExperimentDetail() {
             />
           </div>
         </FSMStrip>
+          </div>
+          <DetailsButton
+            open={detailsOpen}
+            onToggle={() => setDetailsOpen(v => !v)}
+            controls="experiment-details"
+            buttonRef={detailsBtnRef}
+          />
+        </div>
         {actionError && <div className="error-message">{actionError}</div>}
       </section>
 
@@ -235,10 +248,12 @@ export default function ExperimentDetail() {
         <h1 className="page-title exp-title-name">{expName(experiment)}</h1>
       </header>
 
-      {/* ─────────────  INDEPENDENT READ (lede)  ────────────────────────
-          The reviewer's plain-language TLDR leads the page, falling back to
-          the experiment's intent line until a review carries a synopsis. */}
-      <IndependentRead read={independentRead} />
+      {/* ─────────────  THE ASK (permanent lede)  ───────────────────────
+          The intent line the experiment was created with, always visible;
+          the creator's optional details sit behind the header's disclosure.
+          Both are immutable — the approved plan below supersedes the details
+          on anything about how. */}
+      <AskCard experiment={experiment} />
 
       {/* ─────────────  MAP (pinned overview: figure ⇄ logic graph)  ── */}
       <ExperimentGraphs
@@ -291,7 +306,143 @@ export default function ExperimentDetail() {
           historicalRes={historicalRes}
         />
       )}
+
+      <DetailsDrawer id="experiment-details" open={detailsOpen} onClose={closeDetails}>
+        <ExperimentFacts
+          experiment={experiment}
+          designReviews={designReviews}
+          experimentReviews={experimentReviews}
+          px={px}
+        />
+      </DetailsDrawer>
     </div>
+  );
+}
+
+function AskCard({ experiment }) {
+  const intent = String(experiment.intent || '').trim();
+  const details = String(experiment.details || '').trim();
+  const [open, setOpen] = useState(false);
+  if (!intent && !details) return null;
+  return (
+    <section id="ask" className="spotlight exp-ask">
+      <header className="spotlight-head spotlight-head--row">
+        <div className="spotlight-head-left">
+          <span className="spotlight-eyebrow">Intent</span>
+        </div>
+        {details && (
+          <div className="spotlight-head-right">
+            <button
+              type="button"
+              className="btn btn--sm"
+              aria-expanded={open}
+              onClick={() => setOpen(v => !v)}
+            >
+              <span className="toggle-verb">{open ? 'Hide' : 'Show'}</span>{' details'}
+            </button>
+          </div>
+        )}
+      </header>
+      {intent && <p className="ask-prose"><InlineMd text={intent} /></p>}
+      {open && details && (
+        <div className="ask-details"><p className="ask-details-prose"><InlineMd text={details} /></p></div>
+      )}
+    </section>
+  );
+}
+
+/* The drawer body: pure operations — durations, versions, placement. The
+   page already says status, verdicts, and content; none of that repeats. */
+function buildExperimentTimeline(experiment, designReviews, experimentReviews) {
+  const items = [];
+  if (experiment.created_at) items.push({ t: experiment.created_at, rank: 0, tone: null, label: 'created' });
+  const arts = (experiment.artifacts || []).slice().sort((a, b) =>
+    String(a.created_at || '').localeCompare(String(b.created_at || ''))
+    || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0)));
+  let planSeen = 0, reportSeen = 0;
+  for (const a of arts) {
+    if (a.role === 'plan') {
+      planSeen += 1;
+      items.push({ t: a.created_at, rank: 2 * planSeen, tone: null, label: planSeen === 1 ? 'plan submitted' : `plan v${planSeen}` });
+    } else if (a.role === 'report') {
+      reportSeen += 1;
+      items.push({ t: a.created_at, rank: 50 + reportSeen, tone: 'live', label: reportSeen === 1 ? 'report submitted' : `report v${reportSeen}` });
+    }
+  }
+  designReviews.forEach((r, i) => {
+    const v = String(r.verdict || '').toLowerCase();
+    items.push({
+      t: r.created_at, rank: 2 * (i + 1) + 1,
+      tone: v === 'pass' ? 'ok' : 'warn',
+      label: `design review ${designReviews.length > 1 ? `round ${i + 1} ` : ''}· ${v.replace(/_/g, ' ') || 'pending'}`,
+    });
+  });
+  experimentReviews.forEach((r, i) => {
+    const v = String(r.verdict || '').toLowerCase();
+    items.push({
+      t: r.created_at, rank: 60 + i,
+      tone: v === 'pass' ? 'ok' : v === 'fail' ? 'bad' : 'warn',
+      label: `experiment review ${experimentReviews.length > 1 ? `round ${i + 1} ` : ''}· ${v.replace(/_/g, ' ') || 'pending'}`,
+    });
+  });
+  const status = experiment.status;
+  if (['complete', 'failed', 'abandoned'].includes(status) && experiment.updated_at) {
+    items.push({
+      t: experiment.updated_at, rank: 99,
+      tone: status === 'complete' ? 'ok' : 'bad',
+      label: status === 'complete' ? 'complete' : status,
+    });
+  }
+  return items
+    .filter(i => i.t)
+    .sort((a, b) => String(a.t).localeCompare(String(b.t)) || (a.rank - b.rank));
+}
+
+function ExperimentFacts({ experiment, designReviews, experimentReviews, px }) {
+  const ago = (iso) => {
+    const t = Date.parse(iso || '');
+    return Number.isFinite(t) ? fmtAgo(Date.now() - t) : null;
+  };
+  const isClosed = ['complete', 'failed', 'abandoned'].includes(experiment.status);
+  const timeline = buildExperimentTimeline(experiment, designReviews, experimentReviews);
+  const arts = (experiment.artifacts || []).slice().sort((a, b) =>
+    String(a.created_at || '').localeCompare(String(b.created_at || ''))
+    || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0)));
+  const versionsOf = (role) => arts.filter(a => a.role === role).map((a, i) => ({
+    id: a.id,
+    name: `v${i + 1}${a.attempt_index != null ? ` · attempt ${a.attempt_index}` : ''}`,
+    meta: [a.size_bytes != null ? formatBytes(a.size_bytes) : null, ago(a.created_at)].filter(Boolean).join(' · '),
+    title: a.path,
+  }));
+  const reviewRows = (rows) => rows.map((r, i) => ({
+    id: r.id,
+    name: rows.length > 1 ? `round ${i + 1}` : 'round 1',
+    pill: String(r.verdict || 'pending').toLowerCase(),
+    meta: ago(r.created_at) || '',
+  }));
+  const withHref = (d) => ({ ...d, href: px(d.node_type === 'task' ? `/tasks/${d.id}` : `/experiments/${d.id}`) });
+  const upstream = (experiment.dependencies || []).map(withHref);
+  const downstream = (experiment.dependents || []).map(withHref);
+  return (
+    <>
+      <OpsTimeline
+        items={timeline}
+        done={isClosed}
+        createdAt={experiment.created_at}
+        endedAt={experiment.updated_at}
+      />
+      <OpsVersions groups={[
+        { label: 'plan', rows: versionsOf('plan') },
+        { label: 'report', rows: versionsOf('report') },
+        { label: 'design reviews', rows: reviewRows(designReviews) },
+        { label: 'experiment reviews', rows: reviewRows(experimentReviews) },
+      ]} />
+      <OpsPosition
+        upstream={upstream}
+        downstream={downstream}
+        waitNote={upstream.length > 0 && !isClosed ? 'start_running opens once every dependency has succeeded' : null}
+      />
+    </>
   );
 }
 

@@ -46,9 +46,9 @@ against the underlying snapshot.
 
 ## Judge the reflection
 
-- **New signal:** Did `new_terminal_experiments` materially affect the graph,
-  reflection, or decision where warranted? A wave that could have been written
-  before them did not do its job.
+- **New signal:** Did `new_terminal_experiments` (and `new_terminal_tasks`)
+  materially affect the graph, reflection, or decision where warranted? A wave
+  that could have been written before them did not do its job.
 - **Honest graph:** Does the graph preserve contested findings, negative
   results, dead ends, and current uncertainty? Verify load-bearing nodes
   against their references. Judge substance, not the author's vocabulary.
@@ -66,8 +66,12 @@ against the underlying snapshot.
 - **Next wave:** Do the proposed experiments address live research questions,
   avoid known dead ends unless conditions changed, and contain enough intent
   to materialize? Claim references are optional, but every provided reference
-  must genuinely match what the experiment tests. Multi-experiment waves must
-  be genuinely independent.
+  must genuinely match what the experiment tests. Are the proposed tasks
+  scoped and not over-prescribed — a goal, checks an executor can meet and a
+  reviewer can verify, no method dressed up as a check — and does the
+  `depends_on` DAG order the wave sensibly (data before the experiment that
+  trains on it) without inventing dependencies that only serialize work? A
+  task that exists to test a claim is an experiment in disguise.
 
 ## Choose the verdict and return
 

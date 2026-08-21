@@ -1,10 +1,10 @@
 ---
 name: research-workflow
 description: >-
-  Operate the Merv experiment workflow: select a project, follow
-  workflow.status_and_next, create and run experiments, submit evidence, and
-  coordinate required design or attempt reviews. Use for experiment-level
-  research work and for resuming an experiment already in progress.
+  Operate the Merv research workflow: select a project, follow
+  workflow.status_and_next, create and run experiments and tasks, submit
+  evidence, and coordinate required design, attempt, or task reviews. Use for
+  experiment- and task-level work and for resuming work already in progress.
 ---
 
 # Research Workflow
@@ -43,16 +43,89 @@ Operate in this loop:
 
 Pass the selected `project_id` explicitly to every project-scoped operation.
 Use `project(action="overview", project_id=...)` when you need the whole
-project picture or must check that a proposed claim or experiment is not a
-duplicate of settled work.
+project picture or must check that a proposed claim, experiment, or task is
+not a duplicate of settled work.
+
+## Experiment or task?
+
+Two kinds of work node exist, and the line between them is one question: does
+this work exist to change confidence in a research claim?
+
+- Yes → an **experiment**: a claim, a pre-registered plan, adversarial design
+  and attempt reviews, evidence. It can succeed by failing — a refuted claim
+  is a good experiment.
+- No → a **task**: scoped work with a verifiable finish line — a literature
+  sweep, data acquisition and preparation, an evaluation harness, a memo, a
+  write-up. It succeeds only if the thing it promised exists. Tasks never carry
+  a claim and never move claim status; the reflection reads their outcomes.
+
+Tasks are uncapped; experiments keep their cap. Both may depend on other wave
+nodes (`depends_on`): an experiment does not start running, and a task does not
+deliver, until every dependency has succeeded. A failed dependency shows up as
+`dependency_failed` — end the dependent node with a reason, or leave it for the
+next reflection to replan.
+
+## Run a task
+
+The task lifecycle is:
+
+```text
+in_progress → submit delivery → in_review → accept → done
+     ↑                              │
+     └───── needs_changes ──────────┤
+                                    └── fail ──→ failed
+```
+
+Two working states, two endings. `task.create(name, goal, deliverables,
+depends_on?)` puts a task straight into `in_progress`; there is no planning
+stage and no design review. The goal (short standalone prose) and the
+deliverables (each verifiable as written) are IMMUTABLE — Merv renders and
+pins `brief.md` from them at creation, and brief submissions are refused. A
+wrong goal is an honest miss in the delivery, or the owner ends the task and
+creates a better one.
+
+1. **Goal and deliverables** are fixed at `task.create`: goal = 2-4 sentences,
+   what needs to be done and why, standalone (name concrete datasets, tools,
+   and experiments — never "the wave" or "this reflection"); deliverables =
+   one item per thing that must exist, each carrying its own acceptance
+   criterion in the sentence (counts, tolerances, required sections), no
+   bundles, no vague nouns; 1-7 items is the rule of thumb.
+2. **Do the work** however fits — locally, in a sandbox, in the task folder.
+   Keep evidence as you go: files, run receipts, storage objects.
+3. **Delivery** (`tasks/<name>/delivery.md`, role `delivery`,
+   [delivery-template.md](delivery-template.md)): a **Confirmations** section
+   with one numbered entry per deliverable, same numbering — where the thing
+   is and how the reviewer can check it, pointing at durable things (files,
+   storage objects, lit-review sections, run receipts); an honest miss is
+   stated plainly as `not delivered — <why>`. Then **Notes**: a short
+   paragraph on how the task was performed, anything else needed to verify,
+   and what not to trust blindly. Merv enforces only the shape (one entry per
+   deliverable); the reviewer verifies the substance.
+4. `task.transition(submit_delivery)` → `review.request(target_type="task",
+   role="task_reviewer")` → hand the returned handoff to a separate read-only
+   agent running `task-review`. `needs_changes` sends the task back to
+   `in_progress` with the reviewer's notes in `revision_context`: fix the
+   delivery and resubmit. A `fail` verdict ends the task.
+5. After a passing review, `task.transition(accept, evidence={"outcome": ...})`.
+   The owner may end a task at any point with
+   `task.transition(mark_failed, evidence={"reason": ...})`.
+
+Use `workflow.status_and_next(project_id, task_id=...)` for the task's gate,
+checks, brief, delivery, and dependencies. A closed task refuses new artifacts.
 
 ## Keep one experiment folder
 
 Create the folder returned by `experiment.create`, normally
 `experiments/<name>/`, before writing experiment files. Keep its plan, code,
 configuration, compact results, figures, report, and logic graph together.
-Choose a short experiment name that distinguishes it from sibling experiments
-and a one-line `intent` that states what it tests.
+Choose a short experiment name that distinguishes it from sibling
+experiments. Write the `intent` as the ask, standalone: what this tests and
+why the project needs it, naming the datasets, tasks, and sibling experiments
+involved by their own names — another agent may write the plan from it alone.
+Put anything else the planner should have — givens, boundaries with siblings,
+preferences, budgets, warnings — in the optional `details` field. Both are
+immutable once created; the approved plan supersedes `details` on anything
+about how.
 
 There is no automatic synchronization between the checkout, a sandbox, and
 Merv. Pull remote outputs into the experiment folder before submitting them.
@@ -163,6 +236,7 @@ handoff unchanged to a separate read-only agent:
 
 - `experiment-design-review` before execution.
 - `experiment-attempt-review` after result submission.
+- `task-review` after a task's delivery is submitted.
 
 The reviewer owns `review.start` and `review.submit`; the producing agent must
 not review its own work. Preserve the capability long enough to hand it off,

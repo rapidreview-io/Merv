@@ -28,6 +28,19 @@ const REVIEWERS = {
       + 'verdict through the Merv review tools.',
     permission: { edit: 'deny', bash: 'deny' },
   },
+  'task-review': {
+    description:
+      'Read-only task reviewer for a fresh Merv task_reviewer handoff. '
+      + 'Requires the task id, review request id, and reviewer capability.',
+    prompt:
+      'You are the independent Merv task reviewer. Load the '
+      + '`task-review` skill and follow it exactly. Require the task id, '
+      + 'review request id, and reviewer capability from the handoff. Verify '
+      + 'each Done-when check against the delivery by checking, not by '
+      + 'reading. Do not edit files. Submit exactly one verdict through the '
+      + 'Merv review tools.',
+    permission: { edit: 'deny' },
+  },
   'project-reflection-review': {
     description:
       'Read-only reflection reviewer for a fresh Merv reflection_reviewer handoff. '
@@ -63,7 +76,11 @@ export async function mervPlugin() {
   return {
     config: async (config) => {
       config.mcp = config.mcp || {};
+      // Merge, never replace: a user's own merv entry may carry headers or
+      // oauth overrides (redirectUri, callbackPort). Only the fields the
+      // plugin is authoritative for are pinned.
       config.mcp.merv = {
+        ...(config.mcp.merv || {}),
         type: 'remote',
         url: MERV_MCP_URL,
         enabled: true,

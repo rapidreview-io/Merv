@@ -76,6 +76,8 @@ BASE_PUBLIC_TOOLS = frozenset(
         "sandbox.request",
         "sandbox.runs",
         "sandbox.terminal",
+        "task.create",
+        "task.transition",
         "workflow.status_and_next",
     }
 )
@@ -90,6 +92,8 @@ BASE_INTERNAL_TOOLS = frozenset(
         "reflection.list",
         "review.status",
         "sandbox.health",
+        "task.get_state",
+        "task.list",
     }
 )
 STORAGE_PUBLIC_TOOLS = frozenset(
@@ -105,7 +109,7 @@ TRACKING_PUBLIC_TOOLS = frozenset({"mlflow.context", "mlflow.finalize_run"})
 TOOL_INPUT_SCHEMA_SHA256 = {
     "agent.hello": "cb3195328ef9d7ec6b078452696b790e81e25d84b559f0cb97a08668213aec3c",
     "artifact.find": "ac17e7ab19d57565b569c8fac1b0d3cb7558d6707ba134bf4148262b9e7361e2",
-    "artifact.submit": "6a0d7b13ad955492a130b31655449efa534ed3cf3316c50053bfa70278da9b2e",
+    "artifact.submit": "b7b56706352e0621e944693143e2ad2d450297b760bb4741522f40e4bc0eeea0",
     "candidate.list": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
     "candidate.promote": "873ba38c2e42f140ab8eb691f6d2c2fb8cf30ddc22038dba00038b99536ef04c",
     "candidate.stage": "dfdd7ad6a3dd42aac1ac793eaf6ec841f1f7c9b96f1f505743567f888ed90145",
@@ -115,7 +119,7 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "claim.update": "55db160bd01130666f1a7a5720f57544e83de4227582249c88d7b265d68eb227",
     "consolidation.get": "63fa52f5081d1395c21ec85a8204d01e96213724b5f226ab7f0adc61edcd0025",
     "consolidation.submit": "3e9b036ca0aa1aa879e0921516b28eb4dbeb2715e8183c854a3c8acc206a5db2",
-    "experiment.create": "cf4226fc5da948ceb3e6fa74720ce92e043b07014a99136d044b86b25e0c3fa2",
+    "experiment.create": "bc3607c0787f319819e3e4c98ec214eb245d7feb636f3025d146069267514fc3",
     "experiment.exhibit": "a70a9ecc2df102418bb86cc5061ab9b930139dab4f6f6def9037230f99c777f3",
     "experiment.get_state": "4abb4d266094018ce686f7d5c8f985eb25a7f5e0b201b201333626a3f560911e",
     "experiment.list": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
@@ -136,10 +140,10 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "reflection.get": "08e0d6e280b0de7dd6e6d16621f1c5665ed2fbdc8becbad53ac93429ec840ede",
     "reflection.list": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
     "reflection.transition": "2a9b79602febe6aafeeb65eeae51614f28a1fa034c265d850c0e04cd875bf1e8",
-    "review.request": "d1b2d4575c51f70414115f8af964675e3e43903ba16604187215e79f563abc9c",
+    "review.request": "183255a8dfeab65f417d395584fc97523c10b4465ba728d5946c6b18dd33f03b",
     "review.start": "ee9057b697c95ad6cecf5208ddc8b5ba1022f503106b3f1f5c325e60f058d006",
-    "review.status": "aa3d6ff8cbe93e7228d970cbe794f27024ef8f4b80e06705404818fcec05dcda",
-    "review.submit": "1cad7232d9f25da6ce479fe4f8a08ba6482c9e35f92130338b855a903776eef2",
+    "review.status": "35d53359d5f06ab7cec978efb1949fb03c18a6a9b197a1d0ad85a54cbb2266c7",
+    "review.submit": "5d83e0481c6bd1d19b1f56a78eb1de7d2f8f99a4fdf0eb6009211926b0106d10",
     "sandbox.attach": "ee23b4896d74fadcfec8d55f9c4b3c50316099837e0d9a45497c0d533d4e6f43",
     "sandbox.extend": "6b1c3a1ef50ccad6009f750c0bd8db5b9edcd3717c13bb76b4843a2688c2ffff",
     "sandbox.get": "cb58f835a7705c55bd6703cfe9314c9aa002b8f0e6dcffedc384c3fc36c407e9",
@@ -157,7 +161,11 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "storage.object": "3fba20bb5e16ab17aa3e96c203332716c9eb3688332c2e11e573d220046451db",
     "storage.put_object": "550c3f55aa135821f658eba9800d062f4e37b4ad3956af523b105be96d7da15a",
     "storage.submit": "074879ce62d47c893a33b707fb7e307d7bb58c9d3aaccf3da66812f52c7e5fe9",
-    "workflow.status_and_next": "73d3324a8c0dddb1281d3a2c32b7736ee47dea9b9c822816eca979cf23b09a39",
+    "task.create": "b7491b256aea7e16230389fff86175c025aeed06db094b688dd6e94bcc7dfa87",
+    "task.get_state": "523a5b27c7e96a0548c42aea81d3e841919cbaa7f3d4af34fce688397c656867",
+    "task.list": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
+    "task.transition": "cf9aa849fb3f049b6ddff39d95b7f56439d0543d3b18f7131b5a4ce6403abac3",
+    "workflow.status_and_next": "ce991e171a6e4334f6859e6f4289f373006b8c497de6a4e30871512307439c1e",
 }
 
 

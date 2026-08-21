@@ -65,6 +65,10 @@ FROZEN_DURABLE_EVENT_TYPES = frozenset(
         "storage.deleted",
         "storage.expired",
         "storage.registered",
+        "task.created",
+        "task.failed_by_review",
+        "task.returned_to_in_progress",
+        "task.transitioned",
         "telemetry.dropped",
         "tool.call",
     }

@@ -18,13 +18,19 @@ from datetime import UTC, datetime, timedelta
 import json
 from typing import Any
 
-from merv.shared.artifact_roles import PROJECT_GRAPH_ROLE, REFLECTION_LENS_DOC_ROLE
+from merv.shared.artifact_roles import (
+    PROJECT_GRAPH_ROLE,
+    REFLECTION_LENS_DOC_ROLE,
+    TASK_BRIEF_ROLE,
+    TASK_DELIVERY_ROLE,
+)
 
 from .evidence import (
     ArtifactDocument,
     artifact_state_record,
     artifact_submission_recency_key,
     claim_refs,
+    depends_on_refs,
     current_slot_artifacts,
     current_reflection_requirement_artifact,
     graph_diff,
@@ -38,9 +44,12 @@ from .evidence import (
     require_artifact_document,
     validate_reflection_roster,
 )
+from .dependencies import record_dependencies
 from .experiments import ExperimentService
 from .experiment_workflow import EXPERIMENT_TERMINAL_STATUSES
 from .reflection_workflow import REFLECTION_WORKFLOW
+from .tasks import TaskService
+from .task_workflow import TASK_TERMINAL_STATUSES
 from ..artifacts import MAX_SUBMITTED_TEXT_BYTES, ArtifactTarget, Artifacts
 from .policy import (
     ACTIVE_EXPERIMENT_CAP,
@@ -80,10 +89,14 @@ class ReflectionService:
         store: BaseStateStore,
         artifacts: Artifacts,
         experiments: ExperimentService,
+        tasks: TaskService | None = None,
     ) -> None:
         self.store = store
         self.artifacts = artifacts
         self.experiments = experiments
+        self.tasks = (
+            tasks if tasks is not None else TaskService(store=store, artifacts=artifacts)
+        )
 
     # ---- create ----
 
@@ -193,9 +206,47 @@ class ReflectionService:
                 for role in ("report", "graph")
                 if role in authoritative
             ]
+        task_terminal = ", ".join(f"'{s}'" for s in sorted(TASK_TERMINAL_STATUSES))
+        task_rows = conn.execute(
+            f"""
+            SELECT id, name, goal, attempt_index, status, outcome, failed_by
+            FROM tasks
+            WHERE project_id = ? AND status IN ({task_terminal})
+            ORDER BY created_at, id
+            """,
+            (project_id,),
+        ).fetchall()
+        tasks = rows_to_dicts(rows=task_rows)
+        task_history = self.artifacts.history(
+            tx=conn,
+            target_type="task",
+            target_ids=tuple(str(task["id"]) for task in tasks),
+        )
+        for task in tasks:
+            authoritative_task: dict[str, dict[str, Any]] = {}
+            for evidence in task_history[str(task["id"])].artifacts:
+                if evidence.attempt_index != int(task["attempt_index"]) or (
+                    evidence.role not in {TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE}
+                ):
+                    continue
+                artifact = artifact_state_record(evidence)
+                current = authoritative_task.get(evidence.role)
+                if current is None or artifact_submission_recency_key(
+                    artifact
+                ) > artifact_submission_recency_key(current):
+                    authoritative_task[evidence.role] = artifact
+            task["artifacts"] = [
+                self._artifact_content_ref(artifact=authoritative_task[role])
+                for role in (TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE)
+                if role in authoritative_task
+            ]
         previous = self.latest_published(conn=conn, project_id=project_id)
         covered = covered_terminal_ids(
             None if previous is None else (previous.get("corpus") or {})
+        )
+        covered_tasks = covered_terminal_ids(
+            None if previous is None else (previous.get("corpus") or {}),
+            key="terminal_tasks",
         )
         previous_artifacts: dict[str, dict[str, Any]] = {}
         if previous is not None:
@@ -219,11 +270,17 @@ class ReflectionService:
         return {
             "captured_at": now_iso(),
             "terminal_experiments": experiments,
+            "terminal_tasks": tasks,
             "claims": rows_to_dicts(rows=claim_rows),
             "new_terminal_experiments": [
                 {"id": exp["id"], "name": exp["name"], "status": exp["status"]}
                 for exp in experiments
                 if str(exp["id"]) not in covered
+            ],
+            "new_terminal_tasks": [
+                {"id": task["id"], "name": task["name"], "status": task["status"]}
+                for task in tasks
+                if str(task["id"]) not in covered_tasks
             ],
             "previous_published_reflection_id": (
                 None if previous is None else previous["id"]
@@ -344,6 +401,18 @@ class ReflectionService:
                 (reflection_id,),
             ).fetchall()
             data["materialized_experiments"] = rows_to_dicts(rows=experiment_rows)
+            task_rows = conn.execute(
+                """
+                SELECT st.reflection_id, st.task_id, st.proposal_key,
+                       st.created_at, t.name, t.goal, t.status
+                FROM reflection_tasks st
+                JOIN tasks t ON t.id = st.task_id
+                WHERE st.reflection_id = ?
+                ORDER BY st.created_at, st.task_id
+                """,
+                (reflection_id,),
+            ).fetchall()
+            data["materialized_tasks"] = rows_to_dicts(rows=task_rows)
             review_rows = conn.execute(
                 """
                 SELECT * FROM reviews
@@ -628,6 +697,20 @@ class ReflectionService:
             for experiment in corpus.get("terminal_experiments") or []
             if isinstance(experiment, dict)
         ]
+        hydrated["terminal_tasks"] = [
+            {
+                **task,
+                "artifacts": [
+                    self._hydrate_artifact_content(
+                        artifact=dict(reference), content=content
+                    )
+                    for reference in task.get("artifacts") or []
+                    if isinstance(reference, dict)
+                ],
+            }
+            for task in corpus.get("terminal_tasks") or []
+            if isinstance(task, dict)
+        ]
         return hydrated
 
     def _artifact_content(
@@ -647,11 +730,14 @@ class ReflectionService:
             for reference in (corpus.get("previous_published_artifacts") or {}).values()
             if isinstance(reference, dict)
         )
-        for experiment in corpus.get("terminal_experiments") or []:
-            if isinstance(experiment, dict):
+        for node in (
+            *(corpus.get("terminal_experiments") or []),
+            *(corpus.get("terminal_tasks") or []),
+        ):
+            if isinstance(node, dict):
                 references.extend(
                     reference
-                    for reference in experiment.get("artifacts") or []
+                    for reference in node.get("artifacts") or []
                     if isinstance(reference, dict)
                 )
         artifact_ids = tuple(
@@ -2060,9 +2146,14 @@ class ReflectionService:
             path=document.path,
             enforce_world=False,
         )
+        decision = spec.get("decision") or {}
         names = {
             str(proposal.get("name") or "").strip().lower()
-            for proposal in (spec.get("decision") or {}).get("experiments") or []
+            for proposal in decision.get("experiments") or []
+        }
+        task_names = {
+            str(proposal.get("name") or "").strip().lower()
+            for proposal in decision.get("tasks") or []
         }
         reflection_id = str(reflection["id"])
         project_id = str(reflection["project_id"])
@@ -2079,13 +2170,19 @@ class ReflectionService:
                     active_count=active_count, proposed_count=len(names)
                 )
             )
-        for name in sorted(name for name in names if name):
+        for name in sorted(name for name in names | task_names if name):
             # Availability recheck keeps this safe from any caller, not just
             # the gate that world-validated the spec this same transaction.
-            if self._experiment_name_exists(conn=conn, project_id=project_id, name=name):
+            if name in names and self._experiment_name_exists(
+                conn=conn, project_id=project_id, name=name
+            ):
                 raise WorkflowError(
                     f"experiment name already exists in project: {name}"
                 )
+            if name in task_names and self._task_name_exists(
+                conn=conn, project_id=project_id, name=name
+            ):
+                raise WorkflowError(f"task name already exists in project: {name}")
             conn.execute(
                 "INSERT INTO reflection_reserved_names "
                 "(reflection_id, project_id, name_lower, artifact_id) "
@@ -2226,6 +2323,18 @@ class ReflectionService:
                 if enforce_world
                 else None
             ),
+            task_name_taken=(
+                (
+                    lambda name: self._task_name_exists(
+                        conn=conn, project_id=project_id, name=name
+                    )
+                )
+                if enforce_world
+                else None
+            ),
+            node_exists=lambda node_id: self._node_exists(
+                conn=conn, project_id=project_id, node_id=node_id
+            ),
             non_terminal_experiments=(
                 (
                     lambda: self._non_terminal_experiments(
@@ -2241,6 +2350,21 @@ class ReflectionService:
         row = conn.execute(
             "SELECT 1 FROM claims WHERE id = ? AND project_id = ? LIMIT 1",
             (claim_id, project_id),
+        ).fetchone()
+        return row is not None
+
+    def _task_name_exists(self, *, conn, project_id: str, name: str) -> bool:
+        row = conn.execute(
+            "SELECT 1 FROM tasks WHERE project_id = ? AND lower(name) = lower(?) LIMIT 1",
+            (project_id, name),
+        ).fetchone()
+        return row is not None
+
+    def _node_exists(self, *, conn, project_id: str, node_id: str) -> bool:
+        table = "experiments" if node_id.startswith("exp_") else "tasks"
+        row = conn.execute(
+            f"SELECT 1 FROM {table} WHERE id = ? AND project_id = ? LIMIT 1",
+            (node_id, project_id),
         ).fetchone()
         return row is not None
 
@@ -2281,12 +2405,13 @@ class ReflectionService:
             reflection_id=reflection_id,
             changes=spec.get("claim_changes") or [],
         )
-        self._materialize_experiment_wave(
+        self._materialize_wave(
             conn=conn,
             project_id=project_id,
             reflection_id=reflection_id,
             key_to_claim_id=key_to_claim_id,
             experiments=spec["decision"].get("experiments") or [],
+            tasks=spec["decision"].get("tasks") or [],
         )
 
     def _materialize_claim_changes(
@@ -2347,7 +2472,7 @@ class ReflectionService:
             )
         return key_to_claim_id
 
-    def _materialize_experiment_wave(
+    def _materialize_wave(
         self,
         *,
         conn,
@@ -2355,7 +2480,48 @@ class ReflectionService:
         reflection_id: str,
         key_to_claim_id: dict[str, str],
         experiments: list[dict[str, Any]],
+        tasks: list[dict[str, Any]],
     ) -> None:
+        """Create the wave's nodes, then its DAG edges.
+
+        Two passes: every node exists before any edge is recorded, so a task
+        may depend on an experiment proposed later in the spec and vice versa.
+        A task's brief is pinned from the proposal — the reflection authored
+        the finish line, the executor should not have to retype it.
+        """
+        key_to_node_id: dict[str, str] = {}
+        pending_edges: list[tuple[str, list[str]]] = []
+        for proposal in tasks:
+            proposal_key = str(proposal.get("key") or "").strip()
+            task = self.tasks.create_from_reflection(
+                conn=conn,
+                project_id=project_id,
+                reflection_id=reflection_id,
+                name=str(proposal.get("name") or ""),
+                goal=str(proposal.get("goal") or ""),
+                deliverables=[
+                    str(item)
+                    for item in (
+                        proposal.get("deliverables")
+                        if proposal.get("deliverables") is not None
+                        else proposal.get("done_when") or []
+                    )
+                ],
+                proposal_key=proposal_key,
+            )
+            task_id = str(task["id"])
+            if proposal_key:
+                key_to_node_id[proposal_key] = task_id
+            conn.execute(
+                """
+                INSERT INTO reflection_tasks
+                  (reflection_id, task_id, proposal_key, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (reflection_id, task_id, proposal_key, now_iso()),
+            )
+            # create_from_reflection pinned the rendered brief already.
+            pending_edges.append((task_id, depends_on_refs(proposal)))
         for proposal in experiments:
             claim_ids = [key_to_claim_id.get(ref, ref) for ref in claim_refs(proposal)]
             proposal_key = str(proposal.get("key") or "").strip()
@@ -2365,11 +2531,14 @@ class ReflectionService:
                 reflection_id=reflection_id,
                 name=str(proposal.get("name") or ""),
                 intent=str(proposal.get("intent") or ""),
+                details=str(proposal.get("details") or ""),
                 tested_claim_ids=claim_ids,
                 proposal_key=proposal_key,
                 parallelism=str(proposal.get("parallelism") or ""),
             )
             experiment_id = str(experiment["id"])
+            if proposal_key:
+                key_to_node_id[proposal_key] = experiment_id
             conn.execute(
                 """
                 INSERT INTO reflection_experiments
@@ -2377,6 +2546,16 @@ class ReflectionService:
                 VALUES (?, ?, ?, ?)
                 """,
                 (reflection_id, experiment_id, proposal_key, now_iso()),
+            )
+            pending_edges.append((experiment_id, depends_on_refs(proposal)))
+        for node_id, refs in pending_edges:
+            if not refs:
+                continue
+            record_dependencies(
+                conn=conn,
+                project_id=project_id,
+                node_id=node_id,
+                depends_on_ids=[key_to_node_id.get(ref, ref) for ref in refs],
             )
 
     def _create_claim(
@@ -2611,11 +2790,23 @@ class ReflectionService:
             }
             published = self.latest_published(conn=conn, project_id=project_id)
             open_wave = self.open_reflection(conn=conn, project_id=project_id)
+            task_terminal = ", ".join(
+                f"'{status}'" for status in sorted(TASK_TERMINAL_STATUSES)
+            )
+            current_terminal_tasks = {
+                str(row["id"]): str(row["status"])
+                for row in conn.execute(
+                    f"SELECT id, status FROM tasks WHERE project_id = ? "
+                    f"AND status IN ({task_terminal})",
+                    (project_id,),
+                ).fetchall()
+            }
             return reflection_signal_state(
                 current_terminal=current_terminal,
                 current_claims=current_claims,
                 published=published,
                 open_wave=open_wave,
+                current_terminal_tasks=current_terminal_tasks,
             )
         finally:
             if owns_conn:

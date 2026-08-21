@@ -4,23 +4,30 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ..kernel.env import env_int
+from ..kernel.secret_tokens import secret_digest_matches
 from ..kernel.state.fingerprints import oauth_client_fingerprint
 from ..kernel.state.store import BaseStateStore, row_to_dict
-from ..kernel.utils import format_iso
+from ..kernel.utils import ThrottledError, format_iso, parse_iso
 from .oauth import (
     CAP_EVICTION_LIMIT,
     DEFAULT_MAX_CLIENTS,
     DEFAULT_UNUSED_CLIENT_TTL_DAYS,
+    DEVICE_CREATE_PER_IP_PER_MINUTE,
+    DEVICE_MISS_LIMIT,
+    DEVICE_MISS_WINDOW_SECONDS,
+    DEVICE_PENDING_GLOBAL_CAP,
+    DEVICE_PENDING_PER_IP,
     MAX_CLIENTS_ENV_VAR,
     OPPORTUNISTIC_PRUNE_LIMIT,
     UNUSED_CLIENT_TTL_DAYS_ENV_VAR,
     AuthorizationCode,
+    DeviceGrant,
     OAuthClient,
     OAuthError,
     RefreshToken,
@@ -49,6 +56,7 @@ def _fingerprint(client: OAuthClient) -> str:
 _NEVER_USED_PREDICATE = """
   client_id NOT IN (SELECT client_id FROM oauth_authorization_codes)
   AND client_id NOT IN (SELECT client_id FROM oauth_refresh_tokens)
+  AND client_id NOT IN (SELECT client_id FROM oauth_device_grants)
 """
 _UNUSED_CLIENT_PREDICATE = f"""
   created_at < ?
@@ -397,6 +405,249 @@ class SqlOAuthRepository:
             )
         return True
 
+    # -- device authorization grants (RFC 8628) -----------------------------
+
+    def create_device_grant(
+        self, *, grant: DeviceGrant, user_codes: Callable[[], str]
+    ) -> str:
+        """Insert a pending grant under the runner-pairing rate budgets.
+
+        ``user_codes`` yields candidate codes so the secret material stays in
+        policy; the unique index arbitrates collisions inside the transaction.
+        """
+        now = datetime.now(UTC)
+        with self._store.transaction() as conn:
+            self._sweep_device_grants(conn=conn, now=now)
+            recent = conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM oauth_device_grants
+                WHERE client_ip = ? AND created_at > ?
+                """,
+                (grant.client_ip, format_iso(now - timedelta(minutes=1))),
+            ).fetchone()
+            pending_ip = conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM oauth_device_grants
+                WHERE client_ip = ? AND status = 'pending'
+                """,
+                (grant.client_ip,),
+            ).fetchone()
+            pending_all = conn.execute(
+                "SELECT COUNT(*) AS n FROM oauth_device_grants WHERE status = 'pending'"
+            ).fetchone()
+            if (
+                int(recent["n"]) >= DEVICE_CREATE_PER_IP_PER_MINUTE
+                or int(pending_ip["n"]) >= DEVICE_PENDING_PER_IP
+                or int(pending_all["n"]) >= DEVICE_PENDING_GLOBAL_CAP
+            ):
+                raise ThrottledError(
+                    "too many device authorization requests; wait a minute and "
+                    "try again",
+                    details={"retry_after_seconds": 60},
+                )
+            for _attempt in range(8):
+                user_code = user_codes()
+                inserted = conn.execute(
+                    """
+                    INSERT INTO oauth_device_grants (
+                      id, device_code_digest, user_code, client_id, resource,
+                      status, client_ip, created_at, expires_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+                    ON CONFLICT (user_code) DO NOTHING
+                    RETURNING user_code
+                    """,
+                    (
+                        grant.id,
+                        grant.device_code_digest,
+                        user_code,
+                        grant.client_id,
+                        grant.resource,
+                        grant.client_ip,
+                        grant.created_at,
+                        grant.expires_at,
+                    ),
+                ).fetchone()
+                if inserted is not None:
+                    return str(inserted["user_code"])
+            # 8 consecutive 40-bit collisions.
+            raise ThrottledError(  # pragma: no cover
+                "could not allocate a device code; retry"
+            )
+
+    def device_grant_for_consent(
+        self, *, user_code: str, principal: str
+    ) -> DeviceGrant | None:
+        grant, throttled, missed = self._consent_lookup(
+            user_code=user_code, principal=principal
+        )
+        if throttled:
+            raise ThrottledError(
+                "too many failed device-code attempts; wait before trying again",
+                details={"retry_after_seconds": DEVICE_MISS_WINDOW_SECONDS},
+            )
+        return None if missed else grant
+
+    def decide_device_grant(
+        self,
+        *,
+        user_code: str,
+        principal: str,
+        approved: bool,
+        owner_user_id: str,
+        project_id: str,
+        grant_scope: str,
+    ) -> DeviceGrant | None:
+        now = datetime.now(UTC)
+        grant, throttled, missed = self._consent_lookup(
+            user_code=user_code, principal=principal
+        )
+        if throttled:
+            raise ThrottledError(
+                "too many failed device-code attempts; wait before trying again",
+                details={"retry_after_seconds": DEVICE_MISS_WINDOW_SECONDS},
+            )
+        if missed or grant is None:
+            return None
+        with self._store.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE oauth_device_grants
+                SET status = ?, owner_user_id = ?, project_id = ?,
+                    grant_scope = ?, decided_at = ?
+                WHERE id = ? AND status = 'pending'
+                """,
+                (
+                    "approved" if approved else "denied",
+                    owner_user_id,
+                    project_id or None,
+                    grant_scope or None,
+                    format_iso(now),
+                    grant.id,
+                ),
+            )
+            if int(getattr(cursor, "rowcount", 0) or 0) != 1:
+                # A concurrent decision or the expiry sweep won; the caller's
+                # code no longer names a pending grant.
+                return None
+        return grant
+
+    def poll_device_grant(
+        self, *, digest: str, client_id: str, interval_seconds: int
+    ) -> tuple[str, DeviceGrant | None]:
+        now = datetime.now(UTC)
+        with self._store.transaction() as conn:
+            self._sweep_device_grants(conn=conn, now=now)
+            row = conn.execute(
+                "SELECT * FROM oauth_device_grants WHERE device_code_digest = ?",
+                (digest,),
+            ).fetchone()
+            grant = _device_grant(row)
+            if (
+                grant is None
+                or not secret_digest_matches(
+                    stored_digest=grant.device_code_digest, presented_digest=digest
+                )
+                or grant.client_id != client_id
+            ):
+                return ("unknown", None)
+            if grant.status == "pending":
+                last = (
+                    parse_iso(grant.last_polled_at) if grant.last_polled_at else None
+                )
+                conn.execute(
+                    "UPDATE oauth_device_grants SET last_polled_at = ? WHERE id = ?",
+                    (format_iso(now), grant.id),
+                )
+                if last is not None and now < last + timedelta(
+                    seconds=interval_seconds
+                ):
+                    return ("slow_down", None)
+                return ("pending", None)
+            if grant.status == "denied":
+                return ("denied", None)
+            if grant.status == "expired":
+                return ("expired", None)
+            if grant.status == "approved":
+                cursor = conn.execute(
+                    """
+                    UPDATE oauth_device_grants
+                    SET status = 'consumed', consumed_at = ?
+                    WHERE id = ? AND status = 'approved'
+                    """,
+                    (format_iso(now), grant.id),
+                )
+                # The compare-and-set is what makes the exchange one-shot: a
+                # concurrent poll that lost the race must not mint a second
+                # bearer from the same approval.
+                if int(getattr(cursor, "rowcount", 0) or 0) != 1:
+                    return ("unknown", None)
+                return ("approved", grant)
+            # 'consumed': a replayed device code after a successful exchange.
+            return ("unknown", None)
+
+    def _consent_lookup(
+        self, *, user_code: str, principal: str
+    ) -> tuple[DeviceGrant | None, bool, bool]:
+        """Resolve a typed code to its pending grant, counting misses.
+
+        Mirrors runner pairing exactly: the miss row is committed by this
+        transaction even though the caller then fails, so the counter survives
+        the raise; a throttled principal never learns whether a code exists.
+        """
+        now = datetime.now(UTC)
+        window_start = format_iso(
+            now - timedelta(seconds=DEVICE_MISS_WINDOW_SECONDS)
+        )
+        with self._store.transaction() as conn:
+            self._sweep_device_grants(conn=conn, now=now)
+            conn.execute(
+                "DELETE FROM oauth_device_grant_attempts WHERE attempted_at <= ?",
+                (window_start,),
+            )
+            misses = conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM oauth_device_grant_attempts
+                WHERE principal = ? AND attempted_at > ?
+                """,
+                (principal, window_start),
+            ).fetchone()
+            throttled = int(misses["n"]) >= DEVICE_MISS_LIMIT
+            row = (
+                None
+                if throttled
+                else conn.execute(
+                    "SELECT * FROM oauth_device_grants WHERE user_code = ?",
+                    (user_code,),
+                ).fetchone()
+            )
+            grant = _device_grant(row)
+            missed = not throttled and (grant is None or grant.status != "pending")
+            if missed:
+                conn.execute(
+                    "INSERT INTO oauth_device_grant_attempts "
+                    "(principal, attempted_at) VALUES (?, ?)",
+                    (principal, format_iso(now)),
+                )
+        return (None if missed else grant, throttled, missed)
+
+    @staticmethod
+    def _sweep_device_grants(*, conn: Any, now: datetime) -> None:
+        conn.execute(
+            """
+            UPDATE oauth_device_grants SET status = 'expired'
+            WHERE status IN ('pending', 'approved') AND expires_at <= ?
+            """,
+            (format_iso(now),),
+        )
+        # A row a day past expiry holds nothing revocable — the device code is
+        # useless and any minted bearer lives in project_api_keys — so delete
+        # it and keep the table bounded without anyone scheduling a sweep.
+        conn.execute(
+            "DELETE FROM oauth_device_grants WHERE expires_at <= ?",
+            (format_iso(now - timedelta(days=1)),),
+        )
+
     def revoke_refresh_family_and_key_lineage(
         self,
         *,
@@ -442,6 +693,33 @@ def _client(row: Any) -> OAuthClient | None:
         redirect_uris=tuple(json.loads(str(data["redirect_uris_json"]))),
         grant_types=tuple(json.loads(str(data["grant_types_json"]))),
         created_at=str(data["created_at"]),
+    )
+
+
+def _device_grant(row: Any) -> DeviceGrant | None:
+    data = row_to_dict(row=row)
+    if data is None:
+        return None
+    return DeviceGrant(
+        id=str(data["id"]),
+        device_code_digest=str(data["device_code_digest"]),
+        user_code=str(data["user_code"]),
+        client_id=str(data["client_id"]),
+        resource=str(data["resource"]),
+        status=str(data["status"]),
+        owner_user_id=(
+            str(data["owner_user_id"]) if data.get("owner_user_id") else None
+        ),
+        project_id=(str(data["project_id"]) if data.get("project_id") else None),
+        grant_scope=(str(data["grant_scope"]) if data.get("grant_scope") else None),
+        client_ip=str(data.get("client_ip") or ""),
+        created_at=str(data["created_at"]),
+        expires_at=str(data["expires_at"]),
+        last_polled_at=(
+            str(data["last_polled_at"]) if data.get("last_polled_at") else None
+        ),
+        decided_at=(str(data["decided_at"]) if data.get("decided_at") else None),
+        consumed_at=(str(data["consumed_at"]) if data.get("consumed_at") else None),
     )
 
 

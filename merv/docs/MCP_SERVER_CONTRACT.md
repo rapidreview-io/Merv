@@ -58,6 +58,7 @@ project
 claim.create                 claim.update
 experiment.create
 experiment.transition        experiment.exhibit
+task.create                  task.transition
 reflection.create            reflection.get
 reflection.transition
 litreview.view               litreview.edit
@@ -84,6 +85,7 @@ These tools remain dispatchable for HTTP views but are hidden from agent
 ```text
 project.get                  project.update              project.list
 claim.list                   experiment.list             reflection.list
+task.list                    task.get_state
 storage.put_object           storage.complete_upload
 review.status
 sandbox.health
@@ -186,6 +188,51 @@ returns only a compact state-change acknowledgement plus operation-specific
 side-effect receipts. Agents call `workflow.status_and_next` afterward when
 they need refreshed context. The HTTP UI uses richer service views.
 
+`experiment.create` accepts `depends_on` (exp_/task_ ids); `start_running` is
+refused (`dependencies_pending`) until every dependency has succeeded.
+
+## Task workflow
+
+A task is scoped non-experiment work with a verifiable finish line and no
+claim. The agent-facing statuses are:
+
+```text
+in_progress -> in_review -> done
+```
+
+`failed` is the only other ending. The typed transitions are:
+
+```text
+submit_delivery
+accept
+mark_failed
+```
+
+The declaration in `src/merv/brain/research_core/task_workflow.py` drives
+enforcement, `allowed_transitions`, gate checklists, review returns, and
+`workflow.status_and_next(task_id=...)`.
+
+- `task.create(name, goal, deliverables, depends_on?)` creates the task
+  straight into `in_progress`; the name becomes the folder `tasks/<name>/`.
+  Goal and deliverables are immutable — Merv renders and pins `brief.md` from
+  them, and brief submissions against tasks are refused.
+- `submit_delivery` requires a `delivery` artifact whose `Confirmations`
+  section carries one numbered entry per deliverable, and every dependency
+  succeeded.
+- `accept` requires a passing `task_reviewer` review for the current snapshot;
+  `evidence.outcome` is recorded.
+- `mark_failed` is the owner's exit; `evidence.reason` is recorded and
+  `failed_by` is `owner`.
+
+A task review `needs_changes` returns to `in_progress` on the same attempt
+(`return_to` may be omitted). A `fail` verdict ends the task (`failed_by`
+`reviewer`); `return_to` must be omitted or `failed`.
+
+`workflow.status_and_next(project_id, task_id)` returns the task scope: the
+slim task (goal, deliverables, status, dependencies, dependents, artifacts, reviews),
+the workflow guidance, and a bounded context with the brief and delivery content.
+`task.transition` returns a compact acknowledgement.
+
 ## Reflection workflow
 
 External tools and target types use **reflection**. Persisted ids keep the
@@ -203,13 +250,17 @@ reflecting -> synthesizing -> reflection_review -> consolidating -> published
   for every roster lens. Each pinned Markdown document must contain a non-empty
   `Summary` section, which supplies its TLDR in macro reflection views.
 - `submit_reflection_artifacts` requires a valid `project_graph`, concise
-  `reflection_doc`, and materializable `change_spec`.
+  `reflection_doc`, and materializable `change_spec`. The spec's `decision`
+  names the next wave: at most three `experiments` plus any number of `tasks`
+  (each with `goal` and `done_when` checks); both kinds may carry `depends_on`
+  (spec keys or existing exp_/task_ ids, acyclic). A wave may be tasks only.
 - `begin_consolidation` requires a passing `reflection_reviewer` review.
 - `consolidation.submit` records one immutable proposal with a reasoned decision
   for every experiment and its declared Git integration kind.
 - `publish` is internal: it requires a passing `consolidation_reviewer` review
   and the runner's central-ref receipt, then applies claim changes and creates
-  the reviewed experiment wave.
+  the reviewed wave: tasks (each with its brief pinned from the spec),
+  experiments, and the dependency edges between them.
 
 A rejection returns to `synthesizing` when the lens documents stand, or to
 `reflecting` with a new attempt when the fan-out must be repeated.
@@ -217,8 +268,9 @@ A rejection returns to `synthesizing` when the lens documents stand, or to
 ## Review sessions
 
 Supported reviewer roles are `design_reviewer`, `experiment_reviewer`,
-`reflection_reviewer`, `consolidation_reviewer`, `human`, and
-`automated_check`. The four workflow gates use their matching reviewer roles.
+`task_reviewer`, `reflection_reviewer`, `consolidation_reviewer`, `human`, and
+`automated_check`. The five workflow gates use their matching reviewer roles;
+`review.request` accepts `target_type` `experiment`, `task`, or `reflection`.
 
 The current protocol is:
 
@@ -231,7 +283,7 @@ review.submit(review_session_id, verdict, synopsis, return_to?, notes?, findings
 `review.start` and `review.submit` are capability-addressed and take no
 `project_id`.
 
-For the three workflow reviewer roles, `review.request` validates the active
+For the workflow reviewer roles, `review.request` validates the active
 gate. `human` and `automated_check` are gate-exempt and may be requested outside
 a workflow review gate. Every request pins a target snapshot, stores a hash of
 the capability, and returns the plaintext capability once with

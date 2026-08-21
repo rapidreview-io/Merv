@@ -46,6 +46,7 @@ class OpenCodeAdapterTest(unittest.TestCase):
                 "experiment-attempt-review",
                 "experiment-design-review",
                 "project-reflection-review",
+                "task-review",
             },
         )
         for agent in config["agent"].values():

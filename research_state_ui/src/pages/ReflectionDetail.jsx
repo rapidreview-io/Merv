@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
-import { useProjectStore, useProjectHref, selectExperiments } from '../store/useProjectStore';
+import { useProjectStore, useProjectHref, selectExperiments, selectTasks } from '../store/useProjectStore';
 import ArtifactContentView from '../components/ArtifactContentView';
 import FSMStrip, { REFLECTION_STAGES, REFLECTION_GATES, REFLECTION_TERMINAL } from '../components/FSMStrip';
 import ReflectionGraphs from '../components/reflection/ReflectionGraphs';
@@ -47,13 +47,16 @@ function Collapsible({ label, count, children }) {
   );
 }
 
-// A consumed/produced experiment, linking to its page.
+// A consumed/produced node (experiment or task), linking to its page.
 function LineageItem({ strand, px }) {
+  const isTask = strand.kind === 'task';
   return (
-    <Link className="rfl-lineage-item" to={px(`/experiments/${strand.id}`)}>
+    <Link className="rfl-lineage-item" to={px(isTask ? `/tasks/${strand.id}` : `/experiments/${strand.id}`)}>
       <span className={`wflow-item-dot wflow-item-dot--${strand.tone}`} aria-hidden="true" />
       <span className="wflow-item-name">{strand.name}</span>
-      <span className="wflow-item-sub">{String(strand.status || '').replace(/_/g, ' ')}</span>
+      <span className="wflow-item-sub">
+        {isTask ? 'task · ' : ''}{String(strand.status || '').replace(/_/g, ' ')}
+      </span>
     </Link>
   );
 }
@@ -62,6 +65,7 @@ export default function ReflectionDetail() {
   const { reflectionId } = useParams();
   const projectId = useProjectStore(s => s.projectId);
   const experiments = useProjectStore(selectExperiments);
+  const tasks = useProjectStore(selectTasks);
   const px = useProjectHref();
   const [data, setData] = useState(null);
 
@@ -83,7 +87,7 @@ export default function ReflectionDetail() {
   const ordinal = idx + 1;
   const isOpen = Boolean(wave && !TERMINAL_WAVE.has(String(wave.status)));
 
-  const braid = useMemo(() => buildBraid(waves, experiments), [waves, experiments]);
+  const braid = useMemo(() => buildBraid(waves, experiments, tasks), [waves, experiments, tasks]);
   const consumed = braid.strands.filter(s => s.coverIdx === idx);
   const produced = braid.strands.filter(s => s.spawnIdx === idx);
 

@@ -62,7 +62,8 @@ What survives verification, what was ruled out, what remains uncertain, and
 where the lenses disagreed.
 
 ## Decision / future directions
-Why the proposed claim changes and next experiments follow from that reading.
+Why the proposed claim changes and the next wave — its experiments and tasks —
+follow from that reading.
 ```
 
 Do not paste together the five lens documents. Use compact tables, bullets, or
@@ -75,8 +76,28 @@ Submit the belief-state update as `change_spec`. Use new-claim `key` values when
 an experiment in the same spec tests a claim being created. An experiment may
 omit `tested_claim_refs` when it does not test a tracked claim; when provided,
 each reference must name an existing claim id or a new-claim key from the same
-spec. Propose one to three experiments; when proposing more than one, explain
-why each can run independently.
+spec.
+
+The decision is the next wave: a DAG of experiments and tasks. Propose at most
+three experiments (tasks are uncapped; a wave may be tasks only — the project's
+first wave usually is). Use `depends_on` — keys from this spec, or existing
+`exp_`/`task_` ids — when a node must not start before another has succeeded:
+an experiment waits at `ready_to_run`, a task before it delivers. Node names
+must be unique across the wave. Tasks may follow anything; an experiment may
+follow tasks only — never another experiment of this spec, directly or through
+a chain of tasks. Sequential experiments belong to the next reflection, after
+the first one's results are in.
+
+A task is scoped work with a verifiable finish line and no claim: a literature
+sweep, data acquisition and preparation, an evaluation harness, a memo. Be
+specific about outcomes, silent about method: `goal` says what and why,
+`done_when` lists checks — each states what must be true when the task is done
+and how it can be verified — and optional `scope`/`context` bound the work.
+Write the goal in the brief's shape (one headline line, `Deliver:` bullets,
+`So that <why>`) and STANDALONE: the task is read on its own page, so name the
+experiments and datasets it serves by name, never "the wave" or "this
+reflection". Publication pins each task's brief from these fields, so the
+executor starts from the contract you wrote.
 
 ```json
 {
@@ -100,18 +121,35 @@ why each can run independently.
   ],
   "decision": {
     "type": "create_experiments",
+    "tasks": [
+      {
+        "key": "prep_data",
+        "name": "prep-data",
+        "goal": "Prepare dataset D with clean, deduplicated splits.\n\nDeliver:\n- train/val/test parquet files under out/\n- a data card\n\nSo that the distill-resnet18 and scratch-resnet18 experiments train on identical splits.",
+        "done_when": [
+          "train/val/test parquet files exist under out/ — verify: row counts match the data card",
+          "no id appears in more than one split — verify: run check_overlap.py, expect 0"
+        ],
+        "scope": "No new data sources.",
+        "context": "Raw dump lives in storage object sto_....",
+        "depends_on": []
+      }
+    ],
     "experiments": [
       {
         "key": "experiment_key",
         "name": "folder-safe-name",
         "intent": "The precise question this experiment will test.",
+        "details": "Optional: givens, boundaries, preferences, budgets for whoever plans it.",
         "tested_claim_refs": ["new_claim_key"],
-        "parallelism": "Why this experiment does not depend on another proposed result."
+        "depends_on": ["prep_data"]
       }
     ]
   }
 }
 ```
 
-The reflection proposes the next wave; it does not create experiments directly
-or decide to terminate the project. Publication materializes the reviewed spec.
+The reflection proposes the next wave; it does not create experiments or tasks
+directly or decide to terminate the project. Publication materializes the
+reviewed spec: claims, tasks (with pinned briefs), experiments, and the
+dependency edges between them.

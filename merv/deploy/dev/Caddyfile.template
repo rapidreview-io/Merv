@@ -1,0 +1,40 @@
+# Caddy site for the Merv dev brain. Rendered by deploy-dev.sh: __MERV_HOST__
+# becomes MERV_DEV_HOST. TLS is automatic (Let's Encrypt) for the public host.
+__MERV_HOST__ {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		X-Frame-Options DENY
+	}
+
+	# Path-style S3 buckets on the VM's MinIO: presigned heavy-storage URLs
+	# and the blob bucket. MinIO itself listens on loopback only.
+	handle /merv-storage/* {
+		reverse_proxy 127.0.0.1:9000
+	}
+	handle /merv-blobs/* {
+		reverse_proxy 127.0.0.1:9000
+	}
+
+	# The research UI, built from the same commit as the brain and synced to
+	# /srv/merv-ui. Mirrors research_state_ui/vercel.json: hashed assets are
+	# immutable, everything else (index.html, runner, skill catalog) revalidates.
+	redir / /merv/ 302
+	redir /merv /merv/ 308
+	handle_path /merv/* {
+		root * /srv/merv-ui
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		@revalidate not path /assets/*
+		header @revalidate Cache-Control "public, max-age=0, must-revalidate"
+		try_files {path} /index.html
+		file_server
+	}
+
+	# Everything else is the brain: /api, /mcp, /health, OAuth metadata.
+	handle {
+		reverse_proxy 127.0.0.1:8787
+	}
+}

@@ -216,6 +216,10 @@ TABLE_OWNERS = {
     "oauth_clients": SURFACE,
     "oauth_authorization_codes": SURFACE,
     "oauth_refresh_tokens": SURFACE,
+    # RFC 8628 device grants: the surface's oauth_store owns the exchange rows
+    # and the miss counter exactly as it owns codes and refresh tokens.
+    "oauth_device_grants": SURFACE,
+    "oauth_device_grant_attempts": SURFACE,
     # Agent context-window identities and the MCP transport sessions they
     # were minted under: surface-owned like project_api_keys, read (never
     # written) beside the kernel tool_calls ledger for traces.
@@ -240,6 +244,11 @@ TABLE_OWNERS = {
     "reflections": RESEARCH_CORE,
     "reflection_claim_changes": RESEARCH_CORE,
     "reflection_experiments": RESEARCH_CORE,
+    # Tasks: the flat non-experiment work node, its reflection join, and the
+    # wave DAG edges experiments and tasks gate on.
+    "tasks": RESEARCH_CORE,
+    "reflection_tasks": RESEARCH_CORE,
+    "node_dependencies": RESEARCH_CORE,
     # Written by the wave lifecycle (spec validation reserves and pins,
     # publish or abandon releases); read by the tool create path to refuse
     # name races and by the cap check to hold the wave's slots.

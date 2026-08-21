@@ -35,6 +35,10 @@ The server already checks that required headings exist. Judge whether their
 content is scientifically sufficient:
 
 - **Summary:** Does a human reader understand what will be tested and why?
+- **The ask:** Does the plan answer the experiment's `intent`? Where the
+  creator supplied `details`, does the plan engage them — adopting each point
+  or stating why not? A plan that tests something adjacent to the intent is a
+  send-back.
 - **Objective and hypothesis:** Is the claim explicit and scoped? Is the
   expected direction and motivation clear?
 - **Evaluation:** Are the metrics, comparison or baseline, decision rule,

@@ -51,12 +51,12 @@ The bundled MCP entry contains only
 Merv's OAuth endpoints, opens the browser, stores the token, and refreshes it.
 The user never sees or mints the underlying credential.
 
-On a remote machine over SSH, Kilo and OpenCode need the browser's consent
-redirect to reach `127.0.0.1:19876` on that machine. Connect with
-`ssh -o ExitOnForwardFailure=yes -L 19876:127.0.0.1:19876 user@host` from the
-laptop whose browser will approve, run the `mcp auth merv` command inside that
-session, and open the printed URL locally. Details in
-[AUTH.md](AUTH.md#remote-machines).
+On a remote machine over SSH, the browser's consent redirect cannot reach the
+client's loopback listener. Use device pairing instead: run
+`curl -fsSL https://rapidreview.io/merv/pair_mcp.py -o /tmp/pair_mcp.py &&
+python3 /tmp/pair_mcp.py` on that machine and approve the printed code in any
+signed-in browser — nothing ever addresses the machine. Details and the SSH
+port-forward fallback in [AUTH.md](AUTH.md#remote-machines).
 
 Enable RapidReview marketplace auto-update once in Claude's `/plugin` screen.
 Gemini's `--auto-update` flag is sufficient. Qwen prompts when the tracked

@@ -100,6 +100,7 @@ class ProjectContextQuery:
                 )
                 for row in experiments
             ],
+            "tasks": [self._task(task=row) for row in facts.get("tasks", [])],
         }
 
     def _artifact_summaries(
@@ -161,6 +162,21 @@ class ProjectContextQuery:
             "summary": summary,
             "tested_claim_ids": list(experiment.get("tested_claim_ids") or []),
             "updated_at": experiment.get("updated_at"),
+        }
+
+    @staticmethod
+    def _task(*, task: Record) -> Record:
+        summary = str(task.get("outcome") or "").strip() or str(
+            task.get("goal") or ""
+        ).strip()
+        return {
+            "id": task.get("id"),
+            "name": task.get("name"),
+            "status": task.get("status"),
+            "goal": task.get("goal"),
+            "summary": summary,
+            "failed_by": task.get("failed_by") or "",
+            "updated_at": task.get("updated_at"),
         }
 
     @staticmethod

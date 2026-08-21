@@ -190,8 +190,10 @@ class ProjectContextTest(unittest.TestCase):
                 "claims",
                 "candidates",
                 "experiments",
+                "tasks",
             ],
         )
+        self.assertEqual(result["tasks"], [])
         self.assertEqual(result["claims"][0]["status"], "abandoned")
         summaries = {row["id"]: row["summary"] for row in result["experiments"]}
         self.assertEqual(

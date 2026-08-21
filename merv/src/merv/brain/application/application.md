@@ -14,9 +14,12 @@ module directly.
 Artifacts, Sandbox, Feed, and Object Storage only when an operation genuinely
 spans them. Research remains the public owner of its event ledger reads.
 
-- `status` and `status_for_agent` preserve rich UI and slim agent views.
+- `status` and `status_for_agent` preserve rich UI and slim agent views, in
+  project, experiment, or task scope.
 - Experiment create/list/get/transition keep released wire behavior while
   Research remains authoritative for state and gates.
+- Task create/list/get/transition mirror them without exhibits or tracking:
+  a task commits through Research, then adds a best-effort Feed advisory.
 - A transition optionally prepares and pins a metrics exhibit, commits through
   Research, applies MLflow effects, then adds a best-effort Feed advisory.
 - Review start hydrates the exact snapshot-pinned artifacts and bounded project
@@ -42,6 +45,8 @@ spans them. Research remains the public owner of its event ledger reads.
 - `status_guidance.py`: pure next-action guidance derived from workflow schemas.
 - `project_context.py` and `experiments/context.py`: bounded context packets.
 - `experiments/transition.py`: experiment transition ordering and exhibit pin.
+- `tasks.py`: task presentation, transition receipts, and the bounded task
+  context (brief, delivery, checks, dependencies) for status and review start.
 - `experiments/exhibits.py` and `metrics_exhibit.py`: deterministic observation
   exhibit construction.
 - `experiments/presentation.py`, `create.py`, and `claim_guidance.py`: released

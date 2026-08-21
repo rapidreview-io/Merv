@@ -27,6 +27,7 @@ from .policy import (
     CLAIM_STATUSES,
     active_experiment_cap_would_exceed_message,
     validate_experiment_name,
+    validate_task_name,
 )
 from ..kernel.utils import ValidationError, WorkflowError
 
@@ -56,6 +57,23 @@ REQUIRED_REPORT_SECTIONS: tuple[tuple[str, str], ...] = (
     ("Deviations from plan", "deviations"),
     ("Conclusion", "conclusion"),
 )
+# Task documents. The brief's "Done when" checks are the contract; the delivery
+# answers them one entry per check under "Checks".
+REQUIRED_BRIEF_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("Goal", "goal"),
+)
+# The contract list section: "Deliverables" is current; "Done when" is the
+# pre-schema name and stays readable.
+BRIEF_LIST_SECTIONS: tuple[str, ...] = ("deliverables", "done when")
+# The delivery's per-deliverable section: "Confirmations" is current;
+# "Checks" is the pre-schema name and stays readable.
+DELIVERY_LIST_SECTIONS: tuple[str, ...] = ("confirmations", "checks")
+REQUIRED_DELIVERY_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("Confirmations", "confirmations"),
+)
+MAX_BRIEF_BYTES = 16_000
+MAX_DELIVERY_BYTES = 16_000
+_NUMBERED_ITEM_RE = re.compile(r"^[ \t]*(\d+)[.)][ \t]+(.*\S)?[ \t]*$")
 MAX_REPORT_BYTES = 16_000
 GRAPH_SCHEMA_VERSION = 1
 MAX_GRAPH_NODES = 16
@@ -307,6 +325,263 @@ def report_problems(
             if problem:
                 problems.append(problem)
     return problems
+
+
+def markdown_section_body(text: str, key: str) -> str | None:
+    """Body of the first heading whose normalized text starts with ``key``."""
+    text = _HTML_COMMENT_RE.sub("", text)
+    headings = [
+        (
+            match.start(),
+            len(match.group(1)),
+            _normalize_heading(match.group(2)),
+            match.end(),
+        )
+        for match in _HEADING_RE.finditer(text)
+    ]
+    index = next(
+        (i for i, heading in enumerate(headings) if heading[2].startswith(key)),
+        None,
+    )
+    if index is None:
+        return None
+    level, body_start = headings[index][1], headings[index][3]
+    body_end = len(text)
+    for next_start, next_level, _, _ in headings[index + 1 :]:
+        if next_level <= level:
+            body_end = next_start
+            break
+    return text[body_start:body_end]
+
+
+def numbered_items(body: str) -> dict[int, str]:
+    """``1. text`` items in a section body; continuation lines fold in."""
+    items: dict[int, str] = {}
+    current: int | None = None
+    for line in body.splitlines():
+        match = _NUMBERED_ITEM_RE.match(line)
+        if match:
+            current = int(match.group(1))
+            items[current] = (match.group(2) or "").strip()
+            continue
+        if current is not None and line.strip() and line[:1] in (" ", "\t"):
+            items[current] = (items[current] + " " + line.strip()).strip()
+        elif not line.strip():
+            continue
+        else:
+            current = None
+    return items
+
+
+def brief_checks(brief_text: str) -> list[str]:
+    """The brief's deliverables in numeric order (empty if malformed)."""
+    body = None
+    for key in BRIEF_LIST_SECTIONS:
+        body = markdown_section_body(brief_text, key)
+        if body is not None:
+            break
+    if body is None:
+        return []
+    items = numbered_items(body)
+    if not items or sorted(items) != list(range(1, len(items) + 1)):
+        return []
+    return [items[number] for number in sorted(items)]
+
+
+def brief_problems(brief_text: str) -> list[str]:
+    problems: list[str] = []
+    missing = required_markdown_sections_missing(brief_text, REQUIRED_BRIEF_SECTIONS)
+    if missing:
+        problems.append("missing required sections: " + ", ".join(missing))
+    body = None
+    for key in BRIEF_LIST_SECTIONS:
+        body = markdown_section_body(brief_text, key)
+        if body is not None:
+            break
+    if body is None:
+        problems.append(
+            "missing required sections: Deliverables (a numbered list of the "
+            "things that must exist when the task is done)"
+        )
+    else:
+        items = numbered_items(body)
+        if not items:
+            problems.append(
+                "Deliverables must be a numbered list (1. ..., 2. ...), each "
+                "one thing, verifiable as written"
+            )
+        elif sorted(items) != list(range(1, len(items) + 1)):
+            problems.append(
+                "Deliverables must be numbered 1..N without gaps or repeats"
+            )
+        else:
+            for number, text in sorted(items.items()):
+                if not text:
+                    problems.append(f"Deliverable {number} is empty")
+    size = len(brief_text.encode("utf-8"))
+    if size > MAX_BRIEF_BYTES:
+        problems.append(
+            f"brief is {size} bytes; keep it under {MAX_BRIEF_BYTES} — the "
+            "brief is a contract, not a plan"
+        )
+    return problems
+
+
+def delivery_problems(delivery_text: str, *, checks: list[str]) -> list[str]:
+    """Shape only: one confirmation per deliverable. Content is the reviewer's."""
+    problems: list[str] = []
+    body = None
+    for key in DELIVERY_LIST_SECTIONS:
+        body = markdown_section_body(delivery_text, key)
+        if body is not None:
+            break
+    if body is None:
+        problems.append(
+            "missing required sections: Confirmations (one numbered entry per "
+            "deliverable)"
+        )
+    if body is not None:
+        entries = numbered_items(body)
+        expected = list(range(1, len(checks) + 1))
+        absent = [number for number in expected if number not in entries]
+        if absent:
+            problems.append(
+                "Confirmations needs one numbered entry per deliverable; "
+                "missing entries for deliverable(s) "
+                + ", ".join(str(n) for n in absent)
+                + " — say where the thing is and how to check it, or state "
+                "plainly 'not delivered — <why>'"
+            )
+        empty = [number for number in expected if entries.get(number) == ""]
+        if empty:
+            problems.append(
+                "Confirmations must not be empty: " + ", ".join(str(n) for n in empty)
+            )
+        extra = sorted(number for number in entries if number not in expected)
+        if extra:
+            problems.append(
+                "Confirmations has entries with no matching deliverable: "
+                + ", ".join(str(n) for n in extra)
+                + f" (the goal lists {len(checks)} deliverable(s))"
+            )
+    size = len(delivery_text.encode("utf-8"))
+    if size > MAX_DELIVERY_BYTES:
+        problems.append(
+            f"delivery is {size} bytes; keep it under {MAX_DELIVERY_BYTES} — "
+            "point at files and receipts instead of inlining them"
+        )
+    return problems
+
+
+# ---- task documents as structure ------------------------------------------
+# The goal (prose + deliverables) is structure at creation; only the delivery
+# still arrives as a document. Each confirmation entry parses into
+# state/evidence/how; the prose sections (Notes, legacy Report/Caveats) come
+# out whole. Parsers stay tolerant: unmarked entries claim met, prose that
+# fits no shape reads as a single field.
+
+# Delivery entry state: "[x] …", "[ ] …", "[~] …", "not delivered — …".
+_RESULT_MARKER_RE = re.compile(
+    r"^\s*(?:\[(?P<box>[xX✓ ~]|met|unmet|partial(?:ly met)?|not met|yes|no)\]"
+    r"|(?P<word>not delivered|unmet|not met|met|partial(?:ly met)?)\b)\s*[:—–-]?\s*",
+    re.IGNORECASE,
+)
+
+_HOW_SPLIT_RE = re.compile(
+    r"^(?P<evidence>.+?)(?:\s*[—–;]\s*|\s+-\s+|\s+)"
+    r"(?:how\s+to\s+(?:check|verify)(?:\s+it)?|to\s+(?:check|verify)|check|verify)\s*:\s*(?P<how>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def delivery_entry_parts(number: int, entry_text: str) -> dict[str, Any]:
+    """One delivery entry as ``{number, state, evidence, how, text}``.
+
+    ``state`` is the executor's claim — met | unmet | partial — read from a
+    leading ``[x]``/``[ ]``/``[~]`` box or an ``UNMET:`` word; an unmarked
+    entry claims met (the template says unmet must be stated).
+    """
+    text = (entry_text or "").strip()
+    state = "met"
+    body = text
+    marker = _RESULT_MARKER_RE.match(text)
+    if marker:
+        token = (marker.group("box") or marker.group("word") or "").strip().lower()
+        if token in ("", "unmet", "not met", "not delivered", "no"):
+            state = "unmet"
+        elif token.startswith("partial") or token == "~":
+            state = "partial"
+        else:
+            state = "met"
+        body = text[marker.end():].strip()
+    how = None
+    evidence = body
+    split = _HOW_SPLIT_RE.match(body)
+    if split:
+        evidence = split.group("evidence").strip().rstrip("—–-;,: ").strip() or body
+        how = split.group("how").strip() or None
+    return {"number": number, "state": state, "evidence": evidence, "how": how, "text": text}
+
+
+def delivery_results(delivery_text: str, *, count: int) -> list[dict[str, Any]]:
+    """The confirmations, one per deliverable (missing ones None-filled)."""
+    body = None
+    for key in DELIVERY_LIST_SECTIONS:
+        body = markdown_section_body(delivery_text, key)
+        if body is not None:
+            break
+    entries = {} if body is None else numbered_items(body)
+    results: list[dict[str, Any]] = []
+    numbers = sorted(set(range(1, count + 1)) | set(entries))
+    for number in numbers:
+        if number in entries and entries[number]:
+            results.append(delivery_entry_parts(number, entries[number]))
+        else:
+            results.append({"number": number, "state": None, "evidence": None, "how": None, "text": ""})
+    return results
+
+
+def delivery_section(delivery_text: str, key: str) -> str | None:
+    """A delivery section's prose (Report, Caveats) or None when absent/empty."""
+    body = markdown_section_body(delivery_text, key)
+    if body is None:
+        return None
+    body = _HTML_COMMENT_RE.sub("", body).strip()
+    return body or None
+
+
+def render_task_brief(proposal: dict[str, Any]) -> str:
+    """The brief.md Merv pins at task creation.
+
+    Rendered from the immutable goal — prose plus the numbered deliverables —
+    so the record on disk and the reviewer read one canonical form. Legacy
+    proposals may still carry the list as ``done_when``.
+    """
+    name = str(proposal.get("name") or "").strip()
+    goal = str(proposal.get("goal") or "").strip()
+    checks = (
+        _string_list(proposal.get("deliverables"))
+        or _string_list(proposal.get("done_when"))
+        or []
+    )
+    lines = [f"# Brief: {name}" if name else "# Brief", "", "## Goal", goal, ""]
+    lines.append("## Deliverables")
+    for number, check in enumerate(checks, start=1):
+        lines.append(f"{number}. {check}")
+    lines.append("")
+    scope = str(proposal.get("scope") or "").strip()
+    if scope:
+        lines.extend(["## Scope", scope, ""])
+    context = str(proposal.get("context") or "").strip()
+    depends_on = depends_on_refs(proposal)
+    if context or depends_on:
+        lines.append("## Context")
+        if context:
+            lines.append(context)
+        if depends_on:
+            lines.append("Depends on: " + ", ".join(depends_on))
+        lines.append("")
+    return "\n".join(lines)
 
 
 def graph_problems(graph_text: str) -> list[str]:
@@ -648,6 +923,21 @@ def claim_refs(proposal: dict[str, Any]) -> list[str]:
     return []
 
 
+def _string_list(raw: Any) -> list[str] | None:
+    """A list of non-empty strings, or None when the value is not a list."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [raw.strip()] if raw.strip() else []
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    return None
+
+
+def depends_on_refs(proposal: dict[str, Any]) -> list[str]:
+    return _string_list(proposal.get("depends_on")) or []
+
+
 def decision_problems(
     spec: dict[str, Any],
     *,
@@ -655,6 +945,8 @@ def decision_problems(
     claim_keys: dict[str, dict[str, Any]],
     claim_exists: Callable[[str], bool] | None = None,
     experiment_name_taken: Callable[[str], bool] | None = None,
+    task_name_taken: Callable[[str], bool] | None = None,
+    node_exists: Callable[[str], bool] | None = None,
     non_terminal_experiments: Callable[[], list[str]] | None = None,
 ) -> None:
     decision = spec.get("decision")
@@ -666,20 +958,29 @@ def decision_problems(
         problems.append("decision.type must be 'create_experiments'")
         return
     experiments = decision.get("experiments")
+    if experiments is None:
+        experiments = []
     if not isinstance(experiments, list):
         problems.append("decision.experiments must be a list")
         return
-    if not experiments:
+    tasks = decision.get("tasks")
+    if tasks is None:
+        tasks = []
+    if not isinstance(tasks, list):
+        problems.append("decision.tasks must be a list")
+        return
+    if not experiments and not tasks:
         problems.append(
-            "decision.experiments must contain at least one experiment — the "
-            "next wave the project runs; stopping is the researcher's call, "
-            "not the reflection's"
+            "decision must propose at least one node — an experiment in "
+            "decision.experiments or a task in decision.tasks: the next wave "
+            "the project runs; stopping is the researcher's call, not the "
+            "reflection's"
         )
     if len(experiments) > 3:
         problems.append(
             "decision.experiments must contain no more than three experiments"
         )
-    if non_terminal_experiments is not None:
+    if non_terminal_experiments is not None and experiments:
         active_count = len(non_terminal_experiments())
         if active_count + len(experiments) > ACTIVE_EXPERIMENT_CAP:
             problems.append(
@@ -689,37 +990,53 @@ def decision_problems(
                 )
             )
     seen_names: set[str] = set()
-    for index, proposal in enumerate(experiments):
-        label = f"decision.experiments[{index}]"
-        if not isinstance(proposal, dict):
-            problems.append(f"{label} must be an object")
-            continue
+    node_keys: dict[str, str] = {}
+    experiment_nodes: set[str] = set()
+    edges: list[tuple[str, str]] = []
+
+    def check_key(label: str, proposal: dict[str, Any]) -> str:
         key = str(proposal.get("key") or "").strip()
         if key and not _CHANGE_SPEC_KEY_RE.fullmatch(key):
             problems.append(
                 f"{label}.key must start with a letter and use only "
                 "letters, digits, '_' and '-'"
             )
+        elif key and key in node_keys:
+            problems.append(f"duplicate node key in change spec: {key}")
+        elif key:
+            node_keys[key] = label
+        return key
+
+    def check_name(label: str, name: str, *, taken: Callable[[str], bool] | None,
+                   subject: str) -> None:
+        if not name:
+            return
+        lowered = name.lower()
+        if lowered in seen_names:
+            problems.append(f"duplicate node name in change spec: {name}")
+        seen_names.add(lowered)
+        if taken is not None and taken(name):
+            problems.append(f"{subject} name already exists in project: {name}")
+
+    for index, proposal in enumerate(experiments):
+        label = f"decision.experiments[{index}]"
+        if not isinstance(proposal, dict):
+            problems.append(f"{label} must be an object")
+            continue
+        key = check_key(label, proposal)
+        experiment_nodes.add(key or label)
         name = str(proposal.get("name") or "").strip()
         try:
             name = validate_experiment_name(name)
         except ValidationError as exc:
             problems.append(f"{label}.name invalid: {exc}")
             name = ""
-        if name:
-            lowered = name.lower()
-            if lowered in seen_names:
-                problems.append(f"duplicate experiment name in change spec: {name}")
-            seen_names.add(lowered)
-            if experiment_name_taken is not None and experiment_name_taken(name):
-                problems.append(f"experiment name already exists in project: {name}")
+        check_name(label, name, taken=experiment_name_taken, subject="experiment")
         if not str(proposal.get("intent") or "").strip():
             problems.append(f"{label}.intent is required")
-        if len(experiments) >= 2 and not str(proposal.get("parallelism") or "").strip():
-            problems.append(
-                f"{label}.parallelism is required for a multi-experiment wave; "
-                "state why this experiment can run independently of the rest"
-            )
+        details_value = proposal.get("details")
+        if details_value is not None and not isinstance(details_value, str):
+            problems.append(f"{label}.details must be prose (a string)")
         refs = claim_refs(proposal)
         seen_refs: set[str] = set()
         for ref in refs:
@@ -733,6 +1050,110 @@ def decision_problems(
                 continue
             if claim_exists is not None and not claim_exists(ref):
                 problems.append(f"{label} references unknown claim or claim key: {ref}")
+        for ref in depends_on_refs(proposal):
+            edges.append((key or label, ref))
+        if _string_list(proposal.get("depends_on")) is None:
+            problems.append(f"{label}.depends_on must be a list of node keys or ids")
+
+    for index, proposal in enumerate(tasks):
+        label = f"decision.tasks[{index}]"
+        if not isinstance(proposal, dict):
+            problems.append(f"{label} must be an object")
+            continue
+        key = check_key(label, proposal)
+        name = str(proposal.get("name") or "").strip()
+        try:
+            name = validate_task_name(name)
+        except ValidationError as exc:
+            problems.append(f"{label}.name invalid: {exc}")
+            name = ""
+        check_name(label, name, taken=task_name_taken, subject="task")
+        if not str(proposal.get("goal") or "").strip():
+            problems.append(f"{label}.goal is required")
+        raw = proposal.get("deliverables")
+        legacy = proposal.get("done_when")
+        checks = _string_list(raw if raw is not None else legacy)
+        if checks is None:
+            problems.append(
+                f"{label}.deliverables must be a list of deliverables"
+            )
+        elif not checks:
+            problems.append(
+                f"{label}.deliverables needs at least one item — a thing that "
+                "must exist when the task is done, verifiable as written"
+            )
+        for field in ("scope", "context"):
+            value = proposal.get(field)
+            if value is not None and not isinstance(value, str):
+                problems.append(f"{label}.{field} must be a string")
+        for ref in depends_on_refs(proposal):
+            edges.append((key or label, ref))
+        if _string_list(proposal.get("depends_on")) is None:
+            problems.append(f"{label}.depends_on must be a list of node keys or ids")
+
+    # Dependencies: every ref is a key in this spec or an existing node id;
+    # no self edges; no cycles among the spec's own keys.
+    for source, ref in edges:
+        if ref == source:
+            problems.append(f"{source} cannot depend on itself")
+        elif ref in node_keys:
+            continue
+        elif ref.startswith(("exp_", "task_")):
+            if node_exists is not None and not node_exists(ref):
+                problems.append(f"{source} depends on unknown node: {ref}")
+        else:
+            problems.append(
+                f"{source} depends on unknown node key or id: {ref} (use a key "
+                "from this change spec, or an existing exp_/task_ id)"
+            )
+    cycle = _cycle_problem(
+        node_ids=set(node_keys),
+        edges=[
+            (source, ref)
+            for source, ref in edges
+            if source in node_keys and ref in node_keys and source != ref
+        ],
+    )
+    if cycle:
+        problems.append("depends_on " + cycle)
+
+    # No sequential experiments inside one wave: an experiment may not run
+    # after another experiment — directly or through any chain of tasks. An
+    # experiment that builds on a sibling's results is the next reflection's
+    # proposal. Edges onto existing exp_/task_ ids are lineage to earlier
+    # waves and stay outside this rule.
+    adjacency: dict[str, set[str]] = {}
+    for source, ref in edges:
+        if ref in node_keys and ref != source:
+            adjacency.setdefault(source, set()).add(ref)
+    experiment_keys = {key for key in experiment_nodes if key in node_keys}
+    for origin in sorted(experiment_nodes):
+        parent: dict[str, str] = {ref: "" for ref in adjacency.get(origin, ())}
+        queue = sorted(parent)
+        found = ""
+        while queue:
+            node = queue.pop(0)
+            if node in experiment_keys:
+                found = node
+                break
+            for nxt in sorted(adjacency.get(node, ())):
+                if nxt not in parent:
+                    parent[nxt] = node
+                    queue.append(nxt)
+        if found:
+            chain: list[str] = []
+            walk = parent[found]
+            while walk:
+                chain.append(walk)
+                walk = parent[walk]
+            chain.reverse()
+            via = f" through {' -> '.join(chain)}" if chain else ""
+            problems.append(
+                f"{node_keys.get(origin, origin)} depends on experiment "
+                f"{found}{via}: no sequential experiments in one wave — an "
+                "experiment that builds on another experiment's results is "
+                "the next reflection's proposal"
+            )
 
 
 def parse_change_spec(
@@ -741,6 +1162,8 @@ def parse_change_spec(
     path: str,
     claim_exists: Callable[[str], bool] | None = None,
     experiment_name_taken: Callable[[str], bool] | None = None,
+    task_name_taken: Callable[[str], bool] | None = None,
+    node_exists: Callable[[str], bool] | None = None,
     non_terminal_experiments: Callable[[], list[str]] | None = None,
 ) -> dict[str, Any]:
     """Validate a reviewed reflection change spec and return its JSON object."""
@@ -775,6 +1198,8 @@ def parse_change_spec(
         claim_keys=claim_keys,
         claim_exists=claim_exists,
         experiment_name_taken=experiment_name_taken,
+        task_name_taken=task_name_taken,
+        node_exists=node_exists,
         non_terminal_experiments=non_terminal_experiments,
     )
     if problems:

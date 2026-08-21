@@ -7,18 +7,32 @@ import hashlib
 import hmac
 import ipaddress
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from ..kernel.secret_tokens import hash_secret, mint_secret, secret_digest_matches
 from ..kernel.utils import NotFoundError, iso_after, new_id, now_iso, parse_iso
 from .project_keys import GRANT_SCOPES, PROJECT_GRANT, ProjectKeyControl
+from .runner_pairing import USER_CODE_ALPHABET, USER_CODE_LENGTH, format_user_code
 
 AUTHORIZATION_CODE_TTL_SECONDS = 60
 ACCESS_TOKEN_TTL_SECONDS = 3600
 REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
+# RFC 8628 device authorization: the lane for a client whose loopback no
+# browser can reach (a VM over SSH). Same code shape and budgets as runner
+# pairing — the attack (spraying short codes) and the attacker (an
+# authenticated browser session) are identical.
+DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
+DEVICE_CODE_TTL_SECONDS = 10 * 60
+DEVICE_POLL_INTERVAL_SECONDS = 5
+DEVICE_CREATE_PER_IP_PER_MINUTE = 10
+DEVICE_PENDING_PER_IP = 5
+DEVICE_PENDING_GLOBAL_CAP = 1000
+DEVICE_MISS_LIMIT = 10
+DEVICE_MISS_WINDOW_SECONDS = 10 * 60
 # Public DCR is unauthenticated, so a client that registered and never came
 # back to authorize is swept (audit AUTH-03). Used clients — anything with a
 # code or refresh token — are kept regardless of age.
@@ -38,7 +52,9 @@ CAP_EVICTION_LIMIT = 100
 
 _PKCE_CHALLENGE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _PKCE_VERIFIER = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
-_SUPPORTED_GRANTS = frozenset(("authorization_code", "refresh_token"))
+_SUPPORTED_GRANTS = frozenset(("authorization_code", "refresh_token", DEVICE_GRANT))
+# Grants a client may hold on its own; refresh_token only rides along.
+_PRIMARY_GRANTS = frozenset(("authorization_code", DEVICE_GRANT))
 
 
 class OAuthError(Exception):
@@ -101,6 +117,25 @@ class RefreshToken:
     revoked_at: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class DeviceGrant:
+    id: str
+    device_code_digest: str
+    user_code: str
+    client_id: str
+    resource: str
+    status: str
+    owner_user_id: str | None
+    project_id: str | None
+    grant_scope: str | None
+    client_ip: str
+    created_at: str
+    expires_at: str
+    last_polled_at: str | None
+    decided_at: str | None
+    consumed_at: str | None
+
+
 class OAuthRepository(Protocol):
     def get_or_create_client(self, *, client: OAuthClient) -> OAuthClient: ...
     def client_by_id(self, *, client_id: str) -> OAuthClient | None: ...
@@ -119,6 +154,25 @@ class OAuthRepository(Protocol):
         owner_user_id: str,
         revoked_at: str,
     ) -> None: ...
+    def create_device_grant(
+        self, *, grant: DeviceGrant, user_codes: Callable[[], str]
+    ) -> str: ...
+    def device_grant_for_consent(
+        self, *, user_code: str, principal: str
+    ) -> DeviceGrant | None: ...
+    def decide_device_grant(
+        self,
+        *,
+        user_code: str,
+        principal: str,
+        approved: bool,
+        owner_user_id: str,
+        project_id: str,
+        grant_scope: str,
+    ) -> DeviceGrant | None: ...
+    def poll_device_grant(
+        self, *, digest: str, client_id: str, interval_seconds: int
+    ) -> tuple[str, "DeviceGrant | None"]: ...
 
 
 class OAuthControl(Protocol):
@@ -127,6 +181,10 @@ class OAuthControl(Protocol):
     def authorize(self, **kwargs: object) -> str: ...
     def exchange_code(self, **kwargs: object) -> dict[str, Any]: ...
     def refresh(self, **kwargs: object) -> dict[str, Any]: ...
+    def device_authorization(self, **kwargs: object) -> dict[str, Any]: ...
+    def device_details(self, **kwargs: object) -> dict[str, Any]: ...
+    def device_decide(self, **kwargs: object) -> dict[str, Any]: ...
+    def exchange_device_code(self, **kwargs: object) -> dict[str, Any]: ...
 
 
 class ProjectMembership(Protocol):
@@ -164,9 +222,28 @@ class OAuthService:
                 "invalid_client_metadata",
                 "client_name is required and must be at most 200 printable characters",
             )
-        redirect_uris = _string_list(
-            metadata.get("redirect_uris"), field="redirect_uris", required=True
+        grants = _string_list(
+            metadata.get("grant_types", ["authorization_code"]),
+            field="grant_types",
+            required=True,
         )
+        if not set(grants) & _PRIMARY_GRANTS or not set(grants) <= _SUPPORTED_GRANTS:
+            raise OAuthError(
+                "invalid_client_metadata",
+                "grant_types may contain only authorization_code, refresh_token, "
+                f"and {DEVICE_GRANT}",
+            )
+        # A device-only client never receives a redirect, so it registers no
+        # redirect_uris (RFC 7591 requires them only for redirect-based
+        # grants). A client holding authorization_code still must.
+        needs_redirect = "authorization_code" in grants
+        raw_redirects = metadata.get("redirect_uris")
+        if raw_redirects is None and not needs_redirect:
+            redirect_uris: tuple[str, ...] = ()
+        else:
+            redirect_uris = _string_list(
+                raw_redirects, field="redirect_uris", required=needs_redirect
+            )
         if len(redirect_uris) > 10:
             raise OAuthError(
                 "invalid_redirect_uri", "at most 10 redirect_uris may be registered"
@@ -181,16 +258,6 @@ class OAuthService:
             raise OAuthError(
                 "invalid_client_metadata",
                 "only public clients with token_endpoint_auth_method=none are supported",
-            )
-        grants = _string_list(
-            metadata.get("grant_types", ["authorization_code"]),
-            field="grant_types",
-            required=True,
-        )
-        if "authorization_code" not in grants or not set(grants) <= _SUPPORTED_GRANTS:
-            raise OAuthError(
-                "invalid_client_metadata",
-                "grant_types may contain only authorization_code and refresh_token",
             )
         response_types = _string_list(
             metadata.get("response_types", ["code"]),
@@ -417,6 +484,164 @@ class OAuthService:
             grant_scope=token.grant_scope,
             parent_refresh_token_id=token.id,
             refresh_family_id=token.family_id,
+        )
+
+    # -- device authorization (RFC 8628) ------------------------------------
+
+    def device_authorization(
+        self, *, form: dict[str, str], canonical_resource: str, client_ip: str
+    ) -> dict[str, Any]:
+        client = self._token_client(form)
+        if DEVICE_GRANT not in client.grant_types:
+            raise OAuthError(
+                "unauthorized_client", "client cannot use the device grant"
+            )
+        if str(form.get("scope") or "").strip():
+            raise OAuthError("invalid_scope", "scopes are not supported")
+        resource = _required_resource(form, canonical_resource)
+        device_code = mint_secret(prefix="mdc_", nbytes=32)
+        user_code = self._repository.create_device_grant(
+            grant=DeviceGrant(
+                id=new_id(prefix="odg"),
+                device_code_digest=hash_secret(device_code),
+                user_code="",
+                client_id=client.client_id,
+                resource=resource,
+                status="pending",
+                owner_user_id=None,
+                project_id=None,
+                grant_scope=None,
+                client_ip=str(client_ip or "").strip()[:64],
+                created_at=now_iso(),
+                expires_at=iso_after(seconds=DEVICE_CODE_TTL_SECONDS),
+                last_polled_at=None,
+                decided_at=None,
+                consumed_at=None,
+            ),
+            user_codes=lambda: "".join(
+                secrets.choice(USER_CODE_ALPHABET) for _ in range(USER_CODE_LENGTH)
+            ),
+        )
+        return {
+            "device_code": device_code,
+            "user_code": format_user_code(user_code),
+            "expires_in": DEVICE_CODE_TTL_SECONDS,
+            "interval": DEVICE_POLL_INTERVAL_SECONDS,
+        }
+
+    def device_details(self, *, user_code: str, principal: str) -> dict[str, Any]:
+        code = _normalize_device_code(user_code)
+        grant = self._repository.device_grant_for_consent(
+            user_code=code, principal=principal
+        )
+        if grant is None:
+            raise OAuthError(
+                "invalid_grant", "no device authorization is waiting with that code"
+            )
+        client = self._repository.client_by_id(client_id=grant.client_id)
+        return {
+            "user_code": format_user_code(code),
+            "client_id": grant.client_id,
+            "client_name": client.client_name if client else "",
+            "resource": grant.resource,
+        }
+
+    def device_decide(
+        self,
+        *,
+        user_code: str,
+        principal: str,
+        owner_user_id: str,
+        project_id: str,
+        approved: bool,
+        grant_scope: str = PROJECT_GRANT,
+    ) -> dict[str, Any]:
+        code = _normalize_device_code(user_code)
+        if approved:
+            if grant_scope not in GRANT_SCOPES:
+                raise OAuthError("invalid_request", "invalid grant scope")
+            # Same law as redirect consent: approval can never reach beyond
+            # the consenting user's own membership.
+            if (
+                not project_id
+                or not owner_user_id
+                or not self._is_project_member(
+                    project_id=project_id, user_id=owner_user_id
+                )
+            ):
+                raise OAuthError(
+                    "access_denied", "approval requires a project you are a member of"
+                )
+        grant = self._repository.decide_device_grant(
+            user_code=code,
+            principal=principal,
+            approved=approved,
+            owner_user_id=owner_user_id,
+            project_id=project_id if approved else "",
+            grant_scope=grant_scope if approved else "",
+        )
+        if grant is None:
+            raise OAuthError(
+                "invalid_grant", "no device authorization is waiting with that code"
+            )
+        client = self._repository.client_by_id(client_id=grant.client_id)
+        return {
+            "status": "approved" if approved else "denied",
+            "client_name": client.client_name if client else "",
+        }
+
+    def exchange_device_code(
+        self, *, form: dict[str, str], canonical_resource: str
+    ) -> dict[str, Any]:
+        client = self._token_client(form)
+        if DEVICE_GRANT not in client.grant_types:
+            raise OAuthError(
+                "unauthorized_client", "client cannot use the device grant"
+            )
+        resource = _required_resource(form, canonical_resource)
+        raw_code = _required_form(form, "device_code")
+        outcome, grant = self._repository.poll_device_grant(
+            digest=hash_secret(raw_code),
+            client_id=client.client_id,
+            interval_seconds=DEVICE_POLL_INTERVAL_SECONDS,
+        )
+        if outcome == "pending":
+            raise OAuthError(
+                "authorization_pending", "the authorization request is still pending"
+            )
+        if outcome == "slow_down":
+            raise OAuthError(
+                "slow_down", "polling too fast; add five seconds to the interval"
+            )
+        if outcome == "denied":
+            raise OAuthError("access_denied", "the authorization request was denied")
+        if outcome == "expired":
+            raise OAuthError("expired_token", "the device code has expired")
+        owner = str(grant.owner_user_id or "") if grant else ""
+        project = str(grant.project_id or "") if grant else ""
+        if outcome != "approved" or not grant or not owner or not project:
+            raise OAuthError("invalid_grant", "device code is invalid")
+        if grant.resource != resource:
+            raise OAuthError("invalid_grant", "device code is invalid")
+        scope = str(grant.grant_scope or PROJECT_GRANT)
+        refresh_family_id = new_id(prefix="orf")
+        minted = self._mint_access_token(
+            project_id=project,
+            owner_user_id=owner,
+            parent_key_id=None,
+            audience=grant.resource,
+            oauth_family_id=refresh_family_id,
+            grant_scope=scope,
+        )
+        return self._token_response(
+            client=client,
+            minted=minted,
+            resource=grant.resource,
+            owner_user_id=owner,
+            project_id=project,
+            grant_scope=scope,
+            parent_refresh_token_id=None,
+            refresh_family_id=refresh_family_id,
         )
 
     def _revoke_replayed_refresh(self, token: RefreshToken) -> None:
@@ -675,10 +900,30 @@ def _has_control_character(value: str) -> bool:
     return any(ord(character) < 32 or ord(character) == 127 for character in value)
 
 
+def _normalize_device_code(value: object) -> str:
+    """Mirror runner pairing's transcription forgiveness, as an OAuth error."""
+    text = "".join(
+        character
+        for character in str(value or "").upper()
+        if character not in " -_\t\r\n"
+    )
+    text = text.replace("I", "1").replace("L", "1").replace("O", "0")
+    if len(text) != USER_CODE_LENGTH or any(c not in USER_CODE_ALPHABET for c in text):
+        raise OAuthError(
+            "invalid_request",
+            "user_code must be the 8-character code the client printed",
+        )
+    return text
+
+
 __all__ = [
     "ACCESS_TOKEN_TTL_SECONDS",
     "AUTHORIZATION_CODE_TTL_SECONDS",
     "DEFAULT_UNUSED_CLIENT_TTL_DAYS",
+    "DEVICE_CODE_TTL_SECONDS",
+    "DEVICE_GRANT",
+    "DEVICE_POLL_INTERVAL_SECONDS",
+    "DeviceGrant",
     "OAuthControl",
     "OAuthError",
     "OAuthService",

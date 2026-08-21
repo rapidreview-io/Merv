@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 # Known project entity prefixes (kept in sync with feed._KNOWN_REF_PREFIXES).
 ENTITY_ID_RE = re.compile(
-    r"(?<![A-Za-z0-9_])((?:exp|claim|res|rver|syn|rev|lit|paper)_[0-9a-f]{6,32})(?![A-Za-z0-9_])"
+    r"(?<![A-Za-z0-9_])((?:exp|task|claim|res|rver|syn|rev|lit|paper)_[0-9a-f]{6,32})(?![A-Za-z0-9_])"
 )
 _ARXIV_RE = re.compile(r"\barXiv:\s?(\d{4}\.\d{4,5}(?:v\d+)?)\b", re.IGNORECASE)
 _DOI_RE = re.compile(r"\bdoi:\s?(10\.\d{4,9}/[^\s,;)\]]+)", re.IGNORECASE)

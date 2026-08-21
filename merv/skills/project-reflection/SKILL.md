@@ -54,8 +54,10 @@ each agent:
 
 - its server-returned lens charter and the other four lens names, so it stays
   in its lane;
-- `new_terminal_experiments`, framed as the new signal that triggered this
-  wave rather than the only evidence worth reading;
+- `new_terminal_experiments` and `new_terminal_tasks`, framed as the new
+  signal that triggered this wave rather than the only evidence worth reading
+  (a finished task's brief and delivery are inputs to read, not evidence about
+  a claim);
 - its previous reflection summary when the snapshot provides one;
 - the reflection id, project id, and instruction to use the snapshotted corpus;
 - the instruction to call `agent.hello` itself first (passing your `agent_id`
@@ -97,10 +99,11 @@ Produce the three artifacts defined in the template:
    published graph when one exists.
 2. `reflection_doc`: the concise scientific reading of what changed, what
    remains uncertain, and why the direction follows.
-3. `change_spec`: the reviewed claim updates and one to three proposed
-   experiments.
+3. `change_spec`: the reviewed claim updates and the next wave — up to three
+   proposed experiments plus any number of tasks (lit review, data prep,
+   harness work, memos), with `depends_on` edges between them. An experiment may sit downstream of tasks only, never of another proposed experiment (through tasks included) — sequential experiments are the next wave's proposal.
 
-Do not create or modify claims and experiments directly. Successful publication
+Do not create or modify claims, experiments, or tasks directly. Successful publication
 materializes the reviewed change spec. Follow the artifact and reflection tool
 contracts for fields, upload commands, lints, and allowed transitions; after
 editing an artifact, resubmit its bytes before retrying a gate.

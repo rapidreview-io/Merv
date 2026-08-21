@@ -25,6 +25,7 @@ class ExperimentState(TypedDict, total=False):
     project_id: str
     name: str
     intent: str
+    details: str
     status: str
     attempt_index: int
     mlflow_run: PersistedRunState | None
@@ -55,6 +56,66 @@ class CommittedExperimentUpdate:
     event: StoredEvent
 
 
+class TaskResult(TypedDict):
+    """One confirmation: the executor's claim, the pointer, how to check."""
+
+    number: int
+    state: str | None
+    evidence: str | None
+    how: str | None
+    text: str
+
+
+class DependencyNode(TypedDict):
+    """A node on either side of a wave-DAG edge, with its current standing."""
+
+    id: str
+    node_type: str
+    name: str
+    status: str
+    settled: bool
+    failed: bool
+
+
+class TaskState(TypedDict, total=False):
+    id: str
+    project_id: str
+    name: str
+    goal: str
+    status: str
+    attempt_index: int
+    outcome: str
+    failed_by: str
+    # The goal's contract and the delivery parsed to structure;
+    # `dependents` mirrors `dependencies` on the other side of the edge.
+    deliverables: list[str]
+    checks: list[str]  # agent-facing alias of deliverables
+    results: list[TaskResult]
+    report: str | None
+    caveats: str | None
+    dependencies: list[DependencyNode]
+    dependents: list[DependencyNode]
+
+
+class TaskSummary(TypedDict):
+    id: str
+    project_id: str
+    name: str
+    goal: str
+    status: str
+    attempt_index: int
+    outcome: str
+    failed_by: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CommittedTaskUpdate:
+    state: TaskState
+    event: StoredEvent
+
+
 class LiteratureSignal(TypedDict):
     papers_total: int
     papers_unreviewed: int
@@ -73,6 +134,8 @@ class ResearchSnapshot:
     latest_published_reflection: dict[str, Any] | None
     reflection_signal: dict[str, Any]
     gate_evaluations: dict[str, Any]
+    tasks: list[TaskState] = field(default_factory=list)
+    requested_task_id: str | None = None
     recent_claims: list[dict[str, Any]] = field(default_factory=list)
     claim_events_since_reflection: list[dict[str, Any]] = field(
         default_factory=list
@@ -82,6 +145,20 @@ class ResearchSnapshot:
             papers_total=0, papers_unreviewed=0
         )
     )
+
+    @property
+    def selected_task(self) -> TaskState | None:
+        selected_id = self.requested_task_id
+        if selected_id is None:
+            return None
+        return next(
+            (
+                task
+                for task in self.tasks
+                if str(task.get("id") or "") == selected_id
+            ),
+            None,
+        )
 
     @property
     def selected_experiment(self) -> ExperimentState | None:
@@ -100,10 +177,13 @@ class ResearchSnapshot:
 
 __all__ = [
     "CommittedExperimentUpdate",
+    "CommittedTaskUpdate",
     "ExhibitVerdict",
     "ExperimentState",
     "ExperimentSummary",
     "LiteratureSignal",
     "PersistedRunState",
     "ResearchSnapshot",
+    "TaskState",
+    "TaskSummary",
 ]

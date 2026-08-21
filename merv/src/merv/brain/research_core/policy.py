@@ -22,7 +22,14 @@ from .reflection_workflow import (
     REFLECTION_NUDGE_NEW_TERMINAL_THRESHOLD,
     REFLECTION_WORKFLOW,
 )
-from .workflow_schema import ArtifactNeed, ReviewGate, ReviewReturn, Workflow
+from .task_workflow import TASK_TERMINAL_STATUSES, TASK_WORKFLOW
+from .workflow_schema import (
+    ArtifactNeed,
+    RecordNeed,
+    ReviewGate,
+    ReviewReturn,
+    Workflow,
+)
 
 
 REVIEW_VERDICT_VALUES = ("pass", "needs_changes", "fail")
@@ -32,7 +39,7 @@ REVIEW_GATE_EXEMPT_ROLES = frozenset(REVIEW_GATE_EXEMPT_ROLE_VALUES)
 REVIEW_ROLE_VALUES = (
     *(
         state.review.role
-        for workflow in (EXPERIMENT_WORKFLOW, REFLECTION_WORKFLOW)
+        for workflow in (EXPERIMENT_WORKFLOW, REFLECTION_WORKFLOW, TASK_WORKFLOW)
         for state in workflow.states
         if state.review is not None
     ),
@@ -56,11 +63,16 @@ EXPERIMENT_ACTIVE_PROCESS_STATUSES = frozenset({"provisioning", "running"})
 
 SYNOPSIS_MIN_LEN = 40
 SYNOPSIS_MAX_LEN = 420
-_ENTITY_ID_RE = re.compile(r"\b(exp|claim|res|rev|rver|syn|lit|paper)_[A-Za-z0-9]")
+_ENTITY_ID_RE = re.compile(
+    r"\b(exp|claim|res|rev|rver|syn|lit|paper|task)_[A-Za-z0-9]"
+)
 
 MAX_EXPERIMENT_NAME_LEN = 48
 MIN_EXPERIMENT_NAME_LEN = 3
 _EXPERIMENT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+# Task names follow the same folder-safe rules and become tasks/<name>/.
+MAX_TASK_NAME_LEN = MAX_EXPERIMENT_NAME_LEN
+MIN_TASK_NAME_LEN = MIN_EXPERIMENT_NAME_LEN
 
 ACTIVE_EXPERIMENT_CAP = 7
 
@@ -95,14 +107,16 @@ def active_experiment_cap_would_exceed_message(
     )
 
 
-def covered_terminal_ids(corpus: Mapping[str, object] | None) -> set[str]:
+def covered_terminal_ids(
+    corpus: Mapping[str, object] | None, *, key: str = "terminal_experiments"
+) -> set[str]:
     if not corpus:
         return set()
-    entries = corpus.get("terminal_experiments") or []
+    entries = corpus.get(key) or []
     return {
-        str(experiment.get("id"))
-        for experiment in entries
-        if isinstance(experiment, Mapping)
+        str(entry.get("id"))
+        for entry in entries
+        if isinstance(entry, Mapping)
     }
 
 
@@ -112,11 +126,19 @@ def reflection_signal_state(
     current_claims: Mapping[str, str],
     published: Mapping[str, Any] | None,
     open_wave: Mapping[str, Any] | None,
+    current_terminal_tasks: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     covered_ids = covered_terminal_ids(
         None if published is None else (published.get("corpus") or {})
     )
     corpus = {} if published is None else published.get("corpus") or {}
+    # Tasks are inputs the reflection reads, not evidence: a finished task
+    # counts as new material (something to reflect over) but never toward
+    # the experiment debt that nudges or blocks.
+    covered_task_ids = covered_terminal_ids(corpus, key="terminal_tasks")
+    new_terminal_tasks = sorted(
+        set(current_terminal_tasks or {}) - covered_task_ids
+    )
     snapshot_claims = {
         str(claim.get("id")): str(claim.get("status"))
         for claim in corpus.get("claims", [])
@@ -133,6 +155,7 @@ def reflection_signal_state(
     has_new_material = (
         len(new_terminal) >= REFLECTION_IDLE_RECOMMEND_NEW_TERMINAL_THRESHOLD
         or contradicted_flip
+        or bool(new_terminal_tasks)
     )
     stale = open_wave is None and (
         len(new_terminal) >= REFLECTION_NUDGE_NEW_TERMINAL_THRESHOLD
@@ -142,6 +165,8 @@ def reflection_signal_state(
         "terminal_experiments": len(current_terminal),
         "covered_terminal_experiments": len(covered_ids & set(current_terminal)),
         "new_terminal_since_publish": len(new_terminal),
+        "terminal_tasks": len(current_terminal_tasks or {}),
+        "new_terminal_tasks_since_publish": len(new_terminal_tasks),
         "claims_changed_since_publish": len(claims_changed),
         "contradicted_flip": contradicted_flip,
         "has_new_material": has_new_material,
@@ -491,12 +516,12 @@ def validate_synopsis(value: str) -> str:
     return synopsis
 
 
-def validate_experiment_name(name: str) -> str:
+def _validate_folder_name(name: str, *, subject: str, folder: str) -> str:
     name = (name or "").strip()
     if not name:
         raise ValidationError(
-            "name is required: a short, folder-safe experiment name — it "
-            "becomes the experiment folder experiments/<name>/"
+            f"name is required: a short, folder-safe {subject} name — it "
+            f"becomes the {subject} folder {folder}/<name>/"
         )
     if (
         len(name) < MIN_EXPERIMENT_NAME_LEN
@@ -504,12 +529,89 @@ def validate_experiment_name(name: str) -> str:
         or not _EXPERIMENT_NAME_RE.fullmatch(name)
     ):
         raise ValidationError(
-            "experiment name must work as a folder name: start with a letter "
+            f"{subject} name must work as a folder name: start with a letter "
             "or digit and use only letters, digits, '.', '_' and '-', between "
             f"{MIN_EXPERIMENT_NAME_LEN} and "
             f"{MAX_EXPERIMENT_NAME_LEN} characters"
         )
     return name
+
+
+def validate_experiment_name(name: str) -> str:
+    return _validate_folder_name(name, subject="experiment", folder="experiments")
+
+
+def validate_task_name(name: str) -> str:
+    return _validate_folder_name(name, subject="task", folder="tasks")
+
+
+def evaluate_dependency_requirement(
+    requirement: RecordNeed,
+    *,
+    dependencies: list[dict[str, Any]],
+) -> RequirementEvaluation:
+    """Gate a node on its wave dependencies (``node_dependencies`` rows).
+
+    ``dependencies`` rows carry ``id``, ``node_type``, ``name``, ``status`` and
+    ``settled`` (done/complete). Missing rows (a dependency that was deleted)
+    count as unsettled so the gate never silently opens on a dangling edge.
+    """
+    pending = [item for item in dependencies if not item.get("settled")]
+    dead = [item for item in pending if item.get("failed")]
+    satisfied = not pending
+    if satisfied:
+        error = ""
+    elif dead:
+        names = ", ".join(
+            f"{item.get('node_type')} {item.get('name') or item.get('id')} "
+            f"({item.get('status')})"
+            for item in dead
+        )
+        error = (
+            f"a dependency has ended without succeeding: {names}; this node "
+            "cannot proceed on it — mark it failed/abandoned, or wait for the "
+            "next reflection to replan the wave"
+        )
+    else:
+        names = ", ".join(
+            f"{item.get('node_type')} {item.get('name') or item.get('id')} "
+            f"({item.get('status')})"
+            for item in pending
+        )
+        error = f"waiting on unfinished dependencies: {names}"
+    item: GateItem = {
+        "id": f"record:{requirement.name}",
+        "kind": "record",
+        "role": requirement.name,
+        "label": requirement.label,
+        "satisfied": satisfied,
+        "status": "valid" if satisfied else "missing",
+        "gate": requirement.gate,
+        "action": requirement.action,
+        "missing": "" if satisfied else (requirement.missing or error),
+        "dependencies": [
+            {
+                "id": item.get("id"),
+                "node_type": item.get("node_type"),
+                "name": item.get("name"),
+                "status": item.get("status"),
+                "settled": bool(item.get("settled")),
+            }
+            for item in dependencies
+        ],
+    }
+    if pending:
+        item["problems"] = [error]
+    return RequirementEvaluation(
+        role=requirement.name,
+        status="valid" if satisfied else "missing",
+        blocker_code="" if satisfied else (
+            "dependency_failed" if dead else requirement.gate
+        ),
+        enforcement_error=error,
+        problems=() if satisfied else (error,),
+        items=(item,),
+    )
 
 
 def parse_project_settings(raw: Any) -> dict[str, Any]:
@@ -625,6 +727,12 @@ def revision_context_for_review_return(
             "integration decisions. The approved reflection is authoritative "
             "and cannot be reopened here"
         )
+    elif target_type == "task":
+        pieces.append(
+            "Revise the delivery against the brief's Done-when checks: give the "
+            "evidence the reviewer could not verify, or state plainly which "
+            "checks are unmet and why; the brief itself stands"
+        )
     elif target_type == "reflection":
         pieces.append(
             "Consider revising the project graph, reflection doc, and/or "
@@ -642,6 +750,7 @@ def revision_context_for_review_return(
 
 __all__ = [
     "ACTIVE_EXPERIMENT_CAP",
+    "TASK_TERMINAL_STATUSES",
     "AGENT_DISPATCH_SETTING",
     "CLAIM_CONFIDENCES",
     "CLAIM_STATUSES",
@@ -661,6 +770,7 @@ __all__ = [
     "covered_terminal_ids",
     "is_review_gate_exempt",
     "evaluate_artifact_requirement",
+    "evaluate_dependency_requirement",
     "evaluate_review_gate",
     "parse_project_settings",
     "project_settings",
@@ -670,6 +780,7 @@ __all__ = [
     "revision_context_for_review_return",
     "snapshot_from_id",
     "validate_experiment_name",
+    "validate_task_name",
     "validate_review_role",
     "validate_review_verdict",
     "validate_synopsis",

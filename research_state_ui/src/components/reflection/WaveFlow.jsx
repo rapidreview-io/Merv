@@ -1,5 +1,5 @@
 import {
-  createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
+  createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState,
 } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ReactFlow, Background, Handle, Position } from '@xyflow/react';
@@ -64,6 +64,7 @@ function expMetaLine(data) {
   const dur = fmtSpan(t1 - t0);
   if (dur && dur !== '<1m') parts.push(dur);
   if (data.nClaims) parts.push(`${data.nClaims} claim${data.nClaims > 1 ? 's' : ''}`);
+  if (data.nChecks) parts.push(`${data.nChecks} check${data.nChecks > 1 ? 's' : ''}`);
   if (data.nArt) parts.push(`${data.nArt} artifact${data.nArt > 1 ? 's' : ''}`);
   return parts.join(' · ');
 }
@@ -187,6 +188,9 @@ export function buildFlowModel(braid, signal, expMeta = {}) {
           data: {
             ids: r.members.map(m => m.id),
             count: r.members.length,
+            noun: r.members.every(m => m.kind === 'task')
+              ? 'tasks'
+              : r.members.some(m => m.kind === 'task') ? 'nodes' : 'experiments',
             label: [nF && `${nF} failed`, nA && `${nA} abandoned`]
               .filter(Boolean).join(' · '),
             sub: r.members.map(m => m.name).join(', '),
@@ -202,14 +206,16 @@ export function buildFlowModel(braid, signal, expMeta = {}) {
         position: { x: expX(c), y: cy - EXP_H / 2 },
         data: {
           expId: s.id,
+          kind: s.kind || 'experiment',
           name: s.name,
           tone: s.tone,
-          sub: statusWord(s.status)
+          sub: (s.kind === 'task' ? 'task · ' : '') + statusWord(s.status)
             + (s.attemptIndex > 1 ? ` · attempt ${s.attemptIndex}` : ''),
           createdAt: s.createdAt || null,
           updatedAt: meta.updatedAt || null,
           nArt: meta.nArt || 0,
           nClaims: meta.nClaims || 0,
+          nChecks: meta.nChecks || 0,
         },
       });
     });
@@ -334,14 +340,65 @@ const keyActivate = (fn) => (e) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); }
 };
 
+// A task's silhouette is the flowchart "preparation" hexagon — pointed left
+// and right ends exactly where its edges enter and leave — against the
+// experiment's rectangular card. Same 190×70 box (the layout contract), so
+// nothing about lanes or edge geometry changes; only the outline does. It is
+// drawn as SVG rather than a CSS clip-path because a clip-path would also
+// clip off the border, the status tint, the left accent, the selection ring
+// and the live pulse — here each is a polygon that follows the shape.
+const TASK_TIP = 14;
+const TASK_PTS = [
+  [TASK_TIP, 0.5], [EXP_W - TASK_TIP, 0.5], [EXP_W - 0.5, EXP_H / 2],
+  [EXP_W - TASK_TIP, EXP_H - 0.5], [TASK_TIP, EXP_H - 0.5], [0.5, EXP_H / 2],
+].map(p => p.join(',')).join(' ');
+// The left accent: the chevron that stands in for the card's 3px left border.
+const TASK_ACCENT = `${TASK_TIP},0 0,${EXP_H / 2} ${TASK_TIP},${EXP_H}`;
+
+function TaskShape() {
+  const clipId = useId();
+  return (
+    <svg
+      className="fig-task-shape"
+      viewBox={`0 0 ${EXP_W} ${EXP_H}`}
+      width={EXP_W}
+      height={EXP_H}
+      aria-hidden="true"
+      focusable="false"
+    >
+      <defs>
+        <clipPath id={clipId}><polygon points={TASK_PTS} /></clipPath>
+      </defs>
+      {/* Under the fill: only its outer half shows — the selection ring,
+          the focus ring, and the live pulse, in whichever colour applies. */}
+      <polygon className="fig-task-ring" points={TASK_PTS} />
+      <polygon className="fig-task-fill" points={TASK_PTS} />
+      {/* Clipped to the shape, so its inner half is the accent band. */}
+      <polyline className="fig-task-accent" points={TASK_ACCENT} clipPath={`url(#${clipId})`} />
+      <polygon className="fig-task-edge" points={TASK_PTS} />
+    </svg>
+  );
+}
+
+// Legend swatch: the same hexagon, small.
+function TaskSwatch() {
+  return (
+    <svg className="fig-task-swatch" viewBox="0 0 22 12" width="22" height="12" aria-hidden="true" focusable="false">
+      <polygon points="4.5,0.75 17.5,0.75 21.25,6 17.5,11.25 4.5,11.25 0.75,6" />
+    </svg>
+  );
+}
+
 function ExpNode({ data }) {
   const { sel, select } = useContext(FlowCtx);
-  const selected = sel?.kind === 'exp' && sel.id === data.expId;
+  const isTask = data.kind === 'task';
+  const selKind = isTask ? 'task' : 'exp';
+  const selected = sel?.kind === selKind && sel.id === data.expId;
   const figSt = FIG_ST[data.tone];
   return (
     <div
       className={[
-        'fig-node', 'wflow-fig', 'fig-node--experiment',
+        'fig-node', 'wflow-fig', isTask ? 'fig-node--task' : 'fig-node--experiment',
         figSt ? `fig-st--${figSt}` : '',
         selected ? 'fig-node--selected' : '',
       ].filter(Boolean).join(' ')}
@@ -349,11 +406,12 @@ function ExpNode({ data }) {
       role="button"
       tabIndex={0}
       aria-label={`${data.name} — ${data.sub}`}
-      onKeyDown={keyActivate(() => select({ kind: 'exp', id: data.expId }))}
+      onKeyDown={keyActivate(() => select({ kind: selKind, id: data.expId }))}
     >
+      {isTask && <TaskShape />}
       <Handle type="target" position={Position.Left} className="fig-handle" />
       <div className="fig-node-head">
-        <span className="fig-node-glyph" aria-hidden="true">◈</span>
+        <span className="fig-node-glyph" aria-hidden="true">{isTask ? '◇' : '◈'}</span>
         <span className="fig-node-type">{data.sub}</span>
         {data.tone === 'live' && <span className="fig-node-live" aria-hidden="true" />}
       </div>
@@ -369,7 +427,7 @@ function ExpNode({ data }) {
 function ExpGroupNode({ id, data }) {
   const { sel, select } = useContext(FlowCtx);
   const selected = (sel?.kind === 'group' && sel.id === id)
-    || (sel?.kind === 'exp' && data.ids.includes(sel.id));
+    || ((sel?.kind === 'exp' || sel?.kind === 'task') && data.ids.includes(sel.id));
   return (
     <div
       className={[
@@ -380,13 +438,13 @@ function ExpGroupNode({ id, data }) {
       title={data.sub}
       role="button"
       tabIndex={0}
-      aria-label={`${data.count} experiments set aside — ${data.label}`}
+      aria-label={`${data.count} ${data.noun} set aside — ${data.label}`}
       onKeyDown={keyActivate(() => select({ kind: 'group', id, ids: data.ids }))}
     >
       <Handle type="target" position={Position.Left} className="fig-handle" />
       <div className="fig-node-head">
         <span className="fig-node-glyph" aria-hidden="true">⧉</span>
-        <span className="fig-node-type">{data.count} experiments</span>
+        <span className="fig-node-type">{data.count} {data.noun}</span>
       </div>
       <div className="fig-node-label">{data.label}</div>
       <div className="fig-node-sub">{data.sub}</div>
@@ -428,7 +486,7 @@ function ReflNode({ data }) {
 const nodeTypes = { wexp: ExpNode, wexpg: ExpGroupNode, wrefl: ReflNode };
 
 export default function WaveFlow({
-  waves, experiments, signal, project, onSelect, height = 420,
+  waves, experiments, tasks = [], signal, project, onSelect, height = 420,
   title = 'Project graph',
 }) {
   const px = useProjectHref();
@@ -440,19 +498,24 @@ export default function WaveFlow({
   // Identity discipline: rebuild braid/node objects only when the underlying
   // facts change, not on every poll tick or store-array replacement.
   const braidJson = useMemo(
-    () => JSON.stringify(buildBraid(waves, experiments)),
-    [waves, experiments],
+    () => JSON.stringify(buildBraid(waves, experiments, tasks)),
+    [waves, experiments, tasks],
   );
   const braid = useMemo(() => JSON.parse(braidJson), [braidJson]);
   // Card metadata from the live rows, JSON-keyed for the same identity
   // discipline (store arrays are replaced every poll tick).
-  const expMetaJson = useMemo(() => JSON.stringify(Object.fromEntries(
-    (experiments || []).map(e => [e.id, {
+  const expMetaJson = useMemo(() => JSON.stringify(Object.fromEntries([
+    ...(experiments || []).map(e => [e.id, {
       updatedAt: e.updated_at || null,
       nArt: (e.artifacts || []).length,
       nClaims: (e.tested_claims || []).length,
     }]),
-  )), [experiments]);
+    ...(tasks || []).map(t => [t.id, {
+      updatedAt: t.updated_at || null,
+      nArt: (t.artifacts || []).length,
+      nChecks: (t.checks || []).length,
+    }]),
+  ])), [experiments, tasks]);
   const expMeta = useMemo(() => JSON.parse(expMetaJson), [expMetaJson]);
   const { nodes, edges } = useMemo(
     () => buildFlowModel(braid, signal, expMeta),
@@ -576,6 +639,10 @@ export default function WaveFlow({
     (id) => navigate(px(`/experiments/${id}`)),
     [navigate, px],
   );
+  const openTask = useCallback(
+    (id) => navigate(px(`/tasks/${id}`)),
+    [navigate, px],
+  );
   // A wave id opens that wave's page; null (the ghost) is the caller's call —
   // Home sends it to the reflection list.
   const openWave = useCallback(
@@ -626,6 +693,7 @@ export default function WaveFlow({
             <div className="wflow-legend" aria-hidden="true">
               <span className="fig-chip fig-st--done">done</span>
               <span className="fig-chip fig-st--open">running</span>
+              <span className="fig-chip fig-chip--task"><TaskSwatch /> task</span>
               <span className="fig-chip wflow-chip--failed">failed</span>
               <span className="fig-chip wflow-chip--refl">reflection</span>
               <span className="fig-chip wflow-chip--pending">not yet consolidated</span>
@@ -657,7 +725,7 @@ export default function WaveFlow({
               onInit={inst => { rfRef.current = inst; fitCanvas(); setFramed(true); }}
               onNodeClick={(event, node) => {
                 event.stopPropagation();
-                if (node.type === 'wexp') setSel({ kind: 'exp', id: node.data.expId });
+                if (node.type === 'wexp') setSel({ kind: node.data.kind === 'task' ? 'task' : 'exp', id: node.data.expId });
                 else if (node.type === 'wexpg') setSel({ kind: 'group', id: node.id, ids: node.data.ids });
                 else if (node.data.origin) setSel({ kind: 'origin' });
                 else if (node.data.ghost) setSel({ kind: 'ghost' });
@@ -695,10 +763,12 @@ export default function WaveFlow({
               braid={braid}
               waves={waves}
               experiments={experiments}
+              tasks={tasks}
               signal={signal}
               project={project}
               onClose={() => setSel(null)}
               onOpenExp={openExp}
+              onOpenTask={openTask}
               onOpenWave={openWave}
               onSelectNode={setSel}
             />
