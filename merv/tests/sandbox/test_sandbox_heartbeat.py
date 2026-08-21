@@ -13,7 +13,6 @@ from merv.brain.sandbox.scheduler import SandboxScheduler
 from merv.brain.sandbox.core import LIVE_COMMAND_MAX_CHARS
 from merv.brain.sandbox.heartbeat import (
     HEARTBEAT_SERIES_MAX,
-    SandboxActivityPolicy,
     SandboxIdlePolicy,
     append_usage_point,
     usage_point,
@@ -116,69 +115,6 @@ class SandboxIdlePolicyTest(unittest.TestCase):
                 idle_since=now - timedelta(hours=2),
                 now=now,
                 is_idle=False,
-            )
-        )
-
-
-class SandboxActivityPolicyTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.policy = SandboxActivityPolicy()
-        self.previous = _sample()
-
-    def test_running_command_counts_as_activity(self) -> None:
-        self.assertTrue(
-            self.policy.is_active(
-                current=_sample(),
-                previous=self.previous,
-                elapsed_seconds=30,
-                command={"status": "running"},
-            )
-        )
-
-    def test_old_low_threshold_examples_do_not_extend(self) -> None:
-        cases = {
-            "cpu": _sample(cpu=0.10),
-            "gpu": _sample(gpu=5),
-            "network": _sample(net=200_000),
-            "memory": _sample(mem=200_000_000),
-            "ssh": _sample(ssh=1),
-        }
-        for name, current in cases.items():
-            with self.subTest(signal=name):
-                self.assertFalse(
-                    self.policy.is_active(
-                        current=current,
-                        previous=self.previous,
-                        elapsed_seconds=30,
-                    )
-                )
-
-    def test_higher_activity_thresholds_extend(self) -> None:
-        cases = {
-            "cpu": _sample(cpu=0.30),
-            "gpu": _sample(gpu=25),
-            "network": _sample(net=4_000_000),
-            "memory": _sample(mem=900_000_000),
-        }
-        for name, current in cases.items():
-            with self.subTest(signal=name):
-                self.assertTrue(
-                    self.policy.is_active(
-                        current=current,
-                        previous=self.previous,
-                        elapsed_seconds=30,
-                    )
-                )
-
-    def test_stored_snapshot_uses_previous_sample_for_deltas(self) -> None:
-        self.assertTrue(
-            self.policy.is_active_snapshot(
-                snapshot={
-                    "sampled_at": "2026-06-09T12:00:30Z",
-                    "metrics": _sample(net=4_000_000),
-                    "previous_sampled_at": "2026-06-09T12:00:00Z",
-                    "previous_metrics": self.previous,
-                }
             )
         )
 

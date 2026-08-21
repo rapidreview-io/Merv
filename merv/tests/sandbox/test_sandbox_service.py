@@ -1364,7 +1364,6 @@ class SandboxEngineTest(unittest.TestCase):
             time_limit=1200,
         )
         old_expiry = parse_iso(created["expires_at"])
-        self._record_running_command(sandbox_uid=created["sandbox_uid"])
 
         extended = self.call(
             "sandbox.extend",
@@ -1386,15 +1385,6 @@ class SandboxEngineTest(unittest.TestCase):
 
     def test_extend_can_target_sandbox_uid_with_smaller_increment(self) -> None:
         created = self.call("sandbox.request", project_id=self.project_id)
-        self.app.sandbox_storage.record_heartbeat(
-            sandbox_uid=created["sandbox_uid"],
-            expected_project_id=self.project_id,
-            idle_since=None,
-            snapshot={
-                "sampled_at": "2026-06-09T12:00:30Z",
-                "metrics": {"cpu": {"used_cores": 0.30}},
-            },
-        )
 
         extended = self.call(
             "sandbox.extend",
@@ -1407,15 +1397,17 @@ class SandboxEngineTest(unittest.TestCase):
         self.assertEqual(extended["extended_by_seconds"], 600)
         self.assertEqual(extended["time_limit"], 4200)
 
-    def test_extend_rejects_idle_sandbox(self) -> None:
+    def test_extend_allows_idle_sandbox(self) -> None:
         created = self.call("sandbox.request", project_id=self.project_id)
 
-        with self.assertRaisesRegex(ValidationError, "active heartbeat"):
-            self.call(
-                "sandbox.extend",
-                project_id=self.project_id,
-                sandbox_uid=created["sandbox_uid"],
-            )
+        extended = self.call(
+            "sandbox.extend",
+            project_id=self.project_id,
+            sandbox_uid=created["sandbox_uid"],
+        )
+
+        self.assertTrue(extended["extended"])
+        self.assertEqual(extended["extended_by_seconds"], 1800)
 
     def test_extend_rejects_provider_without_lifetime_extension(self) -> None:
         exp_id = self._experiment()

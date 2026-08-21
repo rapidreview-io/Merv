@@ -59,7 +59,6 @@ from .models import (
 )
 from .scheduler import SandboxScheduler
 from .heartbeat import (
-    SandboxActivityPolicy,
     SandboxHeartbeatMonitor,
     gpu_inventory,
     usage_point,
@@ -270,7 +269,6 @@ class SandboxEngine:
         # Composition-injected project gate: raises when the project has
         # switched the resolved provider off (Sandboxes → Configure).
         self._provider_admission = provider_admission
-        self.activity_policy = SandboxActivityPolicy()
         self.request_wait_seconds = env_float(
             "RESEARCH_PLUGIN_SANDBOX_REQUEST_WAIT",
             request_wait_seconds,
@@ -1272,13 +1270,6 @@ class SandboxEngine:
             row.get("tenant_id")
             or self._storage.tenant_for_project(project_id=resolved_project_id)
         )
-        if not self.activity_policy.is_active_snapshot(
-            snapshot=self._storage.heartbeat_snapshot(row=row),
-            command=self._storage.command_snapshot(row=row),
-        ):
-            raise ValidationError(
-                "sandbox.extend requires a running command or active heartbeat metrics"
-            )
         target_uid = str(row.get("sandbox_uid") or "")
         # One transaction holds the cap-row lock, the fresh row re-read, the
         # quota recompute, and the guarded expiry update — two extends by one
