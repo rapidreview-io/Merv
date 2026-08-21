@@ -43,7 +43,7 @@ workflow, authentication, HTTP/MCP rendering, or artifact/blob persistence.
 - `provisioning.py`: asynchronous acquire/cancel recovery; `lifecycle.py`:
   destructive and recovery transitions; `scheduler.py`: timer ordering.
 - `observation.py`: run ledger, remote run reads, metrics, and transcript cache;
-  `heartbeat.py`: activity/idle policy plus the bounded usage series the fleet
+  `heartbeat.py`: idle-reaping policy plus the bounded usage series the fleet
   view reads; `quotas.py`: admission and spend, including per-user per-provider
   daily caps (commitment-based: accrued + committed lease burn vs the cap);
   `budget.py`: the sweep's warn → over_budget → grace → terminate ladder.
