@@ -19,6 +19,13 @@ gateway rejects ids outside the credential's scope. Agents never send a checkout
 root. Each client gets a thin adapter on top of the same `bin/`, `skills/`, and
 `agents/` content:
 
+When a client runs on a remote machine whose loopback browser callback is not
+reachable, install `merv-mcp`, run `merv-mcp login`, and register
+`merv-mcp serve` as a local STDIO server. This device-code path is shared by Codex,
+Claude Code, Cursor, Kilo, OpenCode, and any STDIO-capable MCP client; it keeps
+OAuth and removes both SSH port forwarding and user-managed API keys. See
+[Browserless remote OAuth](REMOTE_OAUTH.md).
+
 | Client | Adapter | MCP registration | Skills | Reviewer subagents |
 |---|---|---|---|---|
 | Claude Code | `.claude-plugin/plugin.json` + `.mcp.json` | URL-only http server → `<base>/mcp`; native OAuth | `skills/` auto-discovered | `agents/` auto-discovered (`merv:` namespace) |

@@ -113,13 +113,23 @@ you reach over SSH and the browser is on your laptop, the redirect lands on
 the *laptop's* loopback: nothing answers, and the remote client gives up after
 five minutes with an OAuth callback timeout.
 
-**Device pairing (preferred).** Merv's token endpoint implements the RFC 8628
-device authorization grant, and the pairing script drives it end to end: it
-prints a short code and a link, you approve in any signed-in browser, and the
-minted tokens are written straight into the client's own MCP token store
-(`mcp-auth.json`), which the client then refreshes natively. The browser talks
-only to Merv — nothing ever addresses the remote machine, so this works from
-any network with no tunnel. On the remote machine:
+**Portable device login (preferred).** Merv's `merv-mcp` command implements the
+RFC 8628 device authorization grant for every client that can launch a local
+STDIO MCP server. It prints a short code and link, you approve in any signed-in
+browser, and it stores and refreshes the OAuth grant on the remote machine. The
+browser talks only to Merv — nothing ever addresses the remote machine, so this
+works from any network with no tunnel and one login can serve Codex, Claude
+Code, Cursor, Kilo, OpenCode, or another STDIO-capable client:
+
+```bash
+merv-mcp login
+```
+
+Configure that client to launch `merv-mcp serve`; see
+[Browserless remote OAuth](REMOTE_OAUTH.md) for exact JSON and Codex TOML.
+
+**Native-store pairing (Kilo/OpenCode).** These two clients can instead receive
+the grant in their own `mcp-auth.json` token store. On the remote machine:
 
 ```bash
 curl -fsSL https://rapidreview.io/merv/pair_mcp.py -o /tmp/pair_mcp.py && python3 /tmp/pair_mcp.py

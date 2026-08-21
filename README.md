@@ -147,6 +147,21 @@ the device grant instead of the browser callback:
 python3 /tmp/pair_mcp.py`, then approve the printed code in any signed-in
 browser — see [Remote machines](merv/docs/AUTH.md#remote-machines).
 
+### Any client on a remote machine
+
+For Codex, Claude Code, Cursor, Kilo, OpenCode, or another STDIO-capable MCP
+client on a VM, one client-neutral device login replaces loopback browser
+routing:
+
+```bash
+merv-mcp login
+```
+
+Configure the client to launch `merv-mcp serve` as its local Merv MCP server.
+The bridge stores and refreshes OAuth on the VM; the user never creates or
+copies an API key. Installation and config examples are in
+[Browserless remote OAuth](merv/docs/REMOTE_OAUTH.md).
+
 Headless runners and CI use `MERV_MCP_KEY`. See
 [Authentication](merv/docs/AUTH.md#when-a-static-key-is-still-required) and
 [client details](merv/docs/CLIENTS.md).

@@ -37,6 +37,7 @@ gcp = ["google-auth>=2.23,<3", "requests>=2.31,<3"]
 merv-http = "merv.brain.surface.transport.http_server:main"
 merv-control = "merv.brain.surface.transport.http_server:control_main"
 merv-client = "merv.client.cli:main"
+merv-mcp = "merv.client.mcp_bridge:main"
 merv-agent-runner = "merv.client.agent_runner:main"
 
 [tool.pytest.ini_options]

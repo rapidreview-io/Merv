@@ -88,8 +88,10 @@ class ClientBundleTest(unittest.TestCase):
             "gemini-extension.json",
             "GEMINI.md",
             "AGENTS.md",
+            "docs/REMOTE_OAUTH.md",
             "bin/merv-agent-runner",
             "bin/merv-client",
+            "bin/merv-mcp",
             "bin/merv-runs-wait",
             "clients/hermes/README.md",
             "clients/hermes/build_bundle.py",
@@ -111,6 +113,7 @@ class ClientBundleTest(unittest.TestCase):
             "clients/qwen/qwen-extension.json",
             "src/merv/client/agent_runner.py",
             "src/merv/client/cli.py",
+            "src/merv/client/mcp_bridge.py",
             "src/merv/client/runs_wait.py",
             # Codex manifest's composerIcon must resolve inside the bundle.
             "assets/icon.svg",
