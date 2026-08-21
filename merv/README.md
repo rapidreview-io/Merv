@@ -83,6 +83,18 @@ browser, stores the resulting token, and refreshes it automatically. Static
 keys are documented separately for headless runners and CI in
 [docs/AUTH.md](docs/AUTH.md#when-a-static-key-is-still-required).
 
+On an SSH VM where the client's loopback browser callback cannot be reached,
+keep OAuth and use Merv's client-neutral device login:
+
+```bash
+merv-mcp login
+```
+
+Then configure the client to launch `merv-mcp serve` as a local STDIO MCP
+server. One machine login works with Codex, Claude Code, Cursor, Kilo,
+OpenCode, and other STDIO-capable clients. See
+[Browserless remote OAuth](docs/REMOTE_OAUTH.md) for installation and config.
+
 ### Hermes Agent
 
 ```bash
