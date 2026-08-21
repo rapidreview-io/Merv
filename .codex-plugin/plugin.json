@@ -1,0 +1,42 @@
+{
+  "name": "merv",
+  "version": "0.1.4+codex.20260810172256",
+  "description": "Lean Codex research-state workflow with hosted MCP research state, typed artifacts, reviews, and cloud SSH sandboxes.",
+  "author": {
+    "name": "RapidReview"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "research",
+    "ml",
+    "codex",
+    "mcp",
+    "experiments"
+  ],
+  "skills": "./skills/",
+  "mcpServers": {
+    "merv": {
+      "type": "http",
+      "url": "https://experiments.rapidreview.io/mcp",
+      "default_tools_approval_mode": "approve"
+    }
+  },
+  "interface": {
+    "displayName": "Merv",
+    "shortDescription": "Project-scoped claims, experiments, typed artifacts, reviews, and cloud sandboxes",
+    "longDescription": "A research-state plug-in where Codex operates through skills and the Merv HTTP MCP endpoint. A brain running locally or as a hosted service owns durable records, workflow policy, review gates, submissions, and cloud sandbox lifecycle. Interactive users sign in with browser OAuth; static keys are reserved for headless automation.",
+    "developerName": "RapidReview",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
+    "defaultPrompt": [
+      "Use Merv. Start with project(action=\"current\"), then workflow.status_and_next.",
+      "Use Merv to run this experiment in a sandbox, retain selected outputs, and submit the result files.",
+      "Use Merv to associate the relevant artifacts, review the experiment, and update claims."
+    ],
+    "composerIcon": "./assets/icon.svg"
+  }
+}

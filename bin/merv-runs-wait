@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ONE process. This script resolves an interpreter and then BECOMES the
+# watcher: no children, no traps, no temp files, no signal ever sent to any
+# pid. Supervision is what kept failing review — bash reaps background children
+# out from under a `wait`, a trapped `wait` has lost wakeups, SIGWINCH is not
+# portable, and bash 3.2 blocks SIGINT after a trapped wait — and none of those
+# have a portable repair. So there is nothing here to supervise: the platform's
+# teardown signals land directly on the Python handlers that already answer for
+# them, and the line and exit code the caller reads are the watcher's own.
+#
+# The honest residual: a signal arriving BEFORE those handlers arm — the tens
+# of milliseconds an interpreter spends starting — takes its default action, so
+# the caller sees a signal exit code and no line. The same class covers an
+# interpreter whose OWN startup fails after a successful exec (a broken
+# PYTHONHOME dies before the -c body runs, so no code of ours gets a turn):
+# nonzero exit, no line. Both are the SIGKILL class — consumers read a missing
+# line as poll_error, verify with one authenticated sandbox.runs, and re-arm.
+# Everything after the handlers arm is the watcher's own reviewed totality.
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  TARGET="$(readlink "$SOURCE")"
+  if [[ "$TARGET" == /* ]]; then
+    SOURCE="$TARGET"
+  else
+    SOURCE="$DIR/$TARGET"
+  fi
+done
+
+BIN_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+PLUGIN_DIR="$(cd "$BIN_DIR/.." >/dev/null 2>&1 && pwd)"
+
+if [[ -n "${MERV_PYTHON:-${RESEARCH_PLUGIN_PYTHON:-}}" ]]; then
+  PYTHON_BIN="${MERV_PYTHON:-$RESEARCH_PLUGIN_PYTHON}"
+elif [[ -n "${CLAUDE_PLUGIN_DATA:-}" && -x "$CLAUDE_PLUGIN_DATA/.venv/bin/python" ]]; then
+  PYTHON_BIN="$CLAUDE_PLUGIN_DATA/.venv/bin/python"
+elif [[ -x "$PLUGIN_DIR/.venv/bin/python" ]]; then
+  PYTHON_BIN="$PLUGIN_DIR/.venv/bin/python"
+else
+  PYTHON_BIN="python3"
+fi
+
+export PYTHONPATH="$PLUGIN_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+
+# No interpreter at all is the one answer this script has to author itself,
+# because there is nothing to hand the question to. Plain sequential code: a
+# guarded write — a closed stdout costs the line and must never cost the code —
+# and the re-arm the caller can act on.
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 && [ ! -x "$PYTHON_BIN" ]; then
+  printf '%s\n' "MERV_RUNS_WAIT poll_error _ crashed" 2>/dev/null || true
+  exit 3
+fi
+
+# The import-failure belt, and the only job the supervisor architecture was
+# ever added for: a broken PYTHONPATH or a half-installed merv would otherwise
+# hand a caller a traceback and an exit code outside the grammar. `-c` is
+# load-bearing — `python -m merv.client.runs_wait` fails before any module body
+# runs when the package itself is unimportable, so no code of ours gets a turn.
+# Once the import succeeds this process IS the watcher: `main` reads sys.argv[1:],
+# which under `-c` is exactly the arguments passed after the program text.
+WRAPPER='
+import os, sys
+try:
+    from merv.client.runs_wait import main
+except BaseException:
+    try:
+        sys.stdout.write("MERV_RUNS_WAIT poll_error _ crashed\n"); sys.stdout.flush()
+    except BaseException:
+        pass
+    os._exit(3)
+sys.exit(main())
+'
+
+# execfail keeps the shell alive if exec itself fails (a directory passing
+# -x, a stale shebang, ENOEXEC, permission), so even that leaves through the
+# grammar; on success nothing below runs. errexit must be OFF here — on the
+# deployed bash 3.2 a failed exec under set -e exits the shell before the
+# fallthrough despite execfail.
+set +e
+shopt -s execfail 2>/dev/null
+exec "$PYTHON_BIN" -c "$WRAPPER" "$@"
+printf 'MERV_RUNS_WAIT poll_error _ crashed\n' 2>/dev/null
+exit 3

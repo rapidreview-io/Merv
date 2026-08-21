@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  TARGET="$(readlink "$SOURCE")"
+  if [[ "$TARGET" == /* ]]; then SOURCE="$TARGET"; else SOURCE="$DIR/$TARGET"; fi
+done
+BIN_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+PLUGIN_DIR="$(cd "$BIN_DIR/.." >/dev/null 2>&1 && pwd)"
+PYTHON_BIN="${MERV_PYTHON:-python3}"
+export PYTHONPATH="$PLUGIN_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PYTHON_BIN" -m merv.client.mcp_bridge "$@"

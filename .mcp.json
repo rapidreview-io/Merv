@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "merv": {
+      "type": "http",
+      "url": "https://experiments.rapidreview.io/mcp"
+    }
+  }
+}

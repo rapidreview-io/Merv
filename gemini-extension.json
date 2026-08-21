@@ -1,0 +1,11 @@
+{
+  "name": "merv",
+  "version": "0.0014",
+  "description": "Lean research-state workflow with hosted MCP research state, typed artifacts, reviews, and cloud SSH sandboxes. Skills for the agent loop, subagents for read-only design, experiment, and reflection review.",
+  "contextFileName": "GEMINI.md",
+  "mcpServers": {
+    "merv": {
+      "httpUrl": "https://experiments.rapidreview.io/mcp"
+    }
+  }
+}

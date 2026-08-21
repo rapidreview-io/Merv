@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "merv": {
+      "type": "remote",
+      "url": "https://experiments.rapidreview.io/mcp",
+      "enabled": true
+    }
+  }
+}
