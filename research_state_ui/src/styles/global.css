@@ -7503,6 +7503,30 @@ html[data-theme="dark"] .dtl-drawer { box-shadow: -14px 0 36px rgba(0, 0, 0, 0.5
    tree from cramping an open sidebar. */
 .ptree-stage { position: relative; overflow: hidden; border-radius: 10px; }
 .ptree-stage:has(.graph-drawer--open) .ptree-scroll { min-height: 400px; }
+
+/* Fullscreen: the slot (title row + canvas) takes over the viewport, the
+   same geometry every expanded graph shares (.wflow-slot--expanded). The
+   canvas grows to fill and gains vertical scrolling; margin:auto inside a
+   flex scroller centers small trees without clipping big ones. */
+.ptree-slot { display: flex; flex-direction: column; min-width: 0; }
+.ptree-slot--expanded {
+  position: fixed; inset: 18px; z-index: 81;
+  background: var(--bg);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .45);
+  padding: 14px;
+  margin-top: 0;
+}
+.ptree-slot--expanded .ptree-titlerow {
+  position: sticky; top: 0; z-index: 1; background: var(--bg);
+}
+.ptree-slot--expanded .ptree-stage {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+}
+.ptree-slot--expanded .ptree-scroll {
+  flex: 1; min-height: 0; overflow: auto; display: flex;
+}
+.ptree-slot--expanded .ptree-svg { margin: auto; }
 .ptree-side-meta { display: flex; gap: 10px; margin-bottom: 8px; }
 .ptree-status {
   font-size: var(--text-xs); line-height: 1; font-weight: 600;

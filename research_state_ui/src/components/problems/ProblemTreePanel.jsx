@@ -4,6 +4,7 @@ import { request } from '../../api';
 import { useProjectHref } from '../../store/useProjectStore';
 import DetailPanelShell, { PanelResizer } from '../DetailPanelShell';
 import GraphDrawer from '../GraphDrawer';
+import GraphExpandButton from '../GraphExpandButton';
 import { buildProblemTree } from './problemTreeModel.js';
 import ProblemTreeFlow from './ProblemTreeFlow.jsx';
 
@@ -29,6 +30,7 @@ export default function ProblemTreePanel({ projectId }) {
   // the payload really changed, so a quiet poll tick re-renders nothing.
   const [json, setJson] = useState(null);
   const [selId, setSelId] = useState(null);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,13 +61,25 @@ export default function ProblemTreePanel({ projectId }) {
     [model, selId],
   );
 
-  // Escape clears the selection — the same one-layer peel the graphs do.
+  // Escape peels one layer at a time: drawer first, then fullscreen — the
+  // same order every graph honors.
   useEffect(() => {
-    if (!sel) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') setSelId(null); };
+    if (!sel && !expanded) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (sel) setSelId(null);
+      else setExpanded(false);
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [sel]);
+  }, [sel, expanded]);
+  // Fullscreen: lock page scroll while expanded.
+  useEffect(() => {
+    if (!expanded) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [expanded]);
 
   const attemptHref = useCallback(
     (a) => px(a.kind === 'task' ? `/tasks/${a.id}` : `/experiments/${a.id}`),
@@ -88,6 +102,16 @@ export default function ProblemTreePanel({ projectId }) {
 
   return (
     <section className="section" id="problem-tree">
+      {expanded && (
+        <div
+          className="fig-backdrop"
+          onClick={() => setExpanded(false)}
+          aria-hidden="true"
+        />
+      )}
+      {/* Title row and canvas share one slot, and the SLOT goes fullscreen —
+          the header rides along so Collapse and the legend stay reachable. */}
+      <div className={`ptree-slot${expanded ? ' ptree-slot--expanded' : ''}`}>
       <div className="ptree-titlerow">
         <div className="section-title">
           Problem tree
@@ -99,6 +123,7 @@ export default function ProblemTreePanel({ projectId }) {
           )}
           {restCounts && <span className="ptree-title-hint">{restCounts}</span>}
         </div>
+        <div className="fig-head-right">
         <div className="ptree-legend" aria-hidden="true">
           <span className="fig-chip fig-st--open">open</span>
           <span className="fig-chip ptree-chip--attempting">
@@ -121,6 +146,12 @@ export default function ProblemTreePanel({ projectId }) {
             </svg>
             task
           </span>
+        </div>
+        <GraphExpandButton
+          expanded={expanded}
+          onToggle={() => setExpanded(v => !v)}
+          label="problem tree"
+        />
         </div>
       </div>
 
@@ -187,6 +218,7 @@ export default function ProblemTreePanel({ projectId }) {
           <p>No problem tree yet.</p>
         </div>
       )}
+      </div>
     </section>
   );
 }
