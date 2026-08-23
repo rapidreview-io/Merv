@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { request } from '../../api';
 import { useProjectHref } from '../../store/useProjectStore';
+import DetailPanelShell, { PanelResizer } from '../DetailPanelShell';
+import GraphDrawer from '../GraphDrawer';
 import { buildProblemTree } from './problemTreeModel.js';
 import ProblemTreeFlow from './ProblemTreeFlow.jsx';
 
@@ -123,57 +125,66 @@ export default function ProblemTreePanel({ projectId }) {
       </div>
 
       {data.exists && model.nodes.length ? (
-        <ProblemTreeFlow
-          model={model}
-          selectedId={selId}
-          onSelect={setSelId}
-          onOpenAttempt={openAttempt}
-        />
+        <div className="ptree-stage">
+          <ProblemTreeFlow
+            model={model}
+            selectedId={selId}
+            onSelect={setSelId}
+            onOpenAttempt={openAttempt}
+          />
+          {sel && <PanelResizer />}
+          {/* The shared drawer every graph sidebar rides — problem details
+              dock over the canvas's right edge, same as the braid's. */}
+          <GraphDrawer open={!!sel}>
+            {sel && (
+              <DetailPanelShell
+                typeLabel={sel.isRoot ? 'root problem' : 'problem'}
+                title={sel.statement}
+                status={(
+                  <span className={`ptree-status ptree-status--${sel.status}`}>
+                    {statusWord(sel.status)}
+                  </span>
+                )}
+                onClose={() => setSelId(null)}
+              >
+                {(sel.isRoot || sel.revisitCount > 0) && (
+                  <div className="ptree-side-meta">
+                    {sel.isRoot && <span className="ptree-detail-tag">charter</span>}
+                    {sel.revisitCount > 0 && (
+                      <span className="ptree-detail-tag">
+                        revisited ×{sel.revisitCount}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {sel.summary && (
+                  <p className="ptree-detail-summary">{sel.summary}</p>
+                )}
+                {sel.attempts.length > 0 && (
+                  <div className="ptree-detail-attempts">
+                    <div className="ptree-detail-label">Attempts</div>
+                    {sel.attempts.map(a => (
+                      <Link key={a.id} className="ptree-att-row" to={attemptHref(a)}>
+                        <span className="ptree-att-glyph" aria-hidden="true">
+                          {a.kind === 'task' ? '◇' : '◈'}
+                        </span>
+                        <span className="ptree-att-name">{a.name}</span>
+                        <span className={`ptree-att-status ptree-att-status--${a.tone}`}>
+                          {statusWord(a.status)}
+                          {a.verdict ? ` · ${a.verdict}` : ''}
+                        </span>
+                        <span className="ptree-att-arrow" aria-hidden="true">→</span>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </DetailPanelShell>
+            )}
+          </GraphDrawer>
+        </div>
       ) : (
         <div className="empty-state empty-state--compact">
           <p>No problem tree yet.</p>
-        </div>
-      )}
-
-      {sel && (
-        <div className="ptree-detail">
-          <div className="ptree-detail-head">
-            <span className={`ptree-status ptree-status--${sel.status}`}>
-              {statusWord(sel.status)}
-            </span>
-            {sel.isRoot && <span className="ptree-detail-tag">root · charter</span>}
-            {sel.revisitCount > 0 && (
-              <span className="ptree-detail-tag">revisited ×{sel.revisitCount}</span>
-            )}
-            <button
-              type="button"
-              className="ptree-detail-close"
-              onClick={() => setSelId(null)}
-              aria-label="Close problem details"
-            >
-              ×
-            </button>
-          </div>
-          <p className="ptree-detail-statement">{sel.statement}</p>
-          {sel.summary && <p className="ptree-detail-summary">{sel.summary}</p>}
-          {sel.attempts.length > 0 && (
-            <div className="ptree-detail-attempts">
-              <div className="ptree-detail-label">Attempts</div>
-              {sel.attempts.map(a => (
-                <Link key={a.id} className="ptree-att-row" to={attemptHref(a)}>
-                  <span className="ptree-att-glyph" aria-hidden="true">
-                    {a.kind === 'task' ? '◇' : '◈'}
-                  </span>
-                  <span className="ptree-att-name">{a.name}</span>
-                  <span className={`ptree-att-status ptree-att-status--${a.tone}`}>
-                    {statusWord(a.status)}
-                    {a.verdict ? ` · ${a.verdict}` : ''}
-                  </span>
-                  <span className="ptree-att-arrow" aria-hidden="true">→</span>
-                </Link>
-              ))}
-            </div>
-          )}
         </div>
       )}
     </section>

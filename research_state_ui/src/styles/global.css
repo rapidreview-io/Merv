@@ -7497,14 +7497,13 @@ html[data-theme="dark"] .dtl-drawer { box-shadow: -14px 0 36px rgba(0, 0, 0, 0.5
 .ptree-att--abandoned .ptree-att-shape { fill: rgba(var(--faint-rgb), .15); stroke: var(--faint); }
 .ptree-att:focus-visible .ptree-att-shape { stroke: var(--active); stroke-width: 2; }
 
-/* Selection detail: a bounded card below the canvas — full statement,
-   status, summary, attempts with deep links. */
-.ptree-detail {
-  margin-top: var(--space-3);
-  border: 1px solid var(--line-soft); border-radius: 10px;
-  background: var(--bg-elev); padding: 14px 16px;
-}
-.ptree-detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+/* Selection details ride the shared graph sidebar (GraphDrawer +
+   DetailPanelShell) docked over the canvas's right edge, so .ptree-stage is
+   the positioned host the drawer and resizer anchor to. :has() keeps a short
+   tree from cramping an open sidebar. */
+.ptree-stage { position: relative; overflow: hidden; border-radius: 10px; }
+.ptree-stage:has(.graph-drawer--open) .ptree-scroll { min-height: 400px; }
+.ptree-side-meta { display: flex; gap: 10px; margin-bottom: 8px; }
 .ptree-status {
   font-size: var(--text-xs); line-height: 1; font-weight: 600;
   padding: 4px 9px; border-radius: var(--radius-pill);
@@ -7517,16 +7516,6 @@ html[data-theme="dark"] .dtl-drawer { box-shadow: -14px 0 36px rgba(0, 0, 0, 0.5
 .ptree-status--stuck      { color: var(--qualifies); border-color: rgba(var(--qualifies-rgb), .35); background: rgba(var(--qualifies-rgb), .08); }
 .ptree-status--moot       { color: var(--faint); border-style: dashed; background: transparent; }
 .ptree-detail-tag { font-size: var(--text-xs); color: var(--faint); }
-.ptree-detail-close {
-  margin-left: auto; border: none; background: none; cursor: pointer;
-  color: var(--muted); font-size: 16px; line-height: 1; padding: 2px 6px;
-  border-radius: var(--radius-sm);
-}
-.ptree-detail-close:hover { color: var(--text); background: var(--bg-soft); }
-.ptree-detail-statement {
-  font-size: var(--text-base); font-weight: 600; line-height: var(--leading-tight);
-  color: var(--text); margin-bottom: 6px;
-}
 .ptree-detail-summary {
   font-size: var(--text-sm); color: var(--muted); line-height: var(--leading-base);
 }
