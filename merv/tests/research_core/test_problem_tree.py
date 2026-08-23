@@ -358,6 +358,11 @@ class RevisitTest(ProblemTreeCase):
         )
         self.assertEqual(mooted_node["status"], "moot")
         self.assertEqual(mooted_node["attempts"][0]["status"], "abandoned")
+        journal = tree["root"]["revisits"]
+        self.assertEqual(journal[-1]["verdict"], "moot")
+        self.assertEqual(journal[-1]["kind"], "interim")
+        self.assertEqual(journal[-1]["mooted"], [children[1]])
+        self.assertIn("stop paying", journal[-1]["why"])
         status = self.tree_status()
         self.assertEqual(status["workflow"]["next_action"], "revisit_problem")
 

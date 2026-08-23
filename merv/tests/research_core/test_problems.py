@@ -77,6 +77,23 @@ class ProblemDefinitionTest(ResearchCase):
                 expected_version=1,
             )
 
+    def test_tree_carries_charter_details_and_version_history(self) -> None:
+        self.define()
+        self.call(
+            "problem.refine",
+            project_id=self.project_id,
+            details=VALID_DETAILS + "\n## Background\nWave one taught us plenty.\n",
+            expected_version=1,
+        )
+        tree = self.call("problem.tree", project_id=self.project_id)
+        self.assertIn("## Solved means", tree["root"]["details"])
+        self.assertIn("## Background", tree["root"]["details"])
+        self.assertEqual(tree["root"]["details_version"], 2)
+        history = tree["details_history"]
+        self.assertEqual([entry["version"] for entry in history], [1])
+        self.assertIn("## Solved means", history[0]["details"])
+        self.assertNotIn("## Background", history[0]["details"])
+
     def test_refine_without_a_root_is_a_clear_miss(self) -> None:
         from merv.brain.kernel.utils import NotFoundError
 

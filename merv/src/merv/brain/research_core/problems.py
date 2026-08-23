@@ -864,6 +864,10 @@ class ProblemService:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             problems = self.project_problems(conn=conn, project_id=project_id)
             attempts = self.attempts_with_state(conn=conn, project_id=project_id)
+            revisits = self._revisits_by_problem(conn=conn, project_id=project_id)
+            history = self._root_details_history(
+                conn=conn, project_id=project_id, problems=problems
+            )
         by_parent: dict[str, list[dict[str, Any]]] = {}
         for problem in problems:
             by_parent.setdefault(str(problem["parent_id"]), []).append(problem)
@@ -880,9 +884,11 @@ class ProblemService:
                 "status": problem["status"],
                 "depth": int(problem["depth"]),
                 "summary": problem["summary"],
+                "details": problem["details"],
                 "details_version": int(problem["details_version"]),
                 "revisit_count": int(problem["revisit_count"]),
                 "attempts": attempts_by_problem.get(str(problem["id"]), []),
+                "revisits": revisits.get(str(problem["id"]), []),
                 "children": [
                     node(child) for child in by_parent.get(str(problem["id"]), [])
                 ],
@@ -895,8 +901,74 @@ class ProblemService:
         return {
             "exists": bool(roots),
             "root": node(roots[0]) if roots else None,
+            # Superseded charter versions, oldest first; the current text
+            # lives on the root node itself.
+            "details_history": history,
             "counts": counts,
         }
+
+    def _revisits_by_problem(
+        self, *, conn, project_id: str
+    ) -> dict[str, list[dict[str, Any]]]:
+        """The decision journal, grouped per problem, oldest first."""
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        rows = conn.execute(
+            """
+            SELECT problem_id, kind, verdict, why, payload_json, created_at
+            FROM problem_revisits WHERE project_id = ?
+            ORDER BY created_at, id
+            """,
+            (project_id,),
+        ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]) or "{}")
+            except ValueError:
+                payload = {}
+            entry: dict[str, Any] = {
+                "kind": str(row["kind"]),
+                "verdict": str(row["verdict"]),
+                "why": str(row["why"]),
+                "at": str(row["created_at"]),
+            }
+            for key in ("summary", "mooted", "children"):
+                if payload.get(key):
+                    entry[key] = payload[key]
+            grouped.setdefault(str(row["problem_id"]), []).append(entry)
+        return grouped
+
+    def _root_details_history(
+        self, *, conn, project_id: str, problems: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Superseded root charter versions from the refine event journal."""
+        root = next(
+            (row for row in problems if not str(row["parent_id"])), None
+        )
+        if root is None:
+            return []
+        rows = conn.execute(
+            """
+            SELECT payload_json, created_at FROM events
+            WHERE project_id = ? AND type = 'problem.details_refined'
+              AND target_id = ?
+            ORDER BY id
+            """,
+            (project_id, str(root["id"])),
+        ).fetchall()
+        history = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]) or "{}")
+            except ValueError:
+                continue
+            history.append(
+                {
+                    "version": int(payload.get("previous_version") or 0),
+                    "details": str(payload.get("previous_details") or ""),
+                    "superseded_at": str(row["created_at"]),
+                }
+            )
+        return history
 
     def project_problems(self, *, conn, project_id: str) -> list[dict[str, Any]]:
         return rows_to_dicts(
