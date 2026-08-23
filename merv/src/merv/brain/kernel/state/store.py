@@ -637,6 +637,27 @@ CREATE TABLE IF NOT EXISTS node_dependencies (
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
+-- A problem is a unit of uncertainty (migration 55). Today only the root row
+-- exists — the project charter the user is interviewed into: statement
+-- immutable, details a living versioned understanding (history in events).
+-- parent_id prepares the decomposition tree; '' means root, at most one per
+-- project (partial unique index, handler-installed).
+CREATE TABLE IF NOT EXISTS problems (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  parent_id TEXT NOT NULL DEFAULT '',
+  statement TEXT NOT NULL,
+  details TEXT NOT NULL DEFAULT '',
+  details_version INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'open',
+  summary TEXT NOT NULL DEFAULT '',
+  depth INTEGER NOT NULL DEFAULT 0,
+  revisit_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(project_id) REFERENCES projects(id)
+);
+
 -- One immutable proposal per consolidation revision. The reflection is already
 -- authoritative when these rows are written; this is code integration history,
 -- never another research-belief workflow.
@@ -1476,6 +1497,11 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     # column. Additive; fresh schemas already carry it.
     (53, "add_task_deliverables", ""),
     (54, "add_experiment_details", ""),
+    # Problems (August 2026): the unit-of-uncertainty ledger, starting with the
+    # one root charter row per project that the user is interviewed into.
+    # Additive; fresh schemas already carry the table, the handler adds the
+    # indexes on both paths.
+    (55, "add_problems", ""),
 )
 
 # Migration 52 indexes — handler-only (they name ladder-added tables).
@@ -1488,6 +1514,15 @@ OAUTH_DEVICE_GRANT_INDEXES = (
     "  ON oauth_device_grants(client_id)",
     "CREATE INDEX IF NOT EXISTS idx_oauth_device_grant_attempts_principal"
     "  ON oauth_device_grant_attempts(principal, attempted_at)",
+)
+
+# Migration 55 indexes — handler-only on both paths; the partial unique index
+# makes "one root problem per project" a database fact.
+PROBLEM_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_problems_project"
+    "  ON problems(project_id, created_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_problems_one_root"
+    "  ON problems(project_id) WHERE parent_id = ''",
 )
 
 # Migration 51 indexes — handler-only (they name ladder-added tables).
@@ -1892,6 +1927,8 @@ class BaseStateStore:
             self._add_oauth_device_grants(conn=conn)
         elif name == "add_experiment_details":
             self._ensure_experiment_details(conn=conn)
+        elif name == "add_problems":
+            self._add_problems(conn=conn)
         else:
             conn.execute(statement)
 
@@ -1908,6 +1945,13 @@ class BaseStateStore:
             conn.execute(
                 "ALTER TABLE experiments ADD COLUMN details TEXT NOT NULL DEFAULT ''"
             )
+
+    def _add_problems(self, *, conn: Connection) -> None:
+        """Migration 55: the problem ledger — one root charter row per project."""
+        if not self._has_table(conn=conn, table="problems"):
+            conn.execute(_schema_table_ddl(table="problems"))
+        for statement in PROBLEM_INDEXES:
+            conn.execute(statement)
 
     def _add_tasks(self, *, conn: Connection) -> None:
         """Migration 51: task nodes, their reflection join, and the wave DAG."""

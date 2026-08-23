@@ -3,10 +3,10 @@
 ## Purpose and boundary
 
 `research_core` is the authoritative domain center for a research project. It
-owns projects, claims, experiments, tasks, the wave DAG between them, reflection
-waves, reviews, lifecycle gates, candidates/champion lineage, and the
-transactions that keep those records consistent: what research state exists and
-whether a state change is legal. The workflow declarations also name the agent
+owns projects, the root problem charter, claims, experiments, tasks, the wave
+DAG between them, reflection waves, reviews, lifecycle gates, candidates/champion
+lineage, and the transactions that keep those records consistent: what research
+state exists and whether a state change is legal. The workflow declarations also name the agent
 action, tools, template, and review skill for each gate. Application orchestrates
 across modules and formats that guidance; Surface owns auth and wire presentation;
 Sandbox executes work, Artifacts owns evidence, Feed publishes observations,
@@ -19,9 +19,10 @@ reflection, and review services are private collaborators.
 ## Files
 - `research.py`: public root; project, claim, candidate writes, workflow delegation,
   snapshots, project context, membership, events, graph refs.
-- `experiments.py`: experiment creation invariants, state machine, gates, sealing,
-  attempts, MLflow run state, idempotent tracking-delivery ledger. `tasks.py`: the
-  same for tasks (creation invariants, state machine, gates, review routing).
+- `experiments.py`: creation invariants, state machine, gates, sealing, attempts,
+  MLflow run state, tracking-delivery ledger. `tasks.py`: the same for tasks.
+- `problems.py`: one root charter per project — statement immutable, details
+  versioned (history in events); `require_root_problem` refuses creates without it.
 - `dependencies.py`: the wave DAG (`node_dependencies`): edges with cycle
   checks, per-node dependency and dependent rows for the shared gate and UI.
 - `reflections.py`: reflection state machine, corpus snapshots, lens coverage,
@@ -51,14 +52,13 @@ the delivery committed and prevents duplicate external runs.
 
 A task is scoped non-experiment work with no claim: `in_progress -> in_review
 -> done`, `failed` the only other ending. Goal prose + deliverables (each
-verifiable as written) are IMMUTABLE structure at create (migration 53),
-rendered and pinned as brief.md; brief submissions are refused. The delivery
-answers one confirmation per deliverable ("not delivered — why" is legal) plus
-Notes; resubmissions are complete versions, one review per version:
-`needs_changes` returns, `fail` or `mark_failed` ends. State parses the
-delivery (entry → state/evidence/how); `dependents` sits beside `dependencies`. Both node kinds share `node_dependencies`: an experiment
-waits at `ready_to_run`, a task before `submit_delivery`, until every dependency
-succeeded (else `dependency_failed`).
+verifiable as written) are IMMUTABLE at create, rendered and pinned as
+brief.md; brief submissions are refused. The delivery answers one confirmation
+per deliverable ("not delivered — why" is legal) plus Notes; resubmissions are
+complete versions, one review per version: `needs_changes` returns, `fail` or
+`mark_failed` ends; state parses the delivery. Both node kinds share
+`node_dependencies`: an experiment waits at `ready_to_run`, a task before
+`submit_delivery`, until every dependency succeeded (else `dependency_failed`).
 
 ## Reflection and review lifecycle
 

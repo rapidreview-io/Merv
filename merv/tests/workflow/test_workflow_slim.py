@@ -238,6 +238,7 @@ class WorkflowSlimTest(unittest.TestCase):
             set(slim["context"]),
             {
                 "project",
+                "problem",
                 "reflection",
                 "literature",
                 "claims",

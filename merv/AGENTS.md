@@ -38,6 +38,11 @@ There is no linking step and no `connect` action. Use
 - Treat the brain state returned through MCP as authoritative. Start or resume
   work with `workflow.status_and_next`, and follow its gate, allowed actions,
   missing evidence, and next action.
+- A fresh project opens at a `problem_definition` gate: interview the USER
+  about their research problem (the gate's interview_guidance carries the
+  agenda), then `problem.define` with their approved statement and details.
+  The statement is immutable; the understanding evolves via `problem.refine`,
+  each version approved by the user.
 - Local edits are not research state. Use `artifact.submit` to contribute
   evidence; it returns a presigned upload command for the bytes, and the
   submitted version can be associated with a target and role.

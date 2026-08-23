@@ -42,7 +42,8 @@ spans them. Research remains the public owner of its event ledger reads.
 
 - `application.py`: the single public root and visible cross-module workflows.
 - `workflow.py`: rich/slim status composition and project-orientation helpers.
-- `status_guidance.py`: pure next-action guidance derived from workflow schemas.
+- `status_guidance.py`: pure next-action guidance derived from workflow schemas;
+  a fresh project's first gate is the root-problem user interview.
 - `project_context.py` and `experiments/context.py`: bounded context packets.
 - `experiments/transition.py`: experiment transition ordering and exhibit pin.
 - `tasks.py`: task presentation, transition receipts, and the bounded task

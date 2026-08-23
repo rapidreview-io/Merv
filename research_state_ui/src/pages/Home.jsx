@@ -78,11 +78,22 @@ export default function Home() {
   return (
     <div className="page-stage">
       {/* The project name is always in the sidebar's project chip — repeating it
-          as the page title is noise. Lead with the summary (real content) when
-          there is one; otherwise go straight to the work below. */}
-      {project.summary && (
+          as the page title is noise. The root problem statement (the charter
+          line every plan cites) leads when defined; the summary follows or,
+          without a charter, leads as before. */}
+      {(project.problem?.statement || project.summary) && (
         <header className="page-header page-header--lg">
-          <p className="page-summary page-summary--lead">{project.summary}</p>
+          {project.problem?.statement && (
+            <p className="page-summary page-summary--lead">{project.problem.statement}</p>
+          )}
+          {project.summary && (
+            <p className={project.problem?.statement
+              ? 'page-summary'
+              : 'page-summary page-summary--lead'}
+            >
+              {project.summary}
+            </p>
+          )}
         </header>
       )}
 

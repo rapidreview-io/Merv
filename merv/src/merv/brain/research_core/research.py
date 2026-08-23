@@ -36,6 +36,7 @@ from .models import (
     TaskState,
     TaskSummary,
 )
+from .problems import ProblemService
 from .reflections import ReflectionService
 from .reviews import ReviewService
 from .tasks import TaskService
@@ -51,6 +52,7 @@ from ..kernel.state.store import (
 from ..kernel.utils import (
     NotFoundError,
     ValidationError,
+    WorkflowError,
     new_id,
     now_iso,
 )
@@ -98,11 +100,13 @@ class Research:
         "_tasks",
         "_reflections",
         "_reviews",
+        "_problems",
     )
 
     def __init__(self, *, store: BaseStateStore, artifacts: Artifacts) -> None:
         self.store = store
         self.artifacts = artifacts
+        self._problems = ProblemService(store=store)
         self._experiments = ExperimentService(store=store, artifacts=artifacts)
         self._tasks = TaskService(store=store, artifacts=artifacts)
         self._reflections = ReflectionService(
@@ -168,6 +172,7 @@ class Research:
         name: str | None = None,
         summary: str | None = None,
         require_verified_reviews: bool | None = None,
+        require_root_problem: bool | None = None,
         hidden: bool | None = None,
         agent_dispatch: bool | None = None,
         storage_max_upload_bytes: int | None = None,
@@ -186,6 +191,8 @@ class Research:
             settings = parse_project_settings(row["settings_json"])
             if require_verified_reviews is not None:
                 settings["require_verified_reviews"] = bool(require_verified_reviews)
+            if require_root_problem is not None:
+                settings["require_root_problem"] = bool(require_root_problem)
             if hidden is not None:
                 settings["hidden"] = bool(hidden)
             if agent_dispatch is not None:
@@ -229,6 +236,60 @@ class Research:
                 "SELECT * FROM projects WHERE id = ?", (project_id,)
             ).fetchone()
             return self._project_view(updated)
+
+    # Problems --------------------------------------------------------------
+
+    def define_problem(
+        self,
+        *,
+        statement: str = "",
+        details: str = "",
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._problems.define_root(
+            statement=statement, details=details, project_id=project_id
+        )
+
+    def refine_problem(
+        self,
+        *,
+        details: str = "",
+        expected_version: int | None = None,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._problems.refine_root(
+            details=details,
+            expected_version=expected_version,
+            project_id=project_id,
+        )
+
+    def problem_state(self, *, project_id: str | None = None) -> dict[str, Any]:
+        root = self._problems.root_state(project_id=project_id)
+        if root is None:
+            return {
+                "exists": False,
+                "hint": (
+                    "This project has no root problem yet. Interview the "
+                    "user, then problem.define."
+                ),
+            }
+        return {"exists": True, "problem": root}
+
+    def _root_problem_gate(self, *, conn, project_id: str) -> None:
+        """Refuse research creates while a required root problem is missing."""
+        row = conn.execute(
+            "SELECT settings_json FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()
+        settings = parse_project_settings(row["settings_json"]) if row else {}
+        if not settings.get("require_root_problem"):
+            return
+        if self._problems.root_state(project_id=project_id, conn=conn) is None:
+            raise WorkflowError(
+                "this project requires a defined root problem before research "
+                "work starts (require_root_problem is on): interview the user "
+                "about the problem, then problem.define. Creation of "
+                "experiments, tasks, and claims is blocked until then."
+            )
 
     def get_project(self, *, project_id: str | None = None) -> dict[str, Any]:
         with closing(self.store.connect()) as conn:
@@ -798,6 +859,7 @@ class Research:
             raise ValidationError(f"unknown claim confidence: {confidence}")
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
+            self._root_problem_gate(conn=conn, project_id=project_id)
             claim_id = new_id(prefix="claim")
             conn.execute(
                 """
@@ -909,6 +971,9 @@ class Research:
         depends_on: list[str] | str | None = None,
         project_id: str | None = None,
     ) -> ExperimentState:
+        with closing(self.store.connect()) as conn:
+            resolved = self.store.require_project_id(conn=conn, project_id=project_id)
+            self._root_problem_gate(conn=conn, project_id=resolved)
         return cast(
             ExperimentState,
             self._experiments.create(
@@ -1040,6 +1105,9 @@ class Research:
         depends_on: list[str] | str | None = None,
         project_id: str | None = None,
     ) -> TaskState:
+        with closing(self.store.connect()) as conn:
+            resolved = self.store.require_project_id(conn=conn, project_id=project_id)
+            self._root_problem_gate(conn=conn, project_id=resolved)
         return cast(
             TaskState,
             self._tasks.create(
@@ -1454,6 +1522,9 @@ class Research:
                 literature_signal=self._literature_signal(
                     conn=conn, project_id=project_id
                 ),
+                root_problem=self._problems.root_state(
+                    project_id=project_id, conn=conn
+                ),
             )
 
     def project_context_facts(self, *, project_id: str | None = None) -> dict[str, Any]:
@@ -1567,8 +1638,12 @@ class Research:
                 (project_id,),
             ).fetchone()
             candidates = self._candidate_context(conn=conn, project_id=project_id)
+            root_problem = self._problems.root_state(
+                project_id=project_id, conn=conn
+            )
         return {
             "project": project,
+            "root_problem": root_problem,
             "claims": claims,
             "experiments": experiments,
             "tasks": tasks,

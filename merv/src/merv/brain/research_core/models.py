@@ -145,6 +145,9 @@ class ResearchSnapshot:
             papers_total=0, papers_unreviewed=0
         )
     )
+    # The project's root problem (charter) view, or None before the user
+    # interview has produced one.
+    root_problem: dict[str, Any] | None = None
 
     @property
     def selected_task(self) -> TaskState | None:

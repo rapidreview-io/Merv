@@ -32,6 +32,8 @@ FROZEN_DURABLE_EVENT_TYPES = frozenset(
         "litreview.section_deleted",
         "litreview.section_edited",
         "litreview.sections_reordered",
+        "problem.defined",
+        "problem.details_refined",
         "project.created",
         "project.updated",
         "reflection.created",

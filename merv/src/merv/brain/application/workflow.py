@@ -206,7 +206,14 @@ class StatusAndNextQuery:
                 evaluation=snapshot.gate_evaluations[str(experiment["id"])],
             )
         else:
-            workflow = self.policy.project_setup()
+            # A truly fresh project starts with the user interview; anything
+            # with prior work (or a defined charter) keeps today's behavior.
+            fresh = not (snapshot.experiments or snapshot.tasks or snapshot.claims)
+            workflow = (
+                self.policy.define_root_problem()
+                if fresh and snapshot.root_problem is None
+                else self.policy.project_setup()
+            )
         idle = all(
             str(row["status"]) in EXPERIMENT_TERMINAL_STATUSES
             for row in snapshot.experiments
@@ -252,6 +259,22 @@ class StatusAndNextQuery:
         result = {
             "project": {
                 **snapshot.project,
+                # Slim charter line: the statement rides everywhere, the full
+                # details live in the project overview and problem.get.
+                "problem": (
+                    {
+                        key: snapshot.root_problem[key]
+                        for key in (
+                            "id",
+                            "statement",
+                            "details_version",
+                            "status",
+                            "updated_at",
+                        )
+                    }
+                    if snapshot.root_problem is not None
+                    else None
+                ),
                 "active_claims": snapshot.claims,
                 "active_experiments": project_rows(
                     snapshot.experiments, _STATUS_EXPERIMENT_FIELDS

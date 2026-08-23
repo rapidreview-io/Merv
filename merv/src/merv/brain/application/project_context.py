@@ -83,6 +83,9 @@ class ProjectContextQuery:
                 "name": project.get("name"),
                 "summary": project.get("summary", ""),
             },
+            # The charter in full: statement plus the living details document,
+            # so planners read the project's own definition of done.
+            "problem": facts.get("root_problem"),
             "reflection": self._reflection(
                 latest=latest_published,
                 open_wave=facts.get("open_reflection"),

@@ -185,6 +185,7 @@ class ProjectContextTest(unittest.TestCase):
             list(result),
             [
                 "project",
+                "problem",
                 "reflection",
                 "literature",
                 "claims",

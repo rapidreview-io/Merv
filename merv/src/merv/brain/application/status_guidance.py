@@ -66,6 +66,66 @@ class StatusGuidancePolicy:
             allowed=["claim.create", "experiment.create", "task.create"],
         )
 
+    def define_root_problem(self) -> dict[str, Any]:
+        """A fresh project's first gate: the user interview, not an agent guess.
+
+        The technique is structural, not rhetorical: the conversation is the
+        user channel, problem.define is the system channel, and the server's
+        section validation is the only way through — so the interview cannot
+        be skipped by optimism, only finished."""
+        blocked_reason = (
+            "define the root problem first: interview the user, then "
+            "problem.define"
+        )
+        result = self._next(
+            gate="problem_definition",
+            action="interview_user_and_define_problem",
+            allowed=["problem.define"],
+            blocked=[
+                {"action": action, "reason": blocked_reason}
+                for action in ("experiment.create", "task.create", "claim.create")
+            ],
+            missing=["root problem (statement + details approved by the user)"],
+        )
+        result["interview_guidance"] = {
+            "who": (
+                "The root problem comes from the USER, never from you. Run a "
+                "short interview in the conversation before calling "
+                "problem.define; if no user is present to answer, stop and "
+                "report that project setup needs the user."
+            ),
+            "how": (
+                "Ask focused questions, at most three per turn, whenever "
+                "important details are missing. Push back on topic labels and "
+                "vague goals until the statement is precise enough to guide a "
+                "research effort. Restate your understanding as it firms up."
+            ),
+            "agenda": (
+                "You are done only when every required details section can be "
+                "written precisely: '## Solved means' (what evidence ends the "
+                "project successfully), '## Failed means' (what evidence "
+                "closes it as refuted — a negative result is an ending, not a "
+                "restart), '## Constraints' (hard givens: data, compute, "
+                "methods, deadlines), '## Non-goals' (adjacent work "
+                "explicitly out of scope). Add '## Resources' and "
+                "'## Background' freely."
+            ),
+            "statement_form": (
+                "One line, under 256 characters, falsifiable: a question or "
+                "proposition naming the object, the effect, and the "
+                "condition — 'Can X reach Y under Z?', never a topic label "
+                "like 'X performance'."
+            ),
+            "handoff": (
+                "Draft the statement and details, show BOTH to the user "
+                "verbatim, and call problem.define only after the user "
+                "explicitly approves the exact text. The statement is "
+                "immutable afterward; details evolve via problem.refine, each "
+                "version approved the same way."
+            ),
+        }
+        return result
+
     def experiment(
         self,
         *,

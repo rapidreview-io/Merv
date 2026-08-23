@@ -256,6 +256,14 @@ class ProjectUpdateInput(ProjectScopedInput):
             "attested reviews stop counting. Omit to leave unchanged."
         ),
     )
+    require_root_problem: bool | None = Field(
+        default=None,
+        description=(
+            "Policy knob: when true, experiment/task/claim creation is "
+            "refused until the project has a root problem (problem.define, "
+            "written from the user interview). Omit to leave unchanged."
+        ),
+    )
     agent_dispatch: bool | None = Field(
         default=None,
         description=(
@@ -515,6 +523,59 @@ class TaskGetStateInput(ProjectScopedInput):
             "to also receive that review's full body under 'review'."
         ),
     )
+
+
+class ProblemDefineInput(ProjectScopedInput):
+    statement: str = Field(
+        default="",
+        description=(
+            "REQUIRED. The root research problem in ONE line, at most 256 "
+            "characters — a falsifiable question or proposition naming the "
+            "object, the effect, and the condition ('Can X reach Y under "
+            "Z?'), never a topic label ('X performance'). This line is the "
+            "project's identity: IMMUTABLE once defined, and carried as "
+            "context by every future plan and subproblem. It must be the "
+            "user's problem in the user's words, approved by them verbatim."
+        ),
+    )
+    details: str = Field(
+        default="",
+        description=(
+            "REQUIRED. The living understanding of the problem, in markdown, "
+            "written FROM the interview with the user. Must contain non-empty "
+            "'## Solved means', '## Failed means', '## Constraints', and "
+            "'## Non-goals' sections; '## Resources' and '## Background' are "
+            "welcome. These sections are the interview agenda — if one cannot "
+            "be written precisely yet, keep interviewing instead of calling "
+            "this tool. Evolves later only through problem.refine (versioned, "
+            "user-approved each time)."
+        ),
+    )
+
+
+class ProblemRefineInput(ProjectScopedInput):
+    details: str = Field(
+        default="",
+        description=(
+            "REQUIRED. The full replacement details document (same required "
+            "sections as problem.define). The statement never changes; if the "
+            "problem itself changed, that is a conversation with the user "
+            "about the project, not a refine. The user must approve the exact "
+            "new text before you call this."
+        ),
+    )
+    expected_version: int | None = Field(
+        default=None,
+        description=(
+            "The details_version you read before editing. If it no longer "
+            "matches, the refine is refused so concurrent edits merge instead "
+            "of overwriting each other. Strongly recommended."
+        ),
+    )
+
+
+class ProblemGetInput(ProjectScopedInput):
+    pass
 
 
 class TaskTransitionInput(ProjectScopedInput):
@@ -1498,6 +1559,45 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             "id assuming stable meaning. To revise the text, propose a claim "
             "change in a reflection change spec (reviewed), or abandon this "
             "claim and create a corrected one."
+        ),
+    ),
+    "problem.define": ToolContract(
+        handler_identity="research.define_problem",
+        input_model=ProblemDefineInput,
+        description=(
+            "Define the project's root problem — its charter. INTERVIEW THE "
+            "USER FIRST: the problem is theirs, never yours. Ask focused "
+            "questions (at most three per turn) until every required details "
+            "section can be written precisely; push back on topic labels and "
+            "vague goals. Then show the drafted statement and details to the "
+            "user VERBATIM and call this tool only after they explicitly "
+            "approve the exact text. One root problem per project; the "
+            "statement is immutable afterward (details evolve via "
+            "problem.refine). If no user is present to interview, stop and "
+            "report that project setup needs them."
+        ),
+    ),
+    "problem.refine": ToolContract(
+        handler_identity="research.refine_problem",
+        input_model=ProblemRefineInput,
+        description=(
+            "Replace the root problem's details with a new user-approved "
+            "version; the statement never changes. Read problem.get first and "
+            "pass its details_version as expected_version. Use when resolved "
+            "work genuinely changed the understanding of the problem — and "
+            "flag loudly in conversation when an edit touches '## Solved "
+            "means' or '## Failed means', because moving the goalposts is a "
+            "pivot the user must consciously make, not a text cleanup. Every "
+            "version is journaled in the project events."
+        ),
+    ),
+    "problem.get": ToolContract(
+        handler_identity="research.problem_state",
+        input_model=ProblemGetInput,
+        description=(
+            "Read the project's root problem: statement, full details, and "
+            "details_version. Read it before planning research work and "
+            "before any problem.refine."
         ),
     ),
     "experiment.create": ToolContract(
