@@ -46,9 +46,12 @@ export function problemStatus(status) {
 
 /**
  * Nested problem node → { nodes, edges, width, height }.
- *   nodes[i] = { id, statement, status, depth, summary, revisitCount,
- *                detailsVersion, isRoot, x, y, cx, hasTray,
- *                attempts: [{ id, kind, name, status, verdict, tone, x, y }] }
+ *   nodes[i] = { id, statement, status, depth, summary, details,
+ *                revisitCount, detailsVersion, isRoot, x, y, cx, hasTray,
+ *                attempts: [{ id, kind, name, status, verdict, tone, x, y }],
+ *                revisits: [{ id, kind, verdict, why, at, summary,
+ *                             mootedCount, spawnedCount }] }  (payload order:
+ *                             oldest first — the sidebar reverses for display)
  *   edges[j] = { id, x1, y1, x2, y2, live }   (live = child is attempting)
  */
 export function buildProblemTree(root) {
@@ -115,12 +118,28 @@ export function buildProblemTree(root) {
       y: NODE_H + TRAY_GAP,
     }));
 
+    // Decision journal — carried verbatim in payload order (oldest first);
+    // ids/counts are precomputed so the sidebar renders rows without
+    // re-deriving anything. Unknown kinds collapse to "interim".
+    const revisits = (Array.isArray(n.revisits) ? n.revisits : []).map((r, i) => ({
+      id: `${n.id}-rv${i}`,
+      kind: r.kind === 'full' ? 'full' : 'interim',
+      verdict: String(r.verdict || ''),
+      why: String(r.why || ''),
+      at: r.at || '',
+      summary: String(r.summary || ''),
+      mootedCount: Array.isArray(r.mooted) ? r.mooted.length : 0,
+      spawnedCount: Array.isArray(r.children) ? r.children.length : 0,
+    }));
+
     const node = {
       id: n.id,
       statement: String(n.statement || ''),
       status: problemStatus(n.status),
       depth,
       summary: String(n.summary || ''),
+      details: String(n.details || ''),
+      revisits,
       revisitCount: n.revisit_count || 0,
       detailsVersion: n.details_version || 1,
       isRoot: depth === 0,

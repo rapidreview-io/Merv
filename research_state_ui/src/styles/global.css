@@ -7566,6 +7566,79 @@ html[data-theme="dark"] .dtl-drawer { box-shadow: -14px 0 36px rgba(0, 0, 0, 0.5
 .ptree-att-status--abandoned { color: var(--faint); }
 .ptree-att-arrow { margin-left: auto; color: var(--faint); }
 
+/* Sidebar: the details document + the decision journal. The doc renders
+   through the shared markdown pipeline; these scoped rules re-pitch its
+   headings into the sidebar's eyebrow grammar (.ptree-detail-label) so the
+   charter reads as panel sections, not an article dropped into a drawer. */
+.ptree-doc { margin-top: 14px; }
+.ptree-doc-label { display: flex; align-items: baseline; gap: 8px; }
+.ptree-doc-version {
+  font-size: 10.5px; font-weight: 500; letter-spacing: 0;
+  text-transform: none; color: var(--faint);
+}
+.ptree-doc-body .markdown-body {
+  font-size: var(--text-sm); line-height: var(--leading-base); color: var(--muted);
+}
+.ptree-doc-body .markdown-body h1,
+.ptree-doc-body .markdown-body h2,
+.ptree-doc-body .markdown-body h3 {
+  font-size: var(--text-xs); font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--faint); margin: 12px 0 3px;
+}
+.ptree-doc-body .markdown-body > :first-child { margin-top: 0; }
+.ptree-doc-body .markdown-body p { margin: 0 0 8px; }
+.ptree-doc-body .markdown-body ul,
+.ptree-doc-body .markdown-body ol { margin: 0 0 8px; padding-left: 18px; }
+.ptree-doc-body .markdown-body li { margin-bottom: 2px; }
+
+/* Disclosures (a child's "Details", the root's "History"): the app's
+   caret-summary grammar (plan sections), namespaced. */
+.ptree-disclosure { margin-top: 14px; }
+.ptree-disclosure > summary {
+  display: flex; align-items: center; gap: 6px;
+  cursor: pointer; list-style: none; user-select: none;
+}
+.ptree-disclosure > summary::-webkit-details-marker { display: none; }
+.ptree-disclosure > summary::before {
+  content: '▸'; color: var(--faint); font-size: 10px;
+  transition: transform var(--motion-fast);
+}
+.ptree-disclosure[open] > summary::before { transform: rotate(90deg); }
+.ptree-disclosure > summary .ptree-detail-label { margin-bottom: 0; }
+.ptree-disclosure > summary:hover .ptree-detail-label { color: var(--text); }
+.ptree-disclosure > .ptree-doc-body,
+.ptree-disclosure-body { margin-top: 6px; }
+/* Superseded charter versions: one quiet row each, indented under History;
+   an opened version reads as a sidenote (hairline left edge), so the current
+   charter above keeps its primacy. */
+.ptree-hist { margin: 2px 0 0 14px; }
+.ptree-hist-line { font-size: var(--text-xs); color: var(--muted); }
+.ptree-hist > summary:hover .ptree-hist-line { color: var(--text); }
+.ptree-hist > .ptree-doc-body {
+  margin: 6px 0 10px; padding-left: 10px;
+  border-left: 2px solid var(--line-soft);
+}
+
+/* The decision journal: compact rows, newest first — kind + verdict + when,
+   the why beneath, then the quieter record lines. */
+.ptree-revisits { margin-top: 14px; }
+.ptree-rev { padding: 7px 0 6px; }
+.ptree-rev + .ptree-rev { border-top: 1px solid var(--line-soft); }
+.ptree-rev-head { display: flex; align-items: baseline; gap: 8px; }
+.ptree-rev-head .ptree-status { padding: 2px 7px; font-size: 10.5px; }
+.ptree-rev-kind {
+  flex: none; font-size: 10px; font-weight: 600; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--faint);
+}
+.ptree-rev-when { margin-left: auto; flex: none; font-size: 10.5px; color: var(--faint); }
+.ptree-rev-why { margin: 5px 0 0; font-size: 12px; color: var(--muted); line-height: var(--leading-base); }
+.ptree-rev-summary { margin: 4px 0 0; font-size: 12px; color: var(--faint); line-height: var(--leading-base); }
+.ptree-rev-counts { display: flex; gap: 12px; margin-top: 4px; font-size: 10.5px; color: var(--faint); }
+/* Verdicts beyond the problem-status palette: "next" moves forward on the
+   accent; "continue" holds steady on steel. */
+.ptree-status--next     { color: var(--active); border-color: rgba(var(--active-rgb), .35); background: rgba(var(--active-rgb), .07); }
+.ptree-status--continue { color: var(--steel);  border-color: rgba(var(--steel-rgb), .4);   background: rgba(var(--steel-rgb), .1); }
+
 /* Motion gates: every perpetual animation on this canvas. */
 @media (prefers-reduced-motion: reduce) {
   .ptree-node--open .ptree-ring,

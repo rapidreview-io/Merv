@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { request } from '../../api';
 import { useProjectHref } from '../../store/useProjectStore';
+import { fmtAgo } from '../../utils/format';
 import DetailPanelShell, { PanelResizer } from '../DetailPanelShell';
 import GraphDrawer from '../GraphDrawer';
 import GraphExpandButton from '../GraphExpandButton';
+import MarkdownView from '../MarkdownView';
 import { buildProblemTree } from './problemTreeModel.js';
 import ProblemTreeFlow from './ProblemTreeFlow.jsx';
 
@@ -22,6 +24,75 @@ const POLL_MS = 5000;
 const COUNT_ORDER = ['open', 'solved', 'stuck', 'failed', 'moot', 'decomposed'];
 
 const statusWord = (s) => String(s || '').replace(/_/g, ' ');
+
+// Revisit verdicts that own a .ptree-status--* recipe; anything else wears
+// the neutral base chip (same closed-vocabulary discipline as problemStatus).
+const VERDICT_CHIPS = new Set(['solved', 'failed', 'stuck', 'next', 'continue', 'moot']);
+const verdictChipClass = (v) =>
+  `ptree-status${VERDICT_CHIPS.has(v) ? ` ptree-status--${v}` : ''}`;
+
+// "Aug 23" — the WaveFlowPanel day format, year only when it isn't this year.
+function fmtDay(iso) {
+  if (!iso) return null;
+  try {
+    const d = new Date(iso);
+    const sameYear = d.getFullYear() === new Date().getFullYear();
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) });
+  } catch { return null; }
+}
+
+// "Aug 23 · 2d ago" — an absolute day the reader can place, and the distance.
+function dayAgo(iso) {
+  const day = fmtDay(iso);
+  if (!day) return null;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? `${day} · ${fmtAgo(Date.now() - t)}` : day;
+}
+
+// The details document self-titles itself ("# Root problem"); the sidebar
+// already labels the section, so the H1 would just be a redundant header
+// before the real content. Same move the reflection doc makes.
+function stripLeadingH1(md) {
+  if (!md) return md;
+  const m = md.match(/^\s*#\s+.+?\s*#*\s*(?:\r?\n|$)/);
+  return m ? md.slice(m[0].length).replace(/^\s+/, '') : md;
+}
+
+// The rendered details document — the shared markdown pipeline, re-pitched by
+// .ptree-doc-body CSS so ## sections read as the sidebar's eyebrow grammar.
+function ProblemDoc({ md }) {
+  return (
+    <div className="ptree-doc-body">
+      <MarkdownView text={stripLeadingH1(md)} />
+    </div>
+  );
+}
+
+// One journal entry: kind + verdict chip + when on a line, why beneath, then
+// the quieter record (summary, mooted/spawned counts) when present.
+function RevisitRow({ r }) {
+  return (
+    <div className="ptree-rev">
+      <div className="ptree-rev-head">
+        <span className="ptree-rev-kind">{r.kind}</span>
+        {r.verdict && (
+          <span className={verdictChipClass(r.verdict)}>{statusWord(r.verdict)}</span>
+        )}
+        <span className="ptree-rev-when">{dayAgo(r.at)}</span>
+      </div>
+      {r.why && <p className="ptree-rev-why">{r.why}</p>}
+      {r.summary && <p className="ptree-rev-summary">{r.summary}</p>}
+      {(r.mootedCount > 0 || r.spawnedCount > 0) && (
+        <div className="ptree-rev-counts">
+          {r.mootedCount > 0 && (
+            <span>{`mooted ${r.mootedCount} ${r.mootedCount === 1 ? 'subtree' : 'subtrees'}`}</span>
+          )}
+          {r.spawnedCount > 0 && <span>{`spawned ${r.spawnedCount}`}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ProblemTreePanel({ projectId }) {
   const px = useProjectHref();
@@ -206,6 +277,55 @@ export default function ProblemTreePanel({ projectId }) {
                         </span>
                         <span className="ptree-att-arrow" aria-hidden="true">→</span>
                       </Link>
+                    ))}
+                  </div>
+                )}
+                {/* The details document. The root's is the charter — the
+                    project's contract — so it renders open, the star of the
+                    panel; a child's is a quiet collapsed disclosure. */}
+                {sel.details && sel.isRoot && (
+                  <div className="ptree-doc">
+                    <div className="ptree-detail-label ptree-doc-label">
+                      Charter
+                      <span className="ptree-doc-version">{`details v${sel.detailsVersion}`}</span>
+                    </div>
+                    <ProblemDoc md={sel.details} />
+                    {Array.isArray(data.details_history) && data.details_history.length > 0 && (
+                      <details className="ptree-disclosure ptree-history">
+                        <summary>
+                          <span className="ptree-detail-label">History</span>
+                        </summary>
+                        <div className="ptree-disclosure-body">
+                          {[...data.details_history].reverse().map(h => (
+                            <details key={h.version} className="ptree-disclosure ptree-hist">
+                              <summary>
+                                <span className="ptree-hist-line">
+                                  {`v${h.version} · superseded ${fmtDay(h.superseded_at) || ''}`}
+                                </span>
+                              </summary>
+                              <ProblemDoc md={h.details} />
+                            </details>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                )}
+                {sel.details && !sel.isRoot && (
+                  <details className="ptree-disclosure ptree-doc">
+                    <summary>
+                      <span className="ptree-detail-label">Details</span>
+                    </summary>
+                    <ProblemDoc md={sel.details} />
+                  </details>
+                )}
+                {/* The decision journal — newest first, the way a reader asks
+                    "what happened here last?". */}
+                {sel.revisits.length > 0 && (
+                  <div className="ptree-revisits">
+                    <div className="ptree-detail-label">Revisits</div>
+                    {[...sel.revisits].reverse().map(r => (
+                      <RevisitRow key={r.id} r={r} />
                     ))}
                   </div>
                 )}
