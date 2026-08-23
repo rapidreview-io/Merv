@@ -148,6 +148,14 @@ class ResearchSnapshot:
     # The project's root problem (charter) view, or None before the user
     # interview has produced one.
     root_problem: dict[str, Any] | None = None
+    # The whole problem tree as flat rows, attempt pairs joined to their work
+    # item's live status, and each problem's latest revisit time — the inputs
+    # the problem-tree guidance is computed from.
+    problems: list[dict[str, Any]] = field(default_factory=list)
+    problem_attempts: list[dict[str, Any]] = field(default_factory=list)
+    problem_revisit_times: dict[str, str] = field(default_factory=dict)
+    # 'reflection' (default) or 'problem_tree' from project settings.
+    workflow_mode: str = "reflection"
 
     @property
     def selected_task(self) -> TaskState | None:

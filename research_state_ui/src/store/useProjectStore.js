@@ -115,8 +115,8 @@ export const useProjectStore = create((set, get) => ({
 
   dismissCompat() { set({ compat: null, compatDismissed: true }); },
 
-  async createProject({ name, summary }) {
-    const created = await api.createProject({ name, summary });
+  async createProject({ name, summary, workflow_mode }) {
+    const created = await api.createProject({ name, summary, workflow_mode });
     const projectRow = created.project || created;
     await get().loadProjects();
     get().setProjectId(projectRow.id);

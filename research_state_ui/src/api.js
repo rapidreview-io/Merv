@@ -177,9 +177,9 @@ export const api = {
 
   // Projects
   listProjects: () => request('/api/projects'),
-  createProject: ({ name, summary }) => request('/api/projects', {
+  createProject: ({ name, summary, workflow_mode }) => request('/api/projects', {
     method: 'POST',
-    body: { name, summary: summary || '' },
+    body: { name, summary: summary || '', workflow_mode: workflow_mode || '' },
   }),
   patchProject: (pid, patch) => request(`/api/projects/${encodeURIComponent(pid)}`, { method: 'PATCH', body: patch }),
   // { id, name, summary, status, created_at, settings } — settings holds the

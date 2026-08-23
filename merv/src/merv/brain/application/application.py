@@ -828,6 +828,7 @@ class Application:
         project_id: str = "",
         name: str = "",
         summary: str = "",
+        workflow_mode: str = "",
         tenant_id: str | None = None,
         user_id: str = "",
         key_project_id: str = "",
@@ -866,6 +867,7 @@ class Application:
                 summary=summary,
                 tenant_id=tenant_id,
                 user_id=user_id,
+                workflow_mode=workflow_mode,
             )
         if action == "overview":
             resolved = project_id or key_project_id
@@ -1067,6 +1069,77 @@ class Application:
             project_id=project_id,
             experiment_id=experiment_id,
         )
+
+    # Problems -------------------------------------------------------------
+
+    def revisit_problem(
+        self,
+        *,
+        problem_id: str,
+        verdict: str = "",
+        why: str = "",
+        summary: str = "",
+        children: list[dict[str, Any]] | None = None,
+        moot_ids: list[str] | str | None = None,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Submit a revisit, then stop paying for anything it mooted.
+
+        The research layer owns the tree change atomically; ending the
+        orphaned work items crosses modules (experiment/task transitions,
+        sandbox leases), so it happens here, per item, with the outcome
+        reported rather than rolled into the tree transaction."""
+        receipt = self.research.submit_problem_revisit(
+            problem_id=problem_id,
+            verdict=verdict,
+            why=why,
+            summary=summary,
+            children=children,
+            moot_ids=moot_ids,
+            project_id=project_id,
+        )
+        ended = []
+        for work in receipt.get("moot_work", []):
+            outcome: dict[str, Any] = {"id": work["id"], "kind": work["kind"]}
+            evidence = {
+                "reason": "mooted: no live problem depends on this work",
+                "revisit_id": receipt.get("revisit_id", ""),
+            }
+            try:
+                if work["kind"] == "experiment":
+                    self.research.transition_experiment(
+                        experiment_id=str(work["id"]),
+                        transition="abandon",
+                        evidence=evidence,
+                        project_id=project_id,
+                    )
+                else:
+                    self.research.transition_task(
+                        task_id=str(work["id"]),
+                        transition="mark_failed",
+                        evidence=evidence,
+                        project_id=project_id,
+                    )
+                outcome["ended"] = True
+            except Exception as error:  # reported, never swallowed silently
+                outcome["ended"] = False
+                outcome["error"] = str(error)
+            if work["kind"] == "experiment" and outcome.get("ended"):
+                try:
+                    release = self.sandboxes.release(
+                        experiment_id=str(work["id"]),
+                        project_id=project_id,
+                        confirm_retained=True,
+                    )
+                    outcome["sandboxes_released"] = release
+                except Exception as error:
+                    # No sandbox attached is normal; anything else is
+                    # surfaced for the caller (the lease reaper remains the
+                    # backstop either way).
+                    outcome["sandboxes_released"] = {"error": str(error)}
+            ended.append(outcome)
+        receipt["ended_work"] = ended
+        return receipt
 
     # Tasks ----------------------------------------------------------------
 

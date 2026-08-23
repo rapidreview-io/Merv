@@ -658,6 +658,36 @@ CREATE TABLE IF NOT EXISTS problems (
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
+-- Attempts (migration 56): which experiments/tasks were created to answer
+-- which problems. Many-to-many with per-problem verdicts at completion; rows
+-- are history and never deleted — a moot problem keeps its lineage.
+CREATE TABLE IF NOT EXISTS problem_attempts (
+  problem_id TEXT NOT NULL,
+  attempt_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  verdict TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  resolved_at TEXT,
+  PRIMARY KEY (problem_id, attempt_id),
+  FOREIGN KEY (problem_id) REFERENCES problems(id)
+);
+
+-- The revisit journal (migration 56): every parent look at its children,
+-- interim or full, with verdict, reason, and structured payload (children
+-- spawned, problems mooted, resolution summary).
+CREATE TABLE IF NOT EXISTS problem_revisits (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  problem_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  verdict TEXT NOT NULL,
+  why TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id),
+  FOREIGN KEY (problem_id) REFERENCES problems(id)
+);
+
 -- One immutable proposal per consolidation revision. The reflection is already
 -- authoritative when these rows are written; this is code integration history,
 -- never another research-belief workflow.
@@ -1502,6 +1532,10 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     # Additive; fresh schemas already carry the table, the handler adds the
     # indexes on both paths.
     (55, "add_problems", ""),
+    # The problem tree (August 2026): attempts (problem<->work many-to-many
+    # with per-problem verdicts) and the revisit journal. Additive; fresh
+    # schemas already carry the tables, the handler adds the indexes.
+    (56, "add_problem_tree", ""),
 )
 
 # Migration 52 indexes — handler-only (they name ladder-added tables).
@@ -1523,6 +1557,14 @@ PROBLEM_INDEXES = (
     "  ON problems(project_id, created_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_problems_one_root"
     "  ON problems(project_id) WHERE parent_id = ''",
+)
+
+# Migration 56 indexes — handler-only on both paths.
+PROBLEM_TREE_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_problem_attempts_attempt"
+    "  ON problem_attempts(attempt_id)",
+    "CREATE INDEX IF NOT EXISTS idx_problem_revisits_problem"
+    "  ON problem_revisits(problem_id, created_at)",
 )
 
 # Migration 51 indexes — handler-only (they name ladder-added tables).
@@ -1929,6 +1971,8 @@ class BaseStateStore:
             self._ensure_experiment_details(conn=conn)
         elif name == "add_problems":
             self._add_problems(conn=conn)
+        elif name == "add_problem_tree":
+            self._add_problem_tree(conn=conn)
         else:
             conn.execute(statement)
 
@@ -1951,6 +1995,14 @@ class BaseStateStore:
         if not self._has_table(conn=conn, table="problems"):
             conn.execute(_schema_table_ddl(table="problems"))
         for statement in PROBLEM_INDEXES:
+            conn.execute(statement)
+
+    def _add_problem_tree(self, *, conn: Connection) -> None:
+        """Migration 56: attempts and the revisit journal for the problem tree."""
+        for table in ("problem_attempts", "problem_revisits"):
+            if not self._has_table(conn=conn, table=table):
+                conn.execute(_schema_table_ddl(table=table))
+        for statement in PROBLEM_TREE_INDEXES:
             conn.execute(statement)
 
     def _add_tasks(self, *, conn: Connection) -> None:

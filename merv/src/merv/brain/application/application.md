@@ -43,7 +43,10 @@ spans them. Research remains the public owner of its event ledger reads.
 - `application.py`: the single public root and visible cross-module workflows.
 - `workflow.py`: rich/slim status composition and project-orientation helpers.
 - `status_guidance.py`: pure next-action guidance derived from workflow schemas;
-  a fresh project's first gate is the root-problem user interview.
+  a fresh project's first gate is the root-problem user interview, and in
+  problem-tree mode the project level serves the frontier scheduler (resolve →
+  interim revisit → full revisit → triage). `application.revisit_problem` then
+  ends mooted work across modules: abandon/fail transitions, sandbox release.
 - `project_context.py` and `experiments/context.py`: bounded context packets.
 - `experiments/transition.py`: experiment transition ordering and exhibit pin.
 - `tasks.py`: task presentation, transition receipts, and the bounded task

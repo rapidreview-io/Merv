@@ -94,6 +94,7 @@ def build_router(
                 or payload.get("description")
                 or payload.get("research_goal")
                 or "",
+                "workflow_mode": payload.get("workflow_mode") or "",
             },
         )
 
@@ -187,6 +188,12 @@ def build_router(
                 ),
             ),
             payload=lambda: present(application.dashboard(project_id=project_id)),
+        )
+
+    @api_router.get("/api/projects/{project_id}/problem-tree")
+    def problem_tree(project_id: str, request: Request) -> dict[str, Any]:
+        return gateway.call_http(
+            request, name="problem.tree", arguments={"project_id": project_id}
         )
 
     @api_router.get("/api/projects/{project_id}/status")

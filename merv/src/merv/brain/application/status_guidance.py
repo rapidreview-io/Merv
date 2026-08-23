@@ -126,6 +126,190 @@ class StatusGuidancePolicy:
         }
         return result
 
+    def problem_tree(
+        self,
+        *,
+        root: dict[str, Any],
+        problems: list[dict[str, Any]],
+        attempts: list[dict[str, Any]],
+        revisit_times: dict[str, str],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The frontier scheduler: what the tree needs next, computed purely.
+
+        Priority: settle finished attempts (cheap, unblocks parents) →
+        interim revisits when a child's resolution brought new information
+        (may cancel waste) → full revisits (move the tree upward) → triage
+        the open frontier (grow it) → wait on running work.
+        """
+        terminal = {"solved", "failed", "stuck", "moot"}
+        blocked = [
+            {
+                "action": action,
+                "reason": (
+                    "problem-tree mode: work enters through problem.attempt "
+                    "against open frontier problems"
+                ),
+            }
+            for action in ("experiment.create", "task.create", "reflection.create")
+        ]
+        by_parent: dict[str, list[dict[str, Any]]] = {}
+        for problem in problems:
+            by_parent.setdefault(str(problem["parent_id"]), []).append(problem)
+
+        frontier = [
+            {
+                "id": str(problem["id"]),
+                "statement": str(problem["statement"]),
+                "depth": int(problem["depth"]),
+            }
+            for problem in problems
+            if str(problem["status"]) == "open"
+        ]
+        pairs_by_attempt: dict[str, list[dict[str, Any]]] = {}
+        for pair in attempts:
+            pairs_by_attempt.setdefault(str(pair["id"]), []).append(pair)
+        attempt_terminal = {
+            "experiment": EXPERIMENT_TERMINAL_STATUSES,
+            "task": TASK_TERMINAL_STATUSES,
+        }
+        resolutions = []
+        running = []
+        for attempt_id, pairs in pairs_by_attempt.items():
+            kind = str(pairs[0]["kind"])
+            status = str(pairs[0]["status"])
+            unresolved = [
+                str(pair["problem_id"]) for pair in pairs if not str(pair["verdict"])
+            ]
+            if not unresolved:
+                continue
+            entry = {
+                "attempt_id": attempt_id,
+                "kind": kind,
+                "name": str(pairs[0]["name"]),
+                "status": status,
+                "problem_ids": unresolved,
+            }
+            if status in attempt_terminal[kind]:
+                resolutions.append(entry)
+            else:
+                running.append(entry)
+
+        full_revisits = []
+        interim_revisits = []
+        for problem in problems:
+            if str(problem["status"]) != "decomposed":
+                continue
+            children = by_parent.get(str(problem["id"]), [])
+            live = [
+                child
+                for child in children
+                if str(child["status"]) not in terminal
+            ]
+            done = [child for child in children if str(child["status"]) in terminal]
+            entry = {
+                "id": str(problem["id"]),
+                "statement": str(problem["statement"]),
+                "children_terminal": len(done),
+                "children_live": len(live),
+            }
+            if not live:
+                full_revisits.append(entry)
+            elif done:
+                last = revisit_times.get(str(problem["id"]), "")
+                fresh = any(str(child["updated_at"]) > last for child in done)
+                if fresh:
+                    interim_revisits.append(entry)
+
+        queues = {
+            "root": {
+                "id": str(root["id"]),
+                "statement": str(root["statement"]),
+                "status": str(root["status"]),
+                "summary": str(root.get("summary") or ""),
+            },
+            "frontier": frontier,
+            "resolutions_pending": resolutions,
+            "full_revisits": full_revisits,
+            "interim_revisits": interim_revisits,
+            "running_attempts": running,
+            "hint": (
+                "problem.tree returns the whole living tree; a node's lane "
+                "context (ancestors, siblings) comes with problem.get and "
+                "the tree read."
+            ),
+        }
+        if str(root["status"]) in terminal:
+            workflow = self._next(
+                gate="problem_tree_resolved",
+                action="none",
+                allowed=["problem.tree"],
+                blocked=blocked,
+            )
+        elif resolutions:
+            workflow = self._next(
+                gate="problem_tree",
+                action="resolve_attempt",
+                allowed=["problem.resolve_attempt", "problem.tree"],
+                blocked=blocked,
+                missing=[
+                    f"verdicts for {entry['attempt_id']} "
+                    f"({', '.join(entry['problem_ids'])})"
+                    for entry in resolutions
+                ],
+            )
+        elif interim_revisits:
+            workflow = self._next(
+                gate="problem_tree",
+                action="interim_revisit",
+                allowed=["problem.revisit_submit", "problem.tree"],
+                blocked=blocked,
+                missing=[
+                    "a child of "
+                    f"{entry['id']} resolved while {entry['children_live']} "
+                    "still run — CONTINUE, MOOT stragglers the answer no "
+                    "longer depends on, or RESOLVE if it is already decided"
+                    for entry in interim_revisits
+                ],
+            )
+        elif full_revisits:
+            workflow = self._next(
+                gate="problem_tree",
+                action="revisit_problem",
+                allowed=["problem.revisit_submit", "problem.tree"],
+                blocked=blocked,
+                missing=[
+                    f"revisit verdict for {entry['id']} "
+                    f"({entry['children_terminal']} children terminal)"
+                    for entry in full_revisits
+                ],
+            )
+        elif frontier:
+            workflow = self._next(
+                gate="problem_tree",
+                action="triage_problem",
+                allowed=[
+                    "problem.attempt",
+                    "problem.decompose",
+                    "problem.mark_stuck",
+                    "problem.tree",
+                ],
+                blocked=blocked,
+                missing=[
+                    "each open problem needs an attempt (ONE concrete, "
+                    "falsifiable experiment or task, runnable now), a "
+                    "decomposition into independent subproblems, or an "
+                    "honest stuck"
+                ],
+            )
+        else:
+            workflow = self._next(
+                gate="problem_tree",
+                action="await_running_work",
+                allowed=["problem.tree", "workflow.status_and_next"],
+                blocked=blocked,
+            )
+        return workflow, queues
+
     def experiment(
         self,
         *,

@@ -25,6 +25,9 @@ export default function CreateProject({ bootstrap = false }) {
   const createProject = useProjectStore(s => s.createProject);
   const [name, setName] = useState('');
   const [summary, setSummary] = useState('');
+  // New projects run as a living problem tree by default; the classic
+  // reflection-wave workflow stays one tap away.
+  const [treeMode, setTreeMode] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   // Bootstrap is a two-step flow: 0 = name the project, 1 = describe it.
@@ -56,6 +59,7 @@ export default function CreateProject({ bootstrap = false }) {
       const row = await createProject({
         name: name.trim(),
         summary: summary.trim(),
+        workflow_mode: treeMode ? 'problem_tree' : 'reflection',
       });
       navigate(projectPath(row.id));
     } catch (err) {
@@ -127,6 +131,26 @@ export default function CreateProject({ bootstrap = false }) {
               →
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => setTreeMode(v => !v)}
+            title="Choose how this project organizes research"
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              marginTop: 10,
+              font: 'inherit',
+              fontSize: 12.5,
+              color: 'var(--text-dim, var(--muted, #888))',
+              cursor: 'pointer',
+              opacity: 0.85,
+            }}
+          >
+            {treeMode
+              ? 'Runs as a living problem tree · switch to classic reflections'
+              : 'Runs with classic reflection waves · switch to the problem tree'}
+          </button>
           {error && <div className="boot-create__error">{error}</div>}
         </form>
       )}

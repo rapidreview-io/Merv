@@ -225,21 +225,43 @@ class StatusAndNextQuery:
             for row in snapshot.tasks
             if str(row["status"]) not in TASK_TERMINAL_STATUSES
         ]
-        reflection = self.policy.project_reflection(
-            open_wave=snapshot.open_reflection,
-            evaluation=(
-                None
-                if snapshot.open_reflection is None
-                else snapshot.gate_evaluations[str(snapshot.open_reflection["id"])]
-            ),
-            signal=snapshot.reflection_signal,
-            idle=idle,
-        )
+        tree_mode = snapshot.workflow_mode == "problem_tree"
         scoped = (
             snapshot.requested_experiment_id is not None
             or snapshot.requested_task_id is not None
         )
-        if not scoped and idle:
+        # In tree mode the project level is ALWAYS the tree: the frontier
+        # scheduler replaces project_setup, reflection takeovers, and the
+        # focused-experiment view alike. Scoped work-item calls keep their
+        # normal leaf guidance.
+        tree_queues: Record | None = None
+        if tree_mode and not scoped:
+            if snapshot.root_problem is None:
+                workflow = self.policy.define_root_problem()
+            else:
+                workflow, tree_queues = self.policy.problem_tree(
+                    root=snapshot.root_problem,
+                    problems=snapshot.problems,
+                    attempts=snapshot.problem_attempts,
+                    revisit_times=snapshot.problem_revisit_times,
+                )
+        reflection = (
+            None
+            if tree_mode
+            else self.policy.project_reflection(
+                open_wave=snapshot.open_reflection,
+                evaluation=(
+                    None
+                    if snapshot.open_reflection is None
+                    else snapshot.gate_evaluations[str(snapshot.open_reflection["id"])]
+                ),
+                signal=snapshot.reflection_signal,
+                idle=idle,
+            )
+        )
+        if tree_mode:
+            pass
+        elif not scoped and idle:
             workflow = (
                 self.policy.reflection_workflow_takeover(reflection=reflection)
                 or workflow
@@ -259,6 +281,7 @@ class StatusAndNextQuery:
         result = {
             "project": {
                 **snapshot.project,
+                "workflow_mode": snapshot.workflow_mode,
                 # Slim charter line: the statement rides everywhere, the full
                 # details live in the project overview and problem.get.
                 "problem": (
@@ -286,6 +309,8 @@ class StatusAndNextQuery:
             "sandboxes": sandboxes,
             "workflow": workflow,
         }
+        if tree_queues is not None:
+            result["problem_tree"] = tree_queues
         if reflection is not None:
             result["project_reflection"] = reflection
         hint = literature_hint(signal=snapshot.literature_signal)
@@ -563,6 +588,8 @@ def _slim_status(
             "sandbox": _sandbox_summary(full.get("sandboxes", [])),
             "project": {"id": project.get("id"), "name": project.get("name")},
         }
+    if full.get("problem_tree"):
+        result["problem_tree"] = full["problem_tree"]
     if full.get("project_reflection"):
         result["project_reflection"] = full["project_reflection"]
     if full.get("litreview"):

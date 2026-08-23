@@ -43,6 +43,16 @@ There is no linking step and no `connect` action. Use
   agenda), then `problem.define` with their approved statement and details.
   The statement is immutable; the understanding evolves via `problem.refine`,
   each version approved by the user.
+- In a problem-tree project (`workflow_mode: problem_tree`) the project level
+  of `workflow.status_and_next` serves the frontier: settle finished attempts
+  with `problem.resolve_attempt` (one verdict per attached problem; a refuting
+  result is `failed`, and failure is information), revisit decomposed parents
+  with `problem.revisit_submit` (full when every child is terminal —
+  solved/failed/stuck/next; interim while children run — continue, moot, or
+  resolve, never next), and triage open problems with `problem.attempt` (one
+  concrete falsifiable attempt runnable now), `problem.decompose` (independent
+  subproblems only), or `problem.mark_stuck`. Direct experiment, task, and
+  reflection creation is refused in tree mode; `problem.tree` is the map.
 - Local edits are not research state. Use `artifact.submit` to contribute
   evidence; it returns a presigned upload command for the bytes, and the
   submitted version can be associated with a target and role.

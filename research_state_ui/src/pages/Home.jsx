@@ -18,6 +18,7 @@ import ActiveExperimentPager from '../components/ActiveExperimentPager';
 import ConnectAgentPanel from '../components/ConnectAgentPanel';
 import AutorunStrip from '../components/AutorunStrip';
 import ProjectReflectionPanel from '../components/ProjectReflectionPanel';
+import ProblemTreePanel from '../components/problems/ProblemTreePanel';
 import { expName } from '../utils/experiment';
 
 export default function Home() {
@@ -124,7 +125,9 @@ export default function Home() {
         </section>
       )}
 
-      <ProjectReflectionPanel projectId={project.id} />
+      {project.workflow_mode === 'problem_tree'
+        ? <ProblemTreePanel projectId={project.id} />
+        : <ProjectReflectionPanel projectId={project.id} />}
 
       <section className="section">
         <div className="section-title">

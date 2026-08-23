@@ -2,34 +2,10 @@ from __future__ import annotations
 
 from merv.brain.kernel.utils import ValidationError, WorkflowError
 
-from .scenarios import ResearchCase
+from .scenarios import PROBLEM_DETAILS, PROBLEM_STATEMENT, ResearchCase
 
-
-VALID_DETAILS = """\
-# Root problem
-
-## Solved means
-A distilled 3B student scores within 2 GSM8K points of the teacher using
-under 10% of its pretraining compute, reproduced across two seeds.
-
-## Failed means
-Three distillation recipes (logit, hidden-state, data-only) all miss the
-2-point band at the compute cap.
-
-## Constraints
-Single 8xH100 node budget; the teacher is frozen; only public datasets.
-
-## Non-goals
-No new pretraining corpora; no teacher retraining; no models above 7B.
-
-## Resources
-The lab's distillation harness and the frozen teacher checkpoints.
-"""
-
-STATEMENT = (
-    "Can a 3B student distilled from teacher logits match the teacher "
-    "within 2 GSM8K points using under 10% of its pretraining compute?"
-)
+VALID_DETAILS = PROBLEM_DETAILS
+STATEMENT = PROBLEM_STATEMENT
 
 
 class ProblemDefinitionTest(ResearchCase):

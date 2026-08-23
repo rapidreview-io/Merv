@@ -411,6 +411,8 @@ ANNOTATION_DEBT = frozenset(
         ("merv.brain.research_core.models.ResearchSnapshot.gate_evaluations", "Any"),
         ("merv.brain.research_core.models.ResearchSnapshot.recent_claims", "Any"),
         ("merv.brain.research_core.models.ResearchSnapshot.root_problem", "Any"),
+        ("merv.brain.research_core.models.ResearchSnapshot.problems", "Any"),
+        ("merv.brain.research_core.models.ResearchSnapshot.problem_attempts", "Any"),
         (
             "merv.brain.research_core.models.ResearchSnapshot.claim_events_since_reflection",
             "Any",

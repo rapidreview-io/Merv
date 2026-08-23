@@ -106,9 +106,11 @@ class Research:
     def __init__(self, *, store: BaseStateStore, artifacts: Artifacts) -> None:
         self.store = store
         self.artifacts = artifacts
-        self._problems = ProblemService(store=store)
         self._experiments = ExperimentService(store=store, artifacts=artifacts)
         self._tasks = TaskService(store=store, artifacts=artifacts)
+        self._problems = ProblemService(
+            store=store, experiments=self._experiments, tasks=self._tasks
+        )
         self._reflections = ReflectionService(
             store=store,
             artifacts=artifacts,
@@ -132,17 +134,32 @@ class Research:
         summary: str = "",
         tenant_id: str | None = None,
         user_id: str = "",
+        workflow_mode: str = "",
     ) -> dict[str, Any]:
         name = self._validate_project_name(name)
         tenant_id = (tenant_id or "local").strip() or "local"
+        workflow_mode = (workflow_mode or "").strip()
+        if workflow_mode and workflow_mode not in ("reflection", "problem_tree"):
+            raise ValidationError(
+                'workflow_mode must be "reflection" or "problem_tree"'
+            )
         with self.store.transaction() as conn:
             project_id = new_id(prefix="proj")
+            settings = {"workflow_mode": workflow_mode} if workflow_mode else {}
             conn.execute(
                 """
-                INSERT INTO projects (id, name, summary, tenant_id, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO projects
+                  (id, name, summary, settings_json, tenant_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (project_id, name, summary.strip(), tenant_id, now_iso()),
+                (
+                    project_id,
+                    name,
+                    summary.strip(),
+                    json.dumps(settings, sort_keys=True),
+                    tenant_id,
+                    now_iso(),
+                ),
             )
             if user_id:
                 conn.execute(
@@ -173,6 +190,7 @@ class Research:
         summary: str | None = None,
         require_verified_reviews: bool | None = None,
         require_root_problem: bool | None = None,
+        workflow_mode: str | None = None,
         hidden: bool | None = None,
         agent_dispatch: bool | None = None,
         storage_max_upload_bytes: int | None = None,
@@ -193,6 +211,12 @@ class Research:
                 settings["require_verified_reviews"] = bool(require_verified_reviews)
             if require_root_problem is not None:
                 settings["require_root_problem"] = bool(require_root_problem)
+            if workflow_mode is not None:
+                if workflow_mode not in ("reflection", "problem_tree"):
+                    raise ValidationError(
+                        'workflow_mode must be "reflection" or "problem_tree"'
+                    )
+                settings["workflow_mode"] = workflow_mode
             if hidden is not None:
                 settings["hidden"] = bool(hidden)
             if agent_dispatch is not None:
@@ -274,6 +298,45 @@ class Research:
                 ),
             }
         return {"exists": True, "problem": root}
+
+    def attempt_problem(self, **kwargs: Any) -> dict[str, Any]:
+        return self._problems.attempt(**kwargs)
+
+    def decompose_problem(self, **kwargs: Any) -> dict[str, Any]:
+        return self._problems.decompose(**kwargs)
+
+    def mark_problem_stuck(self, **kwargs: Any) -> dict[str, Any]:
+        return self._problems.mark_stuck(**kwargs)
+
+    def resolve_problem_attempt(self, **kwargs: Any) -> dict[str, Any]:
+        return self._problems.resolve_attempt(**kwargs)
+
+    def submit_problem_revisit(self, **kwargs: Any) -> dict[str, Any]:
+        return self._problems.revisit_submit(**kwargs)
+
+    def problem_tree(self, *, project_id: str | None = None) -> dict[str, Any]:
+        return self._problems.tree(project_id=project_id)
+
+    def workflow_mode(self, *, project_id: str | None = None) -> str:
+        with closing(self.store.connect()) as conn:
+            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
+            return self._workflow_mode(conn=conn, project_id=project_id)
+
+    def _workflow_mode(self, *, conn, project_id: str) -> str:
+        row = conn.execute(
+            "SELECT settings_json FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()
+        settings = parse_project_settings(row["settings_json"]) if row else {}
+        return str(settings.get("workflow_mode") or "reflection")
+
+    def _reject_direct_create_in_tree_mode(self, *, conn, project_id: str) -> None:
+        if self._workflow_mode(conn=conn, project_id=project_id) == "problem_tree":
+            raise WorkflowError(
+                "this project runs in problem-tree mode: every experiment and "
+                "task answers one or more open problems, so create work "
+                "through problem.attempt (see workflow.status_and_next for "
+                "the frontier), not directly"
+            )
 
     def _root_problem_gate(self, *, conn, project_id: str) -> None:
         """Refuse research creates while a required root problem is missing."""
@@ -974,6 +1037,7 @@ class Research:
         with closing(self.store.connect()) as conn:
             resolved = self.store.require_project_id(conn=conn, project_id=project_id)
             self._root_problem_gate(conn=conn, project_id=resolved)
+            self._reject_direct_create_in_tree_mode(conn=conn, project_id=resolved)
         return cast(
             ExperimentState,
             self._experiments.create(
@@ -1108,6 +1172,7 @@ class Research:
         with closing(self.store.connect()) as conn:
             resolved = self.store.require_project_id(conn=conn, project_id=project_id)
             self._root_problem_gate(conn=conn, project_id=resolved)
+            self._reject_direct_create_in_tree_mode(conn=conn, project_id=resolved)
         return cast(
             TaskState,
             self._tasks.create(
@@ -1169,6 +1234,14 @@ class Research:
         title: str = "",
         lenses: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        with closing(self.store.connect()) as conn:
+            resolved = self.store.require_project_id(conn=conn, project_id=project_id)
+            if self._workflow_mode(conn=conn, project_id=resolved) == "problem_tree":
+                raise WorkflowError(
+                    "this project runs in problem-tree mode: knowledge "
+                    "compression happens continuously through problem "
+                    "revisits, so reflection waves are retired here"
+                )
         return self._reflections.create(
             project_id=project_id,
             title=title,
@@ -1525,6 +1598,16 @@ class Research:
                 root_problem=self._problems.root_state(
                     project_id=project_id, conn=conn
                 ),
+                problems=self._problems.project_problems(
+                    conn=conn, project_id=project_id
+                ),
+                problem_attempts=self._problems.attempts_with_state(
+                    conn=conn, project_id=project_id
+                ),
+                problem_revisit_times=self._problems.latest_revisits(
+                    conn=conn, project_id=project_id
+                ),
+                workflow_mode=self._workflow_mode(conn=conn, project_id=project_id),
             )
 
     def project_context_facts(self, *, project_id: str | None = None) -> dict[str, Any]:

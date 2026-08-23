@@ -247,9 +247,11 @@ TABLE_OWNERS = {
     # Tasks: the flat non-experiment work node, its reflection join, and the
     # wave DAG edges experiments and tasks gate on.
     "tasks": RESEARCH_CORE,
-    # Problems: the unit-of-uncertainty ledger; today the one root charter
-    # row per project written from the user interview.
+    # Problems: the unit-of-uncertainty ledger — the decomposition tree, the
+    # attempt join with per-problem verdicts, and the revisit journal.
     "problems": RESEARCH_CORE,
+    "problem_attempts": RESEARCH_CORE,
+    "problem_revisits": RESEARCH_CORE,
     "reflection_tasks": RESEARCH_CORE,
     "node_dependencies": RESEARCH_CORE,
     # Written by the wave lifecycle (spec validation reserves and pins,

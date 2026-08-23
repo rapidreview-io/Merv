@@ -211,13 +211,23 @@ class ProjectInput(ContractModel):
         default="",
         description="Short user-confirmed project purpose or scope.",
     )
+    workflow_mode: str = Field(
+        default="",
+        description=(
+            'For action=create: "problem_tree" runs the project as a living '
+            "problem tree (root charter from the user interview, work "
+            "created only through problem.attempt, revisits instead of "
+            'reflection waves); "reflection" (default when omitted) keeps '
+            "the classic reflection-wave workflow."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_action(self) -> "ProjectInput":
         if self.action == "list":
             extras = [
                 field
-                for field in ("project_id", "name", "summary")
+                for field in ("project_id", "name", "summary", "workflow_mode")
                 if getattr(self, field)
             ]
             if extras:
@@ -227,7 +237,7 @@ class ProjectInput(ContractModel):
         elif self.action in ("current", "overview"):
             # Both default to the project bound to the caller's MCP key;
             # overview also tolerates an explicit project_id.
-            forbidden = ["name", "summary"]
+            forbidden = ["name", "summary", "workflow_mode"]
             if self.action == "current":
                 forbidden = ["project_id", *forbidden]
             extras = [field for field in forbidden if getattr(self, field)]
@@ -262,6 +272,15 @@ class ProjectUpdateInput(ProjectScopedInput):
             "Policy knob: when true, experiment/task/claim creation is "
             "refused until the project has a root problem (problem.define, "
             "written from the user interview). Omit to leave unchanged."
+        ),
+    )
+    workflow_mode: str | None = Field(
+        default=None,
+        description=(
+            '"problem_tree" runs the project as a living problem tree (work '
+            "only through problem.attempt, revisits instead of reflection "
+            'waves); "reflection" restores the classic workflow. Omit to '
+            "leave unchanged."
         ),
     )
     agent_dispatch: bool | None = Field(
@@ -575,6 +594,162 @@ class ProblemRefineInput(ProjectScopedInput):
 
 
 class ProblemGetInput(ProjectScopedInput):
+    pass
+
+
+class ProblemAttemptInput(ProjectScopedInput):
+    problem_ids: list[str] | str = Field(
+        default_factory=list,
+        description=(
+            "REQUIRED. The open frontier problem(s) this attempt answers, "
+            "1-4 prob_ ids. Every attached problem gets its own verdict at "
+            "completion, and the design review checks the plan genuinely "
+            "tests each one — no passengers."
+        ),
+    )
+    kind: Literal["experiment", "task"] = Field(
+        default="experiment",
+        description=(
+            '"experiment" tests something falsifiable; "task" is scoped work '
+            "with a verifiable finish line and no claim (data prep, harness, "
+            "lit review)."
+        ),
+    )
+    name: str = Field(
+        default="",
+        description=(
+            "REQUIRED. Short folder-safe name for the created work item, "
+            "same rules as experiment.create / task.create."
+        ),
+    )
+    intent: str = Field(
+        default="",
+        description=(
+            "Experiments: REQUIRED. The ask in one standalone line — usually "
+            "the attached problem's statement, or the shared question when "
+            "several are attached."
+        ),
+    )
+    details: str = Field(
+        default="",
+        description=(
+            "Experiments: optional protocol sketch for the planner — the "
+            "'how' you already know. The approved plan supersedes it."
+        ),
+    )
+    goal: str = Field(
+        default="",
+        description="Tasks: REQUIRED. Standalone goal prose (what + why).",
+    )
+    deliverables: list[str] | str | None = Field(
+        default=None,
+        description=(
+            "Tasks: REQUIRED. The things that must exist when the task is "
+            "done, each verifiable as written."
+        ),
+    )
+    depends_on: list[str] | str | None = Field(
+        default_factory=list,
+        description=(
+            "Optional exp_/task_ ids this work must not start before; wave "
+            "DAG edges as on direct creates."
+        ),
+    )
+
+
+class ProblemDecomposeInput(ProjectScopedInput):
+    problem_id: str = Field(
+        description="The open frontier problem to split.",
+    )
+    children: list[dict[str, Any]] | None = Field(
+        default=None,
+        description=(
+            "REQUIRED. 1-8 subproblems as {statement, details?}, workable in "
+            "parallel TODAY: no dependency on each other or on unstated "
+            "results, each strictly narrower than the parent (statement "
+            "rules match the root: one falsifiable line, under 256 chars). "
+            "Anything sequential belongs to a later revisit, not this list. "
+            "If no independent split exists, use problem.mark_stuck or "
+            "problem.attempt instead."
+        ),
+    )
+
+
+class ProblemMarkStuckInput(ProjectScopedInput):
+    problem_id: str = Field(description="The open problem that cannot proceed.")
+    why: str = Field(
+        default="",
+        description=(
+            "REQUIRED. 2-3 standalone sentences the parent reads: why no "
+            "experiment can test this now and no independent decomposition "
+            "exists. Stuck is information, not failure."
+        ),
+    )
+
+
+class ProblemResolveAttemptInput(ProjectScopedInput):
+    attempt_id: str = Field(
+        description="The terminal exp_/task_ work item whose problems to settle.",
+    )
+    verdicts: list[dict[str, Any]] | None = Field(
+        default=None,
+        description=(
+            "One {problem_id, verdict, summary?} per attached unresolved "
+            "problem. verdict: 'solved' or 'failed' resolves it (a refuting "
+            "result is failed — an ending, not a retry; summary REQUIRED, "
+            "2-3 sentences for the parent), 'reopen' returns it to the "
+            "frontier because this attempt did not answer it. When the work "
+            "item died for infra reasons (abandoned/failed), verdicts are "
+            "ignored and every problem reopens."
+        ),
+    )
+
+
+class ProblemRevisitInput(ProjectScopedInput):
+    problem_id: str = Field(description="The decomposed parent to revisit.")
+    verdict: str = Field(
+        default="",
+        description=(
+            "Full revisit (every child terminal): 'solved' | 'failed' | "
+            "'stuck' | 'next' (spawn the next children). Interim revisit "
+            "(children still live): 'continue' | 'moot' (cancel named live "
+            "children the answer no longer depends on) | 'solved'/'failed' "
+            "(already decided — remaining live children are mooted and the "
+            "problem resolves). NEXT never happens while children run."
+        ),
+    )
+    why: str = Field(
+        default="",
+        description=(
+            "REQUIRED. The reasoning, 2-3 sentences, journaled forever in "
+            "the revisit record."
+        ),
+    )
+    summary: str = Field(
+        default="",
+        description=(
+            "For solved/failed: the compressed resolution the grandparent "
+            "reads, 2-3 sentences."
+        ),
+    )
+    children: list[dict[str, Any]] | None = Field(
+        default=None,
+        description=(
+            "For verdict 'next': the new subproblems, same rules as "
+            "problem.decompose children."
+        ),
+    )
+    moot_ids: list[str] | str | None = Field(
+        default=None,
+        description=(
+            "For verdict 'moot': live DIRECT children to cancel. Mooting "
+            "cascades down their subtrees, and work items left with no live "
+            "problem are abandoned and their sandboxes released."
+        ),
+    )
+
+
+class ProblemTreeInput(ProjectScopedInput):
     pass
 
 
@@ -1598,6 +1773,78 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             "Read the project's root problem: statement, full details, and "
             "details_version. Read it before planning research work and "
             "before any problem.refine."
+        ),
+    ),
+    "problem.attempt": ToolContract(
+        handler_identity="research.attempt_problem",
+        input_model=ProblemAttemptInput,
+        description=(
+            "Answer 1-4 open frontier problems with ONE new experiment or "
+            "task — the only way work is created in problem-tree mode. Use "
+            "when the problem can be answered by one concrete, falsifiable "
+            "attempt RIGHT NOW; otherwise problem.decompose, or "
+            "problem.mark_stuck. The attached problems flip to attempting; "
+            "when the work is terminal, settle them with "
+            "problem.resolve_attempt. The work item itself then follows the "
+            "normal experiment/task lifecycle and reviews."
+        ),
+    ),
+    "problem.decompose": ToolContract(
+        handler_identity="research.decompose_problem",
+        input_model=ProblemDecomposeInput,
+        description=(
+            "Split an open problem into 1-8 INDEPENDENT subproblems workable "
+            "in parallel today — sequencing belongs in later revisits, never "
+            "in a sibling list. The parent becomes decomposed and waits; "
+            "children join the open frontier. Only for problems no single "
+            "attempt can answer now."
+        ),
+    ),
+    "problem.mark_stuck": ToolContract(
+        handler_identity="research.mark_problem_stuck",
+        input_model=ProblemMarkStuckInput,
+        description=(
+            "Declare an open problem stuck: no experiment can test it now "
+            "and no independent decomposition exists. Stuck is information "
+            "the parent revisit uses — never silently abandon a frontier "
+            "problem instead."
+        ),
+    ),
+    "problem.resolve_attempt": ToolContract(
+        handler_identity="research.resolve_problem_attempt",
+        input_model=ProblemResolveAttemptInput,
+        description=(
+            "Settle a terminal attempt's attached problems, one verdict "
+            "each: solved / failed (with a 2-3 sentence summary the parent "
+            "reads — a refuting result is failed, and failure is "
+            "information) or reopen (the attempt did not answer it; back to "
+            "the frontier). Infra-dead attempts reopen everything "
+            "automatically. workflow.status_and_next lists attempts waiting "
+            "for this."
+        ),
+    ),
+    "problem.revisit_submit": ToolContract(
+        handler_identity="application.revisit_problem",
+        input_model=ProblemRevisitInput,
+        description=(
+            "The parent look at its children — the tree's only decision "
+            "point. Full (every child terminal): solved/failed/stuck ends "
+            "the problem, next spawns the following children (revisit "
+            "budget applies). Interim (children still live): continue, moot "
+            "named live children the answer no longer depends on, or "
+            "resolve outright when the question is already decided — "
+            "mooted subtrees cascade, and their now-orphaned work items are "
+            "abandoned with sandboxes released, so moot precisely and "
+            "explain why. Every revisit is journaled."
+        ),
+    ),
+    "problem.tree": ToolContract(
+        handler_identity="research.problem_tree",
+        input_model=ProblemTreeInput,
+        description=(
+            "Read the living problem tree: every node with status, depth, "
+            "summary, and attached attempts, nested from the root, plus "
+            "status counts. The map to read before triaging or revisiting."
         ),
     ),
     "experiment.create": ToolContract(
