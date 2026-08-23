@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Link, useLocation } from 'react-router-dom';
-import { useProjectStore, useProjectHref, selectStats, selectSandboxes } from '../store/useProjectStore';
+import { useProjectStore, useProjectHref, selectProject, selectStats, selectSandboxes } from '../store/useProjectStore';
 import { useAutorunStatus } from '../store/useAutorunStatus';
 import { useTheme } from '../store/useTheme';
 import ProjectSwitcher from '../components/ProjectSwitcher';
@@ -134,6 +134,10 @@ function MoreSheet({ open, onClose }) {
   const px = useProjectHref();
   const projectId = useProjectStore(s => s.projectId);
   const autorun = useAutorunStatus(projectId);
+  // Tree-mode projects retire reflection waves — hide the entry only once the
+  // mode is known to be problem_tree (same rule as the desktop sidebar).
+  const project = useProjectStore(selectProject);
+  const reflectionRetired = project?.workflow_mode === 'problem_tree';
 
   const footer = (
     <button type="button" className="btn btn--ghost btn--sm" onClick={() => setSurfaceOverride('desktop')}>
@@ -149,7 +153,7 @@ function MoreSheet({ open, onClose }) {
       <SheetLink to={px('/claims')} label="Claims" count={stats.claims ?? home?.claims?.length ?? 0} />
       <SheetLink to={px('/reviews')} label="Reviews" count={stats.open_reviews ?? stats.reviews ?? 0} />
       <SheetLink to={px('/litreview')} label="Lit Review" />
-      <SheetLink to={px('/reflection')} label="Reflection" />
+      {!reflectionRetired && <SheetLink to={px('/reflection')} label="Reflection" />}
       <SheetLink to={px('/artifacts')} label="Artifacts" count={stats.artifacts ?? 0} />
       <SheetLink to={px('/storage')} label="Storage" />
       <SheetLink to={px('/sandboxes')} label="Sandboxes" count={runningSandboxes ? `${runningSandboxes} running` : null} />

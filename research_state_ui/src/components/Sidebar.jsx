@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { useProjectStore, useProjectHref, selectStats, selectSandboxes } from '../store/useProjectStore';
+import { useProjectStore, useProjectHref, selectProject, selectStats, selectSandboxes } from '../store/useProjectStore';
 import { useAutorunStatus } from '../store/useAutorunStatus';
 import { useTheme } from '../store/useTheme';
 import { useBackdrop, setBackdrop } from '../store/useBackdrop';
@@ -111,6 +111,12 @@ export default function Sidebar({ onHide }) {
   const px = useProjectHref();
   const projectId = useProjectStore(s => s.projectId);
   const autorun = useAutorunStatus(projectId);
+  // Tree-mode projects retire reflection waves (the backend refuses
+  // reflection.create), so the nav entry would only lead to an empty surface.
+  // Hide it ONLY when the mode is known to be problem_tree — while the home
+  // payload is still loading (project null) the link renders as always.
+  const project = useProjectStore(selectProject);
+  const reflectionRetired = project?.workflow_mode === 'problem_tree';
 
   const artifactsCount = stats.artifacts ?? home?.artifacts?.length ?? 0;
 
@@ -160,9 +166,11 @@ export default function Sidebar({ onHide }) {
           <span>Tasks</span>
           <span className="sidebar-link-count">{stats.tasks ?? home?.tasks?.length ?? 0}</span>
         </NavLink>
-        <NavLink to={px('/reflection')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          Reflection
-        </NavLink>
+        {!reflectionRetired && (
+          <NavLink to={px('/reflection')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
+            Reflection
+          </NavLink>
+        )}
         <NavLink to={px('/litreview')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
           Lit Review
         </NavLink>
