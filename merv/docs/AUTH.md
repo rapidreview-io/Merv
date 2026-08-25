@@ -105,59 +105,15 @@ boundary.
 
 ### Remote machines
 
-Browser consent normally ends with a redirect to a loopback URL on the machine
-running the client. Kilo and OpenCode register
-`http://127.0.0.1:19876/mcp/oauth/callback` and listen there for the duration
-of `kilo mcp auth merv` / `opencode mcp auth merv`. When that machine is a VM
-you reach over SSH and the browser is on your laptop, the redirect lands on
-the *laptop's* loopback: nothing answers, and the remote client gives up after
-five minutes with an OAuth callback timeout.
-
-**Portable device login (preferred).** Merv's `merv-mcp` command implements the
-RFC 8628 device authorization grant for every client that can launch a local
-STDIO MCP server. It prints a short code and link, you approve in any signed-in
-browser, and it stores and refreshes the OAuth grant on the remote machine. The
-browser talks only to Merv — nothing ever addresses the remote machine, so this
-works from any network with no tunnel and one login can serve Codex, Claude
-Code, Cursor, Kilo, OpenCode, or another STDIO-capable client:
-
-```bash
-merv-mcp login
-```
-
-Configure that client to launch `merv-mcp serve`; see
-[Browserless remote OAuth](REMOTE_OAUTH.md) for exact JSON and Codex TOML.
-
-**Native-store pairing (Kilo/OpenCode).** These two clients can instead receive
-the grant in their own `mcp-auth.json` token store. On the remote machine:
-
-```bash
-curl -fsSL https://rapidreview.io/merv/pair_mcp.py -o /tmp/pair_mcp.py && python3 /tmp/pair_mcp.py
-```
-
-The script autodetects a Kilo or OpenCode install (`--client kilo|opencode` to
-pick, `--store PATH` for anything else that keeps an `mcp-auth.json`), needs
-only Python 3, and mints the same rotating `mk_`/`mrt_` pair browser consent
-mints — nothing static, revocable from the same keys page. Restart the client
-afterwards; codes expire after ten minutes, so approve promptly.
-
-**SSH port forward (fallback).** Against a brain that predates the device
-grant, forward the callback port from the laptop before signing in, and sign
-in inside that SSH session:
-
-```bash
-ssh -o ExitOnForwardFailure=yes -L 19876:127.0.0.1:19876 user@remote-host
-kilo mcp auth merv        # or: opencode mcp auth merv
-```
-
-Open the printed URL in the laptop's browser and approve. The callback travels
-through the tunnel to the remote client, which exchanges the code and stores
-the token on the remote machine as usual; refresh needs no tunnel, and no key
-is minted or copied. The forward is only needed while signing in. If `ssh`
-reports it could not bind 19876, another Kilo/OpenCode sign-in on the laptop is
-holding the port — finish or cancel it first. The same technique applies to
-any client whose redirect URI is a loopback address: forward that client's
-callback port instead of 19876.
+Start the client's normal Merv sign-in and open the printed URL in any
+browser. The consent page asks where the agent is running; choose **On
+another machine**, approve, and copy the one command it shows into that
+machine's terminal (or paste the URL, if the client's terminal is prompting
+for one). The command delivers the approval to the waiting client, which
+stores and refreshes its own OAuth grant as usual — nothing is installed,
+no tunnel is opened, and no key is minted or copied. The page confirms with
+"Connected" once the client picks the approval up; hand-carried approvals
+stay valid for ten minutes.
 
 ## When a static key is still required
 

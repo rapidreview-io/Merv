@@ -13,13 +13,10 @@ No repository checkout or Merv key is required. Kilo checks the catalog at the
 start of each session. Use `/reload` to pick up a published skill change in an
 already-running session.
 
-On a remote machine over SSH, the browser's sign-in callback cannot reach
-Kilo's loopback listener. Pair with the device grant instead — run
-`curl -fsSL https://rapidreview.io/merv/pair_mcp.py -o /tmp/pair_mcp.py &&
-python3 /tmp/pair_mcp.py` on that machine, approve the printed code in any
-signed-in browser, and restart Kilo. See
-[Remote machines](https://github.com/rapidreview-io/Merv/blob/main/merv/docs/AUTH.md#remote-machines)
-for details and the SSH port-forward fallback.
+On a remote machine over SSH, sign in as usual and choose **On another
+machine** when the consent page asks where the agent is running — it hands
+you one command to run on that machine. See
+[Remote machines](https://github.com/rapidreview-io/Merv/blob/main/merv/docs/AUTH.md#remote-machines).
 
 `build_catalog.py` builds the catalog from the canonical `merv/skills/` tree.
 Each entry carries a content-derived version; Kilo downloads a changed version

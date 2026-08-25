@@ -30,7 +30,9 @@ from merv.brain.kernel.utils import format_iso, parse_iso
 from tests.support.sandbox_backend import FakeSandboxBackend
 from merv.brain.surface.auth import SupabaseVerifier
 from merv.brain.surface.oauth import (
+    AUTHORIZATION_CODE_TTL_SECONDS,
     DEVICE_GRANT,
+    HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS,
     MAX_CLIENTS_ENV_VAR,
     OAuthError,
     OAuthService,
@@ -841,6 +843,109 @@ class OAuthSurfaceTest(unittest.TestCase):
             )
         expired = self._exchange(client_id=registration["client_id"], code=expiring)
         self.assertEqual(expired.json()["error"], "invalid_grant")
+
+    def _code_window_seconds(self, digest: str) -> float:
+        with self.app.store.transaction() as conn:
+            row = conn.execute(
+                "SELECT created_at, expires_at FROM oauth_authorization_codes"
+                " WHERE code_digest = ?",
+                (digest,),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        return (parse_iso(row[1]) - parse_iso(row[0])).total_seconds()
+
+    def test_handoff_consent_mints_a_hand_carry_code_and_reports_pickup(
+        self,
+    ) -> None:
+        registration = self._register(grants=["authorization_code"])
+        response = self.client.post(
+            "/oauth/authorize",
+            json={
+                **self._authorization_params(registration["client_id"]),
+                "decision": "approve",
+                "project_id": self.project_a,
+                "handoff": True,
+            },
+            headers=_bearer(self.jwt_a),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        code = parse_qs(urlsplit(body["redirect_to"]).query)["code"][0]
+        digest = hashlib.sha256(code.encode()).hexdigest()
+        self.assertEqual(body["code_status"], digest)
+        # Hand-carried codes get the RFC 6749 §4.1.2 maximum, not the
+        # redirect budget.
+        self.assertEqual(
+            self._code_window_seconds(digest), HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS
+        )
+
+        pending = self.client.get(
+            f"/oauth/authorize/status?digest={digest}", headers=_bearer(self.jwt_a)
+        )
+        self.assertEqual(pending.status_code, 200, pending.text)
+        self.assertEqual(pending.json(), {"status": "pending"})
+        exchanged = self._exchange(client_id=registration["client_id"], code=code)
+        self.assertEqual(exchanged.status_code, 200, exchanged.text)
+        redeemed = self.client.get(
+            f"/oauth/authorize/status?digest={digest}", headers=_bearer(self.jwt_a)
+        )
+        self.assertEqual(redeemed.json(), {"status": "redeemed"})
+
+    def test_plain_consent_keeps_the_redirect_budget_and_no_status_key(
+        self,
+    ) -> None:
+        registration = self._register(grants=["authorization_code"])
+        response = self.client.post(
+            "/oauth/authorize",
+            json={
+                **self._authorization_params(registration["client_id"]),
+                "decision": "approve",
+                "project_id": self.project_a,
+            },
+            headers=_bearer(self.jwt_a),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertNotIn("code_status", body)
+        code = parse_qs(urlsplit(body["redirect_to"]).query)["code"][0]
+        digest = hashlib.sha256(code.encode()).hexdigest()
+        self.assertEqual(
+            self._code_window_seconds(digest), AUTHORIZATION_CODE_TTL_SECONDS
+        )
+
+    def test_authorization_status_needs_a_session_and_answers_edge_states(
+        self,
+    ) -> None:
+        anonymous = self.client.get("/oauth/authorize/status?digest=" + "0" * 64)
+        self.assertEqual(anonymous.status_code, 401, anonymous.text)
+        for junk in ("", "zz", "0" * 63, "0" * 64):
+            answer = self.client.get(
+                f"/oauth/authorize/status?digest={junk}", headers=_bearer(self.jwt_a)
+            )
+            self.assertEqual(answer.status_code, 200, answer.text)
+            self.assertEqual(answer.json(), {"status": "unknown"})
+
+        registration = self._register(grants=["authorization_code"])
+        response = self.client.post(
+            "/oauth/authorize",
+            json={
+                **self._authorization_params(registration["client_id"]),
+                "decision": "approve",
+                "project_id": self.project_a,
+                "handoff": True,
+            },
+            headers=_bearer(self.jwt_a),
+        )
+        digest = response.json()["code_status"]
+        with self.app.store.transaction() as conn:
+            conn.execute(
+                "UPDATE oauth_authorization_codes SET expires_at = ? WHERE code_digest = ?",
+                ("2000-01-01T00:00:00Z", digest),
+            )
+        expired = self.client.get(
+            f"/oauth/authorize/status?digest={digest}", headers=_bearer(self.jwt_a)
+        )
+        self.assertEqual(expired.json(), {"status": "expired"})
 
     def test_refresh_rotation_revokes_predecessor_and_replay_fails(self) -> None:
         registration, first = self._mint_oauth_tokens()

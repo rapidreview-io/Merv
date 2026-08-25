@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlsplit
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from ....kernel.secret_tokens import hash_secret
 from ...identity import principal_label
 from ...oauth import DEVICE_GRANT, OAuthControl, OAuthError, oauth_error_redirect
 from ...project_keys import PROJECT_GRANT
@@ -245,6 +246,9 @@ def build_router(
         # Absent means the old one-project consent, so an older UI build keeps
         # minting exactly what it minted before.
         grant_scope = str(body.pop("grant_scope", "") or PROJECT_GRANT)
+        # The consent page's "agent on another machine" card: the code is
+        # hand-carried instead of redirected, and the page polls for pickup.
+        handoff = body.pop("handoff", False) is True
         if decision not in ("approve", "deny") or any(
             not isinstance(key, str) or not isinstance(value, str)
             for key, value in body.items()
@@ -262,10 +266,27 @@ def build_router(
                 project_id=project_id,
                 approved=decision == "approve",
                 grant_scope=grant_scope,
+                handoff=handoff,
             )
         except OAuthError as exc:
             return _oauth_json_error(exc)
-        return JSONResponse({"redirect_to": redirect_to}, headers=_NO_STORE)
+        payload: dict[str, Any] = {"redirect_to": redirect_to}
+        if handoff:
+            code = dict(parse_qsl(urlsplit(redirect_to).query)).get("code")
+            if code:
+                payload["code_status"] = hash_secret(code)
+        return JSONResponse(payload, headers=_NO_STORE)
+
+    @router.get("/oauth/authorize/status")
+    def authorization_status(request: Request):
+        denial = _require_supabase_session(request)
+        if denial is not None:
+            return denial
+        digest = request.query_params.get("digest") or ""
+        return JSONResponse(
+            {"status": service.authorization_status(digest=digest)},
+            headers=_NO_STORE,
+        )
 
     @router.post("/oauth/token")
     async def token(request: Request):

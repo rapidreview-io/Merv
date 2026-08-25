@@ -6171,6 +6171,9 @@ a.spend-row-name:hover { color: var(--active); }
 .oauth-scope-choice input { margin-top: 3px; }
 .oauth-scope-choice strong { display: block; font-size: var(--text-sm); }
 .oauth-scope-detail { display: block; margin-top: 2px; font-size: var(--text-xs); color: var(--muted); }
+.oauth-location-question { margin-top: 4px; }
+.oauth-pickup-pending { color: var(--muted); }
+.oauth-pickup-done { color: var(--supports); font-weight: 500; }
 
 /* --- PROVIDER CONFIGURE (Settings > Compute) --------------------------- */
 .sbxp-lede {

@@ -20,11 +20,11 @@ root. Each client gets a thin adapter on top of the same `bin/`, `skills/`, and
 `agents/` content:
 
 When a client runs on a remote machine whose loopback browser callback is not
-reachable, install `merv-mcp`, run `merv-mcp login`, and register
-`merv-mcp serve` as a local STDIO server. This device-code path is shared by Codex,
-Claude Code, Cursor, Kilo, OpenCode, and any STDIO-capable MCP client; it keeps
-OAuth and removes both SSH port forwarding and user-managed API keys. See
-[Browserless remote OAuth](REMOTE_OAUTH.md).
+reachable, its normal sign-in still works: the consent page asks where the
+agent is running, and the **On another machine** answer replaces the redirect
+with one command to copy into that machine's terminal. Every client keeps
+its native OAuth flow with nothing installed; see
+[Remote machines](AUTH.md#remote-machines).
 
 | Client | Adapter | MCP registration | Skills | Reviewer subagents |
 |---|---|---|---|---|
@@ -497,12 +497,9 @@ Notes:
   `verified_agent_review` status.
 - The generated `merv-client` branch is rebuilt after every `main` update; the
   OpenCode source entrypoint remains under `clients/opencode/` in `main`.
-- On a remote machine over SSH, the browser's consent redirect cannot reach
-  OpenCode's loopback listener. Pair with the device grant instead: run
-  `curl -fsSL https://rapidreview.io/merv/pair_mcp.py -o /tmp/pair_mcp.py &&
-  python3 /tmp/pair_mcp.py` on that machine and approve the printed code in
-  any signed-in browser. Details and the SSH port-forward fallback in
-  [Remote machines](AUTH.md#remote-machines).
+- On a remote machine over SSH, sign in as usual and choose **On another
+  machine** on the consent page; it hands you one command to run on that
+  machine. Details in [Remote machines](AUTH.md#remote-machines).
 
 ## Use with Kilo
 
@@ -536,12 +533,9 @@ Notes:
   install.
 - The current unified Kilo CLI is required. If `kilo plugin` is unavailable,
   update Kilo before installing Merv.
-- On a remote machine over SSH, the browser's consent redirect cannot reach
-  Kilo's loopback listener. Pair with the device grant instead: run
-  `curl -fsSL https://rapidreview.io/merv/pair_mcp.py -o /tmp/pair_mcp.py &&
-  python3 /tmp/pair_mcp.py` on that machine and approve the printed code in
-  any signed-in browser. Details and the SSH port-forward fallback in
-  [Remote machines](AUTH.md#remote-machines).
+- On a remote machine over SSH, sign in as usual and choose **On another
+  machine** on the consent page; it hands you one command to run on that
+  machine. Details in [Remote machines](AUTH.md#remote-machines).
 
 ## Use with Hermes Agent
 
