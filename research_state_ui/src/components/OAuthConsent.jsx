@@ -250,8 +250,9 @@ export function HandoffScreen({ clientName, url, pickup }) {
     <ConsentFrame>
       <h2 className="auth-modal-title">One step left</h2>
       <p className="auth-modal-sub">
-        Run this on the machine where {clientName} is running — it delivers the
-        approval to the waiting agent:
+        Open a <strong>second terminal</strong> on the machine where
+        {' '}{clientName} is running — the sign-in is still waiting in the
+        first one — and run:
       </p>
       <div className="arun-command">
         <code className="mono">{command}</code>
@@ -259,9 +260,11 @@ export function HandoffScreen({ clientName, url, pickup }) {
           {copied === 'curl' ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <p className="oauth-consent-resource">
-        If that terminal is asking you to paste a URL instead, paste the
-        address inside the quotes.
+      <p className="oauth-consent-resource oauth-handoff-alt">
+        <span>Terminal asking you to paste a URL instead?</span>
+        <button type="button" className="btn btn--ghost btn--sm" onClick={() => copy('url', url)}>
+          {copied === 'url' ? 'Copied' : 'Copy URL'}
+        </button>
       </p>
       {pickup === 'pending' && (
         <p className="auth-modal-sub oauth-pickup-pending">Waiting for {clientName} to pick this up…</p>
