@@ -43,7 +43,6 @@ INCLUDE = (
     "GEMINI.md",
     "AGENTS.md",
     "README.md",
-    "docs/REMOTE_OAUTH.md",
     # Codex manifest declares composerIcon: ./assets/icon.svg
     "assets",
     # Hermes adapter source (native generated-plugin builder plus legacy installer).
@@ -62,7 +61,6 @@ INCLUDE = (
     "agents",
     # Onboarding and machine-local agent runner (no merv.brain import)
     "bin/merv-client",
-    "bin/merv-mcp",
     "bin/merv-agent-runner",
     # The portable run watcher every platform backgrounds to get woken
     "bin/merv-runs-wait",

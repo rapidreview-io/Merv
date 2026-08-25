@@ -84,16 +84,10 @@ keys are documented separately for headless runners and CI in
 [docs/AUTH.md](docs/AUTH.md#when-a-static-key-is-still-required).
 
 On an SSH VM where the client's loopback browser callback cannot be reached,
-keep OAuth and use Merv's client-neutral device login:
-
-```bash
-merv-mcp login
-```
-
-Then configure the client to launch `merv-mcp serve` as a local STDIO MCP
-server. One machine login works with Codex, Claude Code, Cursor, Kilo,
-OpenCode, and other STDIO-capable clients. See
-[Browserless remote OAuth](docs/REMOTE_OAUTH.md) for installation and config.
+keep OAuth: sign in as usual, choose **On another machine** when the consent
+page asks where the agent is running, and run the one command it shows on
+that machine. Nothing is installed and every client keeps its native flow.
+See [Remote machines](docs/AUTH.md#remote-machines).
 
 ### Hermes Agent
 

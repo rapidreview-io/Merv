@@ -118,11 +118,9 @@ kilo mcp auth merv
 ```
 
 Skills update when a new session starts. Run `/reload` to update the current
-session. On a remote machine over SSH, pair with the device grant instead of
-the browser callback: `curl -fsSL https://rapidreview.io/merv/pair_mcp.py -o
-/tmp/pair_mcp.py && python3 /tmp/pair_mcp.py`, then approve the printed code
-in any signed-in browser — see
-[Remote machines](merv/docs/AUTH.md#remote-machines).
+session. On a remote machine over SSH, sign in as usual and choose **On
+another machine** when the consent page asks where the agent is running —
+see [Remote machines](merv/docs/AUTH.md#remote-machines).
 
 ### Hermes Agent
 
@@ -141,26 +139,18 @@ opencode mcp auth merv
 ```
 
 Skills update automatically when a session starts. Rerun the install command
-when Merv announces an adapter update. On a remote machine over SSH, pair with
-the device grant instead of the browser callback:
-`curl -fsSL https://rapidreview.io/merv/pair_mcp.py -o /tmp/pair_mcp.py &&
-python3 /tmp/pair_mcp.py`, then approve the printed code in any signed-in
-browser — see [Remote machines](merv/docs/AUTH.md#remote-machines).
+when Merv announces an adapter update. On a remote machine over SSH, sign in
+as usual and choose **On another machine** when the consent page asks where
+the agent is running — see
+[Remote machines](merv/docs/AUTH.md#remote-machines).
 
 ### Any client on a remote machine
 
-For Codex, Claude Code, Cursor, Kilo, OpenCode, or another STDIO-capable MCP
-client on a VM, one client-neutral device login replaces loopback browser
-routing:
-
-```bash
-merv-mcp login
-```
-
-Configure the client to launch `merv-mcp serve` as its local Merv MCP server.
-The bridge stores and refreshes OAuth on the VM; the user never creates or
-copies an API key. Installation and config examples are in
-[Browserless remote OAuth](merv/docs/REMOTE_OAUTH.md).
+Every client's normal Merv sign-in works from a VM: open the printed URL in
+any browser, choose **On another machine** on the consent page, and run the
+one command it shows on that machine. The client stores and refreshes its
+own OAuth grant; nothing is installed and no key is created or copied. See
+[Remote machines](merv/docs/AUTH.md#remote-machines).
 
 Headless runners and CI use `MERV_MCP_KEY`. See
 [Authentication](merv/docs/AUTH.md#when-a-static-key-is-still-required) and

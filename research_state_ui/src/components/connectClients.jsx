@@ -14,15 +14,12 @@ export const MERV_REPO_URL = 'https://github.com/rapidreview-io/Merv';
 export const CLIENT_DOCS_URL = `${MERV_REPO_URL}/blob/main/merv/docs/CLIENTS.md`;
 
 const CONSENT_NOTE = 'Approve All my projects in the browser.';
-// Kilo and OpenCode finish sign-in with a browser callback to 127.0.0.1:19876
-// on the machine running the client, which a VM over SSH can never receive.
-// Device pairing (RFC 8628) replaces it: the script polls Merv, the code is
-// approved on /oauth/device here, and no browser ever addresses the machine
-// (see merv/docs/AUTH.md#remote-machines).
-const REMOTE_NOTE = 'On a remote machine, run '
-  + 'curl -fsSL https://rapidreview.io/merv/pair_mcp.py -o /tmp/pair_mcp.py '
-  + '&& python3 /tmp/pair_mcp.py instead, and approve the printed code in '
-  + 'your browser here.';
+// A VM over SSH can never receive the sign-in's loopback callback; the
+// consent page covers that itself — its "On another machine" card swaps the
+// redirect for one command to copy over (see AUTH.md#remote-machines).
+const REMOTE_NOTE = 'On a remote machine, choose "On another machine" when '
+  + 'the consent page asks where the agent is running, and follow the one '
+  + 'command it shows.';
 
 export const NATIVE_CLIENTS = [
   {

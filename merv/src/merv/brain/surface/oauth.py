@@ -19,6 +19,10 @@ from .project_keys import GRANT_SCOPES, PROJECT_GRANT, ProjectKeyControl
 from .runner_pairing import USER_CODE_ALPHABET, USER_CODE_LENGTH, format_user_code
 
 AUTHORIZATION_CODE_TTL_SECONDS = 60
+# Consent chose "agent on another machine": the code travels by hand (curl or
+# paste on the remote host), so it gets the RFC 6749 §4.1.2 maximum instead of
+# the redirect budget. Still single-use and PKCE-bound.
+HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS = 10 * 60
 ACCESS_TOKEN_TTL_SECONDS = 3600
 REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
 # RFC 8628 device authorization: the lane for a client whose loopback no
@@ -52,6 +56,7 @@ CAP_EVICTION_LIMIT = 100
 
 _PKCE_CHALLENGE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _PKCE_VERIFIER = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
+_CODE_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _SUPPORTED_GRANTS = frozenset(("authorization_code", "refresh_token", DEVICE_GRANT))
 # Grants a client may hold on its own; refresh_token only rides along.
 _PRIMARY_GRANTS = frozenset(("authorization_code", DEVICE_GRANT))
@@ -179,6 +184,7 @@ class OAuthControl(Protocol):
     def register_client(self, metadata: dict[str, Any]) -> dict[str, Any]: ...
     def authorization_details(self, **kwargs: object) -> dict[str, Any]: ...
     def authorize(self, **kwargs: object) -> str: ...
+    def authorization_status(self, **kwargs: object) -> str: ...
     def exchange_code(self, **kwargs: object) -> dict[str, Any]: ...
     def refresh(self, **kwargs: object) -> dict[str, Any]: ...
     def device_authorization(self, **kwargs: object) -> dict[str, Any]: ...
@@ -322,6 +328,7 @@ class OAuthService:
         project_id: str,
         approved: bool,
         grant_scope: str = PROJECT_GRANT,
+        handoff: bool = False,
     ) -> str:
         request = self._authorization_request(
             params=params, canonical_resource=canonical_resource
@@ -366,7 +373,11 @@ class OAuthService:
                 code_challenge=request.code_challenge,
                 resource=request.resource,
                 created_at=now_iso(),
-                expires_at=iso_after(seconds=AUTHORIZATION_CODE_TTL_SECONDS),
+                expires_at=iso_after(
+                    seconds=HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS
+                    if handoff
+                    else AUTHORIZATION_CODE_TTL_SECONDS
+                ),
                 consumed_at=None,
             )
         )
@@ -376,6 +387,24 @@ class OAuthService:
             state=request.state,
             code=secret,
         )
+
+    def authorization_status(self, *, digest: str) -> str:
+        """Consent-page poll: has the hand-carried code been redeemed yet?
+
+        Keyed by the code's stored sha256 digest, which the consent response
+        hands the page — irreversible, so holding it proves nothing beyond
+        what the page already knows (it holds the code itself).
+        """
+        if not _CODE_DIGEST.fullmatch(digest):
+            return "unknown"
+        code = self._repository.code_by_digest(digest=digest)
+        if code is None:
+            return "unknown"
+        if code.consumed_at is not None:
+            return "redeemed"
+        if _expired(code.expires_at):
+            return "expired"
+        return "pending"
 
     def exchange_code(
         self, *, form: dict[str, str], canonical_resource: str
@@ -924,6 +953,7 @@ __all__ = [
     "DEVICE_GRANT",
     "DEVICE_POLL_INTERVAL_SECONDS",
     "DeviceGrant",
+    "HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS",
     "OAuthControl",
     "OAuthError",
     "OAuthService",
