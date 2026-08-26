@@ -230,6 +230,22 @@ CREATE TABLE IF NOT EXISTS oauth_device_grant_attempts (
   attempted_at TEXT NOT NULL
 );
 
+-- Short single-use consent-handoff links. 'deliver' carries the client's
+-- loopback callback URL so a curl -L on the agent's machine can finish the
+-- native flow; 'visit' carries a pending authorize query so a phone can pick
+-- the consent up by short code. Both are 32^8 tokens stored as digests,
+-- ten-minute lifetime, consumed on first use; the authorization code inside
+-- a deliver payload stays PKCE-bound to the waiting client either way.
+CREATE TABLE IF NOT EXISTS oauth_handoff_links (
+  token_digest TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('deliver', 'visit')),
+  payload TEXT NOT NULL,
+  client_ip TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS claims (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
@@ -1476,6 +1492,18 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     # column. Additive; fresh schemas already carry it.
     (53, "add_task_deliverables", ""),
     (54, "add_experiment_details", ""),
+    # Consent handoff short links (August 2026): typeable curl targets and
+    # phone pickup codes for remote-machine sign-in. Additive; fresh schemas
+    # already carry the table.
+    (57, "add_oauth_handoff_links", ""),
+)
+
+# Migration 57 indexes — handler-only (they name a ladder-added table).
+OAUTH_HANDOFF_LINK_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_oauth_handoff_links_ip"
+    "  ON oauth_handoff_links(client_ip, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_oauth_handoff_links_expiry"
+    "  ON oauth_handoff_links(expires_at)",
 )
 
 # Migration 52 indexes — handler-only (they name ladder-added tables).
@@ -1890,6 +1918,8 @@ class BaseStateStore:
             self._ensure_task_deliverables(conn=conn)
         elif name == "add_oauth_device_grants":
             self._add_oauth_device_grants(conn=conn)
+        elif name == "add_oauth_handoff_links":
+            self._add_oauth_handoff_links(conn=conn)
         elif name == "add_experiment_details":
             self._ensure_experiment_details(conn=conn)
         else:
@@ -1947,6 +1977,13 @@ class BaseStateStore:
         ):
             conn.execute("ALTER TABLE project_api_keys ADD COLUMN label TEXT")
         for statement in AGENT_RUNNER_PAIRING_INDEXES:
+            conn.execute(statement)
+
+    def _add_oauth_handoff_links(self, *, conn: Connection) -> None:
+        """Migration 57: short single-use consent-handoff links."""
+        if not self._has_table(conn=conn, table="oauth_handoff_links"):
+            conn.execute(_schema_table_ddl(table="oauth_handoff_links"))
+        for statement in OAUTH_HANDOFF_LINK_INDEXES:
             conn.execute(statement)
 
     def _add_oauth_device_grants(self, *, conn: Connection) -> None:

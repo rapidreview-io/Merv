@@ -947,6 +947,86 @@ class OAuthSurfaceTest(unittest.TestCase):
         )
         self.assertEqual(expired.json(), {"status": "expired"})
 
+    def _handoff_approve(self, registration: dict) -> dict:
+        response = self.client.post(
+            "/oauth/authorize",
+            json={
+                **self._authorization_params(registration["client_id"]),
+                "decision": "approve",
+                "project_id": self.project_a,
+                "handoff": True,
+            },
+            headers=_bearer(self.jwt_a),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()
+
+    def test_handoff_approve_mints_typeable_link_that_delivers_once(self) -> None:
+        registration = self._register(grants=["authorization_code"])
+        body = self._handoff_approve(registration)
+        token = body["go_token"]
+        self.assertRegex(token, r"^[0-9A-Z]{4}-[0-9A-Z]{4}$")
+
+        # A browser opening the link must not burn it.
+        browser = self.client.get(
+            f"/oauth/handoff/{token}", headers={"Accept": "text/html"}
+        )
+        self.assertEqual(browser.status_code, 200, browser.text)
+        self.assertIn("terminal", browser.text)
+
+        # curl -L: one 302 to the exact callback, then the code exchanges.
+        hop = self.client.get(f"/oauth/handoff/{token}", follow_redirects=False)
+        self.assertEqual(hop.status_code, 302, hop.text)
+        self.assertEqual(hop.headers["Location"], body["redirect_to"])
+        replay = self.client.get(f"/oauth/handoff/{token}", follow_redirects=False)
+        self.assertEqual(replay.status_code, 404, replay.text)
+        code = parse_qs(urlsplit(body["redirect_to"]).query)["code"][0]
+        exchanged = self._exchange(client_id=registration["client_id"], code=code)
+        self.assertEqual(exchanged.status_code, 200, exchanged.text)
+
+        # Transcription slips (lowercase, dashes dropped, O for 0) still land.
+        body2 = self._handoff_approve(registration)
+        sloppy = body2["go_token"].replace("-", "").lower().replace("0", "o")
+        hop2 = self.client.get(f"/oauth/handoff/{sloppy}", follow_redirects=False)
+        self.assertEqual(hop2.status_code, 302, hop2.text)
+
+    def test_handoff_visit_code_round_trips_a_pending_consent(self) -> None:
+        query = "response_type=code&client_id=oauthc_x&state=abc"
+        anonymous = self.client.post("/oauth/handoff/visit", json={"query": query})
+        self.assertEqual(anonymous.status_code, 401, anonymous.text)
+        minted = self.client.post(
+            "/oauth/handoff/visit", json={"query": query}, headers=_bearer(self.jwt_a)
+        )
+        self.assertEqual(minted.status_code, 200, minted.text)
+        code = minted.json()["code"]
+        picked = self.client.get(f"/oauth/handoff/visit/{code}")
+        self.assertEqual(picked.status_code, 200, picked.text)
+        self.assertEqual(picked.json(), {"query": query})
+        replay = self.client.get(f"/oauth/handoff/visit/{code}")
+        self.assertEqual(replay.status_code, 404, replay.text)
+
+    def test_handoff_link_mint_cap_degrades_gracefully(self) -> None:
+        for _ in range(10):
+            minted = self.client.post(
+                "/oauth/handoff/visit",
+                json={"query": "state=x"},
+                headers=_bearer(self.jwt_a),
+            )
+            self.assertEqual(minted.status_code, 200, minted.text)
+        over = self.client.post(
+            "/oauth/handoff/visit",
+            json={"query": "state=x"},
+            headers=_bearer(self.jwt_a),
+        )
+        self.assertEqual(over.status_code, 400, over.text)
+        self.assertEqual(over.json()["error"], "slow_down")
+        # The consent approve still succeeds at the cap — just without the
+        # short link.
+        registration = self._register(grants=["authorization_code"])
+        body = self._handoff_approve(registration)
+        self.assertNotIn("go_token", body)
+        self.assertIn("code_status", body)
+
     def test_refresh_rotation_revokes_predecessor_and_replay_fails(self) -> None:
         registration, first = self._mint_oauth_tokens()
         refreshed = self.client.post(

@@ -20,9 +20,9 @@ root. Each client gets a thin adapter on top of the same `bin/`, `skills/`, and
 `agents/` content:
 
 When a client runs on a remote machine whose loopback browser callback is not
-reachable, its normal sign-in still works: the consent page asks where the
-agent is running, and the **On another machine** answer replaces the redirect
-with one command to copy into that machine's terminal. Every client keeps
+reachable, its normal sign-in still works: the consent page's *on another
+machine* link replaces the redirect with one short typeable command for that
+machine's terminal. Every client keeps
 its native OAuth flow with nothing installed; see
 [Remote machines](AUTH.md#remote-machines).
 
@@ -497,9 +497,9 @@ Notes:
   `verified_agent_review` status.
 - The generated `merv-client` branch is rebuilt after every `main` update; the
   OpenCode source entrypoint remains under `clients/opencode/` in `main`.
-- On a remote machine over SSH, sign in as usual and choose **On another
-  machine** on the consent page; it hands you one command to run on that
-  machine. Details in [Remote machines](AUTH.md#remote-machines).
+- On a remote machine over SSH, sign in as usual and use the consent page's
+  *on another machine* link; it hands you one short command for that machine.
+  Details in [Remote machines](AUTH.md#remote-machines).
 
 ## Use with Kilo
 
@@ -533,9 +533,9 @@ Notes:
   install.
 - The current unified Kilo CLI is required. If `kilo plugin` is unavailable,
   update Kilo before installing Merv.
-- On a remote machine over SSH, sign in as usual and choose **On another
-  machine** on the consent page; it hands you one command to run on that
-  machine. Details in [Remote machines](AUTH.md#remote-machines).
+- On a remote machine over SSH, sign in as usual and use the consent page's
+  *on another machine* link; it hands you one short command for that machine.
+  Details in [Remote machines](AUTH.md#remote-machines).
 
 ## Use with Hermes Agent
 

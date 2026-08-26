@@ -13,9 +13,9 @@ No repository checkout or Merv key is required. Kilo checks the catalog at the
 start of each session. Use `/reload` to pick up a published skill change in an
 already-running session.
 
-On a remote machine over SSH, sign in as usual and choose **On another
-machine** when the consent page asks where the agent is running — it hands
-you one command to run on that machine. See
+On a remote machine over SSH, sign in as usual and use the consent page's
+*on another machine* link — it hands you one short command to type on that
+machine. See
 [Remote machines](https://github.com/rapidreview-io/Merv/blob/main/merv/docs/AUTH.md#remote-machines).
 
 `build_catalog.py` builds the catalog from the canonical `merv/skills/` tree.

@@ -6171,11 +6171,25 @@ a.spend-row-name:hover { color: var(--active); }
 .oauth-scope-choice input { margin-top: 3px; }
 .oauth-scope-choice strong { display: block; font-size: var(--text-sm); }
 .oauth-scope-detail { display: block; margin-top: 2px; font-size: var(--text-xs); color: var(--muted); }
-.oauth-location-question { margin-top: 4px; }
 .oauth-handoff-alt { display: flex; align-items: center; gap: 10px; }
 .oauth-handoff-alt .btn { flex-shrink: 0; }
+.oauth-handoff-url { overflow-wrap: anywhere; }
 .oauth-pickup-pending { color: var(--muted); }
 .oauth-pickup-done { color: var(--supports); font-weight: 500; }
+/* The remote-machine path is a quiet link, not a peer decision: most
+   sign-ins are local and should read exactly like they always did. */
+.oauth-remote-link {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--muted); font-size: var(--text-xs);
+  text-decoration: underline; text-underline-offset: 2px;
+  text-align: left; align-self: flex-start;
+}
+.oauth-remote-link:hover { color: var(--text); }
+.oauth-remote-link--inline { display: inline; }
+.oauth-remote-note { margin: 0; color: var(--muted); font-size: var(--text-xs); line-height: 1.5; }
+.oauth-go-code { font-family: var(--font-mono); font-size: var(--text-md); letter-spacing: 0.08em; color: var(--text); }
+.oauth-go-form { display: flex; gap: 8px; }
+.oauth-go-input { flex: 1; font-family: var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
 
 /* --- PROVIDER CONFIGURE (Settings > Compute) --------------------------- */
 .sbxp-lede {

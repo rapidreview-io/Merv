@@ -23,6 +23,11 @@ AUTHORIZATION_CODE_TTL_SECONDS = 60
 # paste on the remote host), so it gets the RFC 6749 §4.1.2 maximum instead of
 # the redirect budget. Still single-use and PKCE-bound.
 HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS = 10 * 60
+# Short single-use handoff links: the typeable curl target that finishes a
+# remote sign-in and the phone pickup code for a pending consent. Same code
+# space as device/runner user codes (32^8 = 2^40), same ten-minute budget.
+HANDOFF_LINK_TTL_SECONDS = 10 * 60
+HANDOFF_LINK_CREATE_PER_IP_PER_MINUTE = 10
 ACCESS_TOKEN_TTL_SECONDS = 3600
 REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
 # RFC 8628 device authorization: the lane for a client whose loopback no
@@ -105,6 +110,17 @@ class AuthorizationCode:
 
 
 @dataclass(frozen=True, slots=True)
+class HandoffLink:
+    token_digest: str
+    kind: str
+    payload: str
+    client_ip: str
+    created_at: str
+    expires_at: str
+    consumed_at: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class RefreshToken:
     id: str
     family_id: str
@@ -147,6 +163,11 @@ class OAuthRepository(Protocol):
     def insert_code(self, *, code: AuthorizationCode) -> None: ...
     def code_by_digest(self, *, digest: str) -> AuthorizationCode | None: ...
     def consume_code(self, *, digest: str, consumed_at: str) -> bool: ...
+    def insert_handoff_link(self, *, link: HandoffLink) -> None: ...
+    def consume_handoff_link(
+        self, *, digest: str, kind: str, consumed_at: str
+    ) -> str | None: ...
+    def recent_handoff_links(self, *, client_ip: str, since: str) -> int: ...
     def insert_refresh_token(self, *, token: RefreshToken) -> None: ...
     def refresh_token_by_digest(self, *, digest: str) -> RefreshToken | None: ...
     def consume_refresh_token(self, *, token_id: str, consumed_at: str) -> bool: ...
@@ -185,6 +206,8 @@ class OAuthControl(Protocol):
     def authorization_details(self, **kwargs: object) -> dict[str, Any]: ...
     def authorize(self, **kwargs: object) -> str: ...
     def authorization_status(self, **kwargs: object) -> str: ...
+    def mint_handoff_link(self, **kwargs: object) -> str: ...
+    def consume_handoff_link(self, **kwargs: object) -> str | None: ...
     def exchange_code(self, **kwargs: object) -> dict[str, Any]: ...
     def refresh(self, **kwargs: object) -> dict[str, Any]: ...
     def device_authorization(self, **kwargs: object) -> dict[str, Any]: ...
@@ -405,6 +428,56 @@ class OAuthService:
         if _expired(code.expires_at):
             return "expired"
         return "pending"
+
+    def mint_handoff_link(
+        self, *, kind: str, payload: str, client_ip: str
+    ) -> str:
+        """Mint a short single-use link token; display form ``AB12-CD34``.
+
+        Raises ``slow_down`` at the per-IP mint cap so a caller minting on
+        the user's behalf (the consent approve) can degrade to the full
+        command instead of failing the approval.
+        """
+        if kind not in ("deliver", "visit"):
+            raise OAuthError("invalid_request", "unknown handoff link kind")
+        ip = str(client_ip or "").strip()[:64]
+        window_start = iso_after(seconds=-60)
+        if (
+            self._repository.recent_handoff_links(client_ip=ip, since=window_start)
+            >= HANDOFF_LINK_CREATE_PER_IP_PER_MINUTE
+        ):
+            raise OAuthError("slow_down", "too many handoff links; retry shortly")
+        token = "".join(
+            secrets.choice(USER_CODE_ALPHABET) for _ in range(USER_CODE_LENGTH)
+        )
+        self._repository.insert_handoff_link(
+            link=HandoffLink(
+                token_digest=hash_secret(token),
+                kind=kind,
+                payload=payload,
+                client_ip=ip,
+                created_at=now_iso(),
+                expires_at=iso_after(seconds=HANDOFF_LINK_TTL_SECONDS),
+                consumed_at=None,
+            )
+        )
+        return format_user_code(token)
+
+    def consume_handoff_link(self, *, kind: str, token: str) -> str | None:
+        """One-shot payload pickup; forgiving of dashes, case, and O/I slips."""
+        text = "".join(
+            character
+            for character in str(token or "").upper()
+            if character not in " -_"
+        )
+        text = text.replace("I", "1").replace("L", "1").replace("O", "0")
+        if len(text) != USER_CODE_LENGTH or any(
+            c not in USER_CODE_ALPHABET for c in text
+        ):
+            return None
+        return self._repository.consume_handoff_link(
+            digest=hash_secret(text), kind=kind, consumed_at=now_iso()
+        )
 
     def exchange_code(
         self, *, form: dict[str, str], canonical_resource: str
@@ -954,6 +1027,8 @@ __all__ = [
     "DEVICE_POLL_INTERVAL_SECONDS",
     "DeviceGrant",
     "HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS",
+    "HANDOFF_LINK_TTL_SECONDS",
+    "HandoffLink",
     "OAuthControl",
     "OAuthError",
     "OAuthService",

@@ -84,9 +84,8 @@ keys are documented separately for headless runners and CI in
 [docs/AUTH.md](docs/AUTH.md#when-a-static-key-is-still-required).
 
 On an SSH VM where the client's loopback browser callback cannot be reached,
-keep OAuth: sign in as usual, choose **On another machine** when the consent
-page asks where the agent is running, and run the one command it shows on
-that machine. Nothing is installed and every client keeps its native flow.
+keep OAuth: sign in as usual, use the consent page's *on another machine*
+link, and type the short command it shows on that machine. Nothing is installed and every client keeps its native flow.
 See [Remote machines](docs/AUTH.md#remote-machines).
 
 ### Hermes Agent

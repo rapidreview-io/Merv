@@ -118,9 +118,9 @@ kilo mcp auth merv
 ```
 
 Skills update when a new session starts. Run `/reload` to update the current
-session. On a remote machine over SSH, sign in as usual and choose **On
-another machine** when the consent page asks where the agent is running —
-see [Remote machines](merv/docs/AUTH.md#remote-machines).
+session. On a remote machine over SSH, sign in as usual and use the consent page's *on another machine* link —
+you'll type one short command on that machine. See
+[Remote machines](merv/docs/AUTH.md#remote-machines).
 
 ### Hermes Agent
 
@@ -140,15 +140,15 @@ opencode mcp auth merv
 
 Skills update automatically when a session starts. Rerun the install command
 when Merv announces an adapter update. On a remote machine over SSH, sign in
-as usual and choose **On another machine** when the consent page asks where
-the agent is running — see
+as usual and use the consent page's *on another machine* link — you'll type
+one short command on that machine. See
 [Remote machines](merv/docs/AUTH.md#remote-machines).
 
 ### Any client on a remote machine
 
 Every client's normal Merv sign-in works from a VM: open the printed URL in
-any browser, choose **On another machine** on the consent page, and run the
-one command it shows on that machine. The client stores and refreshes its
+any browser, use the consent page's *on another machine* link, and type the
+short command it shows on that machine. The client stores and refreshes its
 own OAuth grant; nothing is installed and no key is created or copied. See
 [Remote machines](merv/docs/AUTH.md#remote-machines).
 
