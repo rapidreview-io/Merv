@@ -106,14 +106,23 @@ boundary.
 ### Remote machines
 
 Start the client's normal Merv sign-in and open the printed URL in any
-browser. The consent page asks where the agent is running; choose **On
-another machine**, approve, and copy the one command it shows into that
-machine's terminal (or paste the URL, if the client's terminal is prompting
-for one). The command delivers the approval to the waiting client, which
-stores and refreshes its own OAuth grant as usual — nothing is installed,
-no tunnel is opened, and no key is minted or copied. The page confirms with
-"Connected" once the client picks the approval up; hand-carried approvals
-stay valid for ten minutes.
+browser. On the consent page, use the *on another machine* link (a phone
+skips this — it is always treated as approving for another machine),
+approve, and type the short command the page shows into a terminal on that
+machine:
+
+```bash
+curl -L 'https://rapidreview.io/merv/go/AB12-CD34'
+```
+
+That delivers the approval to the waiting client, which stores and
+refreshes its own OAuth grant as usual — nothing is installed, no tunnel is
+opened, and no key is minted or copied. Clients whose terminal prompts for
+a URL paste (Claude Code) get that URL as the first instruction instead.
+The page confirms with "Connected" once the client picks the approval up.
+To approve from your phone, use the consent page's *approve on my phone*
+link and enter the shown code at rapidreview.io/merv/go. Links and
+approvals are single-use and stay valid for ten minutes.
 
 ## When a static key is still required
 

@@ -51,9 +51,9 @@ The bundled MCP entry contains only
 Merv's OAuth endpoints, opens the browser, stores the token, and refreshes it.
 The user never sees or mints the underlying credential.
 
-On a remote machine over SSH, sign in as usual and choose **On another
-machine** when the consent page asks where the agent is running — it hands
-you one command to run on that machine, and nothing else is installed.
+On a remote machine over SSH, sign in as usual and use the consent page's
+*on another machine* link — it hands you one short command to type on that
+machine, and nothing else is installed.
 Details in [AUTH.md](AUTH.md#remote-machines).
 
 Enable RapidReview marketplace auto-update once in Claude's `/plugin` screen.

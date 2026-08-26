@@ -1,26 +1,45 @@
 import { useEffect, useState } from 'react';
-import { api, request } from '../api';
+import { api, request, mcpEndpoint } from '../api';
 
 const ACCOUNT = 'account';
 const PROJECT = 'project';
-const LOCAL = 'local';
-const REMOTE = 'remote';
 const PICKUP_POLL_MS = 3000;
+
+// A coarse pointer means a phone or tablet — never the machine the agent
+// runs on, so those visitors skip the location question entirely.
+const COARSE_POINTER =
+  typeof window !== 'undefined' &&
+  Boolean(window.matchMedia?.('(pointer: coarse)')?.matches);
+
+function brainOrigin() {
+  return mcpEndpoint().replace(/\/mcp$/, '');
+}
+
+// The typeable command target: the pretty /merv/go path exists where the
+// site's rewrites front the brain (production); everywhere else the brain's
+// own endpoint is the accurate address.
+function goUrl(token) {
+  if (window.location.origin === 'https://rapidreview.io') {
+    return `https://rapidreview.io/merv/go/${token}`;
+  }
+  return `${brainOrigin()}/oauth/handoff/${token}`;
+}
 
 export default function OAuthConsent() {
   const [state, setState] = useState({ loading: true, client: null, projects: [], error: '' });
   // Reaching every project is the common case; one project is the opt-in.
   const [grantScope, setGrantScope] = useState(ACCOUNT);
   const [projectId, setProjectId] = useState('');
-  // Same machine is the common case; the remote card is the opt-in that
-  // swaps the final redirect for a hand-carried command.
-  const [location, setLocation] = useState(LOCAL);
+  // Local is the common case, so remote is a quiet link, not a peer choice —
+  // except on a phone, which is never the agent's machine.
+  const [remote, setRemote] = useState(COARSE_POINTER);
   const [busy, setBusy] = useState(false);
-  // Set once a remote-machine decision completes: {url, digest} after
-  // approve, {denied: true} after cancel. Local decisions navigate away
-  // instead and never reach this state.
+  // {url, digest, goToken} after a remote approve; {denied: true} after a
+  // remote cancel. Local decisions navigate away instead.
   const [handoff, setHandoff] = useState(null);
   const [pickup, setPickup] = useState('pending');
+  // The short code a phone can type at /go to pick this consent up.
+  const [phoneCode, setPhoneCode] = useState('');
 
   useEffect(() => {
     let disposed = false;
@@ -84,7 +103,6 @@ export default function OAuthConsent() {
 
   const decide = async (decision) => {
     if (decision === 'approve' && !canApprove) return;
-    const remote = location === REMOTE;
     if (remote && decision === 'deny') {
       // Nothing reachable to redirect to: the agent's listener is on another
       // machine and it simply times out. Just say what happened.
@@ -106,7 +124,11 @@ export default function OAuthConsent() {
         },
       });
       if (remote) {
-        setHandoff({ url: result.redirect_to, digest: result.code_status || '' });
+        setHandoff({
+          url: result.redirect_to,
+          digest: result.code_status || '',
+          goToken: result.go_token || '',
+        });
         setBusy(false);
         return;
       }
@@ -117,6 +139,21 @@ export default function OAuthConsent() {
         error: error.message || 'Could not complete authorization.',
       }));
       setBusy(false);
+    }
+  };
+
+  const mintPhoneCode = async () => {
+    try {
+      const result = await request('/oauth/handoff/visit', {
+        method: 'POST',
+        body: { query: window.location.search.replace(/^\?/, '') },
+      });
+      setPhoneCode(result.code);
+    } catch (error) {
+      setState(current => ({
+        ...current,
+        error: error.message || 'Could not create a phone code.',
+      }));
     }
   };
 
@@ -142,6 +179,7 @@ export default function OAuthConsent() {
       <HandoffScreen
         clientName={state.client.client_name}
         url={handoff.url}
+        goToken={handoff.goToken}
         pickup={handoff.digest ? pickup : ''}
       />
     );
@@ -196,25 +234,56 @@ export default function OAuthConsent() {
           Create a project before connecting a client.
         </p>
       )}
-      <p className="auth-modal-sub oauth-location-question">
-        Where is {state.client.client_name} running?
-      </p>
-      <div className="oauth-scope-choices">
-        <LocationChoice
-          checked={location === LOCAL}
+      {COARSE_POINTER && (
+        <p className="oauth-remote-note">
+          Approving from this device — after you approve, you'll get one short
+          command for the machine where {state.client.client_name} is running.
+        </p>
+      )}
+      {!COARSE_POINTER && !remote && (
+        <button
+          type="button"
+          className="oauth-remote-link"
           disabled={busy}
-          onSelect={() => setLocation(LOCAL)}
-          title="On this computer"
-          detail="The usual sign-in — your browser finishes the connection by itself."
-        />
-        <LocationChoice
-          checked={location === REMOTE}
-          disabled={busy}
-          onSelect={() => setLocation(REMOTE)}
-          title="On another machine"
-          detail="An SSH session, VM, or cloud box. You'll copy one command over to finish."
-        />
-      </div>
+          onClick={() => setRemote(true)}
+        >
+          Is {state.client.client_name} on another machine (SSH, VM, cloud)?
+        </button>
+      )}
+      {!COARSE_POINTER && remote && (
+        <p className="oauth-remote-note">
+          Remote machine: after you approve, you'll get one short command to
+          run there.{' '}
+          <button
+            type="button"
+            className="oauth-remote-link oauth-remote-link--inline"
+            disabled={busy}
+            onClick={() => { setRemote(false); setPhoneCode(''); }}
+          >
+            It's on this computer
+          </button>
+          {!phoneCode && (
+            <>
+              {' · '}
+              <button
+                type="button"
+                className="oauth-remote-link oauth-remote-link--inline"
+                disabled={busy}
+                onClick={mintPhoneCode}
+              >
+                Approve on my phone instead
+              </button>
+            </>
+          )}
+        </p>
+      )}
+      {remote && phoneCode && (
+        <p className="oauth-remote-note">
+          On your phone, open <strong>{window.location.host}{'/merv/go'}</strong>{' '}
+          and enter <strong className="oauth-go-code">{phoneCode}</strong> —
+          then finish the approval there.
+        </p>
+      )}
       <p className="oauth-consent-resource">Resource: {state.client.resource}</p>
       {state.error && <p className="oauth-consent-error">{state.error}</p>}
       <div className="oauth-consent-actions">
@@ -234,9 +303,12 @@ export default function OAuthConsent() {
   );
 }
 
-export function HandoffScreen({ clientName, url, pickup }) {
+export function HandoffScreen({ clientName, url, goToken, pickup }) {
   const [copied, setCopied] = useState('');
-  const command = `curl '${url}'`;
+  const [showFull, setShowFull] = useState(false);
+  const fullCommand = `curl '${url}'`;
+  const shortCommand = goToken ? `curl -L '${goUrl(goToken)}'` : '';
+  const pasteFirst = /claude/i.test(clientName || '');
   const copy = async (id, text) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -246,26 +318,60 @@ export function HandoffScreen({ clientName, url, pickup }) {
       setCopied('');
     }
   };
+  const commandRow = (id, text) => (
+    <div className="arun-command">
+      <code className="mono">{text}</code>
+      <button type="button" className="btn btn--ghost btn--sm" onClick={() => copy(id, text)}>
+        {copied === id ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  );
   return (
     <ConsentFrame>
       <h2 className="auth-modal-title">One step left</h2>
-      <p className="auth-modal-sub">
-        Open a <strong>second terminal</strong> on the machine where
-        {' '}{clientName} is running — the sign-in is still waiting in the
-        first one — and run:
-      </p>
-      <div className="arun-command">
-        <code className="mono">{command}</code>
-        <button type="button" className="btn btn--ghost btn--sm" onClick={() => copy('curl', command)}>
-          {copied === 'curl' ? 'Copied' : 'Copy'}
-        </button>
-      </div>
-      <p className="oauth-consent-resource oauth-handoff-alt">
-        <span>Terminal asking you to paste a URL instead?</span>
-        <button type="button" className="btn btn--ghost btn--sm" onClick={() => copy('url', url)}>
-          {copied === 'url' ? 'Copied' : 'Copy URL'}
-        </button>
-      </p>
+      {pasteFirst ? (
+        <>
+          <p className="auth-modal-sub">
+            The waiting {clientName} terminal is asking for a URL — paste this
+            one there:
+          </p>
+          <div className="arun-command">
+            <code className="mono oauth-handoff-url">{url}</code>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => copy('url', url)}>
+              {copied === 'url' ? 'Copied' : 'Copy URL'}
+            </button>
+          </div>
+          {shortCommand && (
+            <p className="oauth-consent-resource oauth-handoff-alt">
+              <span>No paste prompt? In a second terminal on that machine, run
+              {' '}<code className="mono">{shortCommand}</code></span>
+              <button type="button" className="btn btn--ghost btn--sm" onClick={() => copy('go', shortCommand)}>
+                {copied === 'go' ? 'Copied' : 'Copy'}
+              </button>
+            </p>
+          )}
+        </>
+      ) : (
+        <>
+          <p className="auth-modal-sub">
+            In a <strong>second terminal</strong> on the machine where
+            {' '}{clientName} is waiting, type or paste:
+          </p>
+          {commandRow('go', shortCommand || fullCommand)}
+          <p className="oauth-consent-resource oauth-handoff-alt">
+            <span>Terminal asking you to paste a URL instead?</span>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => copy('url', url)}>
+              {copied === 'url' ? 'Copied' : 'Copy URL'}
+            </button>
+          </p>
+          {shortCommand && !showFull && (
+            <button type="button" className="oauth-remote-link" onClick={() => setShowFull(true)}>
+              Show the full command (no https needed on that machine)
+            </button>
+          )}
+          {shortCommand && showFull && commandRow('curl', fullCommand)}
+        </>
+      )}
       {pickup === 'pending' && (
         <p className="auth-modal-sub oauth-pickup-pending">Waiting for {clientName} to pick this up…</p>
       )}
@@ -284,22 +390,10 @@ export function HandoffScreen({ clientName, url, pickup }) {
 
 export function ScopeChoice({ checked, disabled, onSelect, title, detail }) {
   return (
-    <Choice name="grant_scope" checked={checked} disabled={disabled} onSelect={onSelect} title={title} detail={detail} />
-  );
-}
-
-function LocationChoice({ checked, disabled, onSelect, title, detail }) {
-  return (
-    <Choice name="agent_location" checked={checked} disabled={disabled} onSelect={onSelect} title={title} detail={detail} />
-  );
-}
-
-function Choice({ name, checked, disabled, onSelect, title, detail }) {
-  return (
     <label className={`oauth-scope-choice${checked ? ' is-selected' : ''}`}>
       <input
         type="radio"
-        name={name}
+        name="grant_scope"
         checked={checked}
         disabled={disabled}
         onChange={onSelect}

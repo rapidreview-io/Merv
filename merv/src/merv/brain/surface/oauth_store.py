@@ -28,6 +28,7 @@ from .oauth import (
     UNUSED_CLIENT_TTL_DAYS_ENV_VAR,
     AuthorizationCode,
     DeviceGrant,
+    HandoffLink,
     OAuthClient,
     OAuthError,
     RefreshToken,
@@ -346,6 +347,70 @@ class SqlOAuthRepository:
                 (consumed_at, digest),
             )
         return True
+
+    def insert_handoff_link(self, *, link: HandoffLink) -> None:
+        with self._store.transaction() as conn:
+            # Opportunistic sweep: expired links leave with each mint, so the
+            # table stays bounded without an external timer.
+            conn.execute(
+                """
+                DELETE FROM oauth_handoff_links WHERE token_digest IN (
+                    SELECT token_digest FROM oauth_handoff_links
+                    WHERE expires_at <= ? LIMIT 100
+                )
+                """,
+                (link.created_at,),
+            )
+            conn.execute(
+                """
+                INSERT INTO oauth_handoff_links
+                  (token_digest, kind, payload, client_ip,
+                   created_at, expires_at, consumed_at)
+                VALUES (?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    link.token_digest,
+                    link.kind,
+                    link.payload,
+                    link.client_ip,
+                    link.created_at,
+                    link.expires_at,
+                ),
+            )
+
+    def consume_handoff_link(
+        self, *, digest: str, kind: str, consumed_at: str
+    ) -> str | None:
+        with self._store.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT payload FROM oauth_handoff_links
+                WHERE token_digest = ? AND kind = ?
+                  AND consumed_at IS NULL AND expires_at > ?
+                """,
+                (digest, kind, consumed_at),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                """
+                UPDATE oauth_handoff_links SET consumed_at = ?
+                WHERE token_digest = ? AND consumed_at IS NULL
+                """,
+                (consumed_at, digest),
+            )
+        return str(row["payload"])
+
+    def recent_handoff_links(self, *, client_ip: str, since: str) -> int:
+        with self._store.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS n FROM oauth_handoff_links
+                WHERE client_ip = ? AND created_at > ?
+                """,
+                (client_ip, since),
+            ).fetchone()
+        return int(row["n"])
 
     def insert_refresh_token(self, *, token: RefreshToken) -> None:
         with self._store.transaction() as conn:
