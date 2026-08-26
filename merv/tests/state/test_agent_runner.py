@@ -315,7 +315,8 @@ class AgentHostTest(unittest.TestCase):
                 "/opt/codex",
                 "exec",
                 "--ignore-user-config",
-                "--full-auto",
+                "--sandbox",
+                "workspace-write",
                 "--json",
                 "-c",
                 "sandbox_workspace_write.network_access=true",
@@ -325,6 +326,16 @@ class AgentHostTest(unittest.TestCase):
                 'model_reasoning_effort="high"',
                 "-",
             ],
+        )
+
+        # Codex removed ``--full-auto`` in favor of an explicit sandbox mode.
+        # Keep the runner on the supported spelling so a test call reaches the
+        # model instead of dying in argument parsing.
+        codex_command = CodexHost().command_for(codex)
+        self.assertNotIn("--full-auto", codex_command)
+        self.assertEqual(
+            codex_command[codex_command.index("--sandbox") + 1],
+            "workspace-write",
         )
         codex_session = [
             "-c",
