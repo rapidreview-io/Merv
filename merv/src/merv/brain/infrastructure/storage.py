@@ -11,6 +11,7 @@ import base64
 import hashlib
 import json
 import math
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -35,8 +36,11 @@ class UnconfiguredBlobStore:
         raise InfrastructureUnavailableError("configure merv-sandboxes to delete evidence")
 
 
-def _encode_upload(namespace: str, object_id: str) -> str:
-    payload = json.dumps([namespace, object_id], separators=(",", ":")).encode()
+def _encode_upload(namespace: str, object_id: str, *, row_id: str | None = None) -> str:
+    identity = [namespace, object_id]
+    if row_id is not None:
+        identity.append(row_id)
+    payload = json.dumps(identity, separators=(",", ":")).encode()
     return "msbx_" + base64.urlsafe_b64encode(payload).decode().rstrip("=")
 
 
@@ -45,7 +49,15 @@ def _decode_upload(upload_id: str) -> tuple[str, str]:
         if not upload_id.startswith("msbx_") or len(upload_id) > 512:
             raise ValueError
         raw = upload_id[5:]
-        namespace, object_id = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        identity = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        if not isinstance(identity, list) or len(identity) not in {2, 3}:
+            raise ValueError
+        namespace, object_id = identity[:2]
+        if len(identity) == 3 and (
+            not isinstance(identity[2], str)
+            or not re.fullmatch(r"sto_[A-Za-z0-9_]{1,128}", identity[2])
+        ):
+            raise ValueError
         validate_blob_keys(namespace=namespace)
         if not isinstance(object_id, str) or not object_id.startswith("obj_"):
             raise ValueError
@@ -121,7 +133,11 @@ class RemoteObjectProvider:
         namespace, object_id = _decode_upload(upload_id)
         status = self.client.request("GET", f"/storage/objects/{object_id}/upload",
                                      namespace=self._namespace(namespace))
-        return self._target(namespace=namespace, status=status)
+        target = self._target(namespace=namespace, status=status)
+        # Several historical ledger rows can share one native content object.
+        # Their row-specific completion handles must survive URL refreshes.
+        target["upload_id"] = upload_id
+        return target
 
     def complete_upload(self, *, upload_id: str, parts: Any = None) -> ObjectStat:
         namespace, object_id = _decode_upload(upload_id)
