@@ -228,10 +228,10 @@ class RemoteSandboxesTest(unittest.TestCase):
 
     def test_provider_credentials_are_remote_only_and_policy_remains_editable(self):
         providers = RemoteProviders(client=self.client, store=self.store)
-        entry = providers.set_credentials(project_id="p1", provider="cloud", values={"api_key": "secret-value"})
+        entry = providers.set_credentials(project_id="p1", provider="cloud-own", values={"api_key": "secret-value"})
         self.assertTrue(entry["setup_complete"])
         self.assertNotIn("secret-value", str(providers.overview(project_id="p1")))
-        self.assertTrue(providers.verify(project_id="p1", provider="cloud")["ok"])
+        self.assertTrue(providers.verify(project_id="p1", provider="cloud-own")["ok"])
         self.assertEqual(providers.set_daily_limit(project_id="p1", provider="cloud", daily_usd_limit=10)["daily_usd_limit"], 10)
         self.assertFalse(providers.set_enabled(project_id="p1", provider="cloud", enabled=False)["enabled"])
         with self.store.connect() as conn:

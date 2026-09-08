@@ -9,9 +9,9 @@ import ProviderIcon from './ProviderIcon';
  * One data point per step: each screen collects a single credential field
  * with instructions for retrieving it (help text comes from the backend
  * catalog, so the flow is provider-specific without the UI knowing any
- * provider). Providers with platform credentials (Lambda Labs by default)
- * open with a choice: use the deployment's shared credentials, or supply
- * your own. The wizard ends by saving and then verifying access with a real
+ * provider). Shared deployment connections have separate cards; personal
+ * credentials use their own connection name. The wizard ends by saving and
+ * then verifying access with a real
  * provider API call; only then does it offer the agent-facing enable switch
  * and the optional daily spend cap.
  */

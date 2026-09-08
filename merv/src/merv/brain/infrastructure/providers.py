@@ -25,7 +25,8 @@ class RemoteProviders:
         return self.client.request(method, path, namespace=project_namespace(pid), **kwargs)
 
     @staticmethod
-    def _entry(plugin: dict[str, Any], instance: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _entry(plugin: dict[str, Any], instance: dict[str, Any] | None = None,
+               *, provider_name: str | None = None) -> dict[str, Any]:
         instance = instance or {}
         configured = bool(instance)
         health = instance.get("health") or {}
@@ -37,9 +38,10 @@ class RemoteProviders:
                    "set": False, "value": "", "placeholder": ""}
                   for field in plugin.get("credential_fields", [])]
         source = instance.get("source")
+        name = instance.get("name") or provider_name or plugin["name"]
         return {
-            "provider": instance.get("name") or plugin["name"], "plugin": plugin["name"],
-            "label": (instance.get("name") or plugin["name"]).replace("_", " ").replace("-", " ").title(),
+            "provider": name, "plugin": plugin["name"],
+            "label": name.replace("_", " ").replace("-", " ").title(),
             "note": plugin.get("help", ""), "console_url": plugin.get("docs_url", ""),
             "fields": fields, "enabled": configured, "connected": configured,
             "setup_complete": configured, "env_configured": source == "host",
@@ -50,6 +52,7 @@ class RemoteProviders:
             "in_env_fleet": configured, "fleet_default": False, "updated_at": "",
             "health": health, "supports_enabled_toggle": True, "supports_daily_limit": True,
             "can_disconnect": configured and source != "host",
+            "can_edit_connection": source != "host",
             "credentials_replace": True, "infrastructure": "merv-sandboxes",
         }
 
@@ -65,6 +68,15 @@ class RemoteProviders:
                 for instance in instances]
         used = {instance["plugin"] for instance in instances}
         rows.extend(self._entry(plugin) for name, plugin in plugins.items() if name not in used)
+        # Host connections cannot be replaced or shadowed by namespace
+        # credentials. Offer a distinct personal alias for those clouds.
+        host_plugins = {instance["plugin"] for instance in instances if instance.get("source") == "host"}
+        own_plugins = {instance["plugin"] for instance in instances if instance.get("source") != "host"}
+        names = {instance["name"] for instance in instances}
+        for name in sorted(host_plugins - own_plugins):
+            alias = name + "-own"
+            if alias not in names:
+                rows.append(self._entry(plugins.get(name, {"name": name}), provider_name=alias))
         saved = {row["provider"]: row for row in self._store.list_sandbox_provider_settings(project_id=project_id)}
         for entry in rows:
             policy = saved.get(self._policy_provider(entry))
@@ -89,6 +101,8 @@ class RemoteProviders:
         entry = self._find(project_id=project_id, provider=provider)
         if mode == "platform" and entry["platform_available"]:
             return entry
+        if not entry["can_edit_connection"]:
+            raise ValidationError("shared provider credentials are managed by infrastructure; set up the personal connection to use your own account")
         if mode not in {None, "own"}:
             raise ValidationError("provider credentials are configured in merv-sandboxes; supply the complete credential fields")
         values = values or {}

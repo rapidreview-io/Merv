@@ -1,8 +1,9 @@
 """Authenticated, namespace-scoped transport to merv-sandboxes.
 
 Merv signs short-lived service credentials only after its own project access
-checks. Provider secrets, VM access keys, and object-store credentials never
-enter this process.
+checks. Provider secrets submitted by the setup UI are forwarded to the native
+vault and never persisted or read back; VM and object-store credentials remain
+in the infrastructure deployment.
 """
 
 from __future__ import annotations

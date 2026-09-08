@@ -153,9 +153,11 @@ function ProviderCard({ projectId, provider, onUpdated, onReload, onSetup }) {
                 {busy ? 'Disconnecting…' : 'Disconnect'}
               </button>
             )}
-            <button type="button" className="sbxp-expand" onClick={() => onSetup(p)}>
-              edit connection
-            </button>
+            {p.can_edit_connection !== false && (
+              <button type="button" className="sbxp-expand" onClick={() => onSetup(p)}>
+                edit connection
+              </button>
+            )}
           </>
         ) : (
           <button type="button" className="sbxp-setup" onClick={() => onSetup(p)}>
@@ -184,12 +186,8 @@ export default function ProviderConfig({ projectId }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const onUpdated = (entry) => {
-    setOverview((prev) => prev && {
-      ...prev,
-      providers: prev.providers.map((p) => (p.provider === entry.provider ? entry : p)),
-    });
-  };
+  // Shared and personal connections use the same cloud's project policy.
+  const onUpdated = load;
 
   if (error) return <div className="error-message">{error}</div>;
   if (!overview) return <div className="empty">Loading…</div>;
