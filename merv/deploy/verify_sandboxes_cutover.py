@@ -134,6 +134,11 @@ def research_inventory(args: argparse.Namespace) -> tuple[list[dict[str, Any]], 
             FROM storage_objects WHERE status='available'
             ORDER BY project_id,size_bytes,id)
             SELECT * FROM candidates ORDER BY project_id LIMIT %s""", (args.heavy_samples,)).fetchall()
+        # Exercise a retained large R2 object as well as the small full-hash
+        # samples. verify_history limits this transfer to a 1 MiB range.
+        heavy += conn.execute("""SELECT id,project_id,namespace,content_sha256,size_bytes
+            FROM storage_objects WHERE status='available'
+            ORDER BY size_bytes DESC,id LIMIT 1""").fetchall()
         recovered = conn.execute("""SELECT id,project_id,namespace,content_sha256,size_bytes
             FROM storage_objects WHERE status='available' AND project_id=%s ORDER BY size_bytes,id""",
             (args.recovered_project,)).fetchall() if args.recovered_project else []
