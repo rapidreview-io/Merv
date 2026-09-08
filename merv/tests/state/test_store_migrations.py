@@ -96,6 +96,23 @@ class StoreMigrationTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def test_migration_58_adds_remote_links_and_preserves_legacy_history(self) -> None:
+        store = StateStore(db_path=self.db)
+        with store.transaction() as conn:
+            conn.execute("DROP TABLE remote_sandbox_links")
+            conn.execute("DELETE FROM schema_migrations WHERE version = 58")
+            conn.execute("INSERT INTO projects (id,name,created_at) VALUES ('p1','Legacy','2026-09-08')")
+            conn.execute("INSERT INTO sandboxes (sandbox_uid,project_id,status,created_at,updated_at) VALUES ('old','p1','terminated','2026-09-08','2026-09-08')")
+        upgraded = StateStore(db_path=self.db)
+        with upgraded.transaction() as conn:
+            self.assertEqual(conn.execute("SELECT name FROM schema_migrations WHERE version=58").fetchone()["name"], "add_remote_sandbox_links")
+            self.assertEqual(conn.execute("SELECT status FROM sandboxes WHERE sandbox_uid='old'").fetchone()["status"], "terminated")
+            conn.execute("INSERT INTO remote_sandbox_links (project_id,sandbox_uid,experiment_id,public_key,created_at) VALUES ('p1','native','exp','ssh-public','2026-09-08')")
+        reopened = StateStore(db_path=self.db)
+        with reopened.transaction() as conn:
+            self.assertEqual(conn.execute("SELECT public_key FROM remote_sandbox_links WHERE sandbox_uid='native'").fetchone()["public_key"], "ssh-public")
+            self.assertEqual(conn.execute("SELECT COUNT(*) AS n FROM schema_migrations WHERE version=58").fetchone()["n"], 1)
+
     def _seed_legacy_db(self) -> None:
         conn = sqlite3.connect(self.db)
         try:
