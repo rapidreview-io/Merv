@@ -23,7 +23,7 @@ from merv.brain.kernel.utils import (
     new_id,
     now_iso,
 )
-from merv.brain.object_storage.blobs import LocalDirBlobStore
+from tests.support.blobs import LocalDirBlobStore
 from merv.brain.research_core.association_targets import AssociationTargets
 from merv.shared.markdown_images import MARKDOWN_FIGURE_MAX_BYTES
 

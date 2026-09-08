@@ -40,8 +40,7 @@ from tests.support.brain import TestBrain
 from merv.brain.artifacts import Artifacts
 from merv.brain.feed.persistence import install_feed_schema
 from merv.brain.surface.config import build_state_store, resolve_db_url
-from tests.support.sandbox_backend import FakeSandboxBackend
-from merv.brain.sandbox.quotas import QuotaService
+from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.kernel.state.dialects import (
     PostgresStateStore,
     translate_schema_to_postgres,
@@ -58,9 +57,6 @@ from merv.brain.research_core.experiments import ExperimentService
 from merv.brain.research_core.association_targets import AssociationTargets
 from merv.brain.research_core import Research
 from tests.fakes import FakeBlobStore
-from tests.sandbox.test_sandbox_event_contract import (
-    SandboxStorageEventContractScenarios,
-)
 
 
 CONTAINER = "rp-test-postgres-dialect"
@@ -257,6 +253,7 @@ def _schema_without_project_keys() -> str:
         legacy,
         flags=re.DOTALL,
     )
+    legacy = re.sub(r"CREATE TABLE IF NOT EXISTS agent_runner_pairings \(.*?\n\);\n", "", legacy, flags=re.DOTALL)
     if (
         "CREATE TABLE IF NOT EXISTS project_api_keys" in legacy
         or "REFERENCES project_api_keys" in legacy
@@ -277,6 +274,9 @@ def _schema_without_oauth_tables() -> str:
         "\n",
         SCHEMA,
         flags=re.DOTALL,
+    )
+    legacy = re.sub(
+        r"CREATE TABLE IF NOT EXISTS oauth_(?:handoff_links|device_grants|device_grant_attempts) \(.*?\n\);\n", "", legacy, flags=re.DOTALL
     )
     if legacy == SCHEMA or any(
         table in legacy
@@ -304,12 +304,6 @@ def _schema_without_storage_completion_tokens() -> str:
     return legacy
 
 
-@unittest.skipUnless(HAVE_DOCKER, "docker unavailable")
-class PostgresSandboxStorageEventContractTest(
-    SandboxStorageEventContractScenarios, unittest.TestCase
-):
-    def setUp(self) -> None:
-        self.store = PostgresStateStore(dsn=_reset_database())
 
 
 @unittest.skipUnless(HAVE_DOCKER, "docker unavailable")
@@ -1044,13 +1038,8 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         counts = {
             "tenant_id": "tenant_pg",
             "tool_calls": self.store.tenant_event_count(tenant_id="tenant_pg"),
-            **QuotaService(store=self.store).tenant_generation_counters(
-                tenant_id="tenant_pg"
-            ),
         }
         self.assertEqual(counts["tenant_id"], "tenant_pg")
-        self.assertEqual(counts["sandbox_generations"], 1)
-        self.assertEqual(counts["sandbox_hours"], 2.5)
         self.assertGreaterEqual(counts["tool_calls"], 1)
 
     def test_record_event_returns_exact_persisted_postgres_row(self) -> None:

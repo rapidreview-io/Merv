@@ -9,7 +9,6 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response
-from pydantic import ValidationError as PydanticValidationError
 
 from ....kernel.env import mlflow_suspended
 from ....kernel.request_context import bind_agent
@@ -34,7 +33,7 @@ from ...identity import (
 from ...tools.contracts import TOOL_MANIFEST
 from ...tools.dispatcher import ToolDispatcher
 from ....research_core import Research
-from ....sandbox import SandboxEngine
+from ....infrastructure import RemoteSandboxes as SandboxEngine
 from ..http_policy import (
     AGENT_CONSOLIDATION_SESSION_TOOLS,
     AGENT_EXPERIMENT_SESSION_TOOLS,
@@ -48,7 +47,6 @@ from .shared import (
     RefusalLedger,
     bind_request_principal,
     is_local_origin,
-    ledger_direct_call,
     ledger_refusal,
     ledger_tool_refusal,
     open_hosted_operator_denial,
@@ -580,6 +578,8 @@ class ToolInvocationGateway:
             "sandbox.release",
             "sandbox.runs",
             "sandbox.terminal",
+            "sandbox.run",
+            "sandbox.job",
         }:
             internal_kwargs = {
                 **(internal_kwargs or {}),
@@ -709,6 +709,7 @@ class ToolInvocationGateway:
                 "sandbox.attach",
             }
             and not requested
+            and not (name == "sandbox.job" and experiment_id)
         ):
             raise AgentSessionScopeError(
                 "agent session sandbox calls must identify their experiment",
@@ -773,42 +774,8 @@ class ToolInvocationGateway:
         activity_source: str,
         project_id: str,
     ) -> dict[str, Any]:
-        """Run the pre-flighted call. Both routes write their own ledger row."""
+        """Run the pre-flighted call through the standard dispatcher and ledger."""
         contract, policy, internal_kwargs, call_kwargs = plan
-        if (
-            self.surface.hosted_control
-            and contract is not None
-            and contract.hosted_control_sandbox_lookup
-            and policy is None
-        ):
-            try:
-                request = contract.input_model.model_validate(arguments)
-            except PydanticValidationError as exc:
-                refusal = ValidationError(
-                    "invalid tool arguments",
-                    details={"tool": name, "errors": exc.errors()},
-                )
-                ledger_tool_refusal(
-                    self.ledger,
-                    tool=name,
-                    source=activity_source,
-                    project_id=project_id,
-                    exc=refusal,
-                )
-                raise refusal from exc
-            return ledger_direct_call(
-                self.ledger,
-                tool=name,
-                source=activity_source,
-                project_id=project_id,
-                arguments=arguments,
-                run=lambda: self.sandboxes.get(
-                    experiment_id=request.experiment_id,
-                    project_id=request.project_id,
-                    tenant_id=None,
-                    sandbox_uid=request.sandbox_uid,
-                ),
-            )
         return self.tools.call_tool(
             name=name,
             arguments=arguments,

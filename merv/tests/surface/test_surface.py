@@ -12,11 +12,8 @@ from merv.brain.surface import surface as control_mode
 from merv.brain.surface.config import (
     ALLOW_OPEN_CONTROL_ENV_VAR,
     ALLOWED_ORIGINS_ENV_VAR,
-    BLOB_BUCKET_ENV_VAR,
     CONTROL_RESTRICT_CORS_ENV_VAR,
     DB_URL_ENV_VAR,
-    MGMT_KEY_PATH_ENV_VAR,
-    MGMT_PUBLIC_KEY_ENV_VAR,
     REQUIRE_AGENT_MLFLOW_ENV_VAR,
     REQUIRE_AUTH_ENV_VAR,
     REQUIRE_SANDBOX_BACKEND_ENV_VAR,
@@ -31,12 +28,11 @@ from merv.brain.mlflow.config import (
     MLFLOW_TRACKING_URI_ENV_VAR,
 )
 from merv.brain.mlflow import CentralMlflowService
-from tests.support.sandbox_backend import FakeSandboxBackend, seed_sandbox
+from tests.support.infrastructure import FakeInfrastructureClient, seed_sandbox
 from merv.brain.surface.transport.api import create_fastapi_app
 from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
 from merv.brain.kernel.state import StateStore
-from merv.brain.object_storage.blobs import LocalDirBlobStore
-from merv.brain.sandbox.keys import MountedMgmtKeyStore
+from tests.support.blobs import LocalDirBlobStore
 from merv.brain.kernel.utils import ValidationError
 from merv.brain.kernel.version import CLIENT_VERSION_HEADER
 from merv.shared.client_config import CLIENT_CONFIG_ENV_VAR
@@ -47,8 +43,8 @@ def _mounted_mgmt_key_env(root: Path) -> dict[str, str]:
     key_path.write_text("PRIVATE KEY\n", encoding="utf-8")
     key_path.chmod(0o600)
     return {
-        MGMT_KEY_PATH_ENV_VAR: str(key_path),
-        MGMT_PUBLIC_KEY_ENV_VAR: "ssh-ed25519 AAAAmanaged",
+        "MERV_MGMT_KEY_PATH": str(key_path),
+        "MERV_MGMT_PUBLIC_KEY": "ssh-ed25519 AAAAmanaged",
         # Hosted control keeps no writable state root, so the run-wait signing
         # key is mounted configuration like the management key beside it.
         "MERV_WAIT_SECRET": "hosted-wait-secret-0123456789abcdef",
@@ -72,19 +68,20 @@ class SurfaceTest(unittest.TestCase):
             settings.write_text(
                 '{"features": {"sandbox": false}}', encoding="utf-8"
             )
-            backend = FakeSandboxBackend()
+            backend = FakeInfrastructureClient()
             app = build_control_app(
                 repo_root=root,
                 env={
                     **_mounted_mgmt_key_env(root),
                     CLIENT_CONFIG_ENV_VAR: str(settings),
                 },
-                execution_backend=backend,
+                infrastructure_client=backend,
             )
             self.addCleanup(app.shutdown)
 
             self.assertFalse(app.sandbox_enabled)
-            self.assertEqual(app.sandboxes.health(details=True)["backend"], "disabled")
+            self.assertFalse(app.sandboxes.health(details=True)["ok"])
+            self.assertIsNone(app.sandboxes.client)
             self.assertFalse(
                 any(
                     tool["name"].startswith("sandbox.")
@@ -100,7 +97,7 @@ class SurfaceTest(unittest.TestCase):
             app = build_control_app(
                 repo_root=root,
                 env=_mounted_mgmt_key_env(root),
-                execution_backend=FakeSandboxBackend(),
+                infrastructure_client=FakeInfrastructureClient(),
             )
             self.addCleanup(app.shutdown)
             client = TestClient(
@@ -167,7 +164,7 @@ class SurfaceTest(unittest.TestCase):
             app = build_control_app(
                 repo_root=root,
                 env=_mounted_mgmt_key_env(root),
-                execution_backend=FakeSandboxBackend(),
+                infrastructure_client=FakeInfrastructureClient(),
             )
             self.addCleanup(app.shutdown)
             client = TestClient(
@@ -217,7 +214,7 @@ class SurfaceTest(unittest.TestCase):
             app = build_control_app(
                 repo_root=root,
                 env=_mounted_mgmt_key_env(root),
-                execution_backend=FakeSandboxBackend(),
+                infrastructure_client=FakeInfrastructureClient(),
             )
             self.addCleanup(app.shutdown)
             client = TestClient(
@@ -247,44 +244,8 @@ class SurfaceTest(unittest.TestCase):
                 "http://localhost:5173",
             )
 
-    def test_surface_uses_mounted_management_key_when_configured(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            env = _mounted_mgmt_key_env(root)
-            key_path = Path(env[MGMT_KEY_PATH_ENV_VAR])
-            app = build_control_app(
-                repo_root=root / "staging",
-                env=env,
-                execution_backend=FakeSandboxBackend(),
-            )
-            self.addCleanup(app.shutdown)
 
-            self.assertIsInstance(app.sandboxes._keys, MountedMgmtKeyStore)
-            self.assertEqual(
-                app.sandboxes._keys.ensure(sandbox_uid="sb_1"),
-                "ssh-ed25519 AAAAmanaged",
-            )
-            self.assertEqual(
-                app.sandboxes._keys.key_path(sandbox_uid="sb_1"), key_path
-            )
 
-    def test_surface_rejects_partial_management_key_config(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(ValidationError):
-                build_control_app(
-                    repo_root=Path(tmp),
-                    env={MGMT_PUBLIC_KEY_ENV_VAR: "ssh-ed25519 AAAAmanaged"},
-                    execution_backend=FakeSandboxBackend(),
-                )
-
-    def test_surface_requires_mounted_management_key(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(ValidationError) as ctx:
-                build_control_app(
-                    repo_root=Path(tmp),
-                    execution_backend=FakeSandboxBackend(),
-                )
-        self.assertIn(MGMT_KEY_PATH_ENV_VAR, ctx.exception.message)
 
     def test_surface_ignores_legacy_mlflow_env_without_injection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -299,7 +260,7 @@ class SurfaceTest(unittest.TestCase):
                     REQUIRE_AGENT_MLFLOW_ENV_VAR: "1",
                     REQUIRE_SANDBOX_BACKEND_ENV_VAR: "1",
                 },
-                execution_backend=FakeSandboxBackend(),
+                infrastructure_client=FakeInfrastructureClient(),
             )
             self.addCleanup(app.shutdown)
 
@@ -320,7 +281,7 @@ class SurfaceTest(unittest.TestCase):
                     MLFLOW_SERVER_URI_ENV_VAR: "http://mlflow:5000",
                     REQUIRE_AGENT_MLFLOW_ENV_VAR: "1",
                 },
-                execution_backend=FakeSandboxBackend(),
+                infrastructure_client=FakeInfrastructureClient(),
             )
             self.addCleanup(app.shutdown)
 
@@ -329,7 +290,7 @@ class SurfaceTest(unittest.TestCase):
     def test_surface_can_require_healthy_sandbox_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            backend = FakeSandboxBackend()
+            backend = FakeInfrastructureClient()
             backend.healthy = False
             with self.assertRaises(ValidationError) as ctx:
                 build_control_app(
@@ -338,11 +299,11 @@ class SurfaceTest(unittest.TestCase):
                         **_mounted_mgmt_key_env(root),
                         REQUIRE_SANDBOX_BACKEND_ENV_VAR: "1",
                     },
-                    execution_backend=backend,
+                    infrastructure_client=backend,
                 )
 
-        self.assertIn(REQUIRE_SANDBOX_BACKEND_ENV_VAR, ctx.exception.message)
-        self.assertIn("fake", ctx.exception.message)
+        self.assertIn("merv-sandboxes", ctx.exception.message)
+        self.assertIn("startup health check", ctx.exception.message)
 
     def test_surface_lazy_central_metrics_record_without_archive(self) -> None:
         snapshot = {
@@ -367,7 +328,7 @@ class SurfaceTest(unittest.TestCase):
             app = build_control_app(
                 repo_root=root,
                 env=_mounted_mgmt_key_env(root),
-                execution_backend=FakeSandboxBackend(),
+                infrastructure_client=FakeInfrastructureClient(),
                 mlflow_tracking=CentralMlflowService(
                     tracking_uri="https://mlflow.example.test/",
                     server_uri="http://mlflow:5000/",
@@ -380,7 +341,7 @@ class SurfaceTest(unittest.TestCase):
                 {"project_id": project_id, "name": "exp", "intent": "measure"},
             )["id"]
             seed_sandbox(
-                app.sandboxes._storage,
+                app.sandboxes,
                 experiment_id=exp_id,
                 sandbox_uid="uid_control_metrics",
                 project_id=project_id,
@@ -404,11 +365,11 @@ class SurfaceTest(unittest.TestCase):
 
     def test_surface_without_repo_root_requires_durable_config(self) -> None:
         with self.assertRaises(ValidationError) as ctx:
-            build_control_app(repo_root=None, env={}, execution_backend=FakeSandboxBackend())
+            build_control_app(repo_root=None, env={}, infrastructure_client=FakeInfrastructureClient())
 
         self.assertIn(DB_URL_ENV_VAR, ctx.exception.message)
-        self.assertIn(BLOB_BUCKET_ENV_VAR, ctx.exception.message)
-        self.assertIn(MGMT_KEY_PATH_ENV_VAR, ctx.exception.message)
+        self.assertIn("MERV_SANDBOXES_URL", ctx.exception.message)
+        self.assertIn("MERV_SANDBOXES_JWT_SECRET", ctx.exception.message)
 
     def test_surface_without_repo_root_uses_non_created_compat_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -419,7 +380,8 @@ class SurfaceTest(unittest.TestCase):
             env = {
                 **mounted_env,
                 DB_URL_ENV_VAR: "postgresql://user:pass@db/research_plugin",
-                BLOB_BUCKET_ENV_VAR: "merv-blobs",
+                "MERV_SANDBOXES_URL": "https://sandboxes.test",
+                "MERV_SANDBOXES_JWT_SECRET": "x" * 40,
             }
             with (
                 patch(
@@ -434,7 +396,7 @@ class SurfaceTest(unittest.TestCase):
                 app = build_control_app(
                     repo_root=None,
                     env=env,
-                    execution_backend=FakeSandboxBackend(),
+                    infrastructure_client=FakeInfrastructureClient(),
                 )
             self.addCleanup(app.shutdown)
 
@@ -474,7 +436,7 @@ class SurfaceTest(unittest.TestCase):
             app = build_control_app(
                 repo_root=root,
                 env=_mounted_mgmt_key_env(root),
-                execution_backend=FakeSandboxBackend(),
+                infrastructure_client=FakeInfrastructureClient(),
             )
             self.addCleanup(app.shutdown)
             hosted = HttpSurfacePolicy.for_surface(

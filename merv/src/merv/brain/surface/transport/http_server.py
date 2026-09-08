@@ -235,7 +235,7 @@ def _serve_control(*, host: str, port: int) -> int:
     """Run the hosted brain preset.
 
     Hosted/no-repo-root control requires durable DB, durable blob store, and a
-    mounted management key. End-user auth is Supabase-backed and REQUIRED:
+    configured merv-sandboxes connection. End-user auth is Supabase-backed and REQUIRED:
     booting without a verifier fails startup unless the operator sets
     MERV_ALLOW_OPEN_CONTROL=1, which serves an OPEN surface and says so in the
     boot log.

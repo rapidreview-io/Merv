@@ -2,5 +2,5 @@
 # Agent clients connect directly to the HTTP MCP endpoint.
 
 # Cloud control plane. Keep private behind a TLS-terminating load balancer.
-# Needs MERV_DB_URL + MERV_BLOB_BUCKET.
+# Needs MERV_DB_URL + MERV_SANDBOXES_URL + MERV_SANDBOXES_JWT_SECRET.
 control: merv-control

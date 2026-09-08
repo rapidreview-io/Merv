@@ -13,7 +13,7 @@ from merv.brain.artifacts import Artifacts
 from merv.brain.feed.persistence import install_feed_schema
 from merv.brain.kernel.state import StateStore
 from merv.brain.kernel.state.store import MIGRATIONS
-from merv.brain.object_storage.blobs import LocalDirBlobStore
+from tests.support.blobs import LocalDirBlobStore
 from merv.brain.research_core.association_targets import AssociationTargets
 
 FIXTURE = Path(__file__).parent / "fixtures" / "release_f0439ca_v40.sql"

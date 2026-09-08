@@ -10,7 +10,6 @@ reaches either log scrubber.
 from __future__ import annotations
 
 import asyncio
-import base64
 import contextlib
 import json
 import tempfile
@@ -33,13 +32,9 @@ from merv.brain.kernel.secret_tokens import (
     wait_signature_matches,
 )
 from merv.brain.kernel.state.activity import redact_sensitive, scrub_secret_text
-from merv.brain.kernel.utils import ValidationError, now_iso
-from tests.support.sandbox_backend import FakeSandboxBackend
+from merv.brain.kernel.utils import ValidationError
+from tests.support.infrastructure import FakeInfrastructureClient, project_namespace
 from merv.brain.surface.telemetry import ControlToolCallSink
-from merv.brain.surface.config import (
-    MGMT_KEY_PATH_ENV_VAR,
-    MGMT_PUBLIC_KEY_ENV_VAR,
-)
 from merv.brain.surface.transport.api import runs_wait
 from merv.brain.surface.transport.api.shared import redact_upload_tokens
 from merv.brain.surface.transport.api import create_fastapi_app
@@ -50,31 +45,6 @@ from tests.support.brain import TestBrain
 
 SECRET = b"wait-secret-for-tests-0123456789abcdef"
 
-
-def _b64(text: str) -> str:
-    return base64.b64encode(text.encode("utf-8")).decode("ascii")
-
-
-def _listing(*runs: dict) -> str:
-    """Raw on-box listing text, exactly as runs_listing_command emits it."""
-    blocks = []
-    for run in runs:
-        meta = json.dumps(
-            {
-                "label": run["label"],
-                "command": "python train.py",
-                "pid": 4242,
-                "started_at": "2026-07-27T10:00:00Z",
-            }
-        )
-        exit_code = run.get("exit_code")
-        blocks.append(
-            f"===MERV_RUN {_b64(run['label'])}\n"
-            f"===META {_b64(meta)}\n"
-            f"===EXIT {_b64('' if exit_code is None else str(exit_code))}\n"
-            f"===FIN {_b64(run.get('finished_at', ''))}\n"
-        )
-    return "".join(blocks)
 
 
 class WaitSignatureTest(unittest.TestCase):
@@ -169,11 +139,11 @@ class WaitEndpointTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
-        self.fake = FakeSandboxBackend()
+        self.fake = FakeInfrastructureClient()
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=self.fake,
+            infrastructure_client=self.fake,
         )
         self.client = TestClient(
             create_fastapi_app(self.app, wait_secret=SECRET)
@@ -187,8 +157,7 @@ class WaitEndpointTest(unittest.TestCase):
             {"project_id": self.project_id, "experiment_id": self.experiment_id},
         )
         self.sandbox_uid = view["sandbox_uid"]
-        row = self.app.sandbox_storage.get_by_uid(sandbox_uid=self.sandbox_uid)
-        self.sandbox_id = str(row["sandbox_id"])
+        self.sandbox_id = self.sandbox_uid
         # Module singletons are process-wide by design; each test starts clean.
         runs_wait._ADMISSION = runs_wait._StreamAdmission()
         runs_wait._BUCKET = runs_wait._TokenBucket(
@@ -220,24 +189,14 @@ class WaitEndpointTest(unittest.TestCase):
         return f"/wait/{sandbox_uid}/{label}/{tag}"
 
     def _mirror(self, *runs: dict) -> None:
-        self.fake.run_listings[self.sandbox_id] = _listing(*runs)
-        self.app.sandbox_observer.observe_live(max_age_seconds=0.0)
-
-    def _set_run_clock(self, *, label: str, updated_at: str) -> None:
-        with self.app.store.transaction() as conn:
-            conn.execute(
-                "UPDATE sandbox_runs SET updated_at = ? "
-                "WHERE sandbox_uid = ? AND label = ?",
-                (updated_at, self.sandbox_uid, label),
-            )
+        self.fake.seed_jobs(project_namespace(self.project_id), self.sandbox_uid, *runs)
 
     def _set_sandbox(self, **columns: str) -> None:
-        assignments = ", ".join(f"{name} = ?" for name in columns)
-        with self.app.store.transaction() as conn:
-            conn.execute(
-                f"UPDATE sandboxes SET {assignments} WHERE sandbox_uid = ?",
-                (*columns.values(), self.sandbox_uid),
-            )
+        row = self.fake.records[project_namespace(self.project_id)][self.sandbox_uid]
+        if "status" in columns:
+            row["state"] = {"terminated": "stopped"}.get(columns["status"], columns["status"])
+        if "expires_at" in columns:
+            row["lease_expires_at"] = columns["expires_at"]
 
     @staticmethod
     def _protocol_lines(text: str) -> list[str]:
@@ -264,11 +223,11 @@ class WaitEndpointTest(unittest.TestCase):
         )
 
     def test_a_run_the_dead_box_never_reported_resolves_without_an_exit_code(self) -> None:
-        self._mirror({"label": "seed0"})
-        self._set_sandbox(status="terminated", runs_final_observed_at=now_iso())
+        self._mirror({"label": "seed0", "state": "cancelled"})
+        self._set_sandbox(status="terminated")
         response = self.client.get(self._url(label="seed0"))
         self.assertEqual(
-            response.text, "MERV_RUNS_WAIT done seed0 status=lost exit_code=none\n"
+            response.text, "MERV_RUNS_WAIT done seed0 status=finished exit_code=none\n"
         )
 
     def test_a_run_answers_nothing_else_about_itself(self) -> None:
@@ -299,21 +258,16 @@ class WaitEndpointTest(unittest.TestCase):
         self.assertEqual(response.status_code, 410)
 
     def test_a_forged_tag_never_reaches_the_database(self) -> None:
-        ledger = self.app.sandbox_runs
-        with patch.object(ledger, "wait_facts", side_effect=AssertionError("looked up")):
+        ledger = self.app.sandboxes
+        with patch.object(ledger, "run_wait_facts", side_effect=AssertionError("looked up")):
             response = self.client.get(self._url(label="seed0", sig="1" * 32))
         self.assertEqual(response.status_code, 410)
 
-    def test_a_terminal_run_stops_answering_six_hours_after_it_was_observed(self) -> None:
-        self._mirror({"label": "seed0", "exit_code": 0, "finished_at": "2026-07-27T10:05:00Z"})
-        fresh = self.client.get(self._url(label="seed0"))
-        self.assertEqual(fresh.status_code, 200)
-        # The brain clock, not the receipt the box wrote: only this stamp says
-        # when THIS process last knew anything about the run.
-        self._set_run_clock(label="seed0", updated_at="2026-01-01T00:00:00Z")
-        stale = self.client.get(self._url(label="seed0"))
-        self.assertEqual(stale.status_code, 410)
-        self.assertEqual(stale.text, "MERV_RUNS_WAIT no_such_run seed0\n")
+    def test_an_old_terminal_job_is_freshly_observed_from_the_service(self) -> None:
+        self._mirror({"label": "seed0", "exit_code": 0, "finished_at": "2026-01-01T00:00:00Z"})
+        response = self.client.get(self._url(label="seed0"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text, "MERV_RUNS_WAIT done seed0 status=finished exit_code=0\n")
 
     def test_nothing_answers_past_the_lease_plus_a_day(self) -> None:
         self._mirror({"label": "seed0", "exit_code": 0, "finished_at": "2026-07-27T10:05:00Z"})
@@ -380,7 +334,7 @@ class WaitEndpointTest(unittest.TestCase):
         self._mirror({"label": "seed0"})
         # The box now has the sentinel; nothing else is polling this sandbox,
         # so the reconciliation the hold itself drives is what finds it.
-        self.fake.run_listings[self.sandbox_id] = _listing(
+        self.fake.seed_jobs(project_namespace(self.project_id), self.sandbox_uid,
             {"label": "seed0", "exit_code": 3, "finished_at": "2026-07-27T10:09:00Z"}
         )
         with patch.multiple(
@@ -388,7 +342,6 @@ class WaitEndpointTest(unittest.TestCase):
             WAIT_POLL_SECONDS=0.01,
             WAIT_HEARTBEAT_SECONDS=1000.0,
             WAIT_HOLD_CAP_SECONDS=5.0,
-            WAIT_OBSERVE_MAX_AGE_SECONDS=0.0,
         ):
             response = self.client.get(self._url(label="seed0"))
         self.assertEqual(
@@ -396,26 +349,15 @@ class WaitEndpointTest(unittest.TestCase):
             ["MERV_RUNS_WAIT done seed0 status=finished exit_code=3"],
         )
 
-    def test_a_hold_reconciles_through_the_observer_not_the_ledger(self) -> None:
+    def test_a_hold_repeatedly_reads_native_job_state(self) -> None:
         self._mirror({"label": "seed0"})
-        with patch.multiple(
-            runs_wait,
-            WAIT_POLL_SECONDS=0.01,
-            WAIT_HEARTBEAT_SECONDS=1000.0,
-            WAIT_HOLD_CAP_SECONDS=0.05,
-        ):
-            with patch.object(
-                self.app.sandbox_observer, "observe", return_value=True
-            ) as observe:
-                self.client.get(self._url(label="seed0"))
-        self.assertTrue(observe.call_args_list)
-        for call in observe.call_args_list:
-            self.assertEqual(
-                call.kwargs["max_age_seconds"], runs_wait.WAIT_OBSERVE_MAX_AGE_SECONDS
-            )
-            self.assertEqual(
-                call.kwargs["acquire_timeout"], runs_wait.WAIT_OBSERVE_ACQUIRE_SECONDS
-            )
+        self.fake.calls.clear()
+        with patch.multiple(runs_wait, WAIT_POLL_SECONDS=0.01,
+                            WAIT_HEARTBEAT_SECONDS=1000.0, WAIT_HOLD_CAP_SECONDS=0.05):
+            self.client.get(self._url(label="seed0"))
+        reads = [call for call in self.fake.calls if call[0:2] == ("GET", "/jobs/seed0")]
+        self.assertGreater(len(reads), 1)
+        self.assertTrue(all(call[2] == project_namespace(self.project_id) for call in reads))
 
     # ---------- admission ----------
 
@@ -524,8 +466,8 @@ class WaitEndpointTest(unittest.TestCase):
         """wait_facts opens a synchronous connection (Postgres when hosted), so
         reading it inline would freeze every heartbeat in the process — and
         every unrelated request — for as long as one database is slow."""
-        ledger = self.app.sandbox_runs
-        answer = ledger.wait_facts
+        ledger = self.app.sandboxes
+        answer = ledger.run_wait_facts
         readers: list[str] = []
 
         def slow(**kwargs) -> dict | None:
@@ -546,7 +488,7 @@ class WaitEndpointTest(unittest.TestCase):
             if message["type"] == "http.response.body":
                 chunks.append(message.get("body", b""))
 
-        with patch.object(ledger, "wait_facts", side_effect=slow):
+        with patch.object(ledger, "run_wait_facts", side_effect=slow):
             held = self._drive_wait(
                 label="not-yet", send=send, before=tick, hold_cap=0.6
             )
@@ -590,7 +532,7 @@ class WaitEndpointTest(unittest.TestCase):
             finish.wait(5.0)
             return None
 
-        ledger = self.app.sandbox_runs
+        ledger = self.app.sandboxes
 
         async def scenario() -> int:
             task = asyncio.create_task(self._endpoint(label="seed0"))
@@ -605,7 +547,7 @@ class WaitEndpointTest(unittest.TestCase):
             return runs_wait._ADMISSION.held()
 
         try:
-            with patch.object(ledger, "wait_facts", side_effect=stuck):
+            with patch.object(ledger, "run_wait_facts", side_effect=stuck):
                 held = asyncio.run(scenario())
         finally:
             finish.set()
@@ -702,12 +644,12 @@ class RunsWaitUrlTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
-        self.fake = FakeSandboxBackend()
+        self.fake = FakeInfrastructureClient()
         # Not an identity test: agent_id is merely recorded here (see test_agent_identity.py).
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=self.fake,
+            infrastructure_client=self.fake,
             env={"MERV_AGENT_IDENTITY": "optional"},
         )
         self.client = TestClient(
@@ -747,9 +689,7 @@ class RunsWaitUrlTest(unittest.TestCase):
         )["sandbox_uid"]
 
     def _mirror(self, sandbox_uid: str, *runs: dict) -> None:
-        row = self.app.sandbox_storage.get_by_uid(sandbox_uid=sandbox_uid)
-        self.fake.run_listings[str(row["sandbox_id"])] = _listing(*runs)
-        self.app.sandbox_observer.observe_live(max_age_seconds=0.0)
+        self.fake.seed_jobs(project_namespace(self.project_id), sandbox_uid, *runs)
 
     def _legacy(self, **arguments: str) -> dict:
         response = self.client.post(
@@ -957,8 +897,8 @@ class WaitCompositionTest(unittest.TestCase):
             key_path.write_text("PRIVATE KEY\n", encoding="utf-8")
             key_path.chmod(0o600)
             env = {
-                MGMT_KEY_PATH_ENV_VAR: str(key_path),
-                MGMT_PUBLIC_KEY_ENV_VAR: "ssh-ed25519 AAAAmanaged",
+                "MERV_MGMT_KEY_PATH": str(key_path),
+                "MERV_MGMT_PUBLIC_KEY": "ssh-ed25519 AAAAmanaged",
                 "MERV_ALLOW_OPEN_CONTROL": "1",
             }
             with self.assertRaises(ValidationError) as caught:
@@ -971,7 +911,7 @@ class WaitCompositionTest(unittest.TestCase):
             app = TestBrain(
                 repo_root=repo,
                 db_path=repo / ".research_plugin" / "state.sqlite",
-                execution_backend=FakeSandboxBackend(),
+                infrastructure_client=FakeInfrastructureClient(),
             )
             self.addCleanup(app.shutdown)
             path = repo / ".research_plugin" / WAIT_SECRET_FILENAME
@@ -991,11 +931,11 @@ class WaitServerCompositionTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         repo = Path(self.tmp.name)
-        self.fake = FakeSandboxBackend()
+        self.fake = FakeInfrastructureClient()
         self.brain = TestBrain(
             repo_root=repo,
             db_path=repo / ".research_plugin" / "state.sqlite",
-            execution_backend=self.fake,
+            infrastructure_client=self.fake,
         )
         project_id = self.brain.call_tool(
             "project", {"action": "create", "name": "Waits"}
@@ -1014,11 +954,9 @@ class WaitServerCompositionTest(unittest.TestCase):
             {"project_id": project_id, "experiment_id": experiment_id},
         )
         self.sandbox_uid = view["sandbox_uid"]
-        row = self.brain.sandbox_storage.get_by_uid(sandbox_uid=self.sandbox_uid)
-        self.fake.run_listings[str(row["sandbox_id"])] = _listing(
+        self.fake.seed_jobs(project_namespace(project_id), self.sandbox_uid,
             {"label": "seed0", "exit_code": 0, "finished_at": "2026-07-27T10:05:00Z"}
         )
-        self.brain.sandbox_observer.observe_live(max_age_seconds=0.0)
         # Module singletons are process-wide by design; each test starts clean.
         runs_wait._ADMISSION = runs_wait._StreamAdmission()
         runs_wait._BUCKET = runs_wait._TokenBucket(

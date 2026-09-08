@@ -26,7 +26,7 @@ from ..research_core import (
     Research,
     agent_dispatch_enabled,
 )
-from ..sandbox import SandboxEngine
+from ..infrastructure import RemoteSandboxes as SandboxEngine
 from .experiments.context import ExperimentContextQuery
 from .experiments.create import create_experiment
 from .experiments.exhibits import ExperimentExhibits

@@ -1,102 +1,73 @@
 ---
 name: sandbox-operation
 description: >-
-  Operate Merv cloud sandboxes safely for expensive, long-running, isolated,
-  GPU, or remote experiment work. Use when provisioning or attaching a sandbox,
-  running commands over SSH, observing durable merv_run receipts, retaining
-  outputs, extending a lease, recovering interrupted execution, or releasing a
-  sandbox.
+  Operate Merv cloud sandboxes through merv-sandboxes: select hardware, use
+  certificate SSH or durable jobs, retain outputs, extend leases, and release
+  machines for remote or expensive experiment work.
 ---
 
 # Sandbox Operation
 
-Treat the sandbox as an ephemeral machine that bills while it exists. The Merv
-brain owns its lifecycle; you own the SSH key, remote commands, and deliberate
-retention of every valuable output.
+Merv owns research records and experiment associations. The independent
+merv-sandboxes service owns machines, leases, credentials, durable jobs and
+physical storage. Ephemeral machines can bill until deletion is confirmed.
 
-## Operate the sandbox
+## Rent and connect
 
-1. Confirm that the experiment workflow permits execution. Use a local command
-   instead when the work is lightweight and safe.
-2. Inspect `sandbox.options` when hardware selection is needed. Choose the
-   smallest viable option and pass its provider-shaped values back to
-   `sandbox.request`; do not invent a generic machine shape.
-3. Generate or select a caller-owned SSH keypair. Send only the public key.
-   Never send the private key or embed secrets in commands or retained files.
-4. Request once. If the response is `needs_selection`, choose from its options.
-   If it is `provisioning`, poll with `sandbox.get` after the advised interval;
-   do not issue repeated requests as a polling loop.
-5. Once running, construct SSH from the returned host, port, and user with your
-   private key. Follow response hints for the remote experiment directory and
-   expiry.
+Confirm that the experiment workflow allows execution. Inspect
+`sandbox.options`, choose suitable available hardware, and pass its exact
+`provider` and `instance_type` to `sandbox.request`. Supply a caller-owned
+OpenSSH public key; keep the private key local. A `needs_selection` response
+requires selecting an offer. A `provisioning` response requires polling
+`sandbox.get`, not another request.
 
-Use `sandbox.attach` only to associate an already-running sandbox with another
-experiment. Use `additional: true` only when the work genuinely needs another
-machine instead of the experiment's existing live sandbox.
+A running response includes certificate SSH access. Save `ssh.certificate`
+beside your private key as `<key>-cert.pub`, pin `ssh.host_public_key` in a
+known-hosts file, and connect to `ssh.user@ssh.host` on `ssh.port` using that
+key and certificate. Refresh the certificate with `sandbox.get` when it
+expires. Never disable host-key checking to make a failed connection work.
+The working directory is `/workspace`.
+
+`sandbox.attach` adds a research association to an existing running machine.
+Use `additional=true` only when an experiment needs another machine.
 
 ## Run and observe
 
-Run commands expected to take more than a few minutes through:
+Use `sandbox.run` for durable detached work. Give it a readable name, command,
+working directory, timeout and optional output directory. Save its returned
+job ID. An idempotency key can safely retry the same submitted job; reuse it
+only with identical inputs.
 
-```sh
-merv_run <unique-label> -- <command>
-```
+Read `sandbox.job` for state and exit code. Pass the previous `after` cursor
+and `wait_seconds` up to 45 to wait for a change. For output, select
+`stream=stdout` or `stderr` with an offset and bounded limit; use the returned
+extent to detect truncated or expired bytes. `sandbox.runs` lists an
+experiment's jobs, including jobs from released machines. Cancellation is
+`sandbox.job(cancel=true)`.
 
-`merv_run` detaches from SSH, survives disconnects, and records a durable
-receipt. Labels are one-shot, so use a new label for every launch.
+Plain SSH commands are not automatically durable jobs. The retired
+`merv_run` wrapper is not installed on new machines. When Merv has a stable
+run-wait signing key configured, `sandbox.runs` also returns signed wait URLs
+for durable jobs. These URLs report job completion through Merv while job
+execution remains owned by merv-sandboxes.
+Passive SSH terminal transcripts and utilization samples are unavailable;
+use job output and retained results for evidence. Do not infer success from
+a connection closing or from a missing receipt.
 
-Immediately call `sandbox.runs` after launch. If registration is still
-catching up, retry until the label appears. Observe the receipt rather than
-polling terminal text:
+## Retain and release
 
-- Arm `merv-runs-wait` from the returned `wait_url` when the client supports a
-  background watcher. Re-arm it when its hold expires. Platform-specific
-  background-process setup belongs in the client documentation.
-- Otherwise long-poll `sandbox.runs` within the client's timeout.
-- Treat watcher transport failure as unknown observation: read truth once with
-  authenticated `sandbox.runs`, then resume observation.
-- Read both run `status` and `exit_code`. A terminal watcher response does not
-  itself mean the command succeeded.
-- Treat `unknown` honestly: the machine died before its receipts were read, so
-  retained evidence may establish the result, but absence of evidence requires
-  a rerun. `lost` means receipts were read and no completion sentinel existed.
+Before release or expiry, call `sandbox.pull_outputs` for compact evidence,
+substitute the local key/certificate/known-hosts/destination paths, run its
+rsync command, and verify the copied files. `artifact.submit` uploads caller
+files; it cannot read a sandbox path. Use `storage.submit` for heavy files.
+A job output artifact remains in the independent service; preserve its ID and
+verify retention before relying on it. Retain useful failure logs too.
 
-Use `sandbox.terminal` only for concise diagnosis or recovery context, not as a
-long-run monitor.
+Extend a lease with `sandbox.extend` before expiry if the work needs more time;
+the service enforces lease and spend limits. If infrastructure interrupted
+an approved experiment, record `retry_running` with evidence before rerunning.
 
-## Keep evidence durable
-
-Write scripts, configs, compact results, reports, and figures under
-`$MERV_EXPERIMENT_DIR`. Keep disposable datasets, caches, and bulky
-checkpoints under `$RP_DATASET_DIR`.
-
-Before release or expiry:
-
-1. Call `sandbox.pull_outputs` for compact files and run its returned command
-   locally with the caller-owned private key.
-2. Send heavy files directly to configured durable object storage.
-3. Verify the files exist locally before using `artifact.submit`; artifact
-   upload cannot read a remote sandbox path.
-4. Retain logs needed to explain failures as well as successful results.
-
-Nothing is copied automatically.
-
-## Recover, extend, and release
-
-If infrastructure interrupted execution while the approved design still
-stands, record `retry_running` with evidence before replacing the sandbox. Use
-a planned retry only when the experimental design itself changes, and keep
-rerun outputs distinct.
-
-Call `sandbox.extend` before expiry only when more time is genuinely needed;
-extension support and limits are provider-dependent.
-
-Release promptly after retaining the needed evidence. Release is deliberately
-two-step:
-
-1. Call `sandbox.release` without confirmation and follow its retention
-   checklist. This must not destroy the machine.
-2. Only after verifying retention, call it again with
-   `confirm_retained: true`.
-
-Release and expiry permanently destroy unretained files.
+Release is two-step: call `sandbox.release`, verify needed outputs are retained,
+then repeat with `confirm_retained=true`. A `cleanup_pending` result is a
+request for deletion; poll `sandbox.get` until `terminated`. Release and expiry
+destroy unretained ephemeral files.

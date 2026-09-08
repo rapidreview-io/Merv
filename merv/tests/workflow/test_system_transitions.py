@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 from tests.support.brain import TestBrain
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient, project_namespace
 from merv.brain.research_core.experiment_workflow import EXPERIMENT_WORKFLOW
 from merv.brain.kernel.utils import WorkflowError
 
@@ -22,11 +22,11 @@ class SystemTransitionTestBase(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
-        self.backend = FakeSandboxBackend()
+        self.backend = FakeInfrastructureClient()
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=self.backend,
+            infrastructure_client=self.backend,
         )
         self.project_id = self.call("project", action="create", name="System Transitions")["id"]
 
@@ -71,12 +71,9 @@ class SandboxDrivenTransitionTest(SystemTransitionTestBase):
     def test_reaper_expiry_does_not_transition_experiment(self) -> None:
         exp_id = self._experiment(status="ready_to_run")
         created = self.call("sandbox.request", project_id=self.project_id, experiment_id=exp_id)
-        with self.app.store.transaction() as conn:
-            conn.execute(
-                "UPDATE sandboxes SET expires_at=? WHERE sandbox_uid=?",
-                ("2000-01-01T00:00:00Z", created["sandbox_uid"]),
-            )
-        self.assertEqual(self.app.sandboxes.reap_expired(), 1)
+        record = self.app.infrastructure_client.records[project_namespace(self.project_id)][created["sandbox_uid"]]
+        record.update(state="stopped", lease_expires_at="2000-01-01T00:00:00Z")
+        self.assertEqual(self.app.sandboxes.get(project_id=self.project_id, sandbox_uid=created["sandbox_uid"])["status"], "terminated")
         state = self.call("experiment.get_state", project_id=self.project_id, experiment_id=exp_id)
         self.assertEqual(state["status"], "ready_to_run")
         self.assertEqual(self._transition_events(exp_id), [])

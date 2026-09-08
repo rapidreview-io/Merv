@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.surface.tools.contracts import TOOL_MANIFEST
 from merv.brain.surface.tools.dispatcher import ToolValidationError
 
@@ -28,7 +28,7 @@ class LitreviewToolsTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=repo,
             db_path=repo / ".research_plugin" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
         self.project_id = self.app.current_project()["project"]["id"]
         # Keep tool tests offline: the port double never fetches, so cite

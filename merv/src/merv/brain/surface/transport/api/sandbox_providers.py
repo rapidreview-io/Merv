@@ -19,7 +19,7 @@ from ...identity import (
     is_human_session,
     is_local_principal,
 )
-from ...sandbox_providers import SandboxProviderSettings
+from ....infrastructure import RemoteProviders as SandboxProviderSettings
 from .shared import JsonBody
 
 
@@ -83,6 +83,11 @@ def build_router(
             values=values,
             mode=None if mode is None else str(mode),
         )
+
+    @router.delete("/api/projects/{project_id}/sandbox-providers/{provider}")
+    def disconnect_provider(project_id: str, provider: str, request: Request) -> dict[str, Any]:
+        _require_human(request)
+        return providers.disconnect(project_id=project_id, provider=provider)
 
     @router.post("/api/projects/{project_id}/sandbox-providers/{provider}/enabled")
     def set_enabled(

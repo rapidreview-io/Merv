@@ -8,7 +8,7 @@ from tests.paths import TESTS_ROOT
 SHARED_FAKE_NAMES = {"FakeProcess"}
 CONCERN_PACKAGES = {
     "compat",
-    "sandbox",
+    "infrastructure",
     "workflow",
     "surface",
     "state",

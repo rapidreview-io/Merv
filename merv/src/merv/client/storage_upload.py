@@ -32,7 +32,7 @@ def upload_storage_file(
     upload = target.get("upload") if isinstance(target, dict) else None
     if not isinstance(upload, dict) or not isinstance(upload.get("parts"), list):
         raise StorageUploadError("Merv returned a malformed multipart target")
-    expected_size = _positive_int(upload.get("size_bytes"), field="size_bytes")
+    expected_size = _positive_int(upload.get("size_bytes"), field="size_bytes", allow_zero=True)
     part_size = _positive_int(upload.get("part_size"), field="part_size")
     if size_bytes != expected_size:
         raise StorageUploadError(
@@ -41,8 +41,12 @@ def upload_storage_file(
     _verify_sha256(path=path, checksum_b64=str(upload.get("checksum_sha256") or ""))
 
     parts = sorted(upload["parts"], key=lambda item: int(item["part_number"]))
-    expected_numbers = list(range(1, len(parts) + 1))
-    if [int(part.get("part_number") or 0) for part in parts] != expected_numbers:
+    completed_numbers = upload.get("completed_parts", [])
+    count = _positive_int(upload.get("part_count", len(parts)), field="part_count", allow_zero=True)
+    expected_numbers = list(range(1, count + 1))
+    returned_numbers = [int(part.get("part_number") or 0) for part in parts]
+    if (not isinstance(completed_numbers, list)
+            or sorted(returned_numbers + completed_numbers) != expected_numbers):
         raise StorageUploadError("Merv returned non-contiguous multipart targets")
     worker_count = max(1, min(int(workers), len(parts)))
     completed: list[dict[str, Any]] = []
@@ -58,6 +62,7 @@ def upload_storage_file(
                     part_size,
                     expected_size - ((int(part["part_number"]) - 1) * part_size),
                 ),
+                headers=part.get("headers", {}),
             ): int(part["part_number"])
             for part in parts
         }
@@ -91,9 +96,10 @@ def _verify_sha256(*, path: Path, checksum_b64: str) -> None:
 
 
 def _upload_part(
-    *, path: Path, url: str, part_number: int, offset: int, length: int
+    *, path: Path, url: str, part_number: int, offset: int, length: int,
+    headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    if not url or length <= 0:
+    if not url or length < 0:
         raise StorageUploadError(f"invalid upload target for part {part_number}")
     for attempt in range(3):
         try:
@@ -101,7 +107,7 @@ def _upload_part(
                 url,
                 data=_file_slice(path=path, offset=offset, length=length),
                 method="PUT",
-                headers={"Content-Length": str(length)},
+                headers={**(headers or {}), "Content-Length": str(length)},
             )
             with urllib.request.urlopen(request, timeout=3600) as response:  # noqa: S310
                 etag = str(response.headers.get("ETag") or "").strip()
@@ -154,12 +160,12 @@ def _request_json(
     return body
 
 
-def _positive_int(value: Any, *, field: str) -> int:
+def _positive_int(value: Any, *, field: str, allow_zero: bool = False) -> int:
     try:
         parsed = int(value)
     except (TypeError, ValueError) as exc:
         raise StorageUploadError(f"Merv returned an invalid {field}") from exc
-    if parsed <= 0:
+    if parsed < 0 or (parsed == 0 and not allow_zero):
         raise StorageUploadError(f"Merv returned an invalid {field}")
     return parsed
 

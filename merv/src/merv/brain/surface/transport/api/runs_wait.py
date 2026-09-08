@@ -37,7 +37,7 @@ from ....kernel.secret_tokens import (
     wait_signature_matches,
 )
 from ....kernel.utils import parse_iso
-from ....sandbox import SandboxEngine
+from ....infrastructure import RemoteSandboxes as SandboxEngine
 
 
 MAX_STREAMS_ENV_VAR = "MERV_WAIT_MAX_STREAMS"
@@ -62,10 +62,6 @@ WAIT_TERMINAL_GRACE_SECONDS = 6 * 3600.0
 # Nothing stays valid past the paid-for lease plus a day. This is the ceiling
 # for rows nothing ever reconciled; it moves with sandbox.extend by itself.
 WAIT_LEASE_CEILING_SECONDS = 24 * 3600.0
-# Reconciliation while holding: the observer's own freshness stamp dedupes
-# concurrent waiters on one box, and its permit pool caps the real reads.
-WAIT_OBSERVE_MAX_AGE_SECONDS = 75.0
-WAIT_OBSERVE_ACQUIRE_SECONDS = 10.0
 WAIT_POOL_WORKERS = 6
 # The ledger read opens a synchronous connection (Postgres when hosted), so it
 # is bounded like every other blocking thing here: a database that does not
@@ -253,28 +249,12 @@ def _verdict(*, facts: dict | None, now: datetime) -> _Verdict:
     )
 
 
-def _observe(*, sandboxes: SandboxEngine, sandbox_uid: str) -> None:
-    """One reconciliation attempt for a held run. Blocking; never raises.
-
-    A skipped cycle is exactly a failed read: the mirror stays as it was and
-    the next poll asks again.
-    """
-    try:
-        sandboxes.observe_run(
-            sandbox_uid=sandbox_uid,
-            max_age_seconds=WAIT_OBSERVE_MAX_AGE_SECONDS,
-            acquire_timeout=WAIT_OBSERVE_ACQUIRE_SECONDS,
-        )
-    except Exception:  # noqa: BLE001 — a wait must outlive one bad read
-        return
-
-
 async def _facts(
     *, sandboxes: SandboxEngine, sandbox_uid: str, label: str
 ) -> dict | None:
-    """The ledger read every wait makes, off the loop and time-bounded.
+    """The namespace-scoped service read every wait makes, off the loop and time-bounded.
 
-    Raises ``TimeoutError`` when the database did not answer in the budget;
+    Raises ``TimeoutError`` when the service did not answer in the budget;
     the caller decides whether that is one lost cycle or the end of the hold.
     """
     loop = asyncio.get_running_loop()
@@ -370,18 +350,6 @@ def build_router(
                         # Never matches the MERV_RUNS_WAIT prefix, and the
                         # first one flushes the response past any proxy.
                         yield f"# waiting {int(now - started)}s\n"
-                    try:
-                        await asyncio.wait_for(
-                            loop.run_in_executor(
-                                _WAIT_POOL,
-                                lambda: _observe(
-                                    sandboxes=sandboxes, sandbox_uid=sandbox_uid
-                                ),
-                            ),
-                            timeout=WAIT_OBSERVE_ACQUIRE_SECONDS + 5.0,
-                        )
-                    except (asyncio.TimeoutError, RuntimeError):
-                        pass  # a saturated pool must not stall the heartbeat
                     await asyncio.sleep(WAIT_POLL_SECONDS)
                     try:
                         facts = await _facts(

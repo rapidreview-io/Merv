@@ -40,10 +40,11 @@ flowchart LR
   Client -->|HTTP MCP + OAuth or scoped key| Brain["Brain service"]
   Browser["Merv UI"] -->|HTTP API and SSE| Brain
   Brain --> State["SQLite or Postgres"]
-  Brain --> Blobs["Local or S3-compatible stores"]
-  Brain --> Providers["Lambda Labs, Thunder Compute, or Modal"]
-  Client -->|SSH commands| Providers
-  Client -->|returned transfer commands| Blobs
+  Brain -->|namespace-scoped REST| Infra["merv-sandboxes"]
+  Infra --> Providers["Compute providers and SSH gateway"]
+  Infra --> Blobs["Object storage"]
+  Client -->|SSH certificates| Providers
+  Client -->|presigned transfer commands| Blobs
 ```
 
 ### Brain service
@@ -52,8 +53,8 @@ The brain is the single authority for research records and policy. It owns:
 
 - projects, claims, experiments, artifacts, reviews, reflections, and events;
 - workflow gates, artifact lints, permissions, and reviewer capabilities;
-- sandbox registry, provider credentials, quotas, reapers, and cleanup;
-- blob metadata and optional heavy-object storage;
+- research associations for native sandboxes, archived cost history, and spending policy;
+- artifact identities, blob metadata, and the heavy-object ledger;
 - the `/mcp/*`, `/api/*`, and server-sent-event surfaces.
 
 The brain never receives a checkout root and never opens files from a user's
@@ -66,8 +67,8 @@ graph:
 
 | Preset | Brain location | Record/blob defaults | Intended exposure |
 |---|---|---|---|
-| `local` | `http://127.0.0.1:8787` | SQLite and local-directory blobs | Loopback development; auth off by default |
-| `control` | Operator-provided HTTPS URL | Postgres and S3-compatible stores | Supabase-backed end-user auth; TLS and network controls |
+| `local` | `http://127.0.0.1:8787` | SQLite records; external infrastructure for bytes/compute | Loopback development; auth off by default |
+| `control` | Operator-provided HTTPS URL | Postgres records; external infrastructure for bytes/compute | Supabase-backed end-user auth; TLS and network controls |
 
 `Postgres` here is provider-neutral: the same adapter supports ordinary
 PostgreSQL and hosted or self-hosted Supabase PostgreSQL through `MERV_DB_URL`.
@@ -139,18 +140,16 @@ tools and the upload/download commands they return, as is artifact submission
 Both deployment presets use the same `ControlApp` composition. The composition
 root selects adapters and wires the modular monolith:
 
-- record store: SQLite locally or Postgres when `MERV_DB_URL` is set;
-- submitted-byte blob store: local directory or S3-compatible bucket;
-- optional heavy-object store: S3-compatible storage;
-- sandbox backend: Lambda Labs by default; Thunder Compute, Modal, Hyperstack,
-  DigitalOcean, Verda (DataCrunch), Voltage Park, or TensorDock.
-  `MERV_EXECUTION_BACKENDS` (comma-separated)
-  runs several at once behind one multiplexer that routes per-request by
-  provider and prefixes sandbox ids with their owner (see
-  [SANDBOX_PROVIDERS.md](SANDBOX_PROVIDERS.md)). A lazy driver registry is the
-  runtime provider inventory: composition resolves one descriptor per selected
-  name and imports only its factory. VM drivers share a management-SSH base;
-  Modal remains a separate managed-container/provider-exec driver.
+- record store: SQLite locally or PostgreSQL through `MERV_DB_URL`;
+- infrastructure transport: authenticated, namespace-scoped merv-sandboxes HTTP;
+- submitted blobs and heavy bytes: native object storage through that transport;
+- sandbox/provider facades: native connections, offers, lifecycle, and jobs.
+
+The service owns provider credentials, cloud SDKs, SSH certificates, job
+workers, lease expiry, and physical object cleanup. Merv holds no S3 or
+management-key adapters. Without infrastructure configuration, local mode is
+record-only; byte and compute operations fail explicitly. Hosted startup
+requires `MERV_SANDBOXES_URL` and `MERV_SANDBOXES_JWT_SECRET`.
 
 Research records live in the brain's selected record store. There is no durable
 checkout-local state: a project is bound by its key, not by a machine-local link
@@ -272,7 +271,7 @@ proof that two separate models reasoned independently.
 
 ## Code boundaries
 
-The brain is a modular monolith. Research, Artifacts, Sandbox, Feed, and Object
+The brain is a modular monolith. Research, Artifacts, Infrastructure, Feed, and Object
 Storage expose concrete package-root capabilities. Application coordinates
 only genuinely cross-component work. Surface delivers HTTP/MCP, and Kernel is
 the shared dependency floor. Every file is classified independently by

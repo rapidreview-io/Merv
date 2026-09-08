@@ -45,17 +45,13 @@ CONTROL_MODULES = (
     *ARTIFACTS_MODULES,
     *DOMAIN_MODULES,
     *PORT_MODULES,
-    BACKEND_ROOT / "sandbox" / "models.py",
-    BACKEND_ROOT / "sandbox" / "sandbox_paths.py",
     SURFACE_ROOT / "tools" / "dispatcher.py",
     *sorted(RESEARCH_CORE_ROOT.glob("*.py")),
     *sorted((BACKEND_ROOT / "literature").glob("*.py")),
     BACKEND_ROOT / "application" / "status_guidance.py",
     BACKEND_ROOT / "application" / "experiments" / "presentation.py",
     BACKEND_ROOT / "application" / "workflow.py",
-    BACKEND_ROOT / "sandbox" / "core.py",
     FEED_ROOT / "feed.py",
-    BACKEND_ROOT / "sandbox" / "observation.py",
     SURFACE_ROOT / "surface.py",
     SURFACE_ROOT / "telemetry.py",
     BACKEND_ROOT / "kernel" / "state" / "store.py",
@@ -243,6 +239,15 @@ class BrainToolManifestTest(unittest.TestCase):
 
 
 class PlaneImportLintTest(unittest.TestCase):
+    def test_infrastructure_is_remote_and_compute_providers_are_absent(self) -> None:
+        self.assertFalse((BACKEND_ROOT / "sandbox").exists())
+        for retired in ("s3_blobs.py", "s3_object_store.py", "blobs.py"):
+            self.assertFalse((BACKEND_ROOT / "object_storage" / retired).exists())
+        forbidden = {"boto3", "botocore", "modal", "paramiko", "subprocess"}
+        for path in (BACKEND_ROOT / "infrastructure").glob("*.py"):
+            with self.subTest(module=path.name):
+                self.assertFalse(_import_segments(path) & forbidden)
+
     def test_process_spawn_lint_catches_alias_forms(self) -> None:
         source = """
 import os as ops
@@ -323,33 +328,8 @@ load("subprocess")
         )
         self.assertNotIn("repo_root", source)
 
-    def test_sandbox_core_does_not_import_provider_implementations(self) -> None:
-        path = BACKEND_ROOT / "sandbox" / "core.py"
-        self.assertNotIn("adapters", _import_segments(path))
 
-    def test_sandbox_services_use_models_not_adapters(self) -> None:
-        # Record/control sandbox services depend on the provider-neutral port,
-        # while concrete provider machinery stays under adapters/.
-        for name in ("scheduler.py", "provisioning.py", "core.py"):
-            with self.subTest(module=name):
-                self.assertNotIn(
-                    "adapters", _import_segments(BACKEND_ROOT / "sandbox" / name)
-                )
 
-    def test_sandbox_models_are_neutral(self) -> None:
-        imports = _import_segments(BACKEND_ROOT / "sandbox" / "models.py")
-        forbidden = imports & {
-            "adapters",
-            "dataplane",
-            "services",
-            "state",
-            "subprocess",
-            "workspace",
-        }
-        self.assertFalse(
-            forbidden,
-            f"sandbox backend port imports backend layers: {sorted(forbidden)}",
-        )
 
     def test_checkout_local_diagnostic_adapters_stay_deleted(self) -> None:
         activity = (BACKEND_ROOT / "kernel" / "state" / "activity.py").read_text(
@@ -363,17 +343,6 @@ load("subprocess")
     def test_services_package_init_is_import_light(self) -> None:
         self.assertFalse(_imports(SERVICES_ROOT / "__init__.py"))
 
-    def test_sandbox_domain_values_are_neutral(self) -> None:
-        # Shared sandbox constants/helpers stay below service and adapter code.
-        imports = _import_segments(BACKEND_ROOT / "sandbox" / "models.py")
-        for forbidden in (
-            "services",
-            "dataplane",
-            "workspace",
-            "subprocess",
-            "threading",
-        ):
-            self.assertNotIn(forbidden, imports)
 
     def test_brain_checkout_modules_are_absent(self) -> None:
         self.assertFalse((BACKEND_ROOT / "dataplane").exists())
@@ -421,49 +390,14 @@ load("subprocess")
         self.assertIn("app = Surface(", source)
         self.assertNotIn("TestBrain", source)
         self.assertNotIn("build_local_runtime", source)
-        self.assertIn("MountedMgmtKeyStore", source)
-        self.assertIn("resolve_mgmt_key_path", source)
-        self.assertIn("LocalMgmtKeyStore", source)
+        self.assertIn("RemoteSandboxes", source)
+        self.assertIn("build_infrastructure_client", source)
+        self.assertNotIn("MgmtKeyStore", source)
         self.assertIn("build_local_server", source)
         self.assertIn("CONTROL_COMPAT_REPO_ROOT", source)
         self.assertNotIn("tempfile", _import_segments(path))
 
-    def test_management_key_store_is_adapter_not_service(self) -> None:
-        # The service layer depends on the MgmtKeyStore port only. The local
-        # filesystem key custody adapter belongs to composition-state wiring,
-        # not services/.
-        service_modules = (
-            *GLUE_SERVICE_FILES,
-            *RESEARCH_CORE_ROOT.rglob("*.py"),
-            *FEED_ROOT.rglob("*.py"),
-            *(
-                path
-                for path in (BACKEND_ROOT / "sandbox").glob("*.py")
-                if path.name != "keys.py"
-            ),
-        )
-        for path in sorted(service_modules):
-            with self.subTest(module=path.name):
-                self.assertFalse(_imports_management_key_adapter(path))
-                self.assertNotIn("LocalMgmtKeyStore", path.read_text(encoding="utf-8"))
-        imports = _import_segments(BACKEND_ROOT / "sandbox" / "keys.py")
-        self.assertIn("subprocess", imports)
-        self.assertNotIn("services", imports)
-        self.assertIn(
-            "LocalMgmtKeyStore",
-            (SURFACE_ROOT / "surface.py").read_text(encoding="utf-8"),
-        )
 
-    def test_local_ssh_keygen_is_single_sourced(self) -> None:
-        path = BACKEND_ROOT / "sandbox" / "keys.py"
-        self.assertIn("subprocess", _import_segments(path))
-        self.assertEqual(
-            sum(
-                "ssh-keygen" in candidate.read_text(encoding="utf-8")
-                for candidate in (BACKEND_ROOT / "sandbox").glob("*.py")
-            ),
-            1,
-        )
 
 
 if __name__ == "__main__":

@@ -1,9 +1,8 @@
 """Unified brain composition with local and hosted deployment presets.
 
-The composition wires records, workflow, reviews, blobs, quotas, and
-sandbox lifecycle. Hosted/no-checkout control requires Postgres, a durable blob
-store, and mounted management keys; local deployment selects SQLite and local
-adapters. Checkout I/O never runs here; agents move bounded bytes through
+The composition wires research records and workflow to the independent
+merv-sandboxes HTTP service. Hosted control requires Postgres and service
+authentication; provider lifecycle and storage credentials live in that service. Checkout I/O never runs here; agents move bounded bytes through
 token-authenticated upload routes, and the brain never dials a user machine.
 """
 
@@ -16,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
-from merv.shared.storage_guidance import STORAGE_RULE_OF_THUMB
 
 from ..application import Application
 from ..application.maintenance import CleanupService
@@ -31,19 +29,14 @@ from ..research_core import (
 )
 from .config import (
     ALLOWED_ORIGINS_ENV_VAR,
-    BLOB_BUCKET_ENV_VAR,
     CONTROL_RESTRICT_CORS_ENV_VAR,
     DB_URL_ENV_VAR,
-    MGMT_KEY_PATH_ENV_VAR,
     build_blob_store,
     build_object_store,
     build_state_store,
     REQUIRE_SANDBOX_BACKEND_ENV_VAR,
-    resolve_blob_bucket,
     resolve_db_url,
     resolve_allowed_origins,
-    resolve_mgmt_key_path,
-    resolve_mgmt_public_key,
     resolve_oauth_resource_uri,
     sandbox_feature_enabled,
     resolve_storage_max_upload_bytes,
@@ -52,7 +45,6 @@ from .config import (
 from .brain_dirs import resolve_brain_state_root, resolve_local_brain_staging
 from ..kernel.env import env_bool, env_value
 from ..kernel.ports.blob_store import BlobStore, EvidenceBlobStore
-from ..kernel.ports.mgmt_keys import MgmtKeyStore
 from ..kernel.secret_tokens import load_wait_secret
 from ..kernel.state import BaseStateStore
 from ..kernel.state.tool_call_ledger import (
@@ -62,14 +54,9 @@ from ..kernel.state.tool_call_ledger import (
 from ..kernel.state.tool_call_payloads import ToolCallPayloadStore
 from ..kernel.utils import ValidationError
 from ..object_storage import ObjectStorage
-from ..sandbox import DisabledSandboxBackend, SandboxBackend, SandboxEngine
-from ..sandbox.adapters import (
-    CONNECTABLE_PROVIDERS,
-    CREDENTIAL_CHECKS,
-    build_sandbox_backend,
-    configured_backend_names,
-)
-from ..sandbox.keys import LocalMgmtKeyStore, MountedMgmtKeyStore
+from ..infrastructure.client import build_infrastructure_client
+from ..infrastructure import RemoteSandboxes
+from ..infrastructure import RemoteProviders
 from .agent_identity import AgentIdentities, resolve_agent_identity_mode
 from .artifacts import ArtifactTools
 from .auth import SupabaseVerifier
@@ -82,7 +69,6 @@ from .tools.contracts import TOOL_MANIFEST, available_tool_names
 from .tools.dispatcher import ToolDispatcher
 from .transport.api import create_fastapi_app
 from .transport.http_policy import HttpSurfacePolicy
-from .sandbox_providers import SandboxProviderSettings
 from .user_settings import UserHfTokenSettings
 from .web_preview import AllowlistedPaperPreview, NetworkWebPreview
 
@@ -96,11 +82,9 @@ class Surface:
         store: BaseStateStore,
         blobs: EvidenceBlobStore,
         storage: ObjectStorage,
-        execution_backend: SandboxBackend,
-        mgmt_keys: MgmtKeyStore,
+        infrastructure_client: Any | None = None,
         mlflow_tracking: Any | None = None,
         sandbox_enabled: bool = True,
-        force_expiry_reaper: bool = False,
         structured_logging: bool = False,
         agent_identity_mode: str = "required",
     ) -> None:
@@ -146,24 +130,12 @@ class Surface:
             terminal_experiment_statuses=EXPERIMENT_TERMINAL_STATUSES,
         )
         self.artifact_tools = ArtifactTools(artifacts=self.artifacts)
-        self.sandbox_providers = SandboxProviderSettings(
-            store=store,
-            fleet=configured_backend_names,
-            catalog=CONNECTABLE_PROVIDERS,
-            checks=CREDENTIAL_CHECKS,
-        )
-        self.sandboxes = SandboxEngine(
-            store=store,
-            backend=execution_backend,
-            mgmt_keys=mgmt_keys,
-            force_expiry_reaper=force_expiry_reaper,
-            storage_enabled=storage.enabled,
-            storage_hint=STORAGE_RULE_OF_THUMB,
+        self.infrastructure_client = infrastructure_client
+        self.sandbox_providers = RemoteProviders(store=store, client=infrastructure_client)
+        self.sandboxes = RemoteSandboxes(
+            store=store, client=infrastructure_client if sandbox_enabled else None,
             attachment_check=self.research.assert_experiment_in_project,
-            provider_admission=self.sandbox_providers.ensure_provider_allowed,
         )
-        if sandbox_enabled:
-            self.sandboxes.start()
         self.application = Application(
             research=self.research,
             sandboxes=self.sandboxes,
@@ -212,8 +184,9 @@ class Surface:
             )
 
     def shutdown(self) -> None:
-        with suppress(Exception):
-            self.sandboxes.shutdown()
+        if self.infrastructure_client is not None:
+            with suppress(Exception):
+                self.infrastructure_client.close()
         with suppress(Exception):
             self.tool_ledger.close()
 
@@ -240,11 +213,8 @@ class ControlPlaneServer:
         fastapi_app: FastAPI,
     ) -> None:
         self.app = app
-        # Broader cleanup sweeps are built but NOT scheduled here — a managed
-        # cron or sidecar tick calls ``cleanup.run_all(now=...)``. The owned
-        # expiry reaper lives in the composition-owned SandboxEngine, and
-        # tool-call retention rides its tick, so the one horizon that must hold
-        # without an operator does not depend on that cron existing.
+        # Research metadata cleanup is operator-triggered. The infrastructure
+        # service independently schedules sandbox and physical object cleanup.
         self.cleanup = cleanup
         self.fastapi_app = fastapi_app
 
@@ -256,21 +226,20 @@ def build_control_app(
     *,
     repo_root: Path | None = None,
     env: Mapping[str, str] | None = None,
-    execution_backend: Any | None = None,
+    infrastructure_client: Any | None = None,
     store: Any | None = None,
     blobs: BlobStore | None = None,
     storage: Any = _UNSET,
-    mgmt_keys: Any | None = None,
     mlflow_tracking: Any | None = None,
     local_deployment: bool = False,
 ) -> Surface:
     """Build the unified brain app.
 
     ``repo_root`` is an explicit dev/test staging dir for SQLite/blob defaults;
-    production omits it and must provide DB_URL + BLOB_BUCKET + a mounted
-    management key. The compatibility ``repo_root`` on that production path is
-    a stable sentinel, not a created checkout or temp dir. ``execution_backend``
-    lets the crash-recovery test inject a reaper-capable fake backend.
+    production omits it and must provide DB_URL and the infrastructure service
+    URL plus delegated-auth signing key. The compatibility ``repo_root`` on that production path is
+    a stable sentinel, not a created checkout or temp dir. ``infrastructure_client``
+    lets tests inject a deterministic implementation of the remote API.
     """
     staging = _control_repo_root(
         repo_root=repo_root, env=env, local_deployment=local_deployment
@@ -280,52 +249,33 @@ def build_control_app(
     state_root = resolve_brain_state_root(staging)
     db_path = state_root / "state.sqlite"
     store = store if store is not None else build_state_store(db_path=db_path, env=env)
+    infrastructure_client = infrastructure_client or build_infrastructure_client(env)
     blobs = (
         blobs
         if blobs is not None
-        else build_blob_store(default_root=state_root / "blobs", env=env)
+        else build_blob_store(default_root=state_root / "blobs", env=env, client=infrastructure_client)
     )
     if storage is _UNSET:
         storage = ObjectStorage(
             store=store,
-            provider=build_object_store(default_root=state_root, env=env),
+            provider=build_object_store(default_root=state_root, env=env, client=infrastructure_client),
             max_upload_bytes=resolve_storage_max_upload_bytes(env),
         )
     elif storage is None:
         storage = ObjectStorage(store=store, provider=None)
-    sandbox_enabled = sandbox_feature_enabled(env)
-    if not sandbox_enabled:
-        execution_backend = DisabledSandboxBackend()
-    elif execution_backend is None:
-        execution_backend = build_sandbox_backend(repo_root=staging)
-    if sandbox_enabled:
-        _validate_sandbox_backend_requirement(
-            execution_backend=execution_backend, env=env
-        )
+    sandbox_enabled = sandbox_feature_enabled(env) and infrastructure_client is not None
     app = Surface(
-        store=store,
-        blobs=blobs,
-        storage=storage,
-        execution_backend=execution_backend,
-        mgmt_keys=(
-            mgmt_keys
-            if mgmt_keys is not None
-            else _build_mgmt_key_store(
-                env=env,
-                local_root=staging if local_deployment else None,
-            )
-        ),
-        mlflow_tracking=mlflow_tracking,
-        sandbox_enabled=sandbox_enabled,
-        # The brain holds provider lifecycle responsibility, so this composition
-        # forces the expiry reaper on in both deployment presets.
-        force_expiry_reaper=True,
+        store=store, blobs=blobs, storage=storage,
+        infrastructure_client=infrastructure_client,
+        mlflow_tracking=mlflow_tracking, sandbox_enabled=sandbox_enabled,
         structured_logging=not local_deployment,
         agent_identity_mode=resolve_agent_identity_mode(env),
     )
-    # A brain restart with live VMs must re-acquire reaping. Surface has
-    # already started its SandboxEngine; this reconciles rows left running.
-    _resume_active_sandboxes(app=app)
+    if sandbox_enabled and env_bool(REQUIRE_SANDBOX_BACKEND_ENV_VAR, False, env=env):
+        health = app.sandboxes.health()
+        if not health.get("ok"):
+            app.shutdown()
+            raise ValidationError("merv-sandboxes failed the required startup health check")
     return app
 
 
@@ -348,8 +298,6 @@ def build_control_server(
         )
     oauth_repository = SqlOAuthRepository(store=app._store, env=env)
     cleanup = CleanupService(
-        sandboxes=app.sandboxes,
-        blobs=app._blobs,
         storage=app.storage,
         tool_call_ledger=app.tool_ledger,
         oauth_clients=oauth_repository,
@@ -409,11 +357,10 @@ def build_local_server(
     state_dir: Path | None = None,
     env: Mapping[str, str] | None = None,
     allowed_origins: list[str] | None = None,
-    execution_backend: Any | None = None,
+    infrastructure_client: Any | None = None,
     store: Any | None = None,
     blobs: BlobStore | None = None,
     storage: Any = _UNSET,
-    mgmt_keys: Any | None = None,
     mlflow_tracking: Any | None = None,
 ) -> ControlPlaneServer:
     """Build the localhost brain using the same Surface composition."""
@@ -421,17 +368,14 @@ def build_local_server(
     app = build_control_app(
         repo_root=root,
         env=env,
-        execution_backend=execution_backend,
+        infrastructure_client=infrastructure_client,
         store=store,
         blobs=blobs,
         storage=storage,
-        mgmt_keys=mgmt_keys,
         mlflow_tracking=mlflow_tracking,
         local_deployment=True,
     )
     cleanup = CleanupService(
-        sandboxes=app.sandboxes,
-        blobs=app._blobs,
         storage=app.storage,
         tool_call_ledger=app.tool_ledger,
         agent_sessions=app.agent_sessions,
@@ -468,10 +412,9 @@ def _control_repo_root(
     missing = []
     if not resolve_db_url(env):
         missing.append(DB_URL_ENV_VAR)
-    if not resolve_blob_bucket(env):
-        missing.append(BLOB_BUCKET_ENV_VAR)
-    if not resolve_mgmt_key_path(env):
-        missing.append(MGMT_KEY_PATH_ENV_VAR)
+    for key in ("MERV_SANDBOXES_URL", "MERV_SANDBOXES_JWT_SECRET"):
+        if not env_value(key, env=env):
+            missing.append(key)
     if missing:
         raise ValidationError(
             "control mode without repo_root requires durable control-plane "
@@ -504,82 +447,3 @@ def _local_http_surface() -> HttpSurfacePolicy:
         restrict_cors=False,
         hosted_control=False,
     )
-
-
-def _build_mgmt_key_store(
-    *,
-    env: Mapping[str, str] | None = None,
-    local_root: Path | None = None,
-):
-    if local_root is not None:
-        return LocalMgmtKeyStore(
-            root=resolve_brain_state_root(local_root) / "mgmt_keys"
-        )
-    key_path = resolve_mgmt_key_path(env)
-    public_key = resolve_mgmt_public_key(env)
-    if not key_path:
-        raise ValidationError(
-            f"{MGMT_KEY_PATH_ENV_VAR} is required in control mode; "
-            "mount an externally managed management key"
-        )
-    return MountedMgmtKeyStore(
-        private_key_path=Path(key_path),
-        public_key=public_key,
-    )
-
-
-def _validate_sandbox_backend_requirement(
-    *,
-    execution_backend: Any,
-    env: Mapping[str, str] | None = None,
-) -> None:
-    if not env_bool(REQUIRE_SANDBOX_BACKEND_ENV_VAR, False, env=env):
-        return
-    health = dict(execution_backend.health())
-    if health.get("ok"):
-        return
-    backend = str(
-        health.get("backend")
-        or health.get("name")
-        or health.get("provider")
-        or "unknown"
-    )
-    error = str(health.get("error") or "sandbox backend health check failed")
-    raise ValidationError(
-        f"{REQUIRE_SANDBOX_BACKEND_ENV_VAR}=1 requires a healthy sandbox backend "
-        f"before control startup; {backend} reported: {error}",
-        details={"backend": backend, "error": error},
-    )
-
-
-def _resume_active_sandboxes(*, app: Surface) -> None:
-    """Reconcile rows left running/provisioning after a control restart.
-
-    The reaper thread is already running (Surface started SandboxEngine);
-    a one-shot reconcile pass on startup makes the resumed reaper truthful
-    about rows that may have expired while the control plane was down.
-    Best-effort — a reconcile failure must not block startup or the reaper.
-    """
-    if not app.sandbox_enabled:
-        return
-    with suppress(Exception):  # startup must not hinge on recovery
-        had_running = app.sandboxes.has_running_rows()
-        app.sandboxes.reconcile_running_rows()
-        if had_running:
-            # Kick the resumed reaper once so anything already past its deadline
-            # is reaped promptly instead of waiting a full interval. Off-thread:
-            # startup must not block on cleanup. The composition-started runtime
-            # reaper also catches it on its next tick.
-            import threading
-
-            threading.Thread(
-                target=_safe_reap,
-                args=(app,),
-                name="control-recovery-reap",
-                daemon=True,
-            ).start()
-
-
-def _safe_reap(app: Surface) -> None:
-    with suppress(Exception):  # the reaper must never die
-        app.sandboxes.reap_expired()

@@ -1,7 +1,7 @@
 """Ports and value objects for submitted, content-addressed evidence bytes.
 
-Business components need only :class:`EvidenceBlobStore`; expiry cleanup is a
-separate capability so content owners do not depend on adapter maintenance.
+Business components need only :class:`EvidenceBlobStore`. Content owners
+may also delete exact objects; physical expiry belongs to merv-sandboxes.
 """
 
 from __future__ import annotations
@@ -34,12 +34,6 @@ class EvidenceBlobStore(Protocol):
         """Return submitted bytes, raising ``NotFoundError`` when absent."""
         ...
 
-class ExpiringBlobStore(Protocol):
-    """Cleanup-only capability for removing submitted bytes past their TTL."""
-
-    def sweep_expired(self, *, now: str | None = None) -> int: ...
-
-
 class DeletableBlobStore(Protocol):
     """Targeted removal of one blob, for owners that track their own horizon.
 
@@ -52,7 +46,7 @@ class DeletableBlobStore(Protocol):
 
 
 class BlobStore(
-    EvidenceBlobStore, ExpiringBlobStore, DeletableBlobStore, Protocol
+    EvidenceBlobStore, DeletableBlobStore, Protocol
 ):
     """Composition-time submitted-byte provider."""
 
@@ -70,6 +64,5 @@ __all__ = [
     "BlobStore",
     "DeletableBlobStore",
     "EvidenceBlobStore",
-    "ExpiringBlobStore",
     "validate_blob_keys",
 ]

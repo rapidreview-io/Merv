@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from tests.support.brain import TestBrain
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient, project_namespace, seed_sandbox
 from merv.brain.surface.auth import SupabaseVerifier
 from merv.brain.surface.project_keys import ProjectKeys
 from merv.brain.surface.transport.api import create_fastapi_app
@@ -36,7 +36,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.brain = TestBrain(
             repo_root=root,
             db_path=root / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
         self.client = TestClient(self.brain.fastapi_app, raise_server_exceptions=False)
         self.project_id = self.brain.call_tool(
@@ -188,6 +188,41 @@ class AgentSessionSurfaceTest(unittest.TestCase):
             },
         )
         return reflection_id
+
+    def test_session_reads_its_native_job_and_cannot_cancel_another_experiments_job(self) -> None:
+        secret = self.secret()
+        self.claim(secret=secret, runner_id="native-jobs")
+        other = self.brain.call_tool("experiment.create", {
+            "project_id": self.project_id, "name": "foreign-native-job", "intent": "other work",
+        })["id"]
+        fake = self.brain.infrastructure_client
+        for uid, eid, jid in (("sbx_own", self.experiment_id, "job_own"), ("sbx_foreign", other, "job_foreign")):
+            seed_sandbox(self.brain.sandboxes, project_id=self.project_id,
+                         experiment_id=eid, sandbox_uid=uid, status="running")
+            fake.seed_jobs(project_namespace(self.project_id), uid, {"label": jid, "exit_code": 0})
+        own = self.mcp(secret=secret, name="sandbox.job", arguments={"project_id": self.project_id, "job_id": "job_own"})
+        self.assertEqual(own.status_code, 200, own.text)
+        self.assertEqual(own.json()["result"]["id"], "job_own")
+        output = self.mcp(secret=secret, name="sandbox.job", arguments={
+            "project_id": self.project_id, "job_id": "job_own", "stream": "stdout", "limit": 32,
+        })
+        self.assertEqual(output.status_code, 200, output.text)
+        self.assertEqual(output.json()["result"]["output"]["stream"], "stdout")
+        oversized = self.mcp(secret=secret, name="sandbox.job", arguments={
+            "project_id": self.project_id, "job_id": "job_own", "stream": "stdout", "limit": 1048577,
+        })
+        self.assertEqual(oversized.status_code, 400, oversized.text)
+        cancelled = self.mcp(secret=secret, name="sandbox.job", arguments={
+            "project_id": self.project_id, "job_id": "job_own", "cancel": True,
+        })
+        self.assertEqual(cancelled.status_code, 200, cancelled.text)
+        self.assertEqual(cancelled.json()["result"]["state"], "cancelled")
+        fake.calls.clear()
+        foreign = self.mcp(secret=secret, name="sandbox.job", arguments={
+            "project_id": self.project_id, "job_id": "job_foreign", "cancel": True, "stream": "stdout",
+        })
+        self.assertEqual(foreign.status_code, 404, foreign.text)
+        self.assertFalse(any(path.endswith("/cancel") or path.endswith("/output") for _, path, *_ in fake.calls))
 
     def test_session_is_mcp_only_and_default_denies_other_experiments(self) -> None:
         session_secret = self.secret()
@@ -866,7 +901,7 @@ class AgentDispatchSwitchTest(unittest.TestCase):
         self.brain = TestBrain(
             repo_root=root,
             db_path=root / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
         self.client = TestClient(self.brain.fastapi_app, raise_server_exceptions=False)
         self.project_id = self.brain.call_tool(

@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "Research workflow plugins: durable project state, typed artifact submission, reviews, and cloud sandboxes.",
-    "version": "0.1.4"
+    "version": "0.1.5"
   },
   "plugins": [
     {
       "name": "merv",
       "source": "merv",
       "description": "Lean research-state workflow with hosted MCP research state, typed artifacts, reviews, and cloud SSH sandboxes.",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "category": "productivity",
       "author": {
         "name": "RapidReview"

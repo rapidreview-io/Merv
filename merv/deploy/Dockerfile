@@ -1,12 +1,7 @@
 # Hosted-brain image for Merv.
 #
-# Installs the `control` extra (Postgres driver + object-store SDK + provider
-# SDK) and runs the control composition behind uvicorn. This is the REFERENCE
-# stack — not a managed deploy: TLS termination, a real secret store, managed
-# Postgres, and the cleanup scheduler are all the operator's responsibility (see
-# deploy/README.md). Build context is the plugin root:
-#   docker build -f deploy/Dockerfile -t merv-control .
-#
+# Installs research HTTP/auth and Postgres dependencies only. Compute and
+# storage infrastructure run in the independent merv-sandboxes deployment.
 # syntax=docker/dockerfile:1
 FROM python:3.11-slim AS base
 
@@ -17,23 +12,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# curl is for the HEALTHCHECK probe. openssh-client is for the management SSH
-# channel (Lambda/Thunder transcript, metrics, and secret delivery) and the
-# local Compose key-init job.
+# curl is used only by the health probe.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl openssh-client \
+    && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy the project and install with the control + gcp extras. The `control`
-# profile pulls psycopg + boto3 + the provider SDK; `gcp` adds google-auth so
-# GCP credential verification and provisioning work in the hosted brain
-# (pyproject [project.optional-dependencies]).
+# Install the research control plane without provider SDKs.
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY deploy/db_preflight.py ./deploy/db_preflight.py
-RUN pip install ".[control,gcp]"
+RUN pip install ".[control]"
 
 # Run as a non-root user (the control plane never needs root; it holds no user
 # checkout).

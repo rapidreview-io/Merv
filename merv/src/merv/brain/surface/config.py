@@ -37,17 +37,7 @@ MODE_ENV_VAR = "MERV_MODE"
 DB_URL_ENV_VAR = "MERV_DB_URL"
 
 # Blob and storage adapter configuration.
-BLOB_DIR_ENV_VAR = "MERV_BLOB_DIR"
-BLOB_BUCKET_ENV_VAR = "MERV_BLOB_BUCKET"
-STORAGE_PROVIDER_ENV_VAR = "MERV_STORAGE_PROVIDER"
-STORAGE_BUCKET_ENV_VAR = "MERV_STORAGE_BUCKET"
-STORAGE_ENDPOINT_URL_ENV_VAR = "MERV_STORAGE_ENDPOINT_URL"
-STORAGE_REGION_ENV_VAR = "MERV_STORAGE_REGION"
-STORAGE_ACCESS_KEY_ID_ENV_VAR = "MERV_STORAGE_ACCESS_KEY_ID"
-STORAGE_SECRET_ACCESS_KEY_ENV_VAR = "MERV_STORAGE_SECRET_ACCESS_KEY"
 STORAGE_MAX_UPLOAD_BYTES_ENV_VAR = "MERV_STORAGE_MAX_UPLOAD_BYTES"
-MGMT_KEY_PATH_ENV_VAR = "MERV_MGMT_KEY_PATH"
-MGMT_PUBLIC_KEY_ENV_VAR = "MERV_MGMT_PUBLIC_KEY"
 ALLOWED_ORIGINS_ENV_VAR = "MERV_ALLOWED_ORIGINS"
 CONTROL_RESTRICT_CORS_ENV_VAR = "MERV_CONTROL_RESTRICT_CORS"
 # Where the hosted UI's OAuth consent page lives. Unlike a CORS origin this
@@ -129,33 +119,8 @@ def resolve_control_url(env: Mapping[str, str] | None = None) -> str | None:
     return raw.rstrip("/") or None
 
 
-def resolve_blob_dir(env: Mapping[str, str] | None = None) -> str | None:
-    return env_value(BLOB_DIR_ENV_VAR, env=env)
-
-
-def resolve_blob_bucket(env: Mapping[str, str] | None = None) -> str | None:
-    return env_value(BLOB_BUCKET_ENV_VAR, env=env)
-
-
 def storage_feature_enabled(env: Mapping[str, str] | None = None) -> bool:
-    return resolve_storage_provider(env) is not None
-
-
-def resolve_storage_provider(env: Mapping[str, str] | None = None) -> str | None:
-    raw = (env_value(STORAGE_PROVIDER_ENV_VAR, env=env) or "").lower()
-    if not raw:
-        return None
-    if raw != "s3":
-        raise ValidationError(
-            f"unknown {STORAGE_PROVIDER_ENV_VAR}: {raw!r} "
-            "(expected 's3', or unset to disable storage)",
-            details={"provider": raw},
-        )
-    return raw
-
-
-def resolve_storage_bucket(env: Mapping[str, str] | None = None) -> str | None:
-    return env_value(STORAGE_BUCKET_ENV_VAR, env=env)
+    return bool(env_value("MERV_SANDBOXES_URL", env=env))
 
 
 def resolve_storage_max_upload_bytes(env: Mapping[str, str] | None = None) -> int:
@@ -169,36 +134,6 @@ def resolve_storage_max_upload_bytes(env: Mapping[str, str] | None = None) -> in
         env=env,
         strict=False,
     )
-
-
-def resolve_storage_endpoint_url(env: Mapping[str, str] | None = None) -> str | None:
-    return env_value(STORAGE_ENDPOINT_URL_ENV_VAR, env=env)
-
-
-def resolve_storage_region(env: Mapping[str, str] | None = None) -> str | None:
-    return env_value(STORAGE_REGION_ENV_VAR, env=env)
-
-
-def resolve_storage_access_key_id(env: Mapping[str, str] | None = None) -> str | None:
-    return env_value(STORAGE_ACCESS_KEY_ID_ENV_VAR, env=env) or env_value(
-        "AWS_ACCESS_KEY_ID", env=env
-    )
-
-
-def resolve_storage_secret_access_key(
-    env: Mapping[str, str] | None = None,
-) -> str | None:
-    return env_value(STORAGE_SECRET_ACCESS_KEY_ENV_VAR, env=env) or env_value(
-        "AWS_SECRET_ACCESS_KEY", env=env
-    )
-
-
-def resolve_mgmt_key_path(env: Mapping[str, str] | None = None) -> str | None:
-    return env_value(MGMT_KEY_PATH_ENV_VAR, env=env)
-
-
-def resolve_mgmt_public_key(env: Mapping[str, str] | None = None) -> str | None:
-    return env_value(MGMT_PUBLIC_KEY_ENV_VAR, env=env)
 
 
 def resolve_allowed_origins(env: Mapping[str, str] | None = None) -> list[str]:
@@ -250,57 +185,22 @@ def resolve_ui_base_url(env: Mapping[str, str] | None = None) -> str:
     return raw
 
 
-def build_blob_store(
-    *, default_root: Path, env: Mapping[str, str] | None = None
-) -> BlobStore:
-    """The submitted-byte BlobStore selected by configuration.
+def build_blob_store(*, default_root: Path, env=None, client=None) -> BlobStore:
+    """Submitted evidence lives in the independently operated service."""
+    from ..infrastructure.client import build_infrastructure_client
+    from ..infrastructure.storage import RemoteBlobStore, UnconfiguredBlobStore
 
-    A bucket name selects ``S3BlobStore`` (boto3 imported only on that branch,
-    so local installs never need it); otherwise a ``LocalDirBlobStore`` rooted
-    at the configured dir or ``default_root``. Same protocol + contract tests
-    either way, so callers stay blob-implementation blind. Hosted/no-checkout
-    control validates that a bucket is present at its composition root.
-    """
-    bucket = resolve_blob_bucket(env)
-    if bucket:
-        from ..object_storage.s3_blobs import S3BlobStore
-
-        return S3BlobStore(bucket=bucket)
-    from ..object_storage.blobs import LocalDirBlobStore
-
-    root = resolve_blob_dir(env)
-    return LocalDirBlobStore(root=Path(root) if root else default_root)
+    client = client or build_infrastructure_client(env)
+    return RemoteBlobStore(client=client) if client else UnconfiguredBlobStore()
 
 
-def build_object_store(
-    *, default_root: Path, env: Mapping[str, str] | None = None
-):
-    """The heavy-object store selected by storage env config.
+def build_object_store(*, default_root: Path, env=None, client=None):
+    """Heavy transfers use the same native service and project namespaces."""
+    from ..infrastructure.client import build_infrastructure_client
+    from ..infrastructure.storage import RemoteObjectProvider
 
-    Unset disables storage entirely. ``s3`` covers AWS S3, MinIO, and R2; R2 is
-    just S3 with an endpoint URL. There is intentionally no in-process local
-    provider: local/offline users should run an S3-compatible service such as
-    MinIO and point this config at it.
-    """
-    provider = resolve_storage_provider(env)
-    _ = default_root
-    if provider is None:
-        return None
-    bucket = resolve_storage_bucket(env)
-    if not bucket:
-        raise ValidationError(
-            f"{STORAGE_BUCKET_ENV_VAR} is required when {STORAGE_PROVIDER_ENV_VAR}=s3",
-            details={"provider": provider},
-        )
-    from ..object_storage.s3_object_store import S3CompatibleObjectStore
-
-    return S3CompatibleObjectStore(
-        bucket=bucket,
-        endpoint_url=resolve_storage_endpoint_url(env),
-        region_name=resolve_storage_region(env),
-        access_key_id=resolve_storage_access_key_id(env),
-        secret_access_key=resolve_storage_secret_access_key(env),
-    )
+    client = client or build_infrastructure_client(env)
+    return RemoteObjectProvider(client=client) if client else None
 
 
 def build_state_store(

@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 
 from tests.support.brain import TestBrain
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.kernel.utils import NotFoundError, PermissionDeniedError
 
 
@@ -29,7 +29,7 @@ class TenancyTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
         self.store = self.app.store
         # Two projects, re-homed to two distinct tenants (bootstrap default is

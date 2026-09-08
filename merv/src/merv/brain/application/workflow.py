@@ -19,7 +19,7 @@ from ..research_core import (
     ResearchSnapshot,
     TASK_TERMINAL_STATUSES,
 )
-from ..sandbox import SandboxEngine
+from ..infrastructure import RemoteSandboxes as SandboxEngine
 from .experiments.presentation import (
     project_fields,
     project_rows,

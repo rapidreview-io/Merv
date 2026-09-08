@@ -1,6 +1,6 @@
 {
   "name": "merv-kilo-plugin",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Native Kilo Code adapter for the hosted Merv research workflow.",
   "type": "module",
   "main": "./clients/kilo/plugin.js",

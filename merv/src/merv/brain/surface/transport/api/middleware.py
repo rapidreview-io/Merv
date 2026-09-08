@@ -101,6 +101,8 @@ def install_error_handlers(http: FastAPI) -> None:
             # The request was valid and its transition committed; only the
             # server's own durable record failed. The message and error_code
             # still carry the do-not-retry instruction verbatim.
+            else 503
+            if exc.error_code == "infrastructure_unavailable"
             else 500
             if isinstance(exc, TrackingPersistenceError)
             else 400

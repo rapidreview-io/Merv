@@ -17,7 +17,7 @@ from merv.brain.feed import persistence as feed_persistence
 from merv.brain.kernel.ports.web_preview import WebPreviewError
 from merv.brain.kernel.state.store import StateStore
 from merv.brain.kernel.utils import NotFoundError, ValidationError
-from merv.brain.object_storage.blobs import LocalDirBlobStore
+from tests.support.blobs import LocalDirBlobStore
 from merv.brain.research_core import Research
 from merv.brain.surface import web_preview
 from merv.brain.surface.transport.feed_http import register_feed_routes

@@ -6,7 +6,7 @@ hosted service: every agent client connects directly to one brain over HTTP.
 ```text
 Agent client -----HTTP POST /mcp-----> localhost brain
                                         |
-                                        +-- SQLite / blobs / providers
+                                        +-- SQLite records / merv-sandboxes HTTP
 
 Browser UI ---------------------------> localhost brain
 ```
@@ -19,7 +19,7 @@ agent client directly at the hosted brain over HTTP.
 - Python 3.11+
 - a POSIX shell; OpenSSH and `rsync` when exercising sandbox access/output pulls
 - Node.js/npm only when developing the browser UI
-- provider credentials only when provisioning real sandboxes
+- a separately deployed merv-sandboxes service for byte uploads or compute
 
 Set convenient paths:
 
@@ -39,11 +39,11 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-Starting the brain does not provision a sandbox. For a real sandbox backend,
-leave the default `lambda_labs` selection or set
-`MERV_EXECUTION_BACKEND` to `thunder_compute` or `modal`, then provide
-the corresponding credentials to the brain process. Caller SSH private keys
-remain on the client side.
+Starting the brain does not provision compute. For uploads or sandboxes, set
+`MERV_SANDBOXES_URL` and `MERV_SANDBOXES_JWT_SECRET` to a separate development
+merv-sandboxes deployment. The matching secret belongs in
+`SANDBOXES_MERV_JWT_SECRET` there. Configure provider credentials and object
+storage in that service. Omit both Merv variables for record-only development.
 
 ## Start the brain
 
@@ -131,7 +131,7 @@ brain restarts. They are not repo-local JSONL or SQLite files.
 
 ## State placement
 
-- The local brain stores SQLite state and submitted blobs under its configured
+- The local brain stores SQLite research state under its configured
   brain state root: `~/.merv/brain` on fresh machines, or the legacy
   `~/.research_plugin/brain` layout forever when that state already exists.
 - `merv-client configure` writes the machine configuration (the brain base
@@ -142,12 +142,7 @@ brain restarts. They are not repo-local JSONL or SQLite files.
 
 ## Optional full hosted-shape stack
 
-To exercise Postgres, MinIO, and the control preset locally:
-
-```bash
-cd "$RESEARCH_PLUGIN"
-docker compose -f deploy/docker-compose.yml up --build
-```
-
-This is the reference deployment shape, not a production platform. See
-[deploy/README.md](../deploy/README.md) for its security and operational seams.
+To exercise PostgreSQL and the control preset locally, configure a separate
+merv-sandboxes deployment and follow [deploy/README.md](../deploy/README.md).
+The base Compose stack contains only Merv control; choose a PostgreSQL overlay
+or provide an external record database.

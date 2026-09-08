@@ -25,7 +25,7 @@ from merv.brain.kernel.state.tool_call_payloads import (
     ToolCallPayloadStore,
 )
 from merv.brain.kernel.request_context import begin_request, bind_agent, reset_request
-from merv.brain.object_storage.blobs import LocalDirBlobStore
+from tests.support.blobs import LocalDirBlobStore
 from merv.brain.surface.agent_identity import (
     AGENT_ID_ALPHABET,
     AGENT_ID_LENGTH,
@@ -36,7 +36,7 @@ from merv.brain.surface.agent_identity import (
 )
 from merv.brain.surface.transport.mcp_streamable_http import SERVER_INSTRUCTIONS
 from tests.support.brain import TestBrain
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 
 MCP_ACCEPT = "application/json, text/event-stream"
 
@@ -102,7 +102,7 @@ class AgentIdentityOverMcpTest(unittest.TestCase):
         self.brain = TestBrain(
             repo_root=self.root,
             db_path=self.root / ".merv" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
         self.client = TestClient(self.brain.fastapi_app)
         self.mcp = _Mcp(self.client)
@@ -255,7 +255,7 @@ class OptionalModeTest(unittest.TestCase):
             brain = TestBrain(
                 repo_root=root,
                 db_path=root / ".merv" / "state.sqlite",
-                execution_backend=FakeSandboxBackend(),
+                infrastructure_client=FakeInfrastructureClient(),
                 env={"MERV_AGENT_IDENTITY": "optional"},
             )
             try:

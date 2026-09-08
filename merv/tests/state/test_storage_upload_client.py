@@ -81,6 +81,59 @@ class StorageUploadClientTest(unittest.TestCase):
         )
         self.assertEqual(result["object"]["status"], "available")
 
+    def test_resume_streams_only_missing_parts_and_preserves_signed_headers(self) -> None:
+        data = b"abcdefghij"
+        target = {"upload": {"size_bytes": 10, "part_size": 4, "part_count": 3,
+            "checksum_sha256": base64.b64encode(hashlib.sha256(data).digest()).decode(),
+            "completed_parts": [1, 3],
+            "parts": [{"part_number": 2, "url": "https://store.test/2",
+                       "headers": {"x-amz-checksum-sha256": "signed-checksum"}}]}}
+        writes = []
+        completion = {}
+
+        def open_url(request, timeout):
+            if request.get_method() == "GET":
+                return _Response(json.dumps(target).encode())
+            if request.get_method() == "PUT":
+                writes.append((request.full_url, b"".join(request.data),
+                               request.get_header("X-amz-checksum-sha256")))
+                return _Response(headers={"ETag": '"second"'})
+            completion.update(json.loads(request.data))
+            return _Response(b'{"object":{"status":"available"}}')
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "file"
+            path.write_bytes(data)
+            with patch("merv.client.storage_upload.urllib.request.urlopen", side_effect=open_url):
+                upload_storage_file(path=path, target_url="https://merv.test/u")
+        self.assertEqual(writes, [("https://store.test/2", b"efgh", "signed-checksum")])
+        self.assertEqual(completion["parts"], [{"part_number": 2, "etag": '"second"'}])
+
+    def test_empty_file_upload_and_already_uploaded_resume(self) -> None:
+        for already_uploaded in (False, True):
+            with self.subTest(already_uploaded=already_uploaded):
+                target = {"upload": {"size_bytes": 0, "part_size": 4, "part_count": 1,
+                    "checksum_sha256": base64.b64encode(hashlib.sha256(b"").digest()).decode(),
+                    "completed_parts": [1] if already_uploaded else [],
+                    "parts": [] if already_uploaded else [{"part_number": 1, "url": "https://store.test/1"}]}}
+                writes = []
+
+                def open_url(request, timeout):
+                    if request.get_method() == "GET":
+                        return _Response(json.dumps(target).encode())
+                    if request.get_method() == "PUT":
+                        writes.append(b"".join(request.data))
+                        self.assertEqual(request.get_header("Content-length"), "0")
+                        return _Response(headers={"ETag": '"empty"'})
+                    return _Response(b'{"object":{"status":"available"}}')
+
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "empty"
+                    path.write_bytes(b"")
+                    with patch("merv.client.storage_upload.urllib.request.urlopen", side_effect=open_url):
+                        upload_storage_file(path=path, target_url="https://merv.test/u")
+                self.assertEqual(writes, [] if already_uploaded else [b""])
+
     def test_rejects_changed_file_before_upload(self) -> None:
         target = {
             "upload": {

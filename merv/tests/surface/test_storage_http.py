@@ -16,8 +16,7 @@ from fastapi.testclient import TestClient
 from tests.fakes import FakeObjectStore
 from tests.support.brain import TestBrain
 from merv.brain.surface.surface import build_local_server
-from merv.brain.surface.config import STORAGE_PROVIDER_ENV_VAR
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.kernel.state.store import StateStore
 from merv.brain.object_storage import ObjectStorage
 from merv.brain.object_storage.storage import SINGLE_PUT_MAX_BYTES
@@ -87,7 +86,7 @@ class StorageHttpApiTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
             store=store,
             storage=storage,
         )
@@ -166,7 +165,7 @@ class StorageHttpApiTest(unittest.TestCase):
         import base64
 
         expected_checksum = base64.b64encode(bytes.fromhex(sha)).decode("ascii")
-        self.assertIn(f"-H 'x-amz-checksum-sha256:{expected_checksum}'", run)
+        self.assertIn(f"-H 'x-amz-checksum-sha256: {expected_checksum}'", run)
         # The presign signs BOTH the checksum and the Content-Type into the
         # SigV4 signature, so the curl must echo the Content-Type header or a
         # real S3/R2 target rejects the PUT with SignatureDoesNotMatch.
@@ -508,7 +507,7 @@ class StorageCompositionTest(unittest.TestCase):
                 os.environ,
                 {
                     "RESEARCH_PLUGIN_EXECUTION_BACKEND": "lambda_labs",
-                    STORAGE_PROVIDER_ENV_VAR: "",
+                    "MERV_SANDBOXES_URL": "",
                 },
             ):
                 server = build_local_server(state_dir=root)

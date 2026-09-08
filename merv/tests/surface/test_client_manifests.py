@@ -69,7 +69,7 @@ class HttpMcpManifestTest(unittest.TestCase):
         package = json.loads((adapter / "package.json").read_text())
         plugin = (adapter / "plugin.js").read_text()
         self.assertEqual(package["name"], "merv-kilo-plugin")
-        self.assertEqual(package["version"], "0.1.4")
+        self.assertEqual(package["version"], "0.1.5")
         self.assertIn(HOSTED_MCP_URL, plugin)
         self.assertIn("https://rapidreview.io/merv/.well-known/skills/", plugin)
         self.assertIn("type: 'remote'", plugin)

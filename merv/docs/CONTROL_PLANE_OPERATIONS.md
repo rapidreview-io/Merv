@@ -1,138 +1,66 @@
-# Operating the hosted brain
+# Control plane operations
 
-This is the production runbook for the `control` preset served by
-`merv-control`. The reference container stack lives in
-[`deploy/README.md`](../deploy/README.md).
+Merv runs the research API, MCP gateway, and workflow against its PostgreSQL
+record database. The independent merv-sandboxes service owns physical bytes,
+cloud credentials, VM provisioning, SSH certificates, durable jobs, expiry,
+and cleanup. Operate and back up both services separately.
 
-## Security boundary
+## Startup and health
 
-Control mode is authenticated by default. `SupabaseVerifier` accepts Supabase
-session JWTs, RapidReview `rr_sk_` keys, and Merv `mk_`/OAuth credentials.
-Project membership and key scope are enforced at the HTTP and MCP funnels.
+Hosted control requires `MERV_DB_URL`, `MERV_SANDBOXES_URL`,
+`MERV_SANDBOXES_JWT_SECRET`, `MERV_WAIT_SECRET`, and the end-user authentication
+configuration in [AUTH.md](AUTH.md). Set `MERV_REQUIRE_SANDBOX_BACKEND=1` to
+check authenticated service access at startup. Invalid or incomplete
+configuration fails startup instead of selecting a built-in backend.
 
-Required production posture:
+`GET /health` checks the Merv process. Inspect authenticated `/api/meta` and
+provider reads to verify infrastructure reachability. Upstream infrastructure
+failures return a structured `infrastructure_unavailable` error (HTTP 503),
+while project authorization still happens in Merv. Do not print signing keys,
+provider fields, presigned transfer URLs, or authorization headers in logs.
 
-- terminate TLS before the brain;
-- set `MERV_REQUIRE_AUTH=1`;
-- configure exact browser origins in `MERV_ALLOWED_ORIGINS`;
-- keep `/api/admin/*` on an operator-controlled network;
-- store database, provider, Supabase, and SSH credentials in a secret manager.
+## Compute and spending
 
-An intentionally open control plane requires both `MERV_REQUIRE_AUTH=0` and
-`MERV_ALLOW_OPEN_CONTROL=1`. This is for isolated development only; the server
-logs the open state at every boot.
+Merv associates native sandbox IDs and jobs with research experiments.
+`merv-sandboxes` owns machine state, expiration, job execution, and cleanup.
+Check its control/worker logs and provider health when provisioning fails.
+There is no Merv SSH management key, VM bootstrap script, or reaper to repair.
 
-## Required configuration
+Merv's saved project caps, platform payer caps, enabled flags, and spend kill
+switches remain research policy. Each create/renew call carries a signed daily
+policy including the original payer and legacy daily spend. The native
+service atomically reserves remaining lease commitments across projects and
+rejects admissions that exceed a cap. Extending a lease must pass a fresh
+policy check. Historical terminated sandbox records remain read-only.
 
-`merv-control` forces `MERV_MODE=control` and fails fast without:
+## Storage
 
-```text
-MERV_DB_URL                 Postgres record-store URL
-MERV_BLOB_BUCKET            S3-compatible submitted-byte bucket
-MERV_MGMT_KEY_PATH          mounted management private key, mode 0600
-SUPABASE_URL
-SUPABASE_JWT_SECRET
-SUPABASE_SERVICE_KEY
-SUPABASE_ANON_KEY
-```
+Merv retains the object ledger, artifact identities, retention policy, and
+research relationships. Its storage adapters use the external HTTP API for
+both submitted blobs and heavy objects. Native storage owns multipart uploads,
+presigned URLs, checksum validation, physical deletion, and expiry. Repair
+provider access in that service, never by adding S3 credentials to Merv.
 
-The management public key comes from `MERV_MGMT_PUBLIC_KEY` or the adjacent
-`.pub` file. Drain live sandboxes before rotating this key.
-
-Heavy-object storage is optional and separate from submitted artifacts:
-
-```text
-MERV_STORAGE_PROVIDER=s3
-MERV_STORAGE_BUCKET=...
-MERV_STORAGE_ENDPOINT_URL=...   # MinIO, R2, or custom S3
-MERV_STORAGE_REGION=...
-MERV_STORAGE_ACCESS_KEY_ID=...  # otherwise normal AWS resolution
-MERV_STORAGE_SECRET_ACCESS_KEY=...
-```
-
-Presigned URLs must be reachable from agent machines, not just the container.
-
-## Browser and client traffic
-
-`MERV_ALLOWED_ORIGINS` is a comma-separated list of exact HTTP(S) browser
-origins. CORS is not authentication. Agent clients connect directly to
-`POST /mcp` and pass a project or account-scoped bearer credential.
-
-`GET /api/meta` reports the server/catalog versions, mode, authentication
-requirements, and capabilities. A client explicitly below
-`min_proxy_version` receives `426 client_too_old`; a missing version header is
-currently tolerated. `X-RP-Request-Id` identifies requests in logs.
-
-See [AUTH.md](AUTH.md) for credential and membership behavior and
-[CLIENTS.md](CLIENTS.md) for client configuration.
-
-## Sandbox providers
-
-Select one provider with `MERV_EXECUTION_BACKEND` or several with the
-comma-separated `MERV_EXECUTION_BACKENDS`. Set
-`MERV_REQUIRE_SANDBOX_BACKEND=1` to reject startup when the configured provider
-is unhealthy. Without it, the brain may run record-only and expose the provider
-failure through sandbox health.
-
-Provider credentials belong in the control environment. Secrets delivered to a
-runtime travel through the provider or management channel, never in agent
-responses. See [SANDBOX_PROVIDERS.md](SANDBOX_PROVIDERS.md) for provider
-settings.
-
-## Cleanup and cost control
-
-Sandbox lifecycle scheduling runs in the brain. Broader cleanup is an
-idempotent operator action:
-
-```http
-POST /api/admin/cleanup
-```
-
-Schedule it with managed cron or a sidecar. A pass reconciles tracked
-sandboxes, expires submitted blobs and heavy objects, and recovers stale
-provisioning records. It does not discover arbitrary provider VMs that have no
-durable Merv row.
-
-The tool-call ledger and its per-call payload records (see
-[AGENT_IDENTITY.md](AGENT_IDENTITY.md)) prune themselves on the brain's own
-hourly timer at `MERV_TOOL_CALL_RETENTION_DAYS` (default 180); the cleanup
-pass is a second net for their blobs. Agent traces are read at
-`GET /api/admin/agents` and `GET /api/admin/agents/{agent_id}?payloads=true`
-with the operator token. `MERV_AGENT_IDENTITY=optional` stops the brain from
-demanding an `agent_id` on MCP calls (it still records one when supplied);
-leave it unset in production.
-
-Sandbox admission and spend policy can enforce concurrency, duration, price,
-GPU-hour, and USD limits. Keep the provider consoles and billing alerts as an
-independent safety net.
-
-Nothing on a sandbox is durable by default. Retain compact evidence through
-Artifacts and heavy outputs through Object Storage before release or expiry.
+Use the migration report and native object catalog when diagnosing legacy
+objects. Adopted R2 objects retain their old bucket/key; copied MinIO blobs
+have verified SHA-256. A historical multipart digest with size-only evidence
+is explicitly distinguished from a newly verified full checksum.
 
 ## Observability
 
-The brain writes compact request records to stdout in control mode. Three
-different data sources exist:
+- `/api/activity?limit=100`: bounded in-memory activity ring.
+- `/api/debug/tool-calls`: bounded in-memory tool-call diagnostics.
+- `/api/projects/{project_id}/events`: durable accepted research events.
+- `/api/projects/{project_id}/events/stream`: SSE notifications for UI refresh.
 
-- project events are durable and commit with accepted research changes;
-- `/api/activity` is a bounded in-memory summary ring;
-- `/api/debug/tool-calls` is a bounded in-memory request/response ring.
+Diagnostic rings reset on restart. Durable events and records remain in the
+research database. Use a dedicated PostgreSQL database and session-compatible
+connections because migrations and other operations use advisory locks.
 
-The diagnostic rings reset on restart and are operator surfaces.
+## Deployment and recovery
 
-The UI uses project-event SSE for refresh hints and ETag polling as fallback.
-Terminal and utilization reads use the management transport and short-lived
-caches.
-
-## Readiness
-
-The reference Compose stack is an integration environment, not a production
-platform. After configuring providers, run:
-
-```bash
-python3 deploy/doctor.py --control-url http://127.0.0.1:8787
-```
-
-Production additionally needs managed Postgres and backups, durable bucket
-lifecycle policy, TLS, secrets management, cleanup scheduling, provider billing
-alerts, service monitoring, and a separately deployed UI.
+See [deploy/README.md](../deploy/README.md) for ordinary deployment and
+[SANDBOXES_CUTOVER.md](../deploy/SANDBOXES_CUTOVER.md) for the migration and its
+rollback constraints. Preserve source buckets and offline legacy volumes
+through the rollback window. A rollback after new native writes requires
+reconciling those writes; restoring an old database would lose them.

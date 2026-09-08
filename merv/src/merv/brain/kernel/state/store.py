@@ -811,6 +811,16 @@ CREATE TABLE IF NOT EXISTS sandboxes (
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
+CREATE TABLE IF NOT EXISTS remote_sandbox_links (
+  project_id TEXT NOT NULL,
+  sandbox_uid TEXT NOT NULL,
+  experiment_id TEXT NOT NULL DEFAULT '',
+  public_key TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, sandbox_uid, experiment_id),
+  FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
 CREATE TABLE IF NOT EXISTS sandbox_attachments (
   sandbox_uid TEXT NOT NULL,
   experiment_id TEXT NOT NULL,
@@ -1496,6 +1506,8 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     # phone pickup codes for remote-machine sign-in. Additive; fresh schemas
     # already carry the table.
     (57, "add_oauth_handoff_links", ""),
+    # Research associations for independently operated merv-sandboxes.
+    (58, "add_remote_sandbox_links", ""),
 )
 
 # Migration 57 indexes — handler-only (they name a ladder-added table).
@@ -1922,6 +1934,9 @@ class BaseStateStore:
             self._add_oauth_handoff_links(conn=conn)
         elif name == "add_experiment_details":
             self._ensure_experiment_details(conn=conn)
+        elif name == "add_remote_sandbox_links":
+            if not self._has_table(conn=conn, table="remote_sandbox_links"):
+                conn.execute(_schema_table_ddl(table="remote_sandbox_links"))
         else:
             conn.execute(statement)
 

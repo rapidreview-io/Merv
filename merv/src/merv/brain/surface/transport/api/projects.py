@@ -12,7 +12,7 @@ from fastapi.responses import Response
 from ....application import Application
 from ....kernel.utils import NotFoundError, ValidationError
 from ....research_core import Research
-from ....sandbox import SandboxEngine
+from ....infrastructure import RemoteSandboxes as SandboxEngine
 from ...identity import is_human_session
 from .shared import (
     JsonBody,

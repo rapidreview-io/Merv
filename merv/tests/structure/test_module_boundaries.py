@@ -21,7 +21,7 @@ KERNEL = "kernel"
 RESEARCH_CORE = "research_core"
 ARTIFACTS = "artifacts"
 OBJECT_STORAGE = "object_storage"
-SANDBOX = "sandbox"
+SANDBOX = "infrastructure"
 FEED = "feed"
 MLFLOW = "mlflow"
 AGENT_SESSIONS = "agent_sessions"
@@ -49,7 +49,7 @@ PACKAGE_COMPONENTS = {
     "literature": RESEARCH_CORE,
     "artifacts": ARTIFACTS,
     "object_storage": OBJECT_STORAGE,
-    "sandbox": SANDBOX,
+    "infrastructure": SANDBOX,
     "feed": FEED,
     "mlflow": MLFLOW,
     "agent_sessions": AGENT_SESSIONS,
@@ -74,7 +74,7 @@ ALLOWED_COMPONENT_EDGES = (
     {(KERNEL, KERNEL)}
     | {(RESEARCH_CORE, dependency) for dependency in (RESEARCH_CORE, KERNEL)}
     | {(ARTIFACTS, dependency) for dependency in (ARTIFACTS, KERNEL)}
-    | {(SANDBOX, dependency) for dependency in (SANDBOX, KERNEL)}
+    | {(SANDBOX, dependency) for dependency in (SANDBOX, OBJECT_STORAGE, KERNEL)}
     | {(FEED, dependency) for dependency in (FEED, KERNEL)}
     | {
         (AGENT_SESSIONS, dependency)
@@ -129,9 +129,7 @@ PACKAGE_LAYERS = {
     "literature": APPLICATION_LAYER,
     "artifacts": APPLICATION_LAYER,
     "feed": APPLICATION_LAYER,
-    "sandbox": APPLICATION_LAYER,
-    "sandbox/adapters": ADAPTER,
-    "sandbox/remote": ADAPTER,
+    "infrastructure": APPLICATION_LAYER,
     "mlflow": ADAPTER,
     "object_storage": ADAPTER,
     "agent_sessions": APPLICATION_LAYER,
@@ -143,9 +141,9 @@ FILE_LAYERS = {
     "__init__.py": FOUNDATION,
     "kernel/state/dialects.py": ADAPTER,
     "surface/web_preview.py": ADAPTER,
-    "sandbox/models.py": DOMAIN,
-    "sandbox/adapters/__init__.py": BOOTSTRAP,
-    "sandbox/keys.py": ADAPTER,
+    "infrastructure/client.py": ADAPTER,
+    "infrastructure/storage.py": ADAPTER,
+    "infrastructure/ports.py": PORT,
     "object_storage/__init__.py": APPLICATION_LAYER,
     "object_storage/provider.py": PORT,
     "object_storage/storage.py": APPLICATION_LAYER,
@@ -170,7 +168,6 @@ FILE_LAYERS = {
     # Write-only per-project provider-connection facade over the KERNEL-owned
     # sandbox_provider_settings store methods; the analog of user_settings.py.
     # The fleet resolver is composition-injected so it never imports bootstrap.
-    "surface/sandbox_providers.py": APPLICATION_LAYER,
 }
 
 ALLOWED_LAYER_EDGES = (
@@ -214,6 +211,8 @@ TABLE_OWNERS = {
     "agent_runner_pairings": SURFACE,
     "agent_runner_pairing_attempts": SURFACE,
     "oauth_clients": SURFACE,
+    "oauth_handoff_links": SURFACE,
+    "remote_sandbox_links": SANDBOX,
     "oauth_authorization_codes": SURFACE,
     "oauth_refresh_tokens": SURFACE,
     # RFC 8628 device grants: the surface's oauth_store owns the exchange rows

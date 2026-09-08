@@ -85,14 +85,18 @@ def storage_submit_command(
     checksum_b64: str,
     content_type: str,
     token: str,
+    headers: dict[str, str] | None = None,
 ) -> str:
     """Build the direct upload and completion command."""
     base = (base_url or _LOCAL_API_BASE).rstrip("/")
-    # Both signed headers must be shell-quoted; content_type is caller supplied.
-    checksum_header = _shell_quote(f"x-amz-checksum-sha256:{checksum_b64}")
-    content_type_header = _shell_quote(f"Content-Type: {content_type}")
+    # Provider-specific signed headers are opaque adapter output. The fallback
+    # preserves existing callers of this command builder.
+    signed_headers = headers if headers is not None else {
+        "x-amz-checksum-sha256": checksum_b64, "Content-Type": content_type,
+    }
+    header_flags = " ".join(f"-H {_shell_quote(f'{key}: {value}')}" for key, value in signed_headers.items())
     put = (
-        f"curl -sf -X PUT -H {checksum_header} -H {content_type_header} "
+        f"curl -sf -X PUT {header_flags} "
         f"-T {_shell_quote(path)} {_shell_quote(presigned_url)}"
     )
     complete = (
@@ -416,7 +420,7 @@ class ObjectStorage:
             object_id=str(obj["id"]),
             upload_id=str(upload["upload_id"]),
         )
-        if "parts" in upload:
+        if "parts" in upload and "url" not in upload:
             run = storage_multipart_submit_command(
                 base_url=base_url, path=str(path), token=token
             )
@@ -428,6 +432,7 @@ class ObjectStorage:
                 checksum_b64=_checksum_sha256_b64(sha256),
                 content_type=str(upload.get("content_type") or content_type),
                 token=token,
+                headers=upload.get("headers"),
             )
         return {
             "object": obj,

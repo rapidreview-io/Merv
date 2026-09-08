@@ -4,35 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "merv"
-version = "0.0014"
+version = "0.0015"
 description = "Lean research-state workflow with hosted MCP research state, typed artifacts, reviews, and cloud SSH sandboxes."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "UNLICENSED" }
 authors = [{ name = "RapidReview" }]
 keywords = ["research", "ml", "mcp", "experiments"]
-# Base deps provide the common HTTP surface. Provider SDKs (Modal) and
-# Postgres/object-store deps live in the extras.
+# HTTP clients and service authentication are shared by both deployment modes.
 dependencies = [
     "fastapi>=0.115,<1",
     "httpx>=0.27,<1",
+    "PyJWT>=2.10,<3",
     "pydantic>=2.8,<3",
     "uvicorn>=0.30,<1",
 ]
 
 [project.optional-dependencies]
-# local = localhost-brain provider SDK.
-local = ["modal>=1.4,<2"]
-# control = hosted-brain adapters: Postgres driver + object-store SDK.
-# No provider SDK is required at module load (modal is lazily imported at one
-# site); a control plane that provisions Modal still needs it, so include it.
-# PyJWT verifies Supabase session tokens; lazily imported so the local
-# preset (which shares the composition module) never needs it.
-control = ["modal>=1.4,<2", "psycopg[binary]>=3.1,<4", "boto3>=1.34,<2", "PyJWT>=2.8,<3"]
-# Hyperscaler sandbox drivers: lazily imported, needed only when selected.
-# (aws is already covered by the control extra's boto3; azure needs nothing.)
-aws = ["boto3>=1.34,<2"]
-gcp = ["google-auth>=2.23,<3", "requests>=2.31,<3"]
+# All compute and object-store SDKs belong to merv-sandboxes.
+local = []
+control = ["psycopg[binary]>=3.1,<4"]
 [project.scripts]
 merv-http = "merv.brain.surface.transport.http_server:main"
 merv-control = "merv.brain.surface.transport.http_server:control_main"
@@ -46,7 +37,7 @@ pythonpath = ["src"]
 
 [tool.setuptools.packages.find]
 # src-layout: discover merv AND its subpackages (merv.brain.research_core,
-# merv.brain.sandbox.execution.*, …). A previous explicit package list shipped
+# merv.brain.infrastructure.*, …). A previous explicit package list shipped
 # only the top-level dirs, so an installed wheel (the control image) could not
 # import the subpackages — source-checkout tests never caught it because they
 # run from a copytree, not the wheel. ``find`` over src/ keeps the wheel and

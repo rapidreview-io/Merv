@@ -9,15 +9,6 @@ __MERV_HOST__ {
 		X-Frame-Options DENY
 	}
 
-	# Path-style S3 buckets on the VM's MinIO: presigned heavy-storage URLs
-	# and the blob bucket. MinIO itself listens on loopback only.
-	handle /merv-storage/* {
-		reverse_proxy 127.0.0.1:9000
-	}
-	handle /merv-blobs/* {
-		reverse_proxy 127.0.0.1:9000
-	}
-
 	# The research UI, built from the same commit as the brain and synced to
 	# /srv/merv-ui. Mirrors research_state_ui/vercel.json: hashed assets are
 	# immutable, everything else (index.html, runner, skill catalog) revalidates.

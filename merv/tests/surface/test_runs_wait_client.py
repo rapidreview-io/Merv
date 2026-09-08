@@ -20,7 +20,6 @@ watcher's own process, answering platform signals with its own handlers.
 
 from __future__ import annotations
 
-import base64
 import io
 import json
 import os
@@ -40,7 +39,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from merv.brain.kernel.secret_tokens import WAIT_SECRET_ENV_VAR
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient, project_namespace
 from merv.brain.surface.transport.http_server import make_http_server
 from merv.client import runs_wait
 from merv.client.runs_wait import (
@@ -66,32 +65,6 @@ UID = "sbx-1"
 DEAD_URL = f"http://127.0.0.1:1/wait/{UID}/seed0/deadbeef"
 # The shim a platform actually arms, next to the module it runs.
 SHIM = Path(runs_wait.__file__).resolve().parents[3] / "bin" / "merv-runs-wait"
-
-
-def _b64(text: str) -> str:
-    return base64.b64encode(text.encode("utf-8")).decode("ascii")
-
-
-def _listing(*runs: dict) -> str:
-    """Raw on-box listing text, exactly as runs_listing_command emits it."""
-    blocks = []
-    for run in runs:
-        meta = json.dumps(
-            {
-                "label": run["label"],
-                "command": "python train.py",
-                "pid": 4242,
-                "started_at": "2026-07-27T10:00:00Z",
-            }
-        )
-        exit_code = run.get("exit_code")
-        blocks.append(
-            f"===MERV_RUN {_b64(run['label'])}\n"
-            f"===META {_b64(meta)}\n"
-            f"===EXIT {_b64('' if exit_code is None else str(exit_code))}\n"
-            f"===FIN {_b64(run.get('finished_at', ''))}\n"
-        )
-    return "".join(blocks)
 
 
 def _row(label: str, status: str, **extra) -> dict:
@@ -781,12 +754,12 @@ class RunsWaitEndToEndTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         repo = Path(self.tmp.name)
-        self.fake = FakeSandboxBackend()
+        self.fake = FakeInfrastructureClient()
         # Not an identity test: agent_id is merely recorded here (see test_agent_identity.py).
         self.brain = TestBrain(
             repo_root=repo,
             db_path=repo / ".research_plugin" / "state.sqlite",
-            execution_backend=self.fake,
+            infrastructure_client=self.fake,
             env={"MERV_AGENT_IDENTITY": "optional"},
         )
         self.addCleanup(self.tmp.cleanup)
@@ -807,12 +780,10 @@ class RunsWaitEndToEndTest(unittest.TestCase):
             "sandbox.request",
             {"project_id": self.project_id, "experiment_id": experiment_id},
         )["sandbox_uid"]
-        row = self.brain.sandbox_storage.get_by_uid(sandbox_uid=self.sandbox_uid)
-        self.fake.run_listings[str(row["sandbox_id"])] = _listing(
+        self.fake.seed_jobs(project_namespace(self.project_id), self.sandbox_uid,
             {"label": "seed0", "exit_code": 0, "finished_at": "2026-07-27T10:05:00Z"},
             {"label": "seed1"},
         )
-        self.brain.sandbox_observer.observe_live(max_age_seconds=0.0)
         self.base = self._serve()
 
     def _serve(self) -> str:

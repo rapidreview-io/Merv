@@ -177,6 +177,9 @@ export default function ProviderSetupModal({ projectId, entry: initial, onUpdate
               {step.field.label}
               {!step.field.required && <span className="sbxp-field-opt"> · optional</span>}
             </p>
+            {entry.credentials_replace && entry.connected && (
+              <p className="sbxpw-help">Replacing this connection requires the complete credential set.</p>
+            )}
             <p className="sbxpw-help">
               {step.field.help || `Paste the ${step.field.label.toLowerCase()}.`}{' '}
               <a href={entry.console_url} target="_blank" rel="noreferrer">Open the {entry.label} console ↗</a>
@@ -232,6 +235,7 @@ export default function ProviderSetupModal({ projectId, entry: initial, onUpdate
             <span className="sbxpw-check" aria-hidden="true">✓</span>
             <p className="sbxpw-lead">{entry.label} is connected</p>
             {verifyState.detail && <p className="sbxpw-help">{verifyState.detail}</p>}
+            <p className="sbxpw-help">The service reserves the full authorized lease against your daily cap.</p>
             <div className="sbxpw-finish-row">
               {entry.enabled ? (
                 <span className="sbxpw-enabled-note">Enabled for agents</span>
@@ -242,7 +246,7 @@ export default function ProviderSetupModal({ projectId, entry: initial, onUpdate
               )}
             </div>
             <label className="sbxpw-limit">
-              <span>Daily spend cap (USD, blank = none)</span>
+              <span>Project daily spend cap (USD, blank = none)</span>
               <input
                 type="number"
                 min="0"

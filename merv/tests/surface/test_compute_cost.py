@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from tests.support.brain import TestBrain
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.surface.transport.api import create_fastapi_app
 
 
@@ -24,7 +24,7 @@ class ComputeCostEndpointTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
         self.client = TestClient(create_fastapi_app(self.app))
         self.project_id = self.app.call_tool("project", {"action": "create", "name": "Cost P"})["id"]

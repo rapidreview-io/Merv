@@ -4,14 +4,12 @@ import ast
 import re
 import unittest
 from collections import Counter
-from inspect import Parameter, signature as inspect_signature
 from pathlib import Path
-from typing import Any, Protocol, is_typeddict
+from typing import Protocol
 
 from tests.paths import (
     ARTIFACTS_ROOT,
     BACKEND_ROOT,
-    DOMAIN_ROOT,
     FEED_ROOT,
     PLUGIN_ROOT,
     PORTS_ROOT,
@@ -347,8 +345,6 @@ class ServiceLayoutTest(unittest.TestCase):
 
     def test_ports_are_neutral_and_outside_services(self) -> None:
         expected_imports = {
-            "mgmt_keys.py": {"pathlib", "typing"},
-            "sandbox_lifecycle.py": {"datetime", "typing"},
         }
         for name, allowed_imports in expected_imports.items():
             with self.subTest(module=name):
@@ -372,7 +368,7 @@ class ServiceLayoutTest(unittest.TestCase):
         self.assertFalse((PORTS_ROOT / "reflection_writers.py").exists())
 
     def test_auto_sync_poller_is_removed(self) -> None:
-        local_source = _sandbox_source("scheduler.py")
+        local_source = (BACKEND_ROOT / "infrastructure" / "sandboxes.py").read_text()
         http_source = _api_package_source()
         api_source = (UI_SRC / "api.js").read_text(encoding="utf-8")
         components = UI_SRC / "components"
@@ -523,18 +519,6 @@ class ServiceLayoutTest(unittest.TestCase):
                     source,
                 )
 
-    def test_modal_integer_env_parsing_uses_shared_helper(self) -> None:
-        source = (
-            BACKEND_ROOT / "sandbox" / "adapters" / "modal.py"
-        ).read_text(encoding="utf-8")
-
-        self.assertIn("from ...kernel.env import env_int", source)
-        self.assertNotIn("def _env_int", source)
-        self.assertNotIn("def _env_non_negative_int", source)
-        self.assertNotIn("_positive_int(os.environ.get", source)
-        self.assertIn("_modal_env_int(", source)
-        self.assertIn("_positive_env_int(", source)
-        self.assertIn("_non_negative_env_int(", source)
 
     def test_services_type_against_base_state_store(self) -> None:
         concrete_store_names = {"StateStore", "SqliteStateStore"}
@@ -625,7 +609,6 @@ class ServiceLayoutTest(unittest.TestCase):
     def test_control_services_do_not_leak_sqlite_connection_types(self) -> None:
         for path in (
             ARTIFACTS_ROOT / "artifacts.py",
-            BACKEND_ROOT / "sandbox" / "core.py",
         ):
             with self.subTest(module=path.name):
                 source = path.read_text(encoding="utf-8")
@@ -633,29 +616,11 @@ class ServiceLayoutTest(unittest.TestCase):
                 self.assertNotIn("sqlite3.Row", source)
                 self.assertNotIn("import sqlite3", source)
 
-    def test_transport_uses_contract_capabilities_for_sandbox_lifecycle_specials(
-        self,
-    ) -> None:
+    def test_sandbox_lifecycle_uses_the_standard_dispatcher(self) -> None:
         source = _http_gateway_source()
-        contracts_source = (SURFACE_ROOT / "tools" / "contracts.py").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertNotIn('name == "sandbox.get"', source)
-        self.assertNotIn('name != "sandbox.get"', source)
-        self.assertNotIn('name == "sandbox.release"', source)
-        self.assertIn("TOOL_MANIFEST.get(name)", source)
-        self.assertIn("contract.hosted_control_sandbox_lookup", source)
-        self.assertIn("hosted_control_sandbox_lookup=True", contracts_source)
-        marker = "if (\n            self.surface.hosted_control\n            and contract is not None\n            and contract.hosted_control_sandbox_lookup"
-        start = source.index(marker)
-        end = source.index("return self.tools.call_tool", start)
-        block = source[start:end]
-        self.assertIn("tenant_id=None", block)
-        self.assertIn("self.sandboxes.get", block)
-        self.assertNotIn("include_data_plane_enrichment", block)
-        self.assertNotIn(".store.transaction", block)
-        self.assertNotIn("require_project_id", block)
+        self.assertNotIn("hosted_control_sandbox_lookup", source)
+        self.assertIn("return self.tools.call_tool(", source)
+        self.assertNotIn("run=lambda: self.sandboxes.get(", source)
 
     def test_http_surface_policy_keeps_mode_decisions_named(self) -> None:
         source = _api_app_source()
@@ -815,22 +780,6 @@ class ServiceLayoutTest(unittest.TestCase):
         self.assertNotIn("FROM artifacts", routes + views)
         self.assertNotIn(".blobs.get", routes + views)
 
-    def test_tenant_counter_query_keeps_sandbox_sql_out_of_kernel_and_surface(self) -> None:
-        store = (BACKEND_ROOT / "kernel" / "state" / "store.py").read_text(
-            encoding="utf-8"
-        )
-        quotas = (BACKEND_ROOT / "sandbox" / "quotas.py").read_text(encoding="utf-8")
-        application = (BACKEND_ROOT / "application" / "application.py").read_text(
-            encoding="utf-8"
-        )
-
-        start = store.index("    def tenant_event_count(")
-        end = store.index("\n    def ", start + 5)
-        self.assertNotIn("sandbox_generations", store[start:end])
-        self.assertIn("def tenant_generation_counters", quotas)
-        self.assertIn("def tenant_counters", application)
-        self.assertIn("self.sandboxes.tenant_generation_counters(", application)
-        self.assertIn("self.research.tenant_event_count(", application)
 
     def test_surface_raw_control_app_access_baseline_only_shrinks(self) -> None:
         current = _raw_control_app_accesses()

@@ -23,7 +23,7 @@ import jwt
 from fastapi.testclient import TestClient
 
 from tests.support.brain import TestBrain
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.surface.auth import SupabaseVerifier, UnauthorizedError
 from merv.brain.surface.transport.api import create_fastapi_app
 from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
@@ -175,7 +175,7 @@ class AuthedSurfaceTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
             env={"MERV_AGENT_IDENTITY": "optional"},
         )
         self.verifier = _verifier()

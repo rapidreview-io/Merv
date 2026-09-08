@@ -10,19 +10,10 @@ from fastapi.testclient import TestClient
 from tests.support.brain import TestBrain
 from merv.brain.surface.config import (
     ALLOW_OPEN_CONTROL_ENV_VAR,
-    MGMT_KEY_PATH_ENV_VAR,
-    MGMT_PUBLIC_KEY_ENV_VAR,
     Mode,
-    STORAGE_ACCESS_KEY_ID_ENV_VAR,
-    STORAGE_PROVIDER_ENV_VAR,
-    STORAGE_SECRET_ACCESS_KEY_ENV_VAR,
     resolve_mode,
-    resolve_storage_access_key_id,
-    resolve_storage_provider,
-    resolve_storage_secret_access_key,
-    storage_feature_enabled,
 )
-from tests.support.sandbox_backend import FakeSandboxBackend, seed_sandbox
+from tests.support.infrastructure import FakeInfrastructureClient, seed_sandbox
 from merv.brain.surface.transport.api import create_fastapi_app
 from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
 from merv.brain.kernel.utils import ValidationError
@@ -33,8 +24,8 @@ def _mounted_mgmt_key_env(root: Path) -> dict[str, str]:
     key_path.write_text("PRIVATE KEY\n", encoding="utf-8")
     key_path.chmod(0o600)
     return {
-        MGMT_KEY_PATH_ENV_VAR: str(key_path),
-        MGMT_PUBLIC_KEY_ENV_VAR: "ssh-ed25519 AAAAmanaged",
+        "MERV_MGMT_KEY_PATH": str(key_path),
+        "MERV_MGMT_PUBLIC_KEY": "ssh-ed25519 AAAAmanaged",
         # Hosted control keeps no writable state root, so the run-wait signing
         # key is mounted configuration like the management key beside it.
         "MERV_WAIT_SECRET": "hosted-wait-secret-0123456789abcdef",
@@ -75,59 +66,6 @@ class ModeConfigTest(unittest.TestCase):
             resolve_mode(env={"RESEARCH_PLUGIN_MODE": " Daemon "})
 
 
-class StorageConfigTest(unittest.TestCase):
-    def test_storage_is_disabled_unless_s3_provider_is_explicit(self) -> None:
-        self.assertIsNone(resolve_storage_provider({}))
-        self.assertFalse(storage_feature_enabled({}))
-        self.assertEqual(
-            resolve_storage_provider({STORAGE_PROVIDER_ENV_VAR: " s3 "}),
-            "s3",
-        )
-        self.assertTrue(storage_feature_enabled({STORAGE_PROVIDER_ENV_VAR: "s3"}))
-        with self.assertRaises(ValidationError):
-            resolve_storage_provider({STORAGE_PROVIDER_ENV_VAR: "local"})
-
-    def test_storage_access_key_prefers_storage_env_then_aws_then_none(self) -> None:
-        self.assertEqual(
-            resolve_storage_access_key_id(
-                {
-                    STORAGE_ACCESS_KEY_ID_ENV_VAR: " storage-ak ",
-                    "AWS_ACCESS_KEY_ID": "aws-ak",
-                }
-            ),
-            "storage-ak",
-        )
-        self.assertEqual(
-            resolve_storage_access_key_id({"AWS_ACCESS_KEY_ID": " aws-ak "}),
-            "aws-ak",
-        )
-        self.assertIsNone(resolve_storage_access_key_id({}))
-        self.assertIsNone(
-            resolve_storage_access_key_id(
-                {STORAGE_ACCESS_KEY_ID_ENV_VAR: " ", "AWS_ACCESS_KEY_ID": " "}
-            )
-        )
-
-    def test_storage_secret_prefers_storage_env_then_aws_then_none(self) -> None:
-        self.assertEqual(
-            resolve_storage_secret_access_key(
-                {
-                    STORAGE_SECRET_ACCESS_KEY_ENV_VAR: " storage-secret ",
-                    "AWS_SECRET_ACCESS_KEY": "aws-secret",
-                }
-            ),
-            "storage-secret",
-        )
-        self.assertEqual(
-            resolve_storage_secret_access_key({"AWS_SECRET_ACCESS_KEY": " aws-secret "}),
-            "aws-secret",
-        )
-        self.assertIsNone(resolve_storage_secret_access_key({}))
-        self.assertIsNone(
-            resolve_storage_secret_access_key(
-                {STORAGE_SECRET_ACCESS_KEY_ENV_VAR: " ", "AWS_SECRET_ACCESS_KEY": " "}
-            )
-        )
 
 
 class LocalModeParityTest(unittest.TestCase):
@@ -137,7 +75,7 @@ class LocalModeParityTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
         self.client = TestClient(create_fastapi_app(self.app))
 
@@ -192,7 +130,7 @@ class HostedControlSurfaceTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
             env={"MERV_AGENT_IDENTITY": "optional"},
         )
         self.client = TestClient(
@@ -256,6 +194,7 @@ class HostedControlSurfaceTest(unittest.TestCase):
                 "arguments": {
                     "project_id": project_id,
                     "public_key": "ssh-ed25519 " + ("A" * 48) + " caller@test",
+                    "provider": "fake", "instance_type": "tiny:east",
                 },
             },
         )
@@ -284,7 +223,7 @@ class HostedControlSurfaceTest(unittest.TestCase):
             },
         )
         self.assertEqual(pulled.status_code, 200, pulled.text)
-        self.assertIn("rsync", pulled.json()["result"])
+        self.assertIn("rsync", pulled.json()["result"]["command"])
 
     def test_control_rejects_repo_root_context(self) -> None:
         project = self.client.post(
@@ -315,12 +254,9 @@ class HostedControlSurfaceTest(unittest.TestCase):
             name="experiment.create",
             arguments={"project_id": project_id, "name": "multi", "intent": "two boxes"},
         )["id"]
-        backend = self.app.execution_backend
-        backend.alive["sbx_primary"] = True
-        backend.alive["sbx_extra"] = True
         for uid, sid in (("uid_primary", "sbx_primary"), ("uid_extra", "sbx_extra")):
             seed_sandbox(
-                self.app.sandbox_storage,
+                self.app.sandboxes,
                 experiment_id=exp_id,
                 sandbox_uid=uid,
                 project_id=project_id,
@@ -341,8 +277,8 @@ class HostedControlSurfaceTest(unittest.TestCase):
 
         primary = _get(sandbox_uid="uid_primary")
         extra = _get(sandbox_uid="uid_extra")
-        self.assertEqual(primary["sandbox_id"], "sbx_primary")
-        self.assertEqual(extra["sandbox_id"], "sbx_extra")
+        self.assertEqual(primary["sandbox_id"], "uid_primary")
+        self.assertEqual(extra["sandbox_id"], "uid_extra")
         # The two uids must not collapse to the same sandbox (the hosted bug).
         self.assertNotEqual(primary["sandbox_id"], extra["sandbox_id"])
 
@@ -463,72 +399,6 @@ class HostedControlSurfaceTest(unittest.TestCase):
         self.assertEqual(validated.status_code, 404, validated.text)
 
 
-class SecretStoreCredentialsTest(unittest.TestCase):
-    def setUp(self) -> None:
-        import os
-
-        self.tmp = tempfile.TemporaryDirectory()
-        self.env_file = Path(self.tmp.name) / ".env"
-        self.env_file.write_text("MODAL_TOKEN_ID=from_dotenv\n", encoding="utf-8")
-        self._saved = {
-            k: os.environ.get(k)
-            for k in (
-                "RESEARCH_PLUGIN_MODE",
-                "RESEARCH_PLUGIN_MODAL_ENV_FILE",
-                "MODAL_TOKEN_ID",
-            )
-        }
-        os.environ.pop("MODAL_TOKEN_ID", None)
-
-    def tearDown(self) -> None:
-        import os
-
-        for k, v in self._saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-        self.tmp.cleanup()
-
-    def test_explicit_env_file_is_the_secret_store_seam_in_control(self) -> None:
-        import os
-
-        from merv.brain.sandbox.adapters.modal import load_modal_env_file
-
-        os.environ["RESEARCH_PLUGIN_MODE"] = "control"
-        os.environ["RESEARCH_PLUGIN_MODAL_ENV_FILE"] = str(self.env_file)
-        load_modal_env_file()
-        self.assertEqual(os.environ.get("MODAL_TOKEN_ID"), "from_dotenv")
-
-    def test_implicit_dotenv_disabled_in_control(self) -> None:
-        import os
-
-        import merv.brain.sandbox.adapters.modal as modal_config
-
-        os.environ["RESEARCH_PLUGIN_MODE"] = "control"
-        os.environ.pop("RESEARCH_PLUGIN_MODAL_ENV_FILE", None)
-        with patch.object(
-            modal_config.Path, "exists", return_value=True
-        ), patch.object(
-            modal_config.Path, "read_text", return_value="MODAL_TOKEN_ID=leak\n"
-        ):
-            modal_config.load_modal_env_file()
-        self.assertIsNone(os.environ.get("MODAL_TOKEN_ID"))
-
-    def test_implicit_dotenv_still_works_in_local(self) -> None:
-        import os
-
-        import merv.brain.sandbox.adapters.modal as modal_config
-
-        os.environ["RESEARCH_PLUGIN_MODE"] = "local"
-        os.environ.pop("RESEARCH_PLUGIN_MODAL_ENV_FILE", None)
-        with patch.object(
-            modal_config.Path, "exists", return_value=True
-        ), patch.object(
-            modal_config.Path, "read_text", return_value="MODAL_TOKEN_ID=local_ok\n"
-        ):
-            modal_config.load_modal_env_file()
-        self.assertEqual(os.environ.get("MODAL_TOKEN_ID"), "local_ok")
 
 
 class VersionHandshakeTest(unittest.TestCase):
@@ -538,7 +408,7 @@ class VersionHandshakeTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
         self.client = TestClient(
             create_fastapi_app(

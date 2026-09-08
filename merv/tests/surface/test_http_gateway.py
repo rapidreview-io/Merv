@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from fastapi import Request
 
 from merv.brain.kernel.utils import NotFoundError
-from merv.brain.surface.identity import Principal, ProjectKeyScopeError
+from merv.brain.surface.identity import AgentSessionScopeError, Principal, ProjectKeyScopeError
 from merv.brain.surface.tools.dispatcher import ToolDispatcher
 from merv.brain.surface.transport.api.gateway import (
     ProjectAuthorizer,
@@ -81,6 +81,14 @@ class HttpGatewayTest(unittest.TestCase):
             surface=self.surface,
             projects=self.projects,
         )
+
+    def test_non_experiment_workers_cannot_address_unbound_native_jobs(self) -> None:
+        for target, kind in (("task", "experiment"), ("reflection", "consolidation")):
+            principal = SimpleNamespace(agent_session_id="session", agent_target_type=target,
+                                        agent_target_id="assigned", agent_session_kind=kind)
+            with self.subTest(target=target), self.assertRaises(AgentSessionScopeError):
+                self.gateway().authorize_agent_session(name="sandbox.job", principal=principal,
+                    arguments={"project_id": "proj-a", "job_id": "job_other", "cancel": True})
 
     def test_one_authorizer_covers_path_query_and_tool_scopes(self) -> None:
         self.assertIsNone(
@@ -259,13 +267,11 @@ class KeySandboxControlPathTest(unittest.TestCase):
             },
             principal=KEY,
         )
-        self.assertEqual(self.sandboxes.calls[-1][0], "attach")
-        self.assertNotIn(
-            "include_data_plane_enrichment", self.sandboxes.calls[-1][1]
-        )
+        attach = next(kwargs for name, kwargs in self.sandboxes.calls if name == "attach")
+        self.assertNotIn("include_data_plane_enrichment", attach)
         # attach does NOT install the caller's key — no public_key is forwarded.
-        self.assertNotIn("public_key", self.sandboxes.calls[-1][1])
-        self.assertNotIn("public_key_override", self.sandboxes.calls[-1][1])
+        self.assertNotIn("public_key", attach)
+        self.assertNotIn("public_key_override", attach)
         self.gateway.call(
             name="sandbox.pull_outputs",
             arguments={"project_id": "proj-a", "sandbox_uid": "uid1"},

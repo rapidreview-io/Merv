@@ -12,7 +12,6 @@ from pydantic import ValidationError as PydanticValidationError
 
 from tests.support.brain import TestBrain
 from merv.brain.kernel.utils import PermissionDeniedError
-from merv.brain.surface.config import STORAGE_PROVIDER_ENV_VAR
 from merv.brain.surface.tools.contracts import (
     MCP_HIDDEN_TOOL_NAMES,
     ArtifactFindInput,
@@ -33,7 +32,7 @@ from merv.brain.surface.tools.contracts import (
     TOOL_MANIFEST,
     available_tool_names,
 )
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.surface.tools.dispatcher import ToolDispatcher
 
 
@@ -74,6 +73,8 @@ BASE_PUBLIC_TOOLS = frozenset(
         "sandbox.pull_outputs",
         "sandbox.release",
         "sandbox.request",
+        "sandbox.run",
+        "sandbox.job",
         "sandbox.runs",
         "sandbox.terminal",
         "task.create",
@@ -152,7 +153,9 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "sandbox.options": "de93e5483c38e7d2bfa2131611e6f3005f4056f300e5d9cf68f6b89ad714743c",
     "sandbox.pull_outputs": "a8148c40cb5190cb11fc65a92bc6e434a01ca8e0ba05eb0909c2a3343bf20cba",
     "sandbox.release": "785249e6607ce1907def30e2243f73f1100cd4a7d5ed9bc67898018a2ebee38a",
-    "sandbox.request": "db07e5678008789301d4fe1c2bd8a8d05e08bcb5d0b176fda3d24421c08f6f8e",
+    "sandbox.request": "55578273540e8aff3fd503bbf69ccd3808c9aa4015c78284ad0f0c139c14be90",
+    "sandbox.run": "2f2694a45cbe2c1b5a5623b27d4012c64631c211f52b31408f08491779dfb2bb",
+    "sandbox.job": "118dcf028ede2cb72b33a85a8fbb52c76f7c4083376fcbc397bda2d2aae3b014",
     "sandbox.runs": "72fab984c275b694f03fcde851d06b0e98918aaa13916a65c4c519aecd66cc68",
     "sandbox.terminal": "4140817916c31f3a3694a4197281f8196c6e718971529ae790eadaf639addbf1",
     "storage.complete_upload": "25c9c4e741c2c3c0e284b60213dc18e67eb8751c2fcd0498d4fa60d47d60a879",
@@ -198,12 +201,12 @@ class ToolContractRegistryTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
-        self.env_patch = patch.dict(os.environ, {STORAGE_PROVIDER_ENV_VAR: ""})
+        self.env_patch = patch.dict(os.environ, {"MERV_SANDBOXES_URL": ""})
         self.env_patch.start()
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
 
     def tearDown(self) -> None:
@@ -371,22 +374,16 @@ class ToolContractRegistryTest(unittest.TestCase):
 
     def test_sandbox_tool_descriptions_carry_lifecycle_guidance(self) -> None:
         tools = {tool["name"]: tool for tool in self.app.list_tools()}
-        self.assertNotIn("MLflow", tools["sandbox.request"]["description"])
-        self.assertNotIn("TensorBoard", tools["sandbox.request"]["description"])
-        self.assertIn("brain-composed hint", tools["sandbox.request"]["description"])
-        self.assertIn("durable storage", tools["sandbox.request"]["description"])
-        self.assertIn("public_key", tools["sandbox.request"]["description"])
-        self.assertIn("public_key_source", tools["sandbox.request"]["description"])
-        self.assertIn("expiry", tools["sandbox.get"]["description"])
-        self.assertIn("poll provisioning", tools["sandbox.get"]["description"])
-        self.assertIn("brain-composed hint", tools["sandbox.get"]["description"])
-        self.assertIn("public_key_source", tools["sandbox.get"]["description"])
-        self.assertIn("confirm_retained", tools["sandbox.release"]["description"])
-        self.assertIn("retention checklist", tools["sandbox.release"]["description"])
-        self.assertIn("metrics snapshot", tools["sandbox.release"]["description"])
-        self.assertIn("calling agent", tools["sandbox.pull_outputs"]["description"])
-        self.assertIn("object storage", tools["sandbox.pull_outputs"]["description"])
-        self.assertIn("sandbox.release", tools["sandbox.pull_outputs"]["description"])
+        for name, guidance in {
+            "sandbox.request": ("sandbox.options", "provider", "certificate"),
+            "sandbox.get": ("refresh", "certificate", "gateway host key"),
+            "sandbox.release": ("confirm_retained", "cleanup_pending", "bill"),
+            "sandbox.pull_outputs": ("rsync", "caller machine", "retaining"),
+            "sandbox.run": ("durable", "job ID", "sandbox.job"),
+            "sandbox.job": ("retained", "wait_seconds", "offset/limit"),
+        }.items():
+            for word in guidance:
+                self.assertIn(word, tools[name]["description"])
 
     def test_storage_tools_registered_with_expected_input_models(self) -> None:
         expected = {

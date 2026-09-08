@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
 from ....application import Application
-from ....sandbox import SandboxEngine
+from ....infrastructure import RemoteSandboxes as SandboxEngine
 from .shared import conditional_json_from_signal
 
 from .gateway import ToolInvocationGateway

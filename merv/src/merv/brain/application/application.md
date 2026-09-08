@@ -55,7 +55,8 @@ spans them. Research remains the public owner of its event ledger reads.
   reflection presentation, and guidance.
 - `queries.py`: logic-graph composition only.
 - `mlflow.py`: the only optional MLflow integration contract and behavior.
-- `maintenance.py`: cross-module cleanup ordering.
+- `maintenance.py`: research object-ledger expiry, token/log retention and
+  coding-agent lease cleanup. Infrastructure workers own machine and byte expiry.
 
 ## Boundaries and invariants
 

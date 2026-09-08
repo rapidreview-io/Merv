@@ -8,18 +8,18 @@ import unittest
 from pathlib import Path
 
 from tests.support.brain import TestBrain
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 
 
 class WorkflowSlimTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
-        self.backend = FakeSandboxBackend()
+        self.backend = FakeInfrastructureClient()
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=self.backend,
+            infrastructure_client=self.backend,
         )
         self.project_id = self.call("project", action="create", name="Slim Project")[
             "id"
@@ -219,7 +219,7 @@ class WorkflowSlimTest(unittest.TestCase):
         sandbox = slim["sandbox"]
         self.assertTrue(sandbox["active"])
         self.assertTrue(sandbox["sandbox_id"])
-        self.assertTrue(sandbox["ssh_host"])
+        self.assertIsNone(sandbox["ssh_host"])  # certificates are issued by sandbox.get
         self.assertEqual(sandbox["status"], "running")
         # SSH key material / raw command are NOT here — that's sandbox.request's job.
         self.assertNotIn("key_path", sandbox)

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 from merv.shared.errors import ResearchPluginError
 from tests.support.brain import TestBrain
 
@@ -16,7 +16,7 @@ class TrackingAbsentProductSurfaceTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=root,
             db_path=root / ".merv" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
             env={
                 # Stale deployment configuration must not silently re-enable
                 # the removed integration.

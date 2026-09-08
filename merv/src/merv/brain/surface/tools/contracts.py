@@ -93,7 +93,6 @@ class ToolManifest:
     visibility: ToolVisibility = "public"
     scope_strategy: ToolScopeStrategy | None = None
     feature_requirements: tuple[ToolFeature, ...] = ()
-    hosted_control_sandbox_lookup: bool = False
 
     def __post_init__(self) -> None:
         if self.scope_strategy is None:
@@ -965,80 +964,16 @@ class ReviewStatusInput(ProjectScopedInput):
 
 
 class SandboxRequestInput(ProjectScopedInput):
-    experiment_id: str | None = Field(
-        default=None,
-        description=(
-            "Optional experiment to attach the sandbox to. Omit to create a "
-            "standalone sandbox addressed by sandbox_uid."
-        ),
-    )
-    instance_type: str | None = Field(
-        default=None,
-        description=(
-            "Provider-bundled machine SKU (GPU + CPU + RAM together). Required by "
-            "the Lambda Labs and Thunder Compute backends: call this with no instance_type (or "
-            "use sandbox.options) to get a live menu, then pick one of "
-            "options[].instance_type. Ignored by Modal (which composes the machine "
-            "from gpu/cpu/memory)."
-        ),
-    )
-    region: str | None = Field(
-        default=None,
-        description=(
-            "Optional datacenter/region for the chosen instance_type (Lambda "
-            "Labs). Omit to auto-pick a region that currently has capacity."
-        ),
-    )
-    provider: str | None = Field(
-        default=None,
-        description=(
-            "Compute provider to serve this request when the deployment has "
-            "several configured (e.g. lambda_labs, hyperstack, digitalocean). "
-            "sandbox.options tags every hardware option with the provider that "
-            "serves it — pass that value back together with its instance_type. "
-            "Omit to use the default provider."
-        ),
-    )
-    gpu: str | None = Field(
-        default=None,
-        description=(
-            "GPU type. On Modal a concrete attachable GPU (e.g. 'A100', 'H100'); "
-            "omit for a CPU-only sandbox. On Lambda Labs a free-form filter over "
-            "live instance types — prefer instance_type there."
-        ),
-    )
-    cpu: float | None = Field(
-        default=None,
-        description=(
-            "Requested Modal CPU cores (1 core = 2 vCPUs). Default 2 cores. "
-            "Ignored by Lambda Labs, where the instance_type fixes the vCPUs."
-        ),
-    )
-    memory: int | None = Field(
-        default=None,
-        description=(
-            "Requested sandbox memory in MiB. Default 8192. Ignored by Lambda "
-            "Labs, where the instance_type fixes the RAM."
-        ),
-    )
-    time_limit: int | None = Field(
-        default=None,
-        description="Max sandbox lifetime in seconds (60..86400). Default 3600.",
-    )
-    public_key: str = Field(
-        description=(
-            "Required OpenSSH public key to authorize on the VM. Pass only the "
-            "single-line public key, never private-key material."
-        ),
-    )
-    additional: bool = Field(
-        default=False,
-        description=(
-            "When true with experiment_id, provision a new sandbox and add it "
-            "to that experiment's active sandbox list instead of reusing an "
-            "already attached live sandbox."
-        ),
-    )
+    experiment_id: str | None = Field(default=None, description="Optional experiment association.")
+    instance_type: str | None = Field(default=None, description="Exact options[].instance_type offer ID from sandbox.options.")
+    region: str | None = Field(default=None, description="Optional region filter.")
+    provider: str | None = Field(default=None, description="Provider name returned by sandbox.options.")
+    gpu: str | None = Field(default=None, description="GPU filter for available offers.")
+    cpu: float | None = Field(default=None, gt=0, description="Minimum CPU resources.")
+    memory: int | None = Field(default=None, ge=512, description="Minimum memory in MiB.")
+    time_limit: int | None = Field(default=None, ge=60, le=86400, description="Lease seconds, default 3600.")
+    public_key: str = Field(description="Caller OpenSSH public key for short-lived certificate SSH. Keep the private key local.")
+    additional: bool = Field(default=False, description="Create an additional machine for this experiment instead of reusing one.")
 
     @field_validator("public_key")
     @classmethod
@@ -1179,6 +1114,26 @@ class SandboxRunsInput(ProjectScopedInput):
             "noticed until you next call this."
         ),
     )
+
+
+class SandboxRunInput(SandboxGetInput):
+    command: str = Field(min_length=1, max_length=65536, description="Shell command to run as a durable detached job.")
+    name: str = Field(default="", max_length=128, description="Readable job label.")
+    cwd: str = Field(default="/workspace", description="Absolute working directory inside the sandbox.")
+    timeout_seconds: int = Field(default=0, ge=0, description="Job timeout; zero uses the service default.")
+    outputs: str = Field(default="", description="Optional directory to retain as a job output artifact.")
+    idempotency_key: str | None = Field(default=None, max_length=128, description="Stable retry key; reuse only for the same command and inputs.")
+    env: dict[str, str] = Field(default_factory=dict, description="Environment for this job. Avoid secrets in tool-visible inputs.")
+
+
+class SandboxJobInput(ProjectScopedInput):
+    job_id: str = Field(description="Job ID returned by sandbox.run or sandbox.runs.")
+    after: str | None = Field(default=None, description="Cursor from the previous status for long-polling.")
+    wait_seconds: int = Field(default=0, ge=0, le=45)
+    cancel: bool = Field(default=False, description="Request cancellation of this job.")
+    stream: Literal["stdout", "stderr"] | None = Field(default=None, description="Optionally read a bounded slice of retained job output.")
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=65536, ge=1, le=1048576)
 
 
 class SandboxTerminalInput(ProjectScopedInput):
@@ -1888,148 +1843,52 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         ),
     ),
     "sandbox.request": ToolContract(
-        handler_identity="sandboxes.request",
-        input_model=SandboxRequestInput,
-        description=(
-            "Procure (reuse or create) a project sandbox, optionally attached to "
-            "an experiment, and return SSH details plus a brain-composed hint "
-            "with runtime guidance for the remote work folder, expiry, copy-out, "
-            "and durable storage. "
-            "On Thunder Compute or Lambda Labs, omit instance_type to "
-            "receive a live menu of available machines to pick from. "
-            "SSH key custody: the sandbox authorizes a caller-side public key. "
-            "The primary path is bring-your-own-key — the requesting agent "
-            "generates its own ephemeral ed25519 keypair (ssh-keygen), keeps the "
-            "private key to itself in a location only it can read, and passes "
-            "only the single-line OpenSSH PUBLIC key as public_key so it gets "
-            "authorized on the VM. Never send private-key material. "
-            "The response's persisted public_key_source is 'caller' for new "
-            "requests; legacy 'managed' rows remain readable/releasable."
-        ),
+        handler_identity="sandboxes.request", input_model=SandboxRequestInput,
+        description="Rent a machine through merv-sandboxes. First call sandbox.options, then pass the selected provider and instance_type. Poll sandbox.get while provisioning. Existing live experiment machines are reused unless additional=true. Caller SSH access uses a short-lived certificate.",
     ),
     "sandbox.options": ToolContract(
-        handler_identity="sandboxes.options",
-        input_model=SandboxOptionsInput,
-        description=(
-            "List the hardware the active backend can provision right now "
-            "(Thunder Compute/Lambda Labs: live available instance types; Modal: gpu/cpu/memory menu)."
-        ),
+        handler_identity="sandboxes.options", input_model=SandboxOptionsInput,
+        description="List current rentable offers from the project's configured infrastructure providers.",
     ),
     "sandbox.get": ToolContract(
-        handler_identity="sandboxes.get",
-        input_model=SandboxGetInput,
-        description=(
-            "Get sandbox status, SSH details, expiry, and polling/runtime "
-            "guidance in the brain-composed hint by sandbox_uid or by an "
-            "experiment's active sandbox "
-            "association. Use it to poll provisioning and inspect terminated "
-            "or expired sandboxes. Includes public_key_source so callers know "
-            "whether the VM authorized a caller-supplied public key or a "
-            "legacy managed fallback key."
-        ),
-        hosted_control_sandbox_lookup=True,
+        handler_identity="sandboxes.get", input_model=SandboxGetInput,
+        description="Read sandbox state and refresh caller certificate SSH access. Save the returned certificate beside your local private key and pin the gateway host key. The independent service owns lease and lifecycle state.",
     ),
     "sandbox.attach": ToolContract(
-        handler_identity="sandboxes.attach",
-        input_model=SandboxAttachInput,
-        description=(
-            "Associate an existing running sandbox with an experiment without "
-            "changing the VM, workdir, SSH connection, or lifecycle. A live "
-            "sandbox can be associated with multiple active experiments."
-        ),
+        handler_identity="sandboxes.attach", input_model=SandboxAttachInput,
+        description="Associate a running project sandbox with another experiment. This updates research metadata only.",
     ),
     "sandbox.pull_outputs": ToolContract(
-        handler_identity="sandboxes.pull_outputs_command",
-        input_model=SandboxPullOutputsInput,
-        description=(
-            "Return a filled rsync command for selected files or directories "
-            "under a running sandbox's experiment_dir. The calling agent runs "
-            "the command itself with its own SSH key and local destination; "
-            "bytes move directly from the sandbox to the caller. Use object "
-            "storage tools for heavy artifacts. Use this before artifact.submit "
-            "or sandbox.release; omit paths to pull common retained outputs."
-        ),
+        handler_identity="sandboxes.pull_outputs_command", input_model=SandboxPullOutputsInput,
+        description="Return a certificate-SSH rsync command for retaining selected files under /workspace before sandbox release. Run the command on the caller machine after substituting local key and destination paths.",
     ),
     "sandbox.list": ToolContract(
-        handler_identity="sandboxes.list_sandboxes",
-        input_model=SandboxListInput,
-        description=(
-            "List this project's sandboxes (project-shared: every sandbox in the "
-            "key's project, not just ones this caller provisioned)."
-        ),
+        handler_identity="sandboxes.list_sandboxes", input_model=SandboxListInput,
+        description="List project sandboxes and preserved historical research associations.",
     ),
     "sandbox.release": ToolContract(
-        handler_identity="sandboxes.release",
-        input_model=SandboxReleaseInput,
-        description=(
-            "Terminate a sandbox by experiment_id or sandbox_uid (permanently "
-            "destroys the VM and everything on it) and capture a best-effort "
-            "metrics snapshot. "
-            "Two-step by design: the first call WITHOUT confirm_retained does "
-            "not delete — it returns a retention checklist asking you to confirm "
-            "you have everything you need. Retain first with sandbox.pull_outputs "
-            "for light files and configured durable storage for heavy ones when "
-            "available, then "
-            "re-call with confirm_retained=true to actually terminate."
-        ),
+        handler_identity="sandboxes.release", input_model=SandboxReleaseInput,
+        description="Request deletion after retaining outputs. The first call returns a retention reminder; confirm_retained=true sends deletion to the service. Poll sandbox.get until terminated; cleanup_pending may still bill.",
     ),
     "sandbox.extend": ToolContract(
-        handler_identity="sandboxes.extend",
-        input_model=SandboxExtendInput,
-        description=(
-            "Extend a running sandbox's expiry by at most one 30-minute "
-            "increment, subject to provider support and tenant lifetime/spend "
-            "quotas. Modal may reject this because its provider timeout is "
-            "fixed when the sandbox is created."
-        ),
+        handler_identity="sandboxes.extend", input_model=SandboxExtendInput,
+        description="Add up to 30 minutes to the sandbox lease, subject to the service's limits and budget.",
+    ),
+    "sandbox.run": ToolContract(
+        handler_identity="sandboxes.run", input_model=SandboxRunInput,
+        description="Start a durable detached job through merv-sandboxes. Returns a job ID. Poll sandbox.job for status, bounded stdout/stderr, exit code, and retained results; jobs survive SSH disconnection.",
+    ),
+    "sandbox.job": ToolContract(
+        handler_identity="sandboxes.job", input_model=SandboxJobInput,
+        description="Read or cancel a project job. Use after plus wait_seconds to wait for a change, or stream with offset/limit to read bounded retained output. Job status and retained logs remain available after sandbox release.",
     ),
     "sandbox.runs": ToolContract(
-        handler_identity="sandboxes.runs",
-        input_model=SandboxRunsInput,
-        description=(
-            "List merv_run launches for a sandbox or experiment: label, status, "
-            "exit_code, started/finished timestamps, and log path — one compact "
-            "call instead of transcript polling. Launch long work on the sandbox "
-            "with `merv_run <label> -- <command>` (detaches, survives SSH "
-            "disconnect, writes an exit_code sentinel), then long-poll here with "
-            "wait_seconds. On HTTP surfaces holding a wait key, each row also "
-            "carries a signed `wait_url`: arm `merv-runs-wait --url <wait_url>` "
-            "as a background process right after launching and the finished run "
-            "wakes you, instead of the box billing idle until you next poll; a "
-            "row without one means keyed mode (`merv-runs-wait --project-id ... "
-            "--sandbox-uid ... --label ...`). "
-            "Status is running, finished, lost, or unknown. "
-            "`unknown` means the box died before its receipts could be read, so "
-            "the run's outcome is NOT known — it may well have succeeded, and it "
-            "must never be recorded as a failure. Its logs and unpulled outputs "
-            "died with the box; check what you retained (pulled outputs, "
-            "submitted artifacts) and re-run if nothing survived. "
-            "`lost` is a finding: the receipts WERE read and no sentinel was "
-            "there. "
-            "Receipts outlive the sandbox: finished runs stay queryable after "
-            "release or expiry (logs/outputs do not — pull those before the box "
-            "dies)."
-        ),
+        handler_identity="sandboxes.runs", input_model=SandboxRunsInput,
+        description="List durable jobs launched with sandbox.run for a sandbox or experiment. SSH commands are not automatically jobs. Use sandbox.job to inspect output or wait for status changes.",
     ),
     "sandbox.terminal": ToolContract(
-        handler_identity="sandboxes.terminal",
-        input_model=SandboxTerminalInput,
-        description=(
-            "Read a sandbox terminal transcript by experiment_id or sandbox_uid. "
-            "For polling, pass "
-            "since=<cursor from the last response> to get only NEW output "
-            "instead of re-pulling the whole tail; 'running' indicates whether "
-            "the sandbox is still alive so you can stop polling a finished one. "
-            "Per-command status: 'command_running' is true while a command is "
-            "in flight, and once it finishes 'last_exit_code' (0 = success) and "
-            "'last_command_finished_at' report its result — so you can tell a "
-            "command is done and whether it succeeded without re-reading output "
-            "(null on sandboxes created before this was added). The structured "
-            "'last_command' block persists the latest parsed command id, text, "
-            "status, exit code, timestamps, and output tail; "
-            "'command_status_stale' is true when that block is from the last "
-            "successful transcript read because the current read failed."
-        ),
+        handler_identity="sandboxes.terminal", input_model=SandboxTerminalInput,
+        description="Read a bounded stdout/stderr snapshot of the latest durable job. replace=true means replace the previous snapshot. Use sandbox.job for exact byte ranges or older jobs; SSH sessions are not recorded.",
     ),
     "sandbox.health": ToolContract(
         handler_identity="sandboxes.health",

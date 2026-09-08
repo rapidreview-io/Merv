@@ -1,13 +1,11 @@
 # Dev brain on Azure
 
 A second, isolated Merv brain for soaking branches before they reach prod.
-Everything lives on one VM: Caddy terminates TLS on a public hostname and
-serves the research UI as static files, the brain runs behind it, and the
-records (self-hosted Supabase Postgres), blobs, and heavy storage (MinIO) are
-volumes on the same box. Prod is untouched by construction: different VM,
-database, buckets, OAuth resource URI, and secrets. The only shared pieces
-are the RapidReview Supabase **Auth** project (the same logins work) and the
-sandbox provider accounts (same quota and billing, separate bookkeeping).
+Caddy serves the research UI and proxies the brain; a dedicated PostgreSQL
+volume holds research records. Compute and bytes require an independently
+configured development merv-sandboxes deployment. Keep its signing secret,
+namespaces, object storage, and credentials isolated from production. The
+RapidReview Supabase Auth project may be shared so the same users can sign in.
 
 | | |
 |---|---|
@@ -33,7 +31,7 @@ builds `research_state_ui` and rsyncs `dist/` to `/srv/merv-ui`, renders
 `docker compose up --build -d` from the release directory with the three env
 files and the overlay in this directory, waits for `deploy-control-1` to be
 healthy, and probes the public host. Releases are kept; data lives in the
-compose project's named volumes (`deploy_supabase_pgdata`, `deploy_miniodata`),
+compose project's named volumes (`deploy_supabase_pgdata`),
 so a new release reuses them exactly like prod's release clones.
 
 ## One-time VM setup (already done for rp-control-dev)
@@ -45,16 +43,13 @@ so a new release reuses them exactly like prod's release clones.
    ~/research-suite-vm /srv/merv-ui`. If `azure.archive.ubuntu.com` times out,
    point `/etc/apt/sources.list.d/ubuntu.sources` at `archive.ubuntu.com`.
 3. Create the env files in `~/research-suite-vm/` (mode 0600):
-   - `dev.env` — `MERV_DEV_HOST`, `MERV_DEV_MINIO_USER`,
-     `MERV_DEV_MINIO_PASSWORD`, `MERV_PROVIDER_ENV_FILE`, `MERV_WAIT_SECRET`
-     (see the header of `docker-compose.dev.yml`).
-   - `supabase-db.env` — the four `MERV_DB_SUPABASE_*` secrets plus the two
-     loopback ports, as in `deploy/supabase.env.example`.
-   - `provider-secrets.env` — `SUPABASE_URL/ANON_KEY/SERVICE_KEY/JWT_SECRET`
-     of the auth project, `MERV_REQUIRE_AUTH=1`, the sandbox provider keys
-     (`LAMBDA_LABS_API_KEY`, `THUNDER_COMPUTE_API_KEY`), and a dev-only
-     `MERV_ADMIN_TOKEN`. Generate secrets with `openssl rand -hex 32`; copy
-     shared values host-to-host over SSH pipes rather than through a terminal.
+   - `dev.env` — `MERV_DEV_HOST`, `MERV_WAIT_SECRET`,
+     `MERV_SANDBOXES_URL`, and a dev-only `MERV_SANDBOXES_JWT_SECRET`.
+   - `supabase-db.env` — database settings from `deploy/supabase.env.example`.
+   - `provider-secrets.env` — retained launcher filename for Supabase auth
+     settings and `MERV_REQUIRE_AUTH=1`; cloud provider credentials belong only
+     in the independent infrastructure deployment. Keep env files mode 0600.
+
 4. Run `deploy-dev.sh`.
 
 ## Checking on it
@@ -95,7 +90,7 @@ http://127.0.0.1:55433.
 
 Set `MERV_DEV_HOST` in `dev.env` to the new name (DNS must already resolve)
 and redeploy: the Caddyfile, OAuth resource URI, UI base URL, CORS origins,
-and presigned storage host all follow `MERV_DEV_HOST` (done once on
+all follow `MERV_DEV_HOST` (done once on
 2026-08-19: Azure label → `dev-experiments.rapidreview.io`). MCP clients
 re-authenticate once (the resource URI changed). Google sign-in on the dev UI
 additionally needs the dev origin in the auth project's Supabase *Redirect

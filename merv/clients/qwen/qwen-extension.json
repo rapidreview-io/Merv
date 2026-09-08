@@ -1,6 +1,6 @@
 {
   "name": "merv",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "contextFileName": "QWEN.md",
   "mcpServers": {
     "merv": {

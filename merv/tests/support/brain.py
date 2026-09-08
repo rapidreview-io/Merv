@@ -8,9 +8,9 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from merv.brain.surface.surface import build_local_server
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.kernel.state import StateStore
-from merv.brain.object_storage.blobs import LocalDirBlobStore
+from tests.support.blobs import LocalDirBlobStore
 from merv.brain.kernel.utils import NotFoundError, ValidationError
 
 
@@ -37,26 +37,13 @@ class TestBrain:
         "storage": "storage",
         "mlflow_tracking": "_tracking",
     }
-    _SANDBOX_TEST_PARTS = {
-        "sandbox_storage": "_storage",
-        "sandbox_lifecycle": "_lifecycle",
-        "sandbox_provisioner": "_provisioner",
-        "sandbox_scheduler": "_scheduler",
-        "sandbox_metrics": "_metrics",
-        "sandbox_runs": "_runs",
-        "sandbox_observer": "_observer",
-        "sandbox_keys": "_keys",
-        "sandbox_backend": "_backend",
-        "sandbox_transcripts": "_transcripts",
-        "quotas": "_quotas",
-    }
 
     def __init__(
         self,
         *,
         repo_root: Path,
         db_path: Path,
-        execution_backend: Any | None = None,
+        infrastructure_client: Any | None = None,
         store: Any | None = None,
         blobs: Any | None = None,
         storage: Any | None = None,
@@ -80,10 +67,10 @@ class TestBrain:
         self.server = build_local_server(
             state_dir=self._brain_root(),
             env={} if env is None else env,
-            execution_backend=(
-                execution_backend
-                if execution_backend is not None
-                else FakeSandboxBackend()
+            infrastructure_client=(
+                infrastructure_client
+                if infrastructure_client is not None
+                else FakeInfrastructureClient()
             ),
             store=self._store,
             blobs=self._blobs,
@@ -142,12 +129,10 @@ class TestBrain:
         return self.db_path.parent
 
     def __getattr__(self, name: str) -> Any:
-        if name == "execution_backend":
-            return self._app.sandboxes._backend
+        if name == "infrastructure_client":
+            return self._app.infrastructure_client
         if name in self._test_parts:
             return self._test_parts[name]
-        if name in self._SANDBOX_TEST_PARTS:
-            return getattr(self._app.sandboxes, self._SANDBOX_TEST_PARTS[name])
         return getattr(self._app, self._PRIVATE_ALIASES.get(name, name))
 
     def current_project(self, *, tenant_id: str | None = None) -> dict[str, Any]:
@@ -169,6 +154,8 @@ class TestBrain:
         effective_internal_kwargs = dict(internal_kwargs or {})
         if name == "sandbox.request":
             args.setdefault("public_key", DEFAULT_PUBLIC_KEY)
+            args.setdefault("provider", "fake")
+            args.setdefault("instance_type", "tiny:east")
         return self._app.tools.call_tool(
             name=name,
             arguments=args,

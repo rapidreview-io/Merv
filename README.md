@@ -49,7 +49,7 @@ By default the plugin connects to the hosted brain; it can also run fully
 locally. In either deployment the checkout root and caller SSH private keys
 stay on the user's machine. Agents send explicit project ids, typed metadata,
 and selected submitted bytes; the brain never opens the checkout directly.
-Brain management keys remain separate operational credentials.
+Infrastructure service credentials remain separate operational secrets.
 
 ## Hosted setup
 
@@ -164,8 +164,8 @@ Ask the agent to call `project(action="list")`, then
 
 ## Self-hosting
 
-The hosted brain runs this repo's code, and you can run the whole stack — brain,
-Postgres, and an S3-compatible store — yourself. Start from the reference
+The hosted brain runs this repo's code, and you can run the whole stack — brain and
+Postgres alongside an independently deployed merv-sandboxes service — yourself. Start from the reference
 deployment in [merv/deploy/README.md](merv/deploy/README.md); operations are in
 [CONTROL_PLANE_OPERATIONS.md](merv/docs/CONTROL_PLANE_OPERATIONS.md). Clients
 connect the same way — point the MCP `url` at your own brain.

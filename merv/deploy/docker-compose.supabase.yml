@@ -2,8 +2,8 @@
 #
 # This is deliberately a database/dashboard deployment, not a second auth or
 # storage plane. Merv authentication continues to use the SUPABASE_* variables
-# from the production auth project. Artifacts continue to use MinIO from the
-# base Compose file.
+# from the production auth project. Physical artifact bytes belong to the
+# independently deployed merv-sandboxes service.
 #
 # Studio and Postgres bind to server loopback by default. On a remote host, use
 # an SSH tunnel from your laptop rather than publishing the unauthenticated

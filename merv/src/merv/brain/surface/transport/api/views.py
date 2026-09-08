@@ -7,7 +7,7 @@ from typing import Any, Protocol
 from ....kernel.state.activity import effective_source, is_event_ok
 from ....kernel.utils import NotFoundError
 from ....research_core import EXPERIMENT_WORKFLOW
-from ....sandbox import SandboxEngine
+from ....infrastructure import RemoteSandboxes as SandboxEngine
 
 
 class ActivityTelemetry(Protocol):

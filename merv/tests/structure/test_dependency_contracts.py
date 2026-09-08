@@ -28,16 +28,8 @@ def _debt(lines: str) -> Counter[tuple[str, str, str, str]]:
 
 
 DEPENDENCY_TYPE_DEBT = _debt(
-    """sandbox/core.py | SandboxEngine.__init__ | attachment_check | Callable[..., None] | None
-kernel/state/dialects.py | PostgresConnection.__init__ | raw | Any
+    """kernel/state/dialects.py | PostgresConnection.__init__ | raw | Any
 mlflow/tracking.py | CentralMlflowService.__init__ | health_check | Callable[[], bool] | None
-object_storage/s3_blobs.py | S3BlobStore.__init__ | client | Any | None
-object_storage/s3_object_store.py | S3CompatibleObjectStore.__init__ | client | Any | None
-sandbox/adapters/modal.py | ModalSandboxBackend.__init__ | modal_module | Any | None
-sandbox/adapters/modal.py | ModalSandboxBackend.__init__ | activity | ActivityHook | None
-sandbox/adapters/modal.py | build_modal_sandbox_backend | activity | ActivityHook | None
-sandbox/adapters/thunder_compute.py | ThunderComputeSandboxBackend.__init__ | bootstrap_runner | BootstrapRunner | None
-sandbox/observation.py | TranscriptCache.__init__ | clock | Callable[[], float] | None
 surface/telemetry.py | StructuredLogger.__init__ | stream | Any | None
 surface/transport/api/gateway.py | RequestAuthenticator | verifier | Any | None
 surface/transport/mcp_http.py | register_mcp_routes | list_tools | ToolCatalog

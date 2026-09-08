@@ -234,7 +234,7 @@ class AuthDenialLedgerTest(unittest.TestCase):
 
 
 class HostedSandboxLookupLedgerTest(unittest.TestCase):
-    """The one call hosted mode answers WITHOUT the dispatcher still records."""
+    """Hosted sandbox lookups use the standard dispatcher and its ledger."""
 
     def setUp(self) -> None:
         self.ledger = RecordingLedger()
@@ -244,7 +244,7 @@ class HostedSandboxLookupLedgerTest(unittest.TestCase):
 
     def _gateway(self, get: Any) -> ToolInvocationGateway:
         return ToolInvocationGateway(
-            tools=SimpleNamespace(call_tool=lambda **_kwargs: {"unexpected": True}),
+            tools=SimpleNamespace(call_tool=lambda **kwargs: get(**kwargs)),
             research=SimpleNamespace(),
             sandboxes=SimpleNamespace(get=get),
             surface=self.surface,
@@ -265,12 +265,9 @@ class HostedSandboxLookupLedgerTest(unittest.TestCase):
         gateway = self._gateway(lambda **_kwargs: {"sandbox": {"status": "running"}})
         result = self._call(gateway, project_id="proj-a", sandbox_uid="sbx-1")
         self.assertEqual(result, {"sandbox": {"status": "running"}})
-        (row,) = self.ledger.rows
-        self.assertEqual(row["status"], "ok")
-        self.assertEqual(row["tool"], "sandbox.get")
-        self.assertEqual(row["source"], "mcp")
-        self.assertEqual(row["project_id"], "proj-a")
-        self.assertIn("duration_ms", row)
+        # The standard dispatcher owns accepted-call logging; the gateway
+        # must not create a duplicate row for the former hosted shortcut.
+        self.assertEqual(self.ledger.rows, [])
 
     def test_a_failing_lookup_is_an_error_row_and_still_raises(self) -> None:
         def explode(**_kwargs: Any) -> dict[str, Any]:
@@ -279,10 +276,7 @@ class HostedSandboxLookupLedgerTest(unittest.TestCase):
         gateway = self._gateway(explode)
         with self.assertRaises(NotFoundError):
             self._call(gateway, project_id="proj-a", sandbox_uid="sbx-9")
-        (row,) = self.ledger.rows
-        self.assertEqual(row["status"], "error")
-        self.assertEqual(row["error_code"], "not_found")
-        self.assertIn("sbx-9", row["error"])
+        self.assertEqual(self.ledger.rows, [])
 
     def test_arguments_the_contract_rejects_are_a_rejected_row(self) -> None:
         gateway = self._gateway(lambda **_kwargs: {"unreachable": True})

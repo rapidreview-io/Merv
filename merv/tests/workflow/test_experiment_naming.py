@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from tests.support.brain import TestBrain
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.kernel.utils import ValidationError
 
 
@@ -19,7 +19,7 @@ class ExperimentNamingTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
         self.project_id = self.call("project", action="create", name="Naming")["id"]
 

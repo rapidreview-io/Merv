@@ -25,7 +25,7 @@ from typing import Any
 from unittest import mock
 
 from merv.brain.kernel.secret_tokens import WAIT_SECRET_ENV_VAR
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.surface.config import Mode
 from merv.brain.surface.transport import http_server
 from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
@@ -80,7 +80,7 @@ class HttpServerCompositionTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=root,
             db_path=root / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
 
     def tearDown(self) -> None:

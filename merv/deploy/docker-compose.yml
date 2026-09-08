@@ -1,88 +1,10 @@
-# Database-neutral bring-up of the hosted Merv brain.
-#
-# This base owns Merv, MinIO, and the management key. Add exactly one database
-# overlay for a laptop deployment:
-#
-#   docker compose -f deploy/docker-compose.yml \
-#     -f deploy/docker-compose.postgres.yml up --build
-#
-#   docker compose -f deploy/docker-compose.yml \
-#     -f deploy/docker-compose.supabase.yml up --build
-#
-# Or set MERV_DB_URL and use this file alone for an externally hosted Postgres
-# or Supabase database. Authentication still uses the separate SUPABASE_* auth
-# project, and artifact bytes still use MinIO.
-#
-# Then point an HTTP MCP client at http://localhost:8787/mcp.
-
+# Merv research control. Deploy merv-sandboxes independently for compute/bytes.
+# Add docker-compose.postgres.yml or docker-compose.supabase.yml for records.
 services:
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: rpminio
-      MINIO_ROOT_PASSWORD: rpminio_dev_password
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - miniodata:/data
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # One-shot: create the blob/storage buckets the control plane expects, then exit.
-  createbucket:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 rpminio rpminio_dev_password &&
-      mc mb --ignore-existing local/merv-blobs &&
-      mc mb --ignore-existing local/merv-storage &&
-      echo 'bucket ready';
-      "
-
-  # One-shot: create a dev-only management SSH key in a named volume. Managed
-  # deploys should replace this with an orchestrator/secret-manager mount.
-  mgmtkey:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    user: "0:0"
-    entrypoint: >
-      /bin/sh -c "
-      mkdir -p /run/secrets/research_plugin_mgmt_key &&
-      if [ ! -f /run/secrets/research_plugin_mgmt_key/key ]; then
-        ssh-keygen -t ed25519 -N '' -q -C merv-dev-mgmt -f /run/secrets/research_plugin_mgmt_key/key;
-      fi &&
-      chown 10001:10001 /run/secrets/research_plugin_mgmt_key/key /run/secrets/research_plugin_mgmt_key/key.pub &&
-      chmod 600 /run/secrets/research_plugin_mgmt_key/key &&
-      chmod 644 /run/secrets/research_plugin_mgmt_key/key.pub &&
-      echo 'management key ready';
-      "
-    volumes:
-      - mgmtkey:/run/secrets/research_plugin_mgmt_key
-
   control:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    # Provider credentials are injected directly into the container from this
-    # file. Do not mirror them below with empty `environment` defaults: Compose
-    # gives `environment` precedence over `env_file`, which would silently
-    # erase valid secrets supplied by a production override.
-    env_file:
-      - ${MERV_PROVIDER_ENV_FILE:-${RESEARCH_PLUGIN_PROVIDER_ENV_FILE:-/dev/null}}
-    depends_on:
-      createbucket:
-        condition: service_completed_successfully
-      mgmtkey:
-        condition: service_completed_successfully
     environment:
       MERV_MODE: control
       MERV_HTTP_HOST: 0.0.0.0
@@ -107,35 +29,13 @@ services:
       # Record store: supplied by a database overlay or by the operator. An
       # empty value fails hosted startup with a named MERV_DB_URL error.
       MERV_DB_URL: ${MERV_DB_URL:-}
-      # Submitted-byte blob store: the S3-shape bucket on MinIO. boto3
-      # reads these standard AWS env vars; the endpoint URL points it at MinIO.
-      MERV_BLOB_BUCKET: merv-blobs
-      # Heavy-file storage: optional feature, enabled here through the same
-      # S3-compatible path used for R2/S3 production deployments.
-      MERV_STORAGE_PROVIDER: s3
-      MERV_STORAGE_BUCKET: merv-storage
-      MERV_STORAGE_ENDPOINT_URL: ${MERV_STORAGE_ENDPOINT_URL:-${RESEARCH_PLUGIN_STORAGE_ENDPOINT_URL:-http://minio:9000}}
-      MERV_STORAGE_REGION: ${MERV_STORAGE_REGION:-${RESEARCH_PLUGIN_STORAGE_REGION:-us-east-1}}
-      # Dev-only mounted management key from the mgmtkey one-shot above.
-      MERV_MGMT_KEY_PATH: /run/secrets/research_plugin_mgmt_key/key
-      # Signs the auth-exempt run-wait URLs; hosted control has no writable
-      # state root to generate one in. Dev-only default — real deployments set
-      # this from a secret store (see deploy/.env.example).
-      MERV_WAIT_SECRET: ${MERV_WAIT_SECRET:-dev-only-wait-secret-not-for-production}
-      AWS_ACCESS_KEY_ID: rpminio
-      AWS_SECRET_ACCESS_KEY: rpminio_dev_password
-      AWS_DEFAULT_REGION: us-east-1
-      AWS_ENDPOINT_URL_S3: ${AWS_ENDPOINT_URL_S3:-http://minio:9000}
-      # Provider creds come from MERV_PROVIDER_ENV_FILE or an
-      # override service's env_file ONLY in control mode (.env discovery is
-      # disabled). Leave the file unset for a record-only dev stack.
-      MERV_EXECUTION_BACKEND: ${MERV_EXECUTION_BACKEND:-${RESEARCH_PLUGIN_EXECUTION_BACKEND:-lambda_labs}}
-      MERV_REQUIRE_SANDBOX_BACKEND: ${MERV_REQUIRE_SANDBOX_BACKEND:-${RESEARCH_PLUGIN_REQUIRE_SANDBOX_BACKEND:-0}}
+      # Provider keys, SSH certificate authorities and physical bytes belong
+      # exclusively to the independently deployed merv-sandboxes service.
+      MERV_SANDBOXES_URL: ${MERV_SANDBOXES_URL:?set MERV_SANDBOXES_URL}
+      MERV_SANDBOXES_JWT_SECRET: ${MERV_SANDBOXES_JWT_SECRET:?set MERV_SANDBOXES_JWT_SECRET}
+      MERV_REQUIRE_SANDBOX_BACKEND: ${MERV_REQUIRE_SANDBOX_BACKEND:-1}
+      MERV_STORAGE_MAX_UPLOAD_BYTES: ${MERV_STORAGE_MAX_UPLOAD_BYTES:-53687091200}
+      MERV_OAUTH_RESOURCE_URI: ${MERV_OAUTH_RESOURCE_URI:-}
+      MERV_WAIT_SECRET: ${MERV_WAIT_SECRET:?set a stable MERV_WAIT_SECRET}
     ports:
       - "8787:8787"
-    volumes:
-      - mgmtkey:/run/secrets/research_plugin_mgmt_key:ro
-
-volumes:
-  miniodata:
-  mgmtkey:

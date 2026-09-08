@@ -11,8 +11,8 @@ import Switch from './Switch';
  * in the guided wizard modal; a card only grows the agent-facing enable
  * switch once its connection is set up (own credentials, platform
  * credentials, or deployment environment). Secrets are write-only end to
- * end. The daily spend cap renders on connected cards and is enforced by
- * quota admission on the backend.
+ * end. The project daily spend cap is passed as signed policy to the independent
+ * infrastructure service and enforced when it reserves a new or extended lease.
  */
 
 function statusOf(p) {
@@ -81,7 +81,7 @@ function DailyLimit({ projectId, provider, onUpdated }) {
   );
 }
 
-function ProviderCard({ projectId, provider, onUpdated, onSetup }) {
+function ProviderCard({ projectId, provider, onUpdated, onReload, onSetup }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const p = provider;
@@ -92,6 +92,18 @@ function ProviderCard({ projectId, provider, onUpdated, onSetup }) {
     setBusy(true); setError(null);
     try {
       onUpdated(await api.setSandboxProviderEnabled(projectId, p.provider, enabled));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disconnect = async () => {
+    setBusy(true); setError(null);
+    try {
+      await api.disconnectSandboxProvider(projectId, p.provider);
+      await onReload();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -132,16 +144,15 @@ function ProviderCard({ projectId, provider, onUpdated, onSetup }) {
           {p.user_budget.daily_cap_usd.toFixed(2)} · resets 00:00 UTC
         </p>
       )}
-      {p.setup_complete && p.enabled && p.connected && !p.in_env_fleet && (
-        <p className="sbxp-state">
-          Add <code>{p.provider}</code> to MERV_EXECUTION_BACKENDS to put it in
-          the active fleet.
-        </p>
-      )}
       <div className="sbxp-foot">
         {p.setup_complete ? (
           <>
             <DailyLimit projectId={projectId} provider={p} onUpdated={onUpdated} />
+            {p.can_disconnect && (
+              <button type="button" className="sbxp-expand" disabled={busy} onClick={disconnect}>
+                {busy ? 'Disconnecting…' : 'Disconnect'}
+              </button>
+            )}
             <button type="button" className="sbxp-expand" onClick={() => onSetup(p)}>
               edit connection
             </button>
@@ -190,8 +201,8 @@ export default function ProviderConfig({ projectId }) {
   return (
     <div className="sbxp">
       <p className="sbxp-lede">
-        Connect a cloud once, then flip it on — agents procure sandboxes on any
-        provider that is set up and enabled.
+        Connect a cloud and set this project’s daily cap. Merv keeps your policy;
+        merv-sandboxes manages credentials and enforces compute reservations.
         {usable.length > 0 && (
           <> Currently open to agents: {usable.map((p) => p.label).join(', ')}.</>
         )}
@@ -203,6 +214,7 @@ export default function ProviderConfig({ projectId }) {
             projectId={projectId}
             provider={p}
             onUpdated={onUpdated}
+            onReload={load}
             onSetup={(entry) => setSetupFor(entry.provider)}
           />
         ))}

@@ -31,6 +31,7 @@ class _UploadIdentity(TypedDict):
 
 class UploadTarget(_UploadIdentity, total=False):
     url: str
+    headers: dict[str, str]
     parts: list[UploadPart]
     part_size: int
     size_bytes: int

@@ -426,6 +426,10 @@ class RunnerSettingsApplyTest(unittest.TestCase):
 
 class RunnerMainTest(unittest.TestCase):
     def setUp(self) -> None:
+        # Pairing tests must not inherit an operator's real machine credential.
+        credentials = patch.dict(os.environ, {"MERV_MCP_KEY": "", "RESEARCH_PLUGIN_MCP_KEY": ""})
+        credentials.start()
+        self.addCleanup(credentials.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name).resolve()
         self.config = self.root / "client.json"

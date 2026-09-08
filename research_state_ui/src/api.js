@@ -20,7 +20,7 @@ const BASE = (
 // The UI build's wire version, stamped on every request as X-RP-Client-Version
 // (the cloud control plane reads it for the compat handshake; local mode
 // ignores it). Kept in lockstep with the merv package version.
-export const CLIENT_VERSION = '0.0014';
+export const CLIENT_VERSION = '0.0015';
 
 // The MCP endpoint agents dial — the same brain that serves this UI's API
 // (UI_API.md). With no configured base (dev proxy / co-hosted production)
@@ -387,6 +387,9 @@ export const api = {
       `/api/projects/${encodeURIComponent(pid)}/sandbox-providers/${encodeURIComponent(provider)}`,
       { method: 'PUT', body },
     ),
+  disconnectSandboxProvider: (pid, provider) =>
+    request(`/api/projects/${encodeURIComponent(pid)}/sandbox-providers/${encodeURIComponent(provider)}`, { method: 'DELETE' }),
+
   setSandboxProviderEnabled: (pid, provider, enabled) =>
     request(
       `/api/projects/${encodeURIComponent(pid)}/sandbox-providers/${encodeURIComponent(provider)}/enabled`,

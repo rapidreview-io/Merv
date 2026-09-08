@@ -76,6 +76,8 @@ AGENT_EXPERIMENT_SESSION_TOOLS = frozenset(
         "sandbox.pull_outputs",
         "sandbox.release",
         "sandbox.request",
+        "sandbox.run",
+        "sandbox.job",
         "sandbox.runs",
         "sandbox.terminal",
         "storage.fetch",

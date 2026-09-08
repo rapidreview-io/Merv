@@ -5,11 +5,10 @@ The brain is a modular monolith. Two independent classifications describe it:
 - a **component** says which capability owns a file;
 - a **layer** says what architectural job that file performs.
 
-This distinction is intentional. Research, Artifacts, Sandbox, and Feed are
-business components. MLflow is an outbound tracking integration, and concrete
-object storage is outbound infrastructure. A provider driver can therefore be
-adapter-layer code owned by Sandbox; a folder name does not make an adapter a
-business authority.
+This distinction is intentional. Research, Artifacts, and Feed are business components. Infrastructure adapts
+the external merv-sandboxes service to research associations and policy; MLflow
+is an outbound tracking integration. Physical compute and storage live outside
+the Merv process.
 
 ```text
                        bootstrap / composition
@@ -36,11 +35,11 @@ classification plus file overrides handles mixed packages.
 | Kernel | `kernel/**` | shared contracts, state floor, IDs, events, utilities |
 | Research | `research_core/**`, `literature/**` | project, claim, experiment, review, reflection, and literature authority |
 | Artifacts | `artifacts/**` | submitted artifacts, upload tokens, pinned evidence |
-| Sandbox | `sandbox/**` | lifecycle and provider-driver capability |
+| Infrastructure | `infrastructure/**` | native HTTP adapters, research associations, and spending policy |
 | Feed | `feed/**` | authors, posts, replies, reactions, history, and advisories |
 | Application | `application/**` | cross-component commands, reactions, and composite reads |
 | Tracking integration | `mlflow/**` | MLflow implementation of tracking ports |
-| Storage | `object_storage/**` | heavy-object lifecycle plus byte providers |
+| Storage | `object_storage/**` | heavy-object ledger and retention policy |
 | Surface | `surface/**` | HTTP/MCP delivery and the co-located composition root |
 
 The exact component import matrix is:
@@ -50,9 +49,9 @@ The exact component import matrix is:
 | Kernel | Kernel |
 | Research | Research, Artifacts, Kernel |
 | Artifacts | Artifacts, Kernel |
-| Sandbox | Sandbox, Kernel |
+| Infrastructure | Infrastructure, Storage, Kernel |
 | Feed | Feed, Kernel |
-| Application | Application, Research, Artifacts, Sandbox, Feed, Kernel |
+| Application | Application, Research, Artifacts, Infrastructure, Feed, Storage, Agent sessions, Kernel |
 | Tracking integration | Tracking integration, Application, Kernel |
 | Storage | Storage, Application, Kernel |
 | Surface | any component; its independent layer classification still applies |
@@ -64,8 +63,8 @@ single concrete package-root `Artifacts` capability. This is the executable
 form of “one stable public root”; it prevents a new use case or adapter from
 depending on internal services. Every cross-component import must enter through
 a declared public entrypoint. Workflow reads use
-`Research.snapshot` and `SandboxReads`; Sandbox commands enter through the
-package-root `SandboxEngine`.
+`Research.snapshot` and `SandboxReads`; native sandbox commands enter through
+the package-root `RemoteSandboxes` capability.
 An application service deliberately exported from a component package root is
 itself a valid public entrypoint; Surface may type against it directly when no
 independent projection or capability constraint exists. Internal service-module
@@ -83,18 +82,19 @@ The current layer mapping is deliberately honest about mixed directories:
 | Layer | Representative paths |
 |---|---|
 | foundation | `kernel/**` |
-| port | `kernel/ports/**`, `application/ports/**`, `object_storage/provider.py` |
-| domain | pure component policy such as `research_core/{experiment_workflow,reflection_workflow,policy,evidence}.py` and `sandbox/models.py` |
+| port | `kernel/ports/**`, `application/ports/**`, `infrastructure/ports.py`, `object_storage/provider.py` |
+| domain | pure component policy such as `research_core/{experiment_workflow,reflection_workflow,policy,evidence}.py` |
 | application | component roots such as `object_storage/storage.py` and cross-component work under `application/**` |
-| adapter | `mlflow/**`, concrete storage/blob code, `sandbox/adapters/**`, `sandbox/remote/**`, and key custody |
+| adapter | `mlflow/**`, `infrastructure/{client,storage}.py` |
 | delivery | ordinary `surface/**` HTTP/MCP/auth/serialization code |
-| bootstrap | Surface composition/config/control wiring, the HTTP process launcher, sandbox driver registration |
+| bootstrap | Surface composition/config/control wiring, the HTTP process launcher |
 
 `object_storage/storage.py` owns versioning, TTL, deduplication, lifecycle
 events, concurrency, and reclamation policy, so it is Storage-component
 **application** code. `object_storage/provider.py` is the component-owned
-heavy-byte port. `object_storage/{blobs,s3_blobs,s3_object_store}` are concrete
-adapters; only the first two implement Kernel's narrow submitted-byte port.
+heavy-byte port. `infrastructure/storage.py` implements both this port and
+Kernel's submitted-byte port through authenticated native HTTP. No cloud SDK
+or physical object-store implementation is part of Merv.
 
 Imports must point inward:
 
@@ -290,19 +290,10 @@ keys are an exact shrinking debt ledger; there is no remaining JSON-roundtrip
 exception. Concrete connections, cursors, stores,
 repositories, and services are never permitted in boundary values.
 
-Sandbox provider neutrality is enforced separately: services do not dispatch
-on provider-name literals. Capability flags and the typed `SandboxDriver` /
-`SandboxManagementTransport` contracts express provider differences; lazy
-provider descriptors form the composition registry; the shared offline driver
-conformance suite applies to every registered implementation.
-
-Sandbox exposes one package-root `SandboxEngine` for commands, reads, and
-maintenance. The engine owns orchestration and quota policy while
-`SandboxStorage` owns SQL and atomic transitions, provider adapters own external
-compute I/O, and the narrowly scoped lifecycle/provisioning/observation helpers
-protect concurrency and cleanup ordering. Sandbox reads scope rows by both
-project and experiment. Production code may not import Sandbox submodules or
-reach through `app.sandboxes` to storage, providers, observers, lifecycle
-workers, keys, or mutable state. Bootstrap is the sole exception: it constructs
-the injected provider-neutral backend and management-key store from their
-adapter modules before handing them to the engine.
+Infrastructure exposes `RemoteSandboxes` and `RemoteProviders` at its public
+package root. Research associations and saved admission policy remain in Merv;
+provider credentials, cloud-specific dispatch, lifecycle, and cleanup belong
+to merv-sandboxes. The HTTP adapter signs short-lived project namespace tokens.
+Production imports cannot reach retired provider or S3 modules. Test-only
+fake transports exercise project isolation, jobs, storage, and budget claims
+without provisioning machines.

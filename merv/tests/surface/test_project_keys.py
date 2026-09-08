@@ -18,7 +18,7 @@ import jwt
 from fastapi.testclient import TestClient
 
 from tests.support.brain import TestBrain
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.surface.auth import (
     ALLOW_OPEN_CONTROL_ENV_VAR,
     SupabaseVerifier,
@@ -66,7 +66,7 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=self.root,
             db_path=self.root / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
             env={"MERV_AGENT_IDENTITY": "optional"},
         )
         self.keys = ProjectKeys(store=self.app.store)

@@ -18,7 +18,7 @@ from merv.brain.surface.brain_dirs import (
     resolve_brain_state_root,
     resolve_local_brain_staging,
 )
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 
 
 def _mounted_mgmt_key_env(root: Path) -> dict[str, str]:
@@ -122,7 +122,7 @@ class BrainCompositionLayoutTest(unittest.TestCase):
         app = control_mode.build_control_app(
             repo_root=self.root,
             env=_mounted_mgmt_key_env(self.root),
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
         self.addCleanup(app.shutdown)
         return app
@@ -145,16 +145,10 @@ class BrainCompositionLayoutTest(unittest.TestCase):
         self.assertGreater((legacy / "state.sqlite").stat().st_size, 0)
         self.assertFalse((self.root / "state.sqlite").exists())
 
-    def test_local_mgmt_keys_follow_the_same_layout(self) -> None:
-        legacy = self.root / ".research_plugin"
-        legacy.mkdir()
-        (legacy / "state.sqlite").write_bytes(b"")
-        store = control_mode._build_mgmt_key_store(env=None, local_root=self.root)
-        self.assertEqual(store.root, legacy / "mgmt_keys")
-        fresh_root = self.root / "fresh"
-        fresh_root.mkdir()
-        store = control_mode._build_mgmt_key_store(env=None, local_root=fresh_root)
-        self.assertEqual(store.root, fresh_root / "mgmt_keys")
+    def test_composition_creates_no_provider_management_keys(self) -> None:
+        self._build()
+        self.assertFalse((self.root / "mgmt_keys").exists())
+        self.assertFalse((self.root / ".research_plugin" / "mgmt_keys").exists())
 
 
 if __name__ == "__main__":

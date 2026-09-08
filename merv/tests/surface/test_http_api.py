@@ -14,7 +14,7 @@ from tests.research_core.scenarios import complete_no_code_consolidation
 from merv.brain.mlflow import CentralMlflowService
 from merv.brain.research_core.experiment_workflow import RETURN_TO_PLANNED
 from merv.brain.surface.transport.api import create_fastapi_app
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient, seed_sandbox
 from merv.brain.kernel.utils import now_iso
 
 
@@ -22,12 +22,12 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
-        self.backend = FakeSandboxBackend()
+        self.backend = FakeInfrastructureClient()
         # Not an identity test: agent_id is merely recorded here (see test_agent_identity.py).
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=self.backend,
+            infrastructure_client=self.backend,
             # This legacy compatibility suite explicitly opts into the dormant
             # adapter. Product/default composition intentionally does not.
             mlflow_tracking=CentralMlflowService(),
@@ -368,63 +368,16 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         ]
         self.assertEqual(len(listed), 1)
 
-        # Live usage metrics endpoint surfaces the in-container sample.
-        self.backend.metrics[requested["sandbox_id"]] = {
-            "cpu": {"used_cores": 1.0, "limit_cores": 2.0},
-            "memory": {"used_bytes": 1073741824, "limit_bytes": 8589934592},
-            "gpus": [
-                {
-                    "index": 0,
-                    "name": "A100",
-                    "util_pct": 10,
-                    "mem_used_mib": 512,
-                    "mem_total_mib": 40960,
-                }
-            ],
-        }
-        metrics = self.request(
-            "GET", f"/api/projects/{project_id}/experiments/{exp_id}/sandbox/metrics"
-        )
-        self.assertTrue(metrics["available"])
-        self.assertEqual(metrics["metrics"]["gpus"][0]["util_pct"], 10)
-        metrics_by_uid = self.request(
-            "GET", f"/api/projects/{project_id}/sandboxes/{sandbox_uid}/metrics"
-        )
-        self.assertTrue(metrics_by_uid["available"])
-        self.assertEqual(metrics_by_uid["metrics"]["gpus"][0]["util_pct"], 10)
-
-        self.backend.append_transcript(experiment_id=exp_id, text="$ ls\nplan.md\n")
-        terminal = self.request(
-            "GET", f"/api/projects/{project_id}/experiments/{exp_id}/sandbox/terminal"
-        )
-        self.assertIn("plan.md", terminal["transcript"])
-        # Incremental polling: `since=cursor` returns only new bytes.
-        cursor = terminal["cursor"]
-        unchanged = self.request(
-            "GET",
-            f"/api/projects/{project_id}/experiments/{exp_id}/sandbox/terminal?since={cursor}",
-        )
-        self.assertEqual(unchanged["transcript"], "")
-        self.assertEqual(unchanged["cursor"], cursor)
-        self.backend.append_transcript(experiment_id=exp_id, text="results.json\n")
-        delta = self.request(
-            "GET",
-            f"/api/projects/{project_id}/experiments/{exp_id}/sandbox/terminal?since={cursor}",
-        )
-        self.assertEqual(delta["transcript"], "results.json\n")
-        self.assertGreater(delta["cursor"], cursor)
-
-        self.app.sandbox_transcripts.invalidate(sandbox_id=requested["sandbox_id"])
-        self.backend.append_transcript(
-            experiment_id=sandbox_uid, text="uid transcript\n"
-        )
-        terminal_by_uid = self.request(
-            "GET", f"/api/projects/{project_id}/sandboxes/{sandbox_uid}/terminal"
-        )
-        self.assertIn("uid transcript", terminal_by_uid["transcript"])
+        for route in (f"experiments/{exp_id}/sandbox", f"sandboxes/{sandbox_uid}"):
+            metrics = self.request("GET", f"/api/projects/{project_id}/{route}/metrics")
+            self.assertFalse(metrics["available"])
+            self.assertIn("does not publish", metrics["reason"])
+            terminal = self.request("GET", f"/api/projects/{project_id}/{route}/terminal")
+            self.assertFalse(terminal["available"])
+            self.assertIn("sandbox.run", terminal["transcript"])
 
         released = self.request(
-            "POST", f"/api/projects/{project_id}/sandboxes/{sandbox_uid}/release"
+            "POST", f"/api/projects/{project_id}/sandboxes/{sandbox_uid}/release", {"confirm_retained": True}
         )
         self.assertEqual(released["status"], "terminated")
 
@@ -1238,6 +1191,8 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
                 (project_id, now, now, now),
             )
 
+        seed_sandbox(self.app.sandboxes, project_id=project_id,
+                     experiment_id=running["id"], sandbox_uid="uid_active", status="running")
         home = self.request("GET", f"/api/projects/{project_id}/home")
 
         self.assertEqual(
@@ -1964,7 +1919,7 @@ class ArtifactFigureRouteTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
         self.client = TestClient(create_fastapi_app(self.app))
         project = self.client.post("/api/projects", json={"name": "Rel"}).json()
@@ -2156,7 +2111,7 @@ class DegradedStatesTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
         self.client = TestClient(
             create_fastapi_app(self.app), raise_server_exceptions=False

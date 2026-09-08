@@ -143,7 +143,7 @@ class AccountKeyOverTheWireTest(unittest.TestCase):
         import httpx
         from fastapi.testclient import TestClient
 
-        from tests.support.sandbox_backend import FakeSandboxBackend
+        from tests.support.infrastructure import FakeInfrastructureClient
         from merv.brain.surface.auth import SupabaseVerifier
         from merv.brain.surface.project_keys import ProjectKeys
         from merv.brain.surface.transport.api import create_fastapi_app
@@ -157,7 +157,7 @@ class AccountKeyOverTheWireTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=root,
             db_path=root / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
             env={"MERV_AGENT_IDENTITY": "optional"},
         )
         self.keys = ProjectKeys(store=self.app.store)

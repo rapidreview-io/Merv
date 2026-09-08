@@ -42,7 +42,7 @@ class DeployArtifactsTest(unittest.TestCase):
     def test_dockerfile_installs_control_extra_and_runs_control_entrypoint(self) -> None:
         text = (DEPLOY / "Dockerfile").read_text(encoding="utf-8")
         # Installs the `control` extra (Postgres + object store + provider SDK).
-        self.assertIn('.[control,gcp]', text)
+        self.assertIn('.[control]', text)
         # The whole src/ tree (brain + proxy + shared) must be present before
         # the wheel/install step runs in the image.
         self.assertIn("COPY src ./src", text)
@@ -57,7 +57,7 @@ class DeployArtifactsTest(unittest.TestCase):
         self.assertTrue("/api/meta" in text or "/health" in text)
         # Hosted control needs ssh for Lambda management operations, and the
         # reference compose key-init job needs ssh-keygen.
-        self.assertIn("openssh-client", text)
+        self.assertNotIn("openssh-client", text)
         # The hosted control entrypoint now runs without a checkout/staging dir.
         self.assertNotIn("MERV_REPO_ROOT", text)
         self.assertNotIn("RESEARCH_PLUGIN_REPO_ROOT", text)
@@ -75,34 +75,17 @@ class DeployArtifactsTest(unittest.TestCase):
             pyproject["project"]["optional-dependencies"]["control"]
         )
         self.assertIn("psycopg", control_extra)
-        self.assertIn("boto3", control_extra)
+        self.assertNotIn("boto3", control_extra)
         self.assertNotIn("mlflow", control_extra)
 
-    def test_compose_base_wires_control_object_store_and_management_key(self) -> None:
+    def test_compose_base_wires_independent_infrastructure_only(self) -> None:
         text = (DEPLOY / "docker-compose.yml").read_text(encoding="utf-8")
-        # Database-neutral base: application + object store + management key.
-        for service in ("control:", "minio:", "mgmtkey:"):
-            self.assertIn(service, text)
-        self.assertNotIn("  postgres:\n", text)
-        self.assertIn("MERV_DB_URL", text)
-        self.assertIn("MERV_BLOB_BUCKET", text)
-        self.assertIn("MERV_MGMT_KEY_PATH", text)
-        self.assertIn("MERV_REQUIRE_SANDBOX_BACKEND", text)
-        self.assertIn("MERV_EXECUTION_BACKEND", text)
-        self.assertIn("MERV_PROVIDER_ENV_FILE", text)
-        # Host-side substitutions dual-read: a host exporting only the legacy
-        # spelling keeps its value at compose-interpolation level.
-        self.assertIn(
-            "${MERV_STORAGE_ENDPOINT_URL:-"
-            "${RESEARCH_PLUGIN_STORAGE_ENDPOINT_URL:-http://minio:9000}}",
-            text,
-        )
-        self.assertIn("${AWS_ENDPOINT_URL_S3:-http://minio:9000}", text)
-        self.assertIn("ssh-keygen", text)
-        self.assertIn("mgmtkey:/run/secrets/research_plugin_mgmt_key:ro", text)
-        # Builds from the deploy Dockerfile.
+        self.assertIn("control:", text)
+        for retired in ("minio:", "mgmtkey:", "ssh-keygen", "MERV_BLOB_BUCKET", "MERV_EXECUTION_BACKEND"):
+            self.assertNotIn(retired, text)
+        for setting in ("MERV_DB_URL", "MERV_SANDBOXES_URL", "MERV_SANDBOXES_JWT_SECRET", "MERV_REQUIRE_SANDBOX_BACKEND"):
+            self.assertIn(setting, text)
         self.assertIn("dockerfile: deploy/Dockerfile", text)
-        self.assertNotIn("mlflow", text.lower())
 
     def test_database_overlays_are_hot_swappable_and_isolated(self) -> None:
         postgres = (DEPLOY / "docker-compose.postgres.yml").read_text(encoding="utf-8")
@@ -157,15 +140,11 @@ class DeployArtifactsTest(unittest.TestCase):
         for var in (
             "MERV_MODE",
             "MERV_DB_URL",
-            "MERV_BLOB_BUCKET",
-            "MERV_MGMT_KEY_PATH",
-            "MERV_MGMT_PUBLIC_KEY",
+            "MERV_SANDBOXES_URL",
+            "MERV_SANDBOXES_JWT_SECRET",
             "MERV_ALLOWED_ORIGINS",
-            "MERV_EXECUTION_BACKEND",
             "MERV_REQUIRE_SANDBOX_BACKEND",
-            "MERV_PROVIDER_ENV_FILE",
-            "MERV_LAMBDA_API_KEY",
-            "AWS_ENDPOINT_URL_S3",
+            "MERV_WAIT_SECRET",
         ):
             self.assertIn(var, text)
         self.assertNotIn("mlflow", text.lower())

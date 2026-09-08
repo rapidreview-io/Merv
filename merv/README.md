@@ -206,7 +206,7 @@ brain-managed artifacts.
 
 ## Running a local brain (optional)
 
-For development, or to keep all state on your machine:
+For local record-only development:
 
 ```bash
 cd /path/to/merv
@@ -215,9 +215,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 bin/merv-client configure --control-url http://127.0.0.1:8787
 ```
 
-Sandbox provider credentials (Lambda Labs by default; Thunder, Modal, and a
-fake test backend via `MERV_EXECUTION_BACKEND`) belong to the brain
-process only — see `.env.example`. Startup details:
+For uploads or compute, configure `MERV_SANDBOXES_URL` and
+`MERV_SANDBOXES_JWT_SECRET` against a separate merv-sandboxes deployment.
+Provider credentials and physical bytes belong to that service. Startup details:
 [docs/STARTUP_CHEATSHEET.md](docs/STARTUP_CHEATSHEET.md).
 
 ## Tests
@@ -226,8 +226,7 @@ process only — see `.env.example`. Startup details:
 PYTHONPATH=src .venv/bin/python -m unittest discover -s tests
 ```
 
-Set `MERV_EXECUTION_BACKEND=fake` to keep tests and local workflows
-off cloud providers.
+Tests inject a fake infrastructure HTTP client and never provision cloud resources.
 
 ## Documentation
 

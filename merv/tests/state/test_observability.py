@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 from tests.support.brain import TestBrain
-from tests.support.sandbox_backend import FakeSandboxBackend
+from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.surface.telemetry import StructuredLogger
 
 
@@ -87,7 +87,7 @@ class TenantCountersTest(unittest.TestCase):
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            execution_backend=FakeSandboxBackend(),
+            infrastructure_client=FakeInfrastructureClient(),
         )
         self.store = self.app.store
         self.project_id = self.app.call_tool(
@@ -131,15 +131,16 @@ class TenantCountersTest(unittest.TestCase):
             )
         counts = self.app.application.tenant_counters(tenant_id="tenant_x")
         self.assertEqual(counts["tenant_id"], "tenant_x")
-        self.assertEqual(counts["sandbox_generations"], 2)
-        self.assertAlmostEqual(counts["sandbox_hours"], 3.0)
+        self.assertIsNone(counts["sandbox_generations"])
+        self.assertEqual(counts["sandbox_accounting_source"], "merv-sandboxes")
+        self.assertIsNone(counts["sandbox_hours"])
         self.assertGreaterEqual(counts["tool_calls"], 1)
 
     def test_other_tenant_sees_nothing(self) -> None:
         counts = self.app.application.tenant_counters(tenant_id="tenant_none")
-        self.assertEqual(counts["sandbox_generations"], 0)
+        self.assertIsNone(counts["sandbox_generations"])
         self.assertEqual(counts["tool_calls"], 0)
-        self.assertEqual(counts["sandbox_hours"], 0.0)
+        self.assertIsNone(counts["sandbox_hours"])
 
 
 if __name__ == "__main__":

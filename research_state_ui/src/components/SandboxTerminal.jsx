@@ -10,7 +10,7 @@ import { hardwareLabel, providerLabel } from '../utils/fleet';
  * Replaces the old job dashboard. The agent procures the sandbox (sandbox.request
  * over MCP) and runs commands over SSH itself; this panel only *observes*:
  *   - sandbox status + SSH connection details (read-only, copyable);
- *   - a live transcript of every command + output recorded in the sandbox;
+ *   - the latest durable job’s bounded stdout and stderr, retained by merv-sandboxes;
  *
  * Polls GET /sandbox + /metrics every 3s. The terminal polls separately at
  * 1.5s while live, using the `since` cursor so each poll transfers only new
@@ -98,12 +98,12 @@ export default function SandboxTerminal({
       // A transient read failure returns an "(terminal unavailable: …)" body
       // with a meaningless cursor — keep the scrollback we already have.
       if (!fresh && chunk.startsWith('(terminal unavailable')) return;
-      if (!fresh && term.cursor != null && term.cursor < acc.cursor) {
+      if (!fresh && !term.replace && term.cursor != null && term.cursor < acc.cursor) {
         // Cursor regressed (transcript replaced): refetch from scratch.
         accRef.current = { sandboxId, cursor: null, text: '' };
         return;
       }
-      let text = fresh ? chunk : acc.text + chunk;
+      let text = fresh || term.replace ? chunk : acc.text + chunk;
       if (text.length > MAX_ACCUMULATED_CHARS) {
         const cut = text.length - MAX_ACCUMULATED_CHARS;
         const nl = text.indexOf('\n', cut);
