@@ -90,15 +90,24 @@ def missing_in_namespace(client: InfrastructureClient, object_id: str, namespace
         raise CheckFailed("foreign namespace obtained object metadata or transfer target")
 
 
+def verify_schema(conn: Any, *, pre_cutover: bool = False) -> int:
+    latest = conn.execute("SELECT max(version) AS version FROM schema_migrations").fetchone()["version"]
+    allowed = {57, 58} if pre_cutover else {58}
+    require(latest in allowed, "research schema version does not match this verification phase")
+    if latest == 58:
+        versions = conn.execute("SELECT version,name FROM schema_migrations WHERE version=58").fetchall()
+        require(len(versions) == 1 and versions[0]["name"] == "add_remote_sandbox_links", "research schema58 is not installed")
+        conn.execute("SELECT project_id,sandbox_uid,experiment_id,public_key FROM remote_sandbox_links LIMIT 0")
+    return latest
+
+
 def research_inventory(args: argparse.Namespace) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     require(bool(os.environ.get("MERV_DB_URL")), "MERV_DB_URL is required")
     # Connecting directly avoids startup migrations and research logging. The
     # database enforces read-only transactions for the entire session.
     with psycopg.connect(os.environ["MERV_DB_URL"], row_factory=dict_row,
                          options="-c default_transaction_read_only=on -c statement_timeout=30000") as conn:
-        versions = conn.execute("SELECT version,name FROM schema_migrations WHERE version=58").fetchall()
-        require(len(versions) == 1 and versions[0]["name"] == "add_remote_sandbox_links", "research schema58 is not installed")
-        conn.execute("SELECT project_id,sandbox_uid,experiment_id,public_key FROM remote_sandbox_links LIMIT 0")
+        version = verify_schema(conn, pre_cutover=args.pre_cutover)
         counts = conn.execute("""SELECT
             (SELECT count(*) FROM projects) AS projects,
             (SELECT count(*) FROM artifacts WHERE status='complete') AS complete_artifacts,
@@ -130,7 +139,7 @@ def research_inventory(args: argparse.Namespace) -> tuple[list[dict[str, Any]], 
             (args.recovered_project,)).fetchall() if args.recovered_project else []
         if args.recovered_project:
             require(len(recovered) >= args.expected_recovered, "recovered-project available object count is below expectation")
-        emit("research_schema", ok=True, version=58, **counts)
+        emit("research_schema", ok=True, version=version, pre_cutover=args.pre_cutover, **counts)
     return artifacts, heavy, recovered
 
 
@@ -283,6 +292,7 @@ def verify_writes(args: argparse.Namespace, client: InfrastructureClient) -> Non
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--pre-cutover", action="store_true", help="allow schema57 for strictly read-only research checks before the production switch")
     parser.add_argument("--write-storage", action="store_true", help="also create and delete uniquely named smoke bytes")
     parser.add_argument("--artifact-samples", type=int, default=5, help="old project samples plus this many recent artifacts")
     parser.add_argument("--heavy-samples", type=int, default=5)

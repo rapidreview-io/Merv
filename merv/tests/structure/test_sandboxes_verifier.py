@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
+import os
 from pathlib import Path
+import sys
 from unittest.mock import patch
 
 import httpx
@@ -78,3 +80,63 @@ def test_failed_blob_upload_still_deletes_only_its_owned_object():
             verifier.verify_writes(argparse.Namespace(multipart_mib=65), Client())
     assert calls == [("DELETE", "/storage/objects/obj_smoke_only", "merv-blobs"),
                      ("GET", "/storage/objects/obj_smoke_only", "merv-blobs")]
+
+
+class SchemaConnection:
+    def __init__(self, version):
+        self.version = version
+        self.statements = []
+
+    def execute(self, sql):
+        self.statements.append(sql)
+        assert sql.startswith("SELECT ")
+        return self
+
+    def fetchone(self):
+        return {"version": self.version}
+
+    def fetchall(self):
+        return [{"version": self.version, "name": "add_remote_sandbox_links"}]
+
+
+def test_pre_cutover_schema57_is_read_only_and_does_not_query_new_table():
+    connection = SchemaConnection(57)
+    assert verifier.verify_schema(connection, pre_cutover=True) == 57
+    assert connection.statements == ["SELECT max(version) AS version FROM schema_migrations"]
+
+
+def test_final_verification_rejects_schema57():
+    with pytest.raises(verifier.CheckFailed, match="verification phase"):
+        verifier.verify_schema(SchemaConnection(57))
+
+
+def test_schema58_checks_persisted_remote_links_in_both_phases():
+    for pre_cutover in (False, True):
+        connection = SchemaConnection(58)
+        assert verifier.verify_schema(connection, pre_cutover=pre_cutover) == 58
+        assert "FROM remote_sandbox_links" in connection.statements[-1]
+
+
+def test_disposable_composition_uses_synthetic_database_and_authentication(capsys):
+    from tests.support.infrastructure import FakeInfrastructureClient
+
+    class NativeClient(FakeInfrastructureClient):
+        def request(self, method, path, *, namespace, **kwargs):
+            if path == "/auth/me":
+                return {"namespace": namespace, "token_id": "svc_smoke"}
+            return super().request(method, path, namespace=namespace, **kwargs)
+
+    composition_spec = importlib.util.spec_from_file_location(
+        "composition_verifier", Path(__file__).resolve().parents[2] / "deploy" / "verify_merv_composition.py"
+    )
+    composition = importlib.util.module_from_spec(composition_spec)
+    composition_spec.loader.exec_module(composition)
+    env = {"MERV_DB_URL": "postgresql://must-never-connect/production",
+           "RESEARCH_PLUGIN_DB_URL": "postgresql://must-never-connect/production",
+           "SUPABASE_URL": "https://auth.test", "SUPABASE_JWT_SECRET": "synthetic-secret-for-test-only-12345",
+           "MERV_WAIT_SECRET": "synthetic-wait-secret-only-123456789", "MERV_REQUIRE_AUTH": "1"}
+    with patch.dict(os.environ, env, clear=True), patch.dict(sys.modules, {"verify_sandboxes_cutover": verifier}), \
+            patch("merv.brain.surface.surface.build_infrastructure_client", return_value=NativeClient()):
+        composition.verify_composition()
+        assert os.environ["MERV_DB_URL"] == "" and os.environ["RESEARCH_PLUGIN_DB_URL"] == ""
+    assert '"synthetic_mcp_credential_verified": true' in capsys.readouterr().out
