@@ -88,7 +88,8 @@ class HermesAdapterTest(unittest.TestCase):
             PLUGIN_ROOT / "clients" / "hermes" / "plugin" / "plugin.yaml"
         ).read_text()
         self.assertIn("name: merv", manifest)
-        self.assertIn("version: 0.1.4", manifest)
+        version = json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text())["version"]
+        self.assertIn(f"version: {version}", manifest)
         sync = (
             PLUGIN_ROOT
             / "clients"

@@ -96,6 +96,18 @@ def apply_upload_mapping(args: argparse.Namespace) -> None:
             "Upload mapping requires a successful applied migration report"
         )
     rows = report["upload_id_mapping"]
+    for row in rows:
+        old_size = int(row["size_bytes"])
+        new_size = int(row.get("canonical_size_bytes", old_size))
+        if min(old_size, new_size) < 0:
+            raise SystemExit("Upload mapping sizes must be nonnegative")
+        if old_size != new_size and (
+            not row.get("canonical_object_id")
+            or row.get("canonical_verification") != "provider_sha256"
+        ):
+            raise SystemExit("Size repair requires a fully verified canonical object")
+        row["canonical_size_bytes"] = str(new_size)
+        row.setdefault("canonical_object_id", "")
     if not rows:
         print('{"upload_ids_updated":0}')
         return
@@ -114,6 +126,8 @@ def apply_upload_mapping(args: argparse.Namespace) -> None:
                 "new_upload_id",
                 "sha256",
                 "size_bytes",
+                "canonical_size_bytes",
+                "canonical_object_id",
             ]
         )
         + ")"
@@ -121,7 +135,7 @@ def apply_upload_mapping(args: argparse.Namespace) -> None:
     )
     sql = (
         """BEGIN;
-CREATE TEMP TABLE merv_upload_cutover(id text, project_id text, old_id text, new_id text, sha256 text, size_bytes bigint);
+CREATE TEMP TABLE merv_upload_cutover(id text, project_id text, old_id text, new_id text, sha256 text, size_bytes bigint, canonical_size_bytes bigint, canonical_object_id text, PRIMARY KEY(id));
 INSERT INTO merv_upload_cutover VALUES """
         + values
         + ";\n"
@@ -129,12 +143,19 @@ INSERT INTO merv_upload_cutover VALUES """
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM merv_upload_cutover m LEFT JOIN storage_objects s ON s.id=m.id
              WHERE s.id IS NULL OR s.project_id<>m.project_id OR s.status<>'uploading'
-                OR s.content_sha256<>m.sha256 OR s.size_bytes<>m.size_bytes
-                OR s.upload_id IS NULL OR s.upload_id NOT IN (m.old_id,m.new_id)) THEN
+                OR s.content_sha256<>m.sha256 OR s.upload_id IS NULL
+                OR NOT ((s.upload_id=m.old_id AND s.size_bytes=m.size_bytes)
+                     OR (s.upload_id=m.new_id AND s.size_bytes=m.canonical_size_bytes))) THEN
     RAISE EXCEPTION 'legacy upload changed after migration snapshot';
   END IF;
+  IF EXISTS (SELECT 1 FROM merv_upload_cutover m LEFT JOIN storage_objects c ON c.id=m.canonical_object_id
+             WHERE m.canonical_object_id<>'' AND (c.id IS NULL OR c.project_id<>m.project_id
+                OR c.status<>'available' OR c.content_sha256<>m.sha256
+                OR c.size_bytes<>m.canonical_size_bytes)) THEN
+    RAISE EXCEPTION 'canonical verified object changed after migration snapshot';
+  END IF;
 END $$;
-UPDATE storage_objects s SET upload_id=m.new_id FROM merv_upload_cutover m WHERE s.id=m.id;
+UPDATE storage_objects s SET upload_id=m.new_id, size_bytes=m.canonical_size_bytes FROM merv_upload_cutover m WHERE s.id=m.id;
 UPDATE storage_completion_tokens t SET upload_id=m.new_id FROM merv_upload_cutover m
   WHERE t.project_id=m.project_id AND t.object_id=m.id AND t.upload_id=m.old_id;
 COMMIT;
@@ -166,6 +187,7 @@ async def migrate(args: argparse.Namespace) -> None:
     from botocore.config import Config
     from merv_sandboxes.config import Settings
     from merv_sandboxes.db import create_database
+    from merv_sandboxes.errors import NotFoundError
     from merv_sandboxes.storage.models import ObjectUploadRequest
     from merv_sandboxes.storage.service import ObjectStorage
 
@@ -177,6 +199,7 @@ async def migrate(args: argparse.Namespace) -> None:
     failures: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     native_ids: dict[tuple[str, str], str] = {}
+    verified_sha_sizes: dict[tuple[str, str], int] = {}
     sdk_config = Config(
         signature_version="s3v4",
         max_pool_connections=args.workers + 4,
@@ -329,6 +352,8 @@ async def migrate(args: argparse.Namespace) -> None:
                     and checksum != base64.b64encode(bytes.fromhex(sha)).decode()
                 ):
                     raise ValueError("legacy provider SHA-256 differs from ledger")
+                if checksum:
+                    verified_sha_sizes[row["project_id"], sha] = row["size_bytes"]
                 mode = (
                     "provider_sha256"
                     if checksum
@@ -388,6 +413,52 @@ async def migrate(args: argparse.Namespace) -> None:
                 if args.apply and not expired:
                     # Deterministic key permits restart after bytes copied but before publication.
                     target_key = settings.storage.prefix + "/merv-import/blobs/" + key
+                    try:
+                        existing = await service.resolve(
+                            namespace="merv-blobs", name=key
+                        )
+                    except NotFoundError:
+                        existing = None
+                    if existing is not None:
+                        if (
+                            existing.name != key
+                            or existing.sha256 != sha
+                            or existing.size_bytes != len(data)
+                            or existing.content_type != content_type
+                        ):
+                            raise ValueError(
+                                "native blob metadata differs from verified source"
+                            )
+                        # Every replay still hashes source bytes and freshly verifies
+                        # the immutable native copy, without uploading it again.
+                        await asyncio.to_thread(
+                            service.provider.verify_adoption,
+                            target_key,
+                            len(data),
+                            sha,
+                        )
+                        if existing.expires_at is not None and (
+                            expires_at is None or expires_at > existing.expires_at
+                        ):
+                            await service.extend_retention(
+                                namespace="merv-blobs",
+                                object_id=existing.id,
+                                expires_at=expires_at,
+                            )
+                        counts["blobs_reused"] += 1
+                        counts["blobs_verified"] += 1
+                        counts["blob_bytes"] += len(data)
+                        if counts["blobs_verified"] % 500 == 0:
+                            print(
+                                json.dumps(
+                                    {
+                                        "progress": dict(counts),
+                                        "failures": len(failures),
+                                    }
+                                ),
+                                flush=True,
+                            )
+                        return
                     await asyncio.to_thread(
                         service.provider.client.put_object,
                         Bucket=settings.storage.bucket,
@@ -461,12 +532,36 @@ async def migrate(args: argparse.Namespace) -> None:
                 encoded = (
                     base64.urlsafe_b64encode(
                         json.dumps(
-                            [row["project_id"], native_id], separators=(",", ":")
+                            [row["project_id"], native_id, row["id"]],
+                            separators=(",", ":"),
                         ).encode()
                     )
                     .decode()
                     .rstrip("=")
                 )
+                canonical = unique[row["project_id"], row["content_sha256"]]
+                repair = {}
+                if row["size_bytes"] != canonical["size_bytes"]:
+                    if (
+                        canonical["status"] != "available"
+                        or verified_sha_sizes.get(
+                            (row["project_id"], row["content_sha256"])
+                        )
+                        != canonical["size_bytes"]
+                    ):
+                        failures.append(
+                            {
+                                "kind": "size_repair",
+                                "id": row["id"],
+                                "error": "canonical size requires full SHA verification",
+                            }
+                        )
+                        continue
+                    repair = {
+                        "canonical_object_id": canonical["id"],
+                        "canonical_size_bytes": str(canonical["size_bytes"]),
+                        "canonical_verification": "provider_sha256",
+                    }
                 mapping.append(
                     {
                         "id": row["id"],
@@ -475,6 +570,7 @@ async def migrate(args: argparse.Namespace) -> None:
                         "new_upload_id": "msbx_" + encoded,
                         "sha256": row["content_sha256"],
                         "size_bytes": str(row["size_bytes"]),
+                        **repair,
                     }
                 )
         report = {
@@ -482,6 +578,7 @@ async def migrate(args: argparse.Namespace) -> None:
             "counts": dict(counts),
             "failures": failures,
             "upload_id_mapping": mapping,
+            "size_repairs": [row for row in mapping if row.get("canonical_object_id")],
             "pending_uploads": pending,
             "source_image": source["source_image"],
             "source_release": source["source_release"],

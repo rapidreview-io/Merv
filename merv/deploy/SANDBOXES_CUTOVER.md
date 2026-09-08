@@ -71,13 +71,14 @@ research relationships remain intact.
 
 ## Import and verify bytes
 
-Place `migrate_to_sandboxes.py` on the Docker host and in the new control
-container. Export while the old control container still exists:
+Place `migrate_to_sandboxes.py` on the Docker host and in a disposable native
+service worker. Give that worker access to the native database and legacy MinIO
+networks, using the existing native configuration securely. Set `MIGRATION_WORKER`
+to its container name. Export while the old control container still exists:
 
 ```sh
-python3 migrate_to_sandboxes.py --export legacy-source.json
-docker cp migrate_to_sandboxes.py sandboxes-control-1:/tmp/migrate_to_sandboxes.py
-docker exec -i sandboxes-control-1 python /tmp/migrate_to_sandboxes.py \
+python3 migrate_to_sandboxes.py --blob-endpoint http://deploy-minio-1:9000 --export legacy-source.json
+docker exec -i "$MIGRATION_WORKER" python /tmp/migrate_to_sandboxes.py \
   --trust-legacy-multipart --report /tmp/merv-storage-audit.json < legacy-source.json
 ```
 
@@ -97,16 +98,17 @@ The worker copies and hashes all submitted MinIO blobs. It also recovers
 available heavy objects missing from R2 from the retained MinIO bucket
 `research-plugin-storage`; this recovers the older project's 26 objects that
 otherwise already appeared missing in the old deployment. Copied objects go
-into the native bucket. Blob MIME types and absolute expiration timestamps are preserved. Already
+into the native bucket. Replays fully hash each source blob and verify the native copy again, but reuse matching published receipts without uploading the bytes again. Blob MIME types and absolute expiration timestamps are preserved. Already
 expired source blobs are counted separately and need not be revived. Heavy
 objects remain pinned until the Merv ledger applies retention or deletion.
 
 After the audit has no failures, import:
 
 ```sh
-docker exec -i sandboxes-control-1 python /tmp/migrate_to_sandboxes.py \
+docker exec -i "$MIGRATION_WORKER" python /tmp/migrate_to_sandboxes.py \
   --apply --trust-legacy-multipart --report /tmp/merv-storage-import.json < legacy-source.json
-docker cp sandboxes-control-1:/tmp/merv-storage-import.json ./merv-storage-import.json
+docker exec "$MIGRATION_WORKER" cat /tmp/merv-storage-import.json > ./merv-storage-import.json
+chmod 0600 ./merv-storage-import.json
 ```
 
 The import is restartable. It preserves source bytes, uses deterministic names
@@ -134,6 +136,22 @@ python3 migrate_to_sandboxes.py --apply-upload-mapping merv-storage-import.json
 
 The mapping requires the old uploading rows still match the exported state.
 It preserves all ledger IDs and translates them into resumable native targets.
+The encoded migration handle contains the project, native object ID, and legacy
+ledger row ID. The row ID keeps completion handles distinct when several pending
+ledger rows share the same immutable native bytes. Three production pending rows
+had declared sizes inconsistent with a matching available SHA; the report records
+the fully verified canonical available row and size. The mapping transaction
+repairs only those pending sizes, checks exact old-or-new handle/size pairs, and
+rechecks the canonical row's project, SHA, available status, and size. Completion
+tokens carry no size payload and keep their original row IDs.
+
+For this production host, run the disposable operator worker on both
+`sandboxes_default` and `deploy_default`. Use `sandboxes-postgres-1` for the native
+DB hostname and `http://deploy-minio-1:9000` for the source blob endpoint. The
+public Caddy object routes do not proxy bucket-root listing requests. Do not attach
+production application containers to extra networks. The staged operator wrapper
+supports `--apply-only --source <frozen-export> --report-prefix native-storage-final`
+for the final pass and removes its temporary container afterward.
 Repeated application accepts already-translated rows.
 
 Start the new Merv image against the same research database, using the external

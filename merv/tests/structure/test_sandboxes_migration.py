@@ -123,3 +123,45 @@ def test_mapping_requires_success_and_updates_both_references_atomically(
     assert "legacy upload changed after migration snapshot" in sql
     assert "UPDATE storage_objects" in sql and "UPDATE storage_completion_tokens" in sql
     assert "t.object_id=m.id" in sql and "s.upload_id IS NULL" in sql
+
+
+@pytest.mark.parametrize("verified", [False, True])
+def test_size_repair_requires_canonical_verification_and_exact_pairs(
+    tmp_path, monkeypatch, verified
+):
+    module = migration()
+    row = {
+        "id": "sto_pending",
+        "project_id": "proj_1",
+        "old_upload_id": "old",
+        "new_upload_id": "msbx_unique",
+        "sha256": "a" * 64,
+        "size_bytes": "7",
+        "canonical_size_bytes": "10",
+        "canonical_object_id": "sto_available",
+        "canonical_verification": "provider_sha256"
+        if verified
+        else "legacy_manifest_sha256_size_verified",
+    }
+    report = tmp_path / "report.json"
+    report.write_text(
+        json.dumps({"applied": True, "failures": [], "upload_id_mapping": [row]})
+    )
+    args = SimpleNamespace(apply_upload_mapping=str(report), source_database="db")
+    calls = []
+    monkeypatch.setattr(
+        module.subprocess, "run", lambda command, **kwargs: calls.append(kwargs)
+    )
+    if not verified:
+        with pytest.raises(SystemExit, match="fully verified canonical"):
+            module.apply_upload_mapping(args)
+        assert calls == []
+        return
+    module.apply_upload_mapping(args)
+    sql = calls[0]["input"]
+    assert "s.upload_id=m.old_id AND s.size_bytes=m.size_bytes" in sql
+    assert "s.upload_id=m.new_id AND s.size_bytes=m.canonical_size_bytes" in sql
+    assert "c.status<>'available' OR c.content_sha256<>m.sha256" in sql
+    assert "c.project_id<>m.project_id" in sql
+    assert "c.size_bytes<>m.canonical_size_bytes" in sql
+    assert "SET upload_id=m.new_id, size_bytes=m.canonical_size_bytes" in sql
