@@ -131,8 +131,13 @@ export completes. Use the successful final report to update upload IDs and
 completion-token references in one guarded database transaction:
 
 ```sh
-python3 migrate_to_sandboxes.py --apply-upload-mapping merv-storage-import.json
+python3 migrate_to_sandboxes.py --source-user supabase_admin \
+  --apply-upload-mapping merv-storage-import.json
 ```
+
+Supabase's ordinary `postgres` role can read these tables but cannot update
+them. The explicit `--source-user supabase_admin` uses the existing migration
+administrator; it does not broaden table grants.
 
 The mapping requires the old uploading rows still match the exported state.
 It preserves all ledger IDs and translates them into resumable native targets.

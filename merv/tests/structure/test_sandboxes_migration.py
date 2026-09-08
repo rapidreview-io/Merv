@@ -81,12 +81,13 @@ def test_export_refuses_active_legacy_sandboxes(tmp_path, monkeypatch):
     assert not Path(args.export).exists()
 
 
+@pytest.mark.parametrize("source_user", ["postgres", "supabase_admin"])
 def test_mapping_requires_success_and_updates_both_references_atomically(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, source_user
 ):
     module = migration()
     report = tmp_path / "report.json"
-    args = SimpleNamespace(apply_upload_mapping=str(report), source_database="db")
+    args = SimpleNamespace(apply_upload_mapping=str(report), source_database="db", source_user=source_user)
     report.write_text(json.dumps({"applied": False, "failures": []}))
     with pytest.raises(SystemExit, match="successful applied"):
         module.apply_upload_mapping(args)
@@ -117,6 +118,8 @@ def test_mapping_requires_success_and_updates_both_references_atomically(
     module.apply_upload_mapping(args)
     command, kwargs = calls[0]
     assert "ON_ERROR_STOP=1" in command and kwargs["check"]
+    assert command[command.index("-U") + 1] == source_user
+    assert command[command.index("-d") + 1] == "postgres"
     sql = kwargs["input"]
     assert sql.startswith("BEGIN;") and sql.rstrip().endswith("COMMIT;")
     assert "upload_''old" in sql

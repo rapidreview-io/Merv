@@ -42,7 +42,7 @@ def export_source(args: argparse.Namespace) -> None:
             args.source_database,
             "psql",
             "-U",
-            "postgres",
+            getattr(args, "source_user", "postgres"),
             "-d",
             "postgres",
             "-Atc",
@@ -169,7 +169,7 @@ COMMIT;
             args.source_database,
             "psql",
             "-U",
-            "postgres",
+            getattr(args, "source_user", "postgres"),
             "-d",
             "postgres",
             "-v",
@@ -601,6 +601,7 @@ def main() -> None:
     parser.add_argument("--apply-upload-mapping", metavar="REPORT")
     parser.add_argument("--source-control", default="deploy-control-1")
     parser.add_argument("--source-database", default="deploy-supabase-db-1")
+    parser.add_argument("--source-user", default="postgres", help="PostgreSQL operator role; Supabase writes require supabase_admin or the table owner")
     parser.add_argument("--blob-endpoint", default="https://experiments.rapidreview.io")
     parser.add_argument(
         "--legacy-heavy-bucket",
