@@ -22,7 +22,7 @@ Require the handoff's `experiment_id`, `review_request_id`, and
 Call `review.start` with the supplied request and capability, your own stable
 `caller_session_id`—never the producer's—and optional `declared_agent`. Begin
 with its pinned project context, plan, report, and artifact references. Batch
-the listed result, graph, and exhibit ids through `artifact.find` only when
+the listed result, graph, and exhibit ids through `artifact.read` only when
 their full submitted evidence is needed.
 
 Operate read-only by procedure: the capability protects the review protocol,

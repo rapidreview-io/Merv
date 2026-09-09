@@ -3,7 +3,7 @@
 
   This file is the FULFILLMENT of the task: one confirmation per deliverable,
   so the reviewer verifies each one instead of reading a story. Copy it to
-  tasks/<name>/delivery.md, fill it in, then submit it with artifact.submit
+  tasks/<name>/delivery.md, fill it in, then submit it with artifact.upload
   (role "delivery") and run the returned upload command. Resubmitting after a
   needs_changes review creates the next version — each version is COMPLETE
   (answers every deliverable), never a diff.

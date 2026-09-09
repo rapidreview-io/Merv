@@ -93,7 +93,7 @@ class StatusGuidancePolicy:
             return self._next(
                 gate="unknown",
                 action="inspect_experiment",
-                allowed=["artifact.find"],
+                allowed=["artifact.read"],
             )
         if evaluation.review is not None:
             return self._review_next(
@@ -170,7 +170,7 @@ class StatusGuidancePolicy:
                 )
             if status in TASK_TERMINAL_STATUSES:
                 return self._next(gate="terminal", action="none", allowed=[])
-            return self._next(gate="unknown", action="inspect_task", allowed=["artifact.find"])
+            return self._next(gate="unknown", action="inspect_task", allowed=["artifact.read"])
         if evaluation.review is not None:
             return self._review_next(target_type="task", target=task, gate=evaluation.review)
         current = self._advisory_requirement(evaluation.requirements)
@@ -286,7 +286,7 @@ class StatusGuidancePolicy:
                     "delivered — <why>'. Then Notes: a short paragraph on how "
                     "the task was performed, anything else needed to verify, "
                     "and what not to trust blindly. Evidence, not narrative. "
-                    "Then submit the file with artifact.submit (role "
+                    "Then submit the file with artifact.upload (attach_to.role "
                     "'delivery') and run the returned upload command verbatim."
                 ),
             }
@@ -681,8 +681,8 @@ class StatusGuidancePolicy:
                 "lenses are running so it stays in its lane), writes its "
                 "reflection to a local file (e.g. "
                 "reflections/<syn_id>/reflections/<lens_id>.md), then calls "
-                "artifact.submit for this reflection wave with role "
-                "'reflection_lens_doc', lens_id=<lens_id>, and the file's "
+                "artifact.upload for this reflection wave with attach_to.role "
+                "'reflection_lens_doc', attach_to.lens_id=<lens_id>, and the file's "
                 "relative path. The document must include a non-empty "
                 "'## Summary' with its 2–3 sentence macro finding. The subagent "
                 "then runs the returned upload command verbatim. "
@@ -724,7 +724,7 @@ class StatusGuidancePolicy:
                     "the living graph in place and prune within the budget; "
                     "node refs may point at exp_/claim_/rev_/syn_/art_ ids. "
                     "Then submit the file to this reflection wave with "
-                    "artifact.submit (role 'project_graph') and run the "
+                    "artifact.upload (attach_to.role 'project_graph') and run the "
                     "returned upload command verbatim."
                 ),
             }
@@ -741,7 +741,7 @@ class StatusGuidancePolicy:
                     "figures with relative markdown image links (e.g. "
                     "![project graph](figures/project_graph.png)); every linked "
                     "image must resolve to a local file under 5 MB. Then submit "
-                    "the file to this reflection wave with artifact.submit "
+                    "the file to this reflection wave with artifact.upload "
                     "(role 'reflection_doc'), run the returned upload command "
                     "verbatim, and run the follow-up figure commands the upload "
                     "response returns."
@@ -760,7 +760,7 @@ class StatusGuidancePolicy:
                     "multi-experiment wave) a parallelism note each. Publish "
                     "will apply this only after the reflection reviewer passes "
                     "it. Then submit the file to this reflection wave with "
-                    "artifact.submit (role 'change_spec') and run the returned "
+                    "artifact.upload (attach_to.role 'change_spec') and run the returned "
                     "upload command verbatim."
                 ),
             }
@@ -777,7 +777,7 @@ class StatusGuidancePolicy:
                 "the plan, scripts, configs, and durable inputs there; live "
                 "sandboxes have their own work folders. "
                 "Start from the template's required sections, then submit the "
-                "file with artifact.submit (role 'plan') and run the returned "
+                "file with artifact.upload (attach_to.role 'plan') and run the returned "
                 "upload command verbatim. Consider seeding the "
                 f"logic graph now too ({folder}graph.json, see "
                 "skills/research-workflow/graph-template.md): an objective node "
@@ -791,11 +791,11 @@ class StatusGuidancePolicy:
         heavy_retention = (
             "copy light files out over SSH into the local experiment folder "
             "or upload heavy files with storage.submit, then submit the "
-            "retained metrics JSON with artifact.submit (role 'result')."
+            "retained metrics JSON with artifact.upload (attach_to.role 'result')."
             if self.storage_guidance.get("enabled")
             else (
                 "copy retained files out over SSH into the local experiment folder, "
-                "then submit the retained metrics JSON with artifact.submit "
+                "then submit the retained metrics JSON with artifact.upload "
                 "(role 'result'). Heavy-file storage is not "
                 "enabled on this backend, so large sandbox-only datasets/models "
                 "will not survive release."
@@ -858,7 +858,7 @@ class StatusGuidancePolicy:
                 "of inlining data. Reference figures with relative markdown image "
                 "links (e.g. ![loss](figures/loss.png)); every linked image must "
                 "resolve to a local file under 5 MB, so copy figures off the "
-                "sandbox first. Then submit the report with artifact.submit "
+                "sandbox first. Then submit the report with artifact.upload "
                 "(role 'report'), run the returned upload command verbatim, and "
                 "run the follow-up figure commands the upload response returns."
             ),
@@ -885,7 +885,7 @@ class StatusGuidancePolicy:
                 "graph: node 'kind' vocabulary, edge labels, and structure are "
                 "yours. If the graph is at the 16-node budget and something "
                 "important must be added, reduce the graph to make room. Then "
-                "submit the file with artifact.submit (role 'graph') and run "
+                "submit the file with artifact.upload (attach_to.role 'graph') and run "
                 "the returned upload command verbatim."
             ),
         }

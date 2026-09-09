@@ -98,7 +98,7 @@ class FeedPostInput(ProjectScopedInput):
             "native charts can't express — a Vega-Lite spec with inline data.values "
             "(no url/href; ≤20KB), themed by the UI. Reuse or upload pixels: "
             "{type:'figure', artifact_id, path, caption?} shows a figure already "
-            "submitted with an artifact (no upload — see artifact.find); "
+            "submitted with an artifact (no upload — see artifact.read); "
             "{type:'image', path} uploads a rendered sample or figure "
             "(png/jpeg/gif/webp/svg, one per post — returns the upload command; "
             "matplotlib: transparent background, `plt.style.use('merv.mplstyle')` "

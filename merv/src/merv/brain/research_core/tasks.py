@@ -532,7 +532,7 @@ class TaskService:
             raise WorkflowError(
                 "task brief is not ready: "
                 + "; ".join(problems)
-                + ". Fix the file and resubmit it (artifact.submit) — see "
+                + ". Fix the file and resubmit it (artifact.upload) — see "
                 "skills/research-workflow/brief-template.md."
             )
 
@@ -554,7 +554,7 @@ class TaskService:
             raise WorkflowError(
                 "task delivery is not ready for review: "
                 + "; ".join(problems)
-                + ". Fix the file and resubmit it (artifact.submit) — see "
+                + ". Fix the file and resubmit it (artifact.upload) — see "
                 "skills/research-workflow/delivery-template.md."
             )
 

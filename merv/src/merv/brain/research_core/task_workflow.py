@@ -33,7 +33,7 @@ RETURN_TO_IN_PROGRESS = ReviewReturn(
     ),
     revision=(
         "Sent back to in_progress: the brief stands; address each named check, "
-        "resubmit delivery.md via artifact.submit, then request review again"
+        "resubmit delivery.md via artifact.upload, then request review again"
     ),
 )
 FAIL_TO_FAILED = ReviewReturn(
@@ -75,7 +75,7 @@ TASK_WORKFLOW = Workflow(
                     missing="task brief artifact (role 'brief')",
                     label="Brief submitted and valid",
                     action="write_and_submit_brief",
-                    tools=("artifact.submit",),
+                    tools=("artifact.upload",),
                     artifact_key="brief",
                 ),
                 DEPENDENCIES_NEED,
@@ -93,7 +93,7 @@ TASK_WORKFLOW = Workflow(
                     missing="task delivery artifact (role 'delivery')",
                     label="Delivery submitted and valid",
                     action="write_and_submit_delivery",
-                    tools=("artifact.submit",),
+                    tools=("artifact.upload",),
                     artifact_key="delivery",
                 ),
             ),

@@ -40,7 +40,7 @@ METRIC_RESULT_MAX_BYTES = 16_000
 TASK_BRIEF_ROLE = "brief"
 TASK_DELIVERY_ROLE = "delivery"
 
-# Roles an agent may submit via artifact.submit: the canonical gated docs plus
+# Roles an agent may submit via artifact.upload: the canonical gated docs plus
 # the metrics-JSON 'result' role.
 SUBMITTABLE_ROLES = frozenset(
     {

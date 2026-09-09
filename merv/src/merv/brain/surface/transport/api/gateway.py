@@ -534,8 +534,7 @@ class ToolInvocationGateway:
                     "project_id" if name == "project.list" else "key_project_id"
                 ] = key_project_id
         if base_url and name in (
-            "artifact.submit",
-            "artifact.store",
+            "artifact.upload",
             "artifact.read",
             "feed.post",
             "storage.submit",
@@ -717,9 +716,18 @@ class ToolInvocationGateway:
                 "agent session sandbox calls must identify their experiment",
                 details={"experiment_id": experiment_id, "tool": name},
             )
-        requested_target_type = str(arguments.get("target_type") or "")
-        requested_target_id = str(arguments.get("target_id") or "")
-        if name in {"artifact.submit", "artifact.attach", "review.request", "review.status"} and (
+        target_arguments = (
+            arguments.get("attach_to") if name == "artifact.upload" else arguments
+        )
+        target_arguments = (
+            target_arguments if isinstance(target_arguments, dict) else {}
+        )
+        requested_target_type = str(target_arguments.get("target_type") or "")
+        requested_target_id = str(target_arguments.get("target_id") or "")
+        if (
+            name in {"artifact.attach", "review.request", "review.status"}
+            or (name == "artifact.upload" and arguments.get("attach_to") is not None)
+        ) and (
             requested_target_type != target_type or requested_target_id != target_id
         ):
             raise AgentSessionScopeError(

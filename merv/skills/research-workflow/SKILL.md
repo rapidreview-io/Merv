@@ -199,18 +199,19 @@ results support it under the pre-registered rule.
 
 ## Submit artifacts
 
-Follow `artifact_guidance` and the `artifact.submit` tool contract for roles,
+Follow `artifact_guidance` and the `artifact.upload` tool contract for roles,
 fields, limits, figures, and upload commands. The durable evidence is the
 uploaded content, not the current local file:
 
 1. Write or update the local file.
-2. Submit its metadata with the exact target and role requested by the
-   workflow.
+2. Call `artifact.upload` with the file `path` and
+   `attach_to: {target_type, target_id, role}` from the workflow. Add `lens_id`
+   inside `attach_to` only for `reflection_lens_doc`.
 3. Run every returned upload command, including figure uploads.
 4. After any edit that should affect a gate, resubmit and upload the file.
 
 Use artifact ids already returned in authoritative context. Batch focused
-reads with `artifact.find`; request full content only when summaries cannot
+reads with `artifact.read`; request full content only when summaries cannot
 answer the question.
 
 ## Route specialist work

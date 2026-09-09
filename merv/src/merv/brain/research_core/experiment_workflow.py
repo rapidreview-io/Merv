@@ -48,7 +48,7 @@ RETURN_TO_RUNNING = ReviewReturn(
     choose_when="The plan stands, but execution or the conclusion needs work.",
     revision=(
         "Sent back to running: the approved plan stands; fix execution "
-        "and/or the conclusion, then resubmit results via artifact.submit "
+        "and/or the conclusion, then resubmit results via artifact.upload "
         "and request review again"
     ),
 )
@@ -78,7 +78,7 @@ EXPERIMENT_WORKFLOW = Workflow(
                     missing="experiment plan artifact",
                     label="Plan submitted and valid",
                     action="write_and_submit_plan",
-                    tools=("artifact.submit",),
+                    tools=("artifact.upload",),
                     artifact_key="plan",
                 ),
             ),
@@ -159,7 +159,7 @@ EXPERIMENT_WORKFLOW = Workflow(
                         "sandbox.terminal",
                         "sandbox.get",
                         "experiment.transition",
-                        "artifact.submit",
+                        "artifact.upload",
                     ),
                     artifact_key="result",
                 ),
@@ -172,7 +172,7 @@ EXPERIMENT_WORKFLOW = Workflow(
                         "metrics exhibit — preview it with experiment.exhibit; "
                         "Deviations from plan; Conclusion applying the plan's "
                         "decision rule), copy it out if produced on the "
-                        "sandbox, and submit it with artifact.submit (role "
+                        "sandbox, and submit it with artifact.upload (attach_to.role "
                         "'report') — see "
                         "skills/research-workflow/report-template.md"
                     ),
@@ -181,7 +181,7 @@ EXPERIMENT_WORKFLOW = Workflow(
                     missing="results report artifact (role 'report')",
                     label="Results report present and valid",
                     action="write_and_submit_results_report",
-                    tools=("artifact.submit",),
+                    tools=("artifact.upload",),
                     artifact_key="report",
                 ),
                 ArtifactNeed(
@@ -194,7 +194,7 @@ EXPERIMENT_WORKFLOW = Workflow(
                         "reasoning behind them, as a DAG of at most 16 nodes; "
                         "not a pipeline/provenance diagram and never "
                         "script-generated), copy it out if produced on the "
-                        "sandbox, and submit it with artifact.submit (role "
+                        "sandbox, and submit it with artifact.upload (attach_to.role "
                         "'graph') — see "
                         "skills/research-workflow/graph-template.md"
                     ),
@@ -203,7 +203,7 @@ EXPERIMENT_WORKFLOW = Workflow(
                     missing="logic graph artifact (role 'graph')",
                     label="Logic graph present and valid",
                     action="write_and_submit_logic_graph",
-                    tools=("artifact.submit",),
+                    tools=("artifact.upload",),
                     artifact_key="graph",
                 ),
             ),
@@ -226,7 +226,7 @@ EXPERIMENT_WORKFLOW = Workflow(
                     "is fully complete and every success criterion in the "
                     "experiment intent is satisfied; do NOT call if the "
                     "experiment should continue running; continue with "
-                    "sandbox.* and artifact.submit calls instead and only "
+                    "sandbox.* and artifact.upload calls instead and only "
                     "transition once the work is truly done; if "
                     "revision_context is present, the last review rejected "
                     "this attempt or an infrastructure retry was requested — "

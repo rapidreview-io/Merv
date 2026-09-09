@@ -1057,7 +1057,7 @@ class ReflectionService:
         """Read one complete artifact as strict UTF-8 for a workflow gate."""
         if not artifact_id:
             raise WorkflowError(
-                f"{what} has no submitted artifact — submit it with artifact.submit"
+                f"{what} has no submitted artifact — submit it with artifact.upload"
             )
         found = self.artifacts.get(
             artifact_ids=(artifact_id,),
@@ -1216,7 +1216,7 @@ class ReflectionService:
                     "reflections are missing for lens(es): "
                     + ", ".join(missing_lenses)
                     + " — each roster lens must have its own reflection submitted "
-                    "(artifact.submit with role 'reflection_lens_doc' and its "
+                    "(artifact.upload with role 'reflection_lens_doc' and its "
                     "lens_id) for the current attempt, by its own subagent"
                 )
             )
@@ -1235,7 +1235,7 @@ class ReflectionService:
                             f"reflection for lens {lens_id!r} ({path}) is not ready: "
                             + "; ".join(problems)
                             + " — add a ## Summary with the lens's macro-level "
-                            "finding, then resubmit it (artifact.submit)"
+                            "finding, then resubmit it (artifact.upload)"
                         )
                 except WorkflowError as exc:
                     invalid[lens_id] = str(exc)
@@ -1266,7 +1266,7 @@ class ReflectionService:
             else:
                 item["missing"] = (
                     f"reflection doc for lens {lens_id!r} "
-                    "(artifact.submit with role 'reflection_lens_doc', "
+                    "(artifact.upload with role 'reflection_lens_doc', "
                     f"lens_id {lens_id!r})"
                 )
             if problem:
@@ -2215,7 +2215,7 @@ class ReflectionService:
             raise WorkflowError(
                 "project logic graph is not ready for reflection review: "
                 + "; ".join(problems)
-                + ". Fix the file and resubmit it (artifact.submit) — "
+                + ". Fix the file and resubmit it (artifact.upload) — "
                 "see skills/research-workflow/graph-template.md."
             )
 
@@ -2238,7 +2238,7 @@ class ReflectionService:
             raise WorkflowError(
                 "reflection document is not ready for review: "
                 + "; ".join(problems)
-                + ". Keep it concise, fix the file, and resubmit it (artifact.submit) to "
+                + ". Keep it concise, fix the file, and resubmit it (artifact.upload) to "
                 "submit the revision — see "
                 "skills/project-reflection/reflection-artifacts-template.md."
             )

@@ -74,12 +74,10 @@ class SubmissionAttemptFlowTest(unittest.TestCase):
 
     def _submit(self, *, target_id: str, role: str, path: str, body: str) -> str:
         pending = self.call(
-            "artifact.submit",
+            "artifact.upload",
             project_id=self.project_id,
-            target_type="experiment",
-            target_id=target_id,
-            role=role,
             path=path,
+            attach_to={"target_type": "experiment", "target_id": target_id, "role": role},
         )
         token = pending["run"].rsplit("/", 1)[-1].rstrip("'")
         response = self.app._client.put(

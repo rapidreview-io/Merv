@@ -4,6 +4,7 @@ import secrets
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -231,7 +232,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
             "project_id": self.project_id, "name": "other-artifact-target",
             "intent": "Must remain outside the assigned worker's authority.",
         })["id"]
-        stored = self.mcp(secret=session_secret, name="artifact.store", arguments={
+        stored = self.mcp(secret=session_secret, name="artifact.upload", arguments={
             "project_id": self.project_id, "path": "plan.md",
         })
         self.assertEqual(stored.status_code, 200, stored.text)
@@ -252,6 +253,37 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         own = self.mcp(secret=session_secret, name="artifact.attach", arguments=arguments)
         self.assertEqual(own.status_code, 200, own.text)
         self.assertEqual(own.json()["result"]["association"]["target_id"], self.experiment_id)
+
+    def test_nested_upload_target_is_confined_before_creating_an_intent(self) -> None:
+        secret = self.secret()
+        self.claim(secret=secret, runner_id="nested-upload")
+        other = self.brain.call_tool("experiment.create", {
+            "project_id": self.project_id, "name": "foreign-upload-target",
+            "intent": "Must not receive the assigned worker's evidence.",
+        })["id"]
+        target = {"target_type": "experiment", "target_id": self.experiment_id, "role": "plan"}
+        with patch.object(self.brain.artifacts.contents, "submit") as submit:
+            for foreign in ({**target, "target_id": other}, {**target, "target_type": "reflection"}):
+                with self.subTest(target=foreign):
+                    denied = self.mcp(secret=secret, name="artifact.upload", arguments={
+                        "project_id": self.project_id, "path": "plan.md", "attach_to": foreign,
+                    })
+                    self.assertEqual(denied.status_code, 400, denied.text)
+                    self.assertEqual(denied.json()["error_code"], "agent_session_scope_forbidden")
+            submit.assert_not_called()
+        own = self.mcp(secret=secret, name="artifact.upload", arguments={
+            "project_id": self.project_id, "path": "plan.md", "attach_to": target,
+        })
+        self.assertEqual(own.status_code, 200, own.text)
+        pending = own.json()["result"]
+        token = pending["run"].rsplit("/", 1)[-1].rstrip("'")
+        uploaded = self.client.put(f"/api/artifacts/u/{token}", content=VALID_PLAN.encode())
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        self.assertEqual(
+            [artifact.id for artifact in self.brain.artifacts.scan(target_ids=(self.experiment_id,))],
+            [pending["artifact_id"]],
+        )
+        self.assertEqual(self.brain.artifacts.scan(target_ids=(other,)), ())
 
     def test_session_is_mcp_only_and_default_denies_other_experiments(self) -> None:
         session_secret = self.secret()
@@ -445,6 +477,32 @@ class AgentSessionSurfaceTest(unittest.TestCase):
 
         reviewer_secret = self.secret()
         reviewer = self.claim(secret=reviewer_secret, runner_id="reviewer")
+        content = self.brain.artifacts.contents.create(
+            project_id=self.project_id, path="review-input.bin", data=b"\x00review input"
+        )
+        read = self.mcp(secret=reviewer_secret, name="artifact.read", arguments={
+            "project_id": self.project_id, "artifact_id": content.id, "include_content": True,
+        })
+        self.assertEqual(read.status_code, 200, read.text)
+        self.assertTrue(read.json()["result"]["content"]["is_binary"])
+        with patch.object(self.brain._blobs, "get") as get:
+            raw = self.client.get(read.json()["result"]["download_url"], headers={
+                "Authorization": f"Bearer {reviewer_secret}",
+            })
+            self.assertEqual(raw.status_code, 403, raw.text)
+            get.assert_not_called()
+        target = {"target_type": "experiment", "target_id": self.experiment_id, "role": "plan"}
+        for name, arguments in (
+            ("artifact.upload", {"path": "new.bin"}),
+            ("artifact.upload", {"path": "plan.md", "attach_to": target}),
+            ("artifact.attach", {"artifact_id": content.id, **target}),
+        ):
+            with self.subTest(tool=name, arguments=arguments):
+                denied = self.mcp(secret=reviewer_secret, name=name, arguments={
+                    "project_id": self.project_id, **arguments,
+                })
+                self.assertEqual(denied.status_code, 400, denied.text)
+                self.assertEqual(denied.json()["error_code"], "agent_session_scope_forbidden")
         started = self.mcp(
             secret=reviewer_secret,
             name="review.start",

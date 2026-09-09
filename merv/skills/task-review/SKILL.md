@@ -25,7 +25,7 @@ Require the handoff's `task_id`, `review_request_id`, and
 Call `review.start` with the supplied request and capability, your own stable
 `caller_session_id`—never the producer's—and optional `declared_agent`. Begin
 with its pinned project context, the task context (goal, checks, brief,
-delivery, dependencies), and the submitted artifacts. Use `artifact.find` and
+delivery, dependencies), and the submitted artifacts. Use `artifact.read` and
 `storage.fetch` for the files the delivery points at, and `sandbox.runs` or
 `sandbox.terminal` when a receipt names a command worth replaying.
 

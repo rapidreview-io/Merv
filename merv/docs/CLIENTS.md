@@ -61,7 +61,7 @@ Shared invariants across all clients:
   `merv-client` onboarding CLI, `merv-http`, and brain remain Python 3.11+; a
   venv is needed only for those surfaces when the machine does not already
   provide 3.11+. Agent-run byte transfers — the tokenized `curl` for
-  `artifact.submit`, attachment-bearing `feed.post`, `storage.submit`, and
+  `artifact.upload`, attachment-bearing `feed.post`, `storage.submit`, and
   `storage.fetch` (download), plus the `rsync` for `sandbox.pull_outputs` —
   rely on the machine's `curl`, OpenSSH client, and `rsync`.
 - Skills follow the cross-tool Agent Skills layout (`skills/<name>/SKILL.md`

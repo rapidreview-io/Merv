@@ -58,7 +58,7 @@ a connection closing or from a missing receipt.
 
 Before release or expiry, call `sandbox.pull_outputs` for compact evidence,
 substitute the local key/certificate/known-hosts/destination paths, run its
-rsync command, and verify the copied files. `artifact.submit` uploads caller
+rsync command, and verify the copied files. `artifact.upload` uploads caller
 files; it cannot read a sandbox path. Use `storage.submit` for heavy files.
 A job output artifact remains in the independent service; preserve its ID and
 verify retention before relying on it. Retain useful failure logs too.

@@ -1210,7 +1210,7 @@ class ExperimentService:
             raise WorkflowError(
                 "results report is not ready for experiment review: "
                 + "; ".join(problems)
-                + ". Fix the file and resubmit it (artifact.submit) — "
+                + ". Fix the file and resubmit it (artifact.upload) — "
                 "see skills/research-workflow/report-template.md."
             )
 
@@ -1229,7 +1229,7 @@ class ExperimentService:
             raise WorkflowError(
                 "logic graph is not ready for experiment review: "
                 + "; ".join(problems)
-                + ". Fix the file and resubmit it (artifact.submit) — "
+                + ". Fix the file and resubmit it (artifact.upload) — "
                 "see skills/research-workflow/graph-template.md."
             )
 

@@ -18,7 +18,7 @@ DEFAULT_PUBLIC_KEY = "ssh-ed25519 " + ("A" * 48) + " test-brain@local"
 
 
 def upload_token(run_command: str) -> str:
-    """Extract the one-time token from an artifact.submit `run` line."""
+    """Extract the one-time token from an artifact.upload `run` line."""
     return run_command.rsplit("/", 1)[-1].rstrip("'")
 
 
@@ -176,17 +176,17 @@ class TestBrain:
         lens_id: str = "",
         title: str = "",
     ) -> dict[str, Any]:
-        """The production submit flow: artifact.submit -> token-bearer PUT."""
+        """The production submit flow: artifact.upload -> token-bearer PUT."""
         pending = self.call_tool(
-            "artifact.submit",
+            "artifact.upload",
             {
                 "project_id": project_id,
-                "target_type": target_type,
-                "target_id": target_id,
-                "role": role,
                 "path": path,
-                "lens_id": lens_id,
                 "title": title,
+                "attach_to": {
+                    "target_type": target_type, "target_id": target_id,
+                    "role": role, "lens_id": lens_id,
+                },
             },
         )
         result = self.upload_artifact_bytes(

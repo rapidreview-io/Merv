@@ -7,7 +7,7 @@ import { createPortal } from 'react-dom';
  *
  * The brain does not choose a copy-out destination. The caller copies selected
  * light outputs over SSH to a path it chooses, submits gated evidence with
- * artifact.submit, and uses storage.submit for heavy durable outputs.
+ * artifact.upload, and uses storage.submit for heavy durable outputs.
  */
 
 const STATUS_KIND = {
@@ -79,7 +79,7 @@ export default function SandboxRetentionDetailsModal({
         </div>
 
         <p className="retention-modal-sub">
-          Pull selected light files before release, then use artifact.submit
+          Pull selected light files before release, then use artifact.upload
           for gated evidence or storage.submit for heavy durable outputs.
         </p>
 

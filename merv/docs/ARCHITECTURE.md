@@ -133,7 +133,7 @@ sandboxes, storage, events, and the research feed.
 The browser cannot perform checkout-local operations. Local storage transfer,
 feed-image capture, and sandbox output pulls are agent-driven through typed
 tools and the upload/download commands they return, as is artifact submission
-(artifact.submit plus the returned upload command).
+(artifact.upload plus the returned upload command).
 
 ## Composition and persistence
 
@@ -173,7 +173,7 @@ failure because post-response advisory work cannot roll it back.
 The brain registry in `src/merv/brain/surface/tools/contracts.py` is the single
 generator and source of truth for tool schemas and plane assignments. Since the
 no-dataplane transition every tool is a control tool that runs in the brain.
-Byte operations (`storage.submit`, `storage.fetch`, `artifact.submit`, and
+Byte operations (`storage.submit`, `storage.fetch`, `artifact.upload`, and
 `feed.post`) hand back a one-line command. Storage uses presigned provider URLs;
 Artifact and Feed use bounded token endpoints. Sandbox operations are served by
 the brain, while output bytes move directly over `rsync`.
@@ -222,7 +222,7 @@ reopens the authoritative reflection.
 
 All meaning-changing actions use typed MCP or HTTP operations. Editing a local
 file does not mutate research state. A file becomes evidence only after
-`artifact.submit` mints an upload and the agent runs the returned command,
+`artifact.upload` mints an upload and the agent runs the returned command,
 pinning the bytes against a target and role.
 
 ## Evidence and storage

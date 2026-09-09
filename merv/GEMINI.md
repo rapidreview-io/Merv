@@ -38,9 +38,10 @@ There is no linking step and no `connect` action. Use
 - Treat the brain state returned through MCP as authoritative. Start or resume
   work with `workflow.status_and_next`, and follow its gate, allowed actions,
   missing evidence, and next action.
-- Local edits are not research state. Use `artifact.submit` to contribute
-  evidence; it returns a presigned upload command for the bytes, and the
-  submitted version can be associated with a target and role.
+- Local edits are not research state. Use `artifact.upload` with
+  `attach_to: {target_type, target_id, role}` to contribute research evidence.
+  Run the returned upload command to store bytes and activate the association.
+  Add `lens_id` inside `attach_to` only for `reflection_lens_doc`.
 - Load `research-workflow` for experiment and task work and
   `project-reflection` for a five-lens reflection wave. Work that tests a
   claim is an experiment; scoped work with a verifiable finish line and no

@@ -122,7 +122,10 @@ class HttpGatewayTest(unittest.TestCase):
 
     def test_generic_artifact_tools_enforce_project_key_scope_before_dispatch(self) -> None:
         for name, arguments in (
-            ("artifact.store", {"path": "evidence.bin"}),
+            ("artifact.upload", {"path": "evidence.bin"}),
+            ("artifact.upload", {"path": "plan.md", "attach_to": {
+                "target_type": "experiment", "target_id": "exp_foreign", "role": "plan",
+            }}),
             ("artifact.read", {"artifact_id": "art_foreign"}),
             ("artifact.attach", {"artifact_id": "art_foreign", "target_type": "experiment",
                                  "target_id": "exp_foreign", "role": "plan"}),

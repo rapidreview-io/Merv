@@ -118,7 +118,7 @@ REFLECTION_WORKFLOW = Workflow(
                         "read-only subagent per roster lens; each subagent "
                         "writes its reflection (e.g. "
                         "reflections/<syn_id>/reflections/<lens_id>.md) and "
-                        "submits it with artifact.submit (role "
+                        "submits it with artifact.upload (attach_to.role "
                         "'reflection_lens_doc', lens_id=<lens_id>) for this "
                         "reflection wave; every lens document needs a "
                         "non-empty Summary section"
@@ -131,7 +131,7 @@ REFLECTION_WORKFLOW = Workflow(
                     ),
                     label="Per-lens reflections submitted",
                     action="fan_out_reflection_subagents",
-                    tools=("artifact.submit",),
+                    tools=("artifact.upload",),
                     artifact_key="reflection",
                 ),
             ),
@@ -160,7 +160,7 @@ REFLECTION_WORKFLOW = Workflow(
                         "reflection review: update the living project graph "
                         "(e.g. project/logic_graph.json — the current logic "
                         "state of the whole project as a DAG of at most 16 "
-                        "nodes) and submit it with artifact.submit (role "
+                        "nodes) and submit it with artifact.upload (attach_to.role "
                         "'project_graph') — see "
                         "skills/research-workflow/graph-template.md"
                     ),
@@ -169,7 +169,7 @@ REFLECTION_WORKFLOW = Workflow(
                     missing="project logic graph artifact (role 'project_graph')",
                     label="Project graph present and valid",
                     action="update_and_submit_project_graph",
-                    tools=("artifact.submit",),
+                    tools=("artifact.upload",),
                     artifact_key="project_graph",
                 ),
                 ArtifactNeed(
@@ -178,7 +178,7 @@ REFLECTION_WORKFLOW = Workflow(
                         "a concise reflection document must be submitted "
                         "before reflection review: write the main agent's short "
                         "markdown reflection on the five lens reflections and "
-                        "submit it with artifact.submit (role "
+                        "submit it with artifact.upload (attach_to.role "
                         "'reflection_doc') — see "
                         "skills/project-reflection/"
                         "reflection-artifacts-template.md"
@@ -188,7 +188,7 @@ REFLECTION_WORKFLOW = Workflow(
                     missing="reflection document artifact (role 'reflection_doc')",
                     label="Reflection document present and valid",
                     action="write_and_submit_reflection_doc",
-                    tools=("artifact.submit",),
+                    tools=("artifact.upload",),
                     artifact_key="reflection_doc",
                 ),
                 ArtifactNeed(
@@ -197,7 +197,7 @@ REFLECTION_WORKFLOW = Workflow(
                         "a change spec must be submitted before reflection "
                         "review: write JSON with claim_changes plus a "
                         "create_experiments decision (1-3 experiments) and "
-                        "submit it with artifact.submit (role 'change_spec') — "
+                        "submit it with artifact.upload (attach_to.role 'change_spec') — "
                         "see skills/project-reflection/"
                         "reflection-artifacts-template.md"
                     ),
@@ -206,7 +206,7 @@ REFLECTION_WORKFLOW = Workflow(
                     missing="change spec artifact (role 'change_spec')",
                     label="Change spec present and materializable",
                     action="write_and_submit_change_spec",
-                    tools=("artifact.submit",),
+                    tools=("artifact.upload",),
                     artifact_key="change_spec",
                 ),
             ),

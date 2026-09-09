@@ -63,7 +63,7 @@ reflection.create            reflection.get
 reflection.transition
 litreview.view               litreview.edit
 litreview.cite
-artifact.submit              artifact.find
+artifact.upload              artifact.read               artifact.attach
 storage.find                 storage.object
 review.request               review.start               review.submit
 sandbox.options              sandbox.get                 sandbox.list
@@ -108,31 +108,45 @@ gateway.
 
 ## Artifact submissions
 
-`artifact.submit {project_id, target_type, target_id, role, path, lens_id?, title?}`
-is a control tool: the brain validates legality and workflow-state guards, mints
-a pending artifact with a one-time upload token, and returns
-`{artifact_id, run}` where `run` is a ready-to-run
-`curl -sf -T <path> '<base>/api/artifacts/u/<token>'` line the agent executes
-verbatim. The token-bearer PUT enforces the role byte cap, pins the bytes, and
-(for gated markdown) returns one follow-up `run` line per relative image link.
-Bytes travel over the agent's own shell, never through the brain or MCP.
+`artifact.upload {project_id, path, title?, discover_figures?, attach_to?}`
+returns `{artifact_id, run}`. Write the local file first, then execute `run` to
+send its bytes through a one-time-token PUT to Merv's R2-backed artifact API.
+Upload tokens expire after about 15 minutes. Generic content needs no target.
+To submit research evidence in the same operation, pass
+`attach_to: {target_type, target_id, role, lens_id?}`. Research validates the
+association and activates it atomically when the upload completes; existing
+role limits (16 KB) and attempt guards apply. `lens_id` is required only for
+`reflection_lens_doc`. Attached documents follow their role's figure policy;
+for generic Markdown, opt in with `discover_figures=true`. Execute any figure
+upload commands returned by the PUT response too.
 
-Workflow lints and reviews read the submitted bytes, never a later live edit.
-There is no background checkout scan. Resubmit a changed file to replace the
-slot (a new artifact id is minted, invalidating review snapshots).
+`artifact.attach {project_id, artifact_id, target_type, target_id, role, lens_id?}`
+associates already uploaded content, returning `{artifact_id, association}`.
+The content is reusable across targets. Workflow gates and reviews freeze exact
+submitted versions; a later upload can replace the current slot without
+changing frozen history. There is no background checkout scan.
 
-`artifact.find(project_id, artifact_id=...)` preserves the singular
-`{artifact}` response. `artifact_ids=[...]` resolves an ordered batch of up to
-50 artifacts as `{artifacts, count}`. Batch ids are de-duplicated in first-seen
-order and a missing or cross-project id fails the request atomically. Both
-id-based forms are metadata-only by default; opt into bounded submitted text
-with `include_content=true`. Singular reads add a sibling `content` envelope;
-plural reads add the envelope to each artifact row. The envelope contains
-`content`, `available`, `is_binary`, `size_bytes`, and `content_type`, so binary
-or unavailable bytes are represented without being injected as text. Without
-either id selector, the tool lists the project's complete artifacts filtered
-by target and role; `include_content` is invalid for this broad list mode.
-`artifact.find` is the only agent-facing plural-id retrieval surface.
+`artifact.read {project_id, artifact_id?, artifact_ids?, include_content?,
+target_type?, target_id?, role?}` supports three selections:
+
+- One ID returns `{artifact, download_url}`.
+- A batch of up to 50 IDs returns `{artifacts, count}`, preserving first-seen
+  order and deduplicating IDs. Missing or cross-project IDs fail the whole call.
+- Without IDs, list complete research evidence with optional target/role filters.
+  Unattached content is read by ID; it does not appear in research listings.
+
+IDs can name content or research associations. Association reads include target,
+role, attempt, lens, and submission metadata, plus the underlying `artifact_id`;
+legacy IDs that identify both return the association. ID reads include download
+URLs requiring normal project/account authentication, not MCP-only worker
+credentials. `include_content=true` adds figure paths and a content envelope
+(sibling to a singular artifact, inside each batch row). The envelope reports
+`content`, `available`, `is_binary`, `size_bytes`, and `content_type`; binary or
+unavailable bytes are not injected as text. Content is opt-in and cannot be
+requested in list mode. ID selectors and list filters cannot be mixed.
+
+The former `artifact.store`, `artifact.submit`, and `artifact.find` tools have
+been removed. Use these three tools directly; there are no compatibility aliases.
 
 `workflow.status_and_next(project_id, experiment_id=...)` is the canonical
 experiment read. Its `context` has exactly four sections: experiment, latest

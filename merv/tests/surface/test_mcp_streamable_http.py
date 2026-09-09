@@ -187,6 +187,10 @@ class McpStreamableHttpProtocolTest(unittest.TestCase):
         self.assertEqual(streamed_catalog.status_code, 200, streamed_catalog.text)
         self.assertEqual(streamed_catalog.json()["result"], legacy_catalog.json())
         names = {tool["name"] for tool in streamed_catalog.json()["result"]["tools"]}
+        self.assertEqual(
+            {name for name in names if name.startswith("artifact.")},
+            {"artifact.upload", "artifact.read", "artifact.attach"},
+        )
         self.assertIn("workflow.status_and_next", names)  # public
         self.assertIn("experiment.exhibit", names)  # intentionally unchanged
         self.assertNotIn("experiment.get_state", names)  # consolidated/internal

@@ -58,7 +58,7 @@ class LogicGraphQuery:
                 "graph": None,
                 "problems": [
                     "graph has no submitted content — resubmit it via "
-                    "artifact.submit (role 'graph')"
+                    "artifact.upload (attach_to.role 'graph')"
                 ],
                 "path": chosen.get("path"),
             }
@@ -133,7 +133,7 @@ class LogicGraphQuery:
                 "graph": None,
                 "problems": [
                     "graph has no submitted content — resubmit it via "
-                    "artifact.submit (role 'project_graph')"
+                    "artifact.upload (attach_to.role 'project_graph')"
                 ],
                 "path": chosen.get("path"),
             }
@@ -212,7 +212,7 @@ class LogicGraphQuery:
                     "resolved": False,
                     "hint": (
                         "not a submitted artifact id; submit the file with "
-                        "artifact.submit to make this ref resolvable"
+                        "artifact.upload to make this ref resolvable"
                     ),
                 }
             )

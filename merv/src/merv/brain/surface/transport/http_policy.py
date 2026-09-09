@@ -49,9 +49,7 @@ HOSTED_CONTROL_TOOL_POLICIES = {
 AGENT_EXPERIMENT_SESSION_TOOLS = frozenset(
     {
         "agent.hello",
-        "artifact.find",
-        "artifact.submit",
-        "artifact.store",
+        "artifact.upload",
         "artifact.read",
         "artifact.attach",
         "claim.list",
@@ -93,7 +91,6 @@ AGENT_EXPERIMENT_SESSION_TOOLS = frozenset(
 AGENT_REVIEW_SESSION_TOOLS = frozenset(
     {
         "agent.hello",
-        "artifact.find",
         "artifact.read",
         "claim.list",
         "consolidation.get",
