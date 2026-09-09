@@ -19,7 +19,7 @@ def verify_composition() -> None:
     os.environ["RESEARCH_PLUGIN_DB_URL"] = ""
     from verify_sandboxes_cutover import emit, require
     from fastapi.testclient import TestClient
-    from merv.brain.kernel.state.store import StateStore
+    from merv.brain.kernel.state.store import MIGRATIONS, StateStore
     from merv.brain.kernel.version import SERVER_VERSION
     from merv.brain.surface.project_keys import ProjectKeys
     from merv.brain.surface.surface import build_control_server
@@ -30,7 +30,7 @@ def verify_composition() -> None:
             require(isinstance(server.app._store, StateStore), "synthetic composition did not select SQLite")
             require(server.app._store.db_path.is_relative_to(Path(temporary)), "synthetic SQLite escaped temporary state")
             with server.app._store.connect() as connection:
-                require(connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 59, "synthetic schema59 initialization failed")
+                require(connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == MIGRATIONS[-1][0], "synthetic schema initialization failed")
             project = server.app.research.create_project(name="Temporary composition smoke", user_id="smoke-user")
             key = ProjectKeys(store=server.app._store).create(project_id=project["id"], owner_user_id="smoke-user")["secret"]
             with TestClient(server.fastapi_app, raise_server_exceptions=False) as browser:

@@ -12,6 +12,7 @@ import ObjId from '../components/ObjId';
 import InlineMd from '../components/InlineMd';
 import DetailsDrawer, { DetailsButton, OpsTimeline, OpsVersions, OpsPosition } from '../components/DetailsDrawer';
 import { fmtAgo, fmtSpan, formatBytes } from '../utils/format';
+import { workflowActionButtons } from '../utils/workflowActions';
 
 /*
  * TaskDetail — a task is scoped work with a verifiable finish line, so the
@@ -39,23 +40,13 @@ const TASK_STAGES = [
 const TASK_GATES = new Set(['in_review']);
 const TASK_TERMINAL = new Set(['done', 'failed']);
 
-const NEXT_ACTION_TO_TRANSITION = {
-  submit_delivery_for_review: { transition: 'submit_delivery', label: 'Submit delivery for review' },
-  accept_task:                { transition: 'accept',          label: 'Accept task' },
+const PRIMARY_TRANSITIONS = {
+  submit_delivery: { transition: 'submit_delivery', label: 'Submit delivery for review' },
+  accept:          { transition: 'accept',          label: 'Accept task' },
 };
 const SECONDARY_TRANSITIONS = [
   { transition: 'mark_failed', label: 'End task (mark failed)' },
 ];
-
-function deriveActionButtons(workflow) {
-  if (!workflow) return { primary: null, secondary: [] };
-  const allowsTransition = (workflow.allowed_actions || []).some(a => a === 'task.transition' || (a && !a.includes('.')));
-  if (!allowsTransition) return { primary: null, secondary: [] };
-  const actionKey = String(workflow.next_action || '').split(/[\s(]/)[0];
-  const primary = NEXT_ACTION_TO_TRANSITION[actionKey] || null;
-  const inFlight = !['terminal', 'done', 'failed'].includes(workflow.current_gate);
-  return { primary, secondary: inFlight ? SECONDARY_TRANSITIONS : [] };
-}
 
 const ago = (iso) => {
   const t = Date.parse(iso || '');
@@ -111,7 +102,7 @@ export default function TaskDetail() {
 
   const task = statusData?.task;
   const workflow = statusData?.workflow;
-  const { primary, secondary } = useMemo(() => deriveActionButtons(workflow), [workflow]);
+  const { primary, secondary } = useMemo(() => workflowActionButtons(workflow, PRIMARY_TRANSITIONS, SECONDARY_TRANSITIONS), [workflow]);
 
   const onAction = useCallback(async (transition, evidence) => {
     setBusy(prev => { const n = new Set(prev); n.add(transition); return n; });

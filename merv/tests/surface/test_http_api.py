@@ -10,7 +10,9 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from tests.support.brain import TestBrain, upload_token
-from tests.research_core.scenarios import complete_no_code_consolidation
+from tests.research_core.scenarios import (
+    REVIEW_SYNOPSIS, VALID_GRAPH, VALID_PLAN, VALID_REPORT, complete_no_code_consolidation,
+)
 from merv.brain.mlflow import CentralMlflowService
 from merv.brain.research_core.experiment_workflow import RETURN_TO_PLANNED
 from merv.brain.surface.transport.api import create_fastapi_app
@@ -36,6 +38,8 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.client = TestClient(create_fastapi_app(self.app))
 
     def tearDown(self) -> None:
+        self.client.close()
+        self.app.shutdown()
         self.tmp.cleanup()
 
     def request(self, method: str, path: str, body: dict | None = None):
@@ -72,6 +76,33 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.app.mlflow_tracking.dashboard_url = service.dashboard_url
         self.app.mlflow_tracking.note = service.note
         self.app.mlflow_tracking._health_check = service._health_check
+
+    def review_experiment(self, project_id, experiment_id, role, verdict="pass", return_to=None):
+        request = self.request("POST", f"/api/projects/{project_id}/reviews/request", {
+            "target_type": "experiment", "target_id": experiment_id, "role": role,
+        })
+        reviewer = self.request("POST", f"/api/projects/{project_id}/reviews/start", {
+            "review_request_id": request["review_request_id"],
+            "reviewer_capability": request["reviewer_capability"], "caller_session_id": "http-reviewer",
+        })
+        return self.request("POST", f"/api/projects/{project_id}/reviews/submit", {
+            "review_session_id": reviewer["review_session_id"], "verdict": verdict,
+            "synopsis": REVIEW_SYNOPSIS, **({"return_to": return_to} if return_to else {}),
+        })
+
+    def approve_execution(self, project_id, experiment_id):
+        self.submit(pid=project_id, target_type="experiment", target_id=experiment_id,
+                    role="plan", path="plan.md", body=VALID_PLAN)
+        self.request("POST", f"/api/projects/{project_id}/experiments/{experiment_id}/transition", {"transition": "submit_design"})
+        self.review_experiment(project_id, experiment_id, "design_reviewer")
+
+    def begin_execution(self, project_id, experiment_id):
+        current = self.app.workflows.runtime.get(project_id=project_id, instance_id=experiment_id)
+        self.app.call_tool("workflow.begin", {
+            "project_id": project_id, "instance_id": experiment_id, "expected_revision": current.revision,
+        })
+        self.app.application.workflow_deliveries.run_once(project_id=project_id)
+        return self.app.call_tool("experiment.get_state", {"project_id": project_id, "experiment_id": experiment_id})
 
     def test_home_claim_experiment_artifact_review_endpoints(self) -> None:
         project = self.request(
@@ -111,7 +142,7 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         home = self.request("GET", f"/api/projects/{project_id}/home")
         self.assertEqual(home["project"]["name"], "UI Project")
         self.assertEqual(home["stats"]["claims"], 1)
-        self.assertEqual(home["workflow"]["next_action"], "submit_design_for_review")
+        self.assertEqual(home["workflow"]["next_action"], "submit_design")
 
         content = self.request(
             "GET",
@@ -582,7 +613,7 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.assertEqual(overview["experiments"][0]["experiment_id"], exp["id"])
         self.assertEqual(overview["unmapped_mlflow_experiments"], [])
 
-    def test_running_transition_and_tool_hand_mlflow_block(self) -> None:
+    def test_execution_begin_delivery_and_tool_hand_mlflow_block(self) -> None:
         project = self.request("POST", "/api/projects", {"name": "ML Run Project"})
         project_id = project["id"]
         exp = self.request(
@@ -599,10 +630,6 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
             health_check=lambda: True,
         )
         self.configure_mlflow(mlflow)
-        with self.app.store.transaction() as conn:
-            conn.execute(
-                "UPDATE experiments SET status = 'ready_to_run' WHERE id = ?", (exp_id,)
-            )
 
         before_start = self.app.call_tool(
             "experiment.get_state",
@@ -610,7 +637,9 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         )
         self.assertNotIn("mlflow", before_start)
 
-        # Transitioning into running hands back the MLflow connection block.
+        self.approve_execution(project_id, exp_id)
+        self.assertIsNone(self.app.research.attempt_started_running_at(experiment_id=exp_id))
+        # Actual activation queues tracking; delivery makes the run available.
         run_created = {
             "created": True,
             "experiment_name": f"merv/{project_id}/{exp_id}",
@@ -625,14 +654,7 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         with patch.object(
             CentralMlflowService, "create_run", return_value=run_created
         ) as create_run:
-            transitioned = self.app.call_tool(
-                "experiment.transition",
-                {
-                    "project_id": project_id,
-                    "experiment_id": exp_id,
-                    "transition": "start_running",
-                },
-            )
+            transitioned = self.begin_execution(project_id, exp_id)
         create_run.assert_called_once_with(
             project_id=project_id,
             experiment_id=exp_id,
@@ -758,15 +780,8 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
             )
         )
         self.app.mlflow_tracking.agent_key = "rr_sk_agent"
-        with self.app.store.transaction() as conn:
-            conn.execute(
-                "UPDATE experiments SET status = 'ready_to_run' WHERE id IN (?, ?)",
-                tuple(experiment_ids[:2]),
-            )
-            conn.execute(
-                "UPDATE experiments SET status = 'running' WHERE id = ?",
-                (experiment_ids[2],),
-            )
+        for experiment_id in experiment_ids:
+            self.approve_execution(project_id, experiment_id)
 
         with patch.object(
             CentralMlflowService,
@@ -780,7 +795,7 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
                     "arguments": {
                         "project_id": project_id,
                         "experiment_id": experiment_ids[0],
-                        "transition": "start_running",
+                        "transition": "retry_running",
                     },
                 },
             )
@@ -789,7 +804,7 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
             rest_result = self.request(
                 "POST",
                 f"/api/projects/{project_id}/experiments/{experiment_ids[1]}/transition",
-                {"transition": "start_running"},
+                {"transition": "retry_running"},
             )
 
         for result in (mcp_result, rest_result):
@@ -825,124 +840,54 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.assertIs(self.app.application.sandboxes, self.app.sandboxes)
 
     def test_attempt_revision_and_retry_rotate_the_mlflow_run(self) -> None:
-        project = self.request("POST", "/api/projects", {"name": "ML Rotate Project"})
-        project_id = project["id"]
-        exp_id = self.request(
-            "POST",
-            f"/api/projects/{project_id}/experiments",
-            {"name": "exp-rotate", "intent": "Train"},
-        )["id"]
-        mlflow = CentralMlflowService(
-            mode="external",
-            tracking_uri="https://mlflow.test",
-            server_uri="http://mlflow.internal:5000",
-            dashboard_url="https://mlflow.test",
+        project_id = self.request("POST", "/api/projects", {"name": "ML Rotate Project"})["id"]
+        exp_id = self.request("POST", f"/api/projects/{project_id}/experiments", {
+            "name": "exp-rotate", "intent": "Train",
+        })["id"]
+        self.configure_mlflow(CentralMlflowService(
+            mode="external", tracking_uri="https://mlflow.test",
+            server_uri="http://mlflow.internal:5000", dashboard_url="https://mlflow.test",
             health_check=lambda: True,
-        )
-        self.configure_mlflow(mlflow)
-        with self.app.store.transaction() as conn:
-            conn.execute(
-                "UPDATE experiments SET status = 'ready_to_run' WHERE id = ?", (exp_id,)
-            )
+        ))
+        self.approve_execution(project_id, exp_id)
 
-        def run_payload(run_id: str, attempt: int) -> dict:
-            return {
-                "created": True,
-                "experiment_id": "7",
-                "run_id": run_id,
-                "run_name": f"{exp_id}-attempt-{attempt}",
-                "status": "RUNNING",
-                "artifact_uri": "",
-                "created_at": "2026-07-02T12:00:00Z",
-            }
+        def run_payload(run_id, attempt):
+            return {"created": True, "experiment_id": "7", "run_id": run_id,
+                    "run_name": f"{exp_id}-attempt-{attempt}", "status": "RUNNING",
+                    "artifact_uri": "", "created_at": now_iso()}
 
-        with patch.object(
-            CentralMlflowService, "create_run", return_value=run_payload("run_a1", 1)
-        ):
-            self.app.call_tool(
-                "experiment.transition",
-                {
-                    "project_id": project_id,
-                    "experiment_id": exp_id,
-                    "transition": "start_running",
-                },
-            )
-
-        # An infra retry while the run is still open resumes the same run.
+        with patch.object(CentralMlflowService, "create_run", return_value=run_payload("run_a1", 1)):
+            self.begin_execution(project_id, exp_id)
+        # A retry preserves its attempt and resumes an open run at activation.
         with patch.object(CentralMlflowService, "create_run") as create_run:
-            retried = self.app.call_tool(
-                "experiment.transition",
-                {
-                    "project_id": project_id,
-                    "experiment_id": exp_id,
-                    "transition": "retry_running",
-                },
-            )
+            self.request("POST", f"/api/projects/{project_id}/experiments/{exp_id}/transition", {"transition": "retry_running"})
+            retried = self.begin_execution(project_id, exp_id)
         create_run.assert_not_called()
         self.assertEqual(retried["mlflow"]["run"]["run_id"], "run_a1")
 
-        # Once that run was finalized, resuming would log into a closed run —
-        # the retry mints a fresh run for the same attempt.
-        with self.app.store.transaction() as conn:
-            conn.execute(
-                "UPDATE experiments SET mlflow_run_status = 'FAILED' WHERE id = ?",
-                (exp_id,),
-            )
-        with patch.object(
-            CentralMlflowService,
-            "create_run",
-            return_value=run_payload("run_a1_retry", 1),
-        ) as create_run:
-            retried = self.app.call_tool(
-                "experiment.transition",
-                {
-                    "project_id": project_id,
-                    "experiment_id": exp_id,
-                    "transition": "retry_running",
-                },
-            )
+        self.app.research.refresh_tracking_run(project_id=project_id, experiment_id=exp_id,
+                                              run={**run_payload("run_a1", 1), "status": "FAILED"})
+        with patch.object(CentralMlflowService, "create_run", return_value=run_payload("run_a1_retry", 1)) as create_run:
+            self.request("POST", f"/api/projects/{project_id}/experiments/{exp_id}/transition", {"transition": "retry_running"})
+            retried = self.begin_execution(project_id, exp_id)
         create_run.assert_called_once()
         self.assertEqual(retried["mlflow"]["run"]["run_id"], "run_a1_retry")
 
-        # A review rejection bumps the attempt and clears the run identity...
-        with self.app.store.transaction() as conn:
-            conn.execute(
-                "UPDATE experiments SET status = 'experiment_review' WHERE id = ?",
-                (exp_id,),
-            )
-            self.app.experiments.return_from_review(
-                conn=conn,
-                experiment_id=exp_id,
-                route=RETURN_TO_PLANNED,
-                revision_context="revise the plan",
-            )
-        state = self.app.call_tool(
-            "experiment.get_state", {"project_id": project_id, "experiment_id": exp_id}
-        )
-        self.assertFalse(state.get("mlflow_run"))
-        # ...so the revised attempt's start mints an attempt-2 run instead of
-        # handing back attempt 1's finalized one.
-        with self.app.store.transaction() as conn:
-            conn.execute(
-                "UPDATE experiments SET status = 'ready_to_run' WHERE id = ?", (exp_id,)
-            )
-        with patch.object(
-            CentralMlflowService, "create_run", return_value=run_payload("run_a2", 2)
-        ) as create_run:
-            transitioned = self.app.call_tool(
-                "experiment.transition",
-                {
-                    "project_id": project_id,
-                    "experiment_id": exp_id,
-                    "transition": "start_running",
-                },
-            )
-        create_run.assert_called_once_with(
-            project_id=project_id,
-            experiment_id=exp_id,
-            attempt_index=2,
-            run_name=f"{exp_id}-attempt-2",
-        )
+        # An actual rejected attempt returns to planning and clears its run.
+        for role, path, body in (("result", "results.json", '{"accuracy": 0.72}'),
+                                 ("report", "report.md", VALID_REPORT.replace("## Results", "## Results\n\nSee [the metrics exhibit](metrics_exhibit.json).")), ("graph", "graph.json", VALID_GRAPH)):
+            self.submit(pid=project_id, target_type="experiment", target_id=exp_id, role=role, path=path, body=body)
+        self.request("POST", f"/api/projects/{project_id}/experiments/{exp_id}/transition", {"transition": "submit_results"})
+        self.review_experiment(project_id, exp_id, "experiment_reviewer", "needs_changes", "planned")
+        revised = self.app.research.experiment_state(project_id=project_id, experiment_id=exp_id)
+        self.assertEqual(revised["attempt_index"], 2)
+        self.assertFalse(revised.get("mlflow_run"))
+        self.approve_execution(project_id, exp_id)
+        with patch.object(CentralMlflowService, "create_run", return_value=run_payload("run_a2", 2)) as create_run, \
+             patch.object(CentralMlflowService, "finalize_run", return_value={}):
+            transitioned = self.begin_execution(project_id, exp_id)
+        create_run.assert_called_once_with(project_id=project_id, experiment_id=exp_id,
+                                           attempt_index=2, run_name=f"{exp_id}-attempt-2")
         self.assertEqual(transitioned["mlflow"]["run"]["run_id"], "run_a2")
 
     def test_finalizing_a_foreign_run_id_keeps_the_canonical_run(self) -> None:
@@ -1160,6 +1105,14 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
             conn.execute(
                 "UPDATE experiments SET status = 'complete', updated_at = ? WHERE id = ?",
                 (now, complete["id"]),
+            )
+            conn.execute(
+                "UPDATE workflow_instances SET state = 'running', revision = 2 WHERE id = ?",
+                (running["id"],),
+            )
+            conn.execute(
+                "UPDATE workflow_instances SET state = 'complete', revision = 4, outcome = 'passed' WHERE id = ?",
+                (complete["id"],),
             )
             conn.execute(
                 """
@@ -1599,10 +1552,8 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.assertIn("signal", listing)
         checklist_item = listing["reflections"][0]["gate_checklist"]["items"][0]
         self.assertEqual(checklist_item["action"], "fan_out_reflection_subagents")
-        self.assertLess(
-            list(checklist_item).index("lens_id"),
-            list(checklist_item).index("label"),
-        )
+        children = self.app.workflows.runtime.get(project_id=pid, instance_id=syn_id).children
+        self.assertEqual({child.key for child in children}, {lens["id"] for lens in lenses})
         self.assertEqual(
             self.request("GET", f"/api/projects/{pid}/reflections/{syn_id}")[
                 "gate_checklist"

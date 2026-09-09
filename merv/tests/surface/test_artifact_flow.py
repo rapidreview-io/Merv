@@ -281,11 +281,12 @@ class ArtifactFlowTest(unittest.TestCase):
             experiment_id=exp_id, transition="submit_design",
         )
         self._pass_review(exp_id=exp_id, role="design_reviewer")
-        for transition in ("mark_ready_to_run", "start_running"):
-            self.call(
-                "experiment.transition", project_id=self.project_id,
-                experiment_id=exp_id, transition=transition,
-            )
+        self.call(
+            "workflow.begin", project_id=self.project_id, instance_id=exp_id,
+            expected_revision=self.app.workflows.runtime.get(
+                project_id=self.project_id, instance_id=exp_id,
+            ).revision,
+        )
         self._submit(
             target_type="experiment", target_id=exp_id,
             role="result", path="results.json", body='{"accuracy": 0.72}\n',
@@ -304,9 +305,7 @@ class ArtifactFlowTest(unittest.TestCase):
         )
         self._pass_review(exp_id=exp_id, role="experiment_reviewer")
         state = self.call(
-            "experiment.transition", project_id=self.project_id,
-            experiment_id=exp_id, transition="complete",
-            evidence={"conclusion": "Threshold met."},
+            "experiment.get_state", project_id=self.project_id, experiment_id=exp_id,
         )
         self.assertEqual(state["status"], "complete")
 
@@ -362,11 +361,12 @@ class ArtifactFlowTest(unittest.TestCase):
             experiment_id=exp_id, transition="submit_design",
         )
         self._pass_review(exp_id=exp_id, role="design_reviewer")
-        for transition in ("mark_ready_to_run", "start_running"):
-            self.call(
-                "experiment.transition", project_id=self.project_id,
-                experiment_id=exp_id, transition=transition,
-            )
+        self.call(
+            "workflow.begin", project_id=self.project_id, instance_id=exp_id,
+            expected_revision=self.app.workflows.runtime.get(
+                project_id=self.project_id, instance_id=exp_id,
+            ).revision,
+        )
         self.app.artifacts.pin(
             path="experiments/exhibit-reference/metrics_exhibit.json",
             target=ArtifactTarget(

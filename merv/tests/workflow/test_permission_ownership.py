@@ -14,9 +14,12 @@ from merv.brain.research_core.policy import (
 class OwnedPermissionPolicyTest(unittest.TestCase):
     def test_research_validates_review_vocabulary(self) -> None:
         validate_review_role(role="experiment_reviewer")
+        # The active graph chooses the role; this validator checks its shape.
+        validate_review_role(role="replication_auditor")
         validate_review_verdict(verdict="needs_changes")
-        with self.assertRaisesRegex(ValidationError, "unknown review role: visitor"):
-            validate_review_role(role="visitor")
+        for role in ("", "   ", "x" * 129):
+            with self.subTest(role=role), self.assertRaisesRegex(ValidationError, "nonempty workflow role"):
+                validate_review_role(role=role)
         with self.assertRaisesRegex(ValidationError, "unknown review verdict: maybe"):
             validate_review_verdict(verdict="maybe")
 

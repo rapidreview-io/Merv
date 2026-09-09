@@ -15,11 +15,7 @@ from ..research_core import EXPERIMENT_WORKFLOW, Research, preferred_artifact
 
 Record = dict[str, Any]
 
-_EXPERIMENT_PATH = EXPERIMENT_WORKFLOW.forward_path(EXPERIMENT_WORKFLOW.initial)
-_EXECUTION_STATUS = next(iter(EXPERIMENT_WORKFLOW.effect_sources("result_submission")))
-_PLAN_SUMMARY_STATUSES = frozenset(
-    _EXPERIMENT_PATH[: _EXPERIMENT_PATH.index(_EXECUTION_STATUS) + 1]
-)
+_PLAN_SUMMARY_STATUSES = frozenset(state.name for state in EXPERIMENT_WORKFLOW.states) - EXPERIMENT_WORKFLOW.effect_destinations("result_submission")
 _PROJECT_REFLECTION_ROLES = ("reflection_doc", PROJECT_GRAPH_ROLE)
 
 

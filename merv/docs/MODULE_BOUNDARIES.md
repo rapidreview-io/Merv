@@ -34,6 +34,7 @@ classification plus file overrides handles mixed packages.
 |---|---|---|
 | Kernel | `kernel/**` | shared contracts, state floor, IDs, events, utilities |
 | Research | `research_core/**`, `literature/**` | project, claim, experiment, review, reflection, and literature authority |
+| Workflows | `workflows/**` | versioned graphs, transition evaluation, context builders, durable runtime, and composition |
 | Artifacts | `artifacts/**` | submitted artifacts, upload tokens, pinned evidence |
 | Infrastructure | `infrastructure/**` | native HTTP adapters, research associations, and spending policy |
 | Feed | `feed/**` | authors, posts, replies, reactions, history, and advisories |
@@ -47,11 +48,12 @@ The exact component import matrix is:
 | Importer | May import |
 |---|---|
 | Kernel | Kernel |
-| Research | Research, Artifacts, Kernel |
+| Research | Research, Workflows, Artifacts, Kernel |
+| Workflows | Workflows, Kernel |
 | Artifacts | Artifacts, Kernel |
 | Infrastructure | Infrastructure, Storage, Kernel |
 | Feed | Feed, Kernel |
-| Application | Application, Research, Artifacts, Infrastructure, Feed, Storage, Agent sessions, Kernel |
+| Application | Application, Workflows, Research, Artifacts, Infrastructure, Feed, Storage, Agent sessions, Kernel |
 | Tracking integration | Tracking integration, Application, Kernel |
 | Storage | Storage, Application, Kernel |
 | Surface | any component; its independent layer classification still applies |
@@ -70,10 +72,19 @@ itself a valid public entrypoint; Surface may type against it directly when no
 independent projection or capability constraint exists. Internal service-module
 imports remain forbidden.
 
+Surface constructs Workflows and injects it into Research. Research binds its
+existing records through Workflows' typed read/create/commit capabilities.
+Definitions and context builders receive project-bound read-only knowledge;
+they import no supporting service or SQL connection. Graphs, definitions,
+registry and composition values are domain code; workflow persistence and
+action delivery are application code. Experiment, task, reflection, independent
+lens, and published research-wave flows use this runtime. Generic and legacy
+tool paths share the registered graph evaluation.
+
 Research reaches immutable artifact evidence only through typed operations on
 the concrete `Artifacts` root; it never sees Artifact tables or blob locators.
-Artifacts resolves association targets through the reverse `ArtifactTargets`
-port, the one necessary transaction-aware seam.
+Research's association adapter resolves native targets and seals selected
+immutable content references on the same transaction as the graph transition.
 
 ## Layer law
 
@@ -83,7 +94,7 @@ The current layer mapping is deliberately honest about mixed directories:
 |---|---|
 | foundation | `kernel/**` |
 | port | `kernel/ports/**`, `application/ports/**`, `infrastructure/ports.py`, `object_storage/provider.py` |
-| domain | pure component policy such as `research_core/{experiment_workflow,reflection_workflow,policy,evidence}.py` |
+| domain | `workflows/{graph,composition,definitions/**}` and pure component policy |
 | application | component roots such as `object_storage/storage.py` and cross-component work under `application/**` |
 | adapter | `mlflow/**`, `infrastructure/{client,storage}.py` |
 | delivery | ordinary `surface/**` HTTP/MCP/auth/serialization code |
@@ -161,33 +172,28 @@ one brain process and shares the existing transaction/event ledger.
 
 Agent Sessions is a small application component: it owns durable worker
 identity, leases, and experiment/review exclusivity. Cross-component candidate
-selection remains in Application; Research remains authoritative for workflow
-state; Surface owns runner transport and the MCP-only default-deny session
+selection remains in Application; Workflows owns graph state and assignment
+prerequisites; Surface owns runner transport and the MCP-only default-deny session
 policy; the machine-local runner owns process and worktree adapters.
 
-## Synchronous reaction model
+## Action delivery and advisories
 
-The composition root owns one in-process reaction registry. Application use
-cases dispatch exact durable event values explicitly; there is no ledger scan,
-worker, replay loop, or second event stream. Fatal handlers stop a phase and
-propagate. Advisory handlers, currently Feed reminders, yield no outcome when
-they fail and cannot break the primary command or query.
+Workflow transitions atomically commit native record changes, history, their
+exact event, and requested support actions. The action outbox uses stable keys,
+expiring leases and conditional acknowledgements. Application's delivery worker
+runs during the HTTP server lifespan and calls review, child-start and optional
+tracking capabilities. It does not reconstruct workflow decisions. Review
+capabilities are renewed only while the exact submitted node still waits.
 
-The executable catalog is the registry's only registration source. Each entry
-names its producer, payload version, transaction boundary, reaction phase,
-handler, failure mode, and redelivery requirement. Structure tests resolve the
-producer and transaction methods and prove that runtime registrations exactly
-match the catalog.
+Tracking begins on actual node activation, through an agent lease or explicit
+`workflow.begin`, and terminal actions capture their exact run ID. Late readback
+cannot overwrite a later attempt's run. External effects require idempotency or
+a durable ambiguity fence; automatic retry must never create duplicate work.
 
-Transition reactions run immediately after their committed command. Canonical
-tracking finalization dispatches its exact `experiment.mlflow_run_refreshed`
-event after response assembly. The explicit foreign-run compatibility path has
-no durable event and therefore calls its advisory directly. The review verdict
-reminder deliberately runs later, when the producer reads `review.status`, but
-uses the existing `review.submitted` event ID. Repeated reads are allowed and
-handlers must be repeat-safe. Any future asynchronous delivery needs durable
-checkpoints keyed by `(event_id, phase, handler_name)`, plus an external-side-
-effect idempotency policy, before a worker is introduced.
+Feed advisories remain optional, immediate presentation: explicit tracking
+finalization attaches its reminder after response assembly, and a producer can
+read its review verdict reminder through `review.status`. Advisory failure does
+not reverse a committed workflow action or independent review.
 
 ## Composite query model
 
@@ -211,7 +217,7 @@ has explicit query ceilings for representative 25-wave abandoned and published-
 graph histories instead of a false constant-query claim. A future summary or
 paginated contract should precede batching that endpoint.
 
-Research evaluates each experiment or reflection gate once per hydration. The
+Workflows evaluates the registered graph during native record hydration. The
 typed, JSON-safe evaluation carries requirement, validation, current-snapshot
 review-request, blocker, and legal-transition facts. That same value enforces
 transitions, supplies the semantic checklist, travels in `ResearchSnapshot`,
@@ -220,7 +226,7 @@ Sandbox state for presentation, but it cannot reconstruct transition legality.
 Review requests likewise read their expected role from the current evaluation;
 there is no parallel status-to-review-role map.
 
-Research gate contracts contain semantic roles, evidence status, domain
+Workflow definitions contain semantic roles, evidence status, domain
 enforcement errors, human-readable transition preconditions, blocker codes,
 legal transitions, semantic next actions, tools, templates, reviewer skills,
 and rejection routes. Application formats that declared guidance, adds
@@ -231,25 +237,25 @@ post-publish presentation.
 produced-object facts before applying that pure guidance policy.
 
 Review role/verdict validation and project membership invariants are Research
-policy; artifact association role/target validation is Artifacts policy. HTTP
+policy; artifact association role/target validation belongs to Research's
+association adapter, while generic content validation belongs to Artifacts. HTTP
 routes call the concrete `Research` root and do not reach through to a store.
 
 ## Research shape
 
-`research_core.Research` is the sole public root. It owns project and claim
-records directly and composes three private, transaction-heavy state machines:
-experiments, reflections, and reviews. One canonical `snapshot` operation
-hydrates workflow facts and gate evaluations without caller-selected shapes.
-The lifecycle sources of truth are `experiment_workflow.py` and
-`reflection_workflow.py`, using the passive vocabulary in `workflow_schema.py`.
-Other pure rules live in `policy.py` and `evidence.py`; `association_targets.py`
-is the reverse Artifacts boundary.
-Literature remains a separate cohesive file because it is an independently
-large document/citation workflow, but it is composed directly rather than
-hidden behind a Research service bag. Application owns cross-module workflow,
-agent guidance, review handoff presentation, and tracking reactions. Surface
-owns HTTP/MCP schemas, authentication, authorization transport, and response
-serialization.
+`research_core.Research` is the sole public root for projects, claims, native
+research records, reviews and evidence associations. Its private experiment,
+task and reflection services bind those records to the workflow runtime. One
+canonical `snapshot` operation hydrates project facts and graph evaluations in
+batches. Native workflow files are passive views of the canonical definitions;
+`workflow_schema.py` supplies compatibility formatting, not a second state machine.
+Pure workflow rules and document validation live in `workflows/definitions`.
+
+Literature remains a separate component. Application composes capabilities,
+formats guidance and delivers requested support actions. Surface owns HTTP/MCP
+schemas, authentication, authorization transport, and response serialization.
+Node instructions belong to workflow definitions and are carried in the same
+version/revision packet used for the real assignment lease.
 
 ## Cross-package law
 

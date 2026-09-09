@@ -1,8 +1,7 @@
 # Merv Architecture
 
 This document describes the architecture implemented by the current codebase.
-The workflow declarations in `research_core/{experiment_workflow,
-task_workflow, reflection_workflow}.py`, the tool manifest in
+The workflow declarations in `workflows/definitions/`, the tool manifest in
 `surface/tools/contracts.py`,
 and the structural tests under `tests/structure/` are authoritative when prose
 and code disagree.
@@ -40,6 +39,7 @@ flowchart LR
   Client -->|HTTP MCP + OAuth or scoped key| Brain["Brain service"]
   Browser["Merv UI"] -->|HTTP API and SSE| Brain
   Brain --> State["SQLite or Postgres"]
+  Brain --> Artifacts["Merv artifact and feed storage · R2"]
   Brain -->|namespace-scoped REST| Infra["merv-sandboxes"]
   Infra --> Providers["Compute providers and SSH gateway"]
   Infra --> Blobs["Object storage"]
@@ -67,8 +67,8 @@ graph:
 
 | Preset | Brain location | Record/blob defaults | Intended exposure |
 |---|---|---|---|
-| `local` | `http://127.0.0.1:8787` | SQLite records; external infrastructure for bytes/compute | Loopback development; auth off by default |
-| `control` | Operator-provided HTTPS URL | Postgres records; external infrastructure for bytes/compute | Supabase-backed end-user auth; TLS and network controls |
+| `local` | `http://127.0.0.1:8787` | SQLite records; local artifact bytes; external compute/ML storage | Loopback development; auth off by default |
+| `control` | Operator-provided HTTPS URL | Postgres records; Merv R2 artifacts; external compute/ML storage | Supabase-backed end-user auth; TLS and network controls |
 
 `Postgres` here is provider-neutral: the same adapter supports ordinary
 PostgreSQL and hosted or self-hosted Supabase PostgreSQL through `MERV_DB_URL`.
@@ -142,14 +142,14 @@ root selects adapters and wires the modular monolith:
 
 - record store: SQLite locally or PostgreSQL through `MERV_DB_URL`;
 - infrastructure transport: authenticated, namespace-scoped merv-sandboxes HTTP;
-- submitted blobs and heavy bytes: native object storage through that transport;
+- artifact and feed blobs: Merv-owned R2, with a local disk adapter for development;
+- heavy datasets/models: object storage through merv-sandboxes;
 - sandbox/provider facades: native connections, offers, lifecycle, and jobs.
 
-The service owns provider credentials, cloud SDKs, SSH certificates, job
-workers, lease expiry, and physical object cleanup. Merv holds no S3 or
-management-key adapters. Without infrastructure configuration, local mode is
-record-only; byte and compute operations fail explicitly. Hosted startup
-requires `MERV_SANDBOXES_URL` and `MERV_SANDBOXES_JWT_SECRET`.
+The independent service owns compute-provider credentials, cloud SDKs, SSH
+certificates, job workers, sandbox leases, and heavy-object cleanup. Merv owns its
+artifact byte adapters and credentials. Sandbox and heavy-object operations need
+`MERV_SANDBOXES_URL` and `MERV_SANDBOXES_JWT_SECRET`; artifact storage is separate.
 
 Research records live in the brain's selected record store. There is no durable
 checkout-local state: a project is bound by its key, not by a machine-local link
@@ -160,13 +160,12 @@ the same transaction as their state change. The UI reads those durable events
 for the research timeline. Recent tool-call traffic is a bounded in-memory
 diagnostic view and is not part of durable research state.
 
-Application workflows can synchronously react to an exact committed event
-through a composition-owned registry. Terminal Feed guidance uses this path.
-Producer-facing review guidance correlates `review.status` with the existing
-`review.submitted` event; it does not append a second event. Fatal, degraded,
-and advisory registrations are explicit, and there is no background event worker
-or delivery checkpoint yet. A committed transition is never reported as a
-failure because post-response advisory work cannot roll it back.
+The workflow runtime commits state, history, and requested support actions in
+one transaction. A leased outbox worker delivers review requests, child-wave
+starts, and tracking effects with retries and stable action/event identities.
+Review requests are renewed while their exact review node remains current.
+Immediate Feed guidance remains advisory; it cannot roll back a committed graph
+transition.
 
 ## Tool routing
 
@@ -190,40 +189,39 @@ internals, so the privacy boundary stays enforceable rather than conventional.
 
 ## Workflow architecture
 
-Experiment transitions are declared once in
-`src/merv/brain/research_core/experiment_workflow.py`:
+`workflows/` owns the graph runtime and versioned definitions. A node specifies
+its role, prerequisites, starting-context function, and execution needs; edges
+specify checks, state changes, and support actions. The same evaluation drives
+permitted transitions, dispatch, and next-action guidance.
 
 ```text
-planned -> design_review -> ready_to_run -> running -> experiment_review -> complete
+experiment: planned -> design_review -> running -> experiment_review -> complete
+task: in_progress -> in_review -> done
+reflection: reflecting -> synthesizing -> reflection_review -> consolidating
+            -> consolidation_review -> published
 ```
 
-`failed` and `abandoned` are terminal exits. A result-review rejection returns
-to `running` when the plan still stands, or to `planned` with a new attempt when
-the design is flawed.
+Each reflection lens is its own child workflow. The parent joins the children's
+exact submitted outputs before dispatching synthesis. Review verdicts apply the
+graph's next state in the same transaction; rejection routes and retry/attempt
+behavior remain part of each definition.
 
-The same workflow declaration drives:
+Research bindings supply experiment, task, reflection, review, and evidence
+facts. They project graph changes into existing domain records atomically. New
+workflow definitions can use generic content storage and knowledge reads without
+adding a scheduler branch or a new API dispatch case.
 
-- enforcement in `ExperimentService`;
-- semantic next-action guidance formatted by the Application workflow query;
-- review rejection destinations and attempt behavior;
-- transition discovery and gate checklists returned to agents and the UI.
-
-Reflection transitions are declared in
-`src/merv/brain/research_core/reflection_workflow.py`:
-
-```text
-reflecting -> synthesizing -> reflection_review -> consolidating -> published
-```
-
-Reflection-review rejections return to `synthesizing` when the five lens
-documents stand or to `reflecting` when fan-out must repeat. After reflection
-approval, consolidation review can return only to `consolidating`; it never
-reopens the authoritative reflection.
+Support systems own artifact bytes, review capabilities, agent leases, tracking,
+and sandbox operations. Auto-run freezes the node's brief and exact references
+while issuing a revision-fenced lease. Recovering a node retains its submitted
+work; advancing it fences the prior credential. Interactive agents use
+`workflow.begin(project_id, instance_id, expected_revision)` before doing work.
+Both paths record actual start once per revision and queue the node's start
+effects; neither needs another graph state after approval.
 
 All meaning-changing actions use typed MCP or HTTP operations. Editing a local
-file does not mutate research state. A file becomes evidence only after
-`artifact.submit` mints an upload and the agent runs the returned command,
-pinning the bytes against a target and role.
+file does not mutate research state. `artifact.store` records generic content;
+workflow bindings attach accepted evidence to their domain records.
 
 ## Evidence and storage
 
@@ -250,11 +248,13 @@ storage.
 
 Reviews use request-scoped capabilities rather than prompt trust:
 
-1. The producer calls `review.request`.
+1. Entering a review node queues a request; interactive coordinators may also
+   call `review.request` to obtain a manual handoff.
 2. The brain pins the target snapshot, stores only a hash of the capability, and
    returns the plaintext capability once with a reviewer handoff prompt.
-3. A separate reviewer is expected to call `review.start` with a required
-   caller-supplied session string different from the producer-supplied string.
+3. A separate reviewer calls `review.start`. An auto-run credential supplies
+   the authenticated session and exact request; an interactive handoff uses its
+   capability and a declared session string distinct from the producer.
 4. `review.start` returns bounded project orientation, the target's slim
    experiment/reflection context, and full current-attempt gated artifacts plus
    any system exhibit; the reviewer skill imposes a procedural read-only role
@@ -264,15 +264,15 @@ Reviews use request-scoped capabilities rather than prompt trust:
    strings, or stale snapshots. Submit rechecks that the request is open and
    the snapshot is current, and only the first valid submission is accepted.
 
-The dispatcher also rejects other mutations that explicitly carry a
-`review_session_id`, but it does not authenticate every read or unrelated tool
-call as that reviewer. This is a practical workflow boundary, not cryptographic
-proof that two separate models reasoned independently.
+Auto-run reviewer credentials deny unrelated writes, artifacts uploads, and
+arbitrary graph exits. General project keys used for interactive reviews still
+rely on the skill's read-only procedure outside the capability-addressed review
+calls. Session separation does not prove independent model reasoning.
 
 ## Code boundaries
 
-The brain is a modular monolith. Research, Artifacts, Infrastructure, Feed, and Object
-Storage expose concrete package-root capabilities. Application coordinates
+The brain is a modular monolith. Workflows, Research, Artifacts, Infrastructure,
+Feed, Object Storage, and Agent Sessions expose package-root capabilities. Application coordinates
 only genuinely cross-component work. Surface delivers HTTP/MCP, and Kernel is
 the shared dependency floor. Every file is classified independently by
 component ownership and architectural layer. The exact mappings and import laws

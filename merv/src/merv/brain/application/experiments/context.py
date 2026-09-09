@@ -19,15 +19,8 @@ from ...research_core import (
 
 Record = dict[str, Any]
 
-_INITIAL_STATE = EXPERIMENT_WORKFLOW.state(EXPERIMENT_WORKFLOW.initial)
-_DESIGN_REVIEW_STATE = (
-    None
-    if _INITIAL_STATE is None
-    else EXPERIMENT_WORKFLOW.state(_INITIAL_STATE.forward.to_status)
-)
-_RESULTS_REVIEW_STATE = EXPERIMENT_WORKFLOW.state(
-    next(iter(EXPERIMENT_WORKFLOW.effect_destinations("result_submission")))
-)
+_DESIGN_REVIEW_STATE = EXPERIMENT_WORKFLOW.review_state("design_reviewer")
+_RESULTS_REVIEW_STATE = EXPERIMENT_WORKFLOW.review_state("experiment_reviewer")
 if (
     _DESIGN_REVIEW_STATE is None
     or _DESIGN_REVIEW_STATE.review is None
@@ -37,9 +30,6 @@ if (
     raise RuntimeError("experiment workflow is missing its review states")
 _DESIGN_REVIEW_ROLE = _DESIGN_REVIEW_STATE.review.role
 _RESULTS_REVIEW_ROLE = _RESULTS_REVIEW_STATE.review.role
-_PLAN_APPROVED_STATUSES = frozenset(
-    EXPERIMENT_WORKFLOW.forward_path(_DESIGN_REVIEW_STATE.forward.to_status)
-)
 
 
 class ExperimentContextQuery:
@@ -275,13 +265,6 @@ class ExperimentContextQuery:
         if review and str(review.get("verdict") or "") != "pass":
             return "changes_requested"
         if review and str(review.get("verdict") or "") == "pass":
-            return "approved"
-        if status in _PLAN_APPROVED_STATUSES and not _reviews_for_role(
-            state=state, role=_DESIGN_REVIEW_ROLE
-        ):
-            # Compatibility for durable states written before reviews were
-            # persisted. If reviews do exist but none pins this plan id, the
-            # plan was resubmitted and is no longer approved.
             return "approved"
         return "submitted"
 

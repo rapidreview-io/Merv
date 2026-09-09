@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -38,6 +40,8 @@ from ..http_policy import (
     AGENT_CONSOLIDATION_SESSION_TOOLS,
     AGENT_EXPERIMENT_SESSION_TOOLS,
     AGENT_REVIEW_SESSION_TOOLS,
+    AGENT_WORKFLOW_READ_TOOLS,
+    AGENT_WORKFLOW_WRITE_TOOLS,
     HOSTED_CONTROL_TOOL_POLICIES,
     HttpSurfacePolicy,
 )
@@ -119,7 +123,7 @@ class RequestAuthenticator:
             record = (
                 None
                 if self.agent_sessions is None
-                else self.agent_sessions.authenticate(session_secret=token)
+                else self.agent_sessions.authenticate(session_secret=token, activate=False)
             )
             if record is None:
                 return oauth.bearer_denial(
@@ -173,6 +177,12 @@ class RequestAuthenticator:
                 agent_target_id=str(record["target_id"]),
                 agent_session_kind=str(record["kind"]),
                 agent_review_request_id=str(record["review_request_id"] or ""),
+                agent_workflow_instance_id=str(record.get("workflow_instance_id") or ""),
+                agent_workflow_revision=int(record.get("workflow_revision") or 0),
+                agent_workflow_node=str(record.get("workflow_node") or ""),
+                agent_read_only=bool(
+                    (_session_assignment(record).get("execution") or {}).get("read_only", record["kind"] == "review")
+                ),
                 source_key_id=source_key_id or None,
                 key_sandbox_seconds_ceiling=(
                     None if source_key is None else source_key.sandbox_seconds_ceiling
@@ -182,12 +192,20 @@ class RequestAuthenticator:
                 ),
             )
             request.state.principal = principal
-            request.state.authenticated = True
-            return oauth.credential_audience_denial(
-                request=request,
-                principal=principal,
+            denied = _agent_session_http_denial(request.url.path) or oauth.credential_audience_denial(
+                request=request, principal=principal,
                 canonical_mcp_resource=self.canonical_mcp_resource,
             )
+            if denied is not None:
+                return denied
+            if self.agent_sessions.authenticate(session_secret=token) is None:
+                return oauth.bearer_denial(
+                    request, message="unknown, expired, or released agent session",
+                    enabled=self.oauth_enabled, session_denial=None,
+                )
+            request.state.principal = principal
+            request.state.authenticated = True
+            return None
         if self.verifier is None:
             return None
         try:
@@ -260,16 +278,10 @@ class ProjectAuthorizer:
 
     def http_denial(self, request: Request) -> JSONResponse | None:
         path = request.url.path
-        if getattr(request.state.principal, "agent_session_id", None) and not (
-            path == "/mcp" or path.startswith("/mcp/")
-        ):
-            return JSONResponse(
-                {
-                    "detail": "agent session credentials are valid only on the MCP endpoint",
-                    "error_code": "agent_session_scope_forbidden",
-                },
-                status_code=403,
-            )
+        if getattr(request.state.principal, "agent_session_id", None):
+            denied = _agent_session_http_denial(path)
+            if denied is not None:
+                return denied
         # Credential SHAPE, not binding: an account key has no
         # key_project_id, so a binding test fails open here (INV-11).
         if is_external_key(request.state.principal) and path.startswith(
@@ -657,6 +669,9 @@ class ToolInvocationGateway:
         session_id = str(getattr(principal, "agent_session_id", "") or "")
         if not session_id:
             return
+        if getattr(principal, "agent_workflow_instance_id", None):
+            self._authorize_workflow_session(name=name, arguments=arguments, principal=principal)
+            return
         target_type = str(getattr(principal, "agent_target_type", "") or "")
         target_id = str(getattr(principal, "agent_target_id", "") or "")
         experiment_id = target_id if target_type == "experiment" else ""
@@ -766,6 +781,53 @@ class ToolInvocationGateway:
                     f"{name} review target is outside the assigned {target_type}",
                     details={"target_type": target_type, "target_id": target_id},
                 )
+
+    def _authorize_workflow_session(
+        self, *, name: str, arguments: dict[str, Any], principal: Any,
+    ) -> None:
+        instance_id = str(principal.agent_workflow_instance_id)
+        target_type = str(principal.agent_target_type or "")
+        read_only = bool(principal.agent_read_only)
+        request_id = str(principal.agent_review_request_id or "")
+        allowed = AGENT_WORKFLOW_READ_TOOLS if read_only else AGENT_WORKFLOW_WRITE_TOOLS
+        if name not in allowed or (name == "workflow.transition" and request_id):
+            raise AgentSessionScopeError(f"agent session cannot call {name}", details={"tool": name})
+        if name == "workflow.transition":
+            if str(arguments.get("instance_id") or "") != instance_id:
+                raise AgentSessionScopeError("workflow tool must target the assigned instance")
+        if name == "workflow.transition" and arguments.get("expected_revision") != principal.agent_workflow_revision:
+            raise AgentSessionScopeError("workflow transition must use the leased revision")
+        requested_instance = str(arguments.get("instance_id") or "")
+        if name == "workflow.transition" and requested_instance and requested_instance != instance_id:
+            raise AgentSessionScopeError("agent session cannot act on another workflow")
+        mutates_record = name in {
+            "experiment.transition", "task.transition", "reflection.transition", "consolidation.submit",
+            "experiment.exhibit", "mlflow.finalize_run",
+        } or name.startswith("sandbox.")
+        for field, native_type in (("experiment_id", "experiment"), ("task_id", "task"), ("reflection_id", "reflection")):
+            value = str(arguments.get(field) or "")
+            if mutates_record and value and (target_type != native_type or value != instance_id):
+                # Knowledge reads remain project-scoped; mutations stay bound
+                # to the one leased workflow record.
+                raise AgentSessionScopeError(f"agent session cannot act on another {native_type}")
+        if name in {"artifact.submit", "artifact.attach", "review.request"}:
+            if (str(arguments.get("target_type") or "") != target_type
+                    or str(arguments.get("target_id") or "") != instance_id):
+                raise AgentSessionScopeError(f"{name} must target the assigned workflow record")
+        if name.startswith("sandbox."):
+            if target_type != "experiment":
+                raise AgentSessionScopeError("this workflow has no experiment sandbox authority")
+            if (name not in {"sandbox.health", "sandbox.options", "sandbox.request", "sandbox.attach", "sandbox.job"}
+                    and str(arguments.get("experiment_id") or "") != instance_id):
+                raise AgentSessionScopeError("sandbox calls must identify the assigned experiment")
+        if name == "review.start":
+            if not request_id or str(arguments.get("review_request_id") or "") != request_id:
+                raise AgentSessionScopeError("review worker is bound to a different review request")
+        if name == "review.submit":
+            if not request_id or self.research.review_request_for_session(
+                review_session_id=arguments.get("review_session_id")
+            ) != request_id:
+                raise AgentSessionScopeError("review worker is bound to a different review request")
 
     def _dispatch(
         self,
@@ -928,3 +990,20 @@ def install_auth_routes(
                     status_code=403,
                 )
             return Response(status_code=204)
+
+
+def _session_assignment(record: dict[str, Any]) -> dict[str, Any]:
+    try:
+        value = json.loads(str(record.get("assignment_json") or "{}"))
+    except (ValueError, TypeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _agent_session_http_denial(path: str) -> JSONResponse | None:
+    if path == "/mcp" or path.startswith("/mcp/"):
+        return None
+    return JSONResponse({
+        "detail": "agent session credentials are valid only on the MCP endpoint",
+        "error_code": "agent_session_scope_forbidden",
+    }, status_code=403)

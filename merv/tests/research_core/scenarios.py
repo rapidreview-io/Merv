@@ -134,12 +134,6 @@ def complete_no_code_consolidation(
     def call(tool: str, **arguments: Any) -> dict[str, Any]:
         return app.call_tool(tool, arguments)
 
-    call(
-        "reflection.transition",
-        project_id=project_id,
-        reflection_id=reflection_id,
-        transition="begin_consolidation",
-    )
     packet = app.application.consolidation(
         project_id=project_id,
         reflection_id=reflection_id,
@@ -324,8 +318,7 @@ class ResearchCase(unittest.TestCase):
             target_id=experiment_id,
             role="design_reviewer",
         )
-        self.transition_experiment(experiment_id, "mark_ready_to_run")
-        self.transition_experiment(experiment_id, "start_running")
+        self.assertEqual(self.app.research.experiment_state(project_id=self.project_id, experiment_id=experiment_id)["status"], "running")
         return experiment_id
 
     def drive_experiment_to_review(self, name: str = "experiment") -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
@@ -104,7 +105,18 @@ def create_fastapi_app(
         oauth_enabled=oauth_service is not None,
         canonical_mcp_resource=oauth_resource_uri,
     )
-    http = FastAPI(title="Merv API", version=__version__)
+    @asynccontextmanager
+    async def lifespan(http: FastAPI):
+        deliveries = getattr(getattr(api, "application", None), "workflow_deliveries", None)
+        if deliveries is not None:
+            deliveries.start()
+        try:
+            yield
+        finally:
+            if deliveries is not None:
+                deliveries.stop()
+
+    http = FastAPI(title="Merv API", version=__version__, lifespan=lifespan)
 
     install_request_middleware(
         http, authenticator=authenticator, authorizer=authorizer, ledger=api.tool_ledger

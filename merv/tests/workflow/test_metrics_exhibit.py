@@ -277,6 +277,7 @@ class ExhibitFlowTest(unittest.TestCase):
         ]
 
     def tearDown(self) -> None:
+        self.app.shutdown()
         self.tmp.cleanup()
 
     def call(self, tool_name: str, **kwargs):
@@ -330,23 +331,21 @@ class ExhibitFlowTest(unittest.TestCase):
             transition="submit_design",
         )
         self._pass_review(exp_id=exp_id, role="design_reviewer")
-        self.call(
-            "experiment.transition",
-            project_id=self.project_id,
-            experiment_id=exp_id,
-            transition="mark_ready_to_run",
-        )
+        current = self.app.workflows.runtime.get(project_id=self.project_id, instance_id=exp_id)
+        self.assertEqual(current.state, "running")
+        self.assertIsNone(self.app.research.attempt_started_running_at(experiment_id=exp_id))
         started = self.call(
-            "experiment.transition",
+            "workflow.begin",
             project_id=self.project_id,
-            experiment_id=exp_id,
-            transition="start_running",
+            instance_id=exp_id,
+            expected_revision=current.revision,
         )
-        # Expectation-setting at start: the agent is told the exhibit IS the record.
-        self.assertIn("metrics_exhibit.json", started["metrics_exhibit"]["notice"])
-        self.assertEqual(
-            started["metrics_exhibit"]["preview_tool"], "experiment.exhibit"
-        )
+        # The node handoff explains the system record; actual activation owns
+        # the attempt window and queues the tracking operation.
+        self.assertIn("metrics_exhibit.json", started["brief"])
+        self.assertIn("experiment.exhibit", started["brief"])
+        self.assertIsNotNone(self.app.research.attempt_started_running_at(experiment_id=exp_id))
+        self.app.application.workflow_deliveries.run_once(project_id=self.project_id)
         return exp_id
 
     def _log_run(self, run_id: str, *, offset_ms: int = 0) -> None:

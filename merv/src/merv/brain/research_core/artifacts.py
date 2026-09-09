@@ -301,20 +301,28 @@ class ResearchArtifacts:
         self._replace_slot(tx=tx, row=row, system=True)
         self._event(tx, row, "artifact.pinned")
 
-    def seal(self, *, tx: Connection, target: ArtifactTarget, transition: str) -> None:
+    def seal(self, *, tx: Connection, target: ArtifactTarget, transition: str,
+             association_ids: tuple[str, ...] | None = None) -> None:
         """Commit an explicit immutable evidence selection with the transition."""
         target = self._resolve_target(tx=tx, target=target)
+        selected = None if association_ids is None else tuple(dict.fromkeys(association_ids))
+        selection = "active=1"
+        if selected is not None:
+            selection = f"id IN ({','.join('?' for _ in selected)})" if selected else "1=0"
         rows = tx.execute(
-            """SELECT * FROM research_artifacts
+            f"""SELECT * FROM research_artifacts
             WHERE project_id=? AND target_type=? AND target_id=? AND attempt_index=?
-              AND active=1 AND status='complete' ORDER BY created_seq""",
+              AND {selection} AND status='complete' ORDER BY created_seq""",
             (
                 target.project_id,
                 target.target_type,
                 target.target_id,
                 target.attempt_index,
+                *(selected or ()),
             ),
         ).fetchall()
+        if selected is not None and len(rows) != len(selected):
+            raise NotFoundError("one or more selected associations are unavailable for this target and attempt")
         self.contents.assert_complete(
             artifact_ids=tuple(str(r["artifact_id"]) for r in rows),
             project_id=str(target.project_id),

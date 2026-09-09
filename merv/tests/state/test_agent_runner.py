@@ -733,6 +733,28 @@ class AgentHostTest(unittest.TestCase):
             manager.close(review)
             self.assertFalse(review.path.exists())
 
+            plugin = Claim("ags_plugin", "", "proj_1", target_type="replication", target_id="wf_replication",
+                           kind="workflow", assignment={"execution": {"workspace": "work", "read_only": False}})
+            work = manager.prepare(plugin)
+            self.assertEqual(work.path, root / "workers" / "workflows" / "proj_1" / "wf_replication")
+            (work.path / "progress.md").write_text("retained progress\n", encoding="utf-8")
+            captured = manager.capture(path=work.path, branch=work.branch, base_sha=work.base_sha,
+                                       session_id=plugin.session_id, kind=plugin.kind, writable=not plugin.read_only)
+            resumed = manager.prepare(Claim("ags_plugin_resume", "", "proj_1", target_type="replication",
+                                             target_id="wf_replication", kind="workflow", assignment=plugin.assignment))
+            self.assertEqual(resumed.path, captured.path)
+            self.assertEqual(resumed.head_sha, captured.head_sha)
+            self.assertEqual((resumed.path / "progress.md").read_text(), "retained progress\n")
+
+            scratch = manager.prepare(Claim("ags_scratch", "", "proj_1", target_type="research_note", target_id="wf_note",
+                                             kind="workflow", assignment={"execution": {"workspace": "none", "read_only": False}}))
+            self.assertEqual(scratch.kind, "none")
+            self.assertFalse((scratch.path / ".git").exists())
+            self.assertEqual(manager.capture(path=scratch.path, branch=None, base_sha="", session_id="ags_scratch",
+                                             kind="none", writable=False), scratch)
+            manager.close(scratch)
+            self.assertFalse(scratch.path.exists())
+
     def test_central_advance_records_verified_experiment_ancestry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

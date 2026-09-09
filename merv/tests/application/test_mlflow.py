@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import unittest
 from copy import deepcopy
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from merv.brain.application.mlflow import MlflowIntegration
 from merv.brain.kernel.events import StoredEvent, freeze_json_object
 from merv.brain.research_core.models import (
     CommittedExperimentUpdate as CommittedTrackingRunRefresh,
 )
-
 
 PRESENTATION_LOGGER = "merv.brain.application.mlflow"
 PROJECT_ID = "proj_1"
@@ -78,6 +78,10 @@ class RecordingResearch:
         self.refresh_calls: list[dict[str, Any]] = []
         self.project_calls: list[str] = []
         self.event = _event()
+        self.workflows = SimpleNamespace(deliveries=SimpleNamespace(
+            resolve_manual_repair=lambda **kwargs: None,
+            needs_manual_repair=lambda **kwargs: False,
+        ))
 
     def experiment_state(self, **kwargs: Any) -> dict[str, Any]:
         self.order.append("research.state")

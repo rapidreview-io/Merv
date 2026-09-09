@@ -117,6 +117,13 @@ def test_schema58_remains_readable_before_artifact_cutover_only():
         verifier.verify_schema(SchemaConnection(58))
 
 
+def test_current_workflow_schema_preserves_cutover_verification():
+    current = verifier.MIGRATIONS[-1][0]
+    assert verifier.verify_schema(SchemaConnection(current)) == current
+    with pytest.raises(verifier.CheckFailed, match="verification phase"):
+        verifier.verify_schema(SchemaConnection(current + 1))
+
+
 def test_disposable_composition_uses_synthetic_database_and_authentication(capsys):
     from tests.support.infrastructure import FakeInfrastructureClient
 

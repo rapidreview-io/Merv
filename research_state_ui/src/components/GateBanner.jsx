@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom';
  *
  * The UI never computes the state machine — it renders what the server says
  * is the current_gate + next_action and offers transition buttons derived
- * from the same authority (see deriveActionButtons in ExperimentDetail).
+ * from the same authority (see workflowActionButtons).
  *
  * Props:
  *   workflow:           { current_gate, next_action, allowed_actions, blocked_actions, missing_evidence }
@@ -111,7 +111,7 @@ export default function GateBanner({
           <div className="gate-banner-blocked">
             {blocked_actions.map((b, i) => (
               <div key={i} className="gate-banner-blocked-item">
-                blocked: {b.action} — {b.reason}
+                blocked: {b.action} — {b.reason || (b.blockers || []).map(issue => issue.reason).join('; ')}
               </div>
             ))}
           </div>

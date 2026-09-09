@@ -6,7 +6,7 @@ description: >-
   launch_design_reviewer, OR the main agent has just received a fresh
   reviewer_capability from merv.review.request with role=design_reviewer.
   The spawning agent must pass the experiment_id, review_request_id, and
-  reviewer_capability in the prompt. Do not invoke for general design feedback —
+  assigned-session authority or reviewer_capability in the prompt. Do not invoke for general design feedback —
   only for plugin-driven review handoffs.
 ---
 
@@ -23,17 +23,19 @@ required before execution.
 Call `agent.hello` once first — this review is its own context window — and pass
 the returned `agent_id` in every Merv call that follows.
 
-Require the handoff's `experiment_id`, `review_request_id`, and
-`reviewer_capability`. If one is missing, ask the producer for it.
-
-Call `review.start` with the supplied request and capability, your own stable
-`caller_session_id`—never the producer's—and optional `declared_agent`. Use its
+Use the assigned `experiment_id` and `review_request_id`. In an auto-run session,
+call `review.start` with `reviewer_capability="assigned"` and
+`caller_session_id="assigned"`; Merv resolves your authenticated identity.
+For an interactive handoff, require its exact capability and use your own stable
+`caller_session_id`, distinct from the producer, with optional `declared_agent`. Use its
 pinned `project_context` and experiment `context` as the default evidence.
 Read listed artifacts only when a load-bearing detail needs deeper inspection.
 
-Operate read-only by procedure: the capability protects the review protocol,
-not unrelated tools. Do not mutate claims, experiments, artifacts, sandboxes,
-or workflow state. Your only permitted mutation is `review.submit`.
+Operate read-only. Auto-run credentials enforce this boundary; interactive
+reviewers must follow it when using a general project key. Do not mutate the
+work, its artifacts, sandboxes, or workflow directly. Use only `review.start`
+and `review.submit` for review mutations. Submission applies the graph's verdict
+route and ends your assignment.
 
 ## Judge the design
 
@@ -74,7 +76,8 @@ exhaustive evidence when a scoped signal-finding experiment is sufficient.
 
 ## Submit the verdict
 
-- `pass`: the design is executable and can test the claim.
+- `pass`: the design is executable and can test the claim; Merv enters execution
+  directly for a fresh agent.
 - `needs_changes`: specific revisions can make it valid.
 - `fail`: the design cannot answer the claim or is fundamentally invalid.
 

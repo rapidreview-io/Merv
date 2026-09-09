@@ -69,6 +69,10 @@ class Principal:
     agent_target_id: str | None = None
     agent_session_kind: str | None = None
     agent_review_request_id: str | None = None
+    agent_workflow_instance_id: str | None = None
+    agent_workflow_revision: int | None = None
+    agent_workflow_node: str | None = None
+    agent_read_only: bool = False
     source_key_id: str | None = None
 
 

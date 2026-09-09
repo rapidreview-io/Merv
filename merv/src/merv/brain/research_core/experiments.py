@@ -1,50 +1,46 @@
 # If you update this file, you must consult research_core.md to see whether research_core.md needs to be updated. research_core.md must not exceed 100 lines.
-"""Experiment state machine and tracking ledger."""
+"""Experiment records, verified workflow facts and tracking ledger."""
 
 from __future__ import annotations
 
-from contextlib import closing
+from contextlib import closing, nullcontext
 import json
 from typing import Any
 
 from merv.shared.artifact_roles import EXHIBIT_ROLE
-from merv.shared.markdown_images import markdown_image_links
+
 
 from .evidence import (
-    ArtifactDocument,
     artifact_state_record,
     current_slot_artifacts,
-    graph_problems,
-    plan_sections_missing,
-    preferred_artifact,
-    report_problems,
-    require_artifact_document,
     submission_state_record,
 )
 from .dependencies import dependency_rows, dependent_rows, record_dependencies
 from .experiment_workflow import EXPERIMENT_WORKFLOW
+from .workflow_schema import Workflow
 from .reflection_workflow import REFLECTION_WORKFLOW
 from .policy import (
     ACTIVE_EXPERIMENT_CAP,
     GateEvaluation,
-    RequirementEvaluation,
     active_experiment_cap_reached_message,
     covered_terminal_ids,
     evaluate_artifact_requirement,
-    evaluate_dependency_requirement,
     evaluate_review_gate,
     reflection_create_block_message,
+    review_snapshot_id,
+    snapshot_from_id,
+    read_review_fact,
     validate_experiment_name,
 )
 from .artifacts import ResearchArtifacts as Artifacts
 from .artifact_models import Artifact, ArtifactTarget, Submission
+from ..workflows import Reference, Runtime, Snapshot, WORKFLOWS
 from ..kernel.events import StoredEvent, freeze_json_object
 from ..kernel.state.store import BaseStateStore, row_to_dict, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
 from ..kernel.utils import new_id
 from ..kernel.utils import now_iso
 from .models import CommittedExperimentUpdate
-from .workflow_schema import ArtifactNeed, RecordNeed, ReviewReturn
 
 
 def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
@@ -63,12 +59,7 @@ TRACKING_DELIVERY_EVENT_TYPES = (
     "experiment.mlflow_run_created",
     "experiment.mlflow_run_unavailable",
 )
-ATTEMPT_CLOCK_TRANSITION = next(
-    transition.name
-    for state in EXPERIMENT_WORKFLOW.states
-    for transition in state.transitions
-    if "start_attempt_clock" in transition.effects
-)
+EXPERIMENT = WORKFLOWS["experiment"]
 
 
 def reject_keyed_event_type_override(
@@ -97,9 +88,11 @@ class ExperimentService:
         *,
         store: BaseStateStore,
         artifacts: Artifacts,
+        runtime: Runtime,
     ) -> None:
         self.store = store
         self.artifacts = artifacts
+        self.runtime = runtime
 
     def create(
         self,
@@ -171,6 +164,7 @@ class ExperimentService:
         proposal_key: str = "",
         parallelism: str = "",
         depends_on: list[str] | str | None = None,
+        workflow_instance: Snapshot | None = None,
     ) -> dict[str, Any]:
         # Order-preserving dedupe: distinct refs (a create key and a literal
         # claim id) can resolve to one claim, and experiment_claims has a
@@ -213,7 +207,7 @@ class ExperimentService:
                 is None
             ):
                 raise NotFoundError(f"claim not found: {claim_id}")
-        experiment_id = new_id(prefix="exp")
+        experiment_id = new_id(prefix="exp") if workflow_instance is None else workflow_instance.id
         now = now_iso()
         conn.execute(
             """
@@ -227,7 +221,7 @@ class ExperimentService:
                 name,
                 intent.strip(),
                 details.strip(),
-                EXPERIMENT_WORKFLOW.initial,
+                EXPERIMENT.initial if workflow_instance is None else workflow_instance.state,
                 now,
                 now,
             ),
@@ -263,7 +257,19 @@ class ExperimentService:
             target_id=experiment_id,
             payload=event_payload,
         )
+        if workflow_instance is None:
+            self.runtime.adopt(conn=conn, project_id=project_id, instance_id=experiment_id,
+                               workflow="experiment", state=EXPERIMENT.initial, data={"attempt_index": 1})
         return self.get_state(experiment_id=experiment_id, conn=conn)
+
+    def initialize_workflow(self, conn, snapshot: Snapshot) -> None:
+        self._create_in_transaction(
+            conn=conn, project_id=snapshot.project_id, workflow_instance=snapshot,
+            name=str(snapshot.data.get("name") or ""), intent=str(snapshot.data.get("intent") or ""),
+            details=str(snapshot.data.get("details") or ""),
+            tested_claim_ids=snapshot.data.get("tested_claim_ids"),
+            depends_on=snapshot.data.get("depends_on"),
+        )
 
     def _active_experiment_count(self, *, conn, project_id: str) -> int:
         terminal = ", ".join(
@@ -536,9 +542,10 @@ class ExperimentService:
         dependents = dependent_rows(
             conn=conn, project_id=project_id, node_ids=experiment_ids
         )
+        snapshots = self.runtime.snapshots(project_id=project_id, conn=conn)
         return [
             self._assemble_state_with_gate(
-                conn=conn,
+                conn=conn, snapshots=snapshots,
                 experiment=experiment,
                 dependencies=dependencies.get(str(experiment["id"]), []),
                 dependents=dependents.get(str(experiment["id"]), []),
@@ -557,6 +564,7 @@ class ExperimentService:
         self,
         *,
         conn,
+        snapshots: dict[str, Snapshot] | None = None,
         experiment: dict[str, Any],
         tested_claims: list[dict[str, Any]],
         evidence: tuple[Artifact, ...],
@@ -588,7 +596,7 @@ class ExperimentService:
             review["findings"] = json.loads(review.pop("findings_json", "[]"))
             review["evidence"] = json.loads(review.pop("evidence_json", "{}"))
         data["reviews"] = reviews
-        evaluation = self._evaluate_gate(conn=conn, experiment=data)
+        evaluation = self._evaluate_gate(conn=conn, experiment=data, snapshots=snapshots)
         data["allowed_transitions"] = [dict(x) for x in evaluation.legal_transitions]
         data["gate_checklist"] = evaluation.checklist()
         return data, evaluation
@@ -630,7 +638,8 @@ class ExperimentService:
         event_type: str | None = None,
         return_event: bool = False,
         delivery_id: int | None = None,
-    ) -> dict[str, Any] | CommittedExperimentUpdate:
+        expected_run_id: str | None = None,
+    ) -> dict[str, Any] | CommittedExperimentUpdate | None:
         """``delivery_id`` names the committed event this tracking outcome
         belongs to. A keyed write records it in ``tracking_deliveries`` in the
         SAME transaction as the append, so the row's existence is exact proof
@@ -675,6 +684,15 @@ class ExperimentService:
                     ),
                     landed,
                 )
+            # Lock and compare together so a waiting refresh cannot overwrite
+            # an attachment that committed while it was waiting on PostgreSQL.
+            if expected_run_id is not None and conn.execute(
+                """UPDATE experiments SET mlflow_run_id = mlflow_run_id
+                   WHERE id = ? AND project_id = ? AND COALESCE(mlflow_run_id, '') = ?
+                   RETURNING id""",
+                (experiment_id, project_id, expected_run_id),
+            ).fetchone() is None:
+                return None
             existing = self.get_state(
                 experiment_id=experiment_id,
                 project_id=project_id,
@@ -871,62 +889,43 @@ class ExperimentService:
                 experiment_id=experiment_id, project_id=project_id, conn=conn
             )
 
-    def _evaluate_gate(self, *, conn, experiment: dict[str, Any]) -> GateEvaluation:
-        """Collect current facts once for enforcement, state, and guidance."""
+    def _evaluate_gate(self, *, conn, experiment: dict[str, Any], snapshots=None) -> GateEvaluation:
+        """Evaluate the registered graph once; legacy checklist metadata is presentation only."""
         status = str(experiment.get("status") or "")
-        workflow_state = EXPERIMENT_WORKFLOW.state(status)
+        if snapshots is None:
+            try:
+                snapshot = self.runtime.get(project_id=experiment["project_id"], instance_id=experiment["id"], conn=conn)
+            except NotFoundError:
+                snapshot = None
+        else:
+            snapshot = snapshots.get(experiment["id"])
+        if snapshot is None:
+            snapshot = Snapshot(id=experiment["id"], project_id=experiment["project_id"], workflow="experiment",
+                                version=1, state=status, revision=0,
+                                data={"attempt_index": experiment["attempt_index"]}, outcome=EXPERIMENT.outcomes.get(status, ""))
+        definition = self.runtime.registry.get("experiment", snapshot.version)
+        decision = definition.evaluate(
+            snapshot, _ExperimentKnowledge(self, conn, experiment, snapshot))
+        workflow = Workflow(self.runtime.registry.get("experiment", snapshot.version), EXPERIMENT_WORKFLOW.metadata)
+        workflow_state = workflow.state(snapshot.state)
+        requirements = []
         artifacts = experiment.get("current_attempt_artifacts") or []
-        present_roles = {
-            str(art.get("role"))
-            for art in artifacts
-            if art.get("role")
-        }
-        requirements: list[RequirementEvaluation] = []
-        for requirement in (
-            () if workflow_state is None else workflow_state.requirements
-        ):
-            if isinstance(requirement, RecordNeed):
-                requirements.append(
-                    evaluate_dependency_requirement(
-                        requirement,
-                        dependencies=experiment.get("dependencies") or [],
-                    )
-                )
-                continue
-            assert isinstance(requirement, ArtifactNeed)
-            present = requirement.role in present_roles
-            problems: tuple[str, ...] = ()
-            if present and requirement.validator:
-                try:
-                    self._run_validator(
-                        experiment=experiment, name=requirement.validator
-                    )
-                except WorkflowError as exc:
-                    problems = (str(exc),)
-            requirements.append(
-                evaluate_artifact_requirement(
-                    requirement,
-                    present=present,
-                    problems=problems,
-                )
-            )
+        for need in () if workflow_state is None else workflow_state.requirements:
+            role = need.role
+            present = any(item.get("role") == role for item in artifacts)
+            problem = next((issue.message for action in decision.blocked for issue in action.issues
+                            if issue.code == f"{role}_invalid"), "")
+            requirements.append(evaluate_artifact_requirement(need, present=present, problems=(problem,) if problem else ()))
+        review = None if workflow_state is None or workflow_state.review is None else evaluate_review_gate(
+            conn=conn, target_type="experiment", target=experiment, review=workflow_state.review, snapshot=snapshot)
+        return GateEvaluation(workflow=workflow, status=status, requirements=tuple(requirements),
+                              review=review, decision=decision)
 
-        review = (
-            None
-            if workflow_state is None or workflow_state.review is None
-            else evaluate_review_gate(
-                conn=conn,
-                target_type="experiment",
-                target=experiment,
-                review=workflow_state.review,
-            )
-        )
-        return GateEvaluation(
-            workflow=EXPERIMENT_WORKFLOW,
-            status=status,
-            requirements=tuple(requirements),
-            review=review,
-        )
+    def _workflow_knowledge(self, snapshot: Snapshot, conn):
+        experiment = self.get_state(experiment_id=snapshot.id, project_id=snapshot.project_id, conn=conn)
+        if experiment["status"] != snapshot.state:
+            raise WorkflowError("experiment state differs from its workflow instance; an explicit migration is required")
+        return _ExperimentKnowledge(self, conn, experiment, snapshot)
 
     def list_experiment_summaries(
         self, *, project_id: str | None = None
@@ -946,333 +945,159 @@ class ExperimentService:
             return rows_to_dicts(rows=rows)
 
     def transition_with_event(
-        self,
-        *,
-        experiment_id: str,
-        transition: str,
-        evidence: dict[str, Any] | None = None,
-        project_id: str | None = None,
+        self, *, experiment_id: str, transition: str, evidence: dict[str, Any] | None = None,
+        project_id: str | None = None, expected_revision: int | None = None,
     ) -> CommittedExperimentUpdate:
-        """Transition atomically and expose its exact event after commit."""
-
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            experiment, gate = self.get_state_with_gate(
-                experiment_id=experiment_id, project_id=project_id, conn=conn
+            experiment = self.get_state(experiment_id=experiment_id, project_id=project_id, conn=conn)
+            current = self.runtime.adopt(conn=conn, project_id=project_id, instance_id=experiment_id,
+                                         workflow="experiment", state=experiment["status"],
+                                         data={"attempt_index": experiment["attempt_index"]})
+            after = self.runtime.apply_in_transaction(
+                conn=conn, project_id=project_id, instance_id=experiment_id, action=transition,
+                expected_revision=current.revision if expected_revision is None else expected_revision,
+                request_id=new_id(prefix="experiment_action"), payload=evidence or {},
             )
-            status = experiment["status"]
-            next_status = gate.require_transition(transition)
-            step = EXPERIMENT_WORKFLOW.transition(transition)
-            if step is None:
-                raise WorkflowError(f"unknown experiment transition: {transition}")
-            now = now_iso()
-            # Seal the live composition as a submission attempt. After the gate
-            # (a refused transition seals nothing) and on this same connection
-            # — the artifacts component owns the SQL, we only say when.
-            # Every forward transition seals, not just submit_results: that is
-            # one rule instead of a maintained allowlist, and it preserves plan
-            # history at submit_design on the same terms as report history.
-            self.artifacts.seal(
-                tx=conn,
-                target=ArtifactTarget(
-                    "experiment", experiment_id, experiment["project_id"]
-                ),
-                transition=transition,
+            return CommittedExperimentUpdate(
+                state=self.get_state(experiment_id=experiment_id, project_id=project_id, conn=conn),
+                event=self.runtime.event(conn=conn, snapshot=after),
             )
-            if "record_conclusion" in step.effects:
-                conn.execute(
-                    "UPDATE experiments SET status = ?, conclusion = ?, updated_at = ? WHERE id = ?",
-                    (
-                        next_status,
-                        self._conclusion_from_evidence(evidence),
-                        now,
-                        experiment_id,
-                    ),
-                )
-            elif "record_retry_context" in step.effects:
-                revision_context = self._retry_running_context(
-                    evidence=evidence,
-                    previous=str(experiment.get("revision_context") or ""),
-                )
-                conn.execute(
-                    "UPDATE experiments SET status = ?, revision_context = ?, updated_at = ? WHERE id = ?",
-                    (next_status, revision_context, now, experiment_id),
-                )
-            else:
-                conn.execute(
-                    "UPDATE experiments SET status = ?, updated_at = ? WHERE id = ?",
-                    (next_status, now, experiment_id),
-                )
-            event = self.store.record_event(
-                conn=conn,
-                project_id=experiment["project_id"],
-                event_type=EXPERIMENT_WORKFLOW.event_type,
-                target_type="experiment",
-                target_id=experiment_id,
-                payload={
-                    "from": status,
-                    "to": next_status,
-                    "transition": transition,
-                    "evidence": evidence or {},
-                },
-            )
-            state = self.get_state(experiment_id=experiment_id, conn=conn)
-            return CommittedExperimentUpdate(state=state, event=event)
 
-    def _conclusion_from_evidence(self, evidence: dict[str, Any] | None) -> str:
-        """Derive the durable conclusion text persisted when an experiment
-        completes. Prefer an explicit `conclusion` string; otherwise serialize
-        the whole evidence object so the accepted reasoning is not lost."""
-        if not evidence:
-            return ""
-        conclusion = evidence.get("conclusion")
-        if isinstance(conclusion, str) and conclusion.strip():
-            return conclusion.strip()
-        return json.dumps(evidence, sort_keys=True)
-
-    def _retry_running_context(
-        self, *, evidence: dict[str, Any] | None, previous: str = ""
-    ) -> str:
-        evidence = evidence or {}
-        reason = str(evidence.get("reason") or "infrastructure failure").strip()
-        detail = str(
-            evidence.get("detail")
-            or evidence.get("notes")
-            or evidence.get("note")
-            or ""
-        ).strip()
-        parts = [
-            "Infrastructure retry requested while experiment was running.",
-            "Approved plan and current attempt stay in force; rerun execution and retain fresh results before submit_results.",
-            f"Reason: {reason}.",
-        ]
-        if detail:
-            parts.append(f"Detail: {detail}")
-        context = " ".join(parts)
-        return f"{previous}\n\n{context}".strip() if previous else context
-
-    def return_from_review(
-        self,
-        *,
-        conn,
-        experiment_id: str,
-        route: ReviewReturn,
-        revision_context: str,
-    ) -> None:
-        """Apply the workflow-declared destination and attempt policy."""
-
-        row = conn.execute(
-            "SELECT * FROM experiments WHERE id = ?", (experiment_id,)
-        ).fetchone()
-        if row is None:
-            raise NotFoundError(f"experiment not found: {experiment_id}")
-        sources = EXPERIMENT_WORKFLOW.review_sources(route)
-        if row["status"] not in sources:
-            raise WorkflowError(
-                f"experiment is {row['status']!r}; only an experiment under "
-                f"review can be sent back to {route.to_status}"
-            )
+    def _commit_workflow_change(self, conn, before, after, action, payload) -> None:
+        # Lifecycle decisions live in the graph. This binding only preserves
+        # the native record and seals its submitted evidence on the same tx.
+        if action == "start_work":
+            return  # Runtime's idempotent workflow.work_started event owns the clock.
+        if action not in {"revise_plan", "revise_execution", "migrate"}:
+            self.artifacts.seal(tx=conn, target=ArtifactTarget("experiment", before.id, before.project_id), transition=action)
         now = now_iso()
-        previous_run_id = str(row["mlflow_run_id"] or "")
-        if route.attempt == "new":
-            # Run identity is per-attempt. A revised plan must not inherit the
-            # previous attempt's usually-finalized tracking run.
+        if action == "revise_plan":
             conn.execute(
-                """
-                UPDATE experiments
-                SET status = ?, attempt_index = attempt_index + 1,
-                    revision_context = ?, updated_at = ?,
-                    mlflow_run_id = '', mlflow_run_name = '',
-                    mlflow_run_status = '', mlflow_run_artifact_uri = '',
-                    mlflow_run_created_at = NULL, mlflow_run_error = ''
-                WHERE id = ?
-                """,
-                (route.to_status, revision_context, now, experiment_id),
+                """UPDATE experiments SET status = ?, attempt_index = ?, revision_context = ?, updated_at = ?,
+                   mlflow_run_id = '', mlflow_run_name = '', mlflow_run_status = '', mlflow_run_artifact_uri = '',
+                   mlflow_run_created_at = NULL, mlflow_run_error = '' WHERE id = ? AND project_id = ?""",
+                (after.state, after.data["attempt_index"], after.data["revision_context"], now, before.id, before.project_id),
             )
+        elif action in {"revise_execution", "retry_running"}:
+            conn.execute("UPDATE experiments SET status = ?, revision_context = ?, updated_at = ? WHERE id = ? AND project_id = ?",
+                         (after.state, after.data["revision_context"], now, before.id, before.project_id))
+        elif action == "complete":
+            conn.execute("UPDATE experiments SET status = ?, conclusion = ?, updated_at = ? WHERE id = ? AND project_id = ?",
+                         (after.state, after.data["conclusion"], now, before.id, before.project_id))
         else:
-            conn.execute(
-                """
-                UPDATE experiments
-                SET status = ?, revision_context = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (route.to_status, revision_context, now, experiment_id),
-            )
-        payload = {"revision_context": revision_context}
-        if route.attempt == "new":
-            payload["previous_mlflow_run_id"] = previous_run_id
-        self.store.record_event(
-            conn=conn,
-            project_id=row["project_id"],
-            event_type=route.event_type,
-            target_type="experiment",
-            target_id=experiment_id,
-            payload=payload,
-        )
-
-    def _run_validator(self, *, experiment: dict[str, Any], name: str) -> None:
-        """Dispatch a workflow validator name to its deep-lint implementation."""
-        if name == "plan":
-            self._validate_plan_sections(experiment=experiment)
-        elif name == "report":
-            self._validate_results_report(experiment=experiment)
-        elif name == "graph":
-            self._validate_logic_graph(experiment=experiment)
-
-    def _submitted_document(
-        self, *, experiment: dict[str, Any], role: str, what: str
-    ) -> ArtifactDocument:
-        artifact = preferred_artifact(
-            artifacts=experiment.get("current_attempt_artifacts") or [],
-            roles=(role,),
-        )
-        if artifact is None:
-            raise WorkflowError(
-                f"no {role!r} artifact is submitted for the current attempt"
-            )
-        artifact_id = str(artifact.get("id") or "")
-        found = self.artifacts.get(
-            artifact_ids=(artifact_id,),
-            include="document",
-        )
-        return require_artifact_document(
-            found[0] if found else None,
-            artifact_id=artifact_id,
-            what=what,
-        )
-
-    def _validate_plan_sections(self, *, experiment: dict[str, Any]) -> None:
-        """Block submit_design unless the current attempt's SUBMITTED plan fills
-        in the required spine and every relative figure link has submitted
-        figure content. Lints the bytes pinned at associate; editing the
-        live file changes nothing until it is resubmitted."""
-        document = self._submitted_document(
-            experiment=experiment,
-            role="plan",
-            what="experiment plan",
-        )
-        plan_text, path = document.text, document.path
-        missing = plan_sections_missing(plan_text)
-        if missing:
-            raise WorkflowError(
-                "experiment plan is missing required sections before design review: "
-                + ", ".join(missing)
-                + ". Fill in the plan template's required spine — Summary; "
-                "Objective & hypothesis; Evaluation — then resubmit the plan "
-                "to submit the fix; see skills/research-workflow/plan-template.md."
-            )
-        figures = set(document.figure_links)
-        problems = [
-            f"figure {link!r} has no submitted content: make sure the file "
-            f"exists next to {path} (copy it out first if it was produced "
-            "on the sandbox), then resubmit the plan to submit it"
-            for link in markdown_image_links(plan_text)
-            if link not in figures
-        ]
-        if problems:
-            raise WorkflowError(
-                "experiment plan is not ready for design review: " + "; ".join(problems)
-            )
-
-    def _validate_results_report(self, *, experiment: dict[str, Any]) -> None:
-        """Block submit_results unless the current attempt's SUBMITTED report
-        passes the report lint — including every relative figure link having
-        submitted figure content (captured when the report was associated),
-        and a reference to the system metrics exhibit when one is pinned for
-        this attempt (Application pins it before the transition gate runs)."""
-        document = self._submitted_document(
-            experiment=experiment,
-            role="report",
-            what="results report",
-        )
-        report_text, path = document.text, document.path
-        figures = set(document.figure_links)
-
-        def figure_problem(link: str) -> str | None:
-            if link in figures:
-                return None
-            return (
-                f"figure {link!r} has no submitted content: make sure the file "
-                f"exists next to {path} (copy it out first if it was produced "
-                "on the sandbox), then resubmit the report to submit it"
-            )
-
-        exhibit = preferred_artifact(
-            artifacts=experiment.get("current_attempt_artifacts") or [],
-            roles=(EXHIBIT_ROLE,),
-        )
-        problems = report_problems(
-            report_text,
-            figure_problem=figure_problem,
-            exhibit_path=exhibit["path"] if exhibit else None,
-        )
-        if problems:
-            raise WorkflowError(
-                "results report is not ready for experiment review: "
-                + "; ".join(problems)
-                + ". Fix the file and resubmit it (artifact.submit) — "
-                "see skills/research-workflow/report-template.md."
-            )
-
-    def _validate_logic_graph(self, *, experiment: dict[str, Any]) -> None:
-        """Block submit_results unless the current attempt's SUBMITTED logic
-        graph passes the envelope lint. The lint checks shape only (parses,
-        node budget, DAG) — the story itself is the agent's to tell and the
-        experiment reviewer's to judge."""
-        document = self._submitted_document(
-            experiment=experiment,
-            role="graph",
-            what="logic graph",
-        )
-        problems = graph_problems(document.text)
-        if problems:
-            raise WorkflowError(
-                "logic graph is not ready for experiment review: "
-                + "; ".join(problems)
-                + ". Fix the file and resubmit it (artifact.submit) — "
-                "see skills/research-workflow/graph-template.md."
-            )
+            conn.execute("UPDATE experiments SET status = ?, updated_at = ? WHERE id = ? AND project_id = ?",
+                         (after.state, now, before.id, before.project_id))
 
     def attempt_started_running_at(self, *, experiment_id: str) -> str | None:
-        """When the current attempt entered running — the metrics-exhibit
-        window start. Derived from the transition event stream: each attempt
-        passes through its clock-start transition exactly once; retries and
-        review returns to running keep the same attempt, so the latest matching
-        event belongs to the current attempt."""
+        """First actual execution start in this attempt; approval never starts a clock."""
         with closing(self.store.connect()) as conn:
             rows = conn.execute(
-                """
-                SELECT payload_json, created_at FROM events
-                WHERE target_type = 'experiment' AND target_id = ?
-                  AND type = ?
-                ORDER BY id DESC
-                """,
-                (experiment_id, EXPERIMENT_WORKFLOW.event_type),
+                "SELECT type, payload_json, created_at FROM events WHERE target_id = ? "
+                "AND type IN ('workflow.work_started', 'experiment.transitioned', 'experiment.returned_to_planned') ORDER BY id DESC",
+                (experiment_id,),
             ).fetchall()
+        started = None
         for row in rows:
+            if row["type"] == "experiment.returned_to_planned":
+                break
             try:
                 payload = json.loads(str(row["payload_json"] or "{}"))
             except json.JSONDecodeError:
                 continue
-            if payload.get("transition") == ATTEMPT_CLOCK_TRANSITION:
-                return str(row["created_at"])
-        return None
+            if ((row["type"] == "workflow.work_started" and payload.get("state") == "running")
+                    or (row["type"] == "experiment.transitioned" and payload.get("transition") == "start_running")):
+                started = str(row["created_at"])
+        return started
 
     def record_exhibit_verdict(
-        self,
-        *,
-        experiment_id: str,
-        verdict: dict[str, Any],
-        project_id: str | None = None,
+        self, *, experiment_id: str, verdict: dict[str, Any], project_id: str | None = None,
+        expected_revision: int | None = None, expected_attempt_index: int | None = None,
+        expected_artifact_ids: tuple[str, ...] | None = None, artifact_path: str = "",
+        artifact_data: bytes | None = None, conn=None,
     ) -> None:
-        """Record the exhibit outcome (runs, result files, and pin status)."""
-        with self.store.transaction() as conn:
+        """Atomically retain an exhibit and verdict for the unchanged source snapshot."""
+        if artifact_data is not None and expected_revision is None:
+            raise ValueError("pinning an exhibit requires its source workflow revision")
+        with (self.store.transaction() if conn is None else nullcontext(conn)) as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            self.store.record_event(
-                conn=conn,
-                project_id=project_id,
-                event_type="experiment.exhibit_generated",
-                target_type="experiment",
-                target_id=experiment_id,
-                payload=verdict,
-            )
+            if expected_revision is not None:
+                snapshot = self.runtime.lock(conn=conn, project_id=project_id, instance_id=experiment_id,
+                                             revision=expected_revision)
+                state = self.get_state(experiment_id=experiment_id, project_id=project_id, conn=conn)
+                if snapshot.state != "running" or state["status"] != "running" or state["attempt_index"] != expected_attempt_index:
+                    raise WorkflowError("experiment changed while its metrics exhibit was prepared; refresh before submitting results")
+                current_ids = {str(item["id"]) for item in state.get("current_attempt_artifacts") or () if item.get("role") != EXHIBIT_ROLE}
+                if expected_artifact_ids is not None and current_ids != set(expected_artifact_ids):
+                    raise WorkflowError("experiment evidence changed while its metrics exhibit was prepared; refresh before submitting results")
+            if artifact_data is not None:
+                self.artifacts.pin(tx=conn, target=ArtifactTarget("experiment", experiment_id, project_id),
+                                   path=artifact_path, role=EXHIBIT_ROLE, data=artifact_data,
+                                   title="Metrics exhibit (system-generated)")
+            self.store.record_event(conn=conn, project_id=project_id, event_type="experiment.exhibit_generated",
+                                    target_type="experiment", target_id=experiment_id, payload=verdict)
+
+
+class _ExperimentKnowledge:
+    """Transaction- and project-bound facts; graph functions own every decision."""
+
+    def __init__(self, service, conn, experiment, snapshot):
+        self.service, self.conn, self.experiment, self.snapshot = service, conn, experiment, snapshot
+        self._documents = {}
+
+    def read(self, reference: Reference):
+        experiment, conn = self.experiment, self.conn
+        if reference.kind == "experiment" and reference.id == experiment["id"]:
+            return experiment
+        if reference.kind == "project" and reference.id == experiment["project_id"]:
+            row = conn.execute("SELECT id, name, summary FROM projects WHERE id = ?", (reference.id,)).fetchone()
+            return {} if row is None else dict(row)
+        if reference.kind == "artifact":
+            return self._artifact(reference.id)
+        if reference.kind == "review":
+            return self._review(reference.id)
+        if reference.kind == "review_snapshot" and reference.id == experiment["id"]:
+            node = self.service.runtime.registry.get(self.snapshot.workflow, self.snapshot.version).node(self.snapshot.state)
+            role = node.role if node is not None else ""
+            return read_review_fact(conn=conn, project_id=experiment["project_id"], target_type="experiment",
+                                    target_id=experiment["id"], role=role, request=True,
+                                    snapshot_id=review_snapshot_id(target_type="experiment", target=experiment, snapshot=self.snapshot))
+        if reference.kind == "review_history":
+            rows = conn.execute(
+                "SELECT r.target_snapshot_id, r.verdict, r.return_to, r.notes, s.independence FROM reviews r "
+                "JOIN review_sessions s ON s.id = r.session_id WHERE r.project_id = ? AND r.target_id = ? "
+                "AND r.target_type = 'experiment' AND r.role = ? AND s.status = 'submitted' ORDER BY r.created_seq DESC",
+                (experiment["project_id"], experiment["id"], reference.id),
+            ).fetchall()
+            return {"reviews": [{**dict(row), **snapshot_from_id(snapshot_id=row["target_snapshot_id"])} for row in rows]}
+        raise NotFoundError(f"experiment fact not available: {reference.kind}/{reference.id}")
+
+    def _artifact(self, artifact_id):
+        if artifact_id in self._documents:
+            return self._documents[artifact_id]
+        experiment = self.experiment
+        history = self.service.artifacts.history(tx=self.conn, target_type="experiment", target_ids=(experiment["id"],))[experiment["id"]]
+        artifact = next((item for item in history.artifacts if item.id == artifact_id), None)
+        if artifact is None or artifact.project_id != experiment["project_id"]:
+            raise NotFoundError(f"artifact not found for this experiment: {artifact_id}")
+        fact = {"id": artifact.id, "artifact_id": artifact.artifact_id, "path": artifact.path, "role": artifact.role, "error": ""}
+        try:
+            self.service.artifacts.contents.assert_complete(artifact_ids=(artifact.artifact_id,), project_id=experiment["project_id"], tx=self.conn)
+            content = self.service.artifacts.contents.get(artifact_ids=(artifact.artifact_id,), project_id=experiment["project_id"], include="document", tx=self.conn)[0]
+            if content.data is None:
+                raise WorkflowError(f"{artifact.path} has no submitted content — resubmit it with artifact.submit")
+            fact["figure_links"] = content.figures
+            if artifact.role in {"plan", "report", "graph"}:
+                try:
+                    fact["text"] = content.data.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise WorkflowError(f"{artifact.path} is not valid UTF-8 text") from exc
+        except (NotFoundError, ValidationError, WorkflowError) as exc:
+            fact["error"] = str(exc)
+        self._documents[artifact_id] = fact
+        return fact
+
+    def _review(self, role):
+        return read_review_fact(conn=self.conn, project_id=self.experiment["project_id"], target_type="experiment",
+                                target_id=self.experiment["id"], role=role,
+                                snapshot_id=review_snapshot_id(target_type="experiment", target=self.experiment, snapshot=self.snapshot))

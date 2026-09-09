@@ -9,22 +9,20 @@ the composition-wide bag of one-use Application objects.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from typing import Any
+import json
+from typing import Any, Mapping
 
 from merv.shared.storage_guidance import storage_guidance
 
 from ..agent_sessions import AgentSessions
 from ..research_core import ResearchArtifacts as Artifacts
 from ..feed import FeedService
-from ..kernel.utils import ValidationError, parse_iso
+from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
 from ..object_storage import ObjectStorage
 from ..research_core import (
     EXPERIMENT_TERMINAL_STATUSES,
-    EXPERIMENT_WORKFLOW,
-    REFLECTION_WORKFLOW,
     Research,
-    agent_dispatch_enabled,
+    AGENT_DISPATCH_SETTING,
 )
 from ..infrastructure import RemoteSandboxes as SandboxEngine
 from .experiments.context import ExperimentContextQuery
@@ -62,6 +60,7 @@ from .workflow import (
     artifact_list_record,
     project_at_a_glance,
 )
+from .workflow_actions import WorkflowDeliveries
 
 
 class Application:
@@ -84,12 +83,19 @@ class Application:
         self.sandboxes = sandboxes
         self.objects = objects
         self.agent_sessions = agent_sessions
+        self.agent_sessions.bind_workflows(
+            assignment=self._workflow_assignment,
+            validate=self._validate_workflow_session,
+            activate=self._activate_workflow_session,
+        )
         self._mlflow = MlflowIntegration(
             research=research,
             feed=feed,
             objects=objects,
             adapter=tracking,
         )
+        self.workflow_deliveries = WorkflowDeliveries(workflows=research.workflows, research=research,
+                                                     tracking=self._mlflow, sessions=agent_sessions)
 
         self._project_context = ProjectContextQuery(
             research=research,
@@ -111,6 +117,7 @@ class Application:
             exhibits=self._exhibits,
             objects=objects,
         )
+        self.research.workflows.register_preparation("experiment", self._transition.prepare_workflow_transition)
         self._policy = StatusGuidancePolicy(
             storage_enabled=bool(getattr(objects, "enabled", False)),
             storage_guidance=storage_guidance(
@@ -131,170 +138,28 @@ class Application:
     # Coding-agent execution ----------------------------------------------
 
     def _dispatch_plan(self, *, project_id: str) -> dict[str, Any]:
-        """Everything a claim needs, in claim order: review requests first,
-        then a pending consolidation, then experiments needing an owner (the
-        published wave first). Shared with ``dispatch_queue`` so the page and
-        the runner agree on what is next."""
-        snapshot = self.research.snapshot(project_id=project_id)
-        active = [
-            experiment
-            for experiment in snapshot.experiments
-            if str(experiment["status"]) not in EXPERIMENT_TERMINAL_STATUSES
-        ]
-        active_by_id = {str(item["id"]): item for item in active}
-        published = snapshot.latest_published_reflection or {}
-        wave_ids = [
-            str(item.get("experiment_id") or "")
-            for item in published.get("materialized_experiments", [])
-        ]
-        wave_order = {
-            experiment_id: index for index, experiment_id in enumerate(wave_ids)
-        }
-        owners = sorted(
-            active,
-            key=lambda item: (
-                0 if str(item["id"]) in wave_order else 1,
-                wave_order.get(str(item["id"]), 0),
-                str(item.get("created_at") or ""),
-                str(item["id"]),
-            ),
-        )
-        workspace_by_experiment = self.agent_sessions.workspaces(
-            project_id=project_id,
-            experiment_ids=active_by_id,
-        )
-        reflection = snapshot.open_reflection or {}
-        now = datetime.now(UTC)
-        requests = [
-            request
-            for request in self.research.review_queue(project_id=project_id)["requests"]
-            if request.get("status") in {"requested", "started"}
-            and (parse_iso(request.get("expires_at")) or now) > now
-            and (
-                (
-                    request.get("target_type") == "experiment"
-                    and str(request.get("target_id") or "") in active_by_id
-                )
-                or (
-                    request.get("target_type") == "reflection"
-                    and str(request.get("target_id") or "")
-                    == str(reflection.get("id") or "")
-                    and reflection.get("status")
-                    in {"reflection_review", "consolidating"}
-                )
-            )
-        ]
-        waiting_for_review = {
-            (str(request["target_type"]), str(request["target_id"]))
-            for request in requests
-        }
-        review_candidates = [
-            {
-                **(
-                    active_by_id[str(request["target_id"])]
-                    if request["target_type"] == "experiment"
-                    else reflection
-                ),
-                "target_type": str(request["target_type"]),
-                "target_id": str(request["target_id"]),
-                "kind": "review",
-                "review_request_id": str(request["id"]),
-                "source_sha": str(
-                    (request.get("target_snapshot") or {}).get("code_sha") or ""
-                ),
-            }
-            for request in reversed(requests)
-        ]
-        consolidation_candidates: list[dict[str, Any]] = []
-        if reflection.get("status") == "consolidating" and (
-            ("reflection", str(reflection["id"])) not in waiting_for_review
-        ):
-            consolidation = reflection.get("consolidation") or {}
-            advance = consolidation.get("advance") or {}
-            review_item = next(
-                (
-                    item
-                    for item in (reflection.get("gate_checklist") or {}).get(
-                        "items", []
-                    )
-                    if item.get("kind") == "review"
-                    and item.get("role") == "consolidation_reviewer"
-                ),
-                {},
-            )
-            if not review_item.get("satisfied") or advance.get("status") in {
-                "stale",
-                "failed",
-            }:
-                proposal = consolidation.get("proposal") or {}
-                consolidation_candidates.append(
-                    {
-                        **reflection,
-                        "target_type": "reflection",
-                        "target_id": str(reflection["id"]),
-                        "kind": "consolidation",
-                        "source_sha": str(
-                            advance.get("observed_sha")
-                            or proposal.get("base_sha")
-                            or ""
-                        ),
-                    }
-                )
-        owner_candidates = [
-            {
-                **experiment,
-                "target_type": "experiment",
-                "target_id": str(experiment["id"]),
-                "kind": "experiment",
-                "source_sha": str(
-                    workspace_by_experiment.get(str(experiment["id"]), {}).get(
-                        "head_sha"
-                    )
-                    or ""
-                ),
-            }
-            for experiment in owners
-            if ("experiment", str(experiment["id"])) not in waiting_for_review
-        ]
-        return {
-            "snapshot": snapshot,
-            "active_by_id": active_by_id,
-            "reflection": reflection,
-            "requests": requests,
-            "candidates": review_candidates + consolidation_candidates + owner_candidates,
-        }
+        """Queue every registered graph's dispatchable nodes from one evaluation."""
+        self.workflow_deliveries.run_once(project_id=project_id)
+        candidates = self.research.workflows.candidates(project_id=project_id)
+        # Reviews release waiting research, but the scheduler knows no workflow
+        # names, native states, reviewer roles, or forward-path assumptions.
+        candidates.sort(key=lambda item: not bool((item.get("execution") or {}).get("read_only")))
+        return {"project": self.research.get_project(project_id=project_id), "candidates": candidates}
 
     def dispatch_queue(self, *, project_id: str) -> list[dict[str, Any]]:
-        """What auto-run would pick up next, in order, whether or not anything
-        can pick it up right now: candidates without a live session. Read-only;
-        the page shows these as waiting rows and counts them in its headline."""
         plan = self._dispatch_plan(project_id=project_id)
         live = self.agent_sessions.live_targets(project_id=project_id)
-        queue: list[dict[str, Any]] = []
-        for candidate in plan["candidates"]:
-            kind = str(candidate.get("kind") or "experiment")
-            key = (
-                ("review", str(candidate.get("review_request_id") or ""))
-                if kind == "review"
-                else (kind, str(candidate.get("target_type") or ""), str(candidate.get("target_id") or ""))
-            )
-            if key in live:
-                continue
-            title = str(candidate.get("name") or "")
-            if not title and str(candidate.get("target_type") or "") == "reflection":
-                title = "Project reflection"
-            queue.append(
-                {
-                    "target_type": str(candidate.get("target_type") or ""),
-                    "target_id": str(candidate.get("target_id") or ""),
-                    "kind": kind,
-                    "review_request_id": str(candidate.get("review_request_id") or ""),
-                    "title": title,
-                    "status": str(candidate.get("status") or ""),
-                    "attempt_index": int(candidate.get("attempt_index") or 0),
-                }
-            )
-        return queue
+        return [
+            {
+                "target_type": candidate["workflow"], "target_id": candidate["instance_id"],
+                "instance_id": candidate["instance_id"], "revision": candidate["revision"],
+                "kind": (candidate["execution"]["workspace"]
+                         if candidate["execution"]["workspace"] in {"review", "consolidation"} else "workflow"),
+                "role": candidate["role"], "title": candidate["label"], "status": candidate["state"],
+            }
+            for candidate in plan["candidates"]
+            if ("workflow", str(candidate["instance_id"]), str(candidate["revision"])) not in live
+        ]
 
     def list_agent_sessions(
         self, *, project_id: str, queue_limit: int = 50
@@ -332,228 +197,81 @@ class Application:
         }
 
     def claim_agent_session(
-        self,
-        *,
-        project_id: str,
-        runner_id: str,
-        platform: str,
-        idempotency_key: str,
-        session_secret: str,
-        source_key_id: str = "",
-        source_user_id: str = "",
-        hard_deadline_seconds: int = 24 * 60 * 60,
+        self, *, project_id: str, runner_id: str, platform: str,
+        idempotency_key: str, session_secret: str, source_key_id: str = "",
+        source_user_id: str = "", hard_deadline_seconds: int = 24 * 60 * 60,
     ) -> dict[str, Any]:
-        """Assign the next experiment, review, or consolidation task."""
+        """Lease one node; the node owns its brief and its completion boundary."""
         plan = self._dispatch_plan(project_id=project_id)
-        if not agent_dispatch_enabled(plan["snapshot"].project):
+        if not plan["project"]["settings"].get(AGENT_DISPATCH_SETTING, False):
             return {"session": None, "reason": "agent_dispatch_disabled"}
-        active_by_id = plan["active_by_id"]
-        reflection = plan["reflection"]
-        requests = plan["requests"]
         session = self.agent_sessions.claim(
-            project_id=project_id,
-            candidates=plan["candidates"],
-            runner_id=runner_id,
-            platform=platform,
-            idempotency_key=idempotency_key,
-            session_secret=session_secret,
-            source_key_id=source_key_id,
-            source_user_id=source_user_id,
+            project_id=project_id, candidates=plan["candidates"], runner_id=runner_id,
+            platform=platform, idempotency_key=idempotency_key, session_secret=session_secret,
+            source_key_id=source_key_id, source_user_id=source_user_id,
             hard_deadline_seconds=hard_deadline_seconds,
         )
         if session is None:
             return {"session": None, "reason": "no_dispatchable_agent_task"}
-        target_type = str(session["target_type"])
-        target_id = str(session["target_id"])
-        target = (
-            active_by_id.get(target_id)
-            if target_type == "experiment"
-            else reflection if target_type == "reflection" else None
-        )
-        if target is None or session["status"] not in {"offered", "active"}:
+        if session["status"] not in {"offered", "active"}:
             return {"session": session, "reason": "idempotent_session_closed"}
-        request: dict[str, Any] | None = None
-        if session["kind"] == "review":
-            request = next(
-                (
-                    item
-                    for item in requests
-                    if item["id"] == session["review_request_id"]
-                ),
-                None,
-            )
-            if request is None:
-                return {"session": session, "reason": "review_request_closed"}
-            workflow = (
-                EXPERIMENT_WORKFLOW
-                if target_type == "experiment"
-                else REFLECTION_WORKFLOW
-            )
-            review = workflow.review(str(request["role"]))
-            skill = str(getattr(review, "skill", "") or "review")
-            session["instruction"] = (
-                f"Independently review Merv {target_type} {target_id} for "
-                f"request {request['id']}. Follow the {skill} "
-                "skill. Begin with review.start using this review_request_id; "
-                "the assigned session credential supplies reviewer authority, "
-                "so pass reviewer_capability='assigned' and "
-                "caller_session_id='assigned' (Merv replaces it with this "
-                "session's verified identity). Submit exactly one verdict with "
-                "review.submit. If this platform has no native MCP support, "
-                "invoke tools with `merv-client call TOOL --arguments JSON`."
-            )
-        elif session["kind"] == "consolidation":
-            session["instruction"] = (
-                f"Consolidate the code for authoritative Merv reflection "
-                f"{target_id} in project {project_id}. Start with "
-                "consolidation.get. Review every experiment in its packet, "
-                "then use this proposal worktree to select, combine, rewrite, "
-                "or omit code as needed. Run appropriate validation, commit "
-                "the coherent proposal, and call consolidation.submit with "
-                "the exact base/proposal SHAs and one reasoned decision for "
-                "every experiment. Each decision must name its actual Git "
-                "integration kind; Merv supplies the experiment branch head "
-                "and the runner verifies ancestry. Then call review.request "
-                "with target_type="
-                "'reflection', this reflection id, and role="
-                "'consolidation_reviewer'; end this host session and do not "
-                "perform the review yourself. The reflection is authoritative "
-                "and cannot be reopened. If this platform has no native MCP "
-                "support, invoke tools with `merv-client call TOOL --arguments JSON`."
-            )
-        else:
-            session["instruction"] = (
-                f"Resume Merv experiment {target_id} "
-                f"({target.get('name') or 'unnamed experiment'}) in project "
-                f"{project_id}. Use workflow.status_and_next for this exact "
-                "experiment and follow the research-workflow instructions until "
-                "the experiment reaches a terminal state. When review is "
-                "required, call review.request, then end this host session; do "
-                "not spawn or perform the review yourself. Merv will dispatch "
-                "the request to a separately authenticated reviewer session. "
-                "If this platform has no native MCP support, invoke tools with "
-                "`merv-client call TOOL --arguments JSON`."
-            )
-        instruction = str(session["instruction"])
-        assignment = self._agent_assignment(
-            project_id=project_id,
-            project=plan["snapshot"].project,
-            session=session,
-            target=target,
-            request=request,
-            instruction=instruction,
-        )
-        session = self.agent_sessions.set_assignment(
-            session_id=str(session["id"]),
-            assignment=assignment,
-        )
-        session["instruction"] = instruction
         return {"session": session}
 
-    def _agent_assignment(
-        self,
-        *,
-        project_id: str,
-        project: dict[str, Any],
-        session: dict[str, Any],
-        target: dict[str, Any],
-        request: dict[str, Any] | None,
-        instruction: str,
+    def _workflow_assignment(
+        self, tx: Any, project_id: str, instance_id: str, revision: int,
     ) -> dict[str, Any]:
-        """Build the immutable, human-readable packet shown in Auto-run."""
-        kind = str(session.get("kind") or "experiment")
-        target_type = str(session.get("target_type") or "experiment")
-        attempt = max(int(session.get("attempt_index") or 0), 0)
-        project_name = str(project.get("name") or "Project")
-        target_name = (
-            str(target.get("name") or "Experiment")
-            if target_type == "experiment"
-            else "Project reflection"
+        runtime = self.research.workflows.runtime
+        runtime.require_assignment(conn=tx, project_id=project_id, instance_id=instance_id, revision=revision)
+        packet = runtime.assignment(conn=tx, project_id=project_id, instance_id=instance_id)
+        instruction = (
+            f"{packet['label']}\nProject: {project_id}\n"
+            f"Workflow: {packet['workflow']} {instance_id}; node {packet['state']}; revision {revision}.\n\n"
+            f"{packet['brief']}\n\nExact references:\n"
+            + json.dumps(packet["references"], indent=2)
+            + f"\n\n{packet['handoff']}\n"
+            "Use workflow.status_and_next with this instance_id to refresh available actions. "
+            "Workflow transitions must carry this instance_id, expected_revision, and a stable request_id. "
+            "If native MCP is unavailable, use `merv-client call TOOL --arguments JSON`."
         )
-        role = str((request or {}).get("role") or "")
-        title = "Run experiment"
-        task = "Run experiment"
-        section = "execution"
-        artifact_label = ""
-        artifact_id = ""
-        if kind == "consolidation":
-            title = task = "Consolidate reflection"
-            section = ""
-        elif kind == "review":
-            title, task, section, artifact_role = {
-                "design_reviewer": (
-                    "Review plan",
-                    "Review experiment plan",
-                    "design",
-                    "plan",
-                ),
-                "attempt_reviewer": (
-                    "Review results",
-                    "Review experiment results",
-                    "report",
-                    "report",
-                ),
-                "reflection_reviewer": (
-                    "Review reflection",
-                    "Review project reflection",
-                    "",
-                    "reflection_doc",
-                ),
-                "consolidation_reviewer": (
-                    "Review consolidation",
-                    "Review code consolidation",
-                    "",
-                    "change_spec",
-                ),
-            }.get(role, ("Review work", "Review assigned work", "", ""))
-            snapshot_artifacts = (request or {}).get("target_snapshot", {}).get(
-                "artifacts", []
+        if any(ref["kind"] == "review_request" for ref in packet["references"]):
+            instruction += (
+                "\nThe assigned credential supplies reviewer authority. Start the referenced review "
+                "with reviewer_capability='assigned' and caller_session_id='assigned'; Merv binds "
+                "them to this independent session. Submit one verdict and exit."
             )
-            artifact_ref = next(
-                (
-                    str(item.get("artifact_id") or "")
-                    for item in snapshot_artifacts
-                    if str(item.get("role") or "") == artifact_role
-                ),
-                "",
-            )
-            if artifact_ref:
-                found = self.artifacts.get(
-                    artifact_ids=(artifact_ref,),
-                    project_id=project_id,
-                )
-                if found:
-                    artifact = found[0]
-                    artifact_id = artifact.id
-                    artifact_label = artifact.title or {
-                        "plan": "Experiment plan",
-                        "report": "Results report",
-                        "reflection_doc": "Project reflection",
-                        "change_spec": "Change specification",
-                    }.get(artifact.role, artifact.path)
-
-        packet: dict[str, Any] = {
-            "task": task,
-            "project": project_name,
-            "attempt": attempt,
-        }
-        packet["experiment" if target_type == "experiment" else "reflection"] = (
-            target_name
-        )
-        if artifact_label:
-            packet["artifact"] = artifact_label
         return {
-            "schema_version": 1,
-            "title": title,
-            "subtitle": target_name,
-            "packet": packet,
-            "navigation": {
-                "type": target_type,
-                "target_id": str(session.get("target_id") or ""),
-                "section": section,
-                "artifact_id": artifact_id,
-            },
+            **packet, "schema_version": 2, "instruction": instruction,
+            "title": packet["label"], "subtitle": packet["workflow"],
+            "packet": {"task": packet["label"], "workflow": packet["workflow"],
+                       "project": project_id, "revision": revision},
+            "navigation": {"type": packet["workflow"], "target_id": instance_id},
         }
+
+    def _validate_workflow_session(self, tx: Any, row: Mapping[str, Any]) -> str:
+        try:
+            packet = self.research.workflows.runtime.assignment(
+                conn=tx, project_id=str(row["project_id"]), instance_id=str(row["workflow_instance_id"]),
+            )
+            if int(packet["revision"]) != int(row["workflow_revision"]):
+                return "workflow_assignment_changed"
+        except (WorkflowError, NotFoundError):
+            return "workflow_assignment_changed"
+        if str(packet["state"]) != str(row["workflow_node"]):
+            return "workflow_node_changed"
+        workspace = str(packet["execution"]["workspace"])
+        expected_kind = workspace if workspace in {"review", "consolidation"} else "workflow"
+        if str(row["kind"]) != expected_kind and not (str(row["kind"]) == "experiment" and expected_kind == "workflow"):
+            return "workflow_role_changed"
+        request_id = next((ref["id"] for ref in packet["references"] if ref["kind"] == "review_request"), "")
+        if str(request_id) != str(row["review_request_id"] or ""):
+            return "review_request_changed"
+        return ""
+
+    def _activate_workflow_session(self, tx: Any, row: Mapping[str, Any]) -> None:
+        self.research.workflows.activate(
+            conn=tx, project_id=str(row["project_id"]), instance_id=str(row["workflow_instance_id"]),
+            revision=int(row["workflow_revision"]), session_id=str(row["id"]),
+        )
 
     def attach_agent_session(
         self,
@@ -717,7 +435,10 @@ class Application:
         project_id: str | None = None,
         experiment_id: str | None = None,
         task_id: str | None = None,
+        instance_id: str | None = None,
     ) -> dict[str, Any]:
+        if instance_id is not None:
+            return self.research.workflows.describe(project_id=str(project_id or ""), instance_id=instance_id)
         return self._workflow.status_and_next_agent(
             project_id=project_id,
             experiment_id=experiment_id,

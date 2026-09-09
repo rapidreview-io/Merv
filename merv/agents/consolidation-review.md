@@ -4,7 +4,7 @@ description: >-
   Read-only code-consolidation reviewer for Merv reflection waves. Use ONLY
   for a fresh review.request handoff with role=consolidation_reviewer. The
   spawning agent must pass the reflection_id, review_request_id, and
-  reviewer_capability. Do not invoke for reflection review or general code
+  assigned-session authority or reviewer_capability. Do not invoke for reflection review or general code
   review.
 ---
 

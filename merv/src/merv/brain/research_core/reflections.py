@@ -1,14 +1,9 @@
 # If you update this file, you must consult research_core.md to see whether research_core.md needs to be updated. research_core.md must not exceed 100 lines.
-"""Project reflection wave state service.
+"""Reflection records, immutable evidence, and reviewed publication transactions.
 
-A reflection wave is the project-level counterpart of an experiment: a gated
-record whose artifacts are the living project logic graph (role
-'project_graph'), a concise reflection document (role 'reflection_doc'), and
-the reviewed change spec (role 'change_spec'), produced by reconciling a
-roster of differentiated per-lens reflections (role 'reflection_lens_doc').
-Gates check envelopes only; the story's honesty and the belief-state update
-are the reflection reviewer's call, and what the graph says is the agent's
-design.
+Workflow definitions own decisions, validation, assignments, and composition.
+This adapter supplies project-scoped facts and keeps the native record, sealed
+evidence, reserved names, central receipts, and materialized wave consistent.
 """
 
 from __future__ import annotations
@@ -39,8 +34,6 @@ from .evidence import (
     parse_change_spec,
     preferred_artifact,
     reflection_coverage_for,
-    reflection_doc_review_problems,
-    reflection_lens_doc_problems,
     require_artifact_document,
     validate_reflection_roster,
 )
@@ -56,16 +49,17 @@ from .artifact_models import ArtifactTarget
 from .policy import (
     ACTIVE_EXPERIMENT_CAP,
     GateEvaluation,
-    GateItem,
     RequirementEvaluation,
     active_experiment_cap_would_exceed_message,
     covered_terminal_ids,
-    evaluate_artifact_requirement,
     evaluate_review_gate,
     reflection_signal_state,
+    review_snapshot_id,
+    read_review_fact,
     snapshot_from_id,
 )
-from .workflow_schema import ArtifactNeed, RecordNeed, ReviewReturn
+from .workflow_schema import RecordNeed, Workflow
+from ..workflows import Reference, Runtime, Snapshot, documents
 from ..kernel.state.store import (
     BaseStateStore,
     next_created_seq,
@@ -91,14 +85,14 @@ class ReflectionService:
         store: BaseStateStore,
         artifacts: Artifacts,
         experiments: ExperimentService,
-        tasks: TaskService | None = None,
+        tasks: TaskService,
+        runtime: Runtime,
     ) -> None:
         self.store = store
         self.artifacts = artifacts
         self.experiments = experiments
-        self.tasks = (
-            tasks if tasks is not None else TaskService(store=store, artifacts=artifacts)
-        )
+        self.tasks = tasks
+        self.runtime = runtime
 
     # ---- create ----
 
@@ -109,65 +103,76 @@ class ReflectionService:
         lenses: list[dict[str, Any]] | None = None,
         project_id: str | None = None,
     ) -> dict[str, Any]:
-        roster = validate_reflection_roster(lenses=lenses or [])
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            terminal = tuple(sorted(REFLECTION_WORKFLOW.terminal_statuses))
-            placeholders = ", ".join("?" for _ in terminal)
-            open_row = conn.execute(
-                f"""
-                SELECT id, status FROM reflections
-                WHERE project_id = ? AND status NOT IN ({placeholders})
-                ORDER BY created_seq DESC LIMIT 1
-                """,
-                (project_id, *terminal),
-            ).fetchone()
-            if open_row is not None:
-                raise WorkflowError(
-                    f"a reflection wave is already open: {open_row['id']} is "
-                    f"{open_row['status']!r}. Finish or abandon it before "
-                    "starting a new one — the project graph is one living "
-                    "artifact and only one wave may edit it at a time"
-                )
-            reflection_id = new_id(prefix="syn")
-            now = now_iso()
-            corpus = self._corpus_snapshot(conn=conn, project_id=project_id)
-            conn.execute(
-                """
-                INSERT INTO reflections
-                  (id, project_id, title, status, attempt_index, revision_context,
-                   roster_json, corpus_json, created_at, updated_at, created_seq)
-                VALUES (?, ?, ?, ?, 1, '', ?, ?, ?, ?, ?)
-                """,
-                (
-                    reflection_id,
-                    project_id,
-                    title.strip(),
-                    REFLECTION_WORKFLOW.initial,
-                    json.dumps(roster, sort_keys=True),
-                    json.dumps(corpus, sort_keys=True),
-                    now,
-                    now,
-                    next_created_seq(conn=conn, table="reflections"),
-                ),
+            return self._create_in_transaction(conn=conn, project_id=project_id, title=title, lenses=lenses)
+
+    def initialize_workflow(self, conn, snapshot: Snapshot) -> None:
+        self._create_in_transaction(conn=conn, project_id=snapshot.project_id,
+                                    title=str(snapshot.data.get("title") or ""),
+                                    lenses=[dict(lens) for lens in snapshot.data.get("lenses") or ()], workflow_instance=snapshot)
+
+    def _create_in_transaction(self, *, conn, project_id, title, lenses, workflow_instance=None):
+        roster = validate_reflection_roster(lenses=lenses or [])
+        terminal = tuple(sorted(REFLECTION_WORKFLOW.terminal_statuses))
+        placeholders = ", ".join("?" for _ in terminal)
+        open_row = conn.execute(
+            f"""
+            SELECT id, status FROM reflections
+            WHERE project_id = ? AND status NOT IN ({placeholders})
+            ORDER BY created_seq DESC LIMIT 1
+            """,
+            (project_id, *terminal),
+        ).fetchone()
+        if open_row is not None:
+            raise WorkflowError(
+                f"a reflection wave is already open: {open_row['id']} is "
+                f"{open_row['status']!r}. Finish or abandon it before "
+                "starting a new one — the project graph is one living "
+                "artifact and only one wave may edit it at a time"
             )
-            self.store.record_event(
-                conn=conn,
-                project_id=project_id,
-                event_type="reflection.created",
-                target_type="reflection",
-                target_id=reflection_id,
-                payload={
-                    "title": title.strip(),
-                    "lenses": [lens["id"] for lens in roster],
-                    "corpus_terminal_experiments": len(corpus["terminal_experiments"]),
-                },
-            )
-            return self.get_state(
-                reflection_id=reflection_id,
-                conn=conn,
-                include_content=True,
-            )
+        reflection_id = new_id(prefix="syn") if workflow_instance is None else workflow_instance.id
+        now = now_iso()
+        corpus = self._corpus_snapshot(conn=conn, project_id=project_id)
+        conn.execute(
+            """
+            INSERT INTO reflections
+              (id, project_id, title, status, attempt_index, revision_context,
+               roster_json, corpus_json, created_at, updated_at, created_seq)
+            VALUES (?, ?, ?, ?, 1, '', ?, ?, ?, ?, ?)
+            """,
+            (
+                reflection_id,
+                project_id,
+                title.strip(),
+                REFLECTION_WORKFLOW.initial,
+                json.dumps(roster, sort_keys=True),
+                json.dumps(corpus, sort_keys=True),
+                now,
+                now,
+                next_created_seq(conn=conn, table="reflections"),
+            ),
+        )
+        self.store.record_event(
+            conn=conn,
+            project_id=project_id,
+            event_type="reflection.created",
+            target_type="reflection",
+            target_id=reflection_id,
+            payload={
+                "title": title.strip(),
+                "lenses": [lens["id"] for lens in roster],
+                "corpus_terminal_experiments": len(corpus["terminal_experiments"]),
+            },
+        )
+        if workflow_instance is None:
+            self.runtime.adopt(conn=conn, project_id=project_id, instance_id=reflection_id,
+                               workflow="reflection", state="reflecting", data={"attempt_index": 1})
+        return self.get_state(
+            reflection_id=reflection_id,
+            conn=conn,
+            include_content=True,
+        )
 
     def _corpus_snapshot(self, *, conn, project_id: str) -> dict[str, Any]:
         terminal = ", ".join(f"'{s}'" for s in sorted(EXPERIMENT_TERMINAL_STATUSES))
@@ -356,13 +361,35 @@ class ReflectionService:
                 summarize=True,
             )[reflection_id]
             data["artifacts"] = [
-                artifact_state_record(evidence) for evidence in history.artifacts
+                {**artifact_state_record(evidence), "artifact_id": evidence.artifact_id} for evidence in history.artifacts
             ]
             # Newest row per slot — the reflection wave seals on its forward
             # transitions too, so superseded lens docs stay alive as history.
             data["current_attempt_artifacts"] = current_slot_artifacts(
                 data["artifacts"], attempt=data["attempt_index"]
             )
+            workflow_row = conn.execute(
+                "SELECT data_json, revision FROM workflow_instances WHERE id = ? AND project_id = ?",
+                (reflection_id, data["project_id"]),
+            ).fetchone()
+            if workflow_row is not None:
+                workflow_data = json.loads(workflow_row["data_json"])
+                pinned_lenses = dict(workflow_data.get("lens_artifacts") or {})
+                child_rows = conn.execute(
+                    "SELECT child_key, data_json FROM workflow_instances WHERE parent_id = ? AND parent_revision = ? "
+                    "AND project_id = ? AND outcome = 'submitted'",
+                    (reflection_id, workflow_row["revision"], data["project_id"]),
+                ).fetchall()
+                pinned_lenses.update((child["child_key"], json.loads(child["data_json"])["artifact_id"]) for child in child_rows)
+                if pinned_lenses:
+                    by_id = {(item.get("lens_id"), item["id"]): item for item in data["artifacts"]}
+                    for item in data["artifacts"]:
+                        if item.get("artifact_id") and item.get("attempt_index") == data["attempt_index"]:
+                            by_id.setdefault((item.get("lens_id"), item["artifact_id"]), item)
+                    data["current_attempt_artifacts"] = [
+                        item for item in data["current_attempt_artifacts"]
+                        if item.get("role") != REFLECTION_LENS_DOC_ROLE or item.get("lens_id") not in pinned_lenses
+                    ] + [by_id[(lens_id, artifact_id)] for lens_id, artifact_id in pinned_lenses.items() if (lens_id, artifact_id) in by_id]
             if include_content:
                 content = self._artifact_content(
                     corpus=data["corpus"],
@@ -1070,227 +1097,104 @@ class ReflectionService:
         )
 
     def _evaluate_gate(self, *, conn, reflection: dict[str, Any]) -> GateEvaluation:
-        """Collect reflection facts once for enforcement, state, and guidance."""
-        status = str(reflection.get("status") or "")
-        workflow_state = REFLECTION_WORKFLOW.state(status)
-        requirements: list[RequirementEvaluation] = []
-        if workflow_state is not None and status == REFLECTION_WORKFLOW.initial:
-            requirements.append(
-                self._evaluate_roster_gate(
-                    conn=conn,
-                    reflection=reflection,
-                    requirement=workflow_state.requirements[0],
-                )
-            )
-        elif workflow_state is not None:
-            for requirement in workflow_state.requirements:
-                if isinstance(requirement, RecordNeed):
-                    requirements.append(
-                        self._evaluate_record_requirement(
-                            reflection=reflection,
-                            requirement=requirement,
-                        )
-                    )
-                    continue
-                artifact = current_reflection_requirement_artifact(
-                    reflection=reflection, role=requirement.role
-                )
-                present = artifact is not None
-                problems: tuple[str, ...] = ()
-                if present and requirement.validator:
-                    try:
-                        self._run_validator(
-                            conn=conn, reflection=reflection, name=requirement.validator
-                        )
-                    except WorkflowError as exc:
-                        problems = (str(exc),)
-                requirements.append(
-                    evaluate_artifact_requirement(
-                        requirement,
-                        present=present,
-                        problems=problems,
-                        artifact_fields=(
-                            None
-                            if artifact is None
-                            else {
-                                "path": artifact.get("path"),
-                                "artifact_id": artifact.get("id"),
-                                "submitted_role": artifact.get("role"),
-                            }
-                        ),
-                    )
-                )
+        """Evaluate the registered graph once; legacy checklist is a projection."""
+        status = str(reflection["status"])
+        row = conn.execute("SELECT id FROM workflow_instances WHERE id = ? AND project_id = ?",
+                           (reflection["id"], reflection["project_id"])).fetchone()
+        snapshot = (self.runtime.get(project_id=reflection["project_id"], instance_id=reflection["id"], conn=conn)
+                    if row is not None else Snapshot(id=reflection["id"], project_id=reflection["project_id"],
+                        workflow="reflection", version=1, state=status, revision=0))
+        decision = self.runtime.registry.get("reflection", snapshot.version).evaluate(snapshot, _ReflectionKnowledge(self, conn, reflection, snapshot))
+        workflow = Workflow(self.runtime.registry.get("reflection", snapshot.version), REFLECTION_WORKFLOW.metadata)
+        workflow_state = workflow.state(snapshot.state)
+        all_issues = tuple(issue for action in decision.actions for issue in action.issues)
+        requirements = []
+        for need in () if workflow_state is None else workflow_state.requirements:
+            role = need.name if isinstance(need, RecordNeed) else need.role
+            issue = next((item for item in all_issues if item.code in {need.gate, f"{role}_invalid"}), None)
+            artifact = current_reflection_requirement_artifact(reflection=reflection, role=role)
+            items = ({"id": f"requirement:{role}", "kind": "record" if isinstance(need, RecordNeed) else "artifact",
+                      "role": role, "label": need.label, "satisfied": issue is None,
+                      "status": "valid" if issue is None else "missing", "gate": need.gate,
+                      "action": need.action, "missing": "" if issue is None else need.missing,
+                      **({} if artifact is None else {"artifact_id": artifact.get("id"), "path": artifact.get("path")})},)
+            requirements.append(RequirementEvaluation(role=role, status="valid" if issue is None else "missing",
+                                blocker_code="" if issue is None else issue.code,
+                                enforcement_error="" if issue is None else issue.message,
+                                problems=() if issue is None else (issue.message,), items=items))
+        review = (None if workflow_state is None or workflow_state.review is None else evaluate_review_gate(
+                    conn=conn, target_type="reflection", target=reflection, review=workflow_state.review, snapshot=snapshot))
+        return GateEvaluation(workflow=workflow, status=status, requirements=tuple(requirements),
+                              review=review, decision=decision)
 
-        review = (
-            None
-            if workflow_state is None or workflow_state.review is None
-            else evaluate_review_gate(
-                conn=conn,
-                target_type="reflection",
-                target=reflection,
-                review=workflow_state.review,
-            )
-        )
-        return GateEvaluation(
-            workflow=REFLECTION_WORKFLOW,
-            status=status,
-            requirements=tuple(requirements),
-            review=review,
-        )
+    def _workflow_knowledge(self, snapshot: Snapshot, conn):
+        reflection = self.get_state(reflection_id=snapshot.id, project_id=snapshot.project_id, conn=conn)
+        projected = "consolidating" if snapshot.state == "consolidation_review" else snapshot.state
+        if reflection["status"] != projected:
+            raise WorkflowError("reflection state differs from its workflow instance; an explicit migration is required")
+        return _ReflectionKnowledge(self, conn, reflection, snapshot)
+
+    def _lens_knowledge(self, snapshot: Snapshot, conn):
+        reflection = self.get_state(reflection_id=str(snapshot.data["reflection_id"]), project_id=snapshot.project_id, conn=conn)
+        if str(snapshot.data["lens_id"]) not in {str(item["id"]) for item in reflection["roster"]}:
+            raise WorkflowError("lens does not belong to this reflection's fixed roster")
+        return _ReflectionKnowledge(self, conn, reflection, snapshot)
+
+    def initialize_lens(self, conn, snapshot: Snapshot) -> None:
+        parent = conn.execute(
+            "SELECT p.id, p.project_id, p.revision, p.state, c.parent_revision, c.child_key "
+            "FROM workflow_instances c JOIN workflow_instances p ON p.id = c.parent_id WHERE c.id = ?",
+            (snapshot.id,),
+        ).fetchone()
+        if (parent is None or parent["id"] != snapshot.data.get("reflection_id") or parent["project_id"] != snapshot.project_id
+                or parent["child_key"] != snapshot.data.get("lens_id") or parent["state"] != "reflecting"
+                or parent["revision"] != parent["parent_revision"]):
+            raise WorkflowError("Reflection lenses must be created by their parent's fixed composition.")
+        knowledge = self._lens_knowledge(snapshot, conn)
+        reflection = knowledge.read(Reference("reflection", parent["id"]))
+        if int(snapshot.data.get("attempt_index") or 0) != int(reflection["attempt_index"]):
+            raise WorkflowError("Reflection lens attempt does not match its parent.")
+        if snapshot.outcome == "submitted":
+            self._commit_lens_change(conn, snapshot, snapshot, "adopt_lens", {})
+
+    def _wave_knowledge(self, snapshot: Snapshot, conn):
+        reflection = self.get_state(reflection_id=str(snapshot.data.get("reflection_id") or ""),
+                                    project_id=snapshot.project_id, conn=conn)
+        if reflection["status"] != "published":
+            raise WorkflowError("A research wave can start only from a published reflection.")
+        return _ReflectionKnowledge(self, conn, reflection, snapshot)
+
+    def initialize_wave(self, conn, snapshot: Snapshot) -> None:
+        self._wave_knowledge(snapshot, conn)
+        row = conn.execute("SELECT start_key FROM workflow_instances WHERE id = ? AND project_id = ?",
+                           (snapshot.id, snapshot.project_id)).fetchone()
+        key = f"reflection-wave:{snapshot.data['reflection_id']}"
+        if row["start_key"] != f"client:{key}":
+            raise WorkflowError(f"A published reflection has one research wave; start it with request_id={key!r}.")
 
     @staticmethod
-    def _evaluate_record_requirement(
-        *, reflection: dict[str, Any], requirement: RecordNeed
-    ) -> RequirementEvaluation:
-        consolidation = reflection.get("consolidation") or {}
-        proposal = consolidation.get("proposal") or {}
-        coverage = consolidation.get("coverage") or {}
-        advance = consolidation.get("advance") or {}
-        if requirement.name == "consolidation_proposal":
-            satisfied = bool(proposal) and bool(coverage.get("complete"))
-            fields = {
-                "proposal_id": proposal.get("id"),
-                "proposal_sha": proposal.get("proposal_sha"),
-                "coverage": coverage,
-            }
-        elif requirement.name == "central_advance":
-            satisfied = bool(proposal) and (
-                advance.get("status") == "bound"
-                and advance.get("proposal_id") == proposal.get("id")
-                and advance.get("observed_sha") == proposal.get("proposal_sha")
-            )
-            fields = {
-                "advance_id": advance.get("id"),
-                "status": advance.get("status") or "pending",
-                "observed_sha": advance.get("observed_sha") or "",
-            }
-        else:  # pragma: no cover - workflow declaration is import-validated
-            raise RuntimeError(
-                f"unknown reflection record requirement: {requirement.name}"
-            )
-        return RequirementEvaluation(
-            role=requirement.name,
-            status="valid" if satisfied else "missing",
-            blocker_code="" if satisfied else requirement.gate,
-            enforcement_error="" if satisfied else requirement.error,
-            problems=(),
-            items=(
-                {
-                    "id": f"record:{requirement.name}",
-                    "kind": "record",
-                    "role": requirement.name,
-                    "label": requirement.label,
-                    "satisfied": satisfied,
-                    "status": "valid" if satisfied else "missing",
-                    "gate": requirement.gate,
-                    "action": requirement.action,
-                    "missing": requirement.missing if not satisfied else "",
-                    **fields,
-                },
-            ),
-        )
+    def _commit_wave_change(conn, before, after, action, payload) -> None:
+        # The composition owns only workflow state; member records are bound
+        # independently and retain their own state, revisions, and effects.
+        return None
 
-    def _evaluate_roster_gate(
-        self,
-        *,
-        conn,
-        reflection: dict[str, Any],
-        requirement: ArtifactNeed,
-    ) -> RequirementEvaluation:
-        coverage = reflection.get("reflection_coverage") or {}
-        by_lens = {
-            str(item.get("lens_id") or ""): item
-            for item in coverage.get("lenses") or []
-        }
-        missing_lenses = list(coverage.get("missing") or [])
-        has_association = any(
-            item.get("role") == requirement.role
-            for item in reflection.get("current_attempt_artifacts") or []
-        )
-        missing_error = ""
-        if missing_lenses:
-            missing_error = (
-                requirement.error
-                if not has_association
-                else (
-                    "reflections are missing for lens(es): "
-                    + ", ".join(missing_lenses)
-                    + " — each roster lens must have its own reflection submitted "
-                    "(artifact.submit with role 'reflection_lens_doc' and its "
-                    "lens_id) for the current attempt, by its own subagent"
-                )
-            )
-        invalid: dict[str, str] = {}
-        if not missing_lenses:
-            for lens in coverage.get("lenses") or []:
-                lens_id, path = str(lens["lens_id"]), str(lens["path"])
-                try:
-                    text = self._read_document(
-                        artifact_id=str(lens.get("artifact_id") or ""),
-                        what=f"reflection {lens_id!r}",
-                    ).text
-                    problems = reflection_lens_doc_problems(text)
-                    if problems:
-                        invalid[lens_id] = (
-                            f"reflection for lens {lens_id!r} ({path}) is not ready: "
-                            + "; ".join(problems)
-                            + " — add a ## Summary with the lens's macro-level "
-                            "finding, then resubmit it (artifact.submit)"
-                        )
-                except WorkflowError as exc:
-                    invalid[lens_id] = str(exc)
+    def migrate_workflow_instances(self, conn) -> None:
+        """Explicit v1 adoption of fixed lens sets after the kernel backfill.
 
-        items: list[GateItem] = []
-        for lens in reflection.get("roster") or []:
-            lens_id = str(lens.get("id") or "")
-            found = by_lens.get(lens_id) or {}
-            covered = bool(found.get("covered"))
-            problem = invalid.get(lens_id, "")
-            item: GateItem = {
-                "id": f"reflection_lens:{lens_id}",
-                "kind": "reflection_lens",
-                "role": requirement.role,
-                "lens_id": lens_id,
-                "label": f"{str(lens.get('title') or lens_id)} reflection submitted",
-                "satisfied": covered and not problem,
-                "status": "invalid" if problem else "present" if covered else "missing",
-                "gate": requirement.gate,
-                "action": requirement.action,
-            }
-            if covered:
-                item.update(
-                    path=found.get("path"),
-                    artifact_id=found.get("artifact_id"),
-                    submitted_role=found.get("role"),
-                )
-            else:
-                item["missing"] = (
-                    f"reflection doc for lens {lens_id!r} "
-                    "(artifact.submit with role 'reflection_lens_doc', "
-                    f"lens_id {lens_id!r})"
-                )
-            if problem:
-                item["problems"] = [problem]
-            items.append(item)
-        problems = tuple(invalid.values())
-        error = missing_error or (problems[0] if problems else "")
-        status = "missing" if missing_lenses else "invalid" if problems else "valid"
-        return RequirementEvaluation(
-            role=requirement.role,
-            status=status,
-            blocker_code=(
-                ""
-                if not error
-                else (
-                    requirement.gate
-                    if missing_lenses
-                    else f"{requirement.role}_invalid"
-                )
-            ),
-            enforcement_error=error,
-            problems=problems,
-            items=tuple(items),
-        )
+        Completed, validated submissions enter at the named submitted outcome;
+        unfinished lenses alone receive new work. Each adoption is recorded by
+        the runtime and idempotent across startup retries.
+        """
+        rows = conn.execute(
+            "SELECT id, project_id, revision FROM workflow_instances w WHERE workflow = 'reflection' "
+            "AND version = 1 AND state = 'reflecting' AND NOT EXISTS "
+            "(SELECT 1 FROM workflow_instances c WHERE c.parent_id = w.id AND c.parent_revision = w.revision)",
+        ).fetchall()
+        for row in rows:
+            reflection = self.get_state(reflection_id=row["id"], project_id=row["project_id"], conn=conn)
+            validate_reflection_roster(lenses=reflection["roster"])
+            self.runtime.adopt_children(conn=conn, project_id=row["project_id"], instance_id=row["id"],
+                                        expected_revision=row["revision"], request_id="reflection_lenses:v1")
 
     # ---- transitions ----
 
@@ -1307,8 +1211,8 @@ class ReflectionService:
         project_id: str | None = None,
     ) -> dict[str, Any]:
         """Record one immutable code proposal covering the whole reflection corpus."""
-        base_sha = _git_sha(base_sha)
-        proposal_sha = _git_sha(proposal_sha)
+        base_sha = documents.git_sha(base_sha)
+        proposal_sha = documents.git_sha(proposal_sha)
         producer_session_id = str(producer_session_id or "").strip()
         summary = str(summary or "").strip()
         if not producer_session_id:
@@ -1356,7 +1260,7 @@ class ReflectionService:
                 )
                 if isinstance(item, dict) and item.get("id")
             }
-            normalized = self._validate_consolidation_decisions(
+            normalized = documents.validate_consolidation_decisions(
                 decisions=decisions,
                 expected_experiments=expected,
             )
@@ -1435,146 +1339,25 @@ class ReflectionService:
                     "experiments_considered": len(normalized),
                 },
             )
+            current = self.runtime.adopt(conn=conn, project_id=project_id, instance_id=reflection_id,
+                                         workflow="reflection", state="consolidating")
+            self.runtime.apply_in_transaction(conn=conn, project_id=project_id, instance_id=reflection_id,
+                                              action="submit_consolidation", expected_revision=current.revision,
+                                              request_id=f"proposal:{proposal_id}")
             return self.get_state(
                 reflection_id=reflection_id,
                 conn=conn,
                 include_content=True,
             )
 
-    @staticmethod
-    def _validate_consolidation_decisions(
-        *,
-        decisions: list[dict[str, Any]],
-        expected_experiments: set[str],
-    ) -> list[dict[str, Any]]:
-        if not isinstance(decisions, list):
-            raise ValidationError("decisions must be a list")
-        allowed = {
-            "used_as_is",
-            "adapted",
-            "reviewed_not_used",
-            "superseded",
-        }
-        integration_kinds = {
-            "merge",
-            "fast_forward",
-            "cherry_pick",
-            "rewrite",
-            "none",
-        }
-        normalized: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for raw in decisions:
-            if not isinstance(raw, dict):
-                raise ValidationError("each consolidation decision must be an object")
-            experiment_id = str(raw.get("experiment_id") or "").strip()
-            disposition = str(raw.get("disposition") or "").strip()
-            rationale = str(raw.get("rationale") or "").strip()
-            if experiment_id not in expected_experiments:
-                raise ValidationError(
-                    f"consolidation decision names an experiment outside the "
-                    f"reflection corpus: {experiment_id or '<missing>'}"
-                )
-            if experiment_id in seen:
-                raise ValidationError(
-                    f"duplicate consolidation decision for {experiment_id}"
-                )
-            if disposition not in allowed:
-                raise ValidationError(
-                    f"unknown consolidation disposition: {disposition}"
-                )
-            if not rationale:
-                raise ValidationError(
-                    f"consolidation rationale is required for {experiment_id}"
-                )
-            source_sha = (
-                _git_sha(str(raw.get("source_sha") or ""))
-                if raw.get("source_sha")
-                else ""
-            )
-            integration_kind = str(raw.get("integration_kind") or "none").strip()
-            if integration_kind not in integration_kinds:
-                raise ValidationError(
-                    f"unknown integration kind for {experiment_id}: "
-                    f"{integration_kind}"
-                )
-            carries_code = disposition in {"used_as_is", "adapted"}
-            if carries_code and not source_sha:
-                raise ValidationError(
-                    f"{experiment_id} cannot carry code without a recorded "
-                    "experiment workspace head"
-                )
-            if carries_code and integration_kind == "none":
-                raise ValidationError(
-                    f"{experiment_id} disposition {disposition!r} requires "
-                    "a Git integration kind"
-                )
-            if not carries_code and integration_kind != "none":
-                raise ValidationError(
-                    f"{experiment_id} disposition {disposition!r} requires "
-                    "integration_kind='none'"
-                )
-            superseded_by = str(raw.get("superseded_by") or "").strip()
-            if (
-                disposition == "superseded"
-                and superseded_by not in expected_experiments
-            ):
-                raise ValidationError(
-                    f"superseded decision for {experiment_id} must name the "
-                    "superseding experiment"
-                )
-            if disposition != "superseded" and superseded_by:
-                raise ValidationError(
-                    "superseded_by is valid only for a superseded decision"
-                )
-            if superseded_by == experiment_id:
-                raise ValidationError(f"{experiment_id} cannot supersede itself")
-            normalized.append(
-                {
-                    "experiment_id": experiment_id,
-                    "disposition": disposition,
-                    "rationale": rationale,
-                    "source_sha": source_sha,
-                    "integration_kind": integration_kind,
-                    "superseded_by": superseded_by,
-                }
-            )
-            seen.add(experiment_id)
-        missing = sorted(expected_experiments - seen)
-        if missing:
-            raise ValidationError(
-                "every experiment must be reviewed for consolidation; missing: "
-                + ", ".join(missing)
-            )
-        return normalized
-
-    def require_consolidation_proposal(
-        self, *, conn, reflection: dict[str, Any]
-    ) -> None:
-        state = REFLECTION_WORKFLOW.state(str(reflection.get("status") or ""))
-        if (
-            state is None
-            or state.review is None
-            or state.review.role != "consolidation_reviewer"
-        ):
+    def require_consolidation_proposal(self, *, conn, reflection: dict[str, Any]) -> None:
+        if reflection["status"] != "consolidating":
             return
-        requirement = next(
-            (
-                item
-                for item in state.requirements
-                if isinstance(item, RecordNeed)
-                and item.name == "consolidation_proposal"
-            ),
-            None,
-        )
-        if requirement is None:
-            raise RuntimeError("consolidation state has no proposal requirement")
-        evaluation = self._evaluate_record_requirement(
-            reflection=reflection,
-            requirement=requirement,
-        )
-        if not evaluation.satisfied:
-            raise WorkflowError(evaluation.enforcement_error)
+        decision = self._evaluate_gate(conn=conn, reflection=reflection).decision
+        for action in decision.actions:
+            for issue in action.issues:
+                if issue.code == "consolidation_proposal_required":
+                    raise WorkflowError(issue.message)
 
     def prepare_advance(
         self,
@@ -1744,8 +1527,8 @@ class ReflectionService:
         project_id: str | None = None,
     ) -> dict[str, Any]:
         """Settle one CAS receipt and atomically publish when it reached target."""
-        observed_sha = _git_sha(observed_sha)
-        parents = [_git_sha(value) for value in (proposal_parents or [])]
+        observed_sha = documents.git_sha(observed_sha)
+        parents = [documents.git_sha(value) for value in (proposal_parents or [])]
         try:
             diffstat_json = json.dumps(diffstat or {}, sort_keys=True)
         except (TypeError, ValueError) as exc:
@@ -2030,12 +1813,51 @@ class ReflectionService:
         gate: GateEvaluation,
         transition: str,
     ) -> dict[str, Any]:
-        status = reflection["status"]
         reflection_id = str(reflection["id"])
-        next_status = gate.require_transition(transition)
-        step = REFLECTION_WORKFLOW.transition(transition)
-        if step is None:
-            raise WorkflowError(f"unknown reflection transition: {transition}")
+        current = self.runtime.adopt(conn=conn, project_id=reflection["project_id"], instance_id=reflection_id,
+                                     workflow="reflection", state=reflection["status"],
+                                     data={"attempt_index": reflection["attempt_index"]})
+        if transition == "submit_reflections" and current.state == "reflecting":
+            # Compatibility for the released bulk-submit tool: each existing
+            # contribution still passes its own graph action. The last child
+            # triggers the same guarded parent join used by independent agents.
+            for child in current.children:
+                if child.outcome:
+                    continue
+                child_state = self.runtime.get(project_id=current.project_id, instance_id=child.id, conn=conn)
+                if child_state.outcome:
+                    continue
+                self.runtime.apply_in_transaction(conn=conn, project_id=current.project_id, instance_id=child.id,
+                                                  action="submit", expected_revision=child_state.revision,
+                                                  request_id=new_id(prefix="lens_submission"))
+            current = self.runtime.get(project_id=current.project_id, instance_id=reflection_id, conn=conn)
+            if current.state == "synthesizing":
+                return self.get_state(reflection_id=reflection_id, conn=conn, include_content=True)
+        self.runtime.apply_in_transaction(conn=conn, project_id=current.project_id, instance_id=reflection_id,
+                                          action=transition, expected_revision=current.revision,
+                                          request_id=new_id(prefix="reflection_action"))
+        return self.get_state(reflection_id=reflection_id, conn=conn, include_content=True)
+
+    def _commit_workflow_change(self, conn, before, after, action, payload) -> None:
+        if action in {"start_work", "adopt_children"}:
+            return
+        reflection = self.get_state(reflection_id=before.id, project_id=before.project_id, conn=conn)
+        reflection_id = before.id
+        next_status = "consolidating" if after.state == "consolidation_review" else after.state
+        if action.startswith("revise_"):
+            conn.execute(
+                "UPDATE reflections SET status = ?, attempt_index = ?, revision_context = ?, updated_at = ? "
+                "WHERE id = ? AND project_id = ?",
+                (next_status, int(after.data.get("attempt_index") or reflection["attempt_index"]),
+                 str(after.data.get("revision_context") or ""), now_iso(), before.id, before.project_id),
+            )
+            if next_status not in ("reflection_review", "consolidating"):
+                conn.execute("DELETE FROM reflection_reserved_names WHERE reflection_id = ?", (before.id,))
+            return
+        if action == "migrate":
+            conn.execute("UPDATE reflections SET status = ? WHERE id = ? AND project_id = ?",
+                         (next_status, before.id, before.project_id))
+            return
         if (
             next_status in REFLECTION_WORKFLOW.terminal_statuses
             and next_status != REFLECTION_WORKFLOW.success_status
@@ -2069,9 +1891,9 @@ class ReflectionService:
             target=ArtifactTarget(
                 "reflection", reflection_id, reflection["project_id"]
             ),
-            transition=transition,
+            transition=action,
         )
-        if "materialize_change_spec" in step.effects:
+        if after.state == "published":
             self._materialize_change_spec(conn=conn, reflection=reflection)
             conn.execute(
                 """
@@ -2083,11 +1905,7 @@ class ReflectionService:
                 (
                     next_status,
                     now,
-                    (
-                        self._current_graph_version_id(reflection=reflection)
-                        if "pin_project_graph" in step.effects
-                        else None
-                    ),
+                    self._current_graph_version_id(reflection=reflection),
                     now,
                     reflection_id,
                 ),
@@ -2097,7 +1915,7 @@ class ReflectionService:
                 "UPDATE reflections SET status = ?, updated_at = ? WHERE id = ?",
                 (next_status, now, reflection_id),
             )
-        if transition in ("submit_reflection_artifacts", "begin_consolidation"):
+        if action in ("submit_reflection_artifacts", "begin_consolidation"):
             # submit_reflection_artifacts shares the transaction that
             # world-validated the spec; begin_consolidation re-pins so a spec
             # revised and re-reviewed during reflection_review (review
@@ -2110,19 +1928,24 @@ class ReflectionService:
                 "DELETE FROM reflection_reserved_names WHERE reflection_id = ?",
                 (reflection_id,),
             )
-        self.store.record_event(
-            conn=conn,
-            project_id=reflection["project_id"],
-            event_type=REFLECTION_WORKFLOW.event_type,
-            target_type="reflection",
-            target_id=reflection_id,
-            payload={"from": status, "to": next_status, "transition": transition},
-        )
-        return self.get_state(
-            reflection_id=reflection_id,
-            conn=conn,
-            include_content=True,
-        )
+
+    def _commit_lens_change(self, conn, before, after, action, payload) -> None:
+        if action in {"submit", "adopt_lens"}:
+            target = ArtifactTarget("reflection", str(before.data["reflection_id"]), before.project_id)
+            existing = conn.execute(
+                "SELECT id FROM research_artifacts WHERE project_id = ? AND target_type = 'reflection' "
+                "AND target_id = ? AND attempt_index = ? AND role = 'reflection_lens_doc' AND lens_id = ? "
+                "AND artifact_id = ? AND status = 'complete' ORDER BY created_seq LIMIT 1",
+                (before.project_id, target.target_id, int(before.data["attempt_index"]), before.data["lens_id"], after.data["artifact_id"]),
+            ).fetchone()
+            if existing is None:
+                attached = self.artifacts.attach(tx=conn, artifact_id=str(after.data["artifact_id"]), target=target,
+                                                 role=REFLECTION_LENS_DOC_ROLE, lens_id=str(before.data["lens_id"]))
+                association_id = attached.id
+            else:
+                association_id = existing["id"]
+            self.artifacts.seal(tx=conn, target=target, transition="submit_lens" if action == "submit" else "adopt_lens",
+                                association_ids=(association_id,))
 
     def _reserve_wave_names(self, *, conn, reflection: dict[str, Any]) -> None:
         """Pin the validated spec and reserve its experiment names.
@@ -2191,74 +2014,6 @@ class ReflectionService:
                 "VALUES (?, ?, ?, ?)",
                 (reflection_id, project_id, name, document.artifact_id),
             )
-
-    def _run_validator(self, *, conn, reflection: dict[str, Any], name: str) -> None:
-        if name == "graph":
-            self._validate_project_graph(conn=conn, reflection=reflection)
-        elif name == "reflection_doc":
-            self._validate_reflection_doc(conn=conn, reflection=reflection)
-        elif name == "change_spec":
-            self._validate_change_spec(conn=conn, reflection=reflection)
-
-    def _validate_project_graph(self, *, conn, reflection: dict[str, Any]) -> None:
-        document = self._submitted_role_document(
-            reflection=reflection,
-            roles=(PROJECT_GRAPH_ROLE,),
-            what="project logic graph",
-        )
-        if document is None:
-            raise WorkflowError(
-                "a project logic graph artifact must be submitted before reflection review"
-            )
-        problems = graph_problems(document.text)
-        if problems:
-            raise WorkflowError(
-                "project logic graph is not ready for reflection review: "
-                + "; ".join(problems)
-                + ". Fix the file and resubmit it (artifact.submit) — "
-                "see skills/research-workflow/graph-template.md."
-            )
-
-    def _validate_reflection_doc(self, *, conn, reflection: dict[str, Any]) -> None:
-        document = self._submitted_role_document(
-            reflection=reflection,
-            roles=("reflection_doc",),
-            what="reflection document",
-        )
-        if document is None:
-            raise WorkflowError(
-                "a reflection document artifact must be submitted before reflection review"
-            )
-        problems = reflection_doc_review_problems(
-            text=document.text,
-            submitted_images=set(document.figure_links),
-            path=document.path,
-        )
-        if problems:
-            raise WorkflowError(
-                "reflection document is not ready for review: "
-                + "; ".join(problems)
-                + ". Keep it concise, fix the file, and resubmit it (artifact.submit) to "
-                "submit the revision — see "
-                "skills/project-reflection/reflection-artifacts-template.md."
-            )
-
-    def _validate_change_spec(self, *, conn, reflection: dict[str, Any]) -> None:
-        document = self._submitted_role_document(
-            reflection=reflection,
-            roles=("change_spec",),
-            what="change spec",
-        )
-        if document is None:
-            raise WorkflowError(
-                "a change spec artifact must be submitted before reflection review"
-            )
-        self._parse_change_spec(
-            conn=conn,
-            project_id=str(reflection["project_id"]),
-            text=document.text,
-            path=document.path,
-        )
 
     def _pinned_change_spec(
         self, *, conn, reflection: dict[str, Any]
@@ -2692,74 +2447,6 @@ class ReflectionService:
             what=what,
         )
 
-    # ---- review return routing ----
-
-    def return_from_review(
-        self,
-        *,
-        conn,
-        reflection_id: str,
-        route: ReviewReturn,
-        revision_context: str,
-    ) -> None:
-        """Apply the workflow-declared destination and attempt policy."""
-
-        row = self._require_review_source(
-            conn=conn,
-            reflection_id=reflection_id,
-            route=route,
-        )
-        attempt_index = int(row["attempt_index"]) + int(route.attempt == "new")
-        if route.to_status not in ("reflection_review", "consolidating"):
-            # The wave leaves the reserved window; the next
-            # submit_reflection_artifacts re-validates and re-pins the spec.
-            conn.execute(
-                "DELETE FROM reflection_reserved_names WHERE reflection_id = ?",
-                (reflection_id,),
-            )
-        conn.execute(
-            """
-            UPDATE reflections
-            SET status = ?, attempt_index = ?,
-                revision_context = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (
-                route.to_status,
-                attempt_index,
-                revision_context,
-                now_iso(),
-                reflection_id,
-            ),
-        )
-        self.store.record_event(
-            conn=conn,
-            project_id=row["project_id"],
-            event_type=route.event_type,
-            target_type="reflection",
-            target_id=reflection_id,
-            payload={"revision_context": revision_context},
-        )
-
-    def _require_review_source(
-        self,
-        *,
-        conn,
-        reflection_id: str,
-        route: ReviewReturn,
-    ):
-        row = conn.execute(
-            "SELECT * FROM reflections WHERE id = ?", (reflection_id,)
-        ).fetchone()
-        if row is None:
-            raise NotFoundError(f"reflection not found: {reflection_id}")
-        if row["status"] not in REFLECTION_WORKFLOW.review_sources(route):
-            raise WorkflowError(
-                f"reflection wave is {row['status']!r}; only a wave under "
-                f"review can be sent back to {route.to_status}"
-            )
-        return row
-
     # ---- reflection drift ----
 
     def reflection_signal(self, *, project_id: str, conn=None) -> dict[str, Any]:
@@ -2815,10 +2502,47 @@ class ReflectionService:
                 conn.close()
 
 
-def _git_sha(value: Any) -> str:
-    sha = str(value or "").strip().lower()
-    if not (40 <= len(sha) <= 64) or any(
-        character not in "0123456789abcdef" for character in sha
-    ):
-        raise ValidationError("Git SHA must be a full hexadecimal object id")
-    return sha
+class _ReflectionKnowledge:
+    """Project/transaction-bound records and bytes; graph definitions make decisions."""
+
+    def __init__(self, service, conn, reflection, snapshot):
+        self.service, self.conn, self.reflection, self.snapshot = service, conn, reflection, snapshot
+        self.documents = {}
+
+    def read(self, reference: Reference):
+        wave, conn = self.reflection, self.conn
+        if reference.kind == "reflection" and reference.id == wave["id"]:
+            return wave
+        if reference.kind == "project" and reference.id == wave["project_id"]:
+            row = conn.execute("SELECT id, name, summary FROM projects WHERE id = ?", (reference.id,)).fetchone()
+            return {} if row is None else dict(row)
+        if reference.kind == "artifact":
+            if reference.id not in self.documents:
+                association = conn.execute("SELECT artifact_id FROM research_artifacts WHERE id = ? AND project_id = ?",
+                                           (reference.id, wave["project_id"])).fetchone()
+                content_id = reference.id if association is None else association["artifact_id"]
+                self.service.artifacts.contents.assert_complete(artifact_ids=(content_id,), project_id=wave["project_id"], tx=conn)
+                content = self.service.artifacts.contents.get(artifact_ids=(content_id,), project_id=wave["project_id"], include="document", tx=conn)[0]
+                if content.data is None:
+                    raise WorkflowError("Artifact content is unavailable; upload a complete document.")
+                self.documents[reference.id] = {"text": content.data.decode("utf-8", errors="replace"), "path": content.path,
+                                                "artifact_id": content.id, "figure_links": content.figures}
+            return self.documents[reference.id]
+        if reference.kind == "reflection_world" and reference.id == wave["project_id"]:
+            claims = conn.execute("SELECT id FROM claims WHERE project_id = ?", (reference.id,)).fetchall()
+            experiments = conn.execute("SELECT id, name, status FROM experiments WHERE project_id = ? ORDER BY created_at, id", (reference.id,)).fetchall()
+            tasks = conn.execute("SELECT id, name FROM tasks WHERE project_id = ?", (reference.id,)).fetchall()
+            return {"claim_ids": tuple(row["id"] for row in claims),
+                    "experiment_names": tuple(str(row["name"]).lower() for row in experiments),
+                    "task_names": tuple(str(row["name"]).lower() for row in tasks),
+                    "node_ids": tuple(row["id"] for row in (*experiments, *tasks)),
+                    "non_terminal_experiments": tuple(str(row["name"] or row["id"]) for row in experiments if row["status"] not in EXPERIMENT_TERMINAL_STATUSES)}
+        if reference.kind in {"review", "review_snapshot"}:
+            if reference.kind == "review_snapshot" and reference.id != wave["id"]:
+                raise NotFoundError("review snapshot belongs to another workflow instance")
+            node = self.service.runtime.registry.get(self.snapshot.workflow, self.snapshot.version).node(self.snapshot.state)
+            role = reference.id if reference.kind == "review" else (node.role if node is not None else "")
+            return read_review_fact(conn=conn, project_id=wave["project_id"], target_type="reflection",
+                                    target_id=wave["id"], role=role, request=reference.kind == "review_snapshot",
+                                    snapshot_id=review_snapshot_id(target_type="reflection", target=wave, snapshot=self.snapshot))
+        raise NotFoundError(f"reflection fact not available: {reference.kind}/{reference.id}")

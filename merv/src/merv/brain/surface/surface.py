@@ -9,6 +9,8 @@ token-authenticated upload routes, and the brain never dials a user machine.
 
 from __future__ import annotations
 
+from ..workflows import Workflows
+
 import logging
 from collections.abc import Mapping
 from contextlib import suppress
@@ -19,6 +21,7 @@ from fastapi import FastAPI
 
 from ..application import Application
 from ..application.maintenance import CleanupService
+from .workflow_knowledge import WorkflowKnowledge
 from ..agent_sessions import AgentSessions
 from ..artifacts import Artifacts
 from ..feed import FeedService
@@ -113,7 +116,11 @@ class Surface:
 
         self.artifact_store = Artifacts(store=store, blobs=blobs)
         self.artifacts = ResearchArtifacts(store=store, artifacts=self.artifact_store)
-        self.research = Research(store=store, artifacts=self.artifacts)
+        self.workflows = Workflows(store=store, knowledge=lambda snapshot, conn: WorkflowKnowledge(
+            snapshot=snapshot, conn=conn, artifacts=self.artifact_store, project=self.research.get_project,
+            review=self.research.workflow_review_fact))
+        self.research = Research(store=store, artifacts=self.artifacts, workflows=self.workflows)
+        self.research.initialize_workflows()
         self.feed = FeedService(
             store=store,
             blobs=blobs,
@@ -154,6 +161,7 @@ class Surface:
             "agents": self.agent_identities,
             "application": self.application,
             "research": self.research,
+            "workflows": self.research.workflows,
             "artifact_submissions": self.artifact_tools,
             "sandboxes": self.sandboxes,
             "feed": self.feed,
@@ -182,6 +190,7 @@ class Surface:
             )
 
     def shutdown(self) -> None:
+        self.application.workflow_deliveries.stop()
         if self.infrastructure_client is not None:
             with suppress(Exception):
                 self.infrastructure_client.close()

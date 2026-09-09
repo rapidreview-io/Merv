@@ -39,7 +39,9 @@ There is no linking step and no `connect` action. Use
 
 - Treat the brain state returned through MCP as authoritative. Start or resume
   work with `workflow.status_and_next`, and follow its gate, allowed actions,
-  missing evidence, and next action.
+  missing evidence, and next action. Auto-run assignments own one graph node;
+  stop after its handoff. Interactive agents call `workflow.begin` with the
+  instance id and current revision before beginning node work.
 - Local edits are not research state. Use `artifact.submit` to contribute
   evidence; it returns a presigned upload command for the bytes, and the
   submitted version can be associated with a target and role.
@@ -60,19 +62,22 @@ There is no linking step and no `connect` action. Use
 
 ## Review boundary
 
-When a gate requests review, call `review.request` and delegate its handoff to a
-separate agent using `experiment-design-review`, `experiment-attempt-review`,
-`task-review`, or `project-reflection-review`. That reviewer calls
-`review.start` with its own
-`caller_session_id` and submits the verdict through `review.submit`.
+Entering a review node queues its independent review, and auto-run dispatches
+a fresh reviewer. Interactive coordinators can use `review.request` and hand its
+capability to a separate agent running the matching review skill. The producer
+must not review its own work.
 
-The capability is tied to a role and immutable target snapshot. At
-`review.start` the brain rejects invalid/expired/superseded capabilities, stale
-snapshots, or a declared reviewer session string equal to the declared producer
-string. At submission it rechecks that the request is open and the snapshot is
-current. Reviewer read-only behavior is an operating rule imposed by the skill;
-the system does not authenticate every unrelated tool call as that reviewer.
-This is a practical workflow boundary, not cryptographic proof of independence.
+An assigned reviewer calls `review.start` for its exact request with
+`reviewer_capability="assigned"` and `caller_session_id="assigned"`; Merv resolves
+the authenticated session. A manual handoff uses its exact capability and the
+reviewer's own declared identity. Review submission rechecks the immutable
+snapshot and applies the verdict's graph route atomically.
+
+Auto-run reviewer credentials enforce read-only access outside their review
+calls. Interactive reviewers using a general project key follow the skill's
+read-only procedure. A passing design enters execution directly; passing attempt
+and task reviews complete work; passing reflection review enters consolidation.
+The assigned agent stops after its verdict.
 
 ## Sandbox loop
 

@@ -109,12 +109,6 @@ class TaskWorkflowTest(ResearchCase):
         # The brief is rendered and pinned at create — the first gate is the
         # delivery, and the goal is immutable: brief submissions are refused.
         self.assertEqual(status["workflow"]["current_gate"], "delivery_required")
-        self.assertEqual(
-            status["workflow"]["artifact_guidance"]["checks"],
-            self.call("task.get_state", project_id=self.project_id, task_id=task_id)[
-                "checks"
-            ],
-        )
         self.assertEqual(len(status["task"]["checks"]), 3)
         self.assertEqual(status["task"]["deliverables"], DELIVERABLES)
         rendered = status["context"]["brief"]["content"]
@@ -151,14 +145,14 @@ class TaskWorkflowTest(ResearchCase):
             body=VALID_DELIVERY,
         )
         status = self.task_status(task_id)
-        self.assertEqual(status["workflow"]["current_gate"], "task_review_required")
-        self.assertIn("submit_delivery_for_review", status["workflow"]["next_action"])
+        self.assertEqual(status["workflow"]["current_gate"], "in_progress")
+        self.assertEqual(status["workflow"]["next_action"], "submit_delivery")
 
         receipt = self.transition_task(task_id, "submit_delivery")
         self.assertEqual(receipt["status"], "in_review")
         self.assertEqual(receipt["from_status"], "in_progress")
         status = self.task_status(task_id)
-        self.assertEqual(status["workflow"]["next_action"], "launch_task_reviewer")
+        self.assertEqual(status["workflow"]["next_action"], "request_review")
         self.assertEqual(status["workflow"]["review_gate"]["skill"], "task-review")
         self.assertEqual(status["workflow"]["review_gate"]["role"], "task_reviewer")
 
@@ -167,14 +161,10 @@ class TaskWorkflowTest(ResearchCase):
 
         self.pass_review(target_type="task", target_id=task_id, role="task_reviewer")
         status = self.task_status(task_id)
-        self.assertEqual(status["workflow"]["next_action"], "accept_task")
-
-        accepted = self.transition_task(
-            task_id, "accept", outcome="Splits ready; see the data card."
-        )
-        self.assertEqual(accepted["status"], "done")
+        self.assertEqual(status["workflow"]["next_action"], "none")
         state = self.call("task.get_state", project_id=self.project_id, task_id=task_id)
-        self.assertEqual(state["outcome"], "Splits ready; see the data card.")
+        self.assertEqual(state["status"], "done")
+        self.assertTrue(state["outcome"])
         self.assertEqual(state["failed_by"], "")
         self.assertEqual(state["allowed_transitions"], [])
         self.assertEqual(self.task_status(task_id)["workflow"]["current_gate"], "terminal")
@@ -203,6 +193,20 @@ class TaskWorkflowTest(ResearchCase):
                 body=VALID_DELIVERY,
             )
 
+    def test_workflow_reader_resolves_exact_delivery_reference_inside_its_transaction(self) -> None:
+        from merv.brain.workflows import Reference
+        task_id = self.create_task()
+        first = self.submit(target_type="task", target_id=task_id, role="delivery",
+                            path="first-delivery.md", body=VALID_DELIVERY + "\nOriginal retained document.\n")
+        self.submit(target_type="task", target_id=task_id, role="delivery",
+                    path="second-delivery.md", body=VALID_DELIVERY + "\nNewer document for a different path.\n")
+        runtime = self.app.workflows.runtime
+        with self.app.store.transaction() as conn:
+            snapshot = runtime.get(conn=conn, project_id=self.project_id, instance_id=task_id)
+            fact = runtime.knowledge(snapshot, conn).read(Reference("artifact", first))
+        self.assertIn("Original retained document.", fact["text"])
+        self.assertNotIn("Newer document", fact["text"])
+
     def test_needs_changes_returns_to_in_progress_on_the_same_attempt(self) -> None:
         task_id = self.create_task()
         self.submit_task_docs(task_id)
@@ -220,7 +224,7 @@ class TaskWorkflowTest(ResearchCase):
         self.assertIn("task_reviewer returned needs_changes", state["revision_context"])
         self.assertIn("Done-when checks", state["revision_context"])
         status = self.task_status(task_id)
-        self.assertEqual(status["workflow"]["current_gate"], "task_review_required")
+        self.assertEqual(status["workflow"]["current_gate"], "in_progress")
         self.assertTrue(status["workflow"]["revision_context"])
 
         # A fresh delivery, a fresh review, and the task completes.
@@ -233,7 +237,7 @@ class TaskWorkflowTest(ResearchCase):
         )
         self.transition_task(task_id, "submit_delivery")
         self.pass_review(target_type="task", target_id=task_id, role="task_reviewer")
-        self.assertEqual(self.transition_task(task_id, "accept")["status"], "done")
+        self.assertEqual(self.call("task.get_state", project_id=self.project_id, task_id=task_id)["status"], "done")
 
     def test_fail_verdict_ends_the_task(self) -> None:
         task_id = self.create_task()
@@ -309,7 +313,7 @@ class TaskWorkflowTest(ResearchCase):
         status = self.task_status(downstream)
         self.assertEqual(status["workflow"]["current_gate"], "dependencies_pending")
         self.assertIn("wait_for_dependencies", status["workflow"]["next_action"])
-        self.assertEqual(status["workflow"]["dependencies"][0]["id"], upstream)
+        self.assertEqual(status["task"]["dependencies"][0]["id"], upstream)
         with self.assertRaisesRegex(WorkflowError, "waiting on unfinished dependencies"):
             self.transition_task(downstream, "submit_delivery")
 
@@ -320,7 +324,6 @@ class TaskWorkflowTest(ResearchCase):
         )
         self.transition_task(upstream, "submit_delivery")
         self.pass_review(target_type="task", target_id=upstream, role="task_reviewer")
-        self.transition_task(upstream, "accept")
         self.assertEqual(
             self.transition_task(downstream, "submit_delivery")["status"], "in_review"
         )
@@ -332,7 +335,7 @@ class TaskWorkflowTest(ResearchCase):
         self.submit_task_docs(downstream)
         status = self.task_status(downstream)
         self.assertEqual(status["workflow"]["current_gate"], "dependency_failed")
-        self.assertIn("mark_task_failed", status["workflow"]["next_action"])
+        self.assertEqual(status["workflow"]["next_action"], "mark_failed")
         with self.assertRaisesRegex(WorkflowError, "ended without succeeding"):
             self.transition_task(downstream, "submit_delivery")
         with self.assertRaisesRegex(ValidationError, "cannot depend on itself"):
@@ -373,24 +376,21 @@ class TaskWorkflowTest(ResearchCase):
         self.pass_review(
             target_type="experiment", target_id=experiment_id, role="design_reviewer"
         )
-        self.transition_experiment(experiment_id, "mark_ready_to_run")
         status = self.call(
             "workflow.status_and_next",
             project_id=self.project_id,
             experiment_id=experiment_id,
         )
         self.assertEqual(status["workflow"]["current_gate"], "dependencies_pending")
-        with self.assertRaisesRegex(WorkflowError, "waiting on unfinished dependencies"):
-            self.transition_experiment(experiment_id, "start_running")
+        self.assertEqual(status["workflow"]["state"], "running")
+        with self.assertRaisesRegex(WorkflowError, "dependencies"):
+            self.app.workflows.assignment(project_id=self.project_id, instance_id=experiment_id)
 
         self.submit_task_docs(task_id)
         self.transition_task(task_id, "submit_delivery")
         self.pass_review(target_type="task", target_id=task_id, role="task_reviewer")
-        self.transition_task(task_id, "accept")
-        self.assertEqual(
-            self.transition_experiment(experiment_id, "start_running")["status"],
-            "running",
-        )
+        assignment = self.app.workflows.assignment(project_id=self.project_id, instance_id=experiment_id)
+        self.assertEqual(assignment["state"], "running")
 
     # ---- document structure ----
 

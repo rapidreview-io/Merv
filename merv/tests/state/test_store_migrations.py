@@ -1169,7 +1169,7 @@ class StoreMigrationTest(unittest.TestCase):
             rows = conn.execute(
                 "SELECT type, target_type, payload_json FROM events ORDER BY id"
             ).fetchall()
-            by_type = {str(row["type"]): row for row in rows if row["type"] != "project.created"}
+            by_type = {str(row["type"]): row for row in rows if row["type"] not in {"project.created", "workflow.migrated"}}
             self.assertEqual(
                 set(by_type),
                 {

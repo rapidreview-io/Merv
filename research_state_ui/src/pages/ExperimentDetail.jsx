@@ -15,14 +15,13 @@ import DetailsDrawer, { DetailsButton, OpsTimeline, OpsVersions, OpsPosition } f
 import { expName } from '../utils/experiment';
 import { fmtAgo, formatBytes } from '../utils/format';
 import { gateToSectionId, useScrollToHash } from '../utils/useScrollToHash';
+import { workflowActionButtons } from '../utils/workflowActions';
 import InlineMd from '../components/InlineMd';
 
-const NEXT_ACTION_TO_TRANSITION = {
-  submit_design_for_review:  { transition: 'submit_design',     label: 'Submit for design review' },
-  mark_ready_to_run:         { transition: 'mark_ready_to_run', label: 'Mark ready to run' },
-  start_running:             { transition: 'start_running',     label: 'Start running' },
-  submit_results_for_review: { transition: 'submit_results',    label: 'Submit results for review' },
-  complete_experiment:       { transition: 'complete',          label: 'Complete experiment' },
+const PRIMARY_TRANSITIONS = {
+  submit_design:  { transition: 'submit_design',  label: 'Submit for design review' },
+  submit_results: { transition: 'submit_results', label: 'Submit results for review' },
+  complete:       { transition: 'complete',       label: 'Complete experiment' },
 };
 const SECONDARY_TRANSITIONS = [
   { transition: 'mark_failed', label: 'Mark failed' },
@@ -32,19 +31,6 @@ const TERMINAL_TRANSITIONS = new Set([
   'complete',
   ...SECONDARY_TRANSITIONS.map(a => a.transition),
 ]);
-
-function deriveActionButtons(workflow) {
-  if (!workflow) return { primary: null, secondary: [] };
-  const allowsTransition = (workflow.allowed_actions || []).some(a => a === 'experiment.transition' || (a && !a.includes('.')));
-  if (!allowsTransition) return { primary: null, secondary: [] };
-  // next_action may carry inline guidance after the verb (e.g.
-  // "submit_results_for_review (call only once …)") — match on the verb.
-  const actionKey = String(workflow.next_action || '').split(/[\s(]/)[0];
-  const primary = NEXT_ACTION_TO_TRANSITION[actionKey] || null;
-  const inFlight = !['complete', 'failed', 'abandoned', 'terminal'].includes(workflow.current_gate);
-  return { primary, secondary: inFlight ? SECONDARY_TRANSITIONS : [] };
-}
-
 
 export default function ExperimentDetail() {
   const { experimentId } = useParams();
@@ -100,7 +86,7 @@ export default function ExperimentDetail() {
   const experiment = statusData?.experiment;
   const workflow = statusData?.workflow;
 
-  const { primary, secondary } = useMemo(() => deriveActionButtons(workflow), [workflow]);
+  const { primary, secondary } = useMemo(() => workflowActionButtons(workflow, PRIMARY_TRANSITIONS, SECONDARY_TRANSITIONS), [workflow]);
 
   const onAction = useCallback(async (transition) => {
     setBusy(prev => { const n = new Set(prev); n.add(transition); return n; });
@@ -440,7 +426,7 @@ function ExperimentFacts({ experiment, designReviews, experimentReviews, px }) {
       <OpsPosition
         upstream={upstream}
         downstream={downstream}
-        waitNote={upstream.length > 0 && !isClosed ? 'start_running opens once every dependency has succeeded' : null}
+        waitNote={upstream.length > 0 && !isClosed ? 'Execution waits until every dependency has succeeded' : null}
       />
     </>
   );

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from merv.brain.workflows import Workflows
+
 import json
 import sqlite3
 import tempfile
@@ -90,7 +92,7 @@ class CommittedEventTest(unittest.TestCase):
         self.assertEqual(event.payload["z"][0]["nested"], "original")
 
     def test_research_transition_returns_its_exact_committed_event(self) -> None:
-        research = Research(store=self.store, artifacts=self.artifacts)
+        research = Research(store=self.store, artifacts=self.artifacts, workflows=Workflows(store=self.store))
         created = research.create_experiment(
             project_id=self.project_id, name="committed-event", intent="test"
         )
@@ -113,6 +115,7 @@ class CommittedEventTest(unittest.TestCase):
                 "from": "planned",
                 "to": "failed",
                 "transition": "mark_failed",
+                "workflow": "experiment", "version": 1, "revision": 1,
             },
         )
 
@@ -129,15 +132,13 @@ class CommittedEventTest(unittest.TestCase):
                 "from": "planned",
                 "to": "failed",
                 "transition": "mark_failed",
+                "workflow": "experiment", "version": 1, "revision": 1,
             },
         )
 
     def test_tracking_refresh_returns_the_exact_committed_ledger_event(self) -> None:
-        experiments = ExperimentService(
-            store=self.store,
-            artifacts=self.artifacts,
-        )
-        research = Research(store=self.store, artifacts=self.artifacts)
+        experiments = Research(store=self.store, artifacts=self.artifacts, workflows=Workflows(store=self.store))._experiments
+        research = Research(store=self.store, artifacts=self.artifacts, workflows=Workflows(store=self.store))
         created = experiments.create(
             project_id=self.project_id, name="tracking-event", intent="test"
         )
@@ -170,10 +171,7 @@ class CommittedEventTest(unittest.TestCase):
         self.assertEqual(committed.state["mlflow_run"]["status"], "FINISHED")
 
     def test_event_insert_failure_rolls_back_state_and_event_together(self) -> None:
-        experiments = ExperimentService(
-            store=self.store,
-            artifacts=self.artifacts,
-        )
+        experiments = Research(store=self.store, artifacts=self.artifacts, workflows=Workflows(store=self.store))._experiments
         created = experiments.create(
             project_id=self.project_id, name="rollback-event", intent="test"
         )
@@ -227,10 +225,7 @@ class TrackingDeliveryLedgerSqlTest(unittest.TestCase):
             store=self.store,
             artifacts=Artifacts(store=self.store, blobs=FakeBlobStore()),
         )
-        self.experiments = ExperimentService(
-            store=self.store,
-            artifacts=artifacts,
-        )
+        self.experiments = Research(store=self.store, artifacts=artifacts, workflows=Workflows(store=self.store))._experiments
         with closing(self.store.connect()) as conn:
             row = conn.execute("SELECT id FROM projects").fetchone()
             assert row is not None
@@ -534,10 +529,7 @@ class TrackingDeliveryLookupCostTest(unittest.TestCase):
             store=self.store,
             artifacts=Artifacts(store=self.store, blobs=FakeBlobStore()),
         )
-        self.experiments = ExperimentService(
-            store=self.store,
-            artifacts=artifacts,
-        )
+        self.experiments = Research(store=self.store, artifacts=artifacts, workflows=Workflows(store=self.store))._experiments
         with closing(self.store.connect()) as conn:
             row = conn.execute("SELECT id FROM projects").fetchone()
             assert row is not None

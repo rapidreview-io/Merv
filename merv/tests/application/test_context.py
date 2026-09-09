@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from merv.brain.workflows import Workflows
+
 from dataclasses import replace
 import tempfile
 import unittest
@@ -281,7 +283,7 @@ class ProjectContextFactsTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.store = StateStore(db_path=Path(self.tmp.name) / "state.sqlite")
-        self.research = Research(store=self.store, artifacts=Mock())
+        self.research = Research(store=self.store, artifacts=Mock(), workflows=Workflows(store=self.store))
 
     def tearDown(self) -> None:
         self.tmp.cleanup()

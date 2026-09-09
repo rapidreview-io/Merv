@@ -191,10 +191,10 @@ class ReleaseDatabaseCompatibilityTest(unittest.TestCase):
                 self.assertLessEqual(
                     set(snap["columns"]), set(migrated["columns"])
                 )
-                self.assertEqual(
-                    _projected_rows(migrated, snap["columns"]),
-                    snap["rows"],
-                )
+                projected = _projected_rows(migrated, snap["columns"])
+                if table == "events":
+                    projected = [row for row in projected if row[2] != "workflow.migrated"]
+                self.assertEqual(projected, snap["rows"])
             self.assertEqual(migrated_data["agent_sessions"]["rows"], [])
             for table in (
                 "experiment_workspaces",
@@ -213,10 +213,10 @@ class ReleaseDatabaseCompatibilityTest(unittest.TestCase):
             for table, snap in data_before.items():
                 if table == "schema_migrations":
                     continue
-                self.assertEqual(
-                    _projected_rows(composed_data["research_artifacts" if table == "artifacts" else table], snap["columns"]),
-                    snap["rows"],
-                )
+                projected = _projected_rows(composed_data["research_artifacts" if table == "artifacts" else table], snap["columns"])
+                if table == "events":
+                    projected = [row for row in projected if row[2] != "workflow.migrated"]
+                self.assertEqual(projected, snap["rows"])
 
             reopened = StateStore(db_path=release_db)
             install_feed_schema(reopened)

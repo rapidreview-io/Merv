@@ -385,8 +385,8 @@ def build_experiment_figure(
     # ---- artifacts, one node per (artifact, attempt) association ----
     # Where an artifact sits is decided by what sealed it: a result seal makes
     # it evidence above that submission, a proposal seal makes it the proposal
-    # above the attempt, and anything else (a seal taken by mark_ready /
-    # start_running / retry, or nothing yet) is execution output trailing the
+    # above the attempt, and anything else (an approval / retry seal, an
+    # older execution-start seal, or nothing yet) is execution output trailing the
     # latest beat that preceded it. Superseded rows survive their round (that
     # is the history), so mark anything the target no longer treats as current.
     current_ids = {

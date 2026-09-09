@@ -27,6 +27,7 @@ from psycopg.rows import dict_row
 from merv.brain.infrastructure.client import InfrastructureClient, build_infrastructure_client
 from merv.brain.infrastructure.storage import RemoteObjectProvider, _decode_upload
 from merv.brain.infrastructure.ports import project_namespace
+from merv.brain.kernel.state.store import MIGRATIONS
 from merv.brain.kernel.utils import NotFoundError
 from merv.brain.surface.config import build_blob_store
 
@@ -93,7 +94,7 @@ def missing_in_namespace(client: InfrastructureClient, object_id: str, namespace
 
 def verify_schema(conn: Any, *, pre_cutover: bool = False) -> int:
     latest = conn.execute("SELECT max(version) AS version FROM schema_migrations").fetchone()["version"]
-    allowed = {57, 58, 59} if pre_cutover else {59}
+    allowed = range(57 if pre_cutover else 59, MIGRATIONS[-1][0] + 1)
     require(latest in allowed, "research schema version does not match this verification phase")
     if latest >= 58:
         versions = conn.execute("SELECT version,name FROM schema_migrations WHERE version=58").fetchall()

@@ -2,7 +2,7 @@
 
 The generated `merv-client` branch is an installable Kilo server plugin. It
 registers Merv's hosted HTTP MCP endpoint, the hosted remote-skill catalog, and
-the four read-only reviewer subagents in Kilo's effective configuration.
+the five read-only reviewer subagents in Kilo's effective configuration.
 
 ```bash
 kilo plugin 'github:rapidreview-io/Merv#merv-client' --global

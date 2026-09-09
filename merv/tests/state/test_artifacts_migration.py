@@ -65,7 +65,7 @@ class ArtifactsBackfillMigrationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tmp.name) / "state.sqlite"
-        with patch("merv.brain.kernel.state.store.MIGRATIONS", MIGRATIONS[:-1]):
+        with patch("merv.brain.kernel.state.store.MIGRATIONS", tuple(item for item in MIGRATIONS if item[0] < 59)):
             StateStore(db_path=self.db_path)
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DROP TABLE IF EXISTS artifact_figures")

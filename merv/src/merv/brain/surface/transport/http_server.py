@@ -159,7 +159,7 @@ class UvicornHttpServer:
             port=selected_port,
             log_level="warning",
             access_log=False,
-            lifespan="off",
+            lifespan="on",
         )
         self._server = uvicorn.Server(config)
 
@@ -213,7 +213,7 @@ def _run_server(
         port=selected_port,
         log_level="warning",
         access_log=False,
-        lifespan="off",
+        lifespan="on",
         # Honor X-Forwarded-Proto/-For from the fronting proxy: the artifact
         # upload curls are minted from request.base_url and must say https.
         proxy_headers=True,

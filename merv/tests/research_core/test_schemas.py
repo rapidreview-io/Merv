@@ -31,18 +31,14 @@ class WorkflowSchemaTest(unittest.TestCase):
                     len(set(workflow.transition_names)),
                 )
 
-    def test_experiment_forward_and_review_return_paths_are_declared(self) -> None:
+    def test_experiment_states_and_review_returns_project_the_graph(self) -> None:
         self.assertEqual(
-            EXPERIMENT_WORKFLOW.forward_path("planned"),
-            (
-                "planned",
-                "design_review",
-                "ready_to_run",
-                "running",
-                "experiment_review",
-                "complete",
-            ),
+            tuple(state.name for state in EXPERIMENT_WORKFLOW.states),
+            ("planned", "design_review", "running", "experiment_review"),
         )
+        self.assertEqual(EXPERIMENT_WORKFLOW.transition("approve_design").to_status, "running")
+        self.assertEqual(EXPERIMENT_WORKFLOW.transition("retry_running").to_status, "running")
+        self.assertNotIn("ready_to_run", EXPERIMENT_WORKFLOW.transition_names)
         cases = (
             ("design_reviewer", "needs_changes", "", "planned", "new"),
             ("experiment_reviewer", "needs_changes", "planned", "planned", "new"),
@@ -60,17 +56,13 @@ class WorkflowSchemaTest(unittest.TestCase):
                     (route.to_status, route.attempt), (destination, attempt)
                 )
 
-    def test_reflection_forward_and_review_return_paths_are_declared(self) -> None:
+    def test_reflection_states_and_review_returns_project_the_graph(self) -> None:
         self.assertEqual(
-            REFLECTION_WORKFLOW.forward_path("reflecting"),
-            (
-                "reflecting",
-                "synthesizing",
-                "reflection_review",
-                "consolidating",
-                "published",
-            ),
+            tuple(state.name for state in REFLECTION_WORKFLOW.states),
+            ("reflecting", "synthesizing", "reflection_review", "consolidating", "consolidation_review"),
         )
+        self.assertIsNone(REFLECTION_WORKFLOW.state("consolidating").review)
+        self.assertEqual(REFLECTION_WORKFLOW.review_state("consolidation_reviewer").name, "consolidation_review")
         cases = (
             ("synthesizing", "same"),
             ("reflecting", "new"),
@@ -95,10 +87,10 @@ class WorkflowSchemaTest(unittest.TestCase):
             ("consolidating", "same"),
         )
 
-    def test_task_forward_and_review_routes_are_declared(self) -> None:
+    def test_task_states_and_review_routes_project_the_graph(self) -> None:
         self.assertEqual(
-            TASK_WORKFLOW.forward_path("in_progress"),
-            ("in_progress", "in_review", "done"),
+            tuple(state.name for state in TASK_WORKFLOW.states),
+            ("in_progress", "in_review"),
         )
         self.assertEqual(TASK_WORKFLOW.terminal_statuses, {"done", "failed"})
         back = resolve_review_return(
@@ -118,6 +110,19 @@ class WorkflowSchemaTest(unittest.TestCase):
             self.assertEqual(ended.to_status, "failed")
         self.assertEqual(TASK_WORKFLOW.review_fail_statuses, ("failed",))
         self.assertEqual(TASK_WORKFLOW.review_return_statuses, ("in_progress",))
+
+    def test_compatibility_view_preserves_branches_and_cycles(self) -> None:
+        from merv.brain.workflows import Edge, Node, Workflow as Graph, metadata
+        from merv.brain.research_core.workflow_schema import Workflow
+
+        graph = Graph("revision", 1, "draft", (Node("draft"), Node("review")),
+                      (Edge("draft", "submit", "review"), Edge("review", "repair", "draft"),
+                       Edge("review", "accept", "done")), {"done": "completed"})
+        view = Workflow(graph, metadata.Metadata())
+        validate_workflow(view)
+        self.assertEqual(view.allowed_transitions_for("review"), [
+            {"transition": "repair", "leads_to": "draft"}, {"transition": "accept", "leads_to": "done"}])
+        self.assertFalse(hasattr(view, "forward_path"))
 
     def test_invalid_review_returns_are_rejected_by_the_schema(self) -> None:
         cases = (
@@ -202,7 +207,6 @@ class WorkflowSchemaTest(unittest.TestCase):
         self.assertEqual(REVIEW_GATE_EXEMPT_ROLES, {"human", "automated_check"})
 
     def test_surface_choices_are_derived_from_the_workflows(self) -> None:
-        from merv.brain.research_core import REVIEW_ROLE_VALUES
         from merv.brain.surface.tools.contracts import (
             ExperimentTransitionInput,
             ReflectionTransitionInput,
@@ -226,21 +230,10 @@ class WorkflowSchemaTest(unittest.TestCase):
             choices(TaskTransitionInput, "transition"),
             TASK_WORKFLOW.transition_names,
         )
-        self.assertEqual(choices(ReviewRequestInput, "role"), REVIEW_ROLE_VALUES)
-        self.assertEqual(
-            choices(ReviewRequestInput, "target_type"),
-            ("experiment", "reflection", "task"),
-        )
-        self.assertEqual(
-            choices(ReviewSubmitInput, "return_to"),
-            (
-                "",
-                *EXPERIMENT_WORKFLOW.review_return_statuses,
-                *REFLECTION_WORKFLOW.review_return_statuses,
-                *TASK_WORKFLOW.review_return_statuses,
-                *TASK_WORKFLOW.review_fail_statuses,
-            ),
-        )
+        # Roles and return destinations come from the pinned graph at runtime.
+        self.assertIs(ReviewRequestInput.model_fields["role"].annotation, str)
+        self.assertIs(ReviewRequestInput.model_fields["target_type"].annotation, str)
+        self.assertIs(ReviewSubmitInput.model_fields["return_to"].annotation, str)
 
 
 if __name__ == "__main__":

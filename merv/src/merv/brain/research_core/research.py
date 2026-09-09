@@ -39,6 +39,7 @@ from .models import (
 from .reflections import ReflectionService
 from .reviews import ReviewService
 from .tasks import TaskService
+from ..workflows import Binding, Workflows
 from .artifacts import ResearchArtifacts as Artifacts
 from ..kernel.events import StoredEvent
 from ..kernel.state.store import (
@@ -98,18 +99,21 @@ class Research:
         "_tasks",
         "_reflections",
         "_reviews",
+        "workflows",
     )
 
-    def __init__(self, *, store: BaseStateStore, artifacts: Artifacts) -> None:
+    def __init__(self, *, store: BaseStateStore, artifacts: Artifacts, workflows: Workflows) -> None:
         self.store = store
         self.artifacts = artifacts
-        self._experiments = ExperimentService(store=store, artifacts=artifacts)
-        self._tasks = TaskService(store=store, artifacts=artifacts)
+        self.workflows = workflows
+        self._experiments = ExperimentService(store=store, artifacts=artifacts, runtime=workflows.runtime)
+        self._tasks = TaskService(store=store, artifacts=artifacts, runtime=workflows.runtime)
         self._reflections = ReflectionService(
             store=store,
             artifacts=artifacts,
             experiments=self._experiments,
             tasks=self._tasks,
+            runtime=workflows.runtime,
         )
         self._reviews = ReviewService(
             store=store,
@@ -117,7 +121,44 @@ class Research:
             reflections=self._reflections,
             artifacts=artifacts,
             tasks=self._tasks,
+            runtime=workflows.runtime,
         )
+        self.workflows.bind("task", Binding(self._tasks._workflow_knowledge, self._tasks._commit_workflow_change,
+                                           self._tasks.initialize_workflow))
+        self.workflows.bind("experiment", Binding(self._experiments._workflow_knowledge,
+                                                 self._experiments._commit_workflow_change,
+                                                 self._experiments.initialize_workflow))
+        self.workflows.bind("reflection", Binding(self._reflections._workflow_knowledge,
+                                                 self._reflections._commit_workflow_change,
+                                                 self._reflections.initialize_workflow))
+        self.workflows.bind("reflection_lens", Binding(self._reflections._lens_knowledge,
+                                                      self._reflections._commit_lens_change,
+                                                      self._reflections.initialize_lens))
+        self.workflows.bind("research_wave", Binding(self._reflections._wave_knowledge,
+                                                    self._reflections._commit_wave_change,
+                                                    self._reflections.initialize_wave))
+
+    def initialize_workflows(self) -> None:
+        """Explicit bootstrap of version-pinned legacy compositions after binding."""
+        with self.store.transaction() as conn:
+            self._reflections.migrate_workflow_instances(conn=conn)
+            # Schema 60 adopts released research records, including gates whose
+            # review already passed. Resume only that pinned migration revision;
+            # an arbitrary plugin's read-only node still needs its assigned work.
+            rows = conn.execute(
+                "SELECT w.id, w.project_id FROM workflow_instances w JOIN workflow_history h "
+                "ON h.instance_id = w.id AND h.revision = w.revision "
+                "WHERE h.command_key = 'migration:60' AND w.outcome = ''"
+            ).fetchall()
+            for row in rows:
+                decision = self.workflows.runtime.evaluate(conn=conn, project_id=row["project_id"], instance_id=row["id"])
+                selected = decision.suggested
+                if decision.node is not None and decision.node.read_only and selected is not None and selected.available:
+                    self.workflows.runtime.apply_in_transaction(
+                        conn=conn, project_id=row["project_id"], instance_id=row["id"],
+                        action=selected.edge.name, expected_revision=decision.snapshot.revision,
+                        request_id="migration:60:review", payload={},
+                    )
 
     # Projects -------------------------------------------------------------
 
@@ -230,15 +271,15 @@ class Research:
             ).fetchone()
             return self._project_view(updated)
 
-    def get_project(self, *, project_id: str | None = None) -> dict[str, Any]:
-        with closing(self.store.connect()) as conn:
+    def get_project(self, *, project_id: str | None = None, conn: Connection | None = None) -> dict[str, Any]:
+        if conn is not None:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            row = conn.execute(
-                "SELECT * FROM projects WHERE id = ?", (project_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
             if row is None:
                 raise NotFoundError(f"project not found: {project_id}")
             return self._project_view(row)
+        with closing(self.store.connect()) as conn:
+            return self.get_project(project_id=project_id, conn=conn)
 
     def list_projects(
         self,
@@ -957,6 +998,7 @@ class Research:
         transition: str,
         evidence: dict[str, object] | None = None,
         project_id: str | None = None,
+        expected_revision: int | None = None,
     ) -> CommittedExperimentUpdate:
         return cast(
             CommittedExperimentUpdate,
@@ -964,6 +1006,7 @@ class Research:
                 experiment_id=experiment_id,
                 transition=transition,
                 evidence=evidence,
+                expected_revision=expected_revision,
                 project_id=project_id,
             ),
         )
@@ -992,29 +1035,32 @@ class Research:
         project_id: str,
         experiment_id: str,
         run: PersistedRunState,
-    ) -> CommittedExperimentUpdate:
+        if_current: bool = False,
+        expected_run_id: str | None = None,
+    ) -> CommittedExperimentUpdate | None:
         return cast(
-            CommittedExperimentUpdate,
+            CommittedExperimentUpdate | None,
             self._experiments.record_mlflow_run(
                 project_id=project_id,
                 experiment_id=experiment_id,
                 run=run,
                 event_type="experiment.mlflow_run_refreshed",
                 return_event=True,
+                expected_run_id=(expected_run_id if expected_run_id is not None else
+                                 str(run.get("run_id") or "") if if_current else None),
             ),
         )
 
     def record_exhibit_verdict(
-        self,
-        *,
-        experiment_id: str,
-        project_id: str,
-        verdict: ExhibitVerdict,
+        self, *, experiment_id: str, project_id: str, verdict: ExhibitVerdict,
+        expected_revision: int | None = None, expected_attempt_index: int | None = None,
+        expected_artifact_ids: tuple[str, ...] | None = None, artifact_path: str = "",
+        artifact_data: bytes | None = None,
     ) -> None:
         self._experiments.record_exhibit_verdict(
-            experiment_id=experiment_id,
-            project_id=project_id,
-            verdict=verdict,
+            experiment_id=experiment_id, project_id=project_id, verdict=verdict,
+            expected_revision=expected_revision, expected_attempt_index=expected_attempt_index,
+            expected_artifact_ids=expected_artifact_ids, artifact_path=artifact_path, artifact_data=artifact_data,
         )
 
     def attempt_started_running_at(self, *, experiment_id: str) -> str | None:
@@ -1207,6 +1253,9 @@ class Research:
 
     # Reviews --------------------------------------------------------------
 
+    def workflow_review_fact(self, *, snapshot, reference, conn) -> dict[str, Any]:
+        return self._reviews.read_fact(snapshot=snapshot, reference=reference, conn=conn)
+
     def request_review(
         self,
         *,
@@ -1216,6 +1265,8 @@ class Research:
         reason: str = "",
         producer_session_id: str = "main",
         project_id: str | None = None,
+        expected_revision: int | None = None,
+        if_current: bool = False,
     ) -> dict[str, Any]:
         return self._reviews.request(
             target_type=target_type,
@@ -1224,6 +1275,8 @@ class Research:
             reason=reason,
             producer_session_id=producer_session_id,
             project_id=project_id,
+            expected_revision=expected_revision,
+            if_current=if_current,
         )
 
     def start_review(

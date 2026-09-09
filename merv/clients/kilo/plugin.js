@@ -7,35 +7,35 @@ const REVIEWERS = {
   'experiment-design-review': {
     description:
       'Read-only design reviewer for a fresh Merv design_reviewer handoff. '
-      + 'Requires the experiment id, review request id, and reviewer capability.',
+      + 'Requires the experiment id, review request id, and assigned-session authority or handoff capability.',
     prompt:
       'You are the independent Merv design reviewer. Load the '
       + '`experiment-design-review` skill and follow it exactly. Require the '
-      + 'experiment id, review request id, and reviewer capability from the '
-      + 'handoff. Do not edit files or run shell commands. Submit exactly one '
+      + 'experiment id, review request id, and assigned-session authority or '
+      + 'handoff capability. Do not edit files or run shell commands. Submit exactly one '
       + 'verdict through the Merv review tools.',
     permission: { edit: 'deny', bash: 'deny' },
   },
   'experiment-attempt-review': {
     description:
       'Read-only experiment reviewer for a fresh Merv experiment_reviewer handoff. '
-      + 'Requires the experiment id, review request id, and reviewer capability.',
+      + 'Requires the experiment id, review request id, and assigned-session authority or handoff capability.',
     prompt:
       'You are the independent Merv experiment reviewer. Load the '
       + '`experiment-attempt-review` skill and follow it exactly. Require the '
-      + 'experiment id, review request id, and reviewer capability from the '
-      + 'handoff. Do not edit files or run shell commands. Submit exactly one '
+      + 'experiment id, review request id, and assigned-session authority or '
+      + 'handoff capability. Do not edit files or run shell commands. Submit exactly one '
       + 'verdict through the Merv review tools.',
     permission: { edit: 'deny', bash: 'deny' },
   },
   'task-review': {
     description:
       'Read-only task reviewer for a fresh Merv task_reviewer handoff. '
-      + 'Requires the task id, review request id, and reviewer capability.',
+      + 'Requires the task id, review request id, and assigned-session authority or handoff capability.',
     prompt:
       'You are the independent Merv task reviewer. Load the '
       + '`task-review` skill and follow it exactly. Require the task id, '
-      + 'review request id, and reviewer capability from the handoff. Verify '
+      + 'review request id, and assigned-session authority or handoff capability. Verify '
       + 'each Done-when check against the delivery by checking, not by '
       + 'reading. Do not edit files. Submit exactly one verdict through the '
       + 'Merv review tools.',
@@ -44,12 +44,12 @@ const REVIEWERS = {
   'project-reflection-review': {
     description:
       'Read-only reflection reviewer for a fresh Merv reflection_reviewer handoff. '
-      + 'Requires the reflection id, review request id, and reviewer capability.',
+      + 'Requires the reflection id, review request id, and assigned-session authority or handoff capability.',
     prompt:
       'You are the independent Merv project-reflection reviewer. Load the '
       + '`project-reflection-review` skill and follow it exactly. Require the '
-      + 'reflection id, review request id, and reviewer capability from the '
-      + 'handoff. Do not edit files or run shell commands. Submit exactly one '
+      + 'reflection id, review request id, and assigned-session authority or '
+      + 'handoff capability. Do not edit files or run shell commands. Submit exactly one '
       + 'verdict through the Merv review tools.',
     permission: { edit: 'deny', bash: 'deny' },
   },
@@ -60,8 +60,8 @@ const REVIEWERS = {
     prompt:
       'You are the independent Merv code-consolidation reviewer. Load the '
       + '`consolidation-review` skill and follow it exactly. Require the '
-      + 'reflection id, review request id, and reviewer capability from the '
-      + 'handoff. Do not edit or commit. Read-only checks are allowed. Submit '
+      + 'reflection id, review request id, and assigned-session authority or '
+      + 'handoff capability. Do not edit or commit. Read-only checks are allowed. Submit '
       + 'exactly one verdict through the Merv review tools.',
     permission: { edit: 'deny' },
   },

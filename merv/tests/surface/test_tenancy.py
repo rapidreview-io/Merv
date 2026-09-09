@@ -107,11 +107,15 @@ class TenancyTest(unittest.TestCase):
             "experiment.create",
             {"project_id": project_id, "name": "exp-x", "intent": "test it"},
         )["id"]
-        # Put the experiment in a design review gate so review.request accepts a
-        # design_reviewer role.
+        # Keep the native record and canonical workflow in the same review
+        # node; these tests exercise tenancy and capabilities at that boundary.
         with self.store.transaction() as conn:
             conn.execute(
                 "UPDATE experiments SET status = 'design_review' WHERE id = ?",
+                (exp_id,),
+            )
+            conn.execute(
+                "UPDATE workflow_instances SET state = 'design_review', revision = 1 WHERE id = ?",
                 (exp_id,),
             )
         return exp_id

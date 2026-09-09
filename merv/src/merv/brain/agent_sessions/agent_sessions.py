@@ -7,14 +7,16 @@ from contextlib import closing
 from datetime import UTC, datetime, timedelta
 import json
 import re
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Protocol
 
 from ..kernel.secret_tokens import hash_secret, secret_digest_matches
 from ..kernel.state import BaseStateStore, row_to_dict, rows_to_dicts
+from ..kernel.state.store import Connection
 from ..kernel.utils import (
     NotFoundError,
     PermissionDeniedError,
     ValidationError,
+    WorkflowError,
     format_iso,
     new_id,
     parse_iso,
@@ -40,7 +42,8 @@ LIVE_STATUSES = ("offered", "active")
 
 _PUBLIC_COLUMNS = """
 id, project_id, target_type, target_id, attempt_index, kind, review_request_id,
-source_sha, runner_id, platform, status, host_session_ref,
+source_sha, workflow_instance_id, workflow_revision, workflow_node,
+runner_id, platform, status, host_session_ref,
 workspace_ref, base_sha, head_sha,
 assignment_json, agent_setup_json, telemetry_json, telemetry_at,
 created_at, activated_at, last_activity_at, lease_expires_at, hard_deadline_at,
@@ -60,6 +63,18 @@ MAX_TRACE_STDERR_CHARS = 8 * 1024
 TRACE_GRACE_AFTER_CLOSE_SECONDS = 15 * 60
 
 
+class WorkflowAssignment(Protocol):
+    def __call__(self, tx: Connection, project_id: str, instance_id: str, revision: int) -> dict[str, Any]: ...
+
+
+class WorkflowValidation(Protocol):
+    def __call__(self, tx: Connection, row: Mapping[str, Any]) -> str: ...
+
+
+class WorkflowActivation(Protocol):
+    def __call__(self, tx: Connection, row: Mapping[str, Any]) -> None: ...
+
+
 class AgentSessions:
     """Own the small server-side half of local coding-agent execution."""
 
@@ -73,6 +88,18 @@ class AgentSessions:
         self.terminal_experiment_statuses = tuple(
             sorted(set(terminal_experiment_statuses))
         )
+        self._workflow_assignment: WorkflowAssignment | None = None
+        self._workflow_validation: WorkflowValidation | None = None
+        self._workflow_activation: WorkflowActivation | None = None
+
+    def bind_workflows(
+        self, *, assignment: WorkflowAssignment, validate: WorkflowValidation,
+        activate: WorkflowActivation,
+    ) -> None:
+        """Supply workflow authority while this module retains lease ownership."""
+        self._workflow_assignment = assignment
+        self._workflow_validation = validate
+        self._workflow_activation = activate
 
     def claim(
         self,
@@ -140,6 +167,18 @@ class AgentSessions:
                 since=now - timedelta(seconds=FAILURE_BACKOFF_SECONDS),
             )
             for candidate in candidates:
+                instance_id = str(candidate.get("instance_id") or "")
+                if instance_id:
+                    session = self._claim_workflow(
+                        tx=tx, project_id=project_id, candidate=candidate,
+                        runner_id=runner_id, platform=platform,
+                        idempotency_key=idempotency_key, digest=digest,
+                        now=now, deadline_seconds=deadline_seconds,
+                        source_key_id=source_key_id, source_user_id=source_user_id,
+                    )
+                    if session is not None:
+                        return session
+                    continue
                 target_type = str(candidate.get("target_type") or "experiment")
                 target_id = str(candidate.get("target_id") or candidate.get("id") or "")
                 expected_status = str(candidate.get("status") or "")
@@ -231,6 +270,73 @@ class AgentSessions:
                 return self._find(tx=tx, session_id=session_id)
         return None
 
+    def _claim_workflow(
+        self, *, tx: Connection, project_id: str, candidate: Mapping[str, Any],
+        runner_id: str, platform: str, idempotency_key: str, digest: str,
+        now: datetime, deadline_seconds: int, source_key_id: str, source_user_id: str,
+    ) -> dict[str, Any] | None:
+        if self._workflow_assignment is None:
+            return None
+        instance_id = str(candidate["instance_id"])
+        revision = int(candidate.get("revision", -1))
+        try:
+            # This callback locks/rechecks the workflow and builds its exact brief
+            # inside the transaction that offers the lease. Candidates are hints.
+            assignment = self._workflow_assignment(tx, project_id, instance_id, revision)
+        except (WorkflowError, NotFoundError):
+            return None
+        execution = assignment.get("execution") or {}
+        workspace = str(execution.get("workspace") or "work")
+        kind = workspace if workspace in {"review", "consolidation"} else "workflow"
+        references = assignment.get("references") or []
+        review_request_id = next((str(item["id"]) for item in references if item.get("kind") == "review_request"), "")
+        source_sha = next((str(item["id"]) for item in references if item.get("kind") == "code"), "")
+        if not source_sha:
+            previous = tx.execute(
+                "SELECT head_sha FROM agent_sessions WHERE project_id = ? "
+                "AND target_id = ? AND kind <> 'review' AND head_sha <> '' "
+                "ORDER BY created_at DESC, id DESC LIMIT 1", (project_id, instance_id),
+            ).fetchone()
+            source_sha = str(previous["head_sha"] or "") if previous is not None else ""
+        source_sha = _sha(source_sha, allow_empty=True)
+        if review_request_id:
+            request = tx.execute(
+                "SELECT id FROM review_requests WHERE id = ? AND project_id = ? "
+                "AND target_id = ? AND status IN ('requested','started') AND expires_at > ?",
+                (review_request_id, project_id, instance_id, format_iso(now)),
+            ).fetchone()
+            if request is None:
+                return None
+        placeholders = ", ".join("?" for _ in FAILURE_REASONS)
+        failed = tx.execute(
+            f"SELECT 1 FROM agent_sessions WHERE project_id = ? AND platform = ? "
+            f"AND workflow_instance_id = ? AND workflow_revision = ? "
+            f"AND close_reason IN ({placeholders}) AND closed_at > ? LIMIT 1",
+            (project_id, platform, instance_id, revision, *FAILURE_REASONS,
+             format_iso(now - timedelta(seconds=FAILURE_BACKOFF_SECONDS))),
+        ).fetchone()
+        if failed is not None:
+            return None
+        session_id = new_id(prefix="ags")
+        inserted = tx.execute(
+            """INSERT INTO agent_sessions (
+              id, project_id, target_type, target_id, attempt_index, kind,
+              review_request_id, source_sha, workflow_instance_id, workflow_revision,
+              workflow_node, assignment_json, runner_id, platform, idempotency_key,
+              secret_digest, status, created_at, lease_expires_at, hard_deadline_at,
+              source_key_id, source_user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offered', ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING RETURNING id""",
+            (session_id, project_id, str(assignment["workflow"]), instance_id,
+             int(assignment.get("attempt_index") or 1), kind, review_request_id, source_sha,
+             instance_id, revision, str(assignment["state"]),
+             _bounded_json_object(assignment, field="assignment", limit=MAX_ASSIGNMENT_BYTES),
+             runner_id, platform, idempotency_key, digest, format_iso(now),
+             format_iso(now + timedelta(seconds=OFFER_LEASE_SECONDS)),
+             format_iso(now + timedelta(seconds=deadline_seconds)), source_key_id or None, source_user_id),
+        ).fetchone()
+        return self._find(tx=tx, session_id=session_id) if inserted is not None else None
+
     def set_assignment(
         self, *, session_id: str, assignment: Mapping[str, Any]
     ) -> dict[str, Any]:
@@ -256,7 +362,7 @@ class AgentSessions:
             )
             return self._find(tx=tx, session_id=session_id)
 
-    def authenticate(self, *, session_secret: str) -> dict[str, Any] | None:
+    def authenticate(self, *, session_secret: str, activate: bool = True) -> dict[str, Any] | None:
         """Validate, activate, and touch a session credential in one write."""
         digest = hash_secret(session_secret)
         now = datetime.now(UTC)
@@ -284,10 +390,16 @@ class AgentSessions:
             ).fetchone()
             if row is None or str(row["status"]) not in LIVE_STATUSES:
                 return None
-            invalid_reason = self._invalid_target_reason(row=row)
+            invalid_reason = self._invalid_target_reason(tx=tx, row=row)
             if invalid_reason:
                 self._close(tx=tx, row=row, now=now, reason=invalid_reason)
                 return None
+            if not activate:
+                return row_to_dict(row=row) or {}
+            if str(row["workflow_instance_id"] or "") and self._workflow_activation is not None:
+                # The workflow's start marker deduplicates this, including
+                # preserved active leases from before the workflow migration.
+                self._workflow_activation(tx, row_to_dict(row=row) or {})
             hard_deadline = parse_iso(row["hard_deadline_at"])
             lease_until = min(
                 now + timedelta(seconds=ACTIVE_LEASE_SECONDS),
@@ -684,6 +796,16 @@ class AgentSessions:
                 "runner": runners[0] if runners else None,
             }
 
+    def workflow_producer(self, *, project_id: str, instance_id: str, revision: int) -> str:
+        """The most recently leased producer for this exact workflow revision."""
+        with closing(self.store.connect()) as conn:
+            row = conn.execute(
+                "SELECT id FROM agent_sessions WHERE project_id = ? AND workflow_instance_id = ? "
+                "AND workflow_revision = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+                (project_id, instance_id, revision),
+            ).fetchone()
+            return "" if row is None else str(row["id"])
+
     def live_targets(self, *, project_id: str) -> set[tuple[str, ...]]:
         """Keys of every offered/active session, shaped like the one-live-
         session indexes: ``("review", request_id)`` for reviews, else
@@ -691,7 +813,8 @@ class AgentSessions:
         with self.store.transaction() as tx:
             rows = tx.execute(
                 """
-                SELECT kind, target_type, target_id, review_request_id
+                SELECT kind, target_type, target_id, review_request_id,
+                       workflow_instance_id, workflow_revision
                 FROM agent_sessions
                 WHERE project_id = ? AND status IN ('offered', 'active')
                 """,
@@ -700,7 +823,9 @@ class AgentSessions:
         keys: set[tuple[str, ...]] = set()
         for row in rows:
             kind = str(row["kind"] or "experiment")
-            if kind == "review":
+            if row["workflow_instance_id"]:
+                keys.add(("workflow", str(row["workflow_instance_id"]), str(row["workflow_revision"])))
+            elif kind == "review":
                 keys.add(("review", str(row["review_request_id"] or "")))
             else:
                 keys.add((kind, str(row["target_type"] or ""), str(row["target_id"] or "")))
@@ -987,7 +1112,7 @@ class AgentSessions:
     ) -> None:
         if (
             str(row["target_type"]) != "experiment"
-            or str(row["kind"]) != "experiment"
+            or str(row["kind"]) not in {"experiment", "workflow"}
             or not workspace_ref
             or not base_sha
             or not head_sha
@@ -1043,7 +1168,7 @@ class AgentSessions:
             WHERE s.status IN ('offered', 'active')
             """
         ).fetchall()
-        invalid = [(row, self._invalid_target_reason(row=row)) for row in rows]
+        invalid = [(row, self._invalid_target_reason(tx=tx, row=row)) for row in rows]
         invalid = [(row, reason) for row, reason in invalid if reason]
         for row, reason in invalid:
             self._close(
@@ -1102,7 +1227,11 @@ class AgentSessions:
             for row in rows
         }
 
-    def _invalid_target_reason(self, *, row: Any) -> str:
+    def _invalid_target_reason(self, *, tx: Connection, row: Any) -> str:
+        if str(row["workflow_instance_id"] or ""):
+            if self._workflow_validation is None:
+                return "workflow_authority_unavailable"
+            return self._workflow_validation(tx, row_to_dict(row=row) or {})
         target_type = str(row["target_type"])
         kind = str(row["kind"])
         if target_type == "experiment":
@@ -1512,6 +1641,8 @@ def _public_row(row: Any) -> dict[str, Any]:
     result = row_to_dict(row=row) or {}
     assignment = _json_column(result.pop("assignment_json", "{}"))
     result["assignment"] = assignment or _fallback_assignment(result)
+    if assignment.get("instruction"):
+        result["instruction"] = str(assignment["instruction"])
     result["agent_setup"] = _json_column(result.pop("agent_setup_json", "{}"))
     result["telemetry"] = _json_column(result.pop("telemetry_json", "{}"))
     target_type = str(result.get("target_type") or "")

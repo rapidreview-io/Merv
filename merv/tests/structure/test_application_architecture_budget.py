@@ -33,9 +33,12 @@ class ApplicationArchitectureBudgetTest(unittest.TestCase):
         integration = (APPLICATION / "mlflow.py").read_text()
         root = (APPLICATION / "application.py").read_text()
         transition = (APPLICATION / "experiments/transition.py").read_text()
+        deliveries = (APPLICATION / "workflow_actions.py").read_text()
         self.assertIn("class MlflowIntegration:", integration)
         self.assertIn("self._mlflow = MlflowIntegration(", root)
-        self.assertIn("self.mlflow.after_transition(", transition)
+        self.assertNotIn("self.mlflow.after_transition(", transition)
+        self.assertIn("tracking.deliver_workflow_action", deliveries)
+        self.assertIn("self.workflow_deliveries = WorkflowDeliveries(", root)
         for path in APPLICATION.rglob("*.py"):
             if path.name == "mlflow.py":
                 continue

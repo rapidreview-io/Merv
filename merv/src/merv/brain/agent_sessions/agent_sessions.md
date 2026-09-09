@@ -1,119 +1,85 @@
 # Agent Sessions
 
-Agent Sessions lets Merv run experiments in separate, platform-native coding
-agent sessions on the user's machine.
+Agent Sessions runs workflow nodes in separate, platform-native coding-agent
+sessions on the user's machine.
 
 ## Boundary
 
-- Research Core still owns experiment and reflection state.
-- Application chooses an owner, independent reviewer, or consolidator.
+- Workflows owns node evaluation, agent briefs, transitions, and composition.
+- Application connects that authority to scheduling and support capabilities.
 - Agent Sessions owns worker identity, leases, credentials, and exclusivity.
 - Surface authenticates and transports runner/session requests.
 - The local runner owns processes and platform-specific commands.
-- No campaign object: reviews dispatch independently, and after reflection
-  approval, consolidation and its code review finish before the next wave.
 
-## Dispatch switch
+## Dispatch and lifecycle
 
-Automatic dispatch is per project and off by default: a runner claims nothing
-until the project sets `agent_dispatch`. Turning it off stops new claims only;
-halting a project or one session closes rows so each runner stops its own
-children on the next reconcile.
+Automatic dispatch is per project and off by default. The project must set
+`agent_dispatch` before runners receive work. Turning it off stops new claims;
+halting a project/session closes leases so runners stop their children.
 
-The claim order is one plan (`Application._dispatch_plan`): pending review
-requests, then a pending consolidation, then experiments needing an owner
-(published wave first). `Application.dispatch_queue` reads the same plan minus
-`live_targets` — the keys of every offered/active row, shaped like the
-one-live-session indexes — so the Auto-run page's "waiting" rows and its
-headline count are exactly what the next claim would take, computed whether or
-not dispatch is on.
+`Application._dispatch_plan` enumerates dispatchable nodes from the workflow
+registry, prioritizing independent reviews. The queue subtracts current live
+instance/revision leases. New workflow names require no scheduler branch.
+Dependencies and review prerequisites use the same evaluation as status/tools.
 
-## Lifecycle
+1. A runner persists its claim key before network I/O and derives its `mas_`
+   secret from an owner-only machine key without writing the secret to disk.
+2. Application supplies current workflow instance/revision candidates.
+3. `claim` locks and rechecks the revision and prerequisites, rebuilds the node
+   brief, and freezes exact references in the same transaction as its lease.
+4. Only the secret digest is stored. The child receives the secret through
+   `MERV_AGENT_SESSION_KEY`, then attaches its process and branch references.
+5. The first authorized MCP authentication activates the lease. Workflows
+   records actual work start once per node revision, including resumed workers.
+6. Authenticated calls and confirmed child heartbeats renew the bounded lease.
+7. Release, expiry, hard deadline, changed workflow revision/prerequisites, or a
+   superseded review closes the lease and causes the runner to stop its child.
 
-1. A runner persists a stable claim key before network I/O and derives its
-   `mas_` secret from an owner-only machine key without writing it to disk.
-2. Application supplies current experiment or review candidates.
-3. `claim` atomically offers the first candidate without a live owner.
-4. Only the secret digest is stored; the plaintext stays with the runner.
-5. The runner starts a native platform process with the secret in
-   `MERV_AGENT_SESSION_KEY`, then attaches the host process and durable branch
-   reference.
-6. The first ordinary authenticated Merv call activates the session.
-7. Later authenticated calls extend its lease.
-8. At consolidation the runner alone compare-and-swaps the reviewed proposal
-   into its bare repository's `refs/merv/central` and settles the receipt.
-9. Runner release, lease expiry, hard deadline, terminal experiment, changed
-   attempt, or submitted review closes the session.
+The database enforces one live lease per workflow instance/revision and one
+result per runner/idempotency key. Reviewers use independent credentials and
+workspaces; graph completion fences the previous node. Ordinary exits can
+resume. Repeated fast exits without a commit use a launch-failure backoff.
+Schema 60 binds existing leases to workflow instances while retaining their
+secret, deadline, and frozen legacy packet. Legacy claim support remains for
+existing callers; newly scheduled work always uses workflow authority.
 
-The database enforces one live experiment owner, one live worker per review
-request, and one result per runner/idempotency key; reviewers use separate
-sessions so producers never review their own work. An ordinary exit is
-immediately resumable; two rapid exits without a commit are a crash loop and
-use the short launch backoff so a broken CLI cannot spawn every poll cycle.
+## Security and workspaces
 
-## Security
+Session credentials are MCP-only, default-deny, and scoped to their project,
+workflow instance/revision, read-only policy, and review request. Project
+knowledge/content reads stay project-scoped; mutations target the assigned
+record. Capability-backed reviewers can start/submit their assigned verdict
+but cannot change evidence or take other workflow exits. Parent key revocation
+and project membership remain authoritative. Secrets never appear in argv,
+prompts, logs, or responses.
 
-The session credential is MCP-only, default-deny, and confined to its project,
-experiment, kind, and review request; parent project-key revocation and project
-membership remain authoritative. The secret is never put in argv, prompts,
-logs, or API responses. The runner keeps one persistent branch and worktree per
-experiment and consolidation; detached review worktrees are temporary. It
-records launch intent before spawning, refuses a child whose process identity
-cannot be recovered after restart, and holds a pre-PID-crash claim until its
-lease expires rather than risking a duplicate worker.
+The runner records launch intent before spawning, verifies process identity on
+restart, and holds uncertain pre-PID claims until expiry to avoid duplicates.
+It retains a branch/worktree per workflow, temporary detached review worktrees,
+and proposal branches for consolidation. A node can request a scratch directory
+without Git. Source heads from completed sessions support continuation.
 
-Worktrees prevent Git collisions, not filesystem access: sessions run as the
-same local user, so use containers, VMs, or separate OS identities for
-hostile-agent containment. The Merv-owned bare repository has no remotes, so
-managed agents cannot push its private central ref into the user's repository.
+The runner alone compare-and-swaps reviewed proposals into `refs/merv/central`.
+Its bare repository has no remotes. Existing experiment branch paths are kept;
+other plugins share the generic workflow namespace keyed by instance ID.
+Worktrees prevent Git collisions; same-user processes share filesystem access.
 
-## Pairing and settings
+## Pairing and observability
 
-A runner pairs with one project by device code: it generates its own `mk_`
-key, presents only the digest, prints an 8-character code, and an owner's
-approval in Settings registers the digest as a labelled project key (Surface's
-`RunnerPairings` with `ProjectKeys.register_digest`, one transaction). Per
-`(project_id, runner_id)` this module then holds the owner's desired tuning and
-the machine's inventory: the heartbeat carries inventory and applied version up
-and the caller's own row plus `desired_settings` down. The schema is closed
-(`merv.shared.runner_settings`): enabled/model/effort/parallelism per native
-platform and workspace paths, never argv. Browsers address a runner by an
-opaque `runner_ref`; runner identity stays private. A settings PUT folds into
-what is already desired (platform entries by name, workspace whole), so a PUT
-that carries only a `probe` — the page's Test button asking the machine for one
-test call through a platform — never erases tuning a machine has not pulled
-yet; a probe stays until the next probe.
+A runner pairs by a device code and receives a project `mk_` key. Per runner,
+Agent Sessions stores desired model/effort/parallelism/workspace settings and
+reported machine/platform inventory. Only closed-schema settings cross this
+boundary, never argv. Browsers address runners by opaque references.
+Provider sign-in belongs to each harness; the brain stores only bounded status,
+quota, and smoke-test evidence. A failed fast launch enters the normal backoff.
 
-Provider sign-in belongs to each harness; the brain never holds it. The runner
-reports evidence in its harness inventory, projected field by field: an `auth`
-signal (`present`/`unknown`/`n/a`, or `failed` with the harness's own refusal
-line and the fix in words), `quota` evidence, and `smoke` — the last test call
-(`ok`/`failed`/`running`/`queued`, when, how long, why). A child that dies fast
-with a recognisable refusal closes as `host_process_failed`, which counts as a
-failure for dispatch backoff and shows as one on the page.
+Native adapters cover Codex, Claude Code, Gemini CLI, Cursor Agent, OpenCode,
+GitHub Copilot CLI, Qwen Code and Hermes; custom commands use shell-free stdin.
+Native MCP or the `merv-client call` bridge carries the session credential.
+One runner machine owns a project's durable Git repository.
 
-## Local platforms
-
-`~/.merv/client.json` holds platforms, tuning, and executable commands; the
-runner merges brain-held tuning into it per entry. Native process adapters
-cover Codex, Claude Code, Gemini CLI, Cursor Agent, OpenCode, GitHub Copilot
-CLI, Qwen Code, and Hermes Agent; a shell-free stdin command adapter covers
-custom agents that emit JSONL on stdout. Codex and Claude Code receive an
-isolated, session-scoped MCP configuration; other adapters use the shell-safe
-`merv-client call` bridge (session secret from the environment); Hermes is told
-to ignore ambient Merv MCP configuration. One runner machine owns a project's
-experiment branches and central repository; agent platforms share that runner.
-
-Every claimed session writes only to the executor under
-`~/.merv/agent-traces/<agent-session-id>/`: immutable `metadata.json` (one work
-item, one sanitized harness/model setup), `trace.jsonl` (provider events), and
-`stderr.log` (diagnostics). Hermes produces the same trace through its session
-export after the process stops. Aider is not an auto-run adapter because it
-cannot provide a complete structured trace.
-
-The server keeps the assignment, non-secret agent setup, aggregate counters,
-and one bounded, redacted excerpt per session (`agent_session_traces`: last ≤60
-events + ≤8 KiB stderr, secret-shaped keys/values masked on both ends, owner
-runner only, overwritten in place) for the job card. The raw trace never leaves
-the runner. The heartbeat marks a machine live even with no job or platforms;
-commands and runner identity stay private.
+Each session writes immutable metadata, provider trace, and stderr under
+`~/.merv/agent-traces/<session-id>/`. The server stores the frozen assignment,
+sanitized setup, aggregate counters and a bounded/redacted trace excerpt:
+at most 60 events and 8 KiB stderr. The owning runner may update the excerpt
+briefly after close; raw traces stay local. Heartbeats report idle machines too.

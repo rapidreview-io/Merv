@@ -129,18 +129,19 @@ class ReviewPolicyTest(unittest.TestCase):
             synopsis="The plan and results check out, so the attempt stands as reported.",
         )
 
+    def _approve_design(self, exp_id):
+        current = self.app.research.workflows.runtime.get(project_id=self.project_id, instance_id=exp_id)
+        self.call("workflow.transition", project_id=self.project_id, instance_id=exp_id, action="approve_design",
+                  expected_revision=current.revision, request_id="approve")
+        return self.app.research.experiment_state(project_id=self.project_id, experiment_id=exp_id)
+
     # ---- default (knob off) ----
 
     def test_attested_pass_satisfies_gate_by_default(self) -> None:
         exp_id = self._drive_to_design_review()
         self._insert_attested_pass(exp_id=exp_id, role="design_reviewer")
-        out = self.call(
-            "experiment.transition",
-            project_id=self.project_id,
-            experiment_id=exp_id,
-            transition="mark_ready_to_run",
-        )
-        self.assertEqual(out["status"], "ready_to_run")
+        out = self._approve_design(exp_id)
+        self.assertEqual(out["status"], "running")
 
     # ---- knob on ----
 
@@ -149,12 +150,7 @@ class ReviewPolicyTest(unittest.TestCase):
         exp_id = self._drive_to_design_review()
         self._insert_attested_pass(exp_id=exp_id, role="design_reviewer")
         with self.assertRaises(WorkflowError) as ctx:
-            self.call(
-                "experiment.transition",
-                project_id=self.project_id,
-                experiment_id=exp_id,
-                transition="mark_ready_to_run",
-            )
+            self._approve_design(exp_id)
         self.assertIn("require_verified_reviews", str(ctx.exception))
         self.assertIn("caller_session_id", str(ctx.exception))
 
@@ -166,7 +162,7 @@ class ReviewPolicyTest(unittest.TestCase):
             "workflow.status_and_next", project_id=self.project_id, experiment_id=exp_id
         )
         workflow = wf["workflow"]
-        self.assertEqual(workflow["current_gate"], "design_review")
+        self.assertEqual(workflow["current_gate"], "review_not_requested")
         self.assertEqual(workflow["review_gate"]["status"], "attested_blocked")
         self.assertTrue(
             any("require_verified_reviews" in item for item in workflow["missing_evidence"])
@@ -179,26 +175,16 @@ class ReviewPolicyTest(unittest.TestCase):
         exp_id = self._drive_to_design_review()
         self._insert_attested_pass(exp_id=exp_id, role="design_reviewer")
         self._pass_verified_review(exp_id=exp_id, role="design_reviewer")
-        out = self.call(
-            "experiment.transition",
-            project_id=self.project_id,
-            experiment_id=exp_id,
-            transition="mark_ready_to_run",
-        )
-        self.assertEqual(out["status"], "ready_to_run")
+        out = self.app.research.experiment_state(project_id=self.project_id, experiment_id=exp_id)
+        self.assertEqual(out["status"], "running")
 
     def test_policy_can_be_switched_back_off(self) -> None:
         self.call("project.update", project_id=self.project_id, require_verified_reviews=True)
         self.call("project.update", project_id=self.project_id, require_verified_reviews=False)
         exp_id = self._drive_to_design_review()
         self._insert_attested_pass(exp_id=exp_id, role="design_reviewer")
-        out = self.call(
-            "experiment.transition",
-            project_id=self.project_id,
-            experiment_id=exp_id,
-            transition="mark_ready_to_run",
-        )
-        self.assertEqual(out["status"], "ready_to_run")
+        out = self._approve_design(exp_id)
+        self.assertEqual(out["status"], "running")
 
     # ---- settings surface ----
 

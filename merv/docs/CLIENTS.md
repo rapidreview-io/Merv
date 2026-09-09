@@ -481,7 +481,7 @@ opencode mcp auth merv
 
 The plugin command writes the global plugin entry. Its config hook registers
 the URL-only hosted MCP server, adds Merv's hosted skill catalog, and supplies
-the four read-only reviewer subagents. `opencode mcp auth merv` performs native
+the five read-only reviewer subagents. `opencode mcp auth merv` performs native
 MCP discovery, DCR, PKCE browser consent, secure token storage, and refresh.
 There is no Merv key, repository clone, or local proxy.
 
@@ -513,7 +513,7 @@ kilo mcp auth merv
 ```
 
 The plugin's configuration hook registers the URL-only hosted MCP server, adds
-Merv's hosted catalog to `skills.urls`, and supplies the four read-only reviewer
+Merv's hosted catalog to `skills.urls`, and supplies the five read-only reviewer
 subagents. `kilo mcp auth merv` performs native MCP discovery, DCR, PKCE browser
 consent, secure token storage, and refresh. There is no Merv key or local proxy.
 

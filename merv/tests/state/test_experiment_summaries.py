@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from merv.brain.workflows import Workflows
+
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,7 +29,7 @@ class ExperimentSummaryTest(unittest.TestCase):
         self.store = CountingStateStore(
             db_path=Path(self.tmp.name) / "state.sqlite"
         )
-        self.research = Research(store=self.store, artifacts=Mock())
+        self.research = Research(store=self.store, artifacts=Mock(), workflows=Workflows(store=self.store))
         self.experiments = self.research._experiments
         self.one_ids = self._seed("proj_one", 1)
         self.many_ids = self._seed("proj_many", 25)

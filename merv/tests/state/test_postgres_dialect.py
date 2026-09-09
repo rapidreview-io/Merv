@@ -25,6 +25,8 @@ a control plane actually serves them.
 
 from __future__ import annotations
 
+from merv.brain.workflows import Workflows
+
 import os
 import re
 import shutil
@@ -38,6 +40,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tests.support.brain import TestBrain
+from tests.state import test_workflow_migration as workflow_migration_cases
 from merv.brain.artifacts import Artifacts
 from merv.brain.feed.persistence import install_feed_schema
 from merv.brain.surface.config import build_state_store, resolve_db_url
@@ -315,6 +318,93 @@ def _schema_without_storage_completion_tokens() -> str:
     return legacy
 
 
+
+
+@unittest.skipUnless(HAVE_POSTGRES, "Postgres unavailable")
+class PostgresWorkflowMigrationTest(workflow_migration_cases.ReflectionMigrationTest):
+    """Run the same reflection/lens/publication upgrade contracts on PostgreSQL."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        self.app = TestBrain(repo_root=self.repo, db_path=self.repo / ".research_plugin" / "unused.sqlite",
+                             store=PostgresStateStore(dsn=_reset_database()))
+        self.project_id = self.call("project", action="create", name=self.__class__.__name__)["id"]
+
+    def migrate(self) -> None:
+        path = self.app.db_path
+        self.app.shutdown()
+        with self.app.store.transaction() as conn:
+            workflow_migration_cases._remove_runtime(conn)
+        self.app = TestBrain(repo_root=self.repo, db_path=path, store=PostgresStateStore(dsn=_dsn))
+
+    def test_schema60_preserves_active_trace_and_fences_the_old_owner_at_review(self) -> None:
+        active = self.create_experiment("working-owner")
+        reviewing = self.create_experiment("submitted-owner")
+        self.submit(target_type="experiment", target_id=reviewing, role="plan", body=workflow_migration_cases.VALID_PLAN)
+        self.transition_experiment(reviewing, "submit_design")
+        request = self.call("review.request", project_id=self.project_id, target_type="experiment", target_id=reviewing,
+                            role="design_reviewer", producer_session_id="old-owner")
+        with self.app.store.transaction() as conn:
+            conn.execute("ALTER TABLE agent_sessions ADD CONSTRAINT legacy_target_type CHECK (target_type IN ('experiment', 'reflection'))")
+            conn.execute("ALTER TABLE agent_sessions ADD CONSTRAINT legacy_kind CHECK (kind IN ('experiment', 'review', 'consolidation'))")
+            active_secret = workflow_migration_cases._legacy_session(conn, session_id="active", project_id=self.project_id, target_id=active)
+            owner_secret = workflow_migration_cases._legacy_session(conn, session_id="old-owner", project_id=self.project_id, target_id=reviewing)
+            review_secret = workflow_migration_cases._legacy_session(conn, session_id="reviewer", project_id=self.project_id,
+                                                                     target_id=reviewing, kind="review", review_request_id=request["review_request_id"])
+            conn.execute("INSERT INTO agent_session_traces (session_id, project_id, events_json, stderr_tail, complete, updated_at) "
+                         "VALUES ('active', ?, '[{\"message\": \"Retained progress\"}]', 'Retained stderr', 0, ?)", (self.project_id, now_iso()))
+            before = dict(conn.execute("SELECT * FROM agent_sessions WHERE id = 'active'").fetchone())
+            trace = dict(conn.execute("SELECT * FROM agent_session_traces WHERE session_id = 'active'").fetchone())
+        self.migrate()
+        with self.app.store.connect() as conn:
+            after = dict(conn.execute("SELECT * FROM agent_sessions WHERE id = 'active'").fetchone())
+            self.assertEqual({key: value for key, value in before.items() if not key.startswith("workflow_")},
+                             {key: value for key, value in after.items() if not key.startswith("workflow_")})
+            self.assertEqual((after["workflow_instance_id"], after["workflow_revision"], after["workflow_node"]), (active, 0, "planned"))
+            self.assertEqual(dict(conn.execute("SELECT * FROM agent_session_traces WHERE session_id = 'active'").fetchone()), trace)
+            statuses = {row["id"]: row["status"] for row in conn.execute("SELECT id, status FROM agent_sessions").fetchall()}
+        self.assertEqual(statuses, {"active": "active", "old-owner": "expired", "reviewer": "active"})
+        self.assertIsNone(self.app.agent_sessions.authenticate(session_secret=owner_secret))
+        self.assertIsNotNone(self.app.agent_sessions.authenticate(session_secret=active_secret))
+        self.assertIsNotNone(self.app.agent_sessions.authenticate(session_secret=review_secret))
+        self.app.application.workflow_deliveries.run_once(project_id=self.project_id)
+        self.assertEqual(self.count("review_requests"), 1)
+        with self.app.store.transaction() as conn:
+            workflow_migration_cases._legacy_session(conn, session_id="plugin", project_id=self.project_id,
+                                                     target_id="plugin-instance", target_type="new_plugin", kind="workflow", status="released")
+
+    def test_schema60_starts_old_ready_work_once_and_preserves_clock_across_owner_gap(self) -> None:
+        ready = self.drive_experiment_to_running("ready-work")
+        idle = self.drive_experiment_to_running("started-without-owner")
+        offered = self.drive_experiment_to_running("started-resume-offered")
+        with self.app.store.transaction() as conn:
+            conn.execute("UPDATE experiments SET status = 'ready_to_run' WHERE id = ?", (ready,))
+            for experiment_id in (idle, offered):
+                self.app.store.record_event(conn=conn, project_id=self.project_id, event_type="experiment.transitioned",
+                                            target_type="experiment", target_id=experiment_id, payload={"transition": "start_running"})
+                conn.execute("UPDATE experiments SET mlflow_run_id = ? WHERE id = ?", (f"run-{experiment_id}", experiment_id))
+            ready_secret = workflow_migration_cases._legacy_session(conn, session_id="ready", project_id=self.project_id, target_id=ready)
+            offered_secret = workflow_migration_cases._legacy_session(conn, session_id="offered", project_id=self.project_id, target_id=offered, status="offered")
+        clocks = {experiment_id: self.app.research.attempt_started_running_at(experiment_id=experiment_id) for experiment_id in (idle, offered)}
+        self.migrate()
+        with self.app.store.connect() as conn:
+            markers = {row["id"]: row["started_revision"] for row in conn.execute("SELECT id, started_revision FROM workflow_instances").fetchall()}
+        self.assertEqual(markers, {ready: -1, idle: 0, offered: 0})
+        self.assertEqual(self.instance(ready).state, "running")
+        self.assertIsNone(self.app.research.attempt_started_running_at(experiment_id=ready))
+        for secret in (ready_secret, ready_secret, offered_secret, offered_secret):
+            self.assertIsNotNone(self.app.agent_sessions.authenticate(session_secret=secret))
+        self.call("workflow.begin", project_id=self.project_id, instance_id=idle, expected_revision=0)
+        self.assertIsNotNone(self.app.research.attempt_started_running_at(experiment_id=ready))
+        self.assertEqual({experiment_id: self.app.research.attempt_started_running_at(experiment_id=experiment_id) for experiment_id in clocks}, clocks)
+        with self.app.store.connect() as conn:
+            starts = conn.execute("SELECT target_id FROM events WHERE type = 'workflow.work_started'").fetchall()
+            tracking = conn.execute("SELECT instance_id FROM workflow_actions WHERE kind = 'experiment.start_tracking'").fetchall()
+            runs = {row["id"]: row["mlflow_run_id"] for row in conn.execute("SELECT id, mlflow_run_id FROM experiments WHERE id IN (?, ?)", (idle, offered)).fetchall()}
+        self.assertEqual([row["target_id"] for row in starts], [ready])
+        self.assertEqual([row["instance_id"] for row in tracking], [ready])
+        self.assertEqual(runs, {experiment_id: f"run-{experiment_id}" for experiment_id in clocks})
 
 
 @unittest.skipUnless(HAVE_POSTGRES, "Postgres unavailable")
@@ -1110,17 +1200,15 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         artifacts = ResearchArtifacts(
             store=self.store, artifacts=Artifacts(store=self.store, blobs=FakeBlobStore())
         )
-        experiments = ExperimentService(
-            store=self.store,
-            artifacts=artifacts,
-        )
+        research = Research(store=self.store, artifacts=artifacts, workflows=Workflows(store=self.store))
+        experiments = research._experiments
         created = experiments.create(
             project_id=project_id, name="tracking-refresh", intent="postgres"
         )
 
         committed = Research(
             store=self.store, artifacts=artifacts
-        ).refresh_tracking_run(
+        , workflows=Workflows(store=self.store)).refresh_tracking_run(
             project_id=project_id,
             experiment_id=created["id"],
             run={"run_id": "run_pg", "status": "FINISHED"},
@@ -1140,6 +1228,57 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         self.assertEqual(str(row["created_at"]), committed.event.created_at)
         self.assertEqual(committed.state["mlflow_run"]["run_id"], "run_pg")
 
+    def test_tracking_repair_cannot_overwrite_a_concurrent_new_attachment(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        import psycopg
+        from psycopg.rows import dict_row
+
+        project_id = self._seed_project()
+        artifacts = ResearchArtifacts(
+            store=self.store, artifacts=Artifacts(store=self.store, blobs=FakeBlobStore())
+        )
+        research = Research(store=self.store, artifacts=artifacts, workflows=Workflows(store=self.store))
+        experiment = research._experiments.create(
+            project_id=project_id, name="tracking-race", intent="retain the newer run"
+        )
+        research.refresh_tracking_run(
+            project_id=project_id, experiment_id=experiment["id"],
+            run={"run_id": "old_run", "status": "FINISHED"},
+        )
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            # Independent connections need not share the store's advisory lock.
+            with psycopg.connect(_dsn, row_factory=dict_row) as writer:
+                writer.execute(
+                    "UPDATE experiments SET mlflow_run_id = %s WHERE id = %s",
+                    ("new_run", experiment["id"]),
+                )
+                repair = pool.submit(
+                    research.refresh_tracking_run,
+                    project_id=project_id, experiment_id=experiment["id"],
+                    expected_run_id="old_run", run={"run_id": "repaired_run", "status": "RUNNING"},
+                )
+                deadline = time.monotonic() + 5
+                waiting = False
+                while time.monotonic() < deadline:
+                    if repair.done():
+                        repair.result()
+                    writer.execute("SELECT pg_stat_clear_snapshot()")
+                    waiting = writer.execute(
+                        """SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+                           WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock'
+                           AND query LIKE '%UPDATE experiments%') AS waiting"""
+                    ).fetchone()["waiting"]
+                    if waiting:
+                        break
+                    time.sleep(0.01)
+                self.assertTrue(waiting, "repair never reached the held experiment row")
+            self.assertIsNone(repair.result(timeout=5))
+
+        with self.store.transaction() as conn:
+            row = conn.execute("SELECT mlflow_run_id FROM experiments WHERE id = ?", (experiment["id"],)).fetchone()
+            self.assertEqual(row["mlflow_run_id"], "new_run")
+
     def test_event_insert_failure_rolls_back_transition_and_event(self) -> None:
         import psycopg
 
@@ -1147,10 +1286,8 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         artifacts = ResearchArtifacts(
             store=self.store, artifacts=Artifacts(store=self.store, blobs=FakeBlobStore())
         )
-        experiments = ExperimentService(
-            store=self.store,
-            artifacts=artifacts,
-        )
+        research = Research(store=self.store, artifacts=artifacts, workflows=Workflows(store=self.store))
+        experiments = research._experiments
         created = experiments.create(
             project_id=project_id, name="rollback-event", intent="postgres"
         )
@@ -1344,7 +1481,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         canonicalizes legacy roles, rewrites the pinned snapshot token, and
         migration 25 drops the resource tables (each migration + its ledger
         row inside its own transaction on the autocommit connection)."""
-        with patch("merv.brain.kernel.state.store.MIGRATIONS", MIGRATIONS[:-1]):
+        with patch("merv.brain.kernel.state.store.MIGRATIONS", tuple(item for item in MIGRATIONS if item[0] < 59)):
             self.store = PostgresStateStore(dsn=_reset_database())
         project_id = self._seed_project()
         conn = self.store.connect()

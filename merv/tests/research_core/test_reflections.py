@@ -169,12 +169,6 @@ class ReflectionWorkflowTest(ResearchCase):
 
     def _reviewed_no_code_advance(self, reflection_id: str) -> dict:
         """Drive the consolidation gate to a prepared advance without settling."""
-        self.call(
-            "reflection.transition",
-            project_id=self.project_id,
-            reflection_id=reflection_id,
-            transition="begin_consolidation",
-        )
         packet = self.app.application.consolidation(
             project_id=self.project_id, reflection_id=reflection_id
         )
@@ -366,12 +360,6 @@ class ReflectionWorkflowTest(ResearchCase):
             target_type="reflection",
             target_id=reflection_id,
             role="reflection_reviewer",
-        )
-        self.call(
-            "reflection.transition",
-            project_id=self.project_id,
-            reflection_id=reflection_id,
-            transition="begin_consolidation",
         )
         with self.assertRaisesRegex(WorkflowError, "reserved by reflection wave"):
             self.call(
@@ -776,12 +764,6 @@ class ReflectionWorkflowTest(ResearchCase):
             target_id=reflection_id,
             role="reflection_reviewer",
         )
-        self.call(
-            "reflection.transition",
-            project_id=self.project_id,
-            reflection_id=reflection_id,
-            transition="begin_consolidation",
-        )
         proposed = self.app.application.submit_consolidation(
             project_id=self.project_id,
             reflection_id=reflection_id,
@@ -844,12 +826,6 @@ class ReflectionWorkflowTest(ResearchCase):
             target_type="reflection",
             target_id=reflection_id,
             role="reflection_reviewer",
-        )
-        self.call(
-            "reflection.transition",
-            project_id=self.project_id,
-            reflection_id=reflection_id,
-            transition="begin_consolidation",
         )
         self.app.application.submit_consolidation(
             project_id=self.project_id,
@@ -934,12 +910,6 @@ class ReflectionWorkflowTest(ResearchCase):
             target_id=reflection_id,
             role="reflection_reviewer",
         )
-        self.call(
-            "reflection.transition",
-            project_id=self.project_id,
-            reflection_id=reflection_id,
-            transition="begin_consolidation",
-        )
         self.app.application.submit_consolidation(
             project_id=self.project_id,
             reflection_id=reflection_id,
@@ -998,12 +968,6 @@ class ReflectionWorkflowTest(ResearchCase):
             target_type="reflection",
             target_id=reflection_id,
             role="reflection_reviewer",
-        )
-        self.call(
-            "reflection.transition",
-            project_id=self.project_id,
-            reflection_id=reflection_id,
-            transition="begin_consolidation",
         )
         self.app.application.submit_consolidation(
             project_id=self.project_id,

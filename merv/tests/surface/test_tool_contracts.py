@@ -83,6 +83,12 @@ BASE_PUBLIC_TOOLS = frozenset(
         "task.create",
         "task.transition",
         "workflow.status_and_next",
+        "workflow.catalog",
+        "workflow.start",
+        "workflow.transition",
+        "workflow.assignment",
+        "workflow.begin",
+        "workflow.history",
     }
 )
 BASE_INTERNAL_TOOLS = frozenset(
@@ -111,6 +117,12 @@ TRACKING_PUBLIC_TOOLS = frozenset({"mlflow.context", "mlflow.finalize_run"})
 # position, and strict additional-property behavior remain part of the wire
 # contract.
 TOOL_INPUT_SCHEMA_SHA256 = {
+    "workflow.begin": "7e1f66e8766a011eae57680548d7d9cb2761ac24f8445d6d2c0866b4b4a05e39",
+    "workflow.history": "5eb500efff24fefe5e4ea72ecf5eaf0dda5eaf04da3edf73000e65f064d4671a",
+    "workflow.assignment": "5eb500efff24fefe5e4ea72ecf5eaf0dda5eaf04da3edf73000e65f064d4671a",
+    "workflow.transition": "2ae86744e916c03c59a0c09351ddd32b87ed3183a2ca3e53c3323dbed870d229",
+    "workflow.start": "1c9075387e05da362f6380d2c1f854f268038b86a31158a81221365803829091",
+    "workflow.catalog": "99334726611ccf58a148b0814696bfa6fe08c1b2d027e946beccf5a74331c9aa",
     "agent.hello": "cb3195328ef9d7ec6b078452696b790e81e25d84b559f0cb97a08668213aec3c",
     "artifact.find": "ac17e7ab19d57565b569c8fac1b0d3cb7558d6707ba134bf4148262b9e7361e2",
     "artifact.store": "231c571143f6641244bb4db608dde2fdd70aedbea9e34eabad032a6b59a67a3c",
@@ -130,7 +142,7 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "experiment.exhibit": "a70a9ecc2df102418bb86cc5061ab9b930139dab4f6f6def9037230f99c777f3",
     "experiment.get_state": "4abb4d266094018ce686f7d5c8f985eb25a7f5e0b201b201333626a3f560911e",
     "experiment.list": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
-    "experiment.transition": "69bc10a949b7aef4ba3dfdcf74d64cdb8902cae52f745f73357ca9e55fda8785",
+    "experiment.transition": "5853df9367eb8545ab3aabb593f81b1430ea3551f8ef9e9b7389d5218cee9c9d",
     "feed.list": "83fa2eef2ba251fe37e4ebe81810765c7015b82f17ecc08ea2bd2e1ee4bfc55a",
     "feed.post": "4ae8d1aa5565a69ffabdb443bc760a8981b9eb022757c41d0ab58d6a35eda850",
     "feed.register": "664d9d0e70bbb1ac315788acae97e73febf07be2b803fe533f82fecefc7ea326",
@@ -146,11 +158,11 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "reflection.create": "c8afd8f54699b4a4196102c217801e2acf254bca1783acb50db108d3bcc1cfca",
     "reflection.get": "08e0d6e280b0de7dd6e6d16621f1c5665ed2fbdc8becbad53ac93429ec840ede",
     "reflection.list": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
-    "reflection.transition": "2a9b79602febe6aafeeb65eeae51614f28a1fa034c265d850c0e04cd875bf1e8",
-    "review.request": "183255a8dfeab65f417d395584fc97523c10b4465ba728d5946c6b18dd33f03b",
+    "reflection.transition": "6c2a85a45ea54f5c28d9e1f24444f513cf412cade679419fceff6b0b3d699643",
+    "review.request": "485c8eb3a9228e08a4cd74ac89044a95d221014625d984cf2ad20825a626baaa",
     "review.start": "ee9057b697c95ad6cecf5208ddc8b5ba1022f503106b3f1f5c325e60f058d006",
-    "review.status": "35d53359d5f06ab7cec978efb1949fb03c18a6a9b197a1d0ad85a54cbb2266c7",
-    "review.submit": "5d83e0481c6bd1d19b1f56a78eb1de7d2f8f99a4fdf0eb6009211926b0106d10",
+    "review.status": "f77236c493e0a6d6c270c2d6beee060596bbf8b7c51b587b74887e9c29830a95",
+    "review.submit": "6545cf3024c46ffb5bb26517093a4a5b50b2c8b84e900f8cfd22c26427aeb208",
     "sandbox.attach": "ee23b4896d74fadcfec8d55f9c4b3c50316099837e0d9a45497c0d533d4e6f43",
     "sandbox.extend": "6b1c3a1ef50ccad6009f750c0bd8db5b9edcd3717c13bb76b4843a2688c2ffff",
     "sandbox.get": "cb58f835a7705c55bd6703cfe9314c9aa002b8f0e6dcffedc384c3fc36c407e9",
@@ -173,8 +185,8 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "task.create": "b7491b256aea7e16230389fff86175c025aeed06db094b688dd6e94bcc7dfa87",
     "task.get_state": "523a5b27c7e96a0548c42aea81d3e841919cbaa7f3d4af34fce688397c656867",
     "task.list": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
-    "task.transition": "cf9aa849fb3f049b6ddff39d95b7f56439d0543d3b18f7131b5a4ce6403abac3",
-    "workflow.status_and_next": "ce991e171a6e4334f6859e6f4289f373006b8c497de6a4e30871512307439c1e",
+    "task.transition": "7cc5a9a22300c576ab564ad43412d1940b6d1795f126d52ac4e324c072ee5a68",
+    "workflow.status_and_next": "abdafec8ffdee1ceaba417158b7084f227d0ff508eb3e84384a531d7c4dce537",
 }
 
 
@@ -289,7 +301,7 @@ class ToolContractRegistryTest(unittest.TestCase):
         self.assertEqual(by_scope["caller-selected"], {"project"})
         self.assertEqual(by_scope["capability"], {"review.start", "review.submit"})
         self.assertEqual(
-            by_scope["none"], {"agent.hello", "project.list", "sandbox.health"}
+            by_scope["none"], {"agent.hello", "project.list", "sandbox.health", "workflow.catalog"}
         )
         self.assertEqual(
             by_scope["linked-project"],

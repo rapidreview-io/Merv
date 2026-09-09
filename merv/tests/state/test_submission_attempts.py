@@ -63,8 +63,8 @@ class SubmissionAttemptFlowTest(unittest.TestCase):
         self.project_id = self.call("project", action="create", name="Submissions")["id"]
 
     def tearDown(self) -> None:
-        self.tmp.cleanup()
         self.app.shutdown()
+        self.tmp.cleanup()
 
     def call(self, tool_name: str, **kwargs):
         return self.app.call_tool(tool_name, kwargs)
@@ -124,17 +124,13 @@ class SubmissionAttemptFlowTest(unittest.TestCase):
             transition="submit_design",
         )
         self._review(exp_id=exp_id, role="design_reviewer", verdict="pass")
+        current = self.app.workflows.runtime.get(project_id=self.project_id, instance_id=exp_id)
+        self.assertEqual(current.state, "running")
         self.call(
-            "experiment.transition",
+            "workflow.begin",
             project_id=self.project_id,
-            experiment_id=exp_id,
-            transition="mark_ready_to_run",
-        )
-        self.call(
-            "experiment.transition",
-            project_id=self.project_id,
-            experiment_id=exp_id,
-            transition="start_running",
+            instance_id=exp_id,
+            expected_revision=current.revision,
         )
         self._submit(target_id=exp_id, role="result", path="metrics.json", body='{"accuracy": 0.72}')
         self._submit(target_id=exp_id, role="graph", path="graph.json", body=VALID_GRAPH)

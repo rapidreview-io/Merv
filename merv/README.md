@@ -107,24 +107,29 @@ work back (dashed):
 
 ```mermaid
 flowchart LR
-    planned --> design_review --> ready_to_run --> running --> experiment_review --> complete
+    planned --> design_review --> running --> experiment_review --> complete
     design_review -. revise plan .-> planned
     experiment_review -. plan flawed .-> planned
     experiment_review -. keep working .-> running
 ```
 
-Reflections distill what the project has learned, behind one gate of their own:
+Reflections distill what the project has learned, then hand approved decisions
+to separate code consolidation and review nodes:
 
 ```mermaid
 flowchart LR
-    reflecting --> synthesizing --> reflection_review --> consolidating --> published
+    reflecting --> synthesizing --> reflection_review --> consolidating --> consolidation_review --> published
     reflection_review -. revise lenses .-> reflecting
     reflection_review -. revise synthesis .-> synthesizing
-    consolidating -. revise code only .-> consolidating
+    consolidation_review -. revise code only .-> consolidating
 ```
 
-Merv can dispatch a reviewed experiment wave into separate local coding-agent
-sessions. Configure any number of named platforms in the private machine file
+Every workflow node owns its short starting brief and exact evidence references.
+Merv dispatches experiments, tasks, reflection lenses, synthesis, and reviews as
+separate local agent sessions. A passing review advances the graph automatically;
+plan approval enters execution directly. Interactive agents call `workflow.begin`
+with the instance's current revision before starting work; auto-run records that
+start when its lease activates. Configure any number of named platforms in the private machine file
 `~/.merv/client.json`. Native process adapters cover Codex, Claude Code, Gemini
 CLI, Cursor Agent, OpenCode, GitHub Copilot CLI, Qwen Code, and Hermes
 Agent. The `command` adapter covers a custom executable that accepts its
@@ -173,7 +178,7 @@ client machine and are never created for interactive, non-auto-run sessions;
 the runner mirrors only a bounded, redacted excerpt (last events + stderr tail)
 so the Auto-run job card can show what a job is doing.
 The runner initializes a Merv-owned bare repository and central ref, then keeps
-one persistent branch/worktree per experiment. Reflection approval dispatches a
+one persistent branch/worktree per work instance. Reflection approval dispatches a
 separate consolidator and code reviewer; the runner alone advances central
 after review. Temporary reviewer worktrees are removed, while experiment and
 consolidation worktrees remain recoverable. The private bare clone has no
@@ -246,6 +251,7 @@ Tests inject a fake infrastructure HTTP client and never provision cloud resourc
 - [docs/AUTH.md](docs/AUTH.md) - hosted authentication and project membership
 - [docs/STARTUP_CHEATSHEET.md](docs/STARTUP_CHEATSHEET.md) - local startup flow
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - backend and mode architecture
+- [docs/WORKFLOW_IMPLEMENTATION.md](docs/WORKFLOW_IMPLEMENTATION.md) - graph plugins, context, composition and migration
 - [docs/MODULE_BOUNDARIES.md](docs/MODULE_BOUNDARIES.md) - enforced backend dependency law
 - [docs/MCP_SERVER_CONTRACT.md](docs/MCP_SERVER_CONTRACT.md) - MCP tools and contracts
 - [docs/WORKFLOW_AND_REVIEW.md](docs/WORKFLOW_AND_REVIEW.md) - workflow gates and reviews

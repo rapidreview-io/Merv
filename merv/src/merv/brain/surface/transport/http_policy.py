@@ -125,3 +125,17 @@ AGENT_CONSOLIDATION_SESSION_TOOLS = frozenset(
         "review.status",
     }
 )
+
+
+# Workflow plugins share these support capabilities; registering a new graph
+# changes neither this policy nor the gateway. Native adapters remain scoped to
+# the assigned record; generic content reads retain project filtering.
+AGENT_WORKFLOW_READ_TOOLS = AGENT_REVIEW_SESSION_TOOLS | frozenset({
+    "workflow.catalog", "workflow.assignment", "workflow.history", "workflow.transition",
+    "task.get_state", "task.list", "reflection.get", "reflection.list", "feed.list",
+})
+AGENT_WORKFLOW_WRITE_TOOLS = (
+    AGENT_WORKFLOW_READ_TOOLS | AGENT_EXPERIMENT_SESSION_TOOLS
+    | AGENT_CONSOLIDATION_SESSION_TOOLS
+    | frozenset({"task.transition", "reflection.transition"})
+) - {"review.start", "review.submit"}

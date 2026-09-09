@@ -13,8 +13,10 @@ description: >-
 # Project Reflection
 
 Use reflection to update the project's distilled memory and choose the next
-experiment wave. Act as the orchestrator: own transitions and synthesis, but
-let each lens agent author and submit its own reflection.
+experiment wave. Each assignment owns one node: a lens investigates its charter,
+a synthesizer reconciles the lens contributions, and independent reviewers and
+consolidators handle later nodes. Follow the assigned brief and exact references;
+hand off after submitting this node's evidence.
 
 ## Follow the reflection state machine
 
@@ -33,6 +35,9 @@ Pass the selected `project_id` to every project-scoped operation. If the
 project is unknown, call `project(action="list")` and choose the one the user
 means. Never guess an id. If this context window has no `agent_id` yet, call
 `agent.hello` once first and pass the returned `agent_id` in every Merv call.
+For interactive work on a dispatchable node, call `workflow.begin` with its
+instance id and current revision before starting; auto-run activates its own
+lease. A parent waiting for its children has no agent assignment to begin.
 
 ## Create the wave
 
@@ -49,8 +54,10 @@ substitute later live project or experiment reads for that snapshot.
 
 ## Fan out five independent lenses
 
-Launch one read-only agent per roster entry, in parallel when possible. Give
-each agent:
+Merv creates one child workflow per roster entry and auto-run dispatches the
+five lenses independently. An assigned lens owns only its charter; do not launch
+the other lenses from that assignment. When coordinating a wave interactively,
+give each independently dispatched lens agent:
 
 - its server-returned lens charter and the other four lens names, so it stays
   in its lane;
@@ -63,9 +70,11 @@ each agent:
 - the instruction to call `agent.hello` itself first (passing your `agent_id`
   as `parent_agent_id`) and carry its own `agent_id` in every Merv call — a
   lens agent is its own context window and never borrows yours; and
-- the requirement to write and submit its own `reflection_lens_doc` with its
-  exact `lens_id`, following
-  [reflection-artifacts-template.md](reflection-artifacts-template.md).
+- its child workflow instance and revision, plus the requirement to store its
+  own document with `artifact.store` and submit that content id through
+  `workflow.transition(action="submit", payload={"artifact_id": ...})`, following
+  [reflection-artifacts-template.md](reflection-artifacts-template.md). The graph
+  associates the contribution with the exact roster lens.
 
 Lens agents must not mutate project state, read a checkout, or replace the
 snapshot with live experiment state. Start from the bounded summaries and use
@@ -74,8 +83,9 @@ needs exact snapshotted evidence.
 
 Every current lens document must stand alone. Recheck inherited conclusions
 against the present corpus rather than referring vaguely to a prior wave.
-When all five submissions are present, make the allowed transition to
-`synthesizing`.
+The parent automatically joins the five submitted child outputs and enters
+`synthesizing`. A lens stops after its own submission; the synthesizer receives
+those exact contributions in its fresh assignment.
 
 ## Reconcile the lenses
 
@@ -111,9 +121,9 @@ editing an artifact, resubmit its bytes before retrying a gate.
 ## Coordinate independent review
 
 Once `reflection.get` reports the three synthesis artifacts ready, transition
-to reflection review. Request the `reflection_reviewer` review and pass its
-returned handoff unchanged to a separate agent using
-`project-reflection-review`.
+to reflection review and finish this assignment. Merv queues the review and
+auto-run dispatches a separate `project-reflection-review` agent. When managing
+an unassigned wave interactively, use `review.request` for a reviewer handoff.
 
 The reviewer owns `review.start` and `review.submit`; the orchestrator must not
 review its own synthesis. Preserve the returned capability long enough to hand
@@ -121,15 +131,15 @@ it off and do not supersede a valid request merely because review has started.
 
 After review:
 
-- On `pass`, call the `begin_consolidation` reflection transition and stop.
+- On `pass`, Merv enters consolidation in the same review transaction.
   Merv dispatches a separate consolidator, then a separate
   `consolidation-review` agent. Only after that review passes does the runner
   advance the Merv-owned central Git ref and publish. Do not consolidate code,
   review the consolidation, or call `publish` from this reflection session.
 - On return to `synthesizing`, revise only the rejected synthesis artifacts,
   resubmit them, and request a new review.
-- On return to `reflecting`, launch all five lens agents again for the new
-  attempt, addressing the review's criticism.
+- On return to `reflecting`, Merv creates five new lens assignments for the
+  new attempt, each carrying the review's criticism.
 
 The reflection is authoritative once its review passes. Consolidation may
 select, adapt, supersede, or omit experiment code, but it cannot return to this

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 from copy import deepcopy
+from types import SimpleNamespace
 from typing import Any
 
 from merv.brain.application.experiments.transition import TransitionExperiment
@@ -11,8 +12,9 @@ from merv.brain.kernel.events import StoredEvent, freeze_json_object
 from merv.brain.research_core.models import (
     CommittedExperimentUpdate as CommittedExperimentTransition,
 )
+from merv.brain.workflows import Delivery
 from merv.shared.errors import TrackingPersistenceError
-
+from tests.research_core.scenarios import VALID_PLAN, ResearchCase
 
 REACTIONS_LOGGER = "merv.brain.application.mlflow"
 PRESENTATION_LOGGER = "merv.brain.application.mlflow"
@@ -37,12 +39,26 @@ def _event(
         payload=freeze_json_object(
             {
                 "evidence": {"source": "characterization"},
-                "from": "ready_to_run",
+                "from": "design_review",
                 "status": payload_status,
                 "transition": transition,
             }
         ),
         created_at=CREATED_AT,
+    )
+
+
+def _delivery(kind, *, data=None):
+    return Delivery(
+        "action-41",
+        PROJECT_ID,
+        EXPERIMENT_ID,
+        7,
+        kind,
+        data or {},
+        "delivery-lease",
+        1,
+        event_id=41,
     )
 
 
@@ -272,9 +288,25 @@ class RecordingResearch:
         persistence_errors: list[Exception | LostAck | None] | None = None,
     ) -> None:
         self.order = order
+        self.workflow_revision, self.workflow_outcome = 7, ""
+        self.workflows = SimpleNamespace(
+            runtime=SimpleNamespace(
+                get=lambda **kwargs: SimpleNamespace(
+                    revision=self.workflow_revision,
+                    outcome=self.workflow_outcome,
+                    state=str(self.before["status"]),
+                    id=EXPERIMENT_ID,
+                    project_id=PROJECT_ID,
+                )
+            ),
+            deliveries=SimpleNamespace(
+                protect_external_effect=lambda *args, **kwargs: True,
+                resolve_manual_repair=lambda **kwargs: None,
+            ),
+        )
         self.before = before or _state("running", run=_open_run(), token="before")
         self.committed = committed or _state("running", run=_open_run())
-        self.event = event or _event("start_running")
+        self.event = event or _event("approve_design")
         self.persisted = persisted
         self.transition_error = transition_error
         self.persistence_error = persistence_error
@@ -294,6 +326,8 @@ class RecordingResearch:
         self.persist_calls: list[dict[str, Any]] = []
         self.delivery_reads: list[int] = []
         self.verdicts: list[dict[str, Any]] = []
+        self.exhibit_calls = []
+        self.exhibit_error = None
 
     def experiment_state(
         self, *, experiment_id: str, project_id: str | None = None
@@ -310,6 +344,7 @@ class RecordingResearch:
         transition: str,
         evidence: dict[str, object] | None = None,
         project_id: str | None = None,
+        expected_revision: int | None = None,
     ) -> CommittedExperimentTransition:
         self.order.append("research.transition")
         self.transition_calls.append(
@@ -318,6 +353,11 @@ class RecordingResearch:
                 "transition": transition,
                 "evidence": evidence,
                 "project_id": project_id,
+                **(
+                    {"expected_revision": expected_revision}
+                    if expected_revision is not None
+                    else {}
+                ),
             }
         )
         if self.transition_error is not None:
@@ -382,7 +422,9 @@ class RecordingResearch:
         project_id: str,
         experiment_id: str,
         run: dict[str, Any],
-    ) -> CommittedExperimentTransition:
+        if_current: bool = False,
+        expected_run_id: str | None = None,
+    ) -> CommittedExperimentTransition | None:
         self.order.append("research.record_tracking")
         self.persist_calls.append(
             {
@@ -391,10 +433,18 @@ class RecordingResearch:
                 "run": deepcopy(run),
                 "event_type": "experiment.mlflow_run_refreshed",
                 "delivery_id": None,
+                "if_current": if_current,
             }
         )
         if self.persistence_error is not None:
             raise self.persistence_error
+        current = self.current or self.before
+        if expected_run_id is not None and str((current.get("mlflow_run") or {}).get("run_id") or "") != expected_run_id:
+            return None
+        if if_current and (current.get("mlflow_run") or {}).get("run_id") != run.get(
+            "run_id"
+        ):
+            return None
         state = self._commit(run=run, delivery_id=None)
         return CommittedExperimentTransition(
             state=state,
@@ -421,8 +471,19 @@ class RecordingResearch:
         experiment_id: str,
         project_id: str,
         verdict: dict[str, Any],
+        **preparation,
     ) -> None:
         self.order.append("research.exhibit_verdict")
+        self.exhibit_calls.append(
+            {
+                "project_id": project_id,
+                "experiment_id": experiment_id,
+                "verdict": deepcopy(verdict),
+                **preparation,
+            }
+        )
+        if self.exhibit_error is not None:
+            raise self.exhibit_error
         self.verdicts.append(deepcopy(verdict))
 
     def attempt_started_running_at(self, *, experiment_id: str) -> str | None:
@@ -568,69 +629,69 @@ class TransitionStoragePrefetchTest(unittest.TestCase):
         self.assertEqual(feed.calls, [])
 
 
-class StartAndRetryTransitionTest(unittest.TestCase):
-    def _fixture(
+class TrackingDeliveryTest(unittest.TestCase):
+    def fixture(
         self,
         *,
-        committed: dict[str, Any],
-        event: StoredEvent,
-        before: dict[str, Any] | None = None,
-        persisted: dict[str, Any] | None = None,
-        create_result: dict[str, Any] | None = None,
-        create_error: Exception | None = None,
-        persistence_error: Exception | None = None,
-        persistence_errors: list[Exception | LostAck | None] | None = None,
-    ) -> tuple[
-        TransitionExperiment,
-        RecordingResearch,
-        RecordingTracking,
-        RecordingFeed,
-        list[str],
-    ]:
-        order: list[str] = []
+        state=None,
+        create_result=None,
+        create_error=None,
+        persistence_errors=None,
+        persistence_error=None,
+    ):
+        order = []
+        state = state or _state("running", run=None)
         research = RecordingResearch(
             order,
-            before=before,
-            committed=committed,
-            event=event,
-            persisted=persisted,
-            persistence_error=persistence_error,
+            before=state,
+            committed=state,
             persistence_errors=persistence_errors,
+            persistence_error=persistence_error,
         )
         tracking = RecordingTracking(
             order, create_result=create_result, create_error=create_error
         )
-        feed = RecordingFeed(order)
+        integration = MlflowIntegration(
+            research=research,
+            feed=RecordingFeed(order),
+            objects=RecordingObjects(order),
+            adapter=tracking,
+        )
+        return integration, research, tracking, order
+
+    def start(self, integration, research, *, delivery_id=41):
+        return integration._ensure_run(
+            state=research.before, replace_terminal=True, delivery_id=delivery_id
+        )
+
+    def test_approval_commit_does_not_start_tracking(self):
+        integration, research, tracking, order = self.fixture(
+            create_result=_created_run()
+        )
         use_case = _use_case(
             research=research,
             artifacts=RecordingArtifacts(order),
-            feed=feed,
+            feed=RecordingFeed(order),
             tracking=tracking,
             exhibits=RecordingExhibits(order),
         )
-        return use_case, research, tracking, feed, order
-
-    def test_start_creates_persists_and_threads_the_exact_returned_state(self) -> None:
-        committed = _state("running", run=None)
-        persisted = _state("running", run=_open_run("run_new"), token="persisted")
-        event = _event("start_running")
-        use_case, research, tracking, _feed, order = self._fixture(
-            committed=committed,
-            event=event,
-            persisted=persisted,
-            create_result=_created_run(),
-        )
-
         result = use_case.execute(
             experiment_id=EXPERIMENT_ID,
-            transition="start_running",
-            evidence={"reason": "ready"},
+            transition="approve_design",
             project_id=PROJECT_ID,
-            include_tracking_credentials=True,
         )
-
         self.assertTrue(research.transition_committed)
-        self.assertIs(research.event, event)
+        self.assertEqual(result["status"], "running")
+        self.assertEqual(tracking.create_calls, [])
+        self.assertEqual(research.persist_calls, [])
+
+    def test_start_delivery_creates_and_persists_normalized_run_with_event_identity(
+        self,
+    ):
+        integration, research, tracking, order = self.fixture(
+            create_result=_created_run()
+        )
+        integration.deliver_workflow_action(_delivery("experiment.start_tracking"))
         self.assertEqual(
             tracking.create_calls,
             [
@@ -642,755 +703,235 @@ class StartAndRetryTransitionTest(unittest.TestCase):
                 }
             ],
         )
-        persisted_run = research.persist_calls[0]["run"]
-        self.assertEqual(persisted_run["run_id"], "run_new")
-        self.assertEqual(persisted_run["status"], "RUNNING")
-        self.assertTrue(persisted_run["created_by_plugin"])
-        self.assertNotIn("configured", persisted_run)
-        self.assertNotIn("dashboard_run_url", persisted_run)
-        self.assertEqual(result["mlflow_run"]["run_id"], "run_new")
-        self.assertEqual(result["mlflow"]["run"]["run_id"], "run_new")
-        self.assertEqual(result["mlflow"]["env"]["MLFLOW_RUN_ID"], "run_new")
-        self.assertNotIn("mlflow_warning", result)
-        self.assertIn("metrics_exhibit", result)
-        self.assertEqual(
-            [
-                item
-                for item in order
-                if item
-                in {
-                    "research.transition",
-                    "tracking.create",
-                    "research.record_tracking",
-                    "tracking.context.serialize",
-                }
-            ],
-            [
-                "research.transition",
-                "tracking.create",
-                "research.record_tracking",
-                "tracking.context.serialize",
-            ],
-        )
-        self.assertEqual(
-            order[:2],
-            ["objects.by_experiment", "research.transition"],
+        run = research.persist_calls[0]["run"]
+        self.assertEqual(run["run_id"], "run_new")
+        self.assertEqual(run["status"], "RUNNING")
+        self.assertTrue(run["created_by_plugin"])
+        self.assertNotIn("configured", run)
+        self.assertNotIn("dashboard_run_url", run)
+        self.assertEqual(set(research.ledger), {41})
+        self.assertEqual(research.current["mlflow_run"]["delivery_id"], 41)
+        self.assertLess(
+            order.index("tracking.create"), order.index("research.record_tracking")
         )
 
-    def test_start_reuses_an_existing_run_and_retains_exact_transition_state(
+    def test_delayed_start_cannot_create_tracking_for_a_new_node_or_completed_workflow(
         self,
-    ) -> None:
-        committed = _state("running", run=_open_run())
-        use_case, research, tracking, _feed, _order = self._fixture(
-            committed=committed,
-            event=_event("start_running"),
-        )
+    ):
+        for revision, outcome in ((8, ""), (7, "completed")):
+            with self.subTest(revision=revision, outcome=outcome):
+                integration, research, tracking, order = self.fixture(
+                    create_result=_created_run()
+                )
+                research.workflow_revision, research.workflow_outcome = (
+                    revision,
+                    outcome,
+                )
+                integration.deliver_workflow_action(
+                    _delivery("experiment.start_tracking")
+                )
+                self.assertEqual(tracking.create_calls, [])
+                self.assertEqual(research.persist_calls, [])
 
-        result = use_case.execute(
-            experiment_id=EXPERIMENT_ID,
-            transition="start_running",
-            project_id=PROJECT_ID,
-        )
+    def test_start_reuses_open_run_and_error_only_redelivery_without_another_remote_create(
+        self,
+    ):
+        for run in (
+            _open_run(),
+            {"run_id": None, "error": "prior outage", "delivery_id": 41},
+        ):
+            with self.subTest(run=run):
+                integration, research, tracking, order = self.fixture(
+                    state=_state("running", run=run), create_result=_created_run()
+                )
+                result, attempted = self.start(integration, research)
+                self.assertEqual(result["mlflow_run"], run)
+                self.assertEqual(tracking.create_calls, [])
+                self.assertEqual(research.persist_calls, [])
 
+    def test_explicit_retry_replaces_terminal_run_for_same_attempt(self):
+        integration, research, tracking, order = self.fixture(
+            state=_state("running", run={**_open_run(), "status": "FAILED"}),
+            create_result=_created_run("retry-run"),
+        )
+        result, attempted = self.start(integration, research)
+        self.assertTrue(attempted)
+        self.assertEqual(result["mlflow_run"]["run_id"], "retry-run")
+        self.assertEqual(tracking.create_calls[0]["attempt_index"], 3)
+
+    def test_absent_tracking_capabilities_make_no_attempt(self):
+        integration, research, tracking, order = self.fixture(
+            state=_state("running", run={"error": "earlier outage"})
+        )
+        tracking._capabilities = TrackingCapabilities(
+            logging=False, control=False, readback=False
+        )
+        result, attempted = self.start(integration, research)
+        self.assertFalse(attempted)
+        self.assertEqual(result["mlflow_run"]["error"], "earlier outage")
         self.assertEqual(tracking.create_calls, [])
         self.assertEqual(research.persist_calls, [])
-        self.assertEqual(result["mlflow_run"]["run_id"], "run_open")
 
-    def test_start_persists_a_normalized_adapter_error(self) -> None:
-        committed = _state("running", run=None)
-        persisted = _state(
-            "running",
-            run={
-                "run_id": None,
-                "run_name": f"{EXPERIMENT_ID}-attempt-3",
-                "status": "",
-                "error": "tracking control plane unavailable",
-            },
-            token="persisted-error",
-        )
-        use_case, research, _tracking, _feed, _order = self._fixture(
-            committed=committed,
-            persisted=persisted,
-            event=_event("start_running"),
-            create_result={
-                "created": False,
-                "configured": True,
-                "control_configured": True,
-                "run_name": f"{EXPERIMENT_ID}-attempt-3",
-                "error": "tracking control plane unavailable",
-            },
-        )
-
-        result = use_case.execute(
-            experiment_id=EXPERIMENT_ID,
-            transition="start_running",
-            project_id=PROJECT_ID,
-        )
-
-        self.assertEqual(
-            research.persist_calls[0]["run"]["error"],
-            "tracking control plane unavailable",
-        )
-        self.assertNotIn("configured", research.persist_calls[0]["run"])
-        self.assertEqual(
-            result["mlflow_run"]["error"], "tracking control plane unavailable"
-        )
-
-    def test_start_persistence_failure_retries_once_then_succeeds(self) -> None:
-        persisted = _state("running", run=_open_run("run_new"), token="persisted")
-        use_case, research, tracking, _feed, _order = self._fixture(
-            committed=_state("running", run=None),
-            event=_event("start_running"),
-            persisted=persisted,
-            create_result=_created_run(),
-            persistence_errors=[RuntimeError("connection reset"), None],
-        )
-
-        with self.assertLogs(REACTIONS_LOGGER, level="ERROR") as logs:
-            result = use_case.execute(
-                experiment_id=EXPERIMENT_ID,
-                transition="start_running",
-                project_id=PROJECT_ID,
-            )
-
-        self.assertEqual(len(research.persist_calls), 2)
-        self.assertEqual(len(tracking.create_calls), 1)
-        self.assertEqual(result["mlflow_run"]["run_id"], "run_new")
-        self.assertNotIn("mlflow_warning", result)
-        self.assertIn("connection reset", "\n".join(logs.output))
-
-    def test_start_persistence_failure_propagates_after_the_retry(self) -> None:
-        use_case, research, tracking, feed, _order = self._fixture(
-            committed=_state("running", run=None),
-            event=_event("start_running"),
-            create_result=_created_run(),
-            persistence_error=RuntimeError("tracking persistence failed"),
-        )
-
-        with self.assertLogs(REACTIONS_LOGGER, level="ERROR") as logs:
-            with self.assertRaises(TrackingPersistenceError) as raised:
-                use_case.execute(
-                    experiment_id=EXPERIMENT_ID,
-                    transition="start_running",
-                    project_id=PROJECT_ID,
-                )
-
-        # The transition committed; a lost durable outcome is a server error,
-        # never a success the agent could mistake for a recorded run.
-        self.assertTrue(research.transition_committed)
-        self.assertEqual(len(research.persist_calls), 2)
-        self.assertEqual(len(tracking.create_calls), 1)
-        message = str(raised.exception)
-        self.assertIn("already committed", message)
-        self.assertIn("tracking persistence failed", message)
-        self.assertIn("run_new", message)
-        # An ambiguous commit makes absence unknowable: the claim must stay
-        # honest and point at the one read that settles it.
-        self.assertIn("may or may not exist", message)
-        self.assertIn("experiment.get_state", message)
-        self.assertNotIn("no durable record", message)
-        # The orphan run id is the only handle on an untracked MLflow run, so
-        # it belongs in the operator's log, not just the caller's error.
-        logged = "\n".join(logs.output)
-        self.assertIn("may never have reached the database", logged)
-        self.assertIn("orphaned run: run_new", logged)
-        self.assertEqual(feed.calls, [])
-        self.assertEqual(raised.exception.error_code, "tracking_persistence_failed")
-
-    def test_start_persistence_failure_skips_a_retry_that_would_duplicate(self) -> None:
-        # A genuine lost acknowledgement: the write COMMITTED — the event and
-        # the row both moved — and still raised. The ledger read finds this
-        # delivery, so no second write appends a duplicate event.
-        use_case, research, tracking, _feed, order = self._fixture(
-            committed=_state("running", run=None),
-            event=_event("start_running"),
-            create_result=_created_run(),
-            persistence_errors=[LostAck(RuntimeError("connection reset by peer"))],
-        )
-
-        with self.assertLogs(REACTIONS_LOGGER, level="ERROR") as logs:
-            result = use_case.execute(
-                experiment_id=EXPERIMENT_ID,
-                transition="start_running",
-                project_id=PROJECT_ID,
-            )
-
-        self.assertEqual(len(research.persist_calls), 2)
-        self.assertEqual(len(tracking.create_calls), 1)
-        # The correlation key is the delivery, not the run id or the message.
-        self.assertEqual(research.persist_calls[0]["delivery_id"], 41)
-        self.assertEqual(research.delivery_reads, [])
-        self.assertEqual(set(research.ledger), {41})
-        self.assertEqual(result["mlflow_run"]["run_id"], "run_new")
-        self.assertNotIn("mlflow_warning", result)
-        self.assertIn("Retrying the durable", "\n".join(logs.output))
-
-    def test_start_ignores_a_prior_deliverys_identical_run_as_proof(self) -> None:
-        # A stale identical run id from an EARLIER delivery is not this
-        # delivery's write: the first write really did roll back, so the retry
-        # is required — skipping it would return success with no durable event.
-        persisted = _state("running", run=_open_run("run_new"), token="persisted")
-        # A prior retry_running delivery left an identical run on the row.
-        stale = _state("running", run=_open_run("run_new"), token="stale")
-        use_case, research, _tracking, _feed, _order = self._fixture(
-            committed=_state("running", run=None),
-            before=stale,
-            event=_event("start_running"),
-            persisted=persisted,
-            create_result=_created_run(),
-            persistence_errors=[RuntimeError("connection reset"), None],
-        )
-        research.ledger[7] = stale
-        research.current = stale
-
-        with self.assertLogs(REACTIONS_LOGGER, level="ERROR"):
-            result = use_case.execute(
-                experiment_id=EXPERIMENT_ID,
-                transition="start_running",
-                project_id=PROJECT_ID,
-            )
-
-        self.assertEqual(len(research.persist_calls), 2)
-        self.assertEqual(research.delivery_reads, [])
-        self.assertEqual(result["mlflow_run"]["run_id"], "run_new")
-
-    def test_start_ignores_a_prior_deliverys_identical_error_as_proof(self) -> None:
-        # The production-reachable shape of the same bug: an identical adapter
-        # error string from a prior delivery must not count as this delivery's
-        # durable outcome.
-        outage = "MLflow run creation failed: tracking control plane down"
-        stale = _state(
-            "running",
-            run={"run_id": None, "status": "", "error": outage},
-            token="stale",
-        )
-        persisted = _state(
-            "running",
-            run={"run_id": None, "status": "", "error": outage},
-            token="persisted",
-        )
-        use_case, research, _tracking, _feed, _order = self._fixture(
-            committed=_state("running", run=None),
-            before=stale,
-            event=_event("retry_running"),
-            persisted=persisted,
-            create_error=RuntimeError("tracking control plane down"),
-            persistence_errors=[RuntimeError("connection reset"), None],
-        )
-        research.ledger[7] = stale
-        research.current = stale
-
-        with self.assertLogs(REACTIONS_LOGGER, level="ERROR"):
-            result = use_case.execute(
-                experiment_id=EXPERIMENT_ID,
-                transition="retry_running",
-                project_id=PROJECT_ID,
-            )
-
-        self.assertEqual(len(research.persist_calls), 2)
-        self.assertEqual(research.delivery_reads, [])
-        self.assertEqual(
-            {
-                **research.ledger[41],
-                "mlflow_run": {
-                    key: value
-                    for key, value in research.ledger[41]["mlflow_run"].items()
-                    if key != "delivery_id"
-                },
-            },
-            persisted,
-        )
-        self.assertEqual(result["mlflow_warning"]["error"], outage)
-
-    def test_start_does_not_double_append_when_a_rival_delivery_overwrites(
+    def test_adapter_returned_error_and_exception_become_durable_degraded_outcomes(
         self,
-    ) -> None:
-        # Two concurrent retry_running deliveries: A commits but loses the ack,
-        # B overwrites the current row before A re-reads. A's own event is in
-        # the ledger, so A must not append a second one — and it reports the
-        # row that is actually current rather than resurrecting its own run.
-        rival = _state("running", run=_open_run("run_rival"), token="rival")
-        use_case, research, tracking, _feed, _order = self._fixture(
-            committed=_state("running", run=None),
-            before=rival,  # what a current-row re-read would see: not A's run
-            event=_event("retry_running"),
-            create_result=_created_run(),
-            persistence_errors=[LostAck(RuntimeError("connection reset by peer"))],
+    ):
+        for create_result, create_error, expected in (
+            (
+                {"error": "control unavailable", "configured": True},
+                None,
+                "control unavailable",
+            ),
+            (
+                None,
+                RuntimeError("control unavailable"),
+                "MLflow run creation failed: control unavailable",
+            ),
+        ):
+            with self.subTest(expected=expected):
+                integration, research, tracking, order = self.fixture(
+                    create_result=create_result, create_error=create_error
+                )
+                with self.assertLogs(REACTIONS_LOGGER, level="ERROR"):
+                    result, attempted = self.start(integration, research)
+                self.assertTrue(attempted)
+                self.assertEqual(result["mlflow_run"]["error"], expected)
+                self.assertNotIn("configured", research.persist_calls[0]["run"])
+                self.assertEqual(set(research.ledger), {41})
+
+    def test_retry_after_rollback_or_lost_ack_creates_one_remote_run_and_one_ledger_entry(
+        self,
+    ):
+        for failure in (
+            RuntimeError("connection reset"),
+            LostAck(RuntimeError("ack lost")),
+        ):
+            with self.subTest(failure=failure):
+                integration, research, tracking, order = self.fixture(
+                    create_result=_created_run(), persistence_errors=[failure]
+                )
+                with self.assertLogs(REACTIONS_LOGGER, level="ERROR"):
+                    result, attempted = self.start(integration, research)
+                self.assertEqual(len(tracking.create_calls), 1)
+                self.assertEqual(len(research.persist_calls), 2)
+                self.assertEqual(set(research.ledger), {41})
+                self.assertEqual(result["mlflow_run"]["run_id"], "run_new")
+
+    def test_prior_delivery_with_identical_error_does_not_mask_this_outcome(self):
+        prior = _state(
+            "running",
+            run={"error": "MLflow run creation failed: unavailable", "delivery_id": 7},
         )
+        integration, research, tracking, order = self.fixture(
+            state=prior,
+            create_error=RuntimeError("unavailable"),
+            persistence_errors=[RuntimeError("first write rolled back")],
+        )
+        research.ledger[7], research.current = prior, prior
+        with self.assertLogs(REACTIONS_LOGGER, level="ERROR"):
+            result, attempted = self.start(integration, research)
+        self.assertEqual(set(research.ledger), {7, 41})
+        self.assertEqual(result["mlflow_run"]["delivery_id"], 41)
+        self.assertEqual(len(tracking.create_calls), 1)
+
+    def test_lost_ack_then_rival_write_does_not_restore_the_older_run(self):
+        integration, research, tracking, order = self.fixture(
+            create_result=_created_run(),
+            persistence_errors=[LostAck(RuntimeError("ack lost"))],
+        )
+        rival = _state("running", run={**_open_run("rival"), "delivery_id": 99})
         original_write = research.record_tracking_run
         calls = 0
 
-        def rival_wins(**kwargs: Any) -> dict[str, Any]:
+        def rival_wins(**kwargs):
             nonlocal calls
             calls += 1
             if calls == 2:
-                research.current = rival
-                research.ledger[99] = rival
+                research.current, research.ledger[99] = rival, rival
             return original_write(**kwargs)
 
-        research.record_tracking_run = rival_wins  # type: ignore[method-assign]
-
-        with self.assertLogs(REACTIONS_LOGGER, level="ERROR") as logs:
-            result = use_case.execute(
-                experiment_id=EXPERIMENT_ID,
-                transition="retry_running",
-                project_id=PROJECT_ID,
-            )
-
-        self.assertEqual(len(research.persist_calls), 2)
-        self.assertEqual(len(tracking.create_calls), 1)
-        self.assertEqual(research.delivery_reads, [])
-        # The durable truth, not this delivery's intent.
-        self.assertEqual(result["mlflow_run"]["run_id"], "run_rival")
-        self.assertIn("Retrying the durable", "\n".join(logs.output))
-
-    def test_start_redelivery_of_an_error_only_outcome_creates_no_second_run(
-        self,
-    ) -> None:
-        # Redelivery of an already-served event. The error-only outcome carries
-        # no run id, so the "already has a run" guard cannot catch it: without
-        # the ledger pre-check this would create a second MLflow run whose
-        # write the writer's barrier then discards, orphaning it.
-        outage = "MLflow run creation failed: tracking control plane down"
-        served = _state(
-            "running",
-            run={
-                "run_id": None,
-                "status": "",
-                "error": outage,
-                "delivery_id": 41,
-            },
-            token="served",
-        )
-        use_case, research, tracking, _feed, _order = self._fixture(
-            committed=served,
-            event=_event("retry_running"),
-            create_result=_created_run(),
-        )
-        result = use_case.execute(
-            experiment_id=EXPERIMENT_ID,
-            transition="retry_running",
-            project_id=PROJECT_ID,
-        )
-
-        self.assertEqual(tracking.create_calls, [])
-        self.assertEqual(research.persist_calls, [])
-        self.assertEqual(research.delivery_reads, [])
-        # The redelivery reproduces the answer the first delivery gave.
-        self.assertEqual(result["mlflow_warning"]["error"], outage)
-
-    def test_start_retries_when_the_ledger_shows_no_durable_write(self) -> None:
-        # A ledger with no entry for this delivery means the first write really
-        # did roll back — the retry is the correct move.
-        persisted = _state("running", run=_open_run("run_new"), token="persisted")
-        use_case, research, _tracking, _feed, _order = self._fixture(
-            committed=_state("running", run=None),
-            before=_state("running", run=_open_run("run_stale"), token="stale"),
-            event=_event("start_running"),
-            persisted=persisted,
-            create_result=_created_run(),
-            persistence_errors=[RuntimeError("connection reset"), None],
-        )
-
+        research.record_tracking_run = rival_wins
         with self.assertLogs(REACTIONS_LOGGER, level="ERROR"):
-            result = use_case.execute(
-                experiment_id=EXPERIMENT_ID,
-                transition="start_running",
-                project_id=PROJECT_ID,
-            )
-
-        self.assertEqual(len(research.persist_calls), 2)
-        self.assertEqual(research.ledger, {41: research.current})
-        self.assertEqual(result["mlflow_run"]["run_id"], "run_new")
-
-    def test_start_reread_failure_falls_back_to_the_retry(self) -> None:
-        persisted = _state("running", run=_open_run("run_new"), token="persisted")
-        use_case, research, _tracking, _feed, _order = self._fixture(
-            committed=_state("running", run=None),
-            event=_event("start_running"),
-            persisted=persisted,
-            create_result=_created_run(),
-            persistence_errors=[RuntimeError("connection reset"), None],
-        )
-        research.ledger_error = RuntimeError("unused read path")
-
-        with self.assertLogs(REACTIONS_LOGGER, level="ERROR") as logs:
-            result = use_case.execute(
-                experiment_id=EXPERIMENT_ID,
-                transition="start_running",
-                project_id=PROJECT_ID,
-            )
-
-        self.assertEqual(len(research.persist_calls), 2)
-        self.assertEqual(result["mlflow_run"]["run_id"], "run_new")
-        self.assertNotIn("unused read path", "\n".join(logs.output))
-
-    def test_start_adapter_and_double_persistence_failure_keep_both_causes(
-        self,
-    ) -> None:
-        # The adapter outage is the reason there is anything to persist; losing
-        # it would leave the operator with a bare "connection reset".
-        use_case, research, tracking, _feed, _order = self._fixture(
-            committed=_state("running", run=None),
-            event=_event("start_running"),
-            create_error=RuntimeError("tracking control plane down"),
-            persistence_error=RuntimeError("connection reset by peer"),
-        )
-
-        with self.assertLogs(REACTIONS_LOGGER, level="ERROR") as logs:
-            with self.assertRaises(TrackingPersistenceError) as raised:
-                use_case.execute(
-                    experiment_id=EXPERIMENT_ID,
-                    transition="start_running",
-                    project_id=PROJECT_ID,
-                )
-
-        self.assertTrue(research.transition_committed)
+            result, attempted = self.start(integration, research)
+        self.assertEqual(set(research.ledger), {41, 99})
+        self.assertEqual(result["mlflow_run"]["run_id"], "rival")
         self.assertEqual(len(tracking.create_calls), 1)
-        self.assertEqual(len(research.persist_calls), 2)
-        message = str(raised.exception)
-        logged = "\n".join(logs.output)
-        for cause in (
-            "connection reset by peer",
-            "MLflow run creation failed: tracking control plane down",
+
+    def test_double_persistence_failure_preserves_orphan_id_and_adapter_cause(self):
+        for adapter_fails in (False, True):
+            with self.subTest(adapter_fails=adapter_fails):
+                integration, research, tracking, order = self.fixture(
+                    create_result=None if adapter_fails else _created_run(),
+                    create_error=RuntimeError("control down")
+                    if adapter_fails
+                    else None,
+                    persistence_error=RuntimeError("database unavailable"),
+                )
+                with self.assertLogs(REACTIONS_LOGGER, level="ERROR") as logs:
+                    with self.assertRaises(TrackingPersistenceError) as caught:
+                        self.start(integration, research)
+                self.assertEqual(len(tracking.create_calls), 1)
+                self.assertEqual(len(research.persist_calls), 2)
+                self.assertEqual(research.ledger, {})
+                message = str(caught.exception)
+                self.assertIn("database unavailable", message)
+                self.assertIn("may or may not exist", message)
+                self.assertIn("experiment.get_state", message)
+                self.assertIn("control down" if adapter_fails else "run_new", message)
+                self.assertIn(
+                    "orphaned run: none" if adapter_fails else "orphaned run: run_new",
+                    "\n".join(logs.output),
+                )
+
+    def test_terminal_delivery_finalizes_the_pinned_old_run_instead_of_current_pointer(
+        self,
+    ):
+        for kind, status in (
+            ("experiment.finish_tracking", "FINISHED"),
+            ("experiment.stop_tracking", "KILLED"),
+            ("experiment.fail_tracking", "FAILED"),
         ):
-            with self.subTest(cause=cause):
-                self.assertIn(cause, message)
-                self.assertIn(cause, logged)
-        self.assertIn("orphaned run: none", logged)
-
-    def test_start_adapter_failure_is_recorded_as_durable_run_error(self) -> None:
-        persisted = _state(
-            "running",
-            run={
-                "run_id": None,
-                "run_name": f"{EXPERIMENT_ID}-attempt-3",
-                "status": "",
-                "error": "MLflow run creation failed: tracking control plane down",
-            },
-            token="persisted-error",
-        )
-        use_case, research, _tracking, _feed, _order = self._fixture(
-            committed=_state("running", run=None),
-            event=_event("start_running"),
-            persisted=persisted,
-            create_error=RuntimeError("tracking control plane down"),
-        )
-
-        result = use_case.execute(
-            experiment_id=EXPERIMENT_ID,
-            transition="start_running",
-            project_id=PROJECT_ID,
-        )
-
-        self.assertTrue(research.transition_committed)
-        self.assertEqual(result["status"], "running")
-        self.assertEqual(
-            research.persist_calls[0]["run"],
-            {"error": "MLflow run creation failed: tracking control plane down"},
-        )
-        self.assertEqual(
-            result["mlflow_warning"],
-            {
-                "tracking": "unavailable",
-                "error": "MLflow run creation failed: tracking control plane down",
-                "repair": result["mlflow_warning"]["repair"],
-            },
-        )
-        self.assertIn("mlflow.context", result["mlflow_warning"]["repair"])
-
-    def test_retry_reuses_open_run_but_replaces_terminal_run_for_same_attempt(
-        self,
-    ) -> None:
-        cases = (
-            (_open_run("run_open"), False, "run_open"),
-            ({**_open_run("run_failed"), "status": "FAILED"}, True, "run_retry"),
-        )
-        for existing, creates, expected_run_id in cases:
-            with self.subTest(status=existing["status"]):
-                committed = _state("running", attempt_index=3, run=existing)
-                persisted = _state(
-                    "running",
-                    attempt_index=3,
-                    run=_open_run("run_retry"),
-                    token="persisted",
-                )
-                use_case, research, tracking, _feed, _order = self._fixture(
-                    committed=committed,
-                    persisted=persisted,
-                    event=_event("retry_running"),
-                    create_result=_created_run("run_retry"),
-                )
-
-                result = use_case.execute(
-                    experiment_id=EXPERIMENT_ID,
-                    transition="retry_running",
-                    project_id=PROJECT_ID,
-                )
-
-                self.assertEqual(bool(tracking.create_calls), creates)
-                self.assertEqual(bool(research.persist_calls), creates)
-                if creates:
-                    self.assertEqual(tracking.create_calls[0]["attempt_index"], 3)
-                    self.assertEqual(
-                        tracking.create_calls[0]["run_name"],
-                        f"{EXPERIMENT_ID}-attempt-3",
+            with self.subTest(kind=kind):
+                integration, research, tracking, order = self.fixture(
+                    state=_state(
+                        "running", attempt_index=4, run=_open_run("new-attempt")
                     )
-                self.assertEqual(result["mlflow_run"]["run_id"], expected_run_id)
-
-    def test_retry_without_a_tracking_attempt_does_not_replay_a_stale_error(
-        self,
-    ) -> None:
-        order: list[str] = []
-        stale = _state(
-            "running",
-            run={
-                "run_id": None,
-                "run_name": f"{EXPERIMENT_ID}-attempt-3",
-                "status": "",
-                "error": "MLflow run creation failed: an earlier outage",
-            },
-        )
-        research = RecordingResearch(
-            order, committed=stale, event=_event("retry_running")
-        )
-        tracking = RecordingTracking(
-            order,
-            capabilities=TrackingCapabilities(
-                logging=False, control=False, readback=False
-            ),
-        )
-        use_case = _use_case(
-            research=research,
-            artifacts=RecordingArtifacts(order),
-            feed=RecordingFeed(order),
-            tracking=tracking,
-            exhibits=RecordingExhibits(order),
-        )
-
-        result = use_case.execute(
-            experiment_id=EXPERIMENT_ID,
-            transition="retry_running",
-            project_id=PROJECT_ID,
-        )
-
-        # No run was attempted here, so the persisted error stays visible state
-        # instead of being replayed as a warning about this very call.
-        self.assertEqual(tracking.create_calls, [])
-        self.assertEqual(research.persist_calls, [])
-        self.assertEqual(
-            result["mlflow_run"]["error"],
-            "MLflow run creation failed: an earlier outage",
-        )
-        self.assertNotIn("mlflow_warning", result)
-
-    def test_reactions_are_driven_by_the_exact_returned_event(self) -> None:
-        event = _event(
-            "start_running",
-            event_type="experiment.characterization_only",
-            payload_status="complete",
-        )
-        committed = _state("running", run=None)
-        use_case, research, tracking, feed, _order = self._fixture(
-            committed=committed,
-            event=event,
-            create_result=_created_run(),
-        )
-
-        result = use_case.execute(
-            experiment_id=EXPERIMENT_ID,
-            transition="start_running",
-            project_id=PROJECT_ID,
-        )
-
-        self.assertIs(research.event, event)
-        self.assertEqual(event.id, 41)
-        self.assertEqual(event.created_at, CREATED_AT)
-        self.assertEqual(tracking.create_calls, [])
-        self.assertEqual(research.persist_calls, [])
-        self.assertEqual(feed.calls, [])
-        self.assertIsNone(result.get("mlflow_run"))
-
-
-class TerminalTrackingTransitionTest(unittest.TestCase):
-    def test_terminal_transition_status_mapping_and_exact_persisted_state(self) -> None:
-        cases = (
-            ("submit_results", "experiment_review", "FINISHED"),
-            ("complete", "complete", "FINISHED"),
-            ("abandon", "abandoned", "KILLED"),
-            ("mark_failed", "failed", "FAILED"),
-        )
-        for transition, experiment_status, tracking_status in cases:
-            with self.subTest(transition=transition):
-                order: list[str] = []
-                run = _open_run()
-                committed = _state(experiment_status, run=run)
-                persisted = _state(
-                    experiment_status,
-                    run={**run, "status": tracking_status},
-                    token="persisted-finalization",
                 )
-                research = RecordingResearch(
-                    order,
-                    before=_state("running", run=run, token="before"),
-                    committed=committed,
-                    persisted=persisted,
-                    event=_event(transition),
+                tracking.finalize_result = {
+                    "run": {**_open_run("old-attempt"), "status": status}
+                }
+                integration.deliver_workflow_action(
+                    _delivery(kind, data={"run_id": "old-attempt"})
                 )
-                tracking = RecordingTracking(
-                    order,
-                    finalize_result={
-                        "configured": True,
-                        "terminal": True,
-                        "run": {**run, "status": tracking_status},
+                self.assertEqual(
+                    tracking.finalize_calls[0],
+                    {
+                        "project_id": PROJECT_ID,
+                        "experiment_id": EXPERIMENT_ID,
+                        "run_id": "old-attempt",
+                        "status": status,
+                        "wait_seconds": 0.0,
                     },
                 )
-                use_case = _use_case(
-                    research=research,
-                    artifacts=RecordingArtifacts(order),
-                    feed=RecordingFeed(order, note=None),
-                    tracking=tracking,
-                    exhibits=RecordingExhibits(order, exhibit=_exhibit(runs_found=0)),
-                )
+                self.assertTrue(research.persist_calls[0]["if_current"])
+                self.assertIsNone(research.current)
+                self.assertEqual(research.before["mlflow_run"]["run_id"], "new-attempt")
 
-                result = use_case.execute(
-                    experiment_id=EXPERIMENT_ID,
-                    transition=transition,
-                    project_id=PROJECT_ID,
-                )
+    def test_terminal_delivery_error_propagates_for_outbox_retry(self):
+        integration, research, tracking, order = self.fixture()
+        tracking.finalize_error = RuntimeError("temporary tracking outage")
+        with self.assertRaisesRegex(RuntimeError, "temporary tracking outage"):
+            integration.deliver_workflow_action(
+                _delivery("experiment.finish_tracking", data={"run_id": "old"})
+            )
+        self.assertEqual(research.persist_calls, [])
 
-                self.assertEqual(
-                    tracking.finalize_calls,
-                    [
-                        {
-                            "project_id": PROJECT_ID,
-                            "experiment_id": EXPERIMENT_ID,
-                            "run_id": "run_open",
-                            "status": tracking_status,
-                            "wait_seconds": 0.0,
-                        }
-                    ],
-                )
-                self.assertEqual(
-                    research.persist_calls[0]["event_type"],
-                    "experiment.mlflow_run_refreshed",
-                )
-                self.assertEqual(result["mlflow_run"]["status"], tracking_status)
-
-    def test_terminal_tracking_is_repeat_safe_from_its_returned_state(self) -> None:
-        order: list[str] = []
-        event = _event("complete")
-        initial = _state("complete", run=_open_run())
-        persisted = _state(
-            "complete",
-            run={**_open_run(), "status": "FINISHED"},
-            token="persisted-finalization",
+    def test_terminal_delivery_without_pinned_run_has_no_remote_effect(self):
+        integration, research, tracking, order = self.fixture(
+            state=_state("complete", run=_open_run("current"))
         )
-        research = RecordingResearch(order, persisted=persisted, event=event)
-        tracking = RecordingTracking(
-            order,
-            finalize_result={
-                "configured": True,
-                "terminal": True,
-                "run": {**_open_run(), "status": "FINISHED"},
-            },
-        )
-        integration = MlflowIntegration(
-            research=research,
-            feed=RecordingFeed(order),
-            objects=RecordingObjects(order),
-            adapter=tracking,
-        )
-        first, _ = integration.after_transition(
-            event=event,
-            state=initial,
-        )
-        second, _ = integration.after_transition(
-            event=event,
-            state=first,
-        )
-
-        self.assertIs(first, persisted)
-        self.assertIs(second, persisted)
-        self.assertEqual(len(tracking.finalize_calls), 1)
-        self.assertEqual(len(research.persist_calls), 1)
-
-    def test_terminal_adapter_and_persistence_failures_are_suppressed_and_feed_runs(
-        self,
-    ) -> None:
-        failures = ("adapter", "persistence")
-        for failure_kind in failures:
-            with self.subTest(failure=failure_kind):
-                order: list[str] = []
-                committed = _state("complete", run=_open_run())
-                research = RecordingResearch(
-                    order,
-                    committed=committed,
-                    event=_event("complete"),
-                    persistence_error=(
-                        RuntimeError("persist failed")
-                        if failure_kind == "persistence"
-                        else None
-                    ),
-                )
-                tracking = RecordingTracking(
-                    order,
-                    finalize_error=(
-                        RuntimeError("adapter failed")
-                        if failure_kind == "adapter"
-                        else None
-                    ),
-                    finalize_result={"run": {**_open_run(), "status": "FINISHED"}},
-                )
-                feed = RecordingFeed(order)
-                use_case = _use_case(
-                    research=research,
-                    artifacts=RecordingArtifacts(order),
-                    feed=feed,
-                    tracking=tracking,
-                    exhibits=RecordingExhibits(order),
-                )
-
-                result = use_case.execute(
-                    experiment_id=EXPERIMENT_ID,
-                    transition="complete",
-                    project_id=PROJECT_ID,
-                )
-
-                self.assertTrue(research.transition_committed)
-                self.assertEqual(result["mlflow_run"]["status"], "RUNNING")
-                self.assertEqual(feed.calls[0]["event"], "experiment_complete")
-
-    def test_no_finalize_for_missing_non_plugin_or_already_terminal_run(self) -> None:
-        cases = (
-            None,
-            {**_open_run(), "created_by_plugin": False},
-            {**_open_run(), "status": "FINISHED"},
-        )
-        for run in cases:
-            with self.subTest(run=run):
-                order: list[str] = []
-                committed = _state("complete", run=run)
-                research = RecordingResearch(
-                    order, committed=committed, event=_event("complete")
-                )
-                tracking = RecordingTracking(order)
-                use_case = _use_case(
-                    research=research,
-                    artifacts=RecordingArtifacts(order),
-                    feed=RecordingFeed(order, note=None),
-                    tracking=tracking,
-                    exhibits=RecordingExhibits(order),
-                )
-
-                use_case.execute(
-                    experiment_id=EXPERIMENT_ID,
-                    transition="complete",
-                    project_id=PROJECT_ID,
-                )
-
-                self.assertEqual(tracking.finalize_calls, [])
-                self.assertEqual(research.persist_calls, [])
+        integration.deliver_workflow_action(_delivery("experiment.finish_tracking"))
+        self.assertEqual(tracking.finalize_calls, [])
+        self.assertEqual(research.persist_calls, [])
 
 
 class FeedTransitionReactionTest(unittest.TestCase):
@@ -1546,7 +1087,8 @@ class SubmitResultsExhibitPrerequisiteTest(unittest.TestCase):
             event=_event("submit_results"),
             transition_error=transition_error,
         )
-        artifacts = RecordingArtifacts(order, pin_error=pin_error)
+        research.exhibit_error = pin_error
+        artifacts = RecordingArtifacts(order)
         tracking = RecordingTracking(
             order,
             finalize_result={"run": {**run, "status": "FINISHED"}},
@@ -1569,19 +1111,17 @@ class SubmitResultsExhibitPrerequisiteTest(unittest.TestCase):
             order,
         )
 
-    def test_verdict_and_pin_commit_before_transition_and_pinned_summary_is_returned(
-        self,
-    ) -> None:
-        use_case, research, artifacts, _tracking, _feed, exhibits, order = (
-            self._fixture()
-        )
-
+    def test_verdict_and_pin_are_one_fenced_capability_before_transition(self):
+        use_case, research, artifacts, tracking, feed, exhibits, order = self._fixture()
+        research.before["current_attempt_artifacts"] = [
+            {"id": "result_1", "role": "result"},
+            {"id": "old_exhibit", "role": "exhibit"},
+        ]
         result = use_case.execute(
             experiment_id=EXPERIMENT_ID,
             transition="submit_results",
             project_id=PROJECT_ID,
         )
-
         self.assertIs(exhibits.states[0], research.before)
         self.assertEqual(
             [
@@ -1592,7 +1132,6 @@ class SubmitResultsExhibitPrerequisiteTest(unittest.TestCase):
                     "research.state",
                     "exhibits.generate",
                     "research.exhibit_verdict",
-                    "artifacts.pin",
                     "research.transition",
                 }
             ],
@@ -1600,71 +1139,61 @@ class SubmitResultsExhibitPrerequisiteTest(unittest.TestCase):
                 "research.state",
                 "exhibits.generate",
                 "research.exhibit_verdict",
-                "artifacts.pin",
                 "research.transition",
             ],
         )
-        self.assertEqual(research.verdicts[0]["runs_found"], 1)
-        self.assertTrue(research.verdicts[0]["pinned"])
-        self.assertEqual(len(artifacts.pins), 1)
-        pin = artifacts.pins[0]
-        self.assertEqual(pin["target"].target_type, "experiment")
-        self.assertEqual(pin["target"].target_id, EXPERIMENT_ID)
-        self.assertEqual(pin["target"].project_id, PROJECT_ID)
-        self.assertEqual(pin["role"], "exhibit")
-        self.assertNotIn("content_type", pin)
-        self.assertEqual(json.loads(pin["data"]), _exhibit())
+        recorded = research.exhibit_calls[0]
+        self.assertEqual(recorded["expected_revision"], 7)
+        self.assertEqual(recorded["expected_attempt_index"], 3)
+        self.assertEqual(recorded["expected_artifact_ids"], ("result_1",))
+        self.assertEqual(recorded["verdict"]["runs_found"], 1)
+        self.assertTrue(recorded["verdict"]["pinned"])
+        self.assertEqual(json.loads(recorded["artifact_data"]), _exhibit())
+        self.assertEqual(
+            recorded["artifact_path"],
+            "experiments/A_Characterized_Experiment/metrics_exhibit.json",
+        )
+        self.assertEqual(research.transition_calls[0]["expected_revision"], 7)
+        self.assertEqual(artifacts.pins, [])
+        self.assertEqual(tracking.finalize_calls, [])
         self.assertEqual(
             result["metrics_exhibit"],
             {
                 "pinned": True,
-                "path": "experiments/A_Characterized_Experiment/metrics_exhibit.json",
+                "path": recorded["artifact_path"],
                 "verdict": {"runs_found": 1, "result_files": 0},
             },
         )
 
-    def test_pin_failure_leaves_verdict_but_does_not_transition(self) -> None:
-        failure = RuntimeError("pin failed")
-        use_case, research, artifacts, tracking, feed, _exhibits, _order = (
-            self._fixture(pin_error=failure)
+    def test_atomic_recorder_failure_stops_transition_and_external_effects(self):
+        use_case, research, artifacts, tracking, feed, exhibits, order = self._fixture(
+            pin_error=RuntimeError("atomic pin failed")
         )
-
-        with self.assertRaisesRegex(RuntimeError, "pin failed"):
+        with self.assertRaisesRegex(RuntimeError, "atomic pin failed"):
             use_case.execute(
                 experiment_id=EXPERIMENT_ID,
                 transition="submit_results",
                 project_id=PROJECT_ID,
             )
-
-        self.assertEqual(len(research.verdicts), 1)
-        self.assertTrue(research.verdicts[0]["pinned"])
-        self.assertEqual(len(artifacts.pin_attempts), 1)
-        self.assertEqual(artifacts.pins, [])
+        self.assertEqual(len(research.exhibit_calls), 1)
         self.assertEqual(research.transition_calls, [])
         self.assertFalse(research.transition_committed)
         self.assertEqual(tracking.finalize_calls, [])
         self.assertEqual(feed.calls, [])
 
-    def test_gate_failure_after_pin_preserves_prerequisite_residue(self) -> None:
-        gate_error = RuntimeError("workflow gate rejected report")
-        use_case, research, artifacts, tracking, feed, _exhibits, order = self._fixture(
-            transition_error=gate_error
+    def test_transition_after_preparation_still_receives_the_original_revision(self):
+        use_case, research, artifacts, tracking, feed, exhibits, order = self._fixture(
+            transition_error=RuntimeError("workflow revision changed")
         )
-
-        with self.assertRaisesRegex(RuntimeError, "workflow gate rejected report"):
+        with self.assertRaisesRegex(RuntimeError, "workflow revision changed"):
             use_case.execute(
                 experiment_id=EXPERIMENT_ID,
                 transition="submit_results",
                 project_id=PROJECT_ID,
             )
-
-        self.assertEqual(len(research.verdicts), 1)
-        self.assertEqual(len(artifacts.pins), 1)
-        self.assertEqual(len(research.transition_calls), 1)
+        self.assertEqual(research.exhibit_calls[0]["expected_revision"], 7)
+        self.assertEqual(research.transition_calls[0]["expected_revision"], 7)
         self.assertFalse(research.transition_committed)
-        self.assertLess(
-            order.index("artifacts.pin"), order.index("research.transition")
-        )
         self.assertEqual(tracking.finalize_calls, [])
         self.assertEqual(feed.calls, [])
 
@@ -1697,7 +1226,7 @@ class TrackingCredentialFlagTest(unittest.TestCase):
                 research = RecordingResearch(
                     order,
                     committed=committed,
-                    event=_event("start_running"),
+                    event=_event("approve_design"),
                 )
                 tracking = RecordingTracking(order)
                 use_case = _use_case(
@@ -1710,7 +1239,7 @@ class TrackingCredentialFlagTest(unittest.TestCase):
 
                 result = use_case.execute(
                     experiment_id=EXPERIMENT_ID,
-                    transition="start_running",
+                    transition="approve_design",
                     project_id=PROJECT_ID,
                     include_tracking_credentials=include_credentials,
                 )
@@ -1724,6 +1253,162 @@ class TrackingCredentialFlagTest(unittest.TestCase):
                     password,
                     "credential-for-public-response" if include_credentials else None,
                 )
+
+
+class RealTrackingDeliveryTest(ResearchCase):
+    def test_late_terminal_readback_cannot_overwrite_a_new_run(self):
+        experiment = self.call(
+            "experiment.create",
+            project_id=self.project_id,
+            name="tracking-replacement",
+            intent="Preserve the current run pointer.",
+        )
+        experiment_id = experiment["id"]
+        research = self.app.research
+        research.refresh_tracking_run(
+            project_id=self.project_id,
+            experiment_id=experiment_id,
+            run=_open_run("old-run"),
+        )
+        tracking = RecordingTracking(
+            [],
+            finalize_result={
+                "run": {**_open_run("old-run"), "status": "FINISHED"},
+            },
+        )
+        finalize = tracking.finalize_run
+
+        def replaced_during_finalize(**kwargs):
+            result = finalize(**kwargs)
+            research.refresh_tracking_run(
+                project_id=self.project_id,
+                experiment_id=experiment_id,
+                run=_open_run("new-run"),
+            )
+            return result
+
+        tracking.finalize_run = replaced_during_finalize
+        self.app.application._mlflow.adapter = tracking
+        self.app.application._mlflow.deliver_workflow_action(
+            Delivery(
+                "late-finish",
+                self.project_id,
+                experiment_id,
+                0,
+                "experiment.finish_tracking",
+                {"run_id": "old-run"},
+                "lease",
+                1,
+            )
+        )
+        current = research.experiment_state(
+            project_id=self.project_id, experiment_id=experiment_id
+        )
+        self.assertEqual(current["mlflow_run"]["run_id"], "new-run")
+        self.assertEqual(current["mlflow_run"]["status"], "RUNNING")
+        self.assertEqual(tracking.finalize_calls[0]["run_id"], "old-run")
+
+    def test_approval_activation_delivery_and_terminal_retry_have_distinct_boundaries(
+        self,
+    ):
+        tracking = RecordingTracking([], create_result=_created_run())
+        self.app.application._mlflow.adapter = tracking
+        self.call("project.update", project_id=self.project_id, agent_dispatch=True)
+        experiment = self.call(
+            "experiment.create",
+            project_id=self.project_id,
+            name="tracking-boundaries",
+            intent="Exercise tracking lifecycle.",
+        )
+        experiment_id = experiment["id"]
+        self.submit(
+            target_type="experiment",
+            target_id=experiment_id,
+            role="plan",
+            body=VALID_PLAN,
+        )
+        self.call(
+            "experiment.transition",
+            project_id=self.project_id,
+            experiment_id=experiment_id,
+            transition="submit_design",
+        )
+        self.pass_review(
+            target_type="experiment", target_id=experiment_id, role="design_reviewer"
+        )
+        self.assertEqual(
+            self.app.research.workflows.runtime.get(
+                project_id=self.project_id, instance_id=experiment_id
+            ).state,
+            "running",
+        )
+        self.assertIsNone(
+            self.app.research.attempt_started_running_at(experiment_id=experiment_id)
+        )
+        self.assertEqual(tracking.create_calls, [])
+
+        secret = "mas_" + "x" * 43
+        offered = self.app.application.claim_agent_session(
+            project_id=self.project_id,
+            runner_id="runner",
+            platform="codex",
+            idempotency_key="tracking",
+            session_secret=secret,
+        )["session"]
+        self.assertEqual(offered["workflow_node"], "running")
+        self.assertEqual(tracking.create_calls, [])
+        self.app.agent_sessions.authenticate(session_secret=secret)
+        self.assertIsNotNone(
+            self.app.research.attempt_started_running_at(experiment_id=experiment_id)
+        )
+        self.assertEqual(tracking.create_calls, [])
+        self.app.application.workflow_deliveries.run_once(
+            project_id=self.project_id, renew_interval_seconds=0
+        )
+        recorded = self.app.research.experiment_state(
+            project_id=self.project_id, experiment_id=experiment_id
+        )["mlflow_run"]
+        self.assertEqual(recorded["run_id"], "run_new")
+        self.assertEqual(len(tracking.create_calls), 1)
+        self.app.agent_sessions.authenticate(session_secret=secret)
+        self.app.application.workflow_deliveries.run_once(
+            project_id=self.project_id, renew_interval_seconds=0
+        )
+        self.assertEqual(len(tracking.create_calls), 1)
+
+        tracking.finalize_error = RuntimeError("temporary finish outage")
+        self.call(
+            "experiment.transition",
+            project_id=self.project_id,
+            experiment_id=experiment_id,
+            transition="abandon",
+        )
+        failed = self.app.application.workflow_deliveries.run_once(
+            project_id=self.project_id, renew_interval_seconds=0
+        )
+        self.assertEqual(failed["failed"], 1)
+        with self.app.store.transaction() as conn:
+            row = conn.execute(
+                "SELECT id, status, data_json FROM workflow_actions WHERE instance_id = ? AND kind = 'experiment.stop_tracking'",
+                (experiment_id,),
+            ).fetchone()
+            self.assertEqual(row["status"], "pending")
+            self.assertEqual(json.loads(row["data_json"])["run_id"], "run_new")
+            conn.execute(
+                "UPDATE workflow_actions SET next_attempt_at = '' WHERE id = ?",
+                (row["id"],),
+            )
+        tracking.finalize_error = None
+        self.app.application.workflow_deliveries.run_once(
+            project_id=self.project_id, renew_interval_seconds=0
+        )
+        self.assertEqual(
+            [call["run_id"] for call in tracking.finalize_calls], ["run_new", "run_new"]
+        )
+        self.assertEqual(
+            [call["status"] for call in tracking.finalize_calls], ["KILLED", "KILLED"]
+        )
+        self.assertIsNone(self.app.agent_sessions.authenticate(session_secret=secret))
 
 
 if __name__ == "__main__":

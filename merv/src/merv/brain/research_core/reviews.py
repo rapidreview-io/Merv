@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from contextlib import closing
+from collections.abc import Mapping
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -23,6 +24,7 @@ from ..kernel.utils import (
 )
 from .policy import (
     is_review_gate_exempt,
+    read_review_fact,
     review_snapshot_id,
     revision_context_for_review_return,
     snapshot_from_id,
@@ -38,6 +40,7 @@ from ..kernel.state.store import BaseStateStore, next_created_seq, row_to_dict
 from .experiments import ExperimentService
 from .reflections import ReflectionService
 from .tasks import TaskService
+from ..workflows import Reference, Runtime, Snapshot
 
 
 _WORKFLOW_BY_TARGET = {
@@ -65,13 +68,15 @@ class ReviewService:
         experiments: ExperimentService,
         reflections: ReflectionService,
         artifacts: Artifacts,
-        tasks: TaskService | None = None,
+        tasks: TaskService,
+        runtime: Runtime,
     ) -> None:
         self.store = store
         self.experiments = experiments
         self.reflections = reflections
         self.artifacts = artifacts
-        self.tasks = tasks if tasks is not None else TaskService(store=store, artifacts=artifacts)
+        self.tasks = tasks
+        self.runtime = runtime
 
     def request(
         self,
@@ -82,30 +87,49 @@ class ReviewService:
         reason: str = "",
         producer_session_id: str = "main",
         project_id: str | None = None,
+        expected_revision: int | None = None,
+        if_current: bool = False,
     ) -> dict[str, Any]:
         validate_review_role(role=role)
-        if target_type not in {"experiment", "reflection", "task"}:
-            raise ValidationError(
-                "review targets must be 'experiment', 'reflection', or 'task'"
-            )
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            target, gate = self._target_with_gate(
+            current = self.runtime.get(conn=conn, project_id=project_id, instance_id=target_id)
+            if current.workflow != target_type:
+                raise NotFoundError(f"workflow {target_type!r} not found in this project: {target_id}")
+            if expected_revision is not None:
+                if current.revision != expected_revision or current.outcome:
+                    return {"skipped": True}
+            self.runtime.lock(conn=conn, project_id=project_id, instance_id=target_id, revision=current.revision)
+            target, _gate = self._target_with_gate(
                 conn=conn,
                 target_type=target_type,
                 target_id=target_id,
                 project_id=project_id,
             )
+            node = self.runtime.registry.get(current.workflow, current.version).node(current.state)
             self._validate_role_matches_gate(
                 target_type=target_type,
-                expected=None if gate.review is None else gate.review.role,
+                expected=node.role if node is not None and node.read_only else None,
                 role=role,
             )
+            snapshot_id = review_snapshot_id(target_type=target_type, target=target, snapshot=current)
             if target_type == "reflection" and role == "consolidation_reviewer":
                 self.reflections.require_consolidation_proposal(
                     conn=conn,
                     reflection=target,
                 )
+            if if_current:
+                if read_review_fact(conn=conn, project_id=project_id, target_type=target_type, target_id=target_id,
+                                    snapshot_id=snapshot_id, role=role).get("passed"):
+                    return {"skipped": True, "reason": "The exact submitted snapshot already passed review."}
+                current = conn.execute(
+                    "SELECT id FROM review_requests WHERE project_id = ? AND target_type = ? AND target_id = ? "
+                    "AND role = ? AND target_snapshot_id = ? AND status IN ('requested', 'started') AND expires_at > ? "
+                    "ORDER BY created_seq DESC LIMIT 1",
+                    (project_id, target_type, target_id, role, snapshot_id, now_iso()),
+                ).fetchone()
+                if current is not None:
+                    return {"review_request_id": current["id"], "reused": True}
             # Refresh is revoke-and-reissue: a new capability for the same gate
             # closes every prior open request, so a lost or stale capability can
             # never race the fresh one to submit.
@@ -131,7 +155,6 @@ class ReviewService:
             # caller, and never stored; only its SHA-256 digest lands in the row.
             capability = mint_secret(prefix="rp_", nbytes=24)
             expires_at = format_iso(datetime.now(UTC) + timedelta(hours=1))
-            snapshot_id = review_snapshot_id(target_type=target_type, target=target)
             conn.execute(
                 """
                 INSERT INTO review_requests (
@@ -228,8 +251,15 @@ class ReviewService:
                     "reviewer session must differ from producer session"
                 )
             snapshot_now = self._target_snapshot_id(
-                conn=conn, target_type=req["target_type"], target_id=req["target_id"]
+                conn=conn, project_id=req["project_id"], target_type=req["target_type"], target_id=req["target_id"], lock=True
             )
+            # The workflow lock may have waited behind a capability refresh.
+            # Recheck the row after acquiring it so a revoked request cannot reopen.
+            req = conn.execute("SELECT * FROM review_requests WHERE id = ?", (review_request_id,)).fetchone()
+            if assigned:
+                self._validate_assigned_request_open(req=req)
+            else:
+                self._validate_request_open(req=req, capability=reviewer_capability)
             if snapshot_now != req["target_snapshot_id"]:
                 raise PermissionDeniedError(
                     "target changed after review capability was issued"
@@ -273,6 +303,10 @@ class ReviewService:
                 },
             )
             snapshot = snapshot_from_id(snapshot_id=str(req["target_snapshot_id"]))
+            current = self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
+            node = self.runtime.registry.get(current.workflow, current.version).node(current.state)
+            context = (self.runtime.assignment(conn=conn, project_id=current.project_id, instance_id=current.id)
+                       if node is not None and node.read_only and node.role == req["role"] else None)
             return {
                 "review_session_id": session_id,
                 "project_id": req["project_id"],
@@ -282,6 +316,7 @@ class ReviewService:
                 "target_snapshot_id": req["target_snapshot_id"],
                 "target_snapshot": snapshot,
                 "independence": independence,
+                **({"workflow_context": context} if context is not None else {}),
             }
 
     def submit(
@@ -324,39 +359,44 @@ class ReviewService:
             # If the target moved on (e.g. a sibling review already passed the
             # gate), a stale session must not mutate it.
             snapshot_now = self._target_snapshot_id(
-                conn=conn, target_type=req["target_type"], target_id=req["target_id"]
+                conn=conn, project_id=req["project_id"], target_type=req["target_type"], target_id=req["target_id"], lock=True
             )
+            req = conn.execute("SELECT * FROM review_requests WHERE id = ?", (req["id"],)).fetchone()
+            session = conn.execute("SELECT * FROM review_sessions WHERE id = ?", (review_session_id,)).fetchone()
+            if req["status"] != "started" or session["status"] == "submitted":
+                raise PermissionDeniedError("review request is no longer open or its session already submitted")
             if snapshot_now != req["target_snapshot_id"]:
                 raise PermissionDeniedError(
                     "target changed after this review started; the verdict no "
                     "longer applies — request a fresh review"
                 )
             workflow = _WORKFLOW_BY_TARGET.get(str(req["target_type"]))
-            if workflow is None:
-                raise ValidationError(
-                    f"unknown review target type: {req['target_type']}"
-                )
-            try:
-                route = resolve_review_return(
-                    workflow=workflow,
-                    role=req["role"],
-                    verdict=verdict,
-                    return_to=return_to,
-                )
-            except ValueError as exc:
-                raise ValidationError(str(exc)) from exc
-            return_to = "" if route is None else route.to_status
+            current = self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
+            route = None
+            if workflow is not None and current.version == 1:
+                try:
+                    route = resolve_review_return(workflow=workflow, role=req["role"], verdict=verdict, return_to=return_to)
+                except ValueError as exc:
+                    raise ValidationError(str(exc)) from exc
+                return_to = "" if route is None else route.to_status
+            else:
+                if verdict == "pass" and return_to:
+                    raise ValidationError("return_to only applies when the verdict is needs_changes or fail")
+                destinations = {edge.target for edge in self.runtime.registry.get(current.workflow, current.version).edges
+                                if edge.source == current.state}
+                if return_to and return_to not in destinations:
+                    raise ValidationError("return_to must name a destination of the current workflow node")
             snapshot = snapshot_from_id(snapshot_id=str(req["target_snapshot_id"]))
             attempt_index = int(snapshot.get("attempt_index") or 0)
             target_history = self.artifacts.history(
                 tx=conn,
                 target_type=str(req["target_type"]),
                 target_ids=(str(req["target_id"]),),
-            )[str(req["target_id"])]
+            )[str(req["target_id"])].submissions if workflow is not None else ()
             latest_submission = max(
                 (
                     submission
-                    for submission in target_history.submissions
+                    for submission in target_history
                     if submission.attempt_index == attempt_index
                 ),
                 key=lambda submission: submission.order,
@@ -417,38 +457,21 @@ class ReviewService:
                     "synopsis": synopsis,
                 },
             )
-            if verdict in {"needs_changes", "fail"}:
-                if route is None:
-                    raise RuntimeError("rejected review has no return route")
-                revision_context = revision_context_for_review_return(
-                    target_type=req["target_type"],
-                    role=req["role"],
-                    verdict=verdict,
-                    notes=notes,
-                    findings=findings or [],
-                    route=route,
+            revision_context = "" if route is None else revision_context_for_review_return(
+                target_type=req["target_type"], role=req["role"], verdict=verdict,
+                notes=notes, findings=findings or [], route=route,
+            )
+            decision = self.runtime.evaluate(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
+            selected = decision.suggested
+            if (decision.node is not None and decision.node.read_only and decision.node.role == req["role"]
+                    and selected is not None and selected.available):
+                self.runtime.apply_in_transaction(
+                    conn=conn, project_id=req["project_id"], instance_id=req["target_id"],
+                    expected_revision=decision.snapshot.revision, action=selected.edge.name,
+                    request_id=f"review:{review_id}",
+                    payload={**(evidence or {}), "review_id": review_id, "notes": notes,
+                             "synopsis": synopsis, "revision_context": revision_context},
                 )
-                if req["target_type"] == "experiment":
-                    self.experiments.return_from_review(
-                        conn=conn,
-                        experiment_id=req["target_id"],
-                        route=route,
-                        revision_context=revision_context,
-                    )
-                elif req["target_type"] == "reflection":
-                    self.reflections.return_from_review(
-                        conn=conn,
-                        reflection_id=req["target_id"],
-                        route=route,
-                        revision_context=revision_context,
-                    )
-                elif req["target_type"] == "task":
-                    self.tasks.return_from_review(
-                        conn=conn,
-                        task_id=req["target_id"],
-                        route=route,
-                        revision_context=revision_context,
-                    )
             review = conn.execute(
                 "SELECT * FROM reviews WHERE id = ?", (review_id,)
             ).fetchone()
@@ -709,13 +732,31 @@ class ReviewService:
         if role != expected:
             raise PermissionDeniedError(f"active gate requires {expected}, not {role}")
 
-    def _target_snapshot_id(self, *, conn, target_type: str, target_id: str) -> str:
+    def _target_snapshot_id(self, *, conn, project_id: str, target_type: str, target_id: str, lock: bool = False) -> str:
+        current = self.runtime.get(conn=conn, project_id=project_id, instance_id=target_id)
+        if current.workflow != target_type:
+            raise NotFoundError(f"workflow {target_type!r} not found in this project: {target_id}")
+        if lock:
+            self.runtime.lock(conn=conn, project_id=project_id, instance_id=target_id, revision=current.revision)
         target, _gate = self._target_with_gate(
             conn=conn,
+            project_id=project_id,
             target_type=target_type,
             target_id=target_id,
         )
-        return review_snapshot_id(target_type=target_type, target=target)
+        return review_snapshot_id(target_type=target_type, target=target, snapshot=current)
+
+    def read_fact(self, *, snapshot: Snapshot, reference: Reference, conn) -> dict[str, Any]:
+        if reference.kind not in {"review", "review_snapshot"}:
+            raise NotFoundError(f"unknown review fact: {reference.kind}")
+        node = self.runtime.registry.get(snapshot.workflow, snapshot.version).node(snapshot.state)
+        if reference.kind == "review_snapshot" and reference.id != snapshot.id:
+            raise NotFoundError("review snapshot belongs to another workflow instance")
+        role = reference.id if reference.kind == "review" else (node.role if node is not None else "")
+        snapshot_id = self._target_snapshot_id(conn=conn, project_id=snapshot.project_id,
+                                               target_type=snapshot.workflow, target_id=snapshot.id)
+        return read_review_fact(conn=conn, project_id=snapshot.project_id, target_type=snapshot.workflow,
+                                target_id=snapshot.id, snapshot_id=snapshot_id, role=role, request=reference.kind == "review_snapshot")
 
     def _target_with_gate(
         self,
@@ -743,7 +784,17 @@ class ReviewService:
                 project_id=project_id,
                 conn=conn,
             )
-        raise ValidationError(f"unknown review target type: {target_type}")
+        snapshot = self.runtime.get(conn=conn, project_id=project_id, instance_id=target_id)
+        if snapshot.workflow != target_type:
+            raise NotFoundError(f"workflow {target_type!r} not found in this project: {target_id}")
+        selected = snapshot.data.get("artifacts") or {}
+        if not isinstance(selected, Mapping) or any(not isinstance(label, str) or not isinstance(value, str) for label, value in selected.items()):
+            raise ValidationError("workflow artifacts must map labels to immutable content IDs")
+        if selected:
+            self.artifacts.contents.assert_complete(artifact_ids=tuple(selected.values()), project_id=project_id, tx=conn)
+        return {"id": snapshot.id, "project_id": snapshot.project_id, "status": snapshot.state,
+                "attempt_index": int(snapshot.data.get("attempt_index") or 1),
+                "current_attempt_artifacts": [{"id": value, "role": label} for label, value in selected.items()]}, None
 
     def _hydrate_review(self, *, row) -> dict[str, Any]:
         data = row_to_dict(row=row) or {}

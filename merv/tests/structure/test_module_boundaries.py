@@ -19,6 +19,7 @@ from tests.paths import BACKEND_ROOT
 
 KERNEL = "kernel"
 RESEARCH_CORE = "research_core"
+WORKFLOWS = "workflows"
 ARTIFACTS = "artifacts"
 OBJECT_STORAGE = "object_storage"
 SANDBOX = "infrastructure"
@@ -31,6 +32,7 @@ SURFACE = "surface"
 MODULES = (
     KERNEL,
     RESEARCH_CORE,
+    WORKFLOWS,
     ARTIFACTS,
     OBJECT_STORAGE,
     SANDBOX,
@@ -46,6 +48,7 @@ MODULES = (
 PACKAGE_COMPONENTS = {
     "kernel": KERNEL,
     "research_core": RESEARCH_CORE,
+    "workflows": WORKFLOWS,
     "literature": RESEARCH_CORE,
     "artifacts": ARTIFACTS,
     "object_storage": OBJECT_STORAGE,
@@ -72,7 +75,8 @@ FILE_COMPONENTS = {
 # to Application.  Surface is the outer delivery/composition component.
 ALLOWED_COMPONENT_EDGES = (
     {(KERNEL, KERNEL)}
-    | {(RESEARCH_CORE, dependency) for dependency in (RESEARCH_CORE, KERNEL)}
+    | {(RESEARCH_CORE, dependency) for dependency in (RESEARCH_CORE, WORKFLOWS, KERNEL)}
+    | {(WORKFLOWS, dependency) for dependency in (WORKFLOWS, KERNEL)}
     | {(ARTIFACTS, dependency) for dependency in (ARTIFACTS, KERNEL)}
     | {(SANDBOX, dependency) for dependency in (SANDBOX, OBJECT_STORAGE, KERNEL)}
     | {(FEED, dependency) for dependency in (FEED, KERNEL)}
@@ -85,6 +89,7 @@ ALLOWED_COMPONENT_EDGES = (
         for dependency in (
             APPLICATION_COMPONENT,
             RESEARCH_CORE,
+            WORKFLOWS,
             ARTIFACTS,
             SANDBOX,
             FEED,
@@ -126,6 +131,8 @@ PACKAGE_LAYERS = {
     "kernel": FOUNDATION,
     "kernel/ports": PORT,
     "research_core": APPLICATION_LAYER,
+    "workflows": APPLICATION_LAYER,
+    "workflows/definitions": DOMAIN,
     "literature": APPLICATION_LAYER,
     "artifacts": APPLICATION_LAYER,
     "feed": APPLICATION_LAYER,
@@ -139,6 +146,9 @@ PACKAGE_LAYERS = {
 
 FILE_LAYERS = {
     "__init__.py": FOUNDATION,
+    "workflows/graph.py": DOMAIN,
+    "workflows/composition.py": DOMAIN,
+    "workflows/registry.py": DOMAIN,
     "kernel/state/dialects.py": ADAPTER,
     "artifacts/r2.py": ADAPTER,
     "surface/web_preview.py": ADAPTER,
@@ -199,6 +209,9 @@ LAYER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset()
 # and tables behind ratified component edges. Every stable table is explicit;
 # temporary ``*_migrate`` rebuild tables are ignored by the ownership check.
 TABLE_OWNERS = {
+    "workflow_instances": WORKFLOWS,
+    "workflow_history": WORKFLOWS,
+    "workflow_actions": WORKFLOWS,
     "projects": KERNEL,
     "project_members": KERNEL,
     "user_hf_tokens": KERNEL,

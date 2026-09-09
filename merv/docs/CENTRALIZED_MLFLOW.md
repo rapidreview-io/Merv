@@ -126,12 +126,18 @@ returns the exact experiment name and environment variables for a run:
 }
 ```
 
-`experiment.transition(project_id, experiment_id, transition="start_running")`
-returns the same experiment-scoped block. When both `TRACKING_URI` and `SERVER_URI` are
-configured, the brain makes a best-effort attempt to create an initial MLflow
-run and persist its identity on the experiment. On success, the response
-includes `mlflow.run.run_id`, and the environment includes `MLFLOW_RUN_ID` and
-`RP_MLFLOW_RUN_ID`.
+A passing design review moves the experiment directly into execution. When an
+execution agent activates its lease, or an interactive agent calls
+`workflow.begin(project_id, instance_id=experiment_id, expected_revision)`, Merv
+records actual work start and queues an `experiment.start_tracking` action. The
+worker makes the initial MLflow run when both `TRACKING_URI` and `SERVER_URI` are
+configured and persists the outcome using that action's event identity.
+Approval and lease offers do not create runs.
+
+Read `mlflow.context(project_id, experiment_id)` before training. Once the
+tracking action has succeeded, `mlflow.run.run_id` and the environment's
+`MLFLOW_RUN_ID` and `RP_MLFLOW_RUN_ID` identify the persisted run. A pending or
+failed tracking action is not a synchronous transition failure.
 
 Set the returned variables on the command that starts training. If a run id is
 present, resume it with MLflow's native API, for example:
@@ -149,10 +155,12 @@ as a fallback for a Merv experiment. Remote sandboxes are clients of
 the configured central service; sandbox provisioning does not start MLflow or
 create a tunnel.
 
-An infrastructure retry stays on the same plugin attempt. If the persisted
-MLflow run is still open, `retry_running` returns it for resumption. If that run
-is terminal, the brain attempts to create and persist a fresh run for the same
-attempt.
+An infrastructure retry stays on the same experiment attempt. `retry_running`
+creates a new execution revision and preserves the approved plan and retained
+work. Activation of its new lease queues tracking again: an open run is reused,
+while a terminal run is replaced for the same attempt. Completion and stop
+operations are also durable actions; they name the old run explicitly so a
+delayed delivery cannot finalize a later attempt's run.
 
 ## Finalizing a quantitative run
 
@@ -172,6 +180,9 @@ Finalization reads before writing. A run that is already terminal keeps its
 recorded status, so the default cannot overwrite a script-recorded failure with
 `FINISHED`. Passing an explicit run id can finalize that run, but it does not
 replace a different canonical run already stored on the plugin experiment.
+The exception is a stopped creation for the current workflow revision: an
+explicit repair can replace the previous terminal pointer, provided it has not
+changed while MLflow was being read.
 
 ## Quantitative run metadata
 
@@ -239,6 +250,16 @@ MLflow is best-effort in the experiment workflow:
   occurs during initial/retry run creation, health checks, finalization, and
   compatibility reads.
 - Experiment transitions do not gate on MLflow availability.
+- `workflow.history` includes action status and the last delivery error. Remote
+  run creation is reserved durably before calling MLflow. If the worker dies or
+  cannot persist the result, the action remains `manual_repair`; automatic
+  delivery cannot create another run. A crash immediately before the remote
+  call conservatively requires the same inspection.
+- To repair an ambiguous creation, inspect the experiment's MLflow namespace.
+  Attach the confirmed run with `mlflow.finalize_run(project_id, experiment_id,
+  run_id, status=null)`. Once its readback is persisted, the stopped action is
+  resolved. If no run exists, create one explicitly through MLflow and attach
+  it. Ordinary transient read and finalization failures still retry.
 - `MERV_REQUIRE_AGENT_MLFLOW=1` separately makes brain startup fail
   when `TRACKING_URI` is absent.
 - A quantitative run without usable MLflow should retain fallback result files

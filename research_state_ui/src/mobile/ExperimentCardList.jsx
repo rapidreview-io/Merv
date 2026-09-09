@@ -7,9 +7,9 @@ import { fmtDuration } from '../utils/format';
 
 // Lifecycle groups for the underline text filter, in FSM order.
 const GROUPS = [
-  { id: 'running', label: 'Running', statuses: ['running'] },
+  { id: 'running', label: 'Running', statuses: ['running', 'ready_to_run'] }, // Legacy Ready snapshots.
   { id: 'review', label: 'Review', statuses: ['design_review', 'experiment_review'] },
-  { id: 'ready', label: 'Ready', statuses: ['planned', 'ready_to_run'] },
+  { id: 'planned', label: 'Planned', statuses: ['planned'] },
   { id: 'done', label: 'Done', statuses: ['complete'] },
   { id: 'failed', label: 'Failed', statuses: ['failed'] },
   { id: 'abandoned', label: 'Abandoned', statuses: ['abandoned'] },

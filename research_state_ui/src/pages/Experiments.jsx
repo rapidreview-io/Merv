@@ -9,10 +9,11 @@ import StatusPill from '../components/StatusPill';
 import { expName } from '../utils/experiment';
 import { fmtDayTime, fmtDuration } from '../utils/format';
 
-const LIFECYCLE = ['planned', 'design_review', 'ready_to_run', 'running', 'experiment_review', 'complete'];
+const LIFECYCLE = ['planned', 'design_review', 'running', 'experiment_review', 'complete'];
 const TERMINAL = ['failed', 'abandoned'];
 // Sort rank for the status column: lifecycle order, then terminal states.
-const STATUS_ORDER = [...LIFECYCLE, ...TERMINAL];
+const STATUS_ORDER = Object.fromEntries([...LIFECYCLE, ...TERMINAL].map((status, index) => [status, index]));
+STATUS_ORDER.ready_to_run = STATUS_ORDER.running; // Historical snapshots.
 
 function isTerminal(status) {
   return status === 'complete' || TERMINAL.includes(status);
@@ -36,7 +37,7 @@ const SORTS = {
   created: (a, b) => (a.facts.createdMs || 0) - (b.facts.createdMs || 0),
   finished: (a, b) => (a.facts.settled ? a.facts.endMs : 0) - (b.facts.settled ? b.facts.endMs : 0),
   duration: (a, b) => (a.facts.durationMs || 0) - (b.facts.durationMs || 0),
-  status: (a, b) => STATUS_ORDER.indexOf(a.facts.status) - STATUS_ORDER.indexOf(b.facts.status),
+  status: (a, b) => (STATUS_ORDER[a.facts.status] ?? -1) - (STATUS_ORDER[b.facts.status] ?? -1),
   title: (a, b) => a.title.localeCompare(b.title),
 };
 

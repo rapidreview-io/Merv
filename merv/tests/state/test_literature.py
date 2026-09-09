@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from merv.brain.workflows import Workflows
+
 import tempfile
 import unittest
 from contextlib import closing
@@ -124,7 +126,7 @@ class LiteratureTest(unittest.TestCase):
         self.store = StateStore(db_path=Path(self.tmp.name) / "state.sqlite")
         self.unfurl = FakeUnfurl()
         self.svc = Literature(store=self.store, unfurl=self.unfurl)
-        self.research = Research(store=self.store, artifacts=Mock())
+        self.research = Research(store=self.store, artifacts=Mock(), workflows=Workflows(store=self.store))
         with closing(self.store.connect()) as conn:
             row = conn.execute("SELECT id FROM projects").fetchone()
             self.project_id = str(row["id"])

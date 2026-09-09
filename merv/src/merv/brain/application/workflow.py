@@ -41,13 +41,11 @@ _DESIGN_REVIEW = {
     for state in EXPERIMENT_WORKFLOW.states
     if state.review is not None and state.name not in _RESULT_REVIEW
 }
-_READY_TO_RUN = EXPERIMENT_WORKFLOW.effect_sources("start_attempt_clock")
 _EXPERIMENT_PRIORITY = {
     **{status: 0 for status in _RESULT_WORK},
     **{status: 1 for status in _RESULT_REVIEW},
     **{status: 2 for status in _DESIGN_REVIEW},
-    **{status: 3 for status in _READY_TO_RUN},
-    EXPERIMENT_WORKFLOW.initial: 4,
+    EXPERIMENT_WORKFLOW.initial: 3,
 }
 _PROCESS_PRIORITY = {"running": 0, "provisioning": 1}
 _STATUS_EXPERIMENT_FIELDS = ("id", "name", "intent", "status", "attempt_index")

@@ -10,22 +10,22 @@ react; a normal deployment constructs it with ``adapter=None``.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Final, Protocol, TypedDict, cast, runtime_checkable
 
-from merv.shared.errors import TrackingPersistenceError
+from merv.shared.errors import TrackingPersistenceError, WorkflowError
 
 from ..feed import FeedAdvisory
-from ..kernel.events import StoredEvent
 from ..object_storage import ObjectStorage
 from ..research_core import (
-    EXPERIMENT_WORKFLOW,
     ExperimentState,
     ExperimentSummary,
     PersistedRunState,
     Research,
 )
+from ..workflows import Delivery
 from .experiments.presentation import slim_experiment_state
 
 LOGGER = logging.getLogger(__name__)
@@ -197,17 +197,7 @@ class ExperimentTracking(Protocol):
     ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]], str]: ...
 
 
-_VISIBLE_STATUSES = frozenset().union(
-    *(
-        EXPERIMENT_WORKFLOW.effect_destinations(effect)
-        for effect in (
-            "start_tracking",
-            "restart_tracking",
-            "finish_tracking",
-            "fail_tracking",
-        )
-    )
-)
+_VISIBLE_STATUSES = frozenset({"running", "experiment_review", "complete", "failed", "abandoned"})
 _PRESENTATION_REPAIR = (
     "The state change is committed; only the MLflow context block failed to "
     "assemble, so this response carries no mlflow environment. Do not retry "
@@ -262,6 +252,44 @@ class MlflowIntegration:
     @property
     def enabled(self) -> bool:
         return self.adapter is not None
+
+    def deliver_workflow_action(self, delivery: Delivery) -> None:
+        """Deliver one graph-requested tracking operation using its durable key."""
+        if self.adapter is None:
+            return
+        state = self.research.experiment_state(project_id=delivery.project_id, experiment_id=delivery.instance_id)
+        if delivery.kind == "experiment.start_tracking":
+            current = self.research.workflows.runtime.get(project_id=delivery.project_id, instance_id=delivery.instance_id)
+            if current.revision != delivery.revision or current.outcome:
+                return
+            self._ensure_run(
+                state=state, replace_terminal=True, delivery_id=delivery.event_id,
+                before_create=lambda: self._protect_creation(delivery),
+            )
+            return
+        run_id = str(delivery.data.get("run_id") or "")
+        if not run_id:
+            return
+        status = {"experiment.finish_tracking": "FINISHED", "experiment.stop_tracking": "KILLED",
+                  "experiment.fail_tracking": "FAILED"}[delivery.kind]
+        # A delayed action names the old run explicitly; never finalize a new
+        # attempt's mutable current pointer after a plan revision.
+        result = self.adapter.finalize_run(project_id=delivery.project_id, experiment_id=delivery.instance_id,
+                                           run_id=run_id, status=status, wait_seconds=0.0)
+        readback = result.get("run")
+        if isinstance(readback, dict) and str(readback.get("run_id") or "") == run_id:
+            self.research.refresh_tracking_run(project_id=delivery.project_id, experiment_id=delivery.instance_id,
+                                              run=_persisted_run(readback), if_current=True)
+
+    def _protect_creation(self, delivery: Delivery) -> None:
+        if not self.research.workflows.deliveries.protect_external_effect(
+            delivery, reason=(
+                "MLflow creation may have started. Inspect the experiment's MLflow namespace "
+                "and attach the existing run with mlflow.finalize_run before retrying work. "
+                "Automatic creation is stopped to avoid duplicate remote runs."
+            ),
+        ):
+            raise WorkflowError("tracking delivery lease changed before run creation")
 
     def connection(
         self,
@@ -420,72 +448,13 @@ class MlflowIntegration:
             "guidance": self.guidance(block),
         }
 
-    def after_transition(
-        self,
-        *,
-        event: StoredEvent,
-        state: ExperimentState,
-    ) -> tuple[ExperimentState, dict[str, str] | None]:
-        transition = (
-            str(event.payload.get("transition") or "")
-            if event.type == EXPERIMENT_WORKFLOW.event_type
-            else ""
-        )
-        step = EXPERIMENT_WORKFLOW.transition(transition)
-        effects = () if step is None else step.effects
-        warning = None
-        if {"start_tracking", "restart_tracking"} & set(effects):
-            try:
-                state, attempted = self._ensure_run(
-                    state=state,
-                    replace_terminal="restart_tracking" in effects,
-                    delivery_id=event.id,
-                )
-            except TrackingPersistenceError:
-                raise
-            except Exception as exc:
-                error = _message(exc)
-                LOGGER.error(
-                    "MLflow tracking degraded after committed %s on %s: %s",
-                    transition,
-                    state.get("id"),
-                    error,
-                )
-                warning = _warning(error, _TRACKING_REPAIR)
-            else:
-                if attempted:
-                    run = state.get("mlflow_run") or {}
-                    error = "" if run.get("run_id") else str(run.get("error") or "")
-                    if error:
-                        warning = _warning(error, _TRACKING_REPAIR)
-        requested = (
-            "FINISHED"
-            if "finish_tracking" in effects
-            else (
-                "KILLED"
-                if "stop_tracking" in effects
-                else "FAILED" if "fail_tracking" in effects else ""
-            )
-        )
-        if requested:
-            try:
-                state = self._finish_owned_run(state=state, status=requested)
-            except Exception:
-                # Finalization is advisory after the Research transition has
-                # committed; the explicit finalize operation remains available.
-                LOGGER.exception(
-                    "MLflow run finalization failed after committed %s on %s",
-                    transition,
-                    state.get("id"),
-                )
-        return state, warning
-
     def _ensure_run(
         self,
         *,
         state: ExperimentState,
         replace_terminal: bool,
         delivery_id: int,
+        before_create: Callable[[], None] | None = None,
     ) -> tuple[ExperimentState, bool]:
         if self.adapter is None:
             return state, False
@@ -503,6 +472,8 @@ class MlflowIntegration:
         experiment_id = str(state.get("id") or "")
         project_id = str(state.get("project_id") or "")
         attempt = int(state.get("attempt_index") or 1)
+        if before_create is not None:
+            before_create()
         try:
             created: dict[str, Any] = self.adapter.create_run(
                 project_id=project_id,
@@ -581,33 +552,6 @@ class MlflowIntegration:
                 ) from exc
         raise AssertionError("unreachable")
 
-    def _finish_owned_run(
-        self, *, state: ExperimentState, status: str
-    ) -> ExperimentState:
-        run = state.get("mlflow_run") or {}
-        run_id = str(run.get("run_id") or "")
-        if (
-            self.adapter is None
-            or not run_id
-            or not run.get("created_by_plugin")
-            or str(run.get("status") or "").upper() in TRACKING_TERMINAL_RUN_STATUSES
-        ):
-            return state
-        result = self.adapter.finalize_run(
-            project_id=str(state.get("project_id") or ""),
-            experiment_id=str(state.get("id") or ""),
-            run_id=run_id,
-            status=status,
-            wait_seconds=0.0,
-        )
-        readback = result.get("run")
-        if isinstance(readback, dict) and str(readback.get("run_id") or "") == run_id:
-            return self.research.refresh_tracking_run(
-                project_id=str(state.get("project_id") or ""),
-                experiment_id=str(state.get("id") or ""),
-                run=_persisted_run(readback),
-            ).state
-        return state
 
     def finalize(
         self,
@@ -646,16 +590,33 @@ class MlflowIntegration:
         )
         run = result.get("run")
         persisted_id = str(existing.get("run_id") or "")
+        repairing = bool(
+            run_id and persisted_id and str(run_id) != persisted_id
+            and str(existing.get("status") or "").upper() in TRACKING_TERMINAL_RUN_STATUSES
+            and self.research.workflows.deliveries.needs_manual_repair(
+                project_id=resolved_project_id, instance_id=experiment_id,
+                kind="experiment.start_tracking",
+            )
+        )
         if (
             isinstance(run, dict)
             and run.get("run_id")
-            and (not persisted_id or str(run.get("run_id")) == persisted_id)
+            and (not persisted_id or str(run.get("run_id")) == persisted_id or repairing)
         ):
-            state = self.research.refresh_tracking_run(
+            refreshed = self.research.refresh_tracking_run(
                 project_id=resolved_project_id,
                 experiment_id=experiment_id,
                 run=cast(PersistedRunState, run),
-            ).state
+                expected_run_id=persisted_id,
+            )
+            state = refreshed.state if refreshed is not None else self.research.experiment_state(
+                project_id=resolved_project_id, experiment_id=experiment_id,
+            )
+            if run_id and refreshed is not None:
+                self.research.workflows.deliveries.resolve_manual_repair(
+                    project_id=resolved_project_id, instance_id=experiment_id,
+                    kind="experiment.start_tracking",
+                )
         experiment = dict(
             slim_experiment_state(
                 state,
@@ -799,15 +760,15 @@ class MlflowIntegration:
 
 
 __all__ = [
-    "CreateRunResult",
-    "ExperimentTracking",
-    "FinalizeRunResult",
     "MAX_TRACKING_SNAPSHOT_RUNS",
-    "MetricsSnapshot",
-    "MlflowIntegration",
     "TRACKING_CAPABILITY_TRUTH_TABLE",
     "TRACKING_NAMESPACE_PREFIX",
     "TRACKING_TERMINAL_RUN_STATUSES",
+    "CreateRunResult",
+    "ExperimentTracking",
+    "FinalizeRunResult",
+    "MetricsSnapshot",
+    "MlflowIntegration",
     "TrackingCapabilities",
     "TrackingContext",
     "TrackingContextPayload",

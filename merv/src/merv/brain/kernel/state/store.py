@@ -286,11 +286,10 @@ CREATE TABLE IF NOT EXISTS experiments (
 CREATE TABLE IF NOT EXISTS agent_sessions (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
-  target_type TEXT NOT NULL CHECK (target_type IN ('experiment', 'reflection')),
+  target_type TEXT NOT NULL,
   target_id TEXT NOT NULL,
   attempt_index INTEGER NOT NULL,
-  kind TEXT NOT NULL DEFAULT 'experiment'
-    CHECK (kind IN ('experiment', 'review', 'consolidation')),
+  kind TEXT NOT NULL DEFAULT 'experiment',
   review_request_id TEXT NOT NULL DEFAULT '',
   source_sha TEXT NOT NULL DEFAULT '',
   runner_id TEXT NOT NULL,
@@ -315,6 +314,9 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   close_reason TEXT NOT NULL DEFAULT '',
   source_key_id TEXT,
   source_user_id TEXT NOT NULL DEFAULT '',
+  workflow_instance_id TEXT NOT NULL DEFAULT '',
+  workflow_revision INTEGER NOT NULL DEFAULT 0,
+  workflow_node TEXT NOT NULL DEFAULT '',
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
@@ -1508,6 +1510,72 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     (58, "add_remote_sandbox_links", ""),
     # Generic immutable content; Research owns associations and snapshots.
     (59, "separate_artifact_content_from_research", ""),
+    (60, "add_workflow_runtime", ""),
+)
+
+WORKFLOW_SCHEMA = (
+    """
+    CREATE TABLE IF NOT EXISTS workflow_instances (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      workflow TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      state TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 0,
+      started_revision INTEGER NOT NULL DEFAULT -1,
+      outcome TEXT NOT NULL DEFAULT '',
+      data_json TEXT NOT NULL DEFAULT '{}',
+      start_key TEXT NOT NULL,
+      start_fingerprint TEXT NOT NULL,
+      parent_id TEXT REFERENCES workflow_instances(id),
+      parent_revision INTEGER,
+      child_key TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (project_id, start_key),
+      UNIQUE (parent_id, parent_revision, child_key)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_workflow_instances_project "
+    "ON workflow_instances(project_id, outcome, workflow)",
+    """
+    CREATE TABLE IF NOT EXISTS workflow_history (
+      id TEXT PRIMARY KEY,
+      instance_id TEXT NOT NULL REFERENCES workflow_instances(id),
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      revision INTEGER NOT NULL,
+      command_key TEXT NOT NULL,
+      command_fingerprint TEXT NOT NULL,
+      action TEXT NOT NULL,
+      from_state TEXT NOT NULL,
+      after_json TEXT NOT NULL,
+      event_id INTEGER NOT NULL REFERENCES events(id),
+      created_at TEXT NOT NULL,
+      UNIQUE (instance_id, revision),
+      UNIQUE (instance_id, command_key)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS workflow_actions (
+      id TEXT PRIMARY KEY,
+      instance_id TEXT NOT NULL REFERENCES workflow_instances(id),
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      revision INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      data_json TEXT NOT NULL,
+      event_id INTEGER REFERENCES events(id),
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT NOT NULL DEFAULT '',
+      lease_token TEXT NOT NULL DEFAULT '',
+      lease_until TEXT NOT NULL DEFAULT '',
+      last_error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      delivered_at TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_workflow_actions_pending "
+    "ON workflow_actions(status, next_attempt_at, lease_until)",
 )
 
 RESEARCH_ARTIFACT_SCHEMA = (
@@ -1933,6 +2001,8 @@ class BaseStateStore:
             self._add_submission_attempts(conn=conn)
         elif name == "separate_artifact_content_from_research":
             self._separate_artifact_content_from_research(conn=conn)
+        elif name == "add_workflow_runtime":
+            self._add_workflow_runtime(conn=conn)
         elif name == "add_tool_call_ledger":
             self._add_tool_call_ledger(conn=conn)
         elif name == "add_oauth_client_fingerprint":
@@ -1980,6 +2050,176 @@ class BaseStateStore:
                 conn.execute(_schema_table_ddl(table="remote_sandbox_links"))
         else:
             conn.execute(statement)
+
+    def _add_workflow_runtime(self, *, conn: Connection) -> None:
+        """Explicit v1 adoption, preserving evidence and never replaying work."""
+        for sql in WORKFLOW_SCHEMA:
+            conn.execute(sql)
+        self._expand_workflow_sessions(conn=conn)
+        definitions = (
+            ("task", "tasks", {"in_progress", "in_review"}, {"done": "completed", "failed": "failed"}),
+            ("experiment", "experiments", {"planned", "design_review", "running", "experiment_review"},
+             {"complete": "completed", "failed": "failed", "abandoned": "abandoned"}),
+            ("reflection", "reflections", {"reflecting", "synthesizing", "reflection_review", "consolidating"},
+             {"published": "published", "abandoned": "abandoned"}),
+        )
+        for workflow, table, working, outcomes in definitions:
+            for row in conn.execute(f"SELECT id, project_id, status, attempt_index, created_at, updated_at FROM {table}").fetchall():
+                if conn.execute("SELECT id FROM workflow_instances WHERE id = ?", (row["id"],)).fetchone() is not None:
+                    continue
+                old_state = row["status"]
+                state = "running" if workflow == "experiment" and old_state == "ready_to_run" else old_state
+                if state not in working | set(outcomes):
+                    raise ValidationError(f"cannot migrate {workflow} {row['id']}: unknown status {old_state!r}")
+                data = {} if workflow == "task" else {"attempt_index": row["attempt_index"]}
+                if workflow == "reflection" and state == "consolidating":
+                    proposal = conn.execute("SELECT id, proposal_sha FROM consolidation_proposals WHERE reflection_id = ? ORDER BY revision DESC LIMIT 1", (row["id"],)).fetchone()
+                    if proposal is not None:
+                        data.update(proposal_id=proposal["id"], proposal_sha=proposal["proposal_sha"])
+                        reviews = conn.execute(
+                            "SELECT r.verdict, r.target_snapshot_id FROM reviews r JOIN review_sessions s ON s.id = r.session_id "
+                            "WHERE r.target_type = 'reflection' AND r.target_id = ? AND r.role = 'consolidation_reviewer' "
+                            "AND s.status = 'submitted' ORDER BY r.created_seq DESC", (row["id"],)
+                        ).fetchall()
+                        suffix = f"|{proposal['id']}|{proposal['proposal_sha']}"
+                        latest = next((review for review in reviews if review["target_snapshot_id"].endswith(suffix)), None)
+                        if latest is None or latest["verdict"] == "pass":
+                            state = "consolidation_review"
+                snapshot = {
+                    "id": row["id"], "project_id": row["project_id"], "workflow": workflow, "version": 1,
+                    "state": state, "revision": 0, "data": data, "children": [], "outcome": outcomes.get(state, ""),
+                }
+                identity = json.dumps({"id": row["id"], "workflow": workflow, "version": 1}, sort_keys=True, separators=(",", ":"))
+                fingerprint = hash_secret(identity)
+                conn.execute(
+                    "INSERT INTO workflow_instances (id, project_id, workflow, version, state, outcome, data_json, "
+                    "start_key, start_fingerprint, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
+                    (row["id"], row["project_id"], workflow, state, snapshot["outcome"], json.dumps(data, sort_keys=True), f"adopt:{row['id']}", fingerprint,
+                     row["created_at"], row["updated_at"]),
+                )
+                if workflow == "experiment" and state != old_state:
+                    conn.execute(f"UPDATE {table} SET status = ? WHERE id = ?", (state, row["id"]))
+                event = self.record_event(conn=conn, project_id=row["project_id"], event_type="workflow.migrated",
+                                          target_type=workflow, target_id=row["id"],
+                                          payload={"migration": 60, "version": 1, "from": old_state, "state": state})
+                conn.execute(
+                    "INSERT INTO workflow_history (id, instance_id, project_id, revision, command_key, command_fingerprint, "
+                    "action, from_state, after_json, event_id, created_at) VALUES (?, ?, ?, 0, 'migration:60', ?, 'migrate', ?, ?, ?, ?)",
+                    (new_id(prefix="wfh"), row["id"], row["project_id"], fingerprint, old_state,
+                     json.dumps(snapshot, sort_keys=True), event.id, now_iso()),
+                )
+        # Keep valid pre-upgrade leases attached to the adopted revision. Their
+        # authenticating adapter rechecks phase, attempt and review capability.
+        conn.execute(
+            "UPDATE agent_sessions SET workflow_instance_id = target_id, workflow_revision = 0, "
+            "workflow_node = (SELECT state FROM workflow_instances w WHERE w.id = agent_sessions.target_id) "
+            "WHERE status IN ('offered', 'active') AND EXISTS "
+            "(SELECT 1 FROM workflow_instances w WHERE w.id = agent_sessions.target_id AND w.project_id = agent_sessions.project_id)"
+        )
+        for session in conn.execute("SELECT * FROM agent_sessions WHERE workflow_instance_id <> '' AND status IN ('offered', 'active')").fetchall():
+            instance = conn.execute("SELECT * FROM workflow_instances WHERE id = ?", (session["workflow_instance_id"],)).fetchone()
+            table = {"experiment": "experiments", "reflection": "reflections", "task": "tasks"}[instance["workflow"]]
+            target = conn.execute(f"SELECT status, attempt_index FROM {table} WHERE id = ?", (instance["id"],)).fetchone()
+            valid = not instance["outcome"] and target is not None and target["attempt_index"] == session["attempt_index"]
+            review_role = {"design_review": "design_reviewer", "experiment_review": "experiment_reviewer",
+                           "in_review": "task_reviewer", "reflection_review": "reflection_reviewer",
+                           "consolidation_review": "consolidation_reviewer"}.get(instance["state"], "")
+            if session["kind"] == "review":
+                request = conn.execute("SELECT * FROM review_requests WHERE id = ?", (session["review_request_id"],)).fetchone()
+                prefix = f"{instance['workflow']}|{instance['id']}|{target['status']}|{target['attempt_index']}|" if target else ""
+                valid = valid and bool(review_role) and request is not None and (
+                    request["status"] in {"requested", "started"} and request["expires_at"] > now_iso()
+                    and request["role"] == review_role and request["project_id"] == session["project_id"]
+                    and request["target_snapshot_id"].startswith(prefix)
+                )
+            else:
+                valid = valid and not review_role
+                valid = valid and (session["kind"] != "consolidation" or instance["state"] == "consolidating")
+            try:
+                packet = json.loads(session["assignment_json"] or "{}")
+            except ValueError:
+                packet = {}
+            if session["status"] == "offered" and not packet.get("instruction"):
+                valid = False
+            if not valid:
+                conn.execute("UPDATE agent_sessions SET status = 'expired', closed_at = ?, "
+                             "close_reason = 'workflow_migration_stale_lease' WHERE id = ?", (now_iso(), session["id"]))
+        # The old lease keys allowed owner and reviewer simultaneously. Keep
+        # the reviewer at a submitted gate and fence the superseded owner.
+        seen: set[tuple[str, str]] = set()
+        for session in conn.execute(
+            "SELECT id, project_id, workflow_instance_id FROM agent_sessions "
+            "WHERE workflow_instance_id <> '' AND status IN ('offered', 'active') "
+            "ORDER BY CASE WHEN kind = 'review' THEN 0 ELSE 1 END, "
+            "CASE WHEN status = 'active' THEN 0 ELSE 1 END, created_at, id"
+        ).fetchall():
+            identity = (session["project_id"], session["workflow_instance_id"])
+            if identity in seen:
+                conn.execute("UPDATE agent_sessions SET status = 'expired', closed_at = ?, "
+                             "close_reason = 'workflow_migration_superseded' WHERE id = ?", (now_iso(), session["id"]))
+            seen.add(identity)
+        conn.execute(
+            "UPDATE workflow_instances SET started_revision = revision WHERE EXISTS "
+            "(SELECT 1 FROM agent_sessions s WHERE s.workflow_instance_id = workflow_instances.id AND s.status = 'active') "
+            "AND NOT (workflow = 'experiment' AND state = 'running')"
+        )
+        for instance in conn.execute(
+            "SELECT id, project_id FROM workflow_instances WHERE workflow = 'experiment' AND state = 'running'"
+        ).fetchall():
+            for event in conn.execute(
+                "SELECT type, payload_json FROM events WHERE target_type = 'experiment' AND target_id = ? AND project_id = ? ORDER BY id DESC",
+                (instance["id"], instance["project_id"]),
+            ).fetchall():
+                if event["type"] == "experiment.returned_to_planned":
+                    break
+                payload = json.loads(event["payload_json"])
+                if payload.get("transition") == "start_running" or (event["type"] == "workflow.work_started" and payload.get("state") == "running"):
+                    conn.execute("UPDATE workflow_instances SET started_revision = revision WHERE id = ?", (instance["id"],))
+                    break
+        for name in ("experiment", "review", "consolidation"):
+            conn.execute(f"DROP INDEX IF EXISTS idx_agent_sessions_one_live_{name}")
+        for sql in AGENT_SESSION_INDEXES:
+            if "WHERE kind =" in sql:
+                sql = sql.replace("WHERE kind =", "WHERE workflow_instance_id = '' AND kind =")
+            conn.execute(sql)
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_one_live_workflow "
+            "ON agent_sessions(project_id, workflow_instance_id, workflow_revision) "
+            "WHERE workflow_instance_id <> '' AND status IN ('offered', 'active')"
+        )
+
+        roles = {"design_review": "design_reviewer", "experiment_review": "experiment_reviewer",
+                 "in_review": "task_reviewer", "reflection_review": "reflection_reviewer",
+                 "consolidation_review": "consolidation_reviewer"}
+        for instance in conn.execute("SELECT * FROM workflow_instances WHERE outcome = ''").fetchall():
+            role = roles.get(instance["state"])
+            if role is not None:
+                data = {"target_type": instance["workflow"], "target_id": instance["id"], "role": role}
+                conn.execute(
+                    "INSERT INTO workflow_actions (id,instance_id,project_id,revision,kind,data_json,created_at) "
+                    "VALUES (?, ?, ?, 0, 'review.request', ?, ?)",
+                    (f"{instance['id']}:migration:60:review", instance["id"], instance["project_id"], json.dumps(data, sort_keys=True), now_iso()),
+                )
+        for reflection in conn.execute(
+            "SELECT r.id, r.project_id FROM reflections r WHERE r.status = 'published' AND NOT EXISTS "
+            "(SELECT 1 FROM reflections newer WHERE newer.project_id = r.project_id AND newer.status = 'published' "
+            "AND newer.created_seq > r.created_seq) AND (EXISTS "
+            "(SELECT 1 FROM reflection_experiments m JOIN workflow_instances w ON w.id = m.experiment_id "
+            "WHERE m.reflection_id = r.id AND w.outcome = '') OR EXISTS "
+            "(SELECT 1 FROM reflection_tasks m JOIN workflow_instances w ON w.id = m.task_id "
+            "WHERE m.reflection_id = r.id AND w.outcome = ''))"
+        ).fetchall():
+            data = {"workflow": "research_wave", "request_id": f"reflection-wave:{reflection['id']}",
+                    "data": {"reflection_id": reflection["id"]}}
+            conn.execute(
+                "INSERT INTO workflow_actions (id,instance_id,project_id,revision,kind,data_json,created_at) "
+                "VALUES (?, ?, ?, 0, 'workflow.start', ?, ?)",
+                (f"{reflection['id']}:migration:60:wave", reflection["id"], reflection["project_id"], json.dumps(data, sort_keys=True), now_iso()),
+            )
+
+    def _expand_workflow_sessions(self, *, conn: Connection) -> None:
+        """Dialect implementation widens the former closed target/kind enum."""
+        raise NotImplementedError
 
     def _ensure_task_deliverables(self, *, conn: Connection) -> None:
         """Migration 53: the goal's deliverables as a structured column."""
@@ -3538,12 +3778,22 @@ class StateStore(BaseStateStore):
             self._rename_syntheses_to_reflections(conn=conn)
             self._rename_synthesis_wave_tables(conn=conn)
             conn.executescript(SCHEMA)  # IF NOT EXISTS — safe to race
+            # Rebuilding the session enum must preserve referencing trace rows.
+            # Keep the rebuild and adoption in the same migration transaction.
+            session_schema = conn.execute("SELECT sql FROM sqlite_master WHERE name='agent_sessions'").fetchone()["sql"]
+            rebuild_sessions = "target_type IN" in session_schema or "kind IN" in session_schema
+            if rebuild_sessions:
+                conn.execute("PRAGMA foreign_keys = OFF")
             # The column probes and migration ledger below are check-then-act;
             # hold the write lock across them so two processes booting the same
             # upgrade can't both run one ALTER (executescript autocommits).
             conn.execute("BEGIN IMMEDIATE")
             self._ensure_forward_schema(conn=conn)
             self._apply_migrations(conn=conn)
+            if rebuild_sessions:
+                for table in ("agent_sessions", "agent_session_traces"):
+                    if self._has_table(conn=conn, table=table) and conn.execute(f"PRAGMA foreign_key_check({table})").fetchone():
+                        raise ValidationError(f"workflow migration broke {table} references")
             row = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()
             if row is None:
                 project_id = new_id(prefix="proj")
@@ -3562,6 +3812,22 @@ class StateStore(BaseStateStore):
             conn.commit()
         finally:
             conn.close()
+
+    def _expand_workflow_sessions(self, *, conn: Connection) -> None:
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_sessions'").fetchone()
+        sql = "" if row is None else row["sql"]
+        if "target_type IN" in sql or "kind IN" in sql:
+            columns = [row["name"] for row in conn.execute("PRAGMA table_info(agent_sessions)").fetchall()]
+            conn.execute(_schema_table_ddl(table="agent_sessions", name="agent_sessions_v60"))
+            names = ", ".join(columns)
+            conn.execute(f"INSERT INTO agent_sessions_v60 ({names}) SELECT {names} FROM agent_sessions")
+            conn.execute("DROP TABLE agent_sessions")
+            conn.execute("ALTER TABLE agent_sessions_v60 RENAME TO agent_sessions")
+        for column, ddl in (("workflow_instance_id", "TEXT NOT NULL DEFAULT ''"),
+                            ("workflow_revision", "INTEGER NOT NULL DEFAULT 0"),
+                            ("workflow_node", "TEXT NOT NULL DEFAULT ''")):
+            if not self._has_column(conn=conn, table="agent_sessions", column=column):
+                conn.execute(f"ALTER TABLE agent_sessions ADD COLUMN {column} {ddl}")
 
     def _ensure_forward_schema(self, *, conn: sqlite3.Connection) -> None:
         # Cloud-split Phase 6 (June 2026): tenancy column — projects carry

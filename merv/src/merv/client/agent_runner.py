@@ -69,7 +69,7 @@ SESSION_KEY_PREFIX = "mas_"
 # Reported in the heartbeat inventory so Settings can tell an old runner
 # archive from a current one; the runner is brain-free and has no package
 # version of its own. Bump when the runner/brain contract changes.
-RUNNER_VERSION = "2026.08.16"
+RUNNER_VERSION = "2026.09.09"
 DEFAULT_POLL_SECONDS = 10.0
 RAPID_STOP_SECONDS = 30.0
 CRASH_LOOP_WINDOW_SECONDS = 2 * 60.0
@@ -139,6 +139,16 @@ class Claim:
     def __post_init__(self) -> None:
         if not self.target_id:
             object.__setattr__(self, "target_id", self.experiment_id)
+
+    @property
+    def workspace_mode(self) -> str:
+        return str(((self.assignment or {}).get("execution") or {}).get(
+            "workspace", self.kind if self.kind in {"review", "consolidation"} else "work"
+        ))
+
+    @property
+    def read_only(self) -> bool:
+        return bool(((self.assignment or {}).get("execution") or {}).get("read_only", self.kind == "review"))
 
 
 @dataclass(frozen=True)
@@ -707,6 +717,8 @@ class LocalSession:
     kind: str = "experiment"
     review_request_id: str | None = None
     attempt_index: int = 0
+    workspace_mode: str = ""
+    read_only: bool = False
     trace_dir: str | None = None
     trace_offset: int = 0
     telemetry: dict[str, Any] | None = None
@@ -814,6 +826,8 @@ class SessionLedger:
             kind=claim.kind,
             review_request_id=claim.review_request_id,
             attempt_index=claim.attempt_index,
+            workspace_mode=claim.workspace_mode,
+            read_only=claim.read_only,
         )
         self.sessions[claim.session_id] = session
         self.pending_claims.pop(platform.name, None)
@@ -852,8 +866,6 @@ class WorkspaceManager:
         self._bare_repository: Path | None = None
 
     def prepare(self, claim: Claim) -> Workspace:
-        bare = self._canonical_repository()
-        self._git(bare, "worktree", "prune")
         root = self.settings.root
         if root is None:
             raise RunnerError("git_worktree requires a workspace root")
@@ -861,7 +873,13 @@ class WorkspaceManager:
         root.mkdir(parents=True, exist_ok=True)
         target_id = _safe_name(claim.target_id or claim.experiment_id)
         project_id = _safe_name(claim.project_id)
-        if claim.kind == "review":
+        if claim.workspace_mode == "none":
+            path = root / "sessions" / project_id / _safe_name(claim.session_id)
+            path.mkdir(parents=True, exist_ok=False)
+            return Workspace(path=path, kind="none")
+        bare = self._canonical_repository()
+        self._git(bare, "worktree", "prune")
+        if claim.workspace_mode == "review":
             # Consolidation reviews carry an exact proposal SHA. Experiment
             # plan/result reviews are evidence reviews and may have no code
             # snapshot at all; give those reviewers a clean central checkout
@@ -893,7 +911,7 @@ class WorkspaceManager:
                 review_request_id=claim.review_request_id,
             )
 
-        if claim.kind == "consolidation":
+        if claim.workspace_mode == "consolidation":
             # A rejected proposal keeps its declared base and therefore resumes
             # this exact revision branch. A stale central advance supplies a new
             # observed base, selecting a fresh worktree while preserving the old
@@ -906,7 +924,9 @@ class WorkspaceManager:
             base_ref = f"refs/merv/bases/{category}/{project_id}/{target_id}/{revision}"
         else:
             base_sha = ""
-            category = "experiments"
+            # Preserve the deployed experiment branches; every new graph shares
+            # one generic namespace keyed by its unique instance id.
+            category = "experiments" if claim.target_type == "experiment" else "workflows"
             branch = f"merv/{category}/{project_id}/{target_id}"
             path = root / category / project_id / target_id
             base_ref = f"refs/merv/bases/{category}/{project_id}/{target_id}"
@@ -961,6 +981,8 @@ class WorkspaceManager:
         writable: bool,
     ) -> Workspace:
         """Commit bounded WIP so a conversation ending cannot lose an experiment."""
+        if kind == "none":
+            return Workspace(path=path, kind=kind)
         if writable and self._git(path, "status", "--porcelain").strip():
             changed = self._git(
                 path,
@@ -1013,6 +1035,8 @@ class WorkspaceManager:
         base_sha: str,
         kind: str,
     ) -> Workspace:
+        if kind == "none":
+            return Workspace(path=path, kind=kind)
         return self._workspace(
             path=path,
             branch=branch,
@@ -1022,6 +1046,10 @@ class WorkspaceManager:
 
     def close(self, workspace: Workspace) -> None:
         """Remove temporary reviewer worktrees; durable branches stay put."""
+        if workspace.kind == "none":
+            if workspace.path.exists():
+                shutil.rmtree(workspace.path)
+            return
         if workspace.kind != "review" or not workspace.path.exists():
             return
         self._git(
@@ -2417,7 +2445,7 @@ class AgentRunner:
             path=Path(session.cwd),
             branch=session.branch,
             base_sha=session.base_sha,
-            kind=session.kind,
+            kind="none" if session.workspace_mode == "none" else session.kind,
         )
         self._remember_workspace(session, workspace)
         return workspace
@@ -2430,8 +2458,8 @@ class AgentRunner:
             branch=session.branch,
             base_sha=session.base_sha,
             session_id=session.session_id,
-            kind=session.kind,
-            writable=session.kind in {"experiment", "consolidation"},
+            kind="none" if session.workspace_mode == "none" else session.kind,
+            writable=not session.read_only and session.kind != "review" and session.workspace_mode != "none",
         )
         self._remember_workspace(session, workspace)
         return workspace
@@ -2528,18 +2556,19 @@ class AgentRunner:
             session.cwd = str(workspace.path)
             session.branch = workspace.branch
             self._remember_workspace(session, workspace)
-            instruction += (
-                "\nGit workspace: "
-                f"{workspace.branch or 'detached'} at {workspace.head_sha}; "
-                f"base {workspace.base_sha}.\n"
-            )
+            if claim.workspace_mode != "none":
+                instruction += (
+                    "\nGit workspace: "
+                    f"{workspace.branch or 'detached'} at {workspace.head_sha}; "
+                    f"base {workspace.base_sha}.\n"
+                )
             if self.skills is not None:
                 try:
                     harness_kit.mount_skills(
                         adapter=platform.adapter,
                         workspace=workspace.path,
                         install=self.skills,
-                        exclude_file=self.workspaces.exclude_file(),
+                        exclude_file=None if claim.workspace_mode == "none" else self.workspaces.exclude_file(),
                     )
                 except (HarnessError, OSError) as exc:
                     # The note below still names the install path, so the

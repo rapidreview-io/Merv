@@ -31,12 +31,9 @@ class ExperimentWorkflowTest(ResearchCase):
             target_id=experiment_id,
             role="design_reviewer",
         )
-        states.extend(
-            (
-                self.transition_experiment(experiment_id, "mark_ready_to_run")["status"],
-                self.transition_experiment(experiment_id, "start_running")["status"],
-            )
-        )
+        approved = self.app.research.experiment_state(project_id=self.project_id, experiment_id=experiment_id)
+        states.append(approved["status"])
+        self.assertIsNone(self.app.experiments.attempt_started_running_at(experiment_id=experiment_id))
         for role, path, body in (
             ("result", "results.json", '{"accuracy": 0.72}'),
             ("report", "report.md", VALID_REPORT),
@@ -57,20 +54,13 @@ class ExperimentWorkflowTest(ResearchCase):
             target_id=experiment_id,
             role="experiment_reviewer",
         )
-        completed = self.call(
-            "experiment.transition",
-            project_id=self.project_id,
-            experiment_id=experiment_id,
-            transition="complete",
-            evidence={"conclusion": "Accuracy cleared the registered threshold."},
-        )
+        completed = self.app.research.experiment_state(project_id=self.project_id, experiment_id=experiment_id)
         states.append(completed["status"])
 
         self.assertEqual(
             states,
             [
                 "design_review",
-                "ready_to_run",
                 "running",
                 "experiment_review",
                 "complete",
@@ -82,7 +72,7 @@ class ExperimentWorkflowTest(ResearchCase):
             experiment_id=experiment_id,
         )
         self.assertEqual(
-            state["conclusion"], "Accuracy cleared the registered threshold."
+            state["conclusion"], "The registered threshold was met."
         )
         with self.app.store.connect() as conn:
             events = conn.execute(
@@ -104,8 +94,7 @@ class ExperimentWorkflowTest(ResearchCase):
             [json.loads(row["payload_json"])["transition"] for row in events],
             [
                 "submit_design",
-                "mark_ready_to_run",
-                "start_running",
+                "approve_design",
                 "submit_results",
                 "complete",
             ],

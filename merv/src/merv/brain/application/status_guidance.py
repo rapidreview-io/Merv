@@ -1,929 +1,137 @@
 # If you update this file, you must consult application.md to see whether application.md needs to be updated. application.md must not exceed 100 lines.
-"""Application-owned agent guidance over Research and Sandbox facts."""
+"""Compatibility presentation of canonical workflow evaluations and project hints."""
 
 from __future__ import annotations
 
-from typing import Any
-
-from merv.shared.artifact_roles import (
-    PROJECT_GRAPH_ROLE,
-    REFLECTION_LENS_DOC_ROLE,
-    SUBMITTABLE_ROLES,
-)
-
-from ..research_core import (
-    EXPERIMENT_ACTIVE_PROCESS_STATUSES,
-    EXPERIMENT_TERMINAL_STATUSES,
-    EXPERIMENT_WORKFLOW,
-    GateEvaluation,
-    REFLECTION_WORKFLOW,
-    RequirementEvaluation,
-    TASK_TERMINAL_STATUSES,
-    TASK_WORKFLOW,
-)
-from .experiments.create import experiment_folder
-from .tasks import task_folder
+from ..research_core import GateEvaluation
+from ..workflows import WORKFLOWS
 from .experiments.presentation import project_rows
-from .reflection_guidance import (
-    idle_reflection_hint,
-    present_reflection_signal,
-    reflection_create_block_reason,
-)
-
-_SLIM_ARTIFACT_FIELDS = (
-    "id",
-    "role",
-    "lens_id",
-    "path",
-    "size_bytes",
-    "tldr",
-)
-_SLIM_REVIEW_FIELDS = ("id", "role", "verdict", "created_at", "synopsis")
-_RESULT_SUBMISSION_TRANSITION = next(
-    transition.name
-    for transition in EXPERIMENT_WORKFLOW.transitions
-    if "result_submission" in transition.effects
-)
+from .reflection_guidance import idle_reflection_hint, present_reflection_signal, reflection_create_block_reason
 
 
 class StatusGuidancePolicy:
-    """Compute guidance from immutable facts without reads or side effects."""
+    """Format decisions already evaluated by Workflows; never evaluate another gate."""
 
-    def __init__(
-        self,
-        *,
-        storage_enabled: bool = False,
-        storage_guidance: dict[str, Any] | None = None,
-    ) -> None:
-        self.storage_guidance = dict(
-            storage_guidance or {"enabled": bool(storage_enabled)}
-        )
+    def __init__(self, *, storage_enabled=False, storage_guidance=None):
+        self.storage_guidance = dict(storage_guidance or {"enabled": bool(storage_enabled)})
 
-    def project_setup(self) -> dict[str, Any]:
-        return self._next(
-            gate="project_setup",
-            action="create_claim_or_experiment",
-            allowed=["claim.create", "experiment.create", "task.create"],
-        )
+    def project_setup(self):
+        return self._next(gate="project_setup", action="create_claim_or_experiment",
+                          allowed=["claim.create", "experiment.create", "task.create"])
 
-    def experiment(
-        self,
-        *,
-        experiment: dict[str, Any],
-        sandboxes: list[dict[str, Any]],
-        evaluation: GateEvaluation,
-    ) -> dict[str, Any]:
-        status = evaluation.status
-        transition = evaluation.transition
-        if transition is None:
-            if status == EXPERIMENT_WORKFLOW.success_status:
-                return self._next(
-                    gate="terminal",
-                    action="none",
-                    allowed=[],
-                    blocked=[
-                        {"action": "mutate_experiment", "reason": "experiment complete"}
-                    ],
-                )
-            if status in (
-                EXPERIMENT_WORKFLOW.terminal_statuses
-                - {EXPERIMENT_WORKFLOW.success_status}
-            ):
-                return self._next(gate="terminal", action="none", allowed=[])
-            return self._next(
-                gate="unknown",
-                action="inspect_experiment",
-                allowed=["artifact.find"],
-            )
-        if evaluation.review is not None:
-            return self._review_next(
-                target_type="experiment",
-                target=experiment,
-                gate=evaluation.review,
-            )
-        current = self._advisory_requirement(evaluation.requirements)
-        if current is not None and current.role == "dependencies":
-            return self._dependency_next(
-                target=experiment, requirement=current, transition_tool="experiment.transition",
-                exit_action="abandon_experiment",
-            )
-        if current is not None:
-            guidance = EXPERIMENT_WORKFLOW.requirement(current.role)
-            if guidance is None:
-                raise RuntimeError(
-                    f"experiment workflow has no requirement {current.role!r}"
-                )
-            gate = current.blocker_code
-            if gate == "execution_ready" and any(
-                row.get("status") in EXPERIMENT_ACTIVE_PROCESS_STATUSES
-                for row in sandboxes
-            ):
-                gate = "execution_active"
-            return self._next(
-                gate=gate,
-                action=(
-                    guidance.action
-                    if current.status == "missing"
-                    else f"fix_{current.role}_artifact"
-                ),
-                allowed=list(guidance.tools),
-                missing=(
-                    self._missing_items(current)
-                    if current.status == "missing"
-                    else list(current.problems)
-                ),
-                artifact_guidance=self._artifact_guidance(
-                    key=guidance.artifact_key, experiment=experiment
-                ),
-                revision=experiment.get("revision_context", ""),
-            )
-        ready = EXPERIMENT_WORKFLOW.transition(transition)
-        if ready is None:
-            raise RuntimeError(f"unknown experiment transition {transition!r}")
-        return self._next(
-            gate=ready.gate,
-            action=ready.action,
-            allowed=list(ready.tools),
-            revision=(
-                experiment.get("revision_context", "")
-                if status
-                not in EXPERIMENT_WORKFLOW.effect_sources("start_attempt_clock")
-                else ""
-            ),
-        )
+    def experiment(self, *, experiment, sandboxes, evaluation: GateEvaluation):
+        return self._workflow(target=experiment, evaluation=evaluation)
 
-    def task(
-        self,
-        *,
-        task: dict[str, Any],
-        evaluation: GateEvaluation,
-    ) -> dict[str, Any]:
-        status = evaluation.status
-        transition = evaluation.transition
-        if transition is None:
-            if status == TASK_WORKFLOW.success_status:
-                return self._next(
-                    gate="terminal",
-                    action="none",
-                    allowed=[],
-                    blocked=[{"action": "mutate_task", "reason": "task done"}],
-                )
-            if status in TASK_TERMINAL_STATUSES:
-                return self._next(gate="terminal", action="none", allowed=[])
-            return self._next(gate="unknown", action="inspect_task", allowed=["artifact.find"])
-        if evaluation.review is not None:
-            return self._review_next(target_type="task", target=task, gate=evaluation.review)
-        current = self._advisory_requirement(evaluation.requirements)
-        if current is not None and current.role == "dependencies":
-            return self._dependency_next(
-                target=task, requirement=current, transition_tool="task.transition",
-                exit_action="mark_task_failed",
-            )
-        if current is not None:
-            guidance = TASK_WORKFLOW.requirement(current.role)
-            if guidance is None:
-                raise RuntimeError(f"task workflow has no requirement {current.role!r}")
-            return self._next(
-                gate=current.blocker_code,
-                action=(
-                    guidance.action
-                    if current.status == "missing"
-                    else f"fix_{current.role}_artifact"
-                ),
-                allowed=list(guidance.tools),
-                missing=(
-                    self._missing_items(current)
-                    if current.status == "missing"
-                    else list(current.problems)
-                ),
-                artifact_guidance=self._task_artifact_guidance(
-                    key=guidance.artifact_key, task=task
-                ),
-                revision=task.get("revision_context", ""),
-            )
-        ready = TASK_WORKFLOW.transition(transition)
-        if ready is None:
-            raise RuntimeError(f"unknown task transition {transition!r}")
-        return self._next(
-            gate=ready.gate,
-            action=ready.action,
-            allowed=list(ready.tools),
-            revision=task.get("revision_context", ""),
-        )
+    def task(self, *, task, evaluation: GateEvaluation):
+        return self._workflow(target=task, evaluation=evaluation)
 
-    def _dependency_next(
-        self,
-        *,
-        target: dict[str, Any],
-        requirement: RequirementEvaluation,
-        transition_tool: str,
-        exit_action: str,
-    ) -> dict[str, Any]:
-        item = requirement.items[0] if requirement.items else {}
-        dependencies = list(item.get("dependencies") or [])
-        dead = [dep for dep in dependencies if dep.get("status") in ("failed", "abandoned", "missing")]
-        if requirement.blocker_code == "dependency_failed" or dead:
-            return self._next(
-                gate="dependency_failed",
-                action=(
-                    f"{exit_action}_or_wait_for_reflection (a dependency ended "
-                    "without succeeding; this node cannot proceed on it — end it "
-                    "with a reason, or leave it for the next reflection wave to "
-                    "replan)"
-                ),
-                allowed=["workflow.status_and_next", transition_tool],
-                missing=list(requirement.problems),
-                revision=target.get("revision_context", ""),
-                dependencies=dependencies,
-            )
-        return self._next(
-            gate=requirement.blocker_code or "dependencies_pending",
-            action=(
-                "wait_for_dependencies (this node waits on other wave nodes; "
-                "re-orient with workflow.status_and_next on one of them, or "
-                "poll here)"
-            ),
-            allowed=["workflow.status_and_next"],
-            missing=list(requirement.problems),
-            revision=target.get("revision_context", ""),
-            dependencies=dependencies,
-        )
+    def _reflection_workflow_for(self, *, reflection, evaluation: GateEvaluation):
+        return self._workflow(target=reflection, evaluation=evaluation)
 
-    def _task_artifact_guidance(
-        self, *, key: str, task: dict[str, Any]
-    ) -> dict[str, Any] | None:
-        folder = task_folder(
-            task_id=str(task.get("id") or ""), name=str(task.get("name") or "")
-        )
-        if key == "brief":
-            return {
-                "target_type": "task",
-                "role": "brief",
-                "template": "skills/research-workflow/brief-template.md",
-                "guidance": (
-                    "This task has no readable brief, which means it predates "
-                    "structured goals (the brief is rendered and pinned by Merv "
-                    "at task.create from the immutable goal and deliverables, "
-                    "and cannot be submitted). Ask the owner to end this task "
-                    "(mark_failed) and create it again with a standalone goal "
-                    "and verifiable deliverables."
-                ),
-            }
-        if key == "delivery":
-            checks = list(task.get("checks") or [])
-            return {
-                "target_type": "task",
-                "role": "delivery",
-                "template": "skills/research-workflow/delivery-template.md",
-                "checks": checks,
-                "guidance": (
-                    f"Write the delivery as one markdown file at {folder}delivery.md: "
-                    "a Confirmations section with one numbered entry per "
-                    "deliverable, same numbering — where the thing is and how "
-                    "to check it, pointing at durable things (files in the task "
-                    "folder, storage objects, lit-review sections, run "
-                    "receipts); an honest miss is stated plainly as 'not "
-                    "delivered — <why>'. Then Notes: a short paragraph on how "
-                    "the task was performed, anything else needed to verify, "
-                    "and what not to trust blindly. Evidence, not narrative. "
-                    "Then submit the file with artifact.submit (role "
-                    "'delivery') and run the returned upload command verbatim."
-                ),
-            }
-        return None
-
-    def _artifact_guidance(
-        self, *, key: str, experiment: dict[str, Any]
-    ) -> dict[str, Any] | None:
-        folder = experiment_folder(
-            experiment_id=str(experiment.get("id") or ""),
-            name=str(experiment.get("name") or ""),
-        )
-        if key == "plan":
-            return self._plan_artifact_guidance(folder=folder)
-        if key == "result":
-            return self._result_artifact_guidance()
-        if key == "report":
-            return self._report_artifact_guidance(folder=folder)
-        if key == "graph":
-            return self._graph_artifact_guidance(folder=folder)
-        return None
-
-    def _review_next(
-        self,
-        *,
-        target_type: str,
-        target: dict[str, Any],
-        gate: RequirementEvaluation,
-    ) -> dict[str, Any]:
-        target_id = target["id"]
-        status = target["status"]
-        role = gate.role
-        workflow = {
-            "reflection": REFLECTION_WORKFLOW,
-            "task": TASK_WORKFLOW,
-        }.get(target_type, EXPERIMENT_WORKFLOW)
-        review = workflow.review(role)
-        if review is None:
-            raise RuntimeError(f"{target_type} workflow has no review {role!r}")
-        skill, action_name = review.skill, review.action_name
-        transition_tool = {
-            "reflection": "reflection.transition",
-            "task": "task.transition",
-        }.get(target_type, "experiment.transition")
-        if gate.satisfied:
-            return self._next(
-                gate=f"{action_name}_passed",
-                action=review.pass_action,
-                allowed=[transition_tool],
-            )
-
-        item = gate.items[0]
-        request = (
-            {
-                "id": item.get("request_id"),
-                "status": gate.status,
-                "expires_at": item.get("expires_at"),
-            }
-            if gate.status in {"requested", "started"}
-            else None
-        )
-        blocked_reason = gate.problems[0] if gate.problems and request is None else ""
-        review_status = (
-            str(request["status"])
-            if request is not None
-            else "attested_blocked" if blocked_reason else "none"
-        )
-        launch = review_status in {"none", "attested_blocked", "requested"}
-        action = f"launch_{action_name}er" if launch else f"wait_for_{action_name}"
-        allowed = (
-            ["workflow.status_and_next", "review.request"]
-            if review_status == "requested"
-            else ["review.request"] if launch else ["workflow.status_and_next"]
-        )
-
-        return self._next(
-            gate=status,
-            action=action,
-            allowed=allowed,
-            missing=[blocked_reason] if blocked_reason else [],
-            review_gate=self._review_gate(
-                role=role,
-                skill=skill,
-                status=review_status,
-                target_type=target_type,
-                target_id=target_id,
-                request=request,
-            ),
-        )
-
-    def _review_gate(
-        self,
-        *,
-        role: str,
-        skill: str,
-        status: str,
-        target_id: str,
-        target_type: str = "experiment",
-        request: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        labels = {
-            "none": "Needs reviewer",
-            "requested": "Reviewer pending",
-            "started": "Reviewer active",
-            "attested_blocked": "Verified review required",
+    def _workflow(self, *, target, evaluation: GateEvaluation):
+        decision = evaluation.decision
+        if decision is None:
+            raise RuntimeError("canonical workflow evaluation is missing")
+        selected = decision.suggested
+        issues = tuple(dict.fromkeys((*decision.dispatch_issues, *(() if selected is None else selected.issues))))
+        first = next(iter(issues), None)
+        tools = tuple(tool for issue in issues for tool in issue.tools)
+        if not tools and selected is not None and selected.available:
+            tools = selected.edge.tools or ("workflow.transition",)
+        result = {
+            **decision.public(),
+            "current_gate": first.code if first is not None else "terminal" if decision.snapshot.outcome else decision.snapshot.state,
+            "next_action": (first.action or "resolve_workflow_blocker") if first is not None else "none" if selected is None else selected.edge.name,
+            "allowed_actions": list(dict.fromkeys(tools)),
+            "missing_evidence": [issue.message for issue in issues],
+            "revision_context": str(target.get("revision_context") or ""),
         }
-        gate = {
-            "role": role,
-            "skill": skill,
-            "target_type": target_type,
-            "target_id": target_id,
-            "status": status,
-            "label": labels.get(status, status),
-            "read_only": True,
-        }
-        if request:
-            gate["request_id"] = request["id"]
-            gate["expires_at"] = request["expires_at"]
-        return gate
+        # This is request metadata for older views, not another review policy.
+        review = evaluation.review
+        if review is not None and decision.node is not None and decision.node.read_only:
+            item = next(iter(review.items), {})
+            status = "attested_blocked" if review.problems and review.status == "pending" else review.status
+            result["review_gate"] = {
+                "role": decision.node.role, "target_type": decision.snapshot.workflow,
+                "target_id": decision.snapshot.id, "status": status,
+                "read_only": True,
+                **{name: item[name] for name in ("request_id", "expires_at", "skill", "label") if item.get(name)},
+            }
+        return result
 
-    def project_reflection(
-        self,
-        *,
-        open_wave: dict[str, Any] | None,
-        evaluation: GateEvaluation | None,
-        signal: dict[str, Any],
-        idle: bool,
-    ) -> dict[str, Any] | None:
-        presented_signal = present_reflection_signal(signal) or {}
+    def project_reflection(self, *, open_wave, evaluation, signal, idle):
+        presented = present_reflection_signal(signal) or {}
         if open_wave is not None:
             if evaluation is None:
                 raise RuntimeError("reflection gate evaluation is missing")
-            workflow = self._reflection_workflow_for(
-                reflection=open_wave, evaluation=evaluation
-            )
+            workflow = self._reflection_workflow_for(reflection=open_wave, evaluation=evaluation)
             if signal.get("experiment_create_blocked"):
-                workflow = self._with_experiment_create_block(
-                    workflow=workflow, signal=signal
-                )
-            return {
-                "reflection": self._slim_reflection(open_wave),
-                "workflow": workflow,
-                "signal": presented_signal,
-            }
-        recommended = idle and signal["has_new_material"]
-        if not signal["stale"] and not recommended:
+                workflow = self._with_experiment_create_block(workflow=workflow, signal=signal)
+            return {"reflection": self._slim_reflection(open_wave), "workflow": workflow, "signal": presented}
+        recommended = idle and signal.get("has_new_material")
+        if not signal.get("stale") and not recommended:
             return None
-        block: dict[str, Any] = {
-            "reflection": None,
-            "hint": (
-                presented_signal.get("hint") or idle_reflection_hint(signal=signal)
-            ),
-            "signal": presented_signal,
-            "experiment_create_blocked": bool(signal.get("experiment_create_blocked")),
+        return {
+            "reflection": None, "hint": presented.get("hint") or idle_reflection_hint(signal=signal),
+            "signal": presented, "experiment_create_blocked": bool(signal.get("experiment_create_blocked")),
+            **({"recommended": True} if recommended else {}),
         }
-        if recommended:
-            block["recommended"] = True
-        return block
 
-    def reflection_workflow_takeover(
-        self, *, reflection: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
+    def reflection_workflow_takeover(self, *, reflection):
         if reflection is None:
             return None
         if reflection.get("reflection") is not None:
             return reflection["workflow"]
         signal = reflection.get("signal") or {}
         if signal.get("experiment_create_blocked"):
-            reason = reflection.get("hint") or reflection_create_block_reason(
-                signal=signal
-            )
-            return self._next(
-                gate="reflection_required",
-                action=(
-                    "start_project_reflection_before_next_experiment "
-                    "(run reflection.create via the project-reflection skill; "
-                    "experiment.create is blocked until a project reflection is "
-                    "published)"
-                ),
-                allowed=["reflection.create", "claim.create", "task.create"],
-                blocked=[{"action": "experiment.create", "reason": reason}],
-                missing=[reason] if reason else [],
-            )
-        if not reflection.get("recommended"):
-            return None
-        return self._next(
-            gate="reflection_suggested",
-            action=(
-                "consider_project_reflection (start a reflection wave with "
-                "reflection.create via the project-reflection skill — or "
-                "proceed with claim.create / experiment.create if you judge "
-                "the project's logic state current)"
-            ),
-            allowed=[
-                "reflection.create",
-                "claim.create",
-                "experiment.create",
-                "task.create",
-            ],
-            missing=[reflection["hint"]] if reflection.get("hint") else [],
-        )
+            reason = reflection.get("hint") or reflection_create_block_reason(signal=signal)
+            return self._next(gate="reflection_required", action="start_project_reflection_before_next_experiment",
+                              allowed=["reflection.create", "claim.create", "task.create"],
+                              blocked=[{"action": "experiment.create", "reason": reason}], missing=[reason] if reason else [])
+        if reflection.get("recommended"):
+            return self._next(gate="reflection_suggested", action="consider_project_reflection",
+                              allowed=["reflection.create", "claim.create", "experiment.create", "task.create"],
+                              missing=[reflection["hint"]] if reflection.get("hint") else [])
+        return None
 
-    def live_experiments_takeover(
-        self,
-        *,
-        exp_rows,
-        reflection: dict[str, Any] | None,
-        task_rows: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
-        live = [
-            {
-                "id": row["id"],
-                "name": row["name"],
-                "status": row["status"],
-                "attempt_index": row["attempt_index"],
-                "intent": row["intent"],
-            }
-            for row in exp_rows
-            if str(row["status"]) not in EXPERIMENT_TERMINAL_STATUSES
-        ]
-        live_tasks = [
-            {
-                "id": row["id"],
-                "name": row["name"],
-                "status": row["status"],
-                "goal": row.get("goal"),
-            }
-            for row in task_rows or []
-            if str(row["status"]) not in TASK_TERMINAL_STATUSES
-        ]
+    def live_experiments_takeover(self, *, exp_rows, reflection, task_rows=None):
+        live = project_rows([row for row in exp_rows if row["status"] not in WORKFLOWS["experiment"].outcomes],
+                            ("id", "name", "status", "attempt_index", "intent"))
+        tasks = project_rows([row for row in task_rows or [] if row["status"] not in WORKFLOWS["task"].outcomes],
+                             ("id", "name", "status", "goal"))
         signal = (reflection or {}).get("signal") or {}
-        allowed = ["workflow.status_and_next", "task.create"]
-        blocked: list[dict[str, str]] = []
+        allowed, blocked = ["workflow.status_and_next", "task.create"], []
         if signal.get("experiment_create_blocked"):
-            reason = (reflection or {}).get("hint") or reflection_create_block_reason(
-                signal=signal
-            )
+            reason = (reflection or {}).get("hint") or reflection_create_block_reason(signal=signal)
             blocked.append({"action": "experiment.create", "reason": reason})
         else:
             allowed.append("experiment.create")
-        return self._next(
-            gate="live_experiments",
-            action=(
-                "tend_live_work (this node is finished; re-orient with "
-                "workflow.status_and_next(experiment_id=...) or (task_id=...) "
-                "on one of live_experiments / live_tasks, or create the next "
-                "experiment or task)"
-            ),
-            allowed=allowed,
-            blocked=blocked,
-            live_experiments=live,
-            live_tasks=live_tasks,
-        )
+        return self._next(gate="live_experiments", action="tend_live_work", allowed=allowed,
+                          blocked=blocked, live_experiments=live, live_tasks=tasks)
 
-    def _with_experiment_create_block(
-        self, *, workflow: dict[str, Any], signal: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _with_experiment_create_block(self, *, workflow, signal):
         reason = reflection_create_block_reason(signal=signal)
-        blocked = [
-            item
-            for item in workflow.get("blocked_actions", [])
-            if item.get("action") != "experiment.create"
-        ]
-        blocked.append({"action": "experiment.create", "reason": reason})
         return {
             **workflow,
-            "allowed_actions": [
-                action
-                for action in workflow.get("allowed_actions", [])
-                if action != "experiment.create"
-            ],
-            "blocked_actions": blocked,
+            "allowed_actions": [action for action in workflow.get("allowed_actions", []) if action != "experiment.create"],
+            "blocked_actions": [item for item in workflow.get("blocked_actions", []) if item.get("action") != "experiment.create"]
+                               + [{"action": "experiment.create", "reason": reason}],
         }
 
-    def _reflection_workflow_for(
-        self,
-        *,
-        reflection: dict[str, Any],
-        evaluation: GateEvaluation,
-    ) -> dict[str, Any]:
-        status = evaluation.status
-        transition = evaluation.transition
-        if transition is None:
-            return self._next(gate="terminal", action="none", allowed=[])
-        current = self._advisory_requirement(evaluation.requirements)
-        if current is not None and current.role == "consolidation_proposal":
-            return self._reflection_requirement_next(
-                reflection=reflection,
-                status=status,
-                requirement=current,
-            )
-        if evaluation.review is not None and not evaluation.review.satisfied:
-            return self._review_next(
-                target_type="reflection",
-                target=reflection,
-                gate=evaluation.review,
-            )
-        if current is not None:
-            return self._reflection_requirement_next(
-                reflection=reflection,
-                status=status,
-                requirement=current,
-            )
-        if evaluation.review is not None:
-            return self._review_next(
-                target_type="reflection",
-                target=reflection,
-                gate=evaluation.review,
-            )
-        ready = REFLECTION_WORKFLOW.transition(transition)
-        if ready is None:
-            raise RuntimeError(f"unknown reflection transition {transition!r}")
-        return self._next(
-            gate=ready.gate,
-            action=ready.action,
-            allowed=list(ready.tools),
-            revision=reflection.get("revision_context", ""),
-        )
-
-    def _reflection_requirement_next(
-        self,
-        *,
-        reflection: dict[str, Any],
-        status: str,
-        requirement: RequirementEvaluation,
-    ) -> dict[str, Any]:
-        guidance = next(
-            (
-                item
-                for state in REFLECTION_WORKFLOW.states
-                for item in state.requirements
-                if getattr(item, "role", getattr(item, "name", None))
-                == requirement.role
-            ),
-            None,
-        )
-        if guidance is None:
-            raise RuntimeError(
-                f"reflection workflow has no requirement {requirement.role!r}"
-            )
-        return self._next(
-            gate=requirement.blocker_code,
-            action=(
-                guidance.action
-                if requirement.status == "missing"
-                else f"fix_{requirement.role}_artifact"
-            ),
-            allowed=list(guidance.tools),
-            missing=(
-                self._missing_items(requirement)
-                if requirement.status == "missing"
-                else list(requirement.problems)
-                or (
-                    [requirement.explanation]
-                    if status == REFLECTION_WORKFLOW.initial
-                    else []
-                )
-            ),
-            artifact_guidance=(
-                self._reflection_artifact_guidance()
-                if status == REFLECTION_WORKFLOW.initial
-                else self._synthesizing_artifact_guidance(
-                    key=getattr(guidance, "artifact_key", "")
-                )
-            ),
-            revision=reflection.get("revision_context", ""),
-        )
-
-    @staticmethod
-    def _advisory_requirement(
-        evaluations: tuple[RequirementEvaluation, ...],
-    ) -> RequirementEvaluation | None:
-        return next(
-            (item for item in evaluations if item.status == "missing"), None
-        ) or next((item for item in evaluations if item.status == "invalid"), None)
-
-    @staticmethod
-    def _missing_items(evaluation: RequirementEvaluation) -> list[str]:
-        return [
-            str(item["missing"])
-            for item in evaluation.items
-            if item.get("status") == "missing" and item.get("missing")
-        ] or [evaluation.explanation]
-
-    def _reflection_artifact_guidance(self) -> dict[str, Any]:
+    def _slim_reflection(self, reflection):
         return {
-            "target_type": "reflection",
-            "role": REFLECTION_LENS_DOC_ROLE,
-            "guidance": (
-                "Fan out one read-only subagent per missing lens. Each subagent "
-                "reads the project through its lens only (tell it which other "
-                "lenses are running so it stays in its lane), writes its "
-                "reflection to a local file (e.g. "
-                "reflections/<syn_id>/reflections/<lens_id>.md), then calls "
-                "artifact.submit for this reflection wave with role "
-                "'reflection_lens_doc', lens_id=<lens_id>, and the file's "
-                "relative path. The document must include a non-empty "
-                "'## Summary' with its 2–3 sentence macro finding. The subagent "
-                "then runs the returned upload command verbatim. "
-                "See the project-reflection skill for the lens briefs."
-            ),
-        }
-
-    def _slim_reflection(self, reflection: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "id": reflection.get("id"),
-            "title": reflection.get("title"),
-            "status": reflection.get("status"),
-            "attempt_index": reflection.get("attempt_index"),
-            "revision_context": reflection.get("revision_context"),
-            "roster": project_rows(
-                reflection.get("roster", []), ("id", "title", "core")
-            ),
-            "reflection_coverage": reflection.get("reflection_coverage"),
-            "current_attempt_artifacts": project_rows(
-                reflection.get("current_attempt_artifacts", []), _SLIM_ARTIFACT_FIELDS
-            ),
-            "reviews": project_rows(reflection.get("reviews", []), _SLIM_REVIEW_FIELDS),
+            **{key: reflection.get(key) for key in ("id", "title", "status", "attempt_index", "revision_context", "reflection_coverage")},
+            "roster": project_rows(reflection.get("roster", []), ("id", "title", "core")),
+            "current_attempt_artifacts": project_rows(reflection.get("current_attempt_artifacts", []),
+                                                      ("id", "role", "lens_id", "path", "size_bytes", "tldr")),
+            "reviews": project_rows(reflection.get("reviews", []), ("id", "role", "verdict", "created_at", "synopsis")),
             "allowed_transitions": reflection.get("allowed_transitions", []),
         }
 
-    def _synthesizing_artifact_guidance(self, *, key: str) -> dict[str, Any] | None:
-        if key == "project_graph":
-            return {
-                "target_type": "reflection",
-                "role": PROJECT_GRAPH_ROLE,
-                "template": "skills/research-workflow/graph-template.md",
-                "guidance": (
-                    "Update the living project logic graph (one JSON file, e.g. "
-                    "project/logic_graph.json): the current logic state of the "
-                    "whole project — what is established, what was ruled out and "
-                    "why, the open questions — as a DAG of at most 16 nodes. "
-                    "Treat the lens reflections as unverified inputs: reconcile "
-                    "them against the actual records, don't average them. Edit "
-                    "the living graph in place and prune within the budget; "
-                    "node refs may point at exp_/claim_/rev_/syn_/art_ ids. "
-                    "Then submit the file to this reflection wave with "
-                    "artifact.submit (role 'project_graph') and run the "
-                    "returned upload command verbatim."
-                ),
-            }
-        if key == "reflection_doc":
-            return {
-                "target_type": "reflection",
-                "role": "reflection_doc",
-                "template": "skills/project-reflection/reflection-artifacts-template.md",
-                "guidance": (
-                    "Write the short reflection document as markdown: a critical "
-                    "scientific reading of the five lens reflections with Summary, "
-                    "Critical reading, and Decision / future directions "
-                    "sections. Keep it under 16 KB. You may reference a few "
-                    "figures with relative markdown image links (e.g. "
-                    "![project graph](figures/project_graph.png)); every linked "
-                    "image must resolve to a local file under 5 MB. Then submit "
-                    "the file to this reflection wave with artifact.submit "
-                    "(role 'reflection_doc'), run the returned upload command "
-                    "verbatim, and run the follow-up figure commands the upload "
-                    "response returns."
-                ),
-            }
-        if key == "change_spec":
-            return {
-                "target_type": "reflection",
-                "role": "change_spec",
-                "template": "skills/project-reflection/reflection-artifacts-template.md",
-                "guidance": (
-                    "Write the change spec as JSON: claim_changes plus a "
-                    "create_experiments decision with 1-3 planned experiment "
-                    "specs — names, intents, optional tested claim refs when "
-                    "an experiment tests a tracked claim, and (for a "
-                    "multi-experiment wave) a parallelism note each. Publish "
-                    "will apply this only after the reflection reviewer passes "
-                    "it. Then submit the file to this reflection wave with "
-                    "artifact.submit (role 'change_spec') and run the returned "
-                    "upload command verbatim."
-                ),
-            }
-        return None
-
-    def _plan_artifact_guidance(self, *, folder: str) -> dict[str, Any]:
-        return {
-            "target_type": "experiment",
-            "role": "plan",
-            "template": "skills/research-workflow/plan-template.md",
-            "guidance": (
-                f"Write the experiment plan as one markdown file at {folder}plan.md "
-                "— the folder experiment.create made for this experiment. Keep "
-                "the plan, scripts, configs, and durable inputs there; live "
-                "sandboxes have their own work folders. "
-                "Start from the template's required sections, then submit the "
-                "file with artifact.submit (role 'plan') and run the returned "
-                "upload command verbatim. Consider seeding the "
-                f"logic graph now too ({folder}graph.json, see "
-                "skills/research-workflow/graph-template.md): an objective node "
-                "costs a minute, and the story of the experiment's hard "
-                "decisions should grow as you make them — not be reconstructed "
-                "at the end."
-            ),
-        }
-
-    def _result_artifact_guidance(self) -> dict[str, Any]:
-        heavy_retention = (
-            "copy light files out over SSH into the local experiment folder "
-            "or upload heavy files with storage.submit, then submit the "
-            "retained metrics JSON with artifact.submit (role 'result')."
-            if self.storage_guidance.get("enabled")
-            else (
-                "copy retained files out over SSH into the local experiment folder, "
-                "then submit the retained metrics JSON with artifact.submit "
-                "(role 'result'). Heavy-file storage is not "
-                "enabled on this backend, so large sandbox-only datasets/models "
-                "will not survive release."
-            )
-        )
-        return {
-            "target_type": "experiment",
-            "role": "result",
-            "allowed_roles": sorted(SUBMITTABLE_ROLES),
-            "dataset_guidance": (
-                "Prefer CPU-only sandboxes for data inspection and data engineering "
-                "unless the command needs GPU. Work inside the sandbox work folder "
-                "for scripts, configs, metrics, and compact results. Download "
-                "large datasets, caches, checkpoints, parquet files, and other "
-                "heavy intermediates into the sandbox's dataset/cache locations; "
-                "copy out or upload only the files that "
-                "must persist before releasing the sandbox. Prefer "
-                "saving a data.md in the experiment folder that records dataset "
-                "sources, splits, filters, schema/row-count notes, caveats, and "
-                "where ephemeral data lives on the VM."
-            ),
-            "retention_guidance": (
-                "While a sandbox is live, treat its work folder as ephemeral "
-                "scratch. Before submitting result artifacts, " + heavy_retention
-            ),
-            "storage_guidance": dict(self.storage_guidance),
-            "report_guidance": (
-                "A results report (role 'report') is also required before "
-                f"{_RESULT_SUBMISSION_TRANSITION} — write it in the same pass "
-                "as your result files. "
-                "While the run produces metrics, save the figures (matplotlib PNGs) "
-                "you will reference. See skills/research-workflow/report-template.md."
-            ),
-            "graph_guidance": (
-                "A logic graph (role 'graph') is also required before "
-                f"{_RESULT_SUBMISSION_TRANSITION} — a qualitative story you author about the "
-                "experiment's logical path: the hard decisions and the "
-                "reasoning behind them, not an event or pipeline diagram "
-                "(graph.json, a DAG of at most 16 nodes, written by hand — "
-                "never script-generated). Record decisions in the graph as you "
-                "make them, while the reasoning is fresh; the user watches it "
-                "live. See skills/research-workflow/graph-template.md."
-            ),
-        }
-
-    def _report_artifact_guidance(self, *, folder: str) -> dict[str, Any]:
-        return {
-            "target_type": "experiment",
-            "role": "report",
-            "template": "skills/research-workflow/report-template.md",
-            "guidance": (
-                "Write a SHORT markdown results report in the experiment folder "
-                f"after retaining sandbox outputs, i.e. {folder}report.md. "
-                "Required sections: Summary; Results — interpret the system "
-                "metrics exhibit (preview it with experiment.exhibit, reference "
-                "it by name, and cite run names/ids from it — never numbers "
-                "that aren't in it); Deviations from plan ('none' if faithful); "
-                "Conclusion — apply the plan's pre-registered decision rule "
-                "explicitly. Keep it under 16 KB: link raw metrics files instead "
-                "of inlining data. Reference figures with relative markdown image "
-                "links (e.g. ![loss](figures/loss.png)); every linked image must "
-                "resolve to a local file under 5 MB, so copy figures off the "
-                "sandbox first. Then submit the report with artifact.submit "
-                "(role 'report'), run the returned upload command verbatim, and "
-                "run the follow-up figure commands the upload response returns."
-            ),
-        }
-
-    def _graph_artifact_guidance(self, *, folder: str) -> dict[str, Any]:
-        return {
-            "target_type": "experiment",
-            "role": "graph",
-            "template": "skills/research-workflow/graph-template.md",
-            "guidance": (
-                "Write the experiment's logic graph as one JSON file in the "
-                f"experiment folder ({folder}graph.json): a qualitative story "
-                "you author about the logical path of the experiment — the "
-                "critical questions that needed answers, the hard decisions "
-                "and the reasoning behind them, the pivots (including those "
-                "forced by reviews), and the lessons — told as a DAG of at "
-                "most 16 nodes. Events may appear as anchors for reasoning, "
-                "but this is not an event or pipeline diagram: if your nodes "
-                "are components and your edges read produces/contains/records, "
-                "you have drawn dataflow, not the story. Do not generate it "
-                "with a script over your result files — choosing what mattered "
-                "is the authorship; write the JSON yourself. You design the "
-                "graph: node 'kind' vocabulary, edge labels, and structure are "
-                "yours. If the graph is at the 16-node budget and something "
-                "important must be added, reduce the graph to make room. Then "
-                "submit the file with artifact.submit (role 'graph') and run "
-                "the returned upload command verbatim."
-            ),
-        }
-
-    def _next(
-        self,
-        *,
-        gate: str,
-        action: str,
-        allowed: list[str],
-        blocked: list[dict[str, str]] | None = None,
-        missing: list[str] | None = None,
-        revision: str = "",
-        review_gate: dict[str, Any] | None = None,
-        artifact_guidance: dict[str, Any] | None = None,
-        live_experiments: list[dict[str, Any]] | None = None,
-        live_tasks: list[dict[str, Any]] | None = None,
-        dependencies: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
-        result = {
-            "current_gate": gate,
-            "next_action": action,
-            "allowed_actions": allowed,
-            "blocked_actions": blocked or [],
-            "missing_evidence": missing or [],
-            "revision_context": revision,
-        }
-        if review_gate is not None:
-            result["review_gate"] = review_gate
-        if artifact_guidance is not None:
-            result["artifact_guidance"] = artifact_guidance
-        if live_experiments is not None:
-            result["live_experiments"] = live_experiments
-        if live_tasks is not None:
-            result["live_tasks"] = live_tasks
-        if dependencies is not None:
-            result["dependencies"] = dependencies
-        return result
+    @staticmethod
+    def _next(*, gate, action, allowed, blocked=None, missing=None, **details):
+        return {"current_gate": gate, "next_action": action, "allowed_actions": allowed,
+                "blocked_actions": blocked or [], "missing_evidence": missing or [], "revision_context": "", **details}
 
 
 __all__ = ["StatusGuidancePolicy"]

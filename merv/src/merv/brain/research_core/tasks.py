@@ -14,9 +14,7 @@ from .evidence import (
     ArtifactDocument,
     artifact_state_record,
     brief_checks,
-    brief_problems,
     current_slot_artifacts,
-    delivery_problems,
     delivery_results,
     delivery_section,
     preferred_artifact,
@@ -26,14 +24,17 @@ from .evidence import (
 )
 from .policy import (
     GateEvaluation,
-    RequirementEvaluation,
     evaluate_artifact_requirement,
     evaluate_dependency_requirement,
     evaluate_review_gate,
+    read_review_fact,
+    review_snapshot_id,
+    snapshot_from_id,
     validate_task_name,
 )
 from .task_workflow import TASK_WORKFLOW
-from .workflow_schema import ArtifactNeed, RecordNeed, ReviewReturn
+from ..workflows import Reference, Runtime, Snapshot, WORKFLOWS
+from .workflow_schema import RecordNeed, Workflow
 from .artifacts import ResearchArtifacts as Artifacts
 from .artifact_models import Artifact, ArtifactTarget, Submission
 from ..kernel.state.store import BaseStateStore, row_to_dict, rows_to_dicts
@@ -48,6 +49,7 @@ def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
 
 _MAX_DELIVERABLES = 12
 _MAX_DELIVERABLE_CHARS = 500
+TASK = WORKFLOWS["task"]
 
 
 def _validate_deliverables(value: Any) -> list[str]:
@@ -82,9 +84,10 @@ def _validate_deliverables(value: Any) -> list[str]:
 
 
 class TaskService:
-    def __init__(self, *, store: BaseStateStore, artifacts: Artifacts) -> None:
+    def __init__(self, *, store: BaseStateStore, artifacts: Artifacts, runtime: Runtime) -> None:
         self.store = store
         self.artifacts = artifacts
+        self.runtime = runtime
 
     # ---- create ----
 
@@ -150,6 +153,7 @@ class TaskService:
         depends_on: list[str] | str | None,
         source_reflection_id: str = "",
         proposal_key: str = "",
+        workflow_instance: Snapshot | None = None,
     ) -> dict[str, Any]:
         name = validate_task_name(name)
         if not (goal or "").strip():
@@ -169,7 +173,7 @@ class TaskService:
                 f"a task named {name!r} already exists in this project — choose "
                 "a new name"
             )
-        task_id = new_id(prefix="task")
+        task_id = new_id(prefix="task") if workflow_instance is None else workflow_instance.id
         now = now_iso()
         conn.execute(
             """
@@ -231,7 +235,17 @@ class TaskService:
             target_id=task_id,
             payload=event_payload,
         )
+        if workflow_instance is None:
+            self.runtime.adopt(conn=conn, project_id=project_id, instance_id=task_id,
+                               workflow="task", state=TASK.initial)
         return self.get_state(task_id=task_id, conn=conn)
+
+    def initialize_workflow(self, conn, snapshot: Snapshot) -> None:
+        self._create_in_transaction(
+            conn=conn, project_id=snapshot.project_id, name=str(snapshot.data.get("name") or ""),
+            goal=str(snapshot.data.get("goal") or ""), deliverables=snapshot.data.get("deliverables"),
+            depends_on=snapshot.data.get("depends_on"), workflow_instance=snapshot,
+        )
 
     def _reject_reserved_wave_name(self, *, conn, project_id: str, name: str) -> None:
         # Names reserved by an in-flight reflection wave (experiments and tasks
@@ -345,9 +359,10 @@ class TaskService:
         )
         dependencies = dependency_rows(conn=conn, project_id=project_id, node_ids=task_ids)
         dependents = dependent_rows(conn=conn, project_id=project_id, node_ids=task_ids)
+        snapshots = self.runtime.snapshots(project_id=project_id, conn=conn)
         return [
             self._assemble_state_with_gate(
-                conn=conn,
+                conn=conn, snapshots=snapshots,
                 task=task,
                 evidence=history[str(task["id"])].artifacts,
                 reviews=reviews.get(str(task["id"]), []),
@@ -363,6 +378,7 @@ class TaskService:
         self,
         *,
         conn,
+        snapshots: dict[str, Snapshot] | None = None,
         task: dict[str, Any],
         evidence: tuple[Artifact, ...],
         reviews: list[dict[str, Any]],
@@ -388,7 +404,7 @@ class TaskService:
         data["dependencies"] = dependencies
         data["dependents"] = list(dependents or [])
         self._attach_documents(task=data, detail=detail)
-        evaluation = self._evaluate_gate(conn=conn, task=data)
+        evaluation = self._evaluate_gate(conn=conn, task=data, snapshots=snapshots)
         data["allowed_transitions"] = [dict(x) for x in evaluation.legal_transitions]
         data["gate_checklist"] = evaluation.checklist()
         return data, evaluation
@@ -419,53 +435,42 @@ class TaskService:
 
     # ---- gates ----
 
-    def _evaluate_gate(self, *, conn, task: dict[str, Any]) -> GateEvaluation:
-        status = str(task.get("status") or "")
-        workflow_state = TASK_WORKFLOW.state(status)
-        artifacts = task.get("current_attempt_artifacts") or []
-        present_roles = {str(art.get("role")) for art in artifacts if art.get("role")}
-        requirements: list[RequirementEvaluation] = []
-        for requirement in () if workflow_state is None else workflow_state.requirements:
-            if isinstance(requirement, RecordNeed):
-                requirements.append(
-                    evaluate_dependency_requirement(
-                        requirement, dependencies=task.get("dependencies") or []
-                    )
-                )
-                continue
-            assert isinstance(requirement, ArtifactNeed)
-            present = requirement.role in present_roles
-            problems: tuple[str, ...] = ()
-            if present and requirement.validator:
-                try:
-                    self._run_validator(task=task, name=requirement.validator)
-                except WorkflowError as exc:
-                    problems = (str(exc),)
-            requirements.append(
-                evaluate_artifact_requirement(requirement, present=present, problems=problems)
-            )
-        review = (
-            None
-            if workflow_state is None or workflow_state.review is None
-            else evaluate_review_gate(
-                conn=conn,
-                target_type="task",
-                target=task,
-                review=workflow_state.review,
-            )
-        )
-        return GateEvaluation(
-            workflow=TASK_WORKFLOW,
-            status=status,
-            requirements=tuple(requirements),
-            review=review,
-        )
+    def _evaluate_gate(self, *, conn, task: dict[str, Any], snapshots=None) -> GateEvaluation:
+        status = str(task["status"])
+        if snapshots is None:
+            try:
+                snapshot = self.runtime.get(project_id=task["project_id"], instance_id=task["id"], conn=conn)
+            except NotFoundError:
+                snapshot = None
+        else:
+            snapshot = snapshots.get(task["id"])
+        if snapshot is None:
+            snapshot = Snapshot(id=task["id"], project_id=task["project_id"], workflow="task",
+                                version=1, state=status, revision=0,
+                                data={"attempt_index": task["attempt_index"]}, outcome=TASK.outcomes.get(status, ""))
+        knowledge = _TaskKnowledge(self, conn, task, snapshot)
+        decision = self.runtime.registry.get("task", snapshot.version).evaluate(snapshot, knowledge)
+        workflow = Workflow(self.runtime.registry.get("task", snapshot.version), TASK_WORKFLOW.metadata)
+        workflow_state = workflow.state(snapshot.state)
+        requirements = []
+        for need in () if workflow_state is None else workflow_state.requirements:
+            if isinstance(need, RecordNeed):
+                requirements.append(evaluate_dependency_requirement(need, dependencies=task.get("dependencies") or []))
+            else:
+                present = any(item.get("role") == need.role for item in task.get("current_attempt_artifacts") or [])
+                problem = next((issue.message for action in decision.blocked for issue in action.issues
+                                if issue.code == f"{need.role}_invalid"), "")
+                requirements.append(evaluate_artifact_requirement(need, present=present, problems=(problem,) if problem else ()))
+        review = None if workflow_state is None or workflow_state.review is None else evaluate_review_gate(
+            conn=conn, target_type="task", target=task, review=workflow_state.review, snapshot=snapshot)
+        return GateEvaluation(workflow=workflow, status=status, requirements=tuple(requirements),
+                              review=review, decision=decision)
 
-    def _run_validator(self, *, task: dict[str, Any], name: str) -> None:
-        if name == "brief":
-            self._validate_brief(task=task)
-        elif name == "delivery":
-            self._validate_delivery(task=task)
+    def _workflow_knowledge(self, snapshot: Snapshot, conn):
+        task = self.get_state(task_id=snapshot.id, project_id=snapshot.project_id, conn=conn)
+        if task["status"] != snapshot.state:
+            raise WorkflowError("task state differs from its workflow instance; an explicit migration is required")
+        return _TaskKnowledge(self, conn, task, snapshot)
 
     def _submitted_document(
         self, *, task: dict[str, Any], role: str, what: str
@@ -521,104 +526,50 @@ class TaskService:
         )
         task["caveats"] = delivery_section(delivery.text, "caveats")
 
-    def _validate_brief(self, *, task: dict[str, Any]) -> None:
-        document = self._submitted_document(
-            task=task, role=TASK_BRIEF_ROLE, what="task brief"
-        )
-        if document is None:
-            raise WorkflowError("no 'brief' artifact is submitted for this task")
-        problems = brief_problems(document.text)
-        if problems:
-            raise WorkflowError(
-                "task brief is not ready: "
-                + "; ".join(problems)
-                + ". Fix the file and resubmit it (artifact.submit) — see "
-                "skills/research-workflow/brief-template.md."
-            )
-
-    def _validate_delivery(self, *, task: dict[str, Any]) -> None:
-        checks = [str(x) for x in task.get("deliverables") or []]
-        if not checks:
-            raise WorkflowError(
-                "this task has no deliverables to confirm — it predates "
-                "structured goals and its brief lists none; the owner should "
-                "end it (mark_failed) and create a task with deliverables"
-            )
-        document = self._submitted_document(
-            task=task, role=TASK_DELIVERY_ROLE, what="task delivery"
-        )
-        if document is None:
-            raise WorkflowError("no 'delivery' artifact is submitted for this task")
-        problems = delivery_problems(document.text, checks=checks)
-        if problems:
-            raise WorkflowError(
-                "task delivery is not ready for review: "
-                + "; ".join(problems)
-                + ". Fix the file and resubmit it (artifact.submit) — see "
-                "skills/research-workflow/delivery-template.md."
-            )
-
     # ---- transitions ----
 
     def transition_with_event(
-        self,
-        *,
-        task_id: str,
-        transition: str,
-        evidence: dict[str, Any] | None = None,
-        project_id: str | None = None,
+        self, *, task_id: str, transition: str,
+        evidence: dict[str, Any] | None = None, project_id: str | None = None,
     ) -> CommittedTaskUpdate:
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            task, gate = self.get_state_with_gate(
-                task_id=task_id, project_id=project_id, conn=conn
+            task = self.get_state(task_id=task_id, project_id=project_id, conn=conn)
+            current = self.runtime.adopt(conn=conn, project_id=project_id, instance_id=task_id,
+                                         workflow="task", state=task["status"])
+            after = self.runtime.apply_in_transaction(
+                conn=conn, project_id=project_id, instance_id=task_id, action=transition,
+                expected_revision=current.revision, request_id=new_id(prefix="task_action"), payload=evidence or {},
             )
-            status = task["status"]
-            next_status = gate.require_transition(transition)
-            step = TASK_WORKFLOW.transition(transition)
-            if step is None:
-                raise WorkflowError(f"unknown task transition: {transition}")
-            now = now_iso()
-            self.artifacts.seal(
-                tx=conn,
-                target=ArtifactTarget("task", task_id, task["project_id"]),
-                transition=transition,
+            return CommittedTaskUpdate(
+                state=self.get_state(task_id=task_id, project_id=project_id, conn=conn),
+                event=self.runtime.event(conn=conn, snapshot=after),
             )
-            evidence = evidence or {}
-            if "record_outcome" in step.effects:
-                conn.execute(
-                    "UPDATE tasks SET status = ?, outcome = ?, updated_at = ? WHERE id = ?",
-                    (next_status, self._note_from_evidence(evidence, "outcome"), now, task_id),
-                )
-            elif "record_failure" in step.effects:
-                conn.execute(
-                    """
-                    UPDATE tasks SET status = ?, outcome = ?, failed_by = 'owner',
-                        updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (next_status, self._note_from_evidence(evidence, "reason"), now, task_id),
-                )
-            else:
-                conn.execute(
-                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
-                    (next_status, now, task_id),
-                )
-            event = self.store.record_event(
-                conn=conn,
-                project_id=task["project_id"],
-                event_type=TASK_WORKFLOW.event_type,
-                target_type="task",
-                target_id=task_id,
-                payload={
-                    "from": status,
-                    "to": next_status,
-                    "transition": transition,
-                    "evidence": evidence,
-                },
+
+    def _commit_workflow_change(self, conn, before, after, action, payload) -> None:
+        if action == "start_work":
+            return
+        # The runtime owns graph decisions, revision checks and the event. This
+        # adapter keeps the released task record and its evidence transactional.
+        if action not in {"revise", "fail_review", "migrate"}:
+            self.artifacts.seal(tx=conn, target=ArtifactTarget("task", before.id, before.project_id), transition=action)
+        now = now_iso()
+        if action in {"revise", "fail_review"}:
+            revision = str(after.data.get("revision_context") or "")
+            conn.execute(
+                "UPDATE tasks SET status = ?, revision_context = ?, updated_at = ? WHERE id = ? AND project_id = ?",
+                (after.state, revision, now, before.id, before.project_id),
             )
-            state = self.get_state(task_id=task_id, conn=conn)
-            return CommittedTaskUpdate(state=state, event=event)
+            if action == "fail_review":
+                conn.execute("UPDATE tasks SET outcome = ?, failed_by = 'reviewer' WHERE id = ?", (revision, before.id))
+        elif action == "accept":
+            conn.execute("UPDATE tasks SET status = ?, outcome = ?, updated_at = ? WHERE id = ?",
+                         (after.state, str(after.data.get("outcome") or ""), now, before.id))
+        elif action == "mark_failed":
+            conn.execute("UPDATE tasks SET status = ?, outcome = ?, failed_by = 'owner', updated_at = ? WHERE id = ?",
+                         (after.state, self._note_from_evidence(dict(payload), "reason"), now, before.id))
+        else:
+            conn.execute("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?", (after.state, now, before.id))
 
     @staticmethod
     def _note_from_evidence(evidence: dict[str, Any], key: str) -> str:
@@ -631,52 +582,43 @@ class TaskService:
                 return candidate.strip()
         return json.dumps(evidence, sort_keys=True) if evidence else ""
 
-    def return_from_review(
-        self,
-        *,
-        conn,
-        task_id: str,
-        route: ReviewReturn,
-        revision_context: str,
-    ) -> None:
-        """Apply the declared destination: back to in_progress, or ended."""
-        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        if row is None:
-            raise NotFoundError(f"task not found: {task_id}")
-        review_state = TASK_WORKFLOW.review_state("task_reviewer")
-        if review_state is None or row["status"] != review_state.name:
-            raise WorkflowError(
-                f"task is {row['status']!r}; only a task under review can be "
-                f"sent to {route.to_status}"
-            )
-        now = now_iso()
-        if route.to_status in TASK_WORKFLOW.terminal_statuses:
-            conn.execute(
-                """
-                UPDATE tasks
-                SET status = ?, outcome = ?, failed_by = 'reviewer',
-                    revision_context = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (route.to_status, revision_context, revision_context, now, task_id),
-            )
-        else:
-            conn.execute(
-                """
-                UPDATE tasks
-                SET status = ?, revision_context = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (route.to_status, revision_context, now, task_id),
-            )
-        self.store.record_event(
-            conn=conn,
-            project_id=row["project_id"],
-            event_type=route.event_type,
-            target_type="task",
-            target_id=task_id,
-            payload={"revision_context": revision_context},
-        )
+
+
+class _TaskKnowledge:
+    """Project-bound task facts; definitions receive no connection or writer."""
+
+    def __init__(self, service, conn, task, snapshot):
+        self.service, self.conn, self.task, self.snapshot = service, conn, task, snapshot
+        self._review = None
+
+    def read(self, reference: Reference):
+        task, conn = self.task, self.conn
+        if reference.kind == "task" and reference.id == task["id"]:
+            return task
+        if reference.kind == "project" and reference.id == task["project_id"]:
+            row = conn.execute("SELECT id, name, summary FROM projects WHERE id = ?", (reference.id,)).fetchone()
+            return {} if row is None else dict(row)
+        if reference.kind == "artifact":
+            history = self.service.artifacts.history(tx=conn, target_type="task", target_ids=(task["id"],))[task["id"]]
+            artifact = next((item for item in history.artifacts if item.id == reference.id and item.project_id == task["project_id"]), None)
+            if artifact is not None:
+                try:
+                    self.service.artifacts.contents.assert_complete(artifact_ids=(artifact.artifact_id,), project_id=task["project_id"], tx=conn)
+                    content = self.service.artifacts.contents.get(artifact_ids=(artifact.artifact_id,), project_id=task["project_id"], include="document", tx=conn)[0]
+                    if content.data is None:
+                        raise WorkflowError(f"{artifact.path} has no retained content")
+                    return {"text": content.data.decode("utf-8"), "error": ""}
+                except (WorkflowError, ValidationError, NotFoundError, UnicodeDecodeError) as exc:
+                    return {"text": "", "error": str(exc)}
+        if reference.kind in {"review", "review_snapshot"}:
+            if reference.kind == "review_snapshot" and reference.id != task["id"]:
+                raise NotFoundError("review snapshot belongs to another workflow instance")
+            node = self.service.runtime.registry.get(self.snapshot.workflow, self.snapshot.version).node(self.snapshot.state)
+            role = reference.id if reference.kind == "review" else (node.role if node is not None else "")
+            return read_review_fact(conn=conn, project_id=task["project_id"], target_type="task",
+                                    target_id=task["id"], role=role, request=reference.kind == "review_snapshot",
+                                    snapshot_id=review_snapshot_id(target_type="task", target=task, snapshot=self.snapshot))
+        raise NotFoundError(f"task fact not available: {reference.kind}/{reference.id}")
 
 
 __all__ = ["TaskService"]

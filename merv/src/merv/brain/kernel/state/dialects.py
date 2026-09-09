@@ -222,6 +222,21 @@ class PostgresStateStore(BaseStateStore):
         ).fetchone()
         return row is not None
 
+    def _expand_workflow_sessions(self, *, conn: Any) -> None:
+        rows = conn.execute(
+            "SELECT conname, pg_get_constraintdef(oid) AS definition FROM pg_constraint "
+            "WHERE conrelid = 'agent_sessions'::regclass AND contype = 'c'"
+        ).fetchall()
+        for row in rows:
+            if re.search(r"\b(target_type|kind)\b", row["definition"]):
+                name = str(row["conname"]).replace('"', '""')
+                conn.execute(f'ALTER TABLE agent_sessions DROP CONSTRAINT "{name}"')
+        for column, ddl in (("workflow_instance_id", "TEXT NOT NULL DEFAULT ''"),
+                            ("workflow_revision", "BIGINT NOT NULL DEFAULT 0"),
+                            ("workflow_node", "TEXT NOT NULL DEFAULT ''")):
+            if not self._has_column(conn=conn, table="agent_sessions", column=column):
+                conn.execute(f"ALTER TABLE agent_sessions ADD COLUMN {column} {ddl}")
+
     def _initialize(self) -> None:
         conn = self.connect()
         try:

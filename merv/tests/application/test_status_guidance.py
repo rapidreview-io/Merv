@@ -1,269 +1,79 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 import unittest
 
-from merv.brain.application.status_guidance import (
-    StatusGuidancePolicy,
-)
-from merv.brain.research_core import (
-    EXPERIMENT_WORKFLOW,
-    REFLECTION_WORKFLOW,
-)
-from merv.brain.research_core.policy import GateEvaluation, RequirementEvaluation
-from merv.brain.research_core.workflow_schema import ArtifactNeed, RecordNeed
+from merv.brain.application.status_guidance import StatusGuidancePolicy
+from merv.brain.research_core.policy import RequirementEvaluation
+from merv.brain.workflows import Brief, Edge, Issue, Node, Snapshot, Workflow
 
 
-def _requirement(
-    role: str,
-    status: str,
-    blocker: str,
-    *,
-    problems: tuple[str, ...] = (),
-    items: tuple[dict[str, object], ...] = (),
-) -> RequirementEvaluation:
-    error = problems[0] if problems else f"{role} required"
-    return RequirementEvaluation(role, status, blocker, error, problems, items)
-
-
-def _evaluation(
-    *,
-    subject: str = "experiment",
-    status: str,
-    requirements: tuple[RequirementEvaluation, ...] = (),
-    review: RequirementEvaluation | None = None,
-) -> GateEvaluation:
-    return GateEvaluation(
-        workflow=(
-            REFLECTION_WORKFLOW
-            if subject == "reflection wave"
-            else EXPERIMENT_WORKFLOW
-        ),
-        status=status,
-        requirements=requirements,
-        review=review,
-    )
+def evaluation(*, state="work", blockers=(), dispatch_blockers=(), review=None, workflow="custom_plugin", action="submit", read_only=False):
+    graph = Workflow(name=workflow, version=1, initial=state,
+                     nodes=(Node(state, role="independent_reviewer" if read_only else "owner", build_context=lambda snapshot, knowledge: Brief("Only this node."),
+                                 dispatch_check=lambda snapshot, knowledge: dispatch_blockers, read_only=read_only),),
+                     edges=(Edge(state, action, "done", check=lambda snapshot, knowledge: blockers, tools=("workflow.transition",)),),
+                     outcomes={"done": "completed"})
+    current = Snapshot(id="instance_1", project_id="project_1", workflow=workflow, version=1, state=state, revision=3)
+    return SimpleNamespace(decision=graph.evaluate(current, None), review=review)
 
 
 class StatusGuidanceContractTest(unittest.TestCase):
-    def setUp(self) -> None:
+    def setUp(self):
         self.policy = StatusGuidancePolicy()
+        self.target = {"id": "instance_1", "revision_context": "Preserve previous work."}
 
-    def test_workflow_entries_carry_their_agent_guidance(self) -> None:
-        for workflow in (EXPERIMENT_WORKFLOW, REFLECTION_WORKFLOW):
-            for state in workflow.states:
-                for requirement in state.requirements:
-                    label = (
-                        requirement.role
-                        if isinstance(requirement, ArtifactNeed)
-                        else requirement.name
-                    )
-                    self.assertTrue(requirement.action, label)
-                    if isinstance(requirement, ArtifactNeed):
-                        self.assertTrue(requirement.tools, label)
-                    else:
-                        self.assertIsInstance(requirement, RecordNeed)
-                        self.assertTrue(requirement.label, label)
-                        self.assertTrue(requirement.missing, label)
-                self.assertTrue(state.forward.action, state.forward.name)
-                if not state.forward.tools:
-                    self.assertEqual(state.forward.name, "publish")
-                if state.review is not None:
-                    self.assertTrue(state.review.skill, state.review.role)
-                    self.assertTrue(state.review.pass_action, state.review.role)
+    def test_requirement_order_and_every_blocker_come_from_the_canonical_decision(self):
+        gate = evaluation(blockers=(Issue("report_invalid", "Report lacks its conclusion.", "fix_report", ("artifact.submit",)),
+                                    Issue("graph_missing", "Logic graph missing.", "submit_graph", ("artifact.submit",))))
+        result = self.policy.experiment(experiment=self.target, sandboxes=[], evaluation=gate)
+        self.assertEqual(result["current_gate"], "report_invalid")
+        self.assertEqual(result["next_action"], "fix_report")
+        self.assertEqual(result["missing_evidence"], ["Report lacks its conclusion.", "Logic graph missing."])
+        self.assertEqual(result["blocked_actions"], gate.decision.public()["blocked_actions"])
+        self.assertEqual(result["suggested_action"], gate.decision.public()["suggested_action"])
 
-    def test_missing_requirement_precedes_an_earlier_invalid_one(self) -> None:
-        result = self.policy.experiment(
-            experiment={"id": "exp_1", "name": "example", "status": "running"},
-            sandboxes=[],
-            evaluation=_evaluation(
-                status="running",
-                requirements=(
-                    _requirement("result", "present", "", items=({},)),
-                    _requirement(
-                        "report",
-                        "invalid",
-                        "report_invalid",
-                        problems=("report is invalid",),
-                    ),
-                    _requirement(
-                        "graph",
-                        "missing",
-                        "logic_graph_required",
-                        items=(
-                            {
-                                "status": "missing",
-                                "missing": "logic graph artifact (role 'graph')",
-                            },
-                        ),
-                    ),
-                ),
-            ),
-        )
-        self.assertEqual(result["current_gate"], "logic_graph_required")
-        self.assertEqual(result["next_action"], "write_and_submit_logic_graph")
-        self.assertEqual(
-            result["missing_evidence"], ["logic graph artifact (role 'graph')"]
-        )
+    def test_infrastructure_facts_cannot_change_a_workflow_decision(self):
+        gate = evaluation(blockers=(Issue("result_missing", "Retain results.", "run_experiment", ("artifact.submit",)),))
+        idle = self.policy.experiment(experiment=self.target, sandboxes=[], evaluation=gate)
+        live = self.policy.experiment(experiment=self.target, sandboxes=[{"status": "running"}], evaluation=gate)
+        self.assertEqual(live, idle)
 
-    def test_live_sandbox_changes_only_the_execution_gate_name(self) -> None:
-        result = self.policy.experiment(
-            experiment={"id": "exp_1", "name": "example", "status": "running"},
-            sandboxes=[{"status": "running"}],
-            evaluation=_evaluation(
-                status="running",
-                requirements=(
-                    _requirement(
-                        "result",
-                        "missing",
-                        "execution_ready",
-                        items=({"status": "missing", "missing": "result resource"},),
-                    ),
-                ),
-            ),
-        )
-        self.assertEqual(result["current_gate"], "execution_active")
-        self.assertEqual(result["next_action"], "run_experiment_and_retain_results")
+    def test_dispatch_prerequisites_and_transition_blockers_remain_visible(self):
+        gate = evaluation(blockers=(Issue("result_missing", "Retain results."),),
+                          dispatch_blockers=(Issue("dependencies_pending", "Dataset task is unfinished.", "wait_for_dependencies", ("workflow.status_and_next",)),))
+        result = self.policy.experiment(experiment=self.target, sandboxes=[], evaluation=gate)
+        self.assertEqual(result["next_action"], "wait_for_dependencies")
+        self.assertFalse(result["dispatchable"])
+        self.assertEqual(result["missing_evidence"], ["Dataset task is unfinished.", "Retain results."])
+        self.assertEqual(result["dispatch_blockers"], gate.decision.public()["dispatch_blockers"])
 
-    def test_review_request_preserves_spawn_guidance_shape(self) -> None:
-        result = self.policy.experiment(
-            experiment={"id": "exp_1", "status": "design_review"},
-            sandboxes=[],
-            evaluation=_evaluation(
-                status="design_review",
-                review=_requirement(
-                    "design_reviewer",
-                    "requested",
-                    "design_review_required",
-                    items=(
-                        {
-                            "request_id": "rr_1",
-                            "expires_at": "2026-07-21T18:00:00Z",
-                        },
-                    ),
-                ),
-            ),
-        )
-        self.assertEqual(result["next_action"], "launch_design_reviewer")
-        self.assertEqual(
-            result["allowed_actions"], ["workflow.status_and_next", "review.request"]
-        )
-        self.assertEqual(
-            result["review_gate"],
-            {
-                "role": "design_reviewer",
-                "skill": "experiment-design-review",
-                "target_type": "experiment",
-                "target_id": "exp_1",
-                "status": "requested",
-                "label": "Reviewer pending",
-                "read_only": True,
-                "request_id": "rr_1",
-                "expires_at": "2026-07-21T18:00:00Z",
-            },
-        )
+    def test_review_metadata_is_presented_without_inventing_a_review_route(self):
+        review = RequirementEvaluation("independent_reviewer", "requested", "review_required", "Review required.", (),
+                                       ({"request_id": "request_1", "expires_at": "2026-09-10T00:00:00Z", "skill": "plugin-review"},))
+        gate = evaluation(state="audit", read_only=True, review=review,
+                          blockers=(Issue("review_required", "Review required.", "request_review", ("review.request",)),))
+        result = self.policy.experiment(experiment=self.target, sandboxes=[], evaluation=gate)
+        self.assertEqual(result["review_gate"]["request_id"], "request_1")
+        self.assertEqual(result["review_gate"]["target_type"], "custom_plugin")
+        self.assertEqual(result["review_gate"]["role"], "independent_reviewer")
+        self.assertEqual(result["next_action"], "request_review")
+        self.assertEqual(result["allowed_actions"], ["review.request"])
 
-    def test_reflection_roster_uses_each_factual_missing_lens(self) -> None:
-        result = self.policy.project_reflection(
-            open_wave={
-                "id": "syn_1",
-                "status": "reflecting",
-                "revision_context": "",
-            },
-            evaluation=_evaluation(
-                subject="reflection wave",
-                status="reflecting",
-                requirements=(
-                    _requirement(
-                        "reflection_lens_doc",
-                        "missing",
-                        "reflection_roster_incomplete",
-                        items=(
-                            {"status": "missing", "missing": "amplify reflection"},
-                            {"status": "missing", "missing": "avoid reflection"},
-                        ),
-                    ),
-                ),
-            ),
-            signal={"experiment_create_blocked": False},
-            idle=True,
-        )
-        assert result is not None
-        self.assertEqual(
-            result["workflow"]["missing_evidence"],
-            ["amplify reflection", "avoid reflection"],
-        )
+    def test_reflection_missing_lenses_are_the_graphs_issues(self):
+        gate = evaluation(workflow="reflection", state="collect_lenses",
+                          blockers=(Issue("lens_missing", "amplify reflection"), Issue("lens_missing", "avoid reflection")))
+        result = self.policy.project_reflection(open_wave={"id": "instance_1", "status": "collect_lenses"}, evaluation=gate,
+                                               signal={"experiment_create_blocked": False}, idle=True)
+        self.assertEqual(result["workflow"]["missing_evidence"], ["amplify reflection", "avoid reflection"])
 
-    def test_consolidation_guidance_follows_proposal_review_then_advance(self) -> None:
-        reflection = {"id": "ref_1", "status": "consolidating"}
-        proposal = _requirement(
-            "consolidation_proposal",
-            "missing",
-            "consolidation_proposal_required",
-            items=({"status": "missing", "missing": "complete proposal"},),
-        )
-        advance = _requirement(
-            "central_advance",
-            "missing",
-            "central_advance_required",
-            items=({"status": "missing", "missing": "advance receipt"},),
-        )
-        review = _requirement(
-            "consolidation_reviewer",
-            "missing",
-            "consolidation_review_required",
-            items=({"status": "missing"},),
-        )
-
-        needs_proposal = self.policy._reflection_workflow_for(
-            reflection=reflection,
-            evaluation=_evaluation(
-                subject="reflection wave",
-                status="consolidating",
-                requirements=(proposal, advance),
-                review=review,
-            ),
-        )
-        self.assertEqual(
-            needs_proposal["next_action"], "submit_consolidation_proposal"
-        )
-
-        valid_proposal = _requirement(
-            "consolidation_proposal",
-            "valid",
-            "",
-        )
-        needs_review = self.policy._reflection_workflow_for(
-            reflection=reflection,
-            evaluation=_evaluation(
-                subject="reflection wave",
-                status="consolidating",
-                requirements=(valid_proposal, advance),
-                review=review,
-            ),
-        )
-        self.assertEqual(
-            needs_review["next_action"], "launch_consolidation_reviewer"
-        )
-
-        passed_review = RequirementEvaluation(
-            "consolidation_reviewer",
-            "passed",
-            "",
-            "",
-            (),
-            ({"status": "passed"},),
-        )
-        needs_advance = self.policy._reflection_workflow_for(
-            reflection=reflection,
-            evaluation=_evaluation(
-                subject="reflection wave",
-                status="consolidating",
-                requirements=(valid_proposal, advance),
-                review=passed_review,
-            ),
-        )
-        self.assertEqual(needs_advance["next_action"], "wait_for_central_advance")
-        self.assertEqual(needs_advance["allowed_actions"], [])
+    def test_new_plugin_actions_are_presented_without_a_state_or_workflow_case(self):
+        gate = evaluation(state="external_confirmation", action="replicate_in_new_setting")
+        result = self.policy._reflection_workflow_for(reflection=self.target, evaluation=gate)
+        self.assertEqual(result["next_action"], "replicate_in_new_setting")
+        self.assertEqual(result["available_actions"], gate.decision.public()["available_actions"])
+        self.assertEqual(result["revision"], 3)
+        self.assertEqual(result["revision_context"], "Preserve previous work.")
 
     def test_idle_reflection_hint_preserves_existing_wording(self) -> None:
         result = self.policy.project_reflection(

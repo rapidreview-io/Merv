@@ -8,7 +8,8 @@ from typing import Any, TypedDict, cast
 
 from merv.shared.artifact_roles import EXHIBIT_ROLE
 
-from ...research_core import ArtifactTarget, ResearchArtifacts as Artifacts
+from ...research_core import ResearchArtifacts as Artifacts
+from ...workflows import Snapshot
 from ...feed import FeedAdvisory
 from ...kernel.events import StoredEvent
 from ...object_storage import ObjectStorage
@@ -147,24 +148,26 @@ class TransitionExperiment:
             project_id=resolved_project_id, experiment_ids=(experiment_id,)
         )[experiment_id]
         exhibit = None
+        prepared_snapshot = None
         if (
             "prepare_metrics_exhibit" in effects
             and before is not None
             and str(before.get("status"))
             in EXPERIMENT_WORKFLOW.effect_sources("prepare_metrics_exhibit")
         ):
-            exhibit = self._finalize_exhibit(state=before)
+            prepared_snapshot = self.research.workflows.runtime.get(project_id=resolved_project_id, instance_id=experiment_id)
+            exhibit = self._finalize_exhibit(state=before, snapshot=prepared_snapshot)
 
         committed = self.research.transition_experiment(
             experiment_id=experiment_id,
             transition=transition,
             evidence=evidence,
             project_id=project_id,
+            **({"expected_revision": prepared_snapshot.revision} if prepared_snapshot is not None else {}),
         )
-        state, tracking_warning = self.mlflow.after_transition(
-            event=committed.event,
-            state=committed.state,
-        )
+        state = committed.state
+        # The committed graph queues tracking actions. The durable delivery
+        # worker owns retry and idempotency for native and generic transitions.
         response = cast(
             TransitionResponse,
             dict(
@@ -183,9 +186,7 @@ class TransitionExperiment:
             experiment_id=experiment_id,
             include_credentials=include_tracking_credentials,
         )
-        if tracking_warning is not None:
-            response["mlflow_warning"] = tracking_warning
-        elif presentation_warning is not None:
+        if presentation_warning is not None:
             response["mlflow_warning"] = presentation_warning
         if "show_metrics_exhibit" in effects:
             response["metrics_exhibit"] = self._exhibit_expectation(
@@ -221,33 +222,33 @@ class TransitionExperiment:
         except Exception:
             return None
 
-    def _finalize_exhibit(self, *, state: ExperimentState) -> dict[str, object] | None:
+    def prepare_workflow_transition(self, snapshot: Snapshot, action: str, payload) -> dict[str, object] | None:
+        """Prepare external metrics before the runtime's final transactional gate."""
+        if action != "submit_results" or snapshot.state != "running":
+            return None
+        state = self.research.experiment_state(experiment_id=snapshot.id, project_id=snapshot.project_id)
+        return self._finalize_exhibit(state=state, snapshot=snapshot)
+
+    def _finalize_exhibit(self, *, state: ExperimentState, snapshot: Snapshot | None = None) -> dict[str, object] | None:
+        project_id, experiment_id = str(state.get("project_id") or ""), str(state.get("id") or "")
+        if snapshot is None:
+            snapshot = self.research.workflows.runtime.get(project_id=project_id, instance_id=experiment_id)
+        source_ids = tuple(str(item["id"]) for item in state.get("current_attempt_artifacts") or () if item.get("role") != EXHIBIT_ROLE)
+        # Remote reads happen before any database transaction. The native
+        # capability locks/rechecks this revision and evidence before pinning.
         exhibit = self.exhibits.generate(state=state)
         pinned = should_pin_exhibit(exhibit=exhibit, state=state)
-        verdict = {
-            **dict(exhibit["verdict"]),
-            "attempt_index": exhibit["attempt_index"],
-            "pinned": pinned,
-        }
+        verdict = {**dict(exhibit["verdict"]), "attempt_index": exhibit["attempt_index"], "pinned": pinned}
         if "mlflow" in exhibit:
             verdict["mlflow"] = exhibit["mlflow"]
-        project_id = str(state.get("project_id") or "")
-        experiment_id = str(state.get("id") or "")
         self.research.record_exhibit_verdict(
-            experiment_id=experiment_id,
-            project_id=project_id,
-            verdict=verdict,
+            experiment_id=experiment_id, project_id=project_id, verdict=verdict,
+            expected_revision=snapshot.revision, expected_attempt_index=int(state["attempt_index"]),
+            expected_artifact_ids=source_ids,
+            artifact_path=self._exhibit_path(experiment_id=experiment_id, state=state) if pinned else "",
+            artifact_data=exhibit_bytes(exhibit) if pinned else None,
         )
-        if not pinned:
-            return None
-        self.artifacts.pin(
-            target=ArtifactTarget("experiment", experiment_id, project_id),
-            path=self._exhibit_path(experiment_id=experiment_id, state=state),
-            role=EXHIBIT_ROLE,
-            data=exhibit_bytes(exhibit),
-            title="Metrics exhibit (system-generated)",
-        )
-        return exhibit
+        return exhibit if pinned else None
 
     def _exhibit_path(self, *, experiment_id: str, state: dict[str, Any]) -> str:
         return (

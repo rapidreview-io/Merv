@@ -8,15 +8,15 @@ from typing import Any
 
 from merv.shared.artifact_roles import EXHIBIT_ROLE, GATED_ROLES
 
-from ..research_core import ResearchArtifacts as Artifacts
 from ..feed import FeedAdvisory
 from ..kernel.utils import parse_iso
 from ..research_core import (
     EXPERIMENT_WORKFLOW,
     REFLECTION_WORKFLOW,
-    Research,
     TASK_WORKFLOW,
+    Research,
 )
+from ..research_core import ResearchArtifacts as Artifacts
 from .experiments.context import ExperimentContextQuery
 from .project_context import ProjectContextQuery
 from .reflections import present_agent_reflection_state
@@ -62,10 +62,11 @@ def reviewer_handoff_payload(
         "start_tool": "review.start",
         "submit_tool": "review.submit",
     }
-    if review_request_id and reviewer_capability and skill:
+    if review_request_id and reviewer_capability:
         handoff["spawn_prompt"] = (
             f"You are the {role} for {target_type} {target_id}. "
-            f"Follow the {skill} skill. Begin by calling review.start with "
+            + (f"Follow the {skill} skill. " if skill else "Use the workflow's pinned brief and exact evidence references. ")
+            + "Begin by calling review.start with "
             f"review_request_id={review_request_id}, "
             f"reviewer_capability={reviewer_capability}, and your own "
             "session identity as caller_session_id (required; never the "
@@ -107,7 +108,7 @@ def start_review(
     submitted_artifacts = _submitted_artifacts(
         artifacts=artifacts,
         snapshot=target_snapshot,
-    )
+    ) if target_type in {"experiment", "task", "reflection"} else []
     result["read_scope"] = [
         "claim",
         "experiment",
@@ -150,6 +151,10 @@ def start_review(
             ),
             include_content=False,
         )
+    else:
+        result["target_snapshot"] = target_snapshot
+        result["context"] = result.get("workflow_context") or {}
+        result["submitted_artifacts"] = target_snapshot.get("artifacts") or []
     return result
 
 

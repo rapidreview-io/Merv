@@ -69,7 +69,7 @@ class GenericArtifactMigrationTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "state.sqlite"
-        with patch.object(state, "MIGRATIONS", state.MIGRATIONS[:-1]):
+        with patch.object(state, "MIGRATIONS", tuple(item for item in state.MIGRATIONS if item[0] < 59)):
             legacy = state.StateStore(db_path=self.db)
         seed_legacy_artifacts(legacy)
 
@@ -220,7 +220,7 @@ class GenericArtifactPostgresMigrationTest(unittest.TestCase):
         dsn = os.environ["MERV_TEST_POSTGRES_DSN"]
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
-        with patch.object(state, "MIGRATIONS", state.MIGRATIONS[:-1]):
+        with patch.object(state, "MIGRATIONS", tuple(item for item in state.MIGRATIONS if item[0] < 59)):
             legacy = PostgresStateStore(dsn=dsn)
         seed_legacy_artifacts(legacy)
 

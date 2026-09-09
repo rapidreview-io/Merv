@@ -37,11 +37,12 @@ class SystemTransitionTestBase(unittest.TestCase):
     def call(self, tool: str, **kwargs):
         return self.app.call_tool(tool, kwargs)
 
-    def _experiment(self, *, status: str = "ready_to_run") -> str:
+    def _experiment(self, *, status: str = "running") -> str:
         exp_id = self.call("experiment.create", name="exp-1", project_id=self.project_id, intent="x")["id"]
         if status != "planned":
             with self.app.store.transaction() as conn:
                 conn.execute("UPDATE experiments SET status = ? WHERE id = ?", (status, exp_id))
+                conn.execute("UPDATE workflow_instances SET state = ? WHERE id = ?", (status, exp_id))
         return exp_id
 
     def _transition_events(self, exp_id: str) -> list[dict]:
@@ -62,27 +63,27 @@ class SystemTransitionTestBase(unittest.TestCase):
 
 class SandboxDrivenTransitionTest(SystemTransitionTestBase):
     def test_sandbox_request_does_not_transition_experiment(self) -> None:
-        exp_id = self._experiment(status="ready_to_run")
+        exp_id = self._experiment(status="running")
         self.call("sandbox.request", project_id=self.project_id, experiment_id=exp_id)
         state = self.call("experiment.get_state", project_id=self.project_id, experiment_id=exp_id)
-        self.assertEqual(state["status"], "ready_to_run")
+        self.assertEqual(state["status"], "running")
         self.assertEqual(self._transition_events(exp_id), [])
 
     def test_reaper_expiry_does_not_transition_experiment(self) -> None:
-        exp_id = self._experiment(status="ready_to_run")
+        exp_id = self._experiment(status="running")
         created = self.call("sandbox.request", project_id=self.project_id, experiment_id=exp_id)
         record = self.app.infrastructure_client.records[project_namespace(self.project_id)][created["sandbox_uid"]]
         record.update(state="stopped", lease_expires_at="2000-01-01T00:00:00Z")
         self.assertEqual(self.app.sandboxes.get(project_id=self.project_id, sandbox_uid=created["sandbox_uid"])["status"], "terminated")
         state = self.call("experiment.get_state", project_id=self.project_id, experiment_id=exp_id)
-        self.assertEqual(state["status"], "ready_to_run")
+        self.assertEqual(state["status"], "running")
         self.assertEqual(self._transition_events(exp_id), [])
 
     def test_no_system_transitions_in_discovery(self) -> None:
-        exp_id = self._experiment(status="ready_to_run")
+        exp_id = self._experiment(status="running")
         state = self.call("experiment.get_state", project_id=self.project_id, experiment_id=exp_id)
         names = {t["transition"] for t in state["allowed_transitions"]}
-        self.assertEqual(names, {"start_running", "abandon", "mark_failed"})
+        self.assertEqual(names, {"submit_results", "retry_running", "abandon", "mark_failed"})
 
 class WorkflowDeclarationTest(SystemTransitionTestBase):
     def test_enforcement_fact_drives_application_guidance(self) -> None:
@@ -102,7 +103,7 @@ class WorkflowDeclarationTest(SystemTransitionTestBase):
         self.assertEqual(workflow["current_gate"], plan_req.gate)
         self.assertEqual(workflow["next_action"], plan_req.action)
         self.assertEqual(workflow["allowed_actions"], list(plan_req.tools))
-        self.assertEqual(workflow["missing_evidence"], [plan_req.missing])
+        self.assertEqual(workflow["missing_evidence"], [plan_req.error])
 
 
 if __name__ == "__main__":

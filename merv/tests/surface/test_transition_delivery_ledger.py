@@ -14,7 +14,6 @@ from merv.brain.application.mlflow import TrackingCapabilities
 from merv.brain.mlflow.tracking import MlflowTrackingContext
 from tests.support.brain import TestBrain
 
-
 VALID_PLAN = (
     "## Summary\nCharacterize transition delivery.\n\n"
     "## Objective & hypothesis\nThe composed workflow preserves its ledger.\n\n"
@@ -128,7 +127,7 @@ class RecordingTracking:
         project_id: str,
         experiment_id: str,
         run_id: str,
-        status: str,
+        status: str | None,
         wait_seconds: float,
     ) -> dict[str, Any]:
         self.finalize_calls.append(
@@ -140,8 +139,9 @@ class RecordingTracking:
                 "wait_seconds": wait_seconds,
             }
         )
-        self.runs[0]["status"] = status
-        self.runs[0]["end_time"] = int(time.time() * 1000)
+        if status:
+            self.runs[0]["status"] = status
+            self.runs[0]["end_time"] = int(time.time() * 1000)
         return {
             "configured": True,
             "control_configured": True,
@@ -314,67 +314,28 @@ def _row(
     return event_type, target_type, target_id, payload
 
 
-def _transition_row(
-    experiment_id: str, *, before: str, after: str, transition: str
-) -> tuple[str, str, str, dict[str, Any]]:
-    return _row(
-        "experiment.transitioned",
-        experiment_id,
-        {"evidence": {}, "from": before, "to": after, "transition": transition},
-    )
-
-
-def _tracking_row(
-    experiment_id: str,
-    *,
-    event_type: str,
-    status: str,
-    previous: str,
-    delivery: int | None = None,
-) -> tuple[str, str, str, dict[str, Any]]:
-    # ``delivery`` is the id of the transition event this outcome belongs to —
-    # the correlation key that makes the append-only row exact proof of commit.
-    return _row(
-        event_type,
-        experiment_id,
-        {
-            "error": "",
-            "previous_run_id": previous,
-            "run_id": "run-composed",
-            "run_name": f"{experiment_id}-attempt-1",
-            "status": status,
-            **({} if delivery is None else {"delivery_id": delivery}),
-        },
-    )
-
-
-class TransitionDeliveryAndLedgerTest(unittest.TestCase):
-    def setUp(self) -> None:
+class TrackingSurfaceCase(unittest.TestCase):
+    def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
+        self.brains = []
 
-    def tearDown(self) -> None:
+    def tearDown(self):
+        for app in self.brains:
+            app.shutdown()
         self.tmp.cleanup()
 
-    def _brain(self, tracking: RecordingTracking) -> TestBrain:
-        # Not an identity test: agent_id is merely recorded here (see test_agent_identity.py).
-        return TestBrain(
+    def _brain(self, tracking):
+        app = TestBrain(
             repo_root=self.repo,
-            db_path=self.repo / ".research_plugin" / "state.sqlite",
+            db_path=self.repo / "state.sqlite",
             mlflow_tracking=tracking,
             env={"MERV_AGENT_IDENTITY": "optional"},
         )
+        self.brains.append(app)
+        return app
 
-    def _register(
-        self,
-        app: TestBrain,
-        *,
-        project_id: str,
-        experiment_id: str,
-        path: str,
-        role: str,
-        body: str,
-    ) -> None:
+    def _register(self, app, *, project_id, experiment_id, path, role, body):
         app.submit_artifact(
             project_id=project_id,
             target_type="experiment",
@@ -384,14 +345,7 @@ class TransitionDeliveryAndLedgerTest(unittest.TestCase):
             body=body,
         )
 
-    def _pass_review(
-        self,
-        app: TestBrain,
-        *,
-        project_id: str,
-        experiment_id: str,
-        role: str,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    def _pass_review(self, app, *, project_id, experiment_id, role):
         requested = app.call_tool(
             "review.request",
             {
@@ -419,112 +373,14 @@ class TransitionDeliveryAndLedgerTest(unittest.TestCase):
         )
         return requested, started, submitted
 
-    def test_rest_and_mcp_start_running_have_equivalent_response_and_ledger_delta(
-        self,
-    ) -> None:
-        tracking = RecordingTracking()
-        app = self._brain(tracking)
-        client = TestClient(app.fastapi_app)
-        targets: list[tuple[str, str]] = []
-        for name in ("MCP Parity", "REST Parity"):
-            project_id = app.call_tool("project", {"action": "create", "name": name})[
-                "id"
-            ]
-            experiment_id = app.call_tool(
-                "experiment.create",
-                {
-                    "project_id": project_id,
-                    "name": "equivalent-start",
-                    "intent": "Prove delivery parity.",
-                },
-            )["id"]
-            with app._store.transaction() as conn:
-                conn.execute(
-                    "UPDATE experiments SET status = 'ready_to_run' WHERE id = ?",
-                    (experiment_id,),
-                )
-            targets.append((project_id, experiment_id))
-
-        mcp_project, mcp_experiment = targets[0]
-        mcp_cursor = _cursor(app)
-        mcp_http = client.post(
-            "/mcp/call",
-            json={
-                "name": "experiment.transition",
-                "arguments": {
-                    "project_id": mcp_project,
-                    "experiment_id": mcp_experiment,
-                    "transition": "start_running",
-                },
-            },
-        )
-        self.assertEqual(mcp_http.status_code, 200, mcp_http.text)
-        mcp_response = mcp_http.json()["result"]
-        mcp_rows = _ledger_delta(self, app, project_id=mcp_project, after_id=mcp_cursor)
-
-        rest_project, rest_experiment = targets[1]
-        rest_cursor = _cursor(app)
-        rest_http = client.post(
-            f"/api/projects/{rest_project}/experiments/{rest_experiment}/transition",
-            json={"transition": "start_running"},
-        )
-        self.assertEqual(rest_http.status_code, 200, rest_http.text)
-        rest_response = rest_http.json()
-        rest_rows = _ledger_delta(
-            self, app, project_id=rest_project, after_id=rest_cursor
-        )
-
-        self.assertEqual(
-            _normalized(
-                mcp_response,
-                project_id=mcp_project,
-                experiment_id=mcp_experiment,
-            ),
-            _normalized(
-                rest_response,
-                project_id=rest_project,
-                experiment_id=rest_experiment,
-            ),
-        )
-        expected = lambda experiment_id, cursor: [
-            _transition_row(
-                experiment_id,
-                before="ready_to_run",
-                after="running",
-                transition="start_running",
-            ),
-            _tracking_row(
-                experiment_id,
-                event_type="experiment.mlflow_run_created",
-                status="RUNNING",
-                previous="",
-                # The transition event is the first row after the cursor.
-                delivery=cursor + 1,
-            ),
-        ]
-        self.assertEqual(mcp_rows, expected(mcp_experiment, mcp_cursor))
-        self.assertEqual(rest_rows, expected(rest_experiment, rest_cursor))
-        self.assertEqual(
-            _normalized(mcp_rows, project_id=mcp_project, experiment_id=mcp_experiment),
-            _normalized(
-                rest_rows, project_id=rest_project, experiment_id=rest_experiment
-            ),
-        )
-
-    def test_real_composition_emits_exact_canonical_transition_ledger_without_recursion(
-        self,
-    ) -> None:
-        tracking = RecordingTracking()
-        app = self._brain(tracking)
-        project_id = app.call_tool(
-            "project", {"action": "create", "name": "Canonical Ledger"}
-        )["id"]
+    def _approved(self, app, name):
+        project_id = app.call_tool("project", {"action": "create", "name": name})["id"]
         experiment_id = app.call_tool(
             "experiment.create",
             {
                 "project_id": project_id,
-                "name": "ledger-flow",
-                "intent": "Drive the real composed workflow.",
+                "name": "tracking-flow",
+                "intent": "Verify composed workflow delivery.",
             },
         )["id"]
         self._register(
@@ -549,16 +405,102 @@ class TransitionDeliveryAndLedgerTest(unittest.TestCase):
             experiment_id=experiment_id,
             role="design_reviewer",
         )
-        app.call_tool(
-            "experiment.transition",
+        return project_id, experiment_id
+
+    def _begin(self, app, project_id, experiment_id):
+        current = app.workflows.runtime.get(
+            project_id=project_id, instance_id=experiment_id
+        )
+        return app.call_tool(
+            "workflow.begin",
             {
                 "project_id": project_id,
-                "experiment_id": experiment_id,
-                "transition": "mark_ready_to_run",
+                "instance_id": experiment_id,
+                "expected_revision": current.revision,
             },
         )
+
+    def _drain(self, app, project_id):
+        return app.application.workflow_deliveries.run_once(
+            project_id=project_id, renew_interval_seconds=0
+        )
+
+
+
+class TransitionDeliveryAndLedgerTest(TrackingSurfaceCase):
+    def test_rest_and_mcp_retry_have_equivalent_response_and_canonical_ledger_delta(
+        self,
+    ):
+        tracking = RecordingTracking()
+        app = self._brain(tracking)
+        client = TestClient(app.fastapi_app)
+        targets = [self._approved(app, name) for name in ("MCP Parity", "REST Parity")]
+        responses, ledgers = [], []
+        for index, (project_id, experiment_id) in enumerate(targets):
+            cursor = _cursor(app)
+            response = (
+                client.post(
+                    "/mcp/call",
+                    json={
+                        "name": "experiment.transition",
+                        "arguments": {
+                            "project_id": project_id,
+                            "experiment_id": experiment_id,
+                            "transition": "retry_running",
+                        },
+                    },
+                )
+                if index == 0
+                else client.post(
+                    f"/api/projects/{project_id}/experiments/{experiment_id}/transition",
+                    json={"transition": "retry_running"},
+                )
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            result = response.json()["result"] if index == 0 else response.json()
+            responses.append(
+                _normalized(result, project_id=project_id, experiment_id=experiment_id)
+            )
+            rows = _ledger_delta(self, app, project_id=project_id, after_id=cursor)
+            self.assertEqual(
+                rows,
+                [
+                    _row(
+                        "experiment.transitioned",
+                        experiment_id,
+                        {
+                            "evidence": {},
+                            "from": "running",
+                            "to": "running",
+                            "transition": "retry_running",
+                            "workflow": "experiment",
+                            "version": 1,
+                            "revision": 3,
+                        },
+                    )
+                ],
+            )
+            ledgers.append(
+                _normalized(rows, project_id=project_id, experiment_id=experiment_id)
+            )
+        self.assertEqual(responses[0], responses[1])
+        self.assertEqual(ledgers[0], ledgers[1])
+        self.assertEqual(tracking.create_calls, [])
+
+    def test_real_composition_records_canonical_graph_and_delivery_events_without_recursion(
+        self,
+    ):
+        tracking = RecordingTracking()
+        app = self._brain(tracking)
+        project_id, experiment_id = self._approved(app, "Canonical Ledger")
+        self.assertEqual(tracking.create_calls, [])
+        cursor = _cursor(app)
+        assignment = self._begin(app, project_id, experiment_id)
+        self.assertEqual(assignment["state"], "running")
+        self.assertEqual(tracking.create_calls, [])
+        self._drain(app, project_id)
         for path, role, body in (
-            ("results.json", "result", '{"accuracy":0.75}\n'),
+            ("results.json", "result", '{"accuracy":0.75}'),
             ("report.md", "report", VALID_REPORT),
             ("graph.json", "graph", VALID_GRAPH),
         ):
@@ -570,16 +512,6 @@ class TransitionDeliveryAndLedgerTest(unittest.TestCase):
                 role=role,
                 body=body,
             )
-
-        cursor = _cursor(app)
-        started = app.call_tool(
-            "experiment.transition",
-            {
-                "project_id": project_id,
-                "experiment_id": experiment_id,
-                "transition": "start_running",
-            },
-        )
         submitted = app.call_tool(
             "experiment.transition",
             {
@@ -588,422 +520,269 @@ class TransitionDeliveryAndLedgerTest(unittest.TestCase):
                 "transition": "submit_results",
             },
         )
-        request, session, review = self._pass_review(
+        self.assertTrue(submitted["metrics_exhibit"]["pinned"])
+        self.assertEqual(tracking.finalize_calls, [])
+        self._drain(app, project_id)
+        self._pass_review(
             app,
             project_id=project_id,
             experiment_id=experiment_id,
             role="experiment_reviewer",
         )
-        completed = app.call_tool(
-            "experiment.transition",
+        self._drain(app, project_id)
+        state = app.research.experiment_state(
+            project_id=project_id, experiment_id=experiment_id
+        )
+        self.assertEqual(state["status"], "complete")
+        self.assertEqual(state["mlflow_run"]["status"], "FINISHED")
+        rows = _ledger_delta(self, app, project_id=project_id, after_id=cursor)
+        lifecycle = [
+            row
+            for row in rows
+            if row[0]
+            in {
+                "workflow.work_started",
+                "experiment.mlflow_run_created",
+                "experiment.transitioned",
+                "review.submitted",
+                "experiment.mlflow_run_refreshed",
+            }
+        ]
+        self.assertEqual(
+            [row[0] for row in lifecycle],
+            [
+                "workflow.work_started",
+                "experiment.mlflow_run_created",
+                "experiment.transitioned",
+                "experiment.mlflow_run_refreshed",
+                "review.submitted",
+                "experiment.transitioned",
+                "experiment.mlflow_run_refreshed",
+            ],
+        )
+        self.assertEqual(
+            lifecycle[0][3],
             {
-                "project_id": project_id,
-                "experiment_id": experiment_id,
-                "transition": "complete",
+                "workflow": "experiment",
+                "state": "running",
+                "revision": 2,
+                "session_id": "interactive",
             },
         )
-
-        self.assertEqual(started["mlflow_run"]["status"], "RUNNING")
-        self.assertTrue(submitted["metrics_exhibit"]["pinned"])
-        self.assertEqual(submitted["mlflow_run"]["status"], "FINISHED")
-        self.assertEqual(completed["status"], "complete")
-
-        conn = app._store.connect()
-        try:
-            exhibit_link = conn.execute(
-                """
-                SELECT id, path FROM research_artifacts
-                WHERE target_type = 'experiment' AND target_id = ?
-                  AND role = 'exhibit' AND status = 'complete'
-                ORDER BY created_seq DESC LIMIT 1
-                """,
-                (experiment_id,),
-            ).fetchone()
-        finally:
-            conn.close()
-        self.assertIsNotNone(exhibit_link)
-        exhibit_artifact_id = str(exhibit_link["id"])
-        exhibit_path = str(exhibit_link["path"])
-        review_id = str(review["id"])
-
-        expected = [
-            _transition_row(
-                experiment_id,
-                before="ready_to_run",
-                after="running",
-                transition="start_running",
-            ),
-            _tracking_row(
-                experiment_id,
-                event_type="experiment.mlflow_run_created",
-                status="RUNNING",
-                previous="",
-                delivery=cursor + 1,
-            ),
-            _row(
-                "experiment.exhibit_generated",
-                experiment_id,
-                {
-                    "attempt_index": 1,
-                    "mlflow": {
-                        "available": True,
-                        "configured": True,
-                        "experiment_name": f"merv/{project_id}/{experiment_id}",
-                        "runs_excluded_by_window": 0,
-                    },
-                    "pinned": True,
-                    "result_files": 1,
-                    "runs_found": 1,
-                },
-            ),
-            _row(
-                "artifact.pinned",
-                experiment_id,
-                {
-                    "artifact_id": exhibit_artifact_id,
-                    "path": exhibit_path,
-                    "role": "exhibit",
-                },
-            ),
-            _transition_row(
-                experiment_id,
-                before="running",
-                after="experiment_review",
-                transition="submit_results",
-            ),
-            _tracking_row(
-                experiment_id,
-                event_type="experiment.mlflow_run_refreshed",
-                status="FINISHED",
-                previous="run-composed",
-            ),
-            _row(
-                "review.requested",
-                experiment_id,
-                {
-                    "request_id": request["review_request_id"],
-                    "role": "experiment_reviewer",
-                    "superseded_request_ids": [],
-                },
-            ),
-            _row(
-                "review.started",
-                experiment_id,
-                {
-                    "request_id": request["review_request_id"],
-                    "role": "experiment_reviewer",
-                    "session_id": session["review_session_id"],
-                },
-            ),
-            _row(
-                "review.submitted",
-                experiment_id,
-                {
-                    "return_to": "",
-                    "review_id": review_id,
-                    "role": "experiment_reviewer",
-                    "synopsis": REVIEW_SYNOPSIS,
-                    "verdict": "pass",
-                },
-            ),
-            _transition_row(
-                experiment_id,
-                before="experiment_review",
-                after="complete",
-                transition="complete",
-            ),
-        ]
-        rows = _ledger_delta(self, app, project_id=project_id, after_id=cursor)
-        self.assertEqual(rows, expected)
+        self.assertEqual(lifecycle[1][3]["delivery_id"], cursor + 1)
         self.assertEqual(
-            [row[0] for row in rows].count("experiment.mlflow_run_created"),
-            1,
-        )
-        self.assertEqual(
-            [row[0] for row in rows].count("experiment.mlflow_run_refreshed"),
-            1,
+            [
+                row[3]["transition"]
+                for row in lifecycle
+                if row[0] == "experiment.transitioned"
+            ],
+            ["submit_results", "complete"],
         )
         self.assertFalse(any("dispatch" in row[0] or "ack" in row[0] for row in rows))
         self.assertEqual(len(tracking.create_calls), 1)
-        self.assertEqual(len(tracking.finalize_calls), 1)
-        self.assertEqual(tracking.finalize_calls[0]["status"], "FINISHED")
-        self.assertEqual(tracking.results_calls, 1)
-        self.assertEqual(tracking.context_calls, 3)
-
-
-class TrackingOutageDegradationTest(unittest.TestCase):
-    """A committed transition is never reported as a failure (audit APP-01)."""
-
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.repo = Path(self.tmp.name)
-        self.tracking = OutageTracking()
-        self.app = TestBrain(
-            repo_root=self.repo,
-            db_path=self.repo / ".research_plugin" / "state.sqlite",
-            mlflow_tracking=self.tracking,
-        )
-        self.project_id = self.app.call_tool(
-            "project", {"action": "create", "name": "Tracking Outage"}
-        )["id"]
-        self.experiment_id = self.app.call_tool(
-            "experiment.create",
-            {
-                "project_id": self.project_id,
-                "name": "outage-start",
-                "intent": "Start running while MLflow is down.",
-            },
-        )["id"]
-        with self.app._store.transaction() as conn:
-            conn.execute(
-                "UPDATE experiments SET status = 'ready_to_run' WHERE id = ?",
-                (self.experiment_id,),
-            )
-
-    def tearDown(self) -> None:
-        self.tmp.cleanup()
-
-    def _experiment_row(self) -> dict[str, Any]:
-        conn = self.app._store.connect()
-        try:
-            row = conn.execute(
-                """
-                SELECT status, mlflow_run_id, mlflow_run_error
-                FROM experiments WHERE id = ?
-                """,
-                (self.experiment_id,),
-            ).fetchone()
-        finally:
-            conn.close()
-        return dict(row)
-
-    def _start(self) -> dict[str, Any]:
-        return self.app.call_tool(
-            "experiment.transition",
-            {
-                "project_id": self.project_id,
-                "experiment_id": self.experiment_id,
-                "transition": "start_running",
-            },
-        )
-
-    def test_start_running_commits_and_reports_a_repairable_tracking_warning(
-        self,
-    ) -> None:
-        cursor = _cursor(self.app)
-
-        started = self._start()
-
-        self.assertEqual(started["status"], "running")
-        self.assertEqual(started["mlflow_warning"]["tracking"], "unavailable")
-        self.assertIn(
-            "mlflow control plane unreachable", started["mlflow_warning"]["error"]
-        )
-        self.assertIn("mlflow.finalize_run", started["mlflow_warning"]["repair"])
-        self.assertEqual(len(self.tracking.create_calls), 1)
         self.assertEqual(
-            _ledger_delta(self, self.app, project_id=self.project_id, after_id=cursor),
-            [
-                _transition_row(
-                    self.experiment_id,
-                    before="ready_to_run",
-                    after="running",
-                    transition="start_running",
-                ),
-                _row(
-                    "experiment.mlflow_run_unavailable",
-                    self.experiment_id,
-                    {
-                        "delivery_id": cursor + 1,
-                        "error": (
-                            "MLflow run creation failed: "
-                            "mlflow control plane unreachable"
-                        ),
-                        "previous_run_id": "",
-                        "run_id": "",
-                        "run_name": "",
-                        "status": "",
-                    },
-                ),
-            ],
+            {call["run_id"] for call in tracking.finalize_calls}, {"run-composed"}
         )
-        row = self._experiment_row()
-        self.assertEqual(row["status"], "running")
-        self.assertEqual(row["mlflow_run_id"], "")
-        self.assertIn("mlflow control plane unreachable", row["mlflow_run_error"])
-        state = self.app.call_tool(
+        before_redelivery = _cursor(app)
+        self._drain(app, project_id)
+        self.assertEqual(_cursor(app), before_redelivery)
+
+
+class TrackingOutageDegradationTest(TrackingSurfaceCase):
+
+    def _outage(self):
+        tracking = OutageTracking()
+        app = self._brain(tracking)
+        project_id, experiment_id = self._approved(app, "Tracking Outage")
+        self._begin(app, project_id, experiment_id)
+        with self.assertLogs("merv.brain.application.mlflow", level="ERROR"):
+            self._drain(app, project_id)
+        return app, tracking, project_id, experiment_id
+
+    def test_tracking_outage_is_durable_and_keeps_the_approved_execution_available(
+        self,
+    ):
+        app, tracking, project_id, experiment_id = self._outage()
+        state = app.call_tool(
             "experiment.get_state",
-            {"project_id": self.project_id, "experiment_id": self.experiment_id},
+            {"project_id": project_id, "experiment_id": experiment_id},
         )
         self.assertEqual(state["status"], "running")
-        self.assertIn(
-            "submit_results",
-            [item["transition"] for item in state["allowed_transitions"]],
-        )
+        self.assertIn("mlflow control plane unreachable", state["mlflow_run"]["error"])
+        self.assertEqual(len(tracking.create_calls), 1)
+        with app.store.transaction() as conn:
+            row = conn.execute(
+                "SELECT status, event_id FROM workflow_actions WHERE instance_id = ? AND kind = 'experiment.start_tracking'",
+                (experiment_id,),
+            ).fetchone()
+            self.assertEqual(row["status"], "delivered")
+            outcome = conn.execute(
+                "SELECT payload_json FROM events WHERE target_id = ? AND type = 'experiment.mlflow_run_unavailable'",
+                (experiment_id,),
+            ).fetchone()
+            self.assertEqual(
+                json.loads(outcome["payload_json"])["delivery_id"], row["event_id"]
+            )
+        self._begin(app, project_id, experiment_id)
+        self._drain(app, project_id)
+        self.assertEqual(len(tracking.create_calls), 1)
 
-    def test_agent_run_repair_attaches_once_and_creates_no_second_run(self) -> None:
-        self._start()
-        cursor = _cursor(self.app)
-
-        repaired = [
-            self.app.call_tool(
+    def test_agent_run_repair_attaches_without_creating_another_run(self):
+        app, tracking, project_id, experiment_id = self._outage()
+        cursor = _cursor(app)
+        for _ in range(2):
+            repaired = app.call_tool(
                 "mlflow.finalize_run",
                 {
-                    "project_id": self.project_id,
-                    "experiment_id": self.experiment_id,
+                    "project_id": project_id,
+                    "experiment_id": experiment_id,
                     "run_id": "agent-authored-run",
                     "status": "FINISHED",
                 },
             )
-            for _ in range(2)
-        ]
-
-        for response in repaired:
             self.assertEqual(
-                response["experiment"]["mlflow_run"]["run_id"], "agent-authored-run"
+                repaired["experiment"]["mlflow_run"]["run_id"], "agent-authored-run"
             )
-            self.assertEqual(response["experiment"]["mlflow_run"]["status"], "FINISHED")
-        row = self._experiment_row()
-        self.assertEqual(row["mlflow_run_id"], "agent-authored-run")
-        self.assertEqual(row["mlflow_run_error"], "")
-        self.assertEqual(len(self.tracking.create_calls), 1)
-        rows = _ledger_delta(
-            self, self.app, project_id=self.project_id, after_id=cursor
-        )
+        rows = _ledger_delta(self, app, project_id=project_id, after_id=cursor)
         self.assertEqual(
-            [row[0] for row in rows],
-            ["experiment.mlflow_run_refreshed", "experiment.mlflow_run_refreshed"],
-        )
-        self.assertEqual(
-            [row[3]["run_id"] for row in rows],
-            ["agent-authored-run", "agent-authored-run"],
+            [row[0] for row in rows], ["experiment.mlflow_run_refreshed"] * 2
         )
         self.assertEqual(
             [row[3]["previous_run_id"] for row in rows], ["", "agent-authored-run"]
         )
+        self.assertEqual(len(tracking.create_calls), 1)
 
-
-class LostTrackingWriteOverMcpTest(unittest.TestCase):
-    """A lost tracking write must survive MCP serialization verbatim.
-
-    As a plain ``RuntimeError`` it collapsed to -32603 "Internal error", which
-    reads as an ordinary retryable server fault — exactly the wrong lesson for
-    a transition that is already committed.
-    """
-
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.repo = Path(self.tmp.name)
-        self.tracking = RecordingTracking()
-        # Not an identity test: agent_id is merely recorded here (see test_agent_identity.py).
-        self.app = TestBrain(
-            repo_root=self.repo,
-            db_path=self.repo / ".research_plugin" / "state.sqlite",
-            mlflow_tracking=self.tracking,
-            env={"MERV_AGENT_IDENTITY": "optional"},
+    def test_failed_tracking_write_stops_for_manual_repair_after_successful_mcp_begin(
+        self,
+    ):
+        tracking = RecordingTracking()
+        app = self._brain(tracking)
+        project_id, experiment_id = self._approved(app, "Lost Tracking Write")
+        client = TestClient(app.fastapi_app)
+        current = app.workflows.runtime.get(
+            project_id=project_id, instance_id=experiment_id
         )
-        self.project_id = self.app.call_tool(
-            "project", {"action": "create", "name": "Lost Tracking Write"}
-        )["id"]
-        self.experiment_id = self.app.call_tool(
-            "experiment.create",
-            {
-                "project_id": self.project_id,
-                "name": "lost-write",
-                "intent": "Lose the tracking write after a committed transition.",
+        arguments = {
+            "project_id": project_id,
+            "instance_id": experiment_id,
+            "expected_revision": current.revision,
+        }
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": {"name": "workflow.begin", "arguments": arguments},
             },
-        )["id"]
-        with self.app._store.transaction() as conn:
-            conn.execute(
-                "UPDATE experiments SET status = 'ready_to_run' WHERE id = ?",
-                (self.experiment_id,),
-            )
-
-    def tearDown(self) -> None:
-        self.tmp.cleanup()
-
-    def test_lost_tracking_write_reaches_the_agent_as_a_coded_mcp_error(self) -> None:
-        client = TestClient(self.app.fastapi_app)
-
-        with patch(
-            "merv.brain.research_core.experiments.ExperimentService.record_mlflow_run",
-            side_effect=RuntimeError("write-ahead log offline"),
-        ):
-            response = client.post(
-                "/mcp",
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 7,
-                    "method": "tools/call",
-                    "params": {
-                        "name": "experiment.transition",
-                        "arguments": {
-                            "project_id": self.project_id,
-                            "experiment_id": self.experiment_id,
-                            "transition": "start_running",
-                        },
-                    },
-                },
-                headers={"Accept": "application/json, text/event-stream"},
-            )
-
+            headers={"Accept": "application/json, text/event-stream"},
+        )
         self.assertEqual(response.status_code, 200, response.text)
-        error = response.json()["error"]
-        self.assertEqual(error["code"], -32000)
-        self.assertNotEqual(error["message"], "Internal error")
-        self.assertEqual(error["data"]["error_code"], "tracking_persistence_failed")
+        self.assertNotIn("error", response.json())
+        self.assertEqual(tracking.create_calls, [])
+        with (
+            patch(
+                "merv.brain.research_core.experiments.ExperimentService.record_mlflow_run",
+                side_effect=RuntimeError("write-ahead log offline"),
+            ),
+            self.assertLogs("merv.brain.application.mlflow", level="ERROR"),
+        ):
+            result = self._drain(app, project_id)
+        self.assertEqual(result["failed"], 1)
+        with app.store.transaction() as conn:
+            action = dict(
+                conn.execute(
+                    "SELECT * FROM workflow_actions WHERE instance_id = ? AND kind = 'experiment.start_tracking'",
+                    (experiment_id,),
+                ).fetchone()
+            )
+        self.assertEqual(action["status"], "manual_repair")
         for phrase in (
-            "already committed",
-            "must not be retried",
             "may or may not exist",
-            "experiment.get_state",
             "run-composed",
             "write-ahead log offline",
         ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, error["message"])
-
-        conn = self.app._store.connect()
-        try:
-            row = conn.execute(
-                "SELECT status, mlflow_run_id FROM experiments WHERE id = ?",
-                (self.experiment_id,),
-            ).fetchone()
-        finally:
-            conn.close()
-        # The error is about the tracking record only: the transition itself is
-        # durable, which is why the caller must not retry it.
-        self.assertEqual(row["status"], "running")
-        self.assertEqual(row["mlflow_run_id"], "")
-        self.assertEqual(len(self.tracking.create_calls), 1)
-
-    def test_lost_tracking_write_is_a_server_error_on_the_rest_route(self) -> None:
-        # The request was valid and its transition committed; only the server's
-        # own durable record failed. 400 would tell the agent to fix its call.
-        client = TestClient(self.app.fastapi_app, raise_server_exceptions=False)
-
-        with patch(
-            "merv.brain.research_core.experiments.ExperimentService.record_mlflow_run",
-            side_effect=RuntimeError("write-ahead log offline"),
-        ):
-            response = client.post(
-                f"/api/projects/{self.project_id}"
-                f"/experiments/{self.experiment_id}/transition",
-                json={"transition": "start_running"},
+            self.assertIn(phrase, action["last_error"])
+        self.assertEqual(
+            app.research.experiment_state(
+                project_id=project_id, experiment_id=experiment_id
+            )["status"],
+            "running",
+        )
+        replay = client.post(
+            "/mcp/call", json={"name": "workflow.begin", "arguments": arguments}
+        )
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(len(tracking.create_calls), 1)
+        with app.store.transaction() as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM workflow_actions WHERE instance_id = ? AND kind = 'experiment.start_tracking'",
+                    (experiment_id,),
+                ).fetchone()[0],
+                1,
             )
+            conn.execute(
+                "UPDATE workflow_actions SET lease_until = '', next_attempt_at = '' WHERE id = ?",
+                (action["id"],),
+            )
+        self._drain(app, project_id)
+        history = app.call_tool(
+            "workflow.history",
+            {"project_id": project_id, "instance_id": experiment_id},
+        )
+        stopped = next(item for item in history["actions"] if item["id"] == action["id"])
+        self.assertEqual(stopped["status"], "manual_repair")
+        self.assertIn("run-composed", stopped["last_error"])
+        self.assertEqual(len(tracking.create_calls), 1)
+        repaired = app.call_tool(
+            "mlflow.finalize_run",
+            {
+                "project_id": project_id,
+                "experiment_id": experiment_id,
+                "run_id": "run-composed",
+                "status": None,
+            },
+        )
+        self.assertEqual(repaired["experiment"]["mlflow_run"]["run_id"], "run-composed")
+        history = app.call_tool(
+            "workflow.history",
+            {"project_id": project_id, "instance_id": experiment_id},
+        )
+        restored = next(item for item in history["actions"] if item["id"] == action["id"])
+        self.assertEqual(restored["status"], "delivered")
+        self.assertEqual(restored["last_error"], "")
+        self._drain(app, project_id)
+        self.assertEqual(len(tracking.create_calls), 1)
 
-        self.assertEqual(response.status_code, 500, response.text)
-        body = response.json()
-        self.assertEqual(body["error_code"], "tracking_persistence_failed")
-        for phrase in (
-            "already committed",
-            "must not be retried",
-            "may or may not exist",
-            "experiment.get_state",
-            "write-ahead log offline",
+    def test_manual_repair_can_replace_the_previous_terminal_pointer(self):
+        tracking = RecordingTracking()
+        app = self._brain(tracking)
+        project_id, experiment_id = self._approved(app, "Lost Replacement Write")
+        app.research.refresh_tracking_run(
+            project_id=project_id, experiment_id=experiment_id,
+            run={"run_id": "run-prior", "status": "FINISHED"},
+        )
+        self._begin(app, project_id, experiment_id)
+        with (
+            patch("merv.brain.research_core.experiments.ExperimentService.record_mlflow_run",
+                  side_effect=RuntimeError("database acknowledgement lost")),
+            self.assertLogs("merv.brain.application.mlflow", level="ERROR"),
         ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, body["detail"])
+            self._drain(app, project_id)
+        self.assertEqual(app.research.experiment_state(
+            project_id=project_id, experiment_id=experiment_id,
+        )["mlflow_run"]["run_id"], "run-prior")
+        repaired = app.call_tool("mlflow.finalize_run", {
+            "project_id": project_id, "experiment_id": experiment_id,
+            "run_id": "run-composed", "status": None,
+        })
+        self.assertEqual(repaired["experiment"]["mlflow_run"]["run_id"], "run-composed")
+        self.assertFalse(app.workflows.deliveries.needs_manual_repair(
+            project_id=project_id, instance_id=experiment_id, kind="experiment.start_tracking",
+        ))
+        self._drain(app, project_id)
+        self.assertEqual(len(tracking.create_calls), 1)
 
 
 if __name__ == "__main__":

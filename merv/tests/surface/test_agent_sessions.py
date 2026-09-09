@@ -179,14 +179,10 @@ class AgentSessionSurfaceTest(unittest.TestCase):
             target_id=reflection_id,
             role="reflection_reviewer",
         )
-        self.brain.call_tool(
-            "reflection.transition",
-            {
-                "project_id": self.project_id,
-                "reflection_id": reflection_id,
-                "transition": "begin_consolidation",
-            },
+        state = self.brain.call_tool(
+            "reflection.get", {"project_id": self.project_id, "reflection_id": reflection_id}
         )
+        self.assertEqual(state["status"], "consolidating")
         return reflection_id
 
     def test_session_reads_its_native_job_and_cannot_cancel_another_experiments_job(self) -> None:
@@ -284,26 +280,15 @@ class AgentSessionSurfaceTest(unittest.TestCase):
             arguments={"project_id": self.project_id},
         )
 
-        self.assertEqual(session["kind"], "experiment")
-        self.assertEqual(session["assignment"]["title"], "Run experiment")
-        self.assertEqual(
-            session["assignment"]["subtitle"], "parallel-agent"
-        )
-        self.assertEqual(
-            session["assignment"]["packet"],
-            {
-                "task": "Run experiment",
-                "project": "Agent sessions",
-                "attempt": 1,
-                "experiment": "parallel-agent",
-            },
-        )
-        self.assertIn(
-            "call review.request, then end this host session", session["instruction"]
-        )
-        self.assertIn(
-            "separately authenticated reviewer session", session["instruction"]
-        )
+        self.assertEqual(session["kind"], "workflow")
+        self.assertEqual(session["workflow_instance_id"], self.experiment_id)
+        self.assertEqual(session["workflow_node"], "planned")
+        self.assertEqual(session["workflow_revision"], 0)
+        self.assertEqual(session["assignment"]["title"], "Design experiment")
+        self.assertEqual(session["assignment"]["role"], "experiment_owner")
+        self.assertIn("parallel-agent", session["assignment"]["brief"])
+        self.assertIn("Complete only this node", session["instruction"])
+        self.assertIn("hand off and exit", session["instruction"])
         self.assertEqual(direct.status_code, 403, direct.text)
         self.assertEqual(foreign.status_code, 400, foreign.text)
         self.assertEqual(foreign.json()["error_code"], "agent_session_scope_forbidden")
@@ -485,8 +470,8 @@ class AgentSessionSurfaceTest(unittest.TestCase):
             ]
         }
         self.assertEqual(closed[reviewer["id"]]["status"], "expired")
-        self.assertEqual(closed[reviewer["id"]]["close_reason"], "review_closed")
-        self.assertEqual(closed[owner["id"]]["status"], "offered")
+        self.assertEqual(closed[reviewer["id"]]["close_reason"], "workflow_assignment_changed")
+        self.assertEqual(closed[owner["id"]]["status"], "expired")
 
     def test_merv_dispatches_the_reflection_reviewer_before_consolidation(
         self,
@@ -523,7 +508,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.assertIn("project-reflection-review", reviewer["instruction"])
         self.assertEqual(authenticated.status_code, 200, authenticated.text)
 
-    def test_expired_review_request_no_longer_blocks_owner_redispatch(self) -> None:
+    def test_expired_review_request_is_renewed_for_an_independent_reviewer(self) -> None:
         owner = self.claim(secret=self.secret(), runner_id="owner")
         self.brain.submit_artifact(
             project_id=self.project_id,
@@ -563,10 +548,14 @@ class AgentSessionSurfaceTest(unittest.TestCase):
                 (request["review_request_id"],),
             )
 
+        self.brain.application.workflow_deliveries.run_once(project_id=self.project_id, renew_interval_seconds=0)
         replacement = self.claim(secret=self.secret(), runner_id="replacement")
 
-        self.assertEqual(replacement["kind"], "experiment")
+        self.assertEqual(replacement["kind"], "review")
         self.assertEqual(replacement["experiment_id"], self.experiment_id)
+        self.assertNotEqual(replacement["review_request_id"], request["review_request_id"])
+        self.assertEqual(replacement["workflow_node"], "design_review")
+        self.assertEqual(replacement["workflow_revision"], 1)
 
     def test_revoking_the_parent_project_key_revokes_the_session(self) -> None:
         user_id = "runner-owner"
@@ -783,8 +772,14 @@ class AgentSessionSurfaceTest(unittest.TestCase):
                 "reason": "Review the immutable code proposal.",
             },
         )
-        self.assertEqual(requested.status_code, 200, requested.text)
-        request_id = requested.json()["result"]["review_request_id"]
+        self.assertEqual(requested.status_code, 401, requested.text)
+        # Submitting the proposal ends this node and fences its credential.
+        # The support action opens the next node's independent review.
+        opened = self.brain.application.request_review(
+            project_id=self.project_id, target_type="reflection", target_id=reflection_id,
+            role="consolidation_reviewer", producer_session_id=consolidator["id"],
+        )
+        request_id = opened["review_request_id"]
         self.client.post(
             f"/api/agent-sessions/{consolidator['id']}/release",
             json={"runner_id": "consolidator", "reason": "proposal_submitted"},
@@ -1029,7 +1024,7 @@ class AgentDispatchSwitchTest(unittest.TestCase):
         listing = self.client.get(f"/api/projects/{self.project_id}/agent-sessions").json()
         self.assertEqual(
             [(item["kind"], item["title"], item["status"]) for item in listing["queue"]],
-            [("experiment", "dispatchable", "planned")],
+            [("workflow", "Design experiment", "planned")],
         )
         self.assertEqual(listing["queue"][0]["target_type"], "experiment")
         self.assertEqual(listing["queue_total"], 1)

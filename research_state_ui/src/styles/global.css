@@ -1128,7 +1128,7 @@ html[data-theme="dark"] .product-tab--active {
 
 /* =====================================================================
    FSM strip — experiment lifecycle (lean)
-   Stages: planned → design_review → ready_to_run → running → experiment_review → complete
+   Stages: planned → design_review → running → experiment_review → complete
    ===================================================================== */
 .fsm-strip-wrap {
   display: flex;

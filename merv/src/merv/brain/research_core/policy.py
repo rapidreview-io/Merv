@@ -3,6 +3,19 @@
 
 from __future__ import annotations
 
+from ..workflows import research_contracts
+
+ACTIVE_EXPERIMENT_CAP = research_contracts.ACTIVE_EXPERIMENT_CAP
+CLAIM_CONFIDENCES = research_contracts.CLAIM_CONFIDENCES
+CLAIM_STATUSES = research_contracts.CLAIM_STATUSES
+MAX_EXPERIMENT_NAME_LEN = research_contracts.MAX_EXPERIMENT_NAME_LEN
+MAX_TASK_NAME_LEN = research_contracts.MAX_TASK_NAME_LEN
+MIN_EXPERIMENT_NAME_LEN = research_contracts.MIN_EXPERIMENT_NAME_LEN
+MIN_TASK_NAME_LEN = research_contracts.MIN_TASK_NAME_LEN
+active_experiment_cap_would_exceed_message = research_contracts.active_experiment_cap_would_exceed_message
+validate_experiment_name = research_contracts.validate_experiment_name
+validate_task_name = research_contracts.validate_task_name
+
 from collections.abc import Mapping
 from dataclasses import dataclass
 import json
@@ -11,7 +24,8 @@ from typing import Any, Literal, TypeAlias
 
 from merv.shared.artifact_roles import PROJECT_GRAPH_ROLE, REFLECTION_LENS_DOC_ROLE
 
-from ..kernel.utils import ValidationError, WorkflowError
+from ..kernel.utils import ValidationError, WorkflowError, now_iso
+from ..workflows import Evaluation
 from .experiment_workflow import (
     EXPERIMENT_TERMINAL_STATUSES,
     EXPERIMENT_WORKFLOW,
@@ -47,17 +61,6 @@ REVIEW_ROLE_VALUES = (
 )
 REVIEW_ROLES = frozenset(REVIEW_ROLE_VALUES)
 
-CLAIM_STATUSES = frozenset(
-    {
-        "draft",
-        "active",
-        "supported",
-        "weakened",
-        "contradicted",
-        "abandoned",
-    }
-)
-CLAIM_CONFIDENCES = frozenset({"low", "medium", "high"})
 
 EXPERIMENT_ACTIVE_PROCESS_STATUSES = frozenset({"provisioning", "running"})
 
@@ -67,14 +70,8 @@ _ENTITY_ID_RE = re.compile(
     r"\b(exp|claim|res|rev|rver|syn|lit|paper|task)_[A-Za-z0-9]"
 )
 
-MAX_EXPERIMENT_NAME_LEN = 48
-MIN_EXPERIMENT_NAME_LEN = 3
-_EXPERIMENT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 # Task names follow the same folder-safe rules and become tasks/<name>/.
-MAX_TASK_NAME_LEN = MAX_EXPERIMENT_NAME_LEN
-MIN_TASK_NAME_LEN = MIN_EXPERIMENT_NAME_LEN
 
-ACTIVE_EXPERIMENT_CAP = 7
 
 # projects.settings_json key gating automatic local coding-agent dispatch.
 AGENT_DISPATCH_SETTING = "agent_dispatch"
@@ -95,16 +92,6 @@ def active_experiment_cap_reached_message(
     )
 
 
-def active_experiment_cap_would_exceed_message(
-    *, active_count: int, proposed_count: int
-) -> str:
-    experiment_word = "experiment" if proposed_count == 1 else "experiments"
-    return (
-        "active experiment cap would be exceeded: "
-        f"project has {active_count} active experiments and this reflection "
-        f"proposes {proposed_count} new {experiment_word}; "
-        "finish one before creating another."
-    )
 
 
 def covered_terminal_ids(
@@ -251,53 +238,42 @@ class GateEvaluation:
     status: str
     requirements: tuple[RequirementEvaluation, ...]
     review: RequirementEvaluation | None
-
-    @property
-    def subject(self) -> str:
-        return self.workflow.subject
+    decision: Evaluation
 
     @property
     def state(self):
-        return self.workflow.state(self.status)
+        return self.workflow.state(self.decision.snapshot.state)
 
     @property
     def transition(self) -> str | None:
-        return None if self.state is None else self.state.forward.name
+        return None if self.decision.suggested is None else self.decision.suggested.edge.name
 
     @property
     def leads_to(self) -> str | None:
-        return None if self.state is None else self.state.forward.to_status
+        return None if self.decision.suggested is None else self.decision.suggested.edge.target
 
     @property
     def terminal(self) -> bool:
-        return self.status in self.workflow.terminal_statuses
+        return bool(self.decision.snapshot.outcome)
 
     @property
     def legal_transitions(self) -> tuple[dict[str, str], ...]:
-        return tuple(self.workflow.allowed_transitions_for(self.status))
-
-    @property
-    def blocker(self) -> RequirementEvaluation | None:
-        return next(
-            (
-                item
-                for item in (*self.requirements, self.review)
-                if item and not item.satisfied
-            ),
-            None,
-        )
+        return tuple({"transition": action.edge.name, "leads_to": action.edge.target} for action in self.decision.actions)
 
     @property
     def blocker_code(self) -> str:
-        return "" if self.blocker is None else self.blocker.blocker_code
+        selected = self.decision.suggested
+        return "" if selected is None or not selected.issues else selected.issues[0].code
 
     @property
     def explanation(self) -> str:
-        return "" if self.blocker is None else self.blocker.explanation
+        selected = self.decision.suggested
+        return "" if selected is None else "; ".join(issue.message for issue in selected.issues)
 
     @property
     def ready(self) -> bool:
-        return self.terminal if self.transition is None else self.blocker is None
+        selected = self.decision.suggested
+        return self.terminal if selected is None else selected.available
 
     def checklist(self) -> dict[str, JSONValue]:
         items = [dict(item) for gate in self.requirements for item in gate.items]
@@ -312,33 +288,7 @@ class GateEvaluation:
         }
 
     def require_transition(self, transition: str) -> str:
-        if self.terminal:
-            raise WorkflowError(
-                f"{self.subject} is {self.status!r}; no transitions are "
-                "allowed from a terminal state"
-            )
-        selected = next(
-            (
-                item
-                for item in self.legal_transitions
-                if item["transition"] == transition
-            ),
-            None,
-        )
-        if selected is None:
-            options = ", ".join(item["transition"] for item in self.legal_transitions)
-            raise WorkflowError(
-                f"transition {transition!r} is not allowed from "
-                f"{self.status!r}; allowed from here: {options}"
-            )
-        if transition != self.transition:
-            return selected["leads_to"]
-        for requirement in self.requirements:
-            if not requirement.satisfied:
-                raise WorkflowError(requirement.enforcement_error)
-        if self.review is not None and not self.review.satisfied:
-            raise WorkflowError(self.review.enforcement_error)
-        return selected["leads_to"]
+        return self.decision.require(transition).target
 
 
 def evaluate_artifact_requirement(
@@ -392,23 +342,26 @@ def evaluate_review_gate(
     target_type: str,
     target: dict[str, Any],
     review: ReviewGate,
+    snapshot=None,
 ) -> RequirementEvaluation:
-    snapshot_id = review_snapshot_id(target_type=target_type, target=target)
-    passes = conn.execute(
+    snapshot_id = review_snapshot_id(target_type=target_type, target=target, snapshot=snapshot)
+    latest = conn.execute(
         """
-        SELECT s.independence FROM reviews r
+        SELECT r.verdict, s.independence FROM reviews r
         JOIN review_sessions s ON s.id = r.session_id
         WHERE r.target_type = ? AND r.target_id = ? AND r.role = ?
-          AND r.target_snapshot_id = ? AND r.verdict = 'pass'
-        ORDER BY r.created_seq DESC
+          AND r.target_snapshot_id = ? AND r.project_id = ? AND s.status = 'submitted'
+        ORDER BY r.created_seq DESC LIMIT 1
         """,
         (
             target_type,
             str(target["id"]),
             review.role,
             snapshot_id,
+            str(target["project_id"]),
         ),
     ).fetchall()
+    passes = [row for row in latest if row["verdict"] == "pass"]
     verified = any(
         str(row["independence"]) == "verified_agent_review" for row in passes
     )
@@ -484,8 +437,8 @@ def is_review_gate_exempt(*, role: str) -> bool:
 
 
 def validate_review_role(*, role: str) -> None:
-    if role not in REVIEW_ROLES:
-        raise ValidationError(f"unknown review role: {role}")
+    if not isinstance(role, str) or not role.strip() or len(role) > 128:
+        raise ValidationError("review role must be a nonempty workflow role of at most 128 characters")
 
 
 def validate_review_verdict(*, verdict: str) -> None:
@@ -516,33 +469,10 @@ def validate_synopsis(value: str) -> str:
     return synopsis
 
 
-def _validate_folder_name(name: str, *, subject: str, folder: str) -> str:
-    name = (name or "").strip()
-    if not name:
-        raise ValidationError(
-            f"name is required: a short, folder-safe {subject} name — it "
-            f"becomes the {subject} folder {folder}/<name>/"
-        )
-    if (
-        len(name) < MIN_EXPERIMENT_NAME_LEN
-        or len(name) > MAX_EXPERIMENT_NAME_LEN
-        or not _EXPERIMENT_NAME_RE.fullmatch(name)
-    ):
-        raise ValidationError(
-            f"{subject} name must work as a folder name: start with a letter "
-            "or digit and use only letters, digits, '.', '_' and '-', between "
-            f"{MIN_EXPERIMENT_NAME_LEN} and "
-            f"{MAX_EXPERIMENT_NAME_LEN} characters"
-        )
-    return name
 
 
-def validate_experiment_name(name: str) -> str:
-    return _validate_folder_name(name, subject="experiment", folder="experiments")
 
 
-def validate_task_name(name: str) -> str:
-    return _validate_folder_name(name, subject="task", folder="tasks")
 
 
 def evaluate_dependency_requirement(
@@ -640,8 +570,16 @@ def agent_dispatch_enabled(project: Mapping[str, Any]) -> bool:
     return bool(settings.get(AGENT_DISPATCH_SETTING, False))
 
 
-def review_snapshot_id(*, target_type: str, target: dict[str, Any]) -> str:
+def review_snapshot_id(*, target_type: str, target: dict[str, Any], snapshot=None) -> str:
     """Byte-stable identity of the exact state and artifacts under review."""
+    if snapshot is not None and (snapshot.version > 1 or target_type not in {"experiment", "reflection", "task"}):
+        from ..workflows import snapshot_view
+        pinned = snapshot_view(snapshot)
+        return "workflow:" + json.dumps({**pinned, "target_type": target_type, "target_id": snapshot.id,
+                                         "status": snapshot.state, "attempt_index": int(target.get("attempt_index") or 1),
+                                         "artifacts": [{"artifact_id": item["id"], "role": item.get("role", "")}
+                                                       for item in target.get("current_attempt_artifacts") or ()]},
+                                        sort_keys=True, separators=(",", ":"))
     artifact_tokens = [
         f"{artifact['id']}:{artifact.get('role', '')}:"
         f"{artifact.get('attempt_index', 0)}"
@@ -662,6 +600,8 @@ def review_snapshot_id(*, target_type: str, target: dict[str, Any]) -> str:
 
 
 def snapshot_from_id(*, snapshot_id: str) -> dict[str, Any]:
+    if snapshot_id.startswith("workflow:"):
+        return json.loads(snapshot_id.removeprefix("workflow:"))
     if "|" not in snapshot_id:
         target_type, _, target_id = snapshot_id.partition(":")
         return {
@@ -693,6 +633,37 @@ def snapshot_from_id(*, snapshot_id: str) -> dict[str, Any]:
         "snapshot_token": parts[5] if len(parts) > 5 else "",
         "code_sha": parts[6] if len(parts) > 6 else "",
     }
+
+
+def read_review_fact(*, conn, project_id: str, target_type: str, target_id: str,
+                     snapshot_id: str, role: str, request: bool = False) -> dict[str, Any]:
+    """Read a capability or verdict for exactly one scoped immutable snapshot."""
+    if request:
+        row = conn.execute(
+            "SELECT id, target_snapshot_id FROM review_requests WHERE project_id = ? AND target_type = ? "
+            "AND target_id = ? AND role = ? AND target_snapshot_id = ? AND status IN ('requested', 'started') "
+            "AND expires_at > ? ORDER BY created_seq DESC LIMIT 1",
+            (project_id, target_type, target_id, role, snapshot_id, now_iso()),
+        ).fetchone()
+        return {} if row is None else {**snapshot_from_id(snapshot_id=row["target_snapshot_id"]), "request_id": row["id"]}
+    row = conn.execute(
+        "SELECT r.id, r.verdict, r.return_to, r.notes, r.synopsis, r.findings_json, r.evidence_json, s.independence "
+        "FROM reviews r JOIN review_sessions s ON s.id = r.session_id WHERE r.project_id = ? AND r.target_type = ? "
+        "AND r.target_id = ? AND r.role = ? AND r.target_snapshot_id = ? AND s.status = 'submitted' "
+        "ORDER BY r.created_seq DESC LIMIT 1", (project_id, target_type, target_id, role, snapshot_id),
+    ).fetchone()
+    fact = {} if row is None else dict(row)
+    passed = fact.get("verdict") == "pass"
+    strict = project_settings(conn=conn, project_id=project_id).get("require_verified_reviews")
+    error = f"A passing independent {role} review is required."
+    if passed and strict and fact.get("independence") != "verified_agent_review":
+        passed = False
+        error = (f"A {role} review passed with only attested independence; this project requires verified reviews "
+                 "(require_verified_reviews is on). Request a fresh review with the reviewer's own caller_session_id.")
+    return {**fact, "role": role, "passed": passed, "error": "" if passed else error, "snapshot_id": snapshot_id,
+            "artifacts": snapshot_from_id(snapshot_id=snapshot_id).get("artifacts") or [],
+            "findings": json.loads(str(fact.get("findings_json") or "[]")),
+            "evidence": json.loads(str(fact.get("evidence_json") or "{}"))}
 
 
 def _int_or_zero(value: str) -> int:

@@ -64,7 +64,7 @@ _REFLECTION_REVISION_RETURN = next(
 _REFLECTION_INITIAL_STATE = REFLECTION_WORKFLOW.state(REFLECTION_WORKFLOW.initial)
 if _REFLECTION_INITIAL_STATE is None:
     raise RuntimeError("reflection workflow is missing its first transition")
-_REFLECTION_FIRST_TRANSITION = _REFLECTION_INITIAL_STATE.forward.name
+_REFLECTION_FIRST_TRANSITION = _REFLECTION_INITIAL_STATE.transitions[0].name
 _REFLECTION_PUBLISH_TRANSITION = next(
     transition.name
     for transition in REFLECTION_WORKFLOW.transitions
@@ -125,6 +125,7 @@ class ProjectScopedInput(ContractModel):
 
 
 class WorkflowStatusAndNextInput(ProjectScopedInput):
+    instance_id: str | None = Field(default=None, description="A registered workflow instance, including any plugin workflow.")
     experiment_id: str | None = None
     task_id: str | None = Field(
         default=None,
@@ -136,9 +137,32 @@ class WorkflowStatusAndNextInput(ProjectScopedInput):
 
     @model_validator(mode="after")
     def _one_scope(self) -> "WorkflowStatusAndNextInput":
-        if self.experiment_id and self.task_id:
-            raise ValueError("pass experiment_id or task_id, not both")
+        if sum(bool(value) for value in (self.instance_id, self.experiment_id, self.task_id)) > 1:
+            raise ValueError("pass only one of instance_id, experiment_id or task_id")
         return self
+
+
+class WorkflowInstanceInput(ProjectScopedInput):
+    instance_id: str = Field(min_length=1)
+
+
+class WorkflowBeginInput(WorkflowInstanceInput):
+    expected_revision: int = Field(ge=0)
+
+
+class WorkflowStartInput(ProjectScopedInput):
+    workflow: str = Field(min_length=1)
+    request_id: str = Field(min_length=1, description="Stable id for this logical start; reuse it on retries.")
+    data: dict[str, Any] = Field(default_factory=dict)
+    entry: str = ""
+    version: int | None = Field(default=None, ge=1)
+
+
+class WorkflowTransitionInput(WorkflowInstanceInput):
+    action: str = Field(min_length=1)
+    expected_revision: int = Field(ge=0)
+    request_id: str = Field(min_length=1, description="Stable id for this logical action; reuse it on retries.")
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentHelloInput(ContractModel):
@@ -898,23 +922,26 @@ class StorageObjectInput(ProjectScopedInput):
 
 
 class ReviewRequestInput(ProjectScopedInput):
-    target_type: Literal[*REVIEW_TARGET_VALUES]
+    target_type: str = Field(min_length=1, description="Registered workflow name, such as experiment or replication.")
     target_id: str
-    role: Literal[*REVIEW_ROLE_VALUES]
+    role: str = Field(min_length=1, max_length=128, description="Role declared by the current read-only workflow node.")
     reason: str = ""
     producer_session_id: str = "main"
 
 
 class ReviewStartInput(ContractModel):
     review_request_id: str
-    reviewer_capability: str
+    reviewer_capability: str = Field(
+        description="Use the handoff capability, or 'assigned' in the assigned auto-run reviewer session."
+    )
     declared_agent: str = ""
     caller_session_id: str = Field(
         description=(
             "The reviewer's OWN session identity (any stable identifier for "
             "the reviewing agent's session). Required: it must be non-empty "
             "and differ from the producer session that requested the review, "
-            "so reviewer independence can be verified."
+            "so reviewer independence can be verified. In an assigned auto-run "
+            "reviewer session, use 'assigned'; the authenticated lease supplies the identity."
         )
     )
 
@@ -933,7 +960,7 @@ class ReviewSubmitInput(ContractModel):
             "no backticks or markdown, no newlines."
         )
     )
-    return_to: Literal[*REVIEW_RETURN_VALUES] = Field(
+    return_to: str = Field(
         default_factory=str,
         description=(
             "Where a rejected target goes next. Omit on pass. REQUIRED on "
@@ -954,9 +981,6 @@ class ReviewSubmitInput(ContractModel):
             f"fail verdict ENDS the task ({_TASK_FAIL_STATUS!r}) — reserve it "
             "for a goal that cannot be met within the task's scope."
         ),
-        json_schema_extra={
-            "enum": [value for value in REVIEW_RETURN_VALUES if value]
-        },
     )
     notes: str = Field(default="", description="Free-text summary of the review.")
     findings: list[dict[str, Any]] = Field(
@@ -978,7 +1002,7 @@ class ReviewSubmitInput(ContractModel):
 
 
 class ReviewStatusInput(ProjectScopedInput):
-    target_type: Literal[*REVIEW_TARGET_VALUES]
+    target_type: str = Field(min_length=1)
     target_id: str
 
 
@@ -1350,6 +1374,8 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         handler_identity="application.status_for_agent",
         input_model=WorkflowStatusAndNextInput,
         description=(
+            "With instance_id, return any registered workflow's current state, "
+            "available and blocked actions, revision, and the current node's agent brief. "
             "The canonical entrypoint for starting or resuming work. Without "
             "experiment_id or task_id, returns workflow guidance plus the "
             "bounded project context: project metadata, latest published "
@@ -1364,6 +1390,35 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             "artifact.find with one id or an ordered id batch for deeper "
             "artifact reads."
         ),
+    ),
+    "workflow.catalog": ToolContract(
+        handler_identity="workflows.catalog", input_model=EmptyInput,
+        description="List registered workflows and their available definition versions.",
+    ),
+    "workflow.start": ToolContract(
+        handler_identity="workflows.start", input_model=WorkflowStartInput,
+        description="Start a registered workflow at a named entry, pinned to a definition version. Reuse request_id on retries.",
+    ),
+    "workflow.transition": ToolContract(
+        handler_identity="workflows.transition", input_model=WorkflowTransitionInput,
+        description="Apply a named graph action using the revision returned by workflow.status_and_next. Durable facts are rechecked before committing.",
+    ),
+    "workflow.assignment": ToolContract(
+        handler_identity="workflows.assignment", input_model=WorkflowInstanceInput,
+        description="Build the current agent node's concise brief, exact input references, and handoff instructions. Missing dispatch prerequisites block the assignment.",
+    ),
+    "workflow.begin": ToolContract(
+        handler_identity="workflows.begin", input_model=WorkflowBeginInput,
+        description=(
+            "Begin this existing node's work in an interactive session and return its assignment. "
+            "Use the current expected_revision; prerequisites are rechecked atomically. Records "
+            "actual work start once per revision and queues node start effects without changing "
+            "state. Auto-run sessions activate through their own lease instead."
+        ),
+    ),
+    "workflow.history": ToolContract(
+        handler_identity="workflows.history", input_model=WorkflowInstanceInput,
+        description="Read the durable state history and support actions for one workflow instance, including delivery status and errors requiring repair.",
     ),
     "project": ToolContract(
         handler_identity="application.project",
@@ -1510,6 +1565,8 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             "id, and timestamp), plus any operation-specific side-effect receipt; it "
             "does not return experiment context. Call "
             "workflow.status_and_next afterward to continue. "
+            "Passing reviews apply their forward transition automatically; "
+            "an assigned worker stops after handing off its node. "
             f" Use {_EXPERIMENT_RETRY_TRANSITION} only for "
             "infrastructure/interruption reruns where the experiment should "
             f"stay {_EXPERIMENT_EXECUTION_STATUS} on the same attempt. At "
@@ -1568,11 +1625,11 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         description=(
             "Apply a task transition allowed by workflow.status_and_next: "
             "submit_delivery (in_progress → in_review, needs a valid brief and "
-            "delivery and every dependency done), accept (after a passing "
-            "task_reviewer review → done), or mark_failed (the owner ends the "
+            "delivery and every dependency done), or mark_failed (the owner ends the "
             "task with evidence={'reason': ...}). Returns a compact "
-            "acknowledgement; call workflow.status_and_next(task_id=...) "
-            "afterward to continue."
+            "acknowledgement. A passing task_reviewer review completes the task "
+            "automatically. An assigned worker stops after submission; interactive "
+            "agents refresh workflow.status_and_next(task_id=...)."
         ),
     ),
     "mlflow.context": ToolContract(
@@ -1646,7 +1703,7 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             + "). See "
             "reflection.get.allowed_transitions for preconditions from the "
             f"current status. {_REFLECTION_PUBLISH_TRANSITION} is internal: "
-            "after reflection review, begin_consolidation hands code to a "
+            "a passing reflection review automatically hands code to a "
             "separate consolidator and reviewer; only the runner's central "
             "advance may publish and materialize the approved change spec."
         ),
@@ -1829,7 +1886,9 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             "response's reviewer_handoff.spawn_prompt is a ready-to-use prompt "
             "for the reviewer subagent. The reviewer presents the capability "
             "via review.start with its own caller_session_id. Starting does "
-            "not consume it; the first accepted submission closes the request."
+            "not consume it; the first accepted submission closes the request. "
+            "Auto-run opens and dispatches reviews when a workflow enters a "
+            "review node; its producer stops after that handoff."
         ),
     ),
     "review.start": ToolContract(
@@ -1843,8 +1902,10 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             "by workflow.status_and_next, built only from artifact versions "
             "pinned to the request. Plan/report bodies needed for that review "
             "are included; use artifact.find for deeper reads of the listed "
-            "artifact ids. The reviewer skill supplies the procedural "
-            "read-only boundary."
+            "artifact ids. Assigned auto-run reviewers use 'assigned' for both "
+            "reviewer_capability and caller_session_id; their scoped credential "
+            "enforces the read-only boundary. Interactive reviewers follow the "
+            "same skill using the handoff capability."
         ),
     ),
     "review.submit": ToolContract(
@@ -1864,7 +1925,10 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             "but execution or the conclusion is flawed (the experiment "
             "resumes running with its approved plan intact). Put structured "
             "rationale inside "
-            "'evidence' — unknown top-level fields are rejected."
+            "'evidence' — unknown top-level fields are rejected. The verdict and "
+            "its graph transition commit together: design pass enters execution, "
+            "attempt/task pass completes work, and reflection pass enters "
+            "consolidation. Consolidation pass waits for the runner to publish."
         ),
     ),
     "review.status": ToolContract(

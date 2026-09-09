@@ -80,6 +80,7 @@ class FeedServiceTest(unittest.TestCase):
         self.pid = self.call("project", action="create", name="Feed Test")["id"]
 
     def tearDown(self) -> None:
+        self.app.shutdown()
         self.tmp.cleanup()
 
     def call(self, tool: str, **kwargs):
@@ -913,6 +914,7 @@ class FeedHttpTest(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        self.app.shutdown()
         self.tmp.cleanup()
 
     def test_figure_attachment_reuses_a_submitted_artifact_figure_end_to_end(self) -> None:
@@ -1206,6 +1208,7 @@ class FeedNoteForTest(unittest.TestCase):
         )["id"]
 
     def tearDown(self) -> None:
+        self.app.shutdown()
         self.tmp.cleanup()
 
     def test_none_when_a_posts_text_mentions_the_entity_inline(self) -> None:
@@ -1266,10 +1269,7 @@ class FeedNoteForTest(unittest.TestCase):
 
 
 class FeedNoteTransitionIntegrationTest(unittest.TestCase):
-    """End-to-end coverage of Part 2's main attach point: a real experiment,
-    driven through the actual gate/review stack to `complete`, carries
-    `feed_note` in experiment.transition's response when the feed has never
-    mentioned it, and omits the field once a post references it."""
+    """A review completes the experiment and review status carries its feed nudge."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -1283,6 +1283,7 @@ class FeedNoteTransitionIntegrationTest(unittest.TestCase):
         )["id"]
 
     def tearDown(self) -> None:
+        self.app.shutdown()
         self.tmp.cleanup()
 
     def call(self, tool_name: str, **kwargs):
@@ -1319,7 +1320,7 @@ class FeedNoteTransitionIntegrationTest(unittest.TestCase):
             synopsis="The plan and results check out, so the attempt stands as reported.",
         )
 
-    def _drive_to_ready_for_complete(self, *, name: str) -> str:
+    def _drive_to_complete(self, *, name: str) -> str:
         exp_id = self.call(
             "experiment.create",
             name=name,
@@ -1336,17 +1337,13 @@ class FeedNoteTransitionIntegrationTest(unittest.TestCase):
             transition="submit_design",
         )
         self._pass_review(exp_id=exp_id, role="design_reviewer")
+        current = self.app.workflows.runtime.get(project_id=self.pid, instance_id=exp_id)
+        self.assertEqual(current.state, "running")
         self.call(
-            "experiment.transition",
+            "workflow.begin",
             project_id=self.pid,
-            experiment_id=exp_id,
-            transition="mark_ready_to_run",
-        )
-        self.call(
-            "experiment.transition",
-            project_id=self.pid,
-            experiment_id=exp_id,
-            transition="start_running",
+            instance_id=exp_id,
+            expected_revision=current.revision,
         )
         self._submit(
             exp_id=exp_id, path="results.json", role="result", body='{"metric": 1}\n'
@@ -1366,15 +1363,15 @@ class FeedNoteTransitionIntegrationTest(unittest.TestCase):
         self._pass_review(exp_id=exp_id, role="experiment_reviewer")
         return exp_id
 
-    def test_complete_transition_carries_feed_note_when_feed_is_silent(self) -> None:
-        exp_id = self._drive_to_ready_for_complete(name="exp-silent")
+    def test_completed_review_status_carries_feed_note_when_feed_is_silent(self) -> None:
+        exp_id = self._drive_to_complete(name="exp-silent")
+        self.assertEqual(self.app.research.experiment_state(project_id=self.pid, experiment_id=exp_id)["status"], "complete")
         result = self.call(
-            "experiment.transition",
+            "review.status",
             project_id=self.pid,
-            experiment_id=exp_id,
-            transition="complete",
+            target_type="experiment",
+            target_id=exp_id,
         )
-        self.assertEqual(result["status"], "complete")
         self.assertIn("feed_note", result)
         self.assertIn(exp_id, result["feed_note"])
 

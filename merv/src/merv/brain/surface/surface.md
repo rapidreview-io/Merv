@@ -11,7 +11,7 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
 
 ## Main flow
 
-1. `surface.py` builds one `Surface`: Research, Application, Agent Sessions,
+1. `surface.py` builds one `Surface`: Research, Workflows, Application, Agent Sessions,
    Artifacts, Feed, Literature, Object Storage, Sandbox, telemetry, and tools.
    Machine setting `features.sandbox=false` substitutes a fail-closed backend
    and omits Sandbox tools and HTTP routes; absence keeps Sandbox enabled.
@@ -53,6 +53,8 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
 - `config.py`, `brain_dirs.py`, `transport/http_server.py`: environment parsing
   and local/hosted server construction.
 - `experiment_figure.py`, `transport/api/views.py`: UI-only derived projections.
+- `workflow_knowledge.py`: binds project and immutable artifact readers to the
+  workflow transaction; workflows receive a read-only, project-scoped capability.
 - `feed_http.py`, `runs_wait.py`, storage routes, and user settings: protocols
   whose byte streaming, long-polling, token, or security behavior cannot be
   represented as an ordinary tool call.
@@ -61,8 +63,11 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
 
 - Surface may format and authorize; it may not reproduce module workflow rules.
 - HTTP routes receive narrow collaborators, never a dependency bag or facade.
-- Tools bind directly to the seven product roots; Application is used only for
+- Tools bind directly to their owning product roots; Application is used only for
   genuinely cross-module workflows.
+- Generic workflow tools use instance IDs and ordinary action names; their
+  schemas and routing contain no per-workflow cases. Workflows checks project
+  scope, definition version, current revision, and durable gate facts.
 - Public MCP/HTTP names, schemas, status codes, response dictionaries, token
   behavior, and auth scope are compatibility contracts.
 - Token-bearing paths are redacted before telemetry. Upload tokens, run-wait

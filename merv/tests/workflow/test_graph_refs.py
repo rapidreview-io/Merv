@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from merv.brain.workflows import Workflows
+
 import tempfile
 import unittest
 from pathlib import Path
@@ -49,7 +51,7 @@ class GraphRefResolverTest(unittest.TestCase):
     def test_resolves_only_research_owned_prefixes(self) -> None:
         store = _Store()
 
-        result = Research(store=store, artifacts=Mock()).resolve_graph_refs(
+        result = Research(store=store, artifacts=Mock(), workflows=Workflows(store=store)).resolve_graph_refs(
             project_id="proj_1",
             refs=(
                 "claim_1",
@@ -106,7 +108,7 @@ class GraphRefQueryCountTest(unittest.TestCase):
         self.store = CountingStateStore(
             db_path=Path(self.tmp.name) / "state.sqlite"
         )
-        self.research = Research(store=self.store, artifacts=Mock())
+        self.research = Research(store=self.store, artifacts=Mock(), workflows=Workflows(store=self.store))
         self._seed()
 
     def tearDown(self) -> None:

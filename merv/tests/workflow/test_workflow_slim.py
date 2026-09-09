@@ -26,6 +26,7 @@ class WorkflowSlimTest(unittest.TestCase):
         ]
 
     def tearDown(self) -> None:
+        self.app.shutdown()
         self.tmp.cleanup()
 
     def call(self, tool: str, **kwargs):
@@ -36,6 +37,7 @@ class WorkflowSlimTest(unittest.TestCase):
             conn.execute(
                 "UPDATE experiments SET status = ? WHERE id = ?", (status, exp_id)
             )
+            conn.execute("UPDATE workflow_instances SET state = ? WHERE id = ?", (status, exp_id))
 
     def _seed_review(
         self, *, exp_id: str, review_id: str, seq: int, **overrides
@@ -74,7 +76,7 @@ class WorkflowSlimTest(unittest.TestCase):
         raw.commit()
         raw.close()
 
-    def _experiment_with_plan(self) -> str:
+    def _experiment_with_plan(self, *, valid: bool = False) -> str:
         exp_id = self.call(
             "experiment.create",
             name="the-thing",
@@ -87,7 +89,9 @@ class WorkflowSlimTest(unittest.TestCase):
             target_id=exp_id,
             role="plan",
             path="plan.md",
-            body="## Summary\nTest the staged subset before scaling up.\n",
+            body=("## Summary\nTest the staged subset before scaling up.\n"
+                  + ("\n## Objective & hypothesis\nThe candidate improves accuracy.\n\n"
+                     "## Evaluation\nCompare the baseline on the fixed subset; accept a two-point improvement.\n" if valid else "")),
         )
         return exp_id
 
@@ -142,7 +146,14 @@ class WorkflowSlimTest(unittest.TestCase):
         self.assertNotIn("reviews", context["experiment"])
 
     def test_terminal_context_summarizes_plan_and_keeps_full_report(self) -> None:
-        exp_id = self._experiment_with_plan()
+        exp_id = self._experiment_with_plan(valid=True)
+        self.call("experiment.transition", project_id=self.project_id, experiment_id=exp_id, transition="submit_design")
+        request = self.call("review.request", project_id=self.project_id, target_type="experiment",
+                            target_id=exp_id, role="design_reviewer")
+        session = self.call("review.start", review_request_id=request["review_request_id"],
+                            reviewer_capability=request["reviewer_capability"], caller_session_id="design-reviewer")
+        self.call("review.submit", review_session_id=session["review_session_id"], verdict="pass",
+                  synopsis="The plan can test the registered claim with its fixed comparison and clear decision rule.")
         report = self.app.submit_artifact(
             project_id=self.project_id,
             target_type="experiment",
@@ -169,6 +180,7 @@ class WorkflowSlimTest(unittest.TestCase):
                 "UPDATE experiments SET status = 'complete', conclusion = ? WHERE id = ?",
                 ("The candidate passed the registered threshold.", exp_id),
             )
+            conn.execute("UPDATE workflow_instances SET state = 'complete', outcome = 'completed' WHERE id = ?", (exp_id,))
 
         context = self.call(
             "workflow.status_and_next",
@@ -205,7 +217,7 @@ class WorkflowSlimTest(unittest.TestCase):
 
     def test_active_sandbox_is_summarized(self) -> None:
         exp_id = self._experiment_with_plan()
-        self._set_status(exp_id, "ready_to_run")
+        self._set_status(exp_id, "running")
         self.call(
             "sandbox.request",
             project_id=self.project_id,

@@ -149,15 +149,14 @@ reader for UI/service code, stays singular, and does not accept
 The agent-facing statuses are:
 
 ```text
-planned -> design_review -> ready_to_run -> running -> experiment_review -> complete
+planned -> design_review -> running -> experiment_review -> complete
 ```
 
 `failed` and `abandoned` are terminal exits. The typed transitions are:
 
 ```text
 submit_design
-mark_ready_to_run
-start_running
+approve_design
 retry_running
 submit_results
 complete
@@ -165,17 +164,20 @@ mark_failed
 abandon
 ```
 
-The declaration in `src/merv/brain/research_core/experiment_workflow.py`
-drives enforcement, `allowed_transitions`, gate checklists, review returns, and
-`workflow.status_and_next`.
+The graph in `src/merv/brain/workflows/definitions/experiment.py` drives
+transition enforcement, dispatch prerequisites, node briefs, and allowed actions.
+Research Core binds its state and evidence to the graph. The compatibility views
+in `workflow.status_and_next` use the same evaluated graph.
 
 - `submit_design` requires a pinned `plan` artifact with the required section
   spine.
-- `mark_ready_to_run` requires a passing design review for the current snapshot.
+- A passing design review applies `approve_design` in the review transaction,
+  entering `running` directly. The owner need not make another transition.
 - `submit_results` requires current-attempt `result`, `report`, and `graph`
   artifacts. When a system metrics exhibit is pinned, the report must reference
   and interpret it.
-- `complete` requires a passing experiment review for the current snapshot.
+- A passing experiment review applies `complete` for the current snapshot in
+  the same transaction.
 - `retry_running` is a same-attempt infrastructure retry and remains `running`.
 
 A result-review rejection must return to `running` when the approved plan still
@@ -188,8 +190,12 @@ returns only a compact state-change acknowledgement plus operation-specific
 side-effect receipts. Agents call `workflow.status_and_next` afterward when
 they need refreshed context. The HTTP UI uses richer service views.
 
-`experiment.create` accepts `depends_on` (exp_/task_ ids); `start_running` is
-refused (`dependencies_pending`) until every dependency has succeeded.
+`experiment.create` accepts `depends_on` (exp_/task_ ids). An experiment may be
+`running` after plan approval while `dependencies_pending` blocks its execution
+lease. The same prerequisites are rechecked in the lease transaction. Actual
+work start and tracking are recorded when the execution agent activates its
+lease, or an interactive agent calls `workflow.begin` with the current revision;
+plan approval does not start a clock or create an MLflow run.
 
 ## Task workflow
 
@@ -208,7 +214,7 @@ accept
 mark_failed
 ```
 
-The declaration in `src/merv/brain/research_core/task_workflow.py` drives
+The graph in `src/merv/brain/workflows/definitions/task.py` drives
 enforcement, `allowed_transitions`, gate checklists, review returns, and
 `workflow.status_and_next(task_id=...)`.
 
@@ -219,8 +225,8 @@ enforcement, `allowed_transitions`, gate checklists, review returns, and
 - `submit_delivery` requires a `delivery` artifact whose `Confirmations`
   section carries one numbered entry per deliverable, and every dependency
   succeeded.
-- `accept` requires a passing `task_reviewer` review for the current snapshot;
-  `evidence.outcome` is recorded.
+- A passing `task_reviewer` review applies `accept` for its current snapshot
+  in the review transaction; no separate owner acceptance is required.
 - `mark_failed` is the owner's exit; `evidence.reason` is recorded and
   `failed_by` is `owner`.
 
@@ -239,22 +245,27 @@ External tools and target types use **reflection**. Persisted ids keep the
 `syn_` prefix. The statuses are:
 
 ```text
-reflecting -> synthesizing -> reflection_review -> consolidating -> published
+reflecting -> synthesizing -> reflection_review -> consolidating -> consolidation_review -> published
 ```
 
-`abandoned` is terminal. One wave may be open per project.
+`abandoned` is terminal. One wave may be open per project. The native reflection
+record projects `consolidation_review` as `consolidating`; the workflow assignment
+identifies the separate reviewer node and its read-only role.
 
 - `reflection.create` snapshots the corpus and requires exactly five lenses:
   `amplify`, `avoid`, `entropy`, and two project-specific lenses.
-- `submit_reflections` requires a separately submitted `reflection_lens_doc`
-  for every roster lens. Each pinned Markdown document must contain a non-empty
-  `Summary` section, which supplies its TLDR in macro reflection views.
+- Each roster lens runs as a `reflection_lens` child workflow. It stores its
+  Markdown document with `artifact.store` and submits that content id through
+  `workflow.transition` for the child. Each document needs a non-empty `Summary`.
+  Once all five children finish, the parent joins their exact contributions and
+  applies `submit_reflections` automatically.
 - `submit_reflection_artifacts` requires a valid `project_graph`, concise
   `reflection_doc`, and materializable `change_spec`. The spec's `decision`
   names the next wave: at most three `experiments` plus any number of `tasks`
   (each with `goal` and `done_when` checks); both kinds may carry `depends_on`
   (spec keys or existing exp_/task_ ids, acyclic). A wave may be tasks only.
-- `begin_consolidation` requires a passing `reflection_reviewer` review.
+- A passing `reflection_reviewer` review applies `begin_consolidation` in the
+  review transaction, handing work to a separate consolidator.
 - `consolidation.submit` records one immutable proposal with a reasoned decision
   for every experiment and its declared Git integration kind.
 - `publish` is internal: it requires a passing `consolidation_reviewer` review
@@ -315,13 +326,27 @@ and reflection reviews require `return_to`; design-review rejections always
 return to `planned`. Rejection immediately routes the target state. A passing
 review satisfies a workflow gate only when its role matches that gate and its
 snapshot is current; `human` and `automated_check` passes do not replace the
-required workflow reviewer. A pass does not perform the target's next
-transition.
+required workflow reviewer. A passing design, attempt, task, or reflection
+review follows its graph's declared verdict edge in the same transaction. A
+passing consolidation review waits for the runner's central-ref receipt before
+publication.
 
-Reviewer skills impose the read-only operating role. The dispatcher rejects
-other mutations that explicitly carry a `review_session_id`, but the system does
-not authenticate every read or unrelated call as that reviewer. Session
-separation is therefore a workflow boundary, not cryptographic model identity.
+Auto-run reviewer credentials are read-only outside their exact `review.start`
+and `review.submit` capability. In an assigned session, use the assignment's
+request id and `reviewer_capability="assigned", caller_session_id="assigned"`;
+Merv resolves the authenticated session identity. Interactive capability handoffs
+still rely on the reviewer skill for calls made with a general project key.
+
+Generic workflow tools are `workflow.catalog`, `workflow.start`,
+`workflow.assignment`, `workflow.begin`, `workflow.history`, and `workflow.transition`.
+Interactive agents call `workflow.begin(project_id, instance_id, expected_revision)`
+when ready to work: it returns the assignment and records actual start once per
+revision, checking prerequisites in the same transaction. It creates no lease and
+does not change state. Auto-run uses its own lease activation instead. Transitions
+name an instance and expected revision. Auto-run credentials can mutate only
+their assigned instance and revision, and become invalid when that node changes.
+Assignments freeze the node-owned brief and exact evidence references at lease
+time; recovery resumes current work without replaying completed nodes.
 
 ## Sandboxes
 

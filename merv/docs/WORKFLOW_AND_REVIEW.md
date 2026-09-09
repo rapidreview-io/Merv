@@ -1,10 +1,11 @@
 # Workflow and review
 
-Research Core owns three reviewed workflows: one for each experiment, one for
-each task, and one for project-wide reflection. Their executable declarations
-are `research_core/experiment_workflow.py`, `task_workflow.py`, and
-`reflection_workflow.py`. `workflow.status_and_next` is the agent-facing read
-of current state, gates, allowed actions, and the next action.
+The Workflows layer owns versioned graphs for experiments, tasks, reflections,
+and individual reflection lenses. Their executable declarations live in
+`workflows/definitions/`; Research Core supplies domain records and facts through
+bindings. `workflow.assignment` returns a node's starting brief, exact evidence
+references, prerequisites, and available actions. `workflow.status_and_next`
+retains the experiment, task, and project orientation views.
 
 Experiments and tasks are the two node kinds of a wave. The line between them
 is one question: does the work exist to change confidence in a research claim?
@@ -15,7 +16,7 @@ thing it promised exists). Tasks never carry a claim.
 ## Experiment workflow
 
 ```text
-planned -> design_review -> ready_to_run -> running -> experiment_review -> complete
+planned -> design_review -> running -> experiment_review -> complete
             |                                      |
             +-> planned                            +-> running
                                                    +-> planned
@@ -31,7 +32,7 @@ The backward paths are deliberate:
 - it returns to `planned` and starts a new attempt when the plan itself is
   flawed.
 
-The forward gates are:
+The main graph transitions are:
 
 1. **Plan** — a submitted, size-bounded plan with the required sections.
 2. **Design review** — a passing independent design review pinned to that plan.
@@ -40,6 +41,12 @@ The forward gates are:
    graph; when a metrics exhibit exists, the report must interpret it.
 5. **Experiment review** — a passing independent review of the exact submitted
    attempt snapshot.
+
+A passing design review moves directly to `running`; a passing attempt review
+completes the experiment. Review submission commits the verdict and its graph
+transition together. Execution prerequisites still gate dispatch, and the work
+clock and tracking action start only when an execution agent activates its lease
+or an interactive agent calls `workflow.begin` with the current revision.
 
 Transitions seal the current Artifact composition in the same database
 transaction as the state change. Editing a checkout file has no effect until
@@ -81,23 +88,25 @@ no design review. Its gates are:
 
 Tasks are uncapped. A task's attempt index never advances; the review return
 keeps the same attempt so the artifact and review machinery stays uniform.
-Auto-run does not yet dispatch task work or task reviews to local runners;
-agents work tasks directly over MCP and hand the reviewer prompt off themselves.
+Auto-run dispatches both task work and independent task reviews through the
+same node assignment contract. A passing task review completes the task; a
+separate owner acceptance call is unnecessary.
 
 ## The wave DAG
 
 Both node kinds may depend on other nodes of the same project
 (`node_dependencies`, written by `task.create`, `experiment.create`, and
-reflection publish from the change spec's `depends_on`). An experiment waits at
-`ready_to_run` and a task before `submit_delivery` until every dependency has
-succeeded (`complete` / `done`). A dependency that ended without succeeding
+reflection publish from the change spec's `depends_on`). Execution-node leases
+wait until every dependency has succeeded (`complete` / `done`), even when an
+experiment is already `running` or a task is `in_progress`. Task delivery also
+checks those dependencies. A dependency that ended without succeeding
 surfaces as `dependency_failed`: the dependent node is ended with a reason, or
 left for the next reflection to replan. Edges must not form a cycle.
 
 ## Reflection workflow
 
 ```text
-reflecting -> synthesizing -> reflection_review -> consolidating -> published
+reflecting -> synthesizing -> reflection_review -> consolidating -> consolidation_review -> published
     ^               ^                |
     |               +----------------+  return_to=synthesizing
     +--------------------------------+  return_to=reflecting
@@ -109,7 +118,9 @@ One reflection wave may be open per project. Its gates are:
 
 1. **Roster** — exactly five lenses: `amplify`, `avoid`, `entropy`, and two
    wave-specific lenses with distinct charters.
-2. **Lens coverage** — one current-attempt `reflection_lens_doc` per lens.
+2. **Lens coverage** — five independent child workflows submit their own
+   current-attempt `reflection_lens_doc`; the parent joins their pinned outputs
+   and moves to synthesis automatically.
 3. **Synthesis** — a project graph, concise reflection document, and
    materializable change spec: claim changes plus the next wave — at most
    three experiments and any number of tasks, with `depends_on` edges.

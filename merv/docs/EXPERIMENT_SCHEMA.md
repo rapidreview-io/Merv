@@ -14,7 +14,7 @@ experiment:
   id:      exp_…
   name:    wd-sweep          # folder-safe, unique in project; names the
                              # CONTRAST with siblings, not the project topic
-  status:  planned | design_review | ready_to_run | running
+  status:  planned | design_review | running
            | experiment_review | complete | failed | abandoned
 
   # ── born with (immutable; the handoff to the planner) ─────

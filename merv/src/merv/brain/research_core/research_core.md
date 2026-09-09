@@ -2,17 +2,17 @@
 
 ## Purpose and boundary
 
-`research_core` owns projects, claims, experiments, tasks, their wave DAG, reflection
-waves, reviews, lifecycle gates, candidates/champion lineage, and the
-transactions that keep those records consistent: what research state exists and
-whether a state change is legal. The workflow declarations also name the agent
-action, tools, template, and review skill for each gate. Application orchestrates
-across modules and formats that guidance; Surface owns auth and wire presentation;
-Sandbox executes work, generic Artifacts owns immutable content, Feed publishes
-observations, Object Storage tracks ML workload objects, Literature literature.
+`research_core` owns projects, claims, native research records, reviews,
+artifact associations and candidate lineage. It supplies project-scoped verified
+facts and transactional record bindings to Workflows, which owns graph decisions
+and agent briefs. Application composes modules; Surface owns auth and transport.
+Generic Artifacts owns immutable content, Feed publishes observations, Sandbox
+executes workloads, and Object Storage tracks ML workload objects.
 
 `Research` is the public root, built from `BaseStateStore` and `ResearchArtifacts`;
-the experiment, task, reflection, and review services are private collaborators.
+Surface also injects `Workflows`. Research supplies project-scoped record bindings;
+experiment, task and reflection lifecycles use its versioned graph/runtime. Their
+reflection, and review record services remain private collaborators during extraction.
 
 ## Files
 - `artifacts.py`: research-owned associations, role/target policy, accepted
@@ -20,29 +20,29 @@ the experiment, task, reflection, and review services are private collaborators.
   `artifact_models.py`: association projections and snapshot references.
 - `research.py`: public root; project, claim, candidate writes, workflow delegation,
   snapshots, project context, membership, events, graph refs.
-- `experiments.py`: experiment creation invariants, state machine, gates, sealing,
-  attempts, MLflow run state, idempotent tracking-delivery ledger. `tasks.py`: the
-  same for tasks (creation invariants, state machine, gates, review routing).
+- `experiments.py`: experiment record binding, creation invariants, verified facts,
+  evidence sealing, attempt projection, and idempotent tracking-delivery ledger. `tasks.py`: the
+  task record binding, creation invariants, validated facts, and evidence sealing;
+  its transitions and review returns commit through `workflows.Runtime`.
 - `dependencies.py`: the wave DAG (`node_dependencies`): edges with cycle
   checks, per-node dependency and dependent rows for the shared gate and UI.
-- `reflections.py`: reflection state machine, corpus snapshots, lens coverage,
-  graph comparison, change-spec validation/materialization, drift signal.
+- `reflections.py`: reflection record binding, corpus snapshots, lens coverage,
+  graph comparison, atomic change-spec materialization and drift facts.
 - `reviews.py`: review requests, one-time capabilities, isolated sessions,
   pinned snapshots, verdicts, return routing. `association_targets.py`:
   target resolution and publication protection.
-- `experiment_workflow.py`, `task_workflow.py`, `reflection_workflow.py`: the
-  three lifecycles; the shared dependency need lives with the experiment file.
-- `workflow_schema.py`: passive workflow values and declaration validation.
+- `*_workflow.py` and `workflow_schema.py`: compatibility views of canonical graphs.
 - `policy.py`: vocabulary, validation, gate evaluation, snapshot identity, reflection
-  signal, limits. `evidence.py`: evidence selection, document checks and parsing,
-  brief rendering. `models.py`: typed state shapes. `__init__.py`: narrow imports.
+  signal, limits. `evidence.py`: compatibility exports of workflow-owned pure
+  document validation, evidence selection, and brief rendering. `models.py`: typed state shapes. `__init__.py`: narrow imports.
 
 ## Experiment lifecycle
 
-The forward path is `planned -> design_review -> ready_to_run -> running ->
-experiment_review -> complete`; failure and abandonment are terminal exits.
-Every forward transition evaluates the declared gate and seals the artifact
-composition in the same transaction as the state change. Rejected design work
+The graph uses `planned -> design_review -> running -> experiment_review ->
+complete`; failure and abandonment are terminal outcomes. Passing design review
+immediately enters execution. Dependencies gate dispatch; actual activation starts
+the attempt clock and tracking. Graph decisions, native state, and evidence sealing
+commit together. Rejected design work
 returns to `planned` and increments the attempt; a rejected execution review
 returns to `planned` (new attempt) or `running` (keep the approved plan).
 
@@ -58,13 +58,13 @@ answers one confirmation per deliverable ("not delivered — why" is legal) plus
 Notes; resubmissions are complete versions, one review per version:
 `needs_changes` returns, `fail` or `mark_failed` ends. State parses the
 delivery (entry → state/evidence/how); `dependents` sits beside `dependencies`. Both node kinds share `node_dependencies`: an experiment
-waits at `ready_to_run`, a task before `submit_delivery`, until every dependency
-succeeded (else `dependency_failed`).
+enters `running` after approval and waits for dependencies before dispatch; tasks
+also wait before dispatch and `submit_delivery` (else `dependency_failed`).
 
 ## Reflection and review lifecycle
 
 A reflection moves `reflecting -> synthesizing -> reflection_review ->
-consolidating -> published`. Reflection review makes its research artifacts
+consolidating -> consolidation_review -> published`. Review makes its research artifacts
 authoritative. A separate consolidator covers every experiment, a separate
 reviewer approves the exact code proposal, and the runner binds it to the
 Merv-owned central Git ref; only then does publication atomically materialize
@@ -97,4 +97,4 @@ Compatibility reads may hydrate older rows; new writes follow current invariants
 
 ## Maintenance rule
 
-Keep domain decisions here, connectivity elsewhere; keep this at most 100 lines.
+Keep record invariants here, workflow decisions in Workflows; at most 100 lines.

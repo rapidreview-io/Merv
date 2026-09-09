@@ -1,7 +1,7 @@
 /**
  * FSMStrip — experiment lifecycle pill row for the lean v0.0001 backend.
  *
- *   planned → design_review → ready_to_run → running → experiment_review → complete
+ *   planned → design_review → running → experiment_review → complete
  *
  * `failed` and `abandoned` are terminal exits and rendered on the last cell.
  *
@@ -15,7 +15,6 @@
 const STAGES = [
   { id: 'planned',           label: 'Planned' },
   { id: 'design_review',     label: 'Design review' },
-  { id: 'ready_to_run',      label: 'Ready' },
   { id: 'running',           label: 'Running' },
   { id: 'experiment_review', label: 'Exp. review' },
   { id: 'complete',          label: 'Complete' },
@@ -46,7 +45,9 @@ export default function FSMStrip({
   const TERMINAL_SET = terminal;
   const s = String(status || '').toLowerCase();
   const isFailed = (s === 'failed' || s === 'abandoned') && !STAGES_LIST.some(x => x.id === s);
-  const currentIdx = STAGES_LIST.findIndex(x => x.id === s);
+  // Historical Ready snapshots now sit at the execution boundary.
+  const stageId = stages === STAGES && s === 'ready_to_run' ? 'running' : s;
+  const currentIdx = STAGES_LIST.findIndex(x => x.id === stageId);
   const idx = currentIdx >= 0 ? currentIdx : 0;
 
   return (
