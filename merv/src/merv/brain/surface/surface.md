@@ -45,8 +45,10 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
   both halves are substantial and transactional behavior must remain explicit.
 - `artifacts.py` plus `transport/api/artifacts.py`: stable artifact wire shapes
   and token-authenticated uploads. Project-authenticated content/file/figure
-  reads accept generic content IDs or research association handles;
-  `artifact.read` returns a download URL, including for unattached binary files.
+  reads accept generic content IDs or research association handles. The three
+  tools are `artifact.upload` (optional `attach_to`), `artifact.read` (ID, batch,
+  or research filters), and `artifact.attach` (reuse existing content). ID reads
+  include authenticated download URLs, including for unattached binary files.
   Raw file/figure responses isolate active content with CSP sandbox and nosniff.
 - `telemetry.py`: in-memory activity, durable tool-call recording, and optional
   structured logs.

@@ -25,7 +25,7 @@ call `review.start` with `reviewer_capability="assigned"` and
 For an interactive handoff, require its exact capability and use your own stable
 `caller_session_id`, distinct from the producer, with optional `declared_agent`. Begin
 with its pinned project context, the task context (goal, checks, brief,
-delivery, dependencies), and the submitted artifacts. Use `artifact.find` and
+delivery, dependencies), and the submitted artifacts. Use `artifact.read` and
 `storage.fetch` for the files the delivery points at, and `sandbox.runs` or
 `sandbox.terminal` when a receipt names a command worth replaying.
 

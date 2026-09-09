@@ -81,7 +81,7 @@ _KNOWN_REF_PREFIXES = (
 NUDGE_AFTER_EVENTS = 8
 NUDGE_AFTER_HOURS = 6.0
 
-# Matches artifact.submit: enough time to run curl, short-lived if leaked.
+# Matches artifact.upload: enough time to run curl, short-lived if leaked.
 FEED_UPLOAD_TOKEN_TTL_SECONDS = 15 * 60
 # Direct in-process calls lack the caller-reachable base injected by HTTP.
 _LOCAL_API_BASE = "http://127.0.0.1:8787"
@@ -364,7 +364,7 @@ class FeedService:
         ``{"post_id", "run"}``: the agent runs the ``run`` curl to PUT the local
         file's bytes to ``/api/feed/u/<token>``, which finalizes the post (and
         its thread) — the bytes travel over the agent's own curl, never through
-        MCP (the artifact.submit discipline)."""
+        MCP (the artifact.upload discipline)."""
         if image_path and html_path:
             raise ValidationError("a post may carry an image or an embed, not both")
         normalized = normalize_attachments(
@@ -885,7 +885,7 @@ class FeedService:
                 if not self.figure_lookup(project_id, artifact_id, path):
                     raise ValidationError(
                         f"figure not found in this project: {artifact_id} {path} — "
-                        "use artifact.find to list submitted figures"
+                        "use artifact.read to list submitted figures"
                     )
 
     def _validate_quote_of(

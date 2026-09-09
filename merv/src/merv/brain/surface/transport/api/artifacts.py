@@ -1,7 +1,7 @@
 """Artifact HTTP routes: token-bearer uploads plus UI reads.
 
 The PUT routes are auth-exempt (see RequestAuthenticator): the one-time upload
-token minted by artifact.submit is the credential, so the agent's bare
+token minted by artifact.upload is the credential, so the agent's bare
 ``curl -T`` works against both local and hosted brains.
 """
 

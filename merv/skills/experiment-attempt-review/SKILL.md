@@ -22,7 +22,7 @@ call `review.start` with `reviewer_capability="assigned"` and
 For an interactive handoff, require its exact capability and use your own stable
 `caller_session_id`, distinct from the producer, with optional `declared_agent`. Begin
 with its pinned project context, plan, report, and artifact references. Batch
-the listed result, graph, and exhibit ids through `artifact.find` only when
+the listed result, graph, and exhibit ids through `artifact.read` only when
 their full submitted evidence is needed.
 
 Operate read-only. Auto-run credentials enforce this boundary; interactive

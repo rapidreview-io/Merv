@@ -71,7 +71,8 @@ give each independently dispatched lens agent:
   as `parent_agent_id`) and carry its own `agent_id` in every Merv call — a
   lens agent is its own context window and never borrows yours; and
 - its child workflow instance and revision, plus the requirement to store its
-  own document with `artifact.store` and submit that content id through
+  own document with `artifact.upload(project_id, path)`, execute the returned
+  upload command, and submit that content id through
   `workflow.transition(action="submit", payload={"artifact_id": ...})`, following
   [reflection-artifacts-template.md](reflection-artifacts-template.md). The graph
   associates the contribution with the exact roster lens.

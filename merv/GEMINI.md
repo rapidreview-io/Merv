@@ -4,8 +4,10 @@ This extension exposes one Merv MCP surface backed by a single brain. The agent
 connects directly to `POST /mcp` with `Authorization: Bearer <key>`, where the
 key is an `mk_` key scoped either to one project or to the owner's whole
 account (chosen when it is minted). The brain owns durable
-research records, workflow policy, reviews, sandbox lifecycle, provider
-credentials, blobs, and optional heavy storage.
+research records, workflow policy, reviews, and research object metadata. Merv
+owns research artifacts, figures, and feed bytes in its own R2 storage. The
+independent merv-sandboxes service owns sandbox lifecycle, cloud-provider
+credentials, durable jobs, and ML workload storage such as datasets and models.
 
 The brain never receives a checkout root and never reads the agent's filesystem.
 The agent submits explicit metadata and selected evidence bytes through MCP.
@@ -37,10 +39,15 @@ There is no linking step and no `connect` action. Use
 
 - Treat the brain state returned through MCP as authoritative. Start or resume
   work with `workflow.status_and_next`, and follow its gate, allowed actions,
-  missing evidence, and next action.
-- Local edits are not research state. Use `artifact.submit` to contribute
-  evidence; it returns a presigned upload command for the bytes, and the
-  submitted version can be associated with a target and role.
+  missing evidence, and next action. Auto-run assignments own one graph node;
+  stop after its handoff. Interactive agents call `workflow.begin` with the
+  instance id and current revision before beginning node work.
+- Local edits are not research state. Use `artifact.upload` with
+  `attach_to: {target_type, target_id, role}` to contribute research evidence.
+  Run the returned upload command to store bytes and activate the association.
+  Add `lens_id` inside `attach_to` only for `reflection_lens_doc`.
+  Workflow nodes that accept content IDs use `artifact.upload` without an
+  attachment; their submission transition records the association.
 - Load `research-workflow` for experiment and task work and
   `project-reflection` for a five-lens reflection wave. Work that tests a
   claim is an experiment; scoped work with a verifiable finish line and no
@@ -58,19 +65,22 @@ There is no linking step and no `connect` action. Use
 
 ## Review boundary
 
-When a gate requests review, call `review.request` and delegate its handoff to a
-separate agent using `experiment-design-review`, `experiment-attempt-review`,
-`task-review`, or `project-reflection-review`. That reviewer calls
-`review.start` with its own
-`caller_session_id` and submits the verdict through `review.submit`.
+Entering a review node queues its independent review, and auto-run dispatches
+a fresh reviewer. Interactive coordinators can use `review.request` and hand its
+capability to a separate agent running the matching review skill. The producer
+must not review its own work.
 
-The capability is tied to a role and immutable target snapshot. At
-`review.start` the brain rejects invalid/expired/superseded capabilities, stale
-snapshots, or a declared reviewer session string equal to the declared producer
-string. At submission it rechecks that the request is open and the snapshot is
-current. Reviewer read-only behavior is an operating rule imposed by the skill;
-the system does not authenticate every unrelated tool call as that reviewer.
-This is a practical workflow boundary, not cryptographic proof of independence.
+An assigned reviewer calls `review.start` for its exact request with
+`reviewer_capability="assigned"` and `caller_session_id="assigned"`; Merv resolves
+the authenticated session. A manual handoff uses its exact capability and the
+reviewer's own declared identity. Review submission rechecks the immutable
+snapshot and applies the verdict's graph route atomically.
+
+Auto-run reviewer credentials enforce read-only access outside their review
+calls. Interactive reviewers using a general project key follow the skill's
+read-only procedure. A passing design enters execution directly; passing attempt
+and task reviews complete work; passing reflection review enters consolidation.
+The assigned agent stops after its verdict.
 
 ## Sandbox loop
 

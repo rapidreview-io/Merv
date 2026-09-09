@@ -5,7 +5,7 @@
   in the UI to understand what happened, and the artifact the experiment
   reviewer grades against the plan's pre-registered Evaluation section. Write
   it in the experiment folder (e.g. experiments/<name>/report.md), then
-  submit it with artifact.submit (role "report") and run the returned
+  submit it with artifact.upload (attach_to.role "report") and run the returned
   upload command.
 
   REQUIRED spine — `experiment.transition(submit_results)` is blocked until

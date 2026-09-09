@@ -550,7 +550,7 @@ class ExhibitFlowTest(unittest.TestCase):
         self.assertTrue(payload["pinned"])
 
     def test_reviewer_hydration_includes_the_exhibit_content(self) -> None:
-        # Review start lists the immutable exhibit id; artifact.find is the
+        # Review start lists the immutable exhibit id; artifact.read is the
         # reviewer's focused path to the ground-truth numbers.
         exp_id = self._drive_to_running()
         self._log_run("seed-0")
@@ -580,7 +580,7 @@ class ExhibitFlowTest(unittest.TestCase):
             if artifact["descriptor"] == "exhibit"
         )
         found = self.call(
-            "artifact.find",
+            "artifact.read",
             project_id=self.project_id,
             artifact_id=exhibit_ref["id"],
             include_content=True,
@@ -641,12 +641,10 @@ class ExhibitFlowTest(unittest.TestCase):
         for path in ("forged.json", exhibit_path):
             with self.assertRaises(ValidationError):
                 self.call(
-                    "artifact.submit",
+                    "artifact.upload",
                     project_id=self.project_id,
-                    target_type="experiment",
-                    target_id=exp_id,
-                    role="exhibit",
                     path=path,
+                    attach_to={"target_type": "experiment", "target_id": exp_id, "role": "exhibit"},
                 )
 
 

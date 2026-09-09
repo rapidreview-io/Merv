@@ -1084,7 +1084,7 @@ class ReflectionService:
         """Read one complete artifact as strict UTF-8 for a workflow gate."""
         if not artifact_id:
             raise WorkflowError(
-                f"{what} has no submitted artifact — submit it with artifact.submit"
+                f"{what} has no submitted artifact — submit it with artifact.upload"
             )
         found = self.artifacts.get(
             artifact_ids=(artifact_id,),

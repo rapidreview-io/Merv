@@ -680,61 +680,21 @@ class ConsolidationSubmitInput(ProjectScopedInput):
     decisions: list[ConsolidationDecisionInput]
 
 
-class ArtifactStoreInput(ProjectScopedInput):
-    path: str = Field(min_length=1, max_length=1000)
-    title: str = Field(default="", max_length=1000)
-    discover_figures: bool = False
-
-
-class ArtifactReadInput(ProjectScopedInput):
-    artifact_id: str = Field(min_length=1)
-    include_content: bool = False
-
-
-class ArtifactAttachInput(ProjectScopedInput):
-    artifact_id: str = Field(min_length=1)
-    target_type: str
-    target_id: str
-    role: str
-    lens_id: str = ""
-
-
-class ArtifactSubmitInput(ProjectScopedInput):
+class ArtifactAssociationInput(ContractModel):
     target_type: str = Field(
-        description="Workflow target kind the artifact attaches to.",
-        json_schema_extra={"enum": sorted(ARTIFACT_TARGET_TYPES)},
+        min_length=1, json_schema_extra={"enum": sorted(ARTIFACT_TARGET_TYPES)}
     )
-    target_id: str = Field(
-        description="Id of the experiment, task, reflection, claim, or review."
-    )
+    target_id: str = Field(min_length=1)
     role: str = Field(
-        description=(
-            "Artifact role. Gated docs (plan, report, graph, project_graph, "
-            "reflection_lens_doc, reflection_doc, change_spec; for tasks: "
-            "brief, delivery) and metrics 'result' JSON only — all size-capped "
-            "at 16 KB."
-        ),
-        json_schema_extra={"enum": sorted(SUBMITTABLE_ROLES)},
-    )
-    path: str = Field(
-        description=(
-            "Relative path of the local file you wrote — the provenance label "
-            "and the file the returned upload command sends."
-        )
+        min_length=1, json_schema_extra={"enum": sorted(SUBMITTABLE_ROLES)}
     )
     lens_id: str = Field(
         default="",
-        description=(
-            "REQUIRED when role=reflection_lens_doc: the roster lens this "
-            "reflection covers. Its submitted Markdown must contain a non-empty "
-            f"Summary section to pass {_REFLECTION_FIRST_TRANSITION}. Invalid "
-            "for any other role."
-        ),
+        description="Required only for reflection_lens_doc; identifies the roster lens.",
     )
-    title: str = Field(default="", description="Optional display title.")
 
     @model_validator(mode="after")
-    def _check_lens(self) -> "ArtifactSubmitInput":
+    def _check_lens(self) -> "ArtifactAssociationInput":
         if self.role == "reflection_lens_doc" and not self.lens_id:
             raise ValueError("lens_id is required when role is reflection_lens_doc")
         if self.lens_id and self.role != "reflection_lens_doc":
@@ -742,7 +702,28 @@ class ArtifactSubmitInput(ProjectScopedInput):
         return self
 
 
-class ArtifactFindInput(ProjectScopedInput):
+class ArtifactUploadInput(ProjectScopedInput):
+    path: str = Field(
+        min_length=1,
+        max_length=1000,
+        description="Local file to send with the returned upload command; also its provenance label.",
+    )
+    title: str = Field(default="", max_length=1000)
+    discover_figures: bool = Field(
+        default=False,
+        description="Discover relative Markdown images for unattached content. Attached documents follow their role's figure policy.",
+    )
+    attach_to: ArtifactAssociationInput | None = Field(
+        default=None,
+        description="Optional research association, activated when the upload completes. Omit to store generic content.",
+    )
+
+
+class ArtifactAttachInput(ProjectScopedInput, ArtifactAssociationInput):
+    artifact_id: str = Field(min_length=1)
+
+
+class ArtifactReadInput(ProjectScopedInput):
     artifact_id: str = Field(
         default="",
         description=(
@@ -777,7 +758,7 @@ class ArtifactFindInput(ProjectScopedInput):
     role: str = Field(default="", description="List filter: artifact role.")
 
     @model_validator(mode="after")
-    def _check_selector(self) -> "ArtifactFindInput":
+    def _check_selector(self) -> "ArtifactReadInput":
         if any(not item for item in self.artifact_ids):
             raise ValueError("artifact_ids cannot contain blank ids")
         self.artifact_ids = list(dict.fromkeys(self.artifact_ids))
@@ -1387,7 +1368,7 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             "full latest plan; terminal experiments receive its Summary; the "
             "latest report is full when present. With task_id, returns the "
             "task's guidance, brief, delivery, checks, and dependencies. Use "
-            "artifact.find with one id or an ordered id batch for deeper "
+            "artifact.read with one id or an ordered id batch for deeper "
             "artifact reads."
         ),
     ),
@@ -1552,7 +1533,7 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         input_model=ExperimentGetStateInput,
         description=(
             "Compatibility-only singular internal experiment state projection. "
-            "Agents use workflow.status_and_next for context and artifact.find "
+            "Agents use workflow.status_and_next for context and artifact.read "
             "for focused singular or batch document retrieval."
         ),
     ),
@@ -1767,49 +1748,34 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             "current."
         ),
     ),
-    "artifact.store": ToolContract(
-        handler_identity="artifact_submissions.store",
-        input_model=ArtifactStoreInput,
-        description="Store immutable project content without a workflow target or role. Execute the returned upload command. Use artifact.attach separately to accept it as research evidence.",
+    "artifact.upload": ToolContract(
+        handler_identity="artifact_submissions.upload",
+        input_model=ArtifactUploadInput,
+        description=(
+            "Write a local file, call upload, then execute the returned run command "
+            "to store immutable content in Merv. Optional attach_to bundles research "
+            "association: specify target_type, target_id, role and lens_id when required. "
+            "Associated evidence is validated and size-capped at 16 KB; uploading a new "
+            "version replaces the current slot while preserving frozen history. "
+            "Run any figure upload commands returned by the upload response too."
+        ),
     ),
     "artifact.read": ToolContract(
         handler_identity="artifact_submissions.read",
         input_model=ArtifactReadInput,
-        description="Read generic immutable content by artifact ID. Returns metadata and a download_url for raw bytes using normal project/account authentication; optionally include bounded text and figure paths. Download URLs do not accept MCP-only agent-session credentials.",
+        description=(
+            "Read one artifact_id, an ordered batch of 1-50 artifact_ids, or list "
+            "complete research evidence using target_type/target_id/role filters. "
+            "IDs may identify generic content or research associations; associations "
+            "include their target, role and history. Missing/cross-project IDs fail the "
+            "whole batch. Opt into text and figure paths with include_content. ID reads "
+            "include download URLs requiring project/account auth (not worker credentials)."
+        ),
     ),
     "artifact.attach": ToolContract(
         handler_identity="artifact_submissions.attach",
         input_model=ArtifactAttachInput,
-        description="Accept an existing complete artifact as research evidence. Validates the target and role, returning a distinct association handle for artifact.find and workflow history. The original artifact remains immutable and reusable.",
-    ),
-    "artifact.submit": ToolContract(
-        handler_identity="artifact_submissions.submit",
-        input_model=ArtifactSubmitInput,
-        description=(
-            "Submit a typed artifact against a workflow target. FIRST write "
-            "the document to a local file, then call this with its relative "
-            "path; the result contains a one-line `run` command — execute it "
-            "verbatim to upload the bytes (one-time token, expires in ~15 "
-            "min). Gated roles are validated and size-capped (16 KB); for "
-            "markdown with relative image links the upload response returns "
-            "follow-up commands to push each figure the same way. "
-            "Resubmitting the same slot replaces the previous artifact."
-        ),
-    ),
-    "artifact.find": ToolContract(
-        handler_identity="artifact_submissions.find",
-        input_model=ArtifactFindInput,
-        description=(
-            "Find submitted artifacts. Pass artifact_id to resolve one, "
-            "artifact_ids to resolve an ordered batch of 1-50, or filter the "
-            "project's complete artifacts by target_type/target_id/role. "
-            "Duplicate batch ids are de-duplicated first-seen; missing ids fail "
-            "the request atomically. Metadata is the slim default. For id-based "
-            "plan/report deep dives, include_content=true returns bounded text "
-            "content envelopes while safely marking binary/unavailable bytes. "
-            "Compact rows: id, target, role, attempt, lens_id, path label, "
-            "title, size, timestamps."
-        ),
+        description="Associate existing complete content with a research target and role. Returns an association handle for artifact.read and workflow history; content remains immutable and reusable.",
     ),
     "storage.put_object": ToolContract(
         handler_identity="storage.put_object",
@@ -1901,7 +1867,7 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             "experiment target, the same canonical four-section context used "
             "by workflow.status_and_next, built only from artifact versions "
             "pinned to the request. Plan/report bodies needed for that review "
-            "are included; use artifact.find for deeper reads of the listed "
+            "are included; use artifact.read for deeper reads of the listed "
             "artifact ids. Assigned auto-run reviewers use 'assigned' for both "
             "reviewer_capability and caller_session_id; their scoped credential "
             "enforces the read-only boundary. Interactive reviewers follow the "

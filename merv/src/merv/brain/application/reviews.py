@@ -278,7 +278,7 @@ def _submitted_artifacts(
         if content is None:
             entry["note"] = (
                 "submitted content unavailable; ask the producer to "
-                "resubmit it with artifact.submit"
+                "resubmit it with artifact.upload"
             )
         result.append(entry)
     return result

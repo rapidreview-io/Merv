@@ -85,13 +85,13 @@ class ArtifactFlowTest(unittest.TestCase):
         lens_id: str = "",
     ) -> dict:
         pending = self.call(
-            "artifact.submit",
+            "artifact.upload",
             project_id=self.project_id,
-            target_type=target_type,
-            target_id=target_id,
-            role=role,
             path=path,
-            lens_id=lens_id,
+            attach_to={
+                "target_type": target_type, "target_id": target_id,
+                "role": role, "lens_id": lens_id,
+            },
         )
         token = pending["run"].rsplit("/", 1)[-1].rstrip("'")
         response = self.app._client.put(
@@ -123,7 +123,7 @@ class ArtifactFlowTest(unittest.TestCase):
 
     def _store(self, *, path: str, data: bytes, discover_figures: bool = False) -> dict:
         pending = self.call(
-            "artifact.store", project_id=self.project_id, path=path,
+            "artifact.upload", project_id=self.project_id, path=path,
             discover_figures=discover_figures,
         )
         token = shlex.split(pending["run"])[-1].rsplit("/", 1)[-1]
@@ -218,7 +218,7 @@ class ArtifactFlowTest(unittest.TestCase):
 
     def test_generic_content_can_be_read_before_it_is_attached_to_research(self) -> None:
         pending = self.call(
-            "artifact.store", project_id=self.project_id, path="reusable.md"
+            "artifact.upload", project_id=self.project_id, path="reusable.md"
         )
         token = shlex.split(pending["run"])[-1].rsplit("/", 1)[-1]
         uploaded = self.app._client.put(f"/api/artifacts/u/{token}", content=VALID_PLAN.encode())
@@ -231,7 +231,7 @@ class ArtifactFlowTest(unittest.TestCase):
         self.assertEqual(read["content"]["content"], VALID_PLAN)
         self.assertFalse({"role", "target_id", "attempt_index"} & set(read["artifact"]))
         self.assertEqual(
-            self.call("artifact.find", project_id=self.project_id)["artifacts"], []
+            self.call("artifact.read", project_id=self.project_id)["artifacts"], []
         )
 
         handles = []
@@ -472,12 +472,10 @@ class ArtifactFlowTest(unittest.TestCase):
             intent="Cap enforcement.",
         )["id"]
         pending = self.call(
-            "artifact.submit",
+            "artifact.upload",
             project_id=self.project_id,
-            target_type="experiment",
-            target_id=exp_id,
-            role="plan",
             path="plan.md",
+            attach_to={"target_type": "experiment", "target_id": exp_id, "role": "plan"},
         )
         token = pending["run"].rsplit("/", 1)[-1].rstrip("'")
         response = self.app._client.put(
@@ -495,12 +493,10 @@ class ArtifactFlowTest(unittest.TestCase):
         )["id"]
         body = (VALID_PLAN + "\n![curve](figures/curve.png)\n").encode()
         pending = self.call(
-            "artifact.submit",
+            "artifact.upload",
             project_id=self.project_id,
-            target_type="experiment",
-            target_id=exp_id,
-            role="plan",
             path="plans/plan.md",
+            attach_to={"target_type": "experiment", "target_id": exp_id, "role": "plan"},
         )
         self.assertEqual(set(pending), {"artifact_id", "run"})
         self.assertTrue(pending["artifact_id"].startswith("art_"))
@@ -639,12 +635,12 @@ class ArtifactFlowTest(unittest.TestCase):
     def test_lens_id_is_required_by_the_tool_contract(self) -> None:
         with self.assertRaises(ValidationError):
             self.call(
-                "artifact.submit",
+                "artifact.upload",
                 project_id=self.project_id,
-                target_type="reflection",
-                target_id="ref_x",
-                role="reflection_lens_doc",
                 path="rigor.md",
+                attach_to={
+                    "target_type": "reflection", "target_id": "ref_x", "role": "reflection_lens_doc",
+                },
             )
 
 

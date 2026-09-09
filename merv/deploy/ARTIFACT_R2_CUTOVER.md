@@ -44,7 +44,7 @@ Configure Merv to use its R2 bucket, deploy the new image, and let normal
 startup apply migration 59. Do not redeploy merv-sandboxes for this change.
 
 Verify hosted authentication, old artifact/figure reads, generic
-`artifact.store`/`artifact.read`/`artifact.attach`, workflow reads, snapshot
+`artifact.upload`/`artifact.read`/`artifact.attach`, workflow reads, snapshot
 membership, and separate native ML storage health. The artifact upload token
 API remains compatible. Retain the source bucket and protected backups.
 

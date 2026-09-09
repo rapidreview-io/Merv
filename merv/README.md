@@ -209,13 +209,13 @@ relative paths and versions and pins selected submitted bytes for gates and
 review. System metrics exhibits and optional heavy storage objects are separate
 brain-managed artifacts.
 
-`artifact.store` uploads immutable content without a workflow role or target;
-`artifact.read` retrieves that content by ID. `artifact.attach` accepts an
-existing content ID into a research target and role, returning its association
-ID. The same content can be used by multiple targets. `artifact.submit` remains
-the combined upload-and-associate operation for existing clients. Research owns
-role validation and freezes exact association IDs at each workflow transition;
-the artifact component owns content, upload limits, and figure manifests.
+`artifact.upload` stores immutable content. Pass optional
+`attach_to: {target_type, target_id, role, lens_id?}` to also associate it with
+research when the upload completes. `artifact.read` reads one ID, a batch, or
+lists research evidence by target and role. `artifact.attach` reuses existing
+content with another target, returning its association ID. Research owns role
+validation and freezes exact associations at workflow transitions; Artifacts
+owns content in Merv's R2 bucket, upload limits, and figure manifests.
 
 ## Running a local brain (optional)
 

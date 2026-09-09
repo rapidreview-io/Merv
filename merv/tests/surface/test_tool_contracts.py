@@ -11,11 +11,11 @@ from unittest.mock import Mock, patch
 from pydantic import ValidationError as PydanticValidationError
 
 from tests.support.brain import TestBrain
-from merv.brain.kernel.utils import PermissionDeniedError
+from merv.brain.kernel.utils import PermissionDeniedError, ResearchPluginError
 from merv.brain.surface.tools.contracts import (
     MCP_HIDDEN_TOOL_NAMES,
-    ArtifactFindInput,
-    ArtifactSubmitInput,
+    ArtifactReadInput,
+    ArtifactUploadInput,
     MlflowFinalizeRunInput,
     ReflectionGetInput,
     SandboxExtendInput,
@@ -39,9 +39,7 @@ from merv.brain.surface.tools.dispatcher import ToolDispatcher
 BASE_PUBLIC_TOOLS = frozenset(
     {
         "agent.hello",
-        "artifact.find",
-        "artifact.submit",
-        "artifact.store",
+        "artifact.upload",
         "artifact.read",
         "artifact.attach",
         "candidate.list",
@@ -124,11 +122,9 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "workflow.start": "1c9075387e05da362f6380d2c1f854f268038b86a31158a81221365803829091",
     "workflow.catalog": "99334726611ccf58a148b0814696bfa6fe08c1b2d027e946beccf5a74331c9aa",
     "agent.hello": "cb3195328ef9d7ec6b078452696b790e81e25d84b559f0cb97a08668213aec3c",
-    "artifact.find": "ac17e7ab19d57565b569c8fac1b0d3cb7558d6707ba134bf4148262b9e7361e2",
-    "artifact.store": "231c571143f6641244bb4db608dde2fdd70aedbea9e34eabad032a6b59a67a3c",
-    "artifact.read": "4803b21341498a75f273453f7bcf5eb9d76b795fd121770d83b0656edba301ba",
-    "artifact.attach": "8d674467ae1468962da8a4f75a8a62813ca2979220822f789b3a6861b4b0b32e",
-    "artifact.submit": "b7b56706352e0621e944693143e2ad2d450297b760bb4741522f40e4bc0eeea0",
+    "artifact.read": "ac17e7ab19d57565b569c8fac1b0d3cb7558d6707ba134bf4148262b9e7361e2",
+    "artifact.attach": "72ae3c651f7499b1cbc4b7875e794635f365b0e29fc94539b89393f4a15535ba",
+    "artifact.upload": "5f0cbec4078a87d27198755779be2989ba76408395fee7c4099b22a589835c97",
     "candidate.list": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
     "candidate.promote": "873ba38c2e42f140ab8eb691f6d2c2fb8cf30ddc22038dba00038b99536ef04c",
     "candidate.stage": "dfdd7ad6a3dd42aac1ac793eaf6ec841f1f7c9b96f1f505743567f888ed90145",
@@ -463,31 +459,49 @@ class ToolContractRegistryTest(unittest.TestCase):
             )
 
     def test_artifact_tools_are_manifested(self) -> None:
-        self.assertIs(
-            TOOL_CONTRACTS["artifact.submit"].input_model, ArtifactSubmitInput
+        self.assertEqual(
+            {name for name in TOOL_CONTRACTS if name.startswith("artifact.")},
+            {"artifact.upload", "artifact.read", "artifact.attach"},
         )
-        self.assertIs(TOOL_CONTRACTS["artifact.find"].input_model, ArtifactFindInput)
+        self.assertIs(
+            TOOL_CONTRACTS["artifact.upload"].input_model, ArtifactUploadInput
+        )
+        self.assertIs(TOOL_CONTRACTS["artifact.read"].input_model, ArtifactReadInput)
         # The whole resource-tracking tool family died with the resource cut.
         for removed in ("resource.register", "resource.find", "resource.delete"):
             self.assertNotIn(removed, TOOL_CONTRACTS)
 
-    def test_artifact_submit_requires_lens_id_only_for_lens_docs(self) -> None:
-        base = {
-            "project_id": "p",
-            "target_type": "reflection",
-            "target_id": "syn_1",
-            "path": "reflections/amplify.md",
-        }
+    def test_removed_artifact_names_are_unknown(self) -> None:
+        for name in ("artifact.store", "artifact.submit", "artifact.find"):
+            with self.subTest(tool=name):
+                self.assertNotIn(name, TOOL_CONTRACTS)
+                with self.assertRaisesRegex(ResearchPluginError, "unknown tool:"):
+                    self.app.call_tool(name, {"project_id": "p"})
+
+    def test_artifact_upload_requires_lens_id_only_for_lens_docs(self) -> None:
+        base = {"project_id": "p", "path": "reflections/amplify.md"}
+        target = {"target_type": "reflection", "target_id": "syn_1"}
         with self.assertRaises(PydanticValidationError):
-            ArtifactSubmitInput.model_validate({**base, "role": "reflection_lens_doc"})
+            ArtifactUploadInput.model_validate({
+                **base, "attach_to": {**target, "role": "reflection_lens_doc"},
+            })
         with self.assertRaises(PydanticValidationError):
-            ArtifactSubmitInput.model_validate(
-                {**base, "role": "reflection_doc", "lens_id": "amplify"}
-            )
-        parsed = ArtifactSubmitInput.model_validate(
-            {**base, "role": "reflection_lens_doc", "lens_id": "amplify"}
-        )
-        self.assertEqual(parsed.lens_id, "amplify")
+            ArtifactUploadInput.model_validate({
+                **base, "attach_to": {**target, "role": "reflection_doc", "lens_id": "amplify"},
+            })
+        parsed = ArtifactUploadInput.model_validate({
+            **base, "attach_to": {**target, "role": "reflection_lens_doc", "lens_id": "amplify"},
+        })
+        self.assertEqual(parsed.attach_to.lens_id, "amplify")
+
+    def test_artifact_upload_accepts_unattached_content_and_rejects_partial_targets(self) -> None:
+        base = {"project_id": "p", "path": "arbitrary.bin"}
+        self.assertIsNone(ArtifactUploadInput.model_validate(base).attach_to)
+        for attach_to in ({}, {"target_type": "experiment", "role": "plan"}, "exp_1"):
+            with self.subTest(attach_to=attach_to), self.assertRaises(PydanticValidationError):
+                ArtifactUploadInput.model_validate({**base, "attach_to": attach_to})
+        with self.assertRaises(PydanticValidationError):
+            ArtifactUploadInput.model_validate({**base, "target_type": "experiment", "role": "plan"})
 
     def test_reflection_get_defaults_to_summaries_with_explicit_full_opt_in(
         self,

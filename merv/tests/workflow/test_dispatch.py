@@ -139,7 +139,7 @@ class WorkflowDispatchTest(ResearchCase):
                             action="submit", expected_revision=0, request_id="submit")
         self.assertEqual(advanced.status_code, 200, advanced.text)
         review, reviewer_secret = self.claim("reviewer")
-        upload = self.mcp(reviewer_secret, "artifact.store", project_id=self.project_id)
+        upload = self.mcp(reviewer_secret, "artifact.upload", project_id=self.project_id, path="tamper.txt")
         self.assertEqual(upload.json()["error_code"], "agent_session_scope_forbidden")
         reviewer_begin = self.mcp(reviewer_secret, "workflow.begin", project_id=self.project_id, instance_id=self.instance_id, expected_revision=1)
         self.assertEqual(reviewer_begin.json()["error_code"], "agent_session_scope_forbidden")
@@ -220,7 +220,7 @@ class WorkflowDispatchTest(ResearchCase):
         foreign_request = self.mcp(secret, "review.start", review_request_id="req_elsewhere",
                                    reviewer_capability="assigned", caller_session_id="assigned")
         self.assertEqual(foreign_request.json()["error_code"], "agent_session_scope_forbidden")
-        upload = self.mcp(secret, "artifact.store", project_id=self.project_id, path="tamper.txt")
+        upload = self.mcp(secret, "artifact.upload", project_id=self.project_id, path="tamper.txt")
         self.assertEqual(upload.json()["error_code"], "agent_session_scope_forbidden")
         started = self.mcp(secret, "review.start", review_request_id=request_id,
                            reviewer_capability="assigned", caller_session_id="assigned")
@@ -256,7 +256,7 @@ class WorkflowDispatchTest(ResearchCase):
             self.assertEqual(read_parent.status_code, 200, read_parent.text)
             forbidden = self.mcp(secret, "reflection.transition", project_id=self.project_id, reflection_id=reflection_id, transition="abandon")
             self.assertEqual(forbidden.json()["error_code"], "agent_session_scope_forbidden")
-            uploaded = self.mcp(secret, "artifact.store", project_id=self.project_id, path=f"lens-{index}.md")
+            uploaded = self.mcp(secret, "artifact.upload", project_id=self.project_id, path=f"lens-{index}.md")
             self.assertEqual(uploaded.status_code, 200, uploaded.text)
             pending = uploaded.json()["result"]
             token = shlex.split(pending["run"])[-1].rsplit("/", 1)[-1]

@@ -5,7 +5,7 @@
   to understand what the experiment is, and the artifact the design reviewer
   evaluates. Copy it to the experiment plan (e.g.
   experiments/<name>/plan.md), fill it in, then submit it with
-  artifact.submit (role "plan") and run the returned upload command.
+  artifact.upload (attach_to.role "plan") and run the returned upload command.
 
   REQUIRED spine — `experiment.transition(submit_design)` is blocked until each
   of these has real content (the lint strips these HTML comments, so a section

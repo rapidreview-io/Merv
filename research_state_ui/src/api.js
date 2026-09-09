@@ -330,8 +330,8 @@ export const api = {
   getReflectionGraph: (pid, synId) =>
     request(`/api/projects/${encodeURIComponent(pid)}/reflections/${encodeURIComponent(synId)}/graph`),
 
-  // Artifacts — typed objects the agent submitted against workflow targets.
-  // Read-only here: submission is agent-only (artifact.submit → one-time
+  // Artifacts — immutable content and its associations with research targets.
+  // Read-only here: submission is agent-only (artifact.upload → one-time
   // upload token), so there are no register/associate/delete calls.
   listArtifacts: (pid) =>
     request(`/api/projects/${encodeURIComponent(pid)}/artifacts`),

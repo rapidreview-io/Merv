@@ -46,7 +46,7 @@ def document_ready(role):
             error = "; ".join(problems)
         if error:
             return Issue(f"{role}_invalid", f"task {role} is not ready: {error}",
-                         f"fix_{role}_artifact", ("artifact.submit",))
+                         f"fix_{role}_artifact", ("artifact.upload",))
     return check
 
 

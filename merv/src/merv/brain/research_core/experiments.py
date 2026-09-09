@@ -1085,7 +1085,7 @@ class _ExperimentKnowledge:
             self.service.artifacts.contents.assert_complete(artifact_ids=(artifact.artifact_id,), project_id=experiment["project_id"], tx=self.conn)
             content = self.service.artifacts.contents.get(artifact_ids=(artifact.artifact_id,), project_id=experiment["project_id"], include="document", tx=self.conn)[0]
             if content.data is None:
-                raise WorkflowError(f"{artifact.path} has no submitted content — resubmit it with artifact.submit")
+                raise WorkflowError(f"{artifact.path} has no submitted content — resubmit it with artifact.upload")
             fact["figure_links"] = content.figures
             if artifact.role in {"plan", "report", "graph"}:
                 try:

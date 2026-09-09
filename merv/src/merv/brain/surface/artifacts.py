@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import quote
 
-from ..artifacts import CompletedFigure, PendingUpload
+from ..artifacts import Artifact as Content, CompletedFigure, PendingUpload
 from ..research_core import (
     Artifact,
     ArtifactTarget,
@@ -69,10 +69,28 @@ def pending_upload_v1(pending: PendingUpload, *, base_url: str = "") -> dict[str
     }
 
 
-def artifact_meta_v1(artifact: Artifact) -> dict[str, Any]:
+def artifact_meta_v1(artifact: Artifact | Content) -> dict[str, Any]:
     """Serialize metadata without ever exposing the bearer upload token."""
+    if isinstance(artifact, Content):
+        return {
+            field: getattr(artifact, field)
+            for field in (
+                "id",
+                "project_id",
+                "path",
+                "title",
+                "sha256",
+                "size_bytes",
+                "content_type",
+                "status",
+                "created_by",
+                "created_at",
+                "updated_at",
+            )
+        }
     return {
         "id": artifact.id,
+        "artifact_id": artifact.artifact_id,
         "project_id": artifact.project_id,
         "target_type": artifact.target_type,
         "target_id": artifact.target_id,
@@ -117,7 +135,7 @@ def _is_textual_type(content_type: str) -> bool:
     )
 
 
-def content_envelope_v1(artifact: Artifact) -> dict[str, Any]:
+def content_envelope_v1(artifact: Artifact | Content) -> dict[str, Any]:
     content_type = artifact.content_type
     data = artifact.data
     text: str | None = None
@@ -183,62 +201,34 @@ class ArtifactTools:
 
     artifacts: Artifacts
 
-    def store(
+    def upload(
         self,
         *,
         project_id: str,
         path: str,
         title: str = "",
         discover_figures: bool = False,
+        attach_to: dict[str, str] | None = None,
         base_url: str = "",
     ) -> dict[str, Any]:
-        """Upload generic immutable content without assigning research meaning."""
-        pending = self.artifacts.contents.submit(
-            project_id=project_id,
-            path=path,
-            title=title,
-            discover_figures=discover_figures,
-        )
+        if attach_to is None:
+            pending = self.artifacts.contents.submit(
+                project_id=project_id,
+                path=path,
+                title=title,
+                discover_figures=discover_figures,
+            )
+        else:
+            pending = self.artifacts.submit(
+                target=ArtifactTarget(
+                    attach_to["target_type"], attach_to["target_id"], project_id
+                ),
+                role=attach_to["role"],
+                lens_id=attach_to.get("lens_id", ""),
+                path=path,
+                title=title,
+            )
         return pending_upload_v1(pending, base_url=base_url)
-
-    def read(
-        self, *, project_id: str, artifact_id: str, include_content: bool = False,
-        base_url: str = "",
-    ) -> dict[str, Any]:
-        """Return metadata and a download URL using normal project/account auth."""
-        found = self.artifacts.contents.get(
-            artifact_ids=(artifact_id,),
-            project_id=project_id,
-            include="document" if include_content else "metadata",
-        )
-        _require_all((artifact_id,), found, project_id=project_id)
-        artifact = found[0]
-        result = {
-            "download_url": (
-                f"{(base_url or _LOCAL_API_BASE).rstrip('/')}"
-                f"/api/projects/{quote(project_id, safe='')}/artifacts/{quote(artifact.id, safe='')}/file"
-            ),
-            "artifact": {
-                field: getattr(artifact, field)
-                for field in (
-                    "id",
-                    "project_id",
-                    "path",
-                    "title",
-                    "sha256",
-                    "size_bytes",
-                    "content_type",
-                    "status",
-                    "created_by",
-                    "created_at",
-                    "updated_at",
-                )
-            }
-        }
-        if include_content:
-            result["content"] = content_envelope_v1(artifact)
-            result["artifact"]["figures"] = list(artifact.figures)
-        return result
 
     def attach(
         self,
@@ -261,31 +251,11 @@ class ArtifactTools:
             "association": artifact_meta_v1(association),
         }
 
-    def submit(
+    def read(
         self,
         *,
-        target_type: str,
-        target_id: str,
-        role: str,
-        path: str,
-        lens_id: str = "",
-        title: str = "",
-        project_id: str | None = None,
+        project_id: str,
         base_url: str = "",
-    ) -> dict[str, Any]:
-        pending = self.artifacts.submit(
-            target=ArtifactTarget(target_type, target_id, project_id),
-            role=role,
-            path=path,
-            lens_id=lens_id,
-            title=title,
-        )
-        return pending_upload_v1(pending, base_url=base_url)
-
-    def find(
-        self,
-        *,
-        project_id: str | None = None,
         artifact_id: str = "",
         artifact_ids: list[str] | None = None,
         include_content: bool = False,
@@ -296,24 +266,43 @@ class ArtifactTools:
         requested_ids = tuple(dict.fromkeys(artifact_ids or ()))
         ids = (artifact_id,) if artifact_id else requested_ids
         if ids:
-            artifacts = self.artifacts.get(
-                artifact_ids=ids,
-                project_id=project_id,
-                include="document" if include_content else "metadata",
+            include = "document" if include_content else "metadata"
+            found = {
+                a.id: a
+                for a in self.artifacts.get(
+                    artifact_ids=ids,
+                    project_id=project_id,
+                    include=include,
+                )
+            }
+            missing = tuple(i for i in ids if i not in found)
+            found.update(
+                (a.id, a)
+                for a in self.artifacts.contents.get(
+                    artifact_ids=missing,
+                    project_id=project_id,
+                    include=include,
+                )
             )
-            _require_all(ids, artifacts, project_id=project_id)
-            if artifact_id:
-                artifact = artifacts[0]
-                result: dict[str, Any] = {"artifact": artifact_meta_v1(artifact)}
+            _require_all(ids, tuple(found.values()), project_id=project_id)
+            rows = []
+            for item in ids:
+                artifact = found[item]
+                row = artifact_meta_v1(artifact)
+                row["download_url"] = (
+                    f"{(base_url or _LOCAL_API_BASE).rstrip('/')}"
+                    f"/api/projects/{quote(project_id, safe='')}/artifacts/{quote(item, safe='')}/file"
+                )
                 if include_content:
-                    result["content"] = content_envelope_v1(artifact)
-                return result
-            rows: list[dict[str, Any]] = []
-            for artifact in artifacts:
-                row = _artifact_list_item_v1(artifact)
-                if include_content:
+                    row["figures"] = list(artifact.figures)
                     row["content"] = content_envelope_v1(artifact)
                 rows.append(row)
+            if artifact_id:
+                row = rows[0]
+                result = {"artifact": row, "download_url": row.pop("download_url")}
+                if include_content:
+                    result["content"] = row.pop("content")
+                return result
             return {"artifacts": rows, "count": len(rows)}
         return artifact_list_v1(
             self.artifacts.scan(
@@ -327,7 +316,7 @@ class ArtifactTools:
 
 def _require_all(
     requested: tuple[str, ...],
-    found: tuple[Artifact, ...],
+    found: tuple[Artifact | Content, ...],
     *,
     project_id: str | None,
 ) -> None:

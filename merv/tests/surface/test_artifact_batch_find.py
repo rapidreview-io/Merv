@@ -1,22 +1,23 @@
-"""Focused contract tests for artifact.find id batches and content opt-in."""
+"""Focused contract tests for artifact.read id batches and content opt-in."""
 
 from __future__ import annotations
 
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from pydantic import ValidationError as PydanticValidationError
 
 from merv.brain.kernel.utils import NotFoundError
 from merv.brain.surface.tools.contracts import (
-    ArtifactFindInput,
+    ArtifactReadInput,
     ExperimentGetStateInput,
 )
 from tests.support.brain import TestBrain
 
 
-class ArtifactBatchFindTest(unittest.TestCase):
+class ArtifactBatchReadTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
@@ -55,14 +56,14 @@ class ArtifactBatchFindTest(unittest.TestCase):
         report = self._submit(role="report", path="report.md", body="Report body.")
 
         metadata = self.app.call_tool(
-            "artifact.find",
+            "artifact.read",
             {
                 "project_id": self.project_id,
                 "artifact_ids": [report, plan, report],
             },
         )
         hydrated = self.app.call_tool(
-            "artifact.find",
+            "artifact.read",
             {
                 "project_id": self.project_id,
                 "artifact_ids": [report, plan],
@@ -86,7 +87,7 @@ class ArtifactBatchFindTest(unittest.TestCase):
 
         with self.assertRaises(NotFoundError) as ctx:
             self.app.call_tool(
-                "artifact.find",
+                "artifact.read",
                 {
                     "project_id": self.project_id,
                     "artifact_ids": [existing, "art_missing"],
@@ -98,8 +99,50 @@ class ArtifactBatchFindTest(unittest.TestCase):
             ctx.exception.details["missing_artifact_ids"], ["art_missing"]
         )
 
+    def test_mixed_content_and_association_ids_keep_their_identity_and_order(self) -> None:
+        content = self.app.artifacts.contents.create(
+            project_id=self.project_id, path="plan.md", data=b"Reusable plan body."
+        )
+        association = self.app.call_tool("artifact.attach", {
+            "project_id": self.project_id, "artifact_id": content.id,
+            "target_type": "experiment", "target_id": self.experiment_id, "role": "plan",
+        })["association"]
+        report = self._submit(role="report", path="report.md", body="Report body.")
+        ids = [association["id"], content.id, report]
+        self.assertNotEqual(content.id, association["id"])
+        result = self.app.call_tool("artifact.read", {
+            "project_id": self.project_id, "artifact_ids": [*ids, content.id],
+            "include_content": True,
+        })
+        self.assertEqual(result["count"], 3)
+        self.assertEqual([row["id"] for row in result["artifacts"]], ids)
+        self.assertEqual(
+            [row["content"]["content"] for row in result["artifacts"]],
+            ["Reusable plan body.", "Reusable plan body.", "Report body."],
+        )
+        for row in result["artifacts"]:
+            self.assertTrue(row["download_url"].endswith(f"/{row['id']}/file"))
+            self.assertEqual(row["figures"], [])
+        self.assertEqual(result["artifacts"][0]["target_id"], self.experiment_id)
+        self.assertNotIn("target_id", result["artifacts"][1])
+
+    def test_mixed_batch_rejects_foreign_content_without_reading_its_bytes(self) -> None:
+        existing = self._submit(role="plan", path="plan.md", body="Plan body.")
+        foreign_project = self.app.call_tool("project", {"action": "create", "name": "Foreign"})["id"]
+        foreign = self.app.artifacts.contents.create(
+            project_id=foreign_project, path="private.bin", data=b"\x00private"
+        )
+        with patch.object(self.app._blobs, "get", wraps=self.app._blobs.get) as get:
+            with self.assertRaises(NotFoundError) as ctx:
+                self.app.call_tool("artifact.read", {
+                    "project_id": self.project_id, "artifact_ids": [existing, foreign.id],
+                    "include_content": True,
+                })
+            self.assertNotIn(foreign_project, [call.kwargs["namespace"] for call in get.call_args_list])
+        self.assertEqual(ctx.exception.details["missing_artifact_ids"], [foreign.id])
+
     def test_contract_bounds_and_disambiguates_batch_reads(self) -> None:
-        parsed = ArtifactFindInput.model_validate(
+        parsed = ArtifactReadInput.model_validate(
             {
                 "project_id": "proj_1",
                 "artifact_ids": ["art_2", "art_1", "art_2"],
@@ -107,14 +150,14 @@ class ArtifactBatchFindTest(unittest.TestCase):
         )
         self.assertEqual(parsed.artifact_ids, ["art_2", "art_1"])
         with self.assertRaises(PydanticValidationError):
-            ArtifactFindInput.model_validate(
+            ArtifactReadInput.model_validate(
                 {
                     "project_id": "proj_1",
                     "artifact_ids": [f"art_{index}" for index in range(51)],
                 }
             )
         with self.assertRaises(PydanticValidationError):
-            ArtifactFindInput.model_validate(
+            ArtifactReadInput.model_validate(
                 {
                     "project_id": "proj_1",
                     "artifact_ids": ["art_1"],

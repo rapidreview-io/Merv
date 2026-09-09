@@ -29,9 +29,9 @@ test('codex --json items summarize by item type', () => {
   assert.equal(command.kind, 'item.completed · command_execution');
   const mcp = summarizeTraceEvent({
     type: 'item.completed',
-    item: { type: 'mcp_tool_call', server: 'merv_agent_session', tool: 'artifact.submit', status: 'completed' },
+    item: { type: 'mcp_tool_call', server: 'merv_agent_session', tool: 'artifact.upload', status: 'completed' },
   });
-  assert.equal(mcp.text, '⚙ merv_agent_session.artifact.submit · completed');
+  assert.equal(mcp.text, '⚙ merv_agent_session.artifact.upload · completed');
   const done = summarizeTraceEvent({ type: 'turn.completed', usage: { input_tokens: 10 } });
   assert.equal(done.tone, 'final');
 });

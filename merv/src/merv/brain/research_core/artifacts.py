@@ -462,7 +462,7 @@ class ResearchArtifacts:
             )
         if target.attempt_index != int(row["attempt_index"]):
             return ValidationError(
-                "upload refused — attempt superseded. Call artifact.submit again for the current attempt"
+                "upload refused — attempt superseded. Call artifact.upload again for the current attempt"
             )
         return None
 

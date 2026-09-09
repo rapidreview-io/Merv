@@ -6,7 +6,9 @@ errors.
 
 ## Lens reflection
 
-Each lens agent writes and submits its own Markdown document as
+Each lens agent uploads its own Markdown document with
+`artifact.upload(project_id, path)` and runs the returned command. Submit the
+content ID through the assigned child workflow; its transition records
 `reflection_lens_doc` with the roster's exact `lens_id`.
 
 ```markdown

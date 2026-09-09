@@ -231,7 +231,7 @@ GET /api/projects/{project_id}/artifacts/{artifact_id}/figure?rel={relative_path
 ```
 
 There are deliberately no browser submission routes: artifacts are submitted
-by the agent (`artifact.submit` plus the returned one-time-token
+by the agent (`artifact.upload` plus the returned one-time-token
 `PUT /api/artifacts/u/{token}` upload; figures via
 `PUT /api/artifacts/f/{token}`). The listing returns compact complete-artifact
 rows (id, target, role, attempt, lens_id, path label, title, size,

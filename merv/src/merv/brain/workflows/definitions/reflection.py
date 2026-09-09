@@ -62,14 +62,14 @@ def lens_issue(wave, knowledge, lens_id):
     artifact = _artifact(wave, "reflection_lens_doc", lens_id)
     if artifact is None:
         return Issue("reflection_roster_incomplete", f"Reflection is missing for lens {lens_id!r}; submit its own reflection_lens_doc with that lens_id.",
-                     "fan_out_reflection_subagents", ("artifact.submit",))
+                     "fan_out_reflection_subagents", ("artifact.upload",))
     try:
         problems = reflection_lens_doc_problems(_document(knowledge, artifact)["text"])
     except (NotFoundError, ValidationError, WorkflowError) as exc:
         problems = (str(exc),)
     if problems:
         return Issue("reflection_lens_doc_invalid", f"Reflection for lens {lens_id!r} is not ready: " + "; ".join(problems)
-                     + ". Add a non-empty ## Summary and resubmit it.", "revise_lens_reflection", ("artifact.submit",))
+                     + ". Add a non-empty ## Summary and resubmit it.", "revise_lens_reflection", ("artifact.upload",))
 
 
 def lenses_complete(snapshot, knowledge):
@@ -93,7 +93,7 @@ def _artifact_check(role, validator):
             problems = (str(exc),)
         if problems:
             return Issue(f"{role}_invalid", f"{need.missing.capitalize()} is not ready for reflection review: " + "; ".join(problems),
-                         f"revise_{role}", ("artifact.submit",))
+                         f"revise_{role}", ("artifact.upload",))
     return check
 
 
@@ -367,7 +367,7 @@ def submit_lens(snapshot, payload, knowledge):
     artifact = _artifact(_wave(snapshot, knowledge), "reflection_lens_doc", str(snapshot.data["lens_id"]))
     artifact_id = str(payload.get("artifact_id") or (artifact or {}).get("artifact_id") or (artifact or {}).get("id") or "")
     if not artifact_id:
-        raise WorkflowError("Submit this lens's reflection_lens_doc, or upload it with artifact.store and pass artifact_id to this action.")
+        raise WorkflowError("Submit this lens's reflection_lens_doc, or upload it with artifact.upload and pass artifact_id to this action.")
     document = knowledge.read(Reference("artifact", artifact_id))
     problems = reflection_lens_doc_problems(document["text"])
     if problems:
@@ -388,7 +388,7 @@ def build_lens_context(snapshot, knowledge):
         "view is an input to a later synthesis assignment. Investigate promising findings and failed "
         "directions through this lens's charter, name uncertainty, and propose concrete next tests.\n\n"
         "Resume from any retained contribution before repeating investigation. Submit one complete "
-        "document with artifact.store and a non-empty Summary section. Cite exact evidence references "
+        "document with artifact.upload and a non-empty Summary section. Cite exact evidence references "
         "so the synthesizer can verify your claims quickly. Then commit the submit action for this lens "
         "workflow with payload={artifact_id: the uploaded content ID}. The workflow associates it with "
         "this fixed lens and wave; its submitted artifact ID is frozen in workflow "

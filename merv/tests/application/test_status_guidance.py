@@ -24,8 +24,8 @@ class StatusGuidanceContractTest(unittest.TestCase):
         self.target = {"id": "instance_1", "revision_context": "Preserve previous work."}
 
     def test_requirement_order_and_every_blocker_come_from_the_canonical_decision(self):
-        gate = evaluation(blockers=(Issue("report_invalid", "Report lacks its conclusion.", "fix_report", ("artifact.submit",)),
-                                    Issue("graph_missing", "Logic graph missing.", "submit_graph", ("artifact.submit",))))
+        gate = evaluation(blockers=(Issue("report_invalid", "Report lacks its conclusion.", "fix_report", ("artifact.upload",)),
+                                    Issue("graph_missing", "Logic graph missing.", "submit_graph", ("artifact.upload",))))
         result = self.policy.experiment(experiment=self.target, sandboxes=[], evaluation=gate)
         self.assertEqual(result["current_gate"], "report_invalid")
         self.assertEqual(result["next_action"], "fix_report")
@@ -34,7 +34,7 @@ class StatusGuidanceContractTest(unittest.TestCase):
         self.assertEqual(result["suggested_action"], gate.decision.public()["suggested_action"])
 
     def test_infrastructure_facts_cannot_change_a_workflow_decision(self):
-        gate = evaluation(blockers=(Issue("result_missing", "Retain results.", "run_experiment", ("artifact.submit",)),))
+        gate = evaluation(blockers=(Issue("result_missing", "Retain results.", "run_experiment", ("artifact.upload",)),))
         idle = self.policy.experiment(experiment=self.target, sandboxes=[], evaluation=gate)
         live = self.policy.experiment(experiment=self.target, sandboxes=[{"status": "running"}], evaluation=gate)
         self.assertEqual(live, idle)

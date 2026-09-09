@@ -99,14 +99,14 @@ def require_artifact_document(
 ) -> ArtifactDocument:
     if not artifact_id:
         raise WorkflowError(
-            f"{what} has no submitted artifact — submit it with artifact.submit"
+            f"{what} has no submitted artifact — submit it with artifact.upload"
         )
     if artifact is None or artifact.status != "complete":
         raise WorkflowError(f"{what}: artifact not found: {artifact_id}")
     if artifact.data is None:
         raise WorkflowError(
             f"{what} ({artifact.path}) has no submitted content — resubmit it "
-            "with artifact.submit"
+            "with artifact.upload"
         )
     try:
         text = artifact.data.decode("utf-8")
@@ -801,7 +801,7 @@ def current_reflection_requirement_artifact(
 
 def reflection_coverage_for(*, reflection: dict[str, Any]) -> dict[str, Any]:
     # A current-attempt lens doc covers lens L when it was submitted with the
-    # explicit lens_id L (artifact.submit requires it for the role).
+    # explicit lens_id L (artifact.upload requires it for the role).
     by_lens: dict[str, dict[str, Any]] = {}
     for res in reflection.get("current_attempt_artifacts", []):
         if res.get("role") != REFLECTION_LENS_DOC_ROLE:
@@ -1171,7 +1171,7 @@ def parse_change_spec(
     if not text.strip():
         raise WorkflowError(
             f"change spec {path!r} is empty — write it and "
-            "resubmit it (artifact.submit) to submit the content"
+            "resubmit it (artifact.upload) to submit the content"
         )
     try:
         spec = json.loads(text)
@@ -1180,7 +1180,7 @@ def parse_change_spec(
             f"change spec {path!r} is not valid JSON: {exc}. "
             "Write the role 'change_spec' artifact from "
             "skills/project-reflection/reflection-artifacts-template.md and "
-            "resubmit it with artifact.submit."
+            "resubmit it with artifact.upload."
         ) from exc
     if not isinstance(spec, dict):
         raise WorkflowError(f"change spec {path!r} must be a JSON object")
@@ -1206,7 +1206,7 @@ def parse_change_spec(
         raise WorkflowError(
             "change spec is not ready for review: "
             + "; ".join(problems)
-            + ". Fix the file and resubmit it (artifact.submit) — "
+            + ". Fix the file and resubmit it (artifact.upload) — "
             "see skills/project-reflection/reflection-artifacts-template.md."
         )
     return spec

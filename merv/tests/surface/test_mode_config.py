@@ -169,9 +169,9 @@ class HostedControlSurfaceTest(unittest.TestCase):
         self.assertEqual(tools.status_code, 200, tools.text)
         names = {tool["name"] for tool in tools.json()["tools"]}
         self.assertIn("claim.create", names)
-        self.assertIn("artifact.submit", names)
+        self.assertIn("artifact.upload", names)
         # feed.post is control-plane since Phase D.1 (media bytes ride the
-        # agent's own curl), so it is MCP-visible like artifact.submit.
+        # agent's own curl), so it is MCP-visible like artifact.upload.
         self.assertIn("feed.post", names)
         for name in ("sandbox.request", "sandbox.attach", "sandbox.pull_outputs"):
             self.assertIn(name, names)
@@ -306,13 +306,13 @@ class HostedControlSurfaceTest(unittest.TestCase):
             },
         )
         pending = self.app.call_tool(
-            name="artifact.submit",
+            name="artifact.upload",
             arguments={
                 "project_id": project_id,
-                "target_type": "experiment",
-                "target_id": experiment["id"],
-                "role": "result",
                 "path": "results.json",
+                "attach_to": {
+                    "target_type": "experiment", "target_id": experiment["id"], "role": "result",
+                },
             },
         )
 

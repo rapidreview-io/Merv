@@ -120,6 +120,11 @@ class RequestAuthenticator:
             else ""
         )
         if token.startswith(AGENT_SESSION_SECRET_PREFIX):
+            denied = _agent_session_http_denial(path)
+            if denied is not None:
+                # These credentials cannot reach raw HTTP routes. Reject
+                # before workflow validation reads its supporting evidence.
+                return denied
             record = (
                 None
                 if self.agent_sessions is None
@@ -192,7 +197,7 @@ class RequestAuthenticator:
                 ),
             )
             request.state.principal = principal
-            denied = _agent_session_http_denial(request.url.path) or oauth.credential_audience_denial(
+            denied = oauth.credential_audience_denial(
                 request=request, principal=principal,
                 canonical_mcp_resource=self.canonical_mcp_resource,
             )
@@ -546,8 +551,7 @@ class ToolInvocationGateway:
                     "project_id" if name == "project.list" else "key_project_id"
                 ] = key_project_id
         if base_url and name in (
-            "artifact.submit",
-            "artifact.store",
+            "artifact.upload",
             "artifact.read",
             "feed.post",
             "storage.submit",
@@ -732,9 +736,18 @@ class ToolInvocationGateway:
                 "agent session sandbox calls must identify their experiment",
                 details={"experiment_id": experiment_id, "tool": name},
             )
-        requested_target_type = str(arguments.get("target_type") or "")
-        requested_target_id = str(arguments.get("target_id") or "")
-        if name in {"artifact.submit", "artifact.attach", "review.request", "review.status"} and (
+        target_arguments = (
+            arguments.get("attach_to") if name == "artifact.upload" else arguments
+        )
+        target_arguments = (
+            target_arguments if isinstance(target_arguments, dict) else {}
+        )
+        requested_target_type = str(target_arguments.get("target_type") or "")
+        requested_target_id = str(target_arguments.get("target_id") or "")
+        if (
+            name in {"artifact.attach", "review.request", "review.status"}
+            or (name == "artifact.upload" and arguments.get("attach_to") is not None)
+        ) and (
             requested_target_type != target_type or requested_target_id != target_id
         ):
             raise AgentSessionScopeError(
@@ -810,9 +823,13 @@ class ToolInvocationGateway:
                 # Knowledge reads remain project-scoped; mutations stay bound
                 # to the one leased workflow record.
                 raise AgentSessionScopeError(f"agent session cannot act on another {native_type}")
-        if name in {"artifact.submit", "artifact.attach", "review.request"}:
-            if (str(arguments.get("target_type") or "") != target_type
-                    or str(arguments.get("target_id") or "") != instance_id):
+        target_arguments = arguments.get("attach_to") if name == "artifact.upload" else arguments
+        if name in {"artifact.attach", "review.request"} or (
+            name == "artifact.upload" and target_arguments is not None
+        ):
+            target_arguments = target_arguments if isinstance(target_arguments, dict) else {}
+            if (str(target_arguments.get("target_type") or "") != target_type
+                    or str(target_arguments.get("target_id") or "") != instance_id):
                 raise AgentSessionScopeError(f"{name} must target the assigned workflow record")
         if name.startswith("sandbox."):
             if target_type != "experiment":

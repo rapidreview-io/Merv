@@ -17,7 +17,7 @@ class ArtifactNeed:
     error: str
     gate: str
     action: str
-    tools: tuple[str, ...] = ("artifact.submit",)
+    tools: tuple[str, ...] = ("artifact.upload",)
     validator: str = ""
     missing: str = ""
     label: str = ""

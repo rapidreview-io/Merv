@@ -18,7 +18,7 @@ for machine-learning research. Its durable model is:
   claim (a brief of checks in, a delivery of evidence out, one review).
   Experiments and tasks are the nodes of a wave; `depends_on` edges between
   them form the wave DAG.
-- **Artifact** — a typed document submitted against a workflow target.
+- **Artifact** — immutable project content, reusable through research associations.
 - **Review** — an independent judgment pinned to an immutable target snapshot.
 - **Reflection** — a reviewed project-wide update to the logic graph, claims,
   and next wave of experiments and tasks.
@@ -133,7 +133,7 @@ sandboxes, storage, events, and the research feed.
 The browser cannot perform checkout-local operations. Local storage transfer,
 feed-image capture, and sandbox output pulls are agent-driven through typed
 tools and the upload/download commands they return, as is artifact submission
-(artifact.submit plus the returned upload command).
+(artifact.upload plus the returned upload command).
 
 ## Composition and persistence
 
@@ -172,7 +172,7 @@ transition.
 The brain registry in `src/merv/brain/surface/tools/contracts.py` is the single
 generator and source of truth for tool schemas and plane assignments. Since the
 no-dataplane transition every tool is a control tool that runs in the brain.
-Byte operations (`storage.submit`, `storage.fetch`, `artifact.submit`, and
+Byte operations (`storage.submit`, `storage.fetch`, `artifact.upload`, and
 `feed.post`) hand back a one-line command. Storage uses presigned provider URLs;
 Artifact and Feed use bounded token endpoints. Sandbox operations are served by
 the brain, while output bytes move directly over `rsync`.
@@ -220,8 +220,12 @@ Both paths record actual start once per revision and queue the node's start
 effects; neither needs another graph state after approval.
 
 All meaning-changing actions use typed MCP or HTTP operations. Editing a local
-file does not mutate research state. `artifact.store` records generic content;
-workflow bindings attach accepted evidence to their domain records.
+file does not mutate research state. `artifact.upload` records immutable content
+after the agent runs its returned command. An optional
+`attach_to: {target_type, target_id, role, lens_id?}` activates a research
+association when that upload completes; `artifact.attach` reuses existing
+content. Workflow nodes can accept content IDs and let their bindings record the
+association. `artifact.read` retrieves content or lists research evidence.
 
 ## Evidence and storage
 
@@ -235,10 +239,11 @@ Three storage layers have distinct purposes:
 3. **Heavy-object storage** keeps large datasets, checkpoints, archives, and
    other valuable files that should not live in git.
 
-Artifacts owns artifact identities, upload tokens, figure membership, and byte
-retrieval. Research uses the concrete `Artifacts` root to read and seal that
-evidence, then applies experiment/reflection gate and review policy. Research
-never queries Artifact tables or reads blob providers directly.
+Artifacts owns content identities, upload tokens, figure membership, and byte
+retrieval. Research owns target/role associations and freezes exact evidence
+versions through workflow bindings. Workflows owns document validation and gate
+decisions. Research reads bytes through the public Artifacts root; it never
+queries Artifact tables or reads blob providers directly.
 
 Nothing on a sandbox is durable by default. Before release or expiry, agents
 must pull compact evidence into the repo or upload heavy files to durable

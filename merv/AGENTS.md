@@ -42,9 +42,12 @@ There is no linking step and no `connect` action. Use
   missing evidence, and next action. Auto-run assignments own one graph node;
   stop after its handoff. Interactive agents call `workflow.begin` with the
   instance id and current revision before beginning node work.
-- Local edits are not research state. Use `artifact.submit` to contribute
-  evidence; it returns a presigned upload command for the bytes, and the
-  submitted version can be associated with a target and role.
+- Local edits are not research state. Use `artifact.upload` with
+  `attach_to: {target_type, target_id, role}` to contribute research evidence.
+  Run the returned upload command to store bytes and activate the association.
+  Add `lens_id` inside `attach_to` only for `reflection_lens_doc`.
+  Workflow nodes that accept content IDs use `artifact.upload` without an
+  attachment; their submission transition records the association.
 - Load `research-workflow` for experiment and task work and
   `project-reflection` for a five-lens reflection wave. Work that tests a
   claim is an experiment; scoped work with a verifiable finish line and no

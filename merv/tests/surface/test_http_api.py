@@ -1951,13 +1951,13 @@ class ArtifactFigureRouteTest(unittest.TestCase):
             json={"name": "cap-check", "intent": "Reject oversize uploads."},
         ).json()
         pending = self.app.call_tool(
-            "artifact.submit",
+            "artifact.upload",
             {
                 "project_id": self.project_id,
-                "target_type": "experiment",
-                "target_id": exp["id"],
-                "role": "report",
                 "path": "report.md",
+                "attach_to": {
+                    "target_type": "experiment", "target_id": exp["id"], "role": "report",
+                },
             },
         )
         token = upload_token(pending["run"])
@@ -2082,13 +2082,13 @@ class DegradedStatesTest(unittest.TestCase):
         ).json()
         # Submitted but never uploaded: the row is pending, no bytes exist.
         pending = self.app.call_tool(
-            "artifact.submit",
+            "artifact.upload",
             {
                 "project_id": pid,
-                "target_type": "experiment",
-                "target_id": exp["id"],
-                "role": "result",
                 "path": "results.json",
+                "attach_to": {
+                    "target_type": "experiment", "target_id": exp["id"], "role": "result",
+                },
             },
         )
         body = self.client.get(
