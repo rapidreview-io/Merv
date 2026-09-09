@@ -8,6 +8,7 @@ token minted by artifact.submit is the credential, so the agent's bare
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
@@ -21,6 +22,11 @@ from ...artifacts import (
     completed_figure_v1,
     content_envelope_v1,
 )
+
+_RAW_CONTENT_HEADERS = {
+    "Content-Security-Policy": "sandbox",
+    "X-Content-Type-Options": "nosniff",
+}
 
 
 def _too_large(cap: int) -> JSONResponse:
@@ -55,6 +61,18 @@ async def _read_capped(request: Request, *, cap: int) -> bytes | None:
 
 def build_router(*, artifacts: Artifacts) -> APIRouter:
     api_router = APIRouter()
+
+    def read_artifact(project_id: str, artifact_id: str):
+        found = artifacts.get(
+            project_id=project_id, artifact_ids=(artifact_id,), include="document"
+        ) or artifacts.contents.get(
+            project_id=project_id, artifact_ids=(artifact_id,), include="document"
+        )
+        if not found:
+            raise NotFoundError(
+                f"artifact not found in project {project_id}: {artifact_id}"
+            )
+        return found[0]
 
     @api_router.put("/api/artifacts/u/{token}")
     async def upload_artifact(token: str, request: Request) -> Any:
@@ -124,29 +142,11 @@ def build_router(*, artifacts: Artifacts) -> APIRouter:
 
     @api_router.get("/api/projects/{project_id}/artifacts/{artifact_id}/content")
     def artifact_content(project_id: str, artifact_id: str) -> dict[str, Any]:
-        found = artifacts.get(
-            project_id=project_id,
-            artifact_ids=(artifact_id,),
-            include="document",
-        )
-        if not found:
-            raise NotFoundError(
-                f"artifact not found in project {project_id}: {artifact_id}"
-            )
-        return content_envelope_v1(found[0])
+        return content_envelope_v1(read_artifact(project_id, artifact_id))
 
     @api_router.get("/api/projects/{project_id}/artifacts/{artifact_id}/file")
     def artifact_file(project_id: str, artifact_id: str) -> Response:
-        found = artifacts.get(
-            project_id=project_id,
-            artifact_ids=(artifact_id,),
-            include="document",
-        )
-        if not found:
-            raise NotFoundError(
-                f"artifact not found in project {project_id}: {artifact_id}"
-            )
-        artifact = found[0]
+        artifact = read_artifact(project_id, artifact_id)
         if artifact.data is None:
             if artifact.status == "complete":
                 raise NotFoundError(
@@ -162,7 +162,10 @@ def build_router(*, artifacts: Artifacts) -> APIRouter:
             media_type=(
                 artifact.content_type or "application/octet-stream"
             ),
-            headers={"Content-Disposition": f'inline; filename="{filename}"'},
+            headers={
+                **_RAW_CONTENT_HEADERS,
+                "Content-Disposition": _content_disposition(filename),
+            },
         )
 
     @api_router.get("/api/projects/{project_id}/artifacts/{artifact_id}/figure")
@@ -173,10 +176,22 @@ def build_router(*, artifacts: Artifacts) -> APIRouter:
             link_path=rel,
         )
         if data is None:
+            data = artifacts.contents.figure(
+                project_id=project_id, artifact_id=artifact_id, link_path=rel
+            )
+        if data is None:
             return JSONResponse(
                 {"detail": f"figure not found: {rel}", "error_code": "not_found"},
                 status_code=404,
             )
-        return Response(content=data, media_type="application/octet-stream")
+        return Response(
+            content=data, media_type="application/octet-stream", headers=_RAW_CONTENT_HEADERS
+        )
 
     return api_router
+
+
+def _content_disposition(filename: str) -> str:
+    if all(32 <= ord(char) < 127 and char not in {'"', "\\"} for char in filename):
+        return f'inline; filename="{filename}"'
+    return f"inline; filename*=UTF-8''{quote(filename, safe='')}"

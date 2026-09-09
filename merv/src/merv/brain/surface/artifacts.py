@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import quote
 
 from ..artifacts import CompletedFigure, PendingUpload
 from ..research_core import (
@@ -201,8 +202,10 @@ class ArtifactTools:
         return pending_upload_v1(pending, base_url=base_url)
 
     def read(
-        self, *, project_id: str, artifact_id: str, include_content: bool = False
+        self, *, project_id: str, artifact_id: str, include_content: bool = False,
+        base_url: str = "",
     ) -> dict[str, Any]:
+        """Return metadata and a download URL using normal project/account auth."""
         found = self.artifacts.contents.get(
             artifact_ids=(artifact_id,),
             project_id=project_id,
@@ -211,6 +214,10 @@ class ArtifactTools:
         _require_all((artifact_id,), found, project_id=project_id)
         artifact = found[0]
         result = {
+            "download_url": (
+                f"{(base_url or _LOCAL_API_BASE).rstrip('/')}"
+                f"/api/projects/{quote(project_id, safe='')}/artifacts/{quote(artifact.id, safe='')}/file"
+            ),
             "artifact": {
                 field: getattr(artifact, field)
                 for field in (

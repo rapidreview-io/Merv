@@ -536,6 +536,7 @@ class ToolInvocationGateway:
         if base_url and name in (
             "artifact.submit",
             "artifact.store",
+            "artifact.read",
             "feed.post",
             "storage.submit",
             "sandbox.runs",

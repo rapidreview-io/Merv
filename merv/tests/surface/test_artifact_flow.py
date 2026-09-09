@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from tests.support.brain import TestBrain
 from merv.brain.research_core import ArtifactTarget
@@ -119,6 +120,101 @@ class ArtifactFlowTest(unittest.TestCase):
             verdict="pass",
             synopsis="The plan and results check out, so the attempt stands.",
         )
+
+    def _store(self, *, path: str, data: bytes, discover_figures: bool = False) -> dict:
+        pending = self.call(
+            "artifact.store", project_id=self.project_id, path=path,
+            discover_figures=discover_figures,
+        )
+        token = shlex.split(pending["run"])[-1].rsplit("/", 1)[-1]
+        uploaded = self.app._client.put(f"/api/artifacts/u/{token}", content=data)
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        return uploaded.json()
+
+    def test_unattached_binary_has_a_working_download_url(self) -> None:
+        data = b"\x00\xff\x89PNG binary evidence"
+        artifact = self._store(path="raw.bin", data=data)
+        hello = self.app._client.post("/mcp/call", json={
+            "name": "agent.hello", "arguments": {},
+        })
+        self.assertEqual(hello.status_code, 200, hello.text)
+        read = self.app._client.post("/mcp/call", json={
+            "name": "artifact.read", "arguments": {
+                "project_id": self.project_id, "artifact_id": artifact["artifact_id"],
+                "include_content": True, "agent_id": hello.json()["result"]["agent_id"],
+            },
+        })
+        self.assertEqual(read.status_code, 200, read.text)
+        result = read.json()["result"]
+        self.assertTrue(result["download_url"].startswith("http://testserver/api/projects/"))
+        self.assertTrue(result["content"]["is_binary"])
+        self.assertIsNone(result["content"]["content"])
+        downloaded = self.app._client.get(result["download_url"])
+        self.assertEqual(downloaded.status_code, 200, downloaded.text)
+        self.assertEqual(downloaded.content, data)
+        self.assertEqual(downloaded.headers["content-security-policy"], "sandbox")
+        self.assertEqual(downloaded.headers["x-content-type-options"], "nosniff")
+        self.assertEqual(downloaded.headers["content-disposition"], 'inline; filename="raw.bin"')
+
+    def test_unattached_and_associated_documents_share_file_and_figure_reads(self) -> None:
+        body = (VALID_PLAN + "\n![plot](figures/plot.png)\n").encode()
+        artifact = self._store(path="plan.md", data=body, discover_figures=True)
+        figure_bytes = b"\x89PNG test figure"
+        figure_url = shlex.split(artifact["figures"][0]["run"])[-1]
+        uploaded = self.app._client.put(figure_url, content=figure_bytes)
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+
+        def verify_downloads(handle: str) -> None:
+            base = f"/api/projects/{self.project_id}/artifacts/{handle}"
+            content = self.app._client.get(f"{base}/content")
+            self.assertEqual(content.status_code, 200, content.text)
+            self.assertEqual(content.json()["content"], body.decode())
+            self.assertEqual(self.app._client.get(f"{base}/file").content, body)
+            figure = self.app._client.get(f"{base}/figure", params={"rel": "figures/plot.png"})
+            self.assertEqual(figure.status_code, 200, figure.text)
+            self.assertEqual(figure.content, figure_bytes)
+            self.assertEqual(figure.headers["content-security-policy"], "sandbox")
+            self.assertEqual(figure.headers["x-content-type-options"], "nosniff")
+
+        verify_downloads(artifact["artifact_id"])
+        experiment_id = self.call(
+            "experiment.create", project_id=self.project_id,
+            name="download-association", intent="Read reused content and figures.",
+        )["id"]
+        association = self.call(
+            "artifact.attach", project_id=self.project_id, artifact_id=artifact["artifact_id"],
+            target_type="experiment", target_id=experiment_id, role="plan",
+        )["association"]
+        self.assertNotEqual(association["id"], artifact["artifact_id"])
+        verify_downloads(association["id"])
+
+    def test_foreign_project_downloads_do_not_read_blob_bytes(self) -> None:
+        artifact = self._store(path="raw.bin", data=b"\x00private bytes")
+        other = self.call("project", action="create", name="Other downloads")["id"]
+        base = f"/api/projects/{other}/artifacts/{artifact['artifact_id']}"
+        with patch.object(self.app._blobs, "get", side_effect=AssertionError("foreign blob read")) as get:
+            for suffix in ("file", "content", "figure?rel=private.png"):
+                response = self.app._client.get(f"{base}/{suffix}")
+                self.assertEqual(response.status_code, 404, response.text)
+            get.assert_not_called()
+
+    def test_arbitrary_filenames_produce_safe_content_disposition_headers(self) -> None:
+        cases = (
+            ("ordinary file.bin", 'inline; filename="ordinary file.bin"'),
+            ('quoted"name.bin', "inline; filename*=UTF-8''quoted%22name.bin"),
+            ("文書.bin", "inline; filename*=UTF-8''%E6%96%87%E6%9B%B8.bin"),
+            ("report\r\nX-Test: injected.bin", "inline; filename*=UTF-8''report%0D%0AX-Test%3A%20injected.bin"),
+        )
+        for filename, expected in cases:
+            with self.subTest(filename=filename):
+                artifact = self._store(path=filename, data=b"raw bytes")
+                response = self.app._client.get(
+                    f"/api/projects/{self.project_id}/artifacts/{artifact['artifact_id']}/file"
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.content, b"raw bytes")
+                self.assertEqual(response.headers["content-disposition"], expected)
+                self.assertNotIn("x-test", response.headers)
 
     def test_generic_content_can_be_read_before_it_is_attached_to_research(self) -> None:
         pending = self.call(

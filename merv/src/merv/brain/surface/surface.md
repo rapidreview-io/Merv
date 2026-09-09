@@ -44,7 +44,10 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
   race-safe persistence, and protocol routes. Persistence stays separate because
   both halves are substantial and transactional behavior must remain explicit.
 - `artifacts.py` plus `transport/api/artifacts.py`: stable artifact wire shapes
-  and token-authenticated byte upload/download.
+  and token-authenticated uploads. Project-authenticated content/file/figure
+  reads accept generic content IDs or research association handles;
+  `artifact.read` returns a download URL, including for unattached binary files.
+  Raw file/figure responses isolate active content with CSP sandbox and nosniff.
 - `telemetry.py`: in-memory activity, durable tool-call recording, and optional
   structured logs.
 - `config.py`, `brain_dirs.py`, `transport/http_server.py`: environment parsing

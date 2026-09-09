@@ -164,6 +164,14 @@ class ResearchArtifactBoundaryTest(ArtifactFixture):
         self.assertEqual([item.id for item in visible], [latest.id])
         self.assertEqual(self.core.get(artifact_ids=(first.id,), include="content")[0].data, b"first")
 
+    def test_unavailable_historical_bytes_cannot_be_accepted_as_new_evidence(self) -> None:
+        content = self.create()
+        self.core._blobs.blobs.pop((self.project_id, content.sha256))
+        with self.assertRaisesRegex(ValidationError, "content is unavailable"):
+            self.research.attach(artifact_id=content.id, target=self.target(), role="plan")
+        self.assertEqual(self.research.scan(target_ids=(self.experiment_id,)), ())
+        self.assertEqual(self.core.get(artifact_ids=(content.id,))[0].sha256, content.sha256)
+
     def test_cross_project_attachment_is_refused_without_changing_source_content(self) -> None:
         other = self.other_project()
         foreign = self.core.create(project_id=other, path="evidence.md", data=b"private")

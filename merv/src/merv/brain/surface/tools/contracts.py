@@ -1718,7 +1718,7 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
     "artifact.read": ToolContract(
         handler_identity="artifact_submissions.read",
         input_model=ArtifactReadInput,
-        description="Read generic immutable content by artifact ID. Returns content metadata without workflow associations; optionally include bounded content and figure paths.",
+        description="Read generic immutable content by artifact ID. Returns metadata and a download_url for raw bytes using normal project/account authentication; optionally include bounded text and figure paths. Download URLs do not accept MCP-only agent-session credentials.",
     ),
     "artifact.attach": ToolContract(
         handler_identity="artifact_submissions.attach",
