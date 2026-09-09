@@ -12,7 +12,8 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
-from ....artifacts import Artifacts, CompletedArtifact, CompletedFigure
+from ....artifacts import CompletedFigure
+from ....research_core import ResearchArtifacts as Artifacts, CompletedArtifact
 from ....kernel.utils import NotFoundError, ValidationError
 from ...artifacts import (
     artifact_list_v1,

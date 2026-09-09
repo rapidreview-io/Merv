@@ -1,5 +1,11 @@
 # Move production to merv-sandboxes
 
+This is the historical sandbox-infrastructure cutover runbook. Its evidence
+storage steps have been superseded: Merv now stores artifacts, figures, feed
+bytes, and diagnostic payloads in its own R2 bucket using `MERV_BLOB_*`
+configuration. See `ARTIFACT_R2_CUTOVER.md` for that migration. Native sandbox
+and large dataset/model storage remain under merv-sandboxes as described below.
+
 Merv retains its research PostgreSQL database. Sandbox lifecycle, provider
 credentials, submitted blobs, and heavy object bytes move to the independent
 `merv-sandboxes` service. The Merv process needs only `MERV_SANDBOXES_URL` and

@@ -20,6 +20,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from merv.brain.kernel.state.fingerprints import oauth_client_fingerprint
 from merv.brain.kernel.state.store import MIGRATIONS, StateStore
@@ -115,14 +116,18 @@ class OAuthMigrationTest(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "state.sqlite"
-            StateStore(db_path=db_path)
+            # Build the pre-upgrade ledger before removing these historical
+            # table shapes. Rewinding a fully migrated content store would
+            # incorrectly replay destructive later migrations against it.
+            with patch("merv.brain.kernel.state.store.MIGRATIONS",
+                       tuple(migration for migration in MIGRATIONS if migration[0] < 28)):
+                StateStore(db_path=db_path)
             conn = sqlite3.connect(db_path)
             try:
                 conn.execute("PRAGMA foreign_keys = OFF")
                 conn.execute("DROP TABLE oauth_refresh_tokens")
                 conn.execute("DROP TABLE oauth_authorization_codes")
                 conn.execute("DROP TABLE oauth_clients")
-                conn.execute("DELETE FROM schema_migrations WHERE version >= 28")
                 before = conn.execute(
                     "SELECT version, name FROM schema_migrations ORDER BY version"
                 ).fetchall()
@@ -172,7 +177,9 @@ class OAuthClientFingerprintMigrationTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         db_path = Path(tmp.name) / "state.sqlite"
-        StateStore(db_path=db_path)
+        with patch("merv.brain.kernel.state.store.MIGRATIONS",
+                   tuple(migration for migration in MIGRATIONS if migration[0] < 38)):
+            StateStore(db_path=db_path)
         conn = sqlite3.connect(db_path)
         try:
             # The index must go before the column SQLite refuses to drop under it.
@@ -185,7 +192,6 @@ class OAuthClientFingerprintMigrationTest(unittest.TestCase):
                     "VALUES (?, ?, ?, ?, ?)",
                     (client_id, name, json.dumps(uris), json.dumps(grants), created_at),
                 )
-            conn.execute("DELETE FROM schema_migrations WHERE version >= 38")
             conn.commit()
         finally:
             conn.close()

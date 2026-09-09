@@ -140,6 +140,7 @@ PACKAGE_LAYERS = {
 FILE_LAYERS = {
     "__init__.py": FOUNDATION,
     "kernel/state/dialects.py": ADAPTER,
+    "artifacts/r2.py": ADAPTER,
     "surface/web_preview.py": ADAPTER,
     "infrastructure/client.py": ADAPTER,
     "infrastructure/storage.py": ADAPTER,
@@ -258,8 +259,10 @@ TABLE_OWNERS = {
     "paper_links": RESEARCH_CORE,
     "artifacts": ARTIFACTS,
     "artifact_figures": ARTIFACTS,
-    # The seal writes both, and only Artifacts writes them.
-    "submissions": ARTIFACTS,
+    # Research owns content associations and complete evidence selections.
+    "research_artifact_links": RESEARCH_CORE,
+    "submissions": RESEARCH_CORE,
+    "research_submission_artifacts": RESEARCH_CORE,
     "storage_objects": OBJECT_STORAGE,
     "storage_completion_tokens": OBJECT_STORAGE,
     "sandboxes": SANDBOX,
@@ -283,6 +286,7 @@ TABLE_OWNERS = {
     "consolidation_decisions": RESEARCH_CORE,
     "reflection_advances": RESEARCH_CORE,
 }
+SQL_RELATION_OWNERS = {**TABLE_OWNERS, "research_artifacts": RESEARCH_CORE}
 SQL_TABLE_REF = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_]+)\b", re.IGNORECASE)
 CREATE_TABLE_REF = re.compile(
     r"\bCREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+([a-z_]+)\s*\(",
@@ -461,9 +465,8 @@ def _component_edge_allowed(*, importer: str, target: str) -> bool:
     importer_component = _component(importer)
     target_component = _component(target)
     if importer_component == RESEARCH_CORE and target_component == ARTIFACTS:
-        # Research shares the one typed public root with Application and
-        # Surface. Artifacts still knows no Research module: its target
-        # resolver is implemented by Research and injected at composition.
+        # Research composes its associations and snapshots over the generic
+        # public content API. Artifacts has no callback into Research.
         return target == f"{ARTIFACTS}/__init__.py"
     return (importer_component, target_component) in ALLOWED_COMPONENT_EDGES
 
@@ -922,7 +925,7 @@ class ModuleBoundaryTest(unittest.TestCase):
                 if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
                     continue
                 for match in SQL_TABLE_REF.finditer(node.value):
-                    owner = TABLE_OWNERS.get(match.group(1).lower())
+                    owner = SQL_RELATION_OWNERS.get(match.group(1).lower())
                     if owner is None or owner == module:
                         continue
                     if (module, owner) not in ALLOWED_COMPONENT_EDGES:

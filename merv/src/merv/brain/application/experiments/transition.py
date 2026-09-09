@@ -8,7 +8,7 @@ from typing import Any, TypedDict, cast
 
 from merv.shared.artifact_roles import EXHIBIT_ROLE
 
-from ...artifacts import ArtifactTarget, Artifacts
+from ...research_core import ArtifactTarget, ResearchArtifacts as Artifacts
 from ...feed import FeedAdvisory
 from ...kernel.events import StoredEvent
 from ...object_storage import ObjectStorage

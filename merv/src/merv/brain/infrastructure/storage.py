@@ -1,39 +1,20 @@
-"""Merv's byte ports implemented through native merv-sandboxes storage.
+"""Large dataset and model transfers through native merv-sandboxes storage.
 
-Only research names, versions, associations and retention policy remain in
-Merv. Transfer sessions, checksums, byte locations and provider access belong
-to the infrastructure service. Content names preserve existing evidence keys.
+Research names, versions, associations and retention policy remain in Merv.
+Artifact and figure bytes use the independent Merv-owned R2 adapter.
 """
 
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
-import math
 import re
-from datetime import datetime, timezone
 from typing import Any
 
-import httpx
-
 from ..kernel.ports.blob_store import validate_blob_keys
-from ..kernel.utils import NotFoundError, ValidationError, parse_iso
+from ..kernel.utils import NotFoundError, ValidationError
 from ..object_storage import ObjectStat
 from .client import InfrastructureClient, InfrastructureUnavailableError, project_namespace
-
-
-class UnconfiguredBlobStore:
-    """Record-only local setup; never silently persists bytes inside Merv."""
-
-    def put(self, **kwargs: Any) -> str:
-        raise InfrastructureUnavailableError("configure MERV_SANDBOXES_URL and MERV_SANDBOXES_JWT_SECRET to store evidence")
-
-    def get(self, **kwargs: Any) -> bytes:
-        raise InfrastructureUnavailableError("configure merv-sandboxes to read evidence")
-
-    def delete(self, **kwargs: Any) -> bool:
-        raise InfrastructureUnavailableError("configure merv-sandboxes to delete evidence")
 
 
 def _encode_upload(namespace: str, object_id: str, *, row_id: str | None = None) -> str:
@@ -172,60 +153,3 @@ class RemoteObjectProvider:
                                     namespace=self._namespace(namespace))
                 found = True
         return found
-
-
-class RemoteBlobStore(RemoteObjectProvider):
-    """Bounded submitted evidence; full content addressing survives migration."""
-
-    def _namespace(self, namespace: str) -> str:
-        return "merv-blobs"
-
-    def _name(self, namespace: str, sha256: str) -> str:
-        validate_blob_keys(namespace=namespace, sha256=sha256)
-        return namespace + "/" + sha256
-
-    def put(
-        self, *, namespace: str, data: bytes, content_type: str = "application/octet-stream",
-        expires_at: str | None = None,
-    ) -> str:
-        sha256 = hashlib.sha256(data).hexdigest()
-        existing = self._available(namespace=namespace, sha256=sha256)
-        if existing is None:
-            request: dict[str, Any] = {
-                "name": self._name(namespace, sha256), "sha256": sha256,
-                "size_bytes": len(data), "content_type": content_type,
-            }
-            if expires_at is not None:
-                expiry = parse_iso(expires_at)
-                if expiry is None:
-                    raise ValidationError("invalid evidence expiry")
-                request["expires_in_seconds"] = max(60, math.ceil((expiry - datetime.now(timezone.utc)).total_seconds()))
-            status = self.client.request("POST", "/storage/objects", namespace="merv-blobs", json=request)
-            target = self._target(namespace=namespace, status=status)
-            with httpx.Client(timeout=120) as transfer:
-                for part in target["parts"]:
-                    offset = (part["part_number"] - 1) * target["part_size"]
-                    chunk = data[offset:offset + target["part_size"]]
-                    try:
-                        response = transfer.put(part["url"], content=chunk, headers=part.get("headers", {}))
-                        response.raise_for_status()
-                    except httpx.HTTPError as exc:
-                        raise InfrastructureUnavailableError("evidence upload to merv-sandboxes failed") from exc
-            self.complete_upload(upload_id=target["upload_id"])
-            _, object_id = _decode_upload(target["upload_id"])
-        else:
-            object_id = existing["id"]
-        self.client.request("PATCH", f"/storage/objects/{object_id}/retention", namespace="merv-blobs",
-                            json={"expires_at": expires_at})
-        return sha256
-
-    def get(self, *, namespace: str, sha256: str) -> bytes:
-        target = self.presign_download(namespace=namespace, sha256=sha256, expires_in=3600)
-        try:
-            response = httpx.get(target["url"], timeout=120)
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise InfrastructureUnavailableError("evidence download from merv-sandboxes failed") from exc
-        if hashlib.sha256(response.content).hexdigest() != sha256:
-            raise ValidationError("stored evidence checksum mismatch")
-        return response.content

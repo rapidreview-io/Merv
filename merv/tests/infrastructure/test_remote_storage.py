@@ -3,12 +3,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from unittest.mock import patch
 
-import httpx
 import pytest
 
-from merv.brain.infrastructure.storage import RemoteBlobStore, RemoteObjectProvider, _decode_upload, _encode_upload
+from merv.brain.infrastructure.storage import RemoteObjectProvider, _decode_upload, _encode_upload
 from merv.brain.kernel.state import StateStore
 from merv.brain.object_storage import ObjectStorage
 from merv.shared.errors import ValidationError
@@ -67,27 +65,6 @@ def test_stat_and_download_resolve_existing_names_without_cross_project_lookup()
     assert provider.presign_download(namespace="proj_a", sha256=SHA, expires_in=60)["url"].startswith("https://")
     assert all(call[2]["namespace"] == "merv-project-proj_a" for call in client.calls)
     assert client.calls[0][2]["params"]["name"] == SHA
-
-
-def test_blob_download_verifies_bytes_and_preserves_original_namespace():
-    client = Client(lambda method, path, **kwargs: {"objects": [record()]}
-                    if path == "/storage/objects" else {"url": "https://store.test/signed"})
-    blobs = RemoteBlobStore(client=client)
-    with patch("merv.brain.infrastructure.storage.httpx.get", return_value=httpx.Response(
-        200, content=b"corrupt", request=httpx.Request("GET", "https://store.test/signed"))):
-        with pytest.raises(ValidationError, match="checksum"):
-            blobs.get(namespace="artifact-fixtures", sha256=SHA)
-    assert client.calls[0][2]["namespace"] == "merv-blobs"
-    assert client.calls[0][2]["params"]["name"] == "artifact-fixtures/" + SHA
-
-
-def test_existing_blob_put_extends_retention_without_reupload():
-    client = Client(lambda method, path, **kwargs: {"objects": [record()]}
-                    if path == "/storage/objects" else record())
-    blobs = RemoteBlobStore(client=client)
-    assert blobs.put(namespace="artifacts", data=b"abc", expires_at=None) == SHA
-    assert [call[0] for call in client.calls] == ["GET", "PATCH"]
-    assert client.calls[-1][2]["json"] == {"expires_at": None}
 
 
 def test_upload_identity_cannot_escape_api_path():

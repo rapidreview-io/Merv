@@ -185,13 +185,22 @@ def resolve_ui_base_url(env: Mapping[str, str] | None = None) -> str:
     return raw
 
 
-def build_blob_store(*, default_root: Path, env=None, client=None) -> BlobStore:
-    """Submitted evidence lives in the independently operated service."""
-    from ..infrastructure.client import build_infrastructure_client
-    from ..infrastructure.storage import RemoteBlobStore, UnconfiguredBlobStore
+def build_blob_store(*, default_root: Path, env=None) -> BlobStore:
+    """Artifacts and feed bytes use Merv's own R2 bucket and credentials."""
+    from ..artifacts.r2 import R2BlobStore, UnconfiguredBlobStore
 
-    client = client or build_infrastructure_client(env)
-    return RemoteBlobStore(client=client) if client else UnconfiguredBlobStore()
+    required = ("BUCKET", "ENDPOINT_URL", "ACCESS_KEY_ID", "SECRET_ACCESS_KEY")
+    values = {name: env_value(f"MERV_BLOB_{name}", env=env) for name in (*required, "REGION", "PREFIX")}
+    if not any(values.values()):
+        return UnconfiguredBlobStore()
+    missing = [f"MERV_BLOB_{name}" for name in required if not values[name]]
+    if missing:
+        raise ValidationError("incomplete artifact R2 configuration: " + ", ".join(missing))
+    return R2BlobStore(
+        bucket=values["BUCKET"], endpoint_url=values["ENDPOINT_URL"],
+        access_key_id=values["ACCESS_KEY_ID"], secret_access_key=values["SECRET_ACCESS_KEY"],
+        region=values["REGION"] or "auto", prefix=values["PREFIX"] or "",
+    )
 
 
 def build_object_store(*, default_root: Path, env=None, client=None):

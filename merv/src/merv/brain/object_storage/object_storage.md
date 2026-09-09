@@ -10,9 +10,8 @@ provider credentials, integrity verification and physical cleanup.
 - `storage.py`: research object ledger, completion tokens, policy and projections.
 - `provider.py`: byte-transfer port and immutable object statistics.
 - `__init__.py`: public research object API.
-- `../infrastructure/storage.py`: REST implementations of ObjectProvider and
-  BlobStore using native merv-sandboxes objects. No S3 SDK or filesystem store
-  ships inside Merv.
+- `../infrastructure/storage.py`: ObjectProvider implementation for ML workload
+  transfers through merv-sandboxes. Research evidence uses a separate R2 client.
 
 ## Transfer and compatibility
 
@@ -31,11 +30,10 @@ provider credentials, integrity verification and physical cleanup.
 
 ## Submitted evidence
 
-Artifacts, Feed and tool-call payloads use `RemoteBlobStore.put/get`. Their
-original namespace and digest form a name inside the private `merv-blobs`
-service namespace. Downloads verify the complete SHA-256. Repeated puts only
-extend retention; null expiry pins. The independent service schedules expiry,
-while tool-call ledger cleanup can request deletion by content name.
+Artifacts, Feed and tool-call payloads belong to Merv. They use its own
+`artifacts/r2.py` byte provider and dedicated R2 bucket, addressed by project
+namespace and SHA-256. Tool-call ledger cleanup deletes its expired payloads;
+research evidence remains durable. These bytes never use the ML storage API.
 
 ## Invariants
 

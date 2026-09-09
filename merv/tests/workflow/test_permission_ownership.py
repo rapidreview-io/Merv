@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock
 
-from merv.brain.artifacts import ArtifactTarget, Artifacts
+from merv.brain.research_core import ArtifactTarget, ResearchArtifacts
 from merv.brain.kernel.utils import ValidationError
 from merv.brain.research_core.policy import (
     validate_review_role,
@@ -20,8 +20,8 @@ class OwnedPermissionPolicyTest(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "unknown review verdict: maybe"):
             validate_review_verdict(verdict="maybe")
 
-    def test_artifacts_validates_association_vocabulary(self) -> None:
-        artifacts = Artifacts(store=Mock(), blobs=Mock(), targets=Mock())
+    def test_research_validates_association_vocabulary(self) -> None:
+        artifacts = ResearchArtifacts(store=Mock(), artifacts=Mock())
 
         with self.assertRaises(ValidationError) as target_error:
             artifacts.submit(

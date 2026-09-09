@@ -8,7 +8,7 @@ from typing import Any
 
 from merv.shared.artifact_roles import EXHIBIT_ROLE, GATED_ROLES
 
-from ..artifacts import Artifacts
+from ..research_core import ResearchArtifacts as Artifacts
 from ..feed import FeedAdvisory
 from ..kernel.utils import parse_iso
 from ..research_core import (

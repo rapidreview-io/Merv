@@ -8,7 +8,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from ..artifacts import Artifacts
+from .artifacts import ResearchArtifacts as Artifacts
 from ..kernel.secret_tokens import hash_secret, mint_secret, secret_digest_matches
 from ..kernel.events import StoredEvent, freeze_json_object
 from ..kernel.identity import LOCAL_TENANT_ID

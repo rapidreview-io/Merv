@@ -30,7 +30,7 @@ def verify_composition() -> None:
             require(isinstance(server.app._store, StateStore), "synthetic composition did not select SQLite")
             require(server.app._store.db_path.is_relative_to(Path(temporary)), "synthetic SQLite escaped temporary state")
             with server.app._store.connect() as connection:
-                require(connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 58, "synthetic schema58 initialization failed")
+                require(connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 59, "synthetic schema59 initialization failed")
             project = server.app.research.create_project(name="Temporary composition smoke", user_id="smoke-user")
             key = ProjectKeys(store=server.app._store).create(project_id=project["id"], owner_user_id="smoke-user")["secret"]
             with TestClient(server.fastapi_app, raise_server_exceptions=False) as browser:

@@ -214,6 +214,7 @@ def submission_state_record(submission: Any) -> dict[str, Any]:
         "transition": submission.transition,
         "created_at": submission.created_at,
         "created_seq": submission.order,
+        "artifact_ids": list(submission.artifact_ids),
     }
 
 

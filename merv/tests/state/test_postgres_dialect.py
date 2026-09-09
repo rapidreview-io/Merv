@@ -35,6 +35,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests.support.brain import TestBrain
 from merv.brain.artifacts import Artifacts
@@ -54,7 +55,7 @@ from merv.brain.kernel.state.store import (
 )
 from merv.brain.kernel.utils import ValidationError, now_iso
 from merv.brain.research_core.experiments import ExperimentService
-from merv.brain.research_core.association_targets import AssociationTargets
+from merv.brain.research_core.artifacts import ResearchArtifacts
 from merv.brain.research_core import Research
 from tests.fakes import FakeBlobStore
 
@@ -79,6 +80,9 @@ def _docker_available() -> bool:
         return False
 
 
+# An explicitly supplied disposable database supports native Postgres runs.
+# This suite resets its public schema between tests; never use an app database.
+TEST_POSTGRES_DSN = os.environ.get("MERV_TEST_POSTGRES_DSN", "").strip()
 REQUIRE_POSTGRES_TESTS = os.environ.get(
     "MERV_REQUIRE_POSTGRES_TESTS", ""
 ).strip().lower() in {
@@ -87,11 +91,11 @@ REQUIRE_POSTGRES_TESTS = os.environ.get(
     "yes",
     "on",
 }
-HAVE_DOCKER = _docker_available()
-if REQUIRE_POSTGRES_TESTS and not HAVE_DOCKER:
+HAVE_DOCKER = not TEST_POSTGRES_DSN and _docker_available()
+HAVE_POSTGRES = bool(TEST_POSTGRES_DSN) or HAVE_DOCKER
+if REQUIRE_POSTGRES_TESTS and not HAVE_POSTGRES:
     raise RuntimeError(
-        "MERV_REQUIRE_POSTGRES_TESTS is enabled but a working Docker daemon "
-        "is unavailable"
+        "MERV_REQUIRE_POSTGRES_TESTS needs MERV_TEST_POSTGRES_DSN or Docker"
     )
 
 
@@ -104,6 +108,13 @@ def _free_port() -> int:
 def setUpModule() -> None:
     """Start one postgres:16-alpine container for the whole module."""
     global _dsn
+    if TEST_POSTGRES_DSN:
+        import psycopg
+
+        with psycopg.connect(TEST_POSTGRES_DSN, connect_timeout=2) as conn:
+            conn.execute("SELECT 1")
+        _dsn = TEST_POSTGRES_DSN
+        return
     if not HAVE_DOCKER:
         return
     port = _free_port()
@@ -306,7 +317,7 @@ def _schema_without_storage_completion_tokens() -> str:
 
 
 
-@unittest.skipUnless(HAVE_DOCKER, "docker unavailable")
+@unittest.skipUnless(HAVE_POSTGRES, "Postgres unavailable")
 class PostgresStoreBehaviorTest(unittest.TestCase):
     """(a), (c), (d): schema/ledger application and record-layer semantics."""
 
@@ -1096,10 +1107,8 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
 
     def test_tracking_refresh_returns_exact_persisted_postgres_event(self) -> None:
         project_id = self._seed_project()
-        artifacts = Artifacts(
-            store=self.store,
-            blobs=FakeBlobStore(),
-            targets=AssociationTargets(),
+        artifacts = ResearchArtifacts(
+            store=self.store, artifacts=Artifacts(store=self.store, blobs=FakeBlobStore())
         )
         experiments = ExperimentService(
             store=self.store,
@@ -1135,10 +1144,8 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         import psycopg
 
         project_id = self._seed_project()
-        artifacts = Artifacts(
-            store=self.store,
-            blobs=FakeBlobStore(),
-            targets=AssociationTargets(),
+        artifacts = ResearchArtifacts(
+            store=self.store, artifacts=Artifacts(store=self.store, blobs=FakeBlobStore())
         )
         experiments = ExperimentService(
             store=self.store,
@@ -1256,10 +1263,10 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                 conn.execute(
                     """
                     INSERT INTO artifacts (
-                      id, project_id, target_type, target_id, role, path,
+                      id, project_id, path,
                       status, created_at, updated_at, created_seq
                     )
-                    VALUES (?, ?, 'experiment', 'exp_1', 'result', 'notes.md',
+                    VALUES (?, ?, 'notes.md',
                             'complete', ?, ?, ?)
                     """,
                     (f"art_{index}", project_id, now_iso(), now_iso(), seq),
@@ -1275,8 +1282,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
             conn.close()
 
     def test_artifact_resubmit_supersedes_the_slot_on_postgres(self) -> None:
-        """The artifact.submit replace path: resubmitting the same slot deletes
-        the prior complete artifact and keeps only the fresh one."""
+        """Replacing a research slot keeps both immutable content versions."""
         tmp = tempfile.TemporaryDirectory()
         repo = Path(tmp.name)
         app = TestBrain(
@@ -1316,12 +1322,18 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
             conn = self.store.connect()
             try:
                 rows = conn.execute(
-                    "SELECT id FROM artifacts WHERE project_id = ? AND status = 'complete'",
+                    "SELECT id FROM research_artifacts WHERE project_id = ? "
+                    "AND status = 'complete' AND active = 1",
                     (project_id,),
                 ).fetchall()
             finally:
                 conn.close()
             self.assertEqual([r["id"] for r in rows], [second["artifact_id"]])
+            with self.store.transaction() as conn:
+                self.assertEqual(conn.execute(
+                    "SELECT COUNT(*) AS n FROM artifacts WHERE project_id = ? AND status = 'complete'",
+                    (project_id,),
+                ).fetchone()["n"], 2)
         finally:
             app.shutdown()
             tmp.cleanup()
@@ -1332,6 +1344,8 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         canonicalizes legacy roles, rewrites the pinned snapshot token, and
         migration 25 drops the resource tables (each migration + its ledger
         row inside its own transaction on the autocommit connection)."""
+        with patch("merv.brain.kernel.state.store.MIGRATIONS", MIGRATIONS[:-1]):
+            self.store = PostgresStateStore(dsn=_reset_database())
         project_id = self._seed_project()
         conn = self.store.connect()
         try:
@@ -1425,7 +1439,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         conn = replay.connect()
         try:
             artifact = conn.execute(
-                "SELECT id, role, lens_id FROM artifacts WHERE project_id = ?",
+                "SELECT id, role, lens_id FROM research_artifacts WHERE project_id = ?",
                 (project_id,),
             ).fetchone()
             self.assertEqual(str(artifact["role"]), "reflection_doc")

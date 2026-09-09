@@ -6,8 +6,9 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from merv.brain.kernel.state.store import StateStore
+from merv.brain.kernel.state.store import MIGRATIONS, StateStore
 
 
 class ArtifactsBackfillMigrationTest(unittest.TestCase):
@@ -64,7 +65,8 @@ class ArtifactsBackfillMigrationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tmp.name) / "state.sqlite"
-        StateStore(db_path=self.db_path)
+        with patch("merv.brain.kernel.state.store.MIGRATIONS", MIGRATIONS[:-1]):
+            StateStore(db_path=self.db_path)
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DROP TABLE IF EXISTS artifact_figures")
             conn.execute("DROP TABLE IF EXISTS artifacts")
@@ -226,7 +228,7 @@ class ArtifactsBackfillMigrationTest(unittest.TestCase):
         conn.row_factory = sqlite3.Row
         artifacts = {
             (str(row["path"]), str(row["role"])): dict(row)
-            for row in conn.execute("SELECT * FROM artifacts").fetchall()
+            for row in conn.execute("SELECT * FROM research_artifacts").fetchall()
         }
         self.assertEqual(len(artifacts), 4)
         # The keyed dict above would mask a duplicate-slot row; count raw rows.

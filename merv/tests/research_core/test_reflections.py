@@ -93,7 +93,7 @@ class ReflectionWorkflowTest(ResearchCase):
         with self.app.store.connect() as conn:
             sealed = conn.execute(
                 """
-                SELECT COUNT(*) AS n FROM artifacts
+                SELECT COUNT(*) AS n FROM research_artifact_links
                 WHERE target_id = ? AND submission_id <> ''
                 """,
                 (reflection_id,),

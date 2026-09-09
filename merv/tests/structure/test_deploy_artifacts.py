@@ -78,12 +78,14 @@ class DeployArtifactsTest(unittest.TestCase):
         self.assertNotIn("boto3", control_extra)
         self.assertNotIn("mlflow", control_extra)
 
-    def test_compose_base_wires_independent_infrastructure_only(self) -> None:
+    def test_compose_base_wires_research_evidence_and_independent_compute(self) -> None:
         text = (DEPLOY / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("control:", text)
-        for retired in ("minio:", "mgmtkey:", "ssh-keygen", "MERV_BLOB_BUCKET", "MERV_EXECUTION_BACKEND"):
+        for retired in ("minio:", "mgmtkey:", "ssh-keygen", "MERV_EXECUTION_BACKEND"):
             self.assertNotIn(retired, text)
         for setting in ("MERV_DB_URL", "MERV_SANDBOXES_URL", "MERV_SANDBOXES_JWT_SECRET", "MERV_REQUIRE_SANDBOX_BACKEND"):
+            self.assertIn(setting, text)
+        for setting in ("MERV_BLOB_BUCKET", "MERV_BLOB_ENDPOINT_URL", "MERV_BLOB_ACCESS_KEY_ID", "MERV_BLOB_SECRET_ACCESS_KEY"):
             self.assertIn(setting, text)
         self.assertIn("dockerfile: deploy/Dockerfile", text)
 

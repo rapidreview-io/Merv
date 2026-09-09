@@ -807,7 +807,7 @@ class StoreMigrationTest(unittest.TestCase):
             self.assertEqual(row["tenant_id"], "local")
             # rowid-order preserved through the backfill; resource tables gone.
             rows = conn.execute(
-                "SELECT target_id, content_sha256 FROM artifacts ORDER BY created_seq"
+                "SELECT target_id, content_sha256 FROM research_artifacts ORDER BY created_seq"
             ).fetchall()
             self.assertEqual(
                 [r["target_id"] for r in rows], ["att_a", "att_b", "att_c"]
@@ -1201,7 +1201,7 @@ class StoreMigrationTest(unittest.TestCase):
             # passing review still matches; migration 25 dropped the resource
             # tables.
             artifact = conn.execute(
-                "SELECT id, target_type, role FROM artifacts"
+                "SELECT id, target_type, role FROM research_artifacts"
             ).fetchone()
             self.assertEqual(artifact["target_type"], "reflection")
             self.assertEqual(artifact["role"], "reflection_doc")

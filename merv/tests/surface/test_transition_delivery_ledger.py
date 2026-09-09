@@ -612,7 +612,7 @@ class TransitionDeliveryAndLedgerTest(unittest.TestCase):
         try:
             exhibit_link = conn.execute(
                 """
-                SELECT id, path FROM artifacts
+                SELECT id, path FROM research_artifacts
                 WHERE target_type = 'experiment' AND target_id = ?
                   AND role = 'exhibit' AND status = 'complete'
                 ORDER BY created_seq DESC LIMIT 1

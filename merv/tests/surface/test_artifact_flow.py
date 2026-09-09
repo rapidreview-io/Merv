@@ -11,8 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from tests.support.brain import TestBrain
-from merv.brain.artifacts import ArtifactTarget
-from merv.brain.kernel.utils import ValidationError
+from merv.brain.research_core import ArtifactTarget
+from merv.brain.kernel.utils import NotFoundError, ValidationError
 from merv.brain.surface.transport.api.gateway import RequestAuthenticator
 from merv.brain.surface.transport.api.artifacts import build_router
 from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
@@ -119,6 +119,47 @@ class ArtifactFlowTest(unittest.TestCase):
             verdict="pass",
             synopsis="The plan and results check out, so the attempt stands.",
         )
+
+    def test_generic_content_can_be_read_before_it_is_attached_to_research(self) -> None:
+        pending = self.call(
+            "artifact.store", project_id=self.project_id, path="reusable.md"
+        )
+        token = shlex.split(pending["run"])[-1].rsplit("/", 1)[-1]
+        uploaded = self.app._client.put(f"/api/artifacts/u/{token}", content=VALID_PLAN.encode())
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        content_id = pending["artifact_id"]
+        read = self.call(
+            "artifact.read", project_id=self.project_id,
+            artifact_id=content_id, include_content=True,
+        )
+        self.assertEqual(read["content"]["content"], VALID_PLAN)
+        self.assertFalse({"role", "target_id", "attempt_index"} & set(read["artifact"]))
+        self.assertEqual(
+            self.call("artifact.find", project_id=self.project_id)["artifacts"], []
+        )
+
+        handles = []
+        for name in ("first-use", "second-use"):
+            experiment_id = self.call(
+                "experiment.create", project_id=self.project_id,
+                name=name, intent="Reuse the same immutable input.",
+            )["id"]
+            attached = self.call(
+                "artifact.attach", project_id=self.project_id, artifact_id=content_id,
+                target_type="experiment", target_id=experiment_id, role="plan",
+            )
+            handles.append(attached["association"]["id"])
+            self.assertEqual(attached["artifact_id"], content_id)
+            self.assertEqual(attached["association"]["target_id"], experiment_id)
+        self.assertNotEqual(*handles)
+        foreign = self.call("project", action="create", name="Foreign content")["id"]
+        with self.assertRaises(NotFoundError):
+            self.call("artifact.read", project_id=foreign, artifact_id=content_id, include_content=True)
+        with self.assertRaises(NotFoundError):
+            self.call(
+                "artifact.attach", project_id=foreign, artifact_id=content_id,
+                target_type="experiment", target_id=experiment_id, role="plan",
+            )
 
     def test_full_loop_submit_upload_gate_and_transitions(self) -> None:
         exp_id = self.call(

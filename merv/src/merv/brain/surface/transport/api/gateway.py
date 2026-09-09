@@ -535,6 +535,7 @@ class ToolInvocationGateway:
                 ] = key_project_id
         if base_url and name in (
             "artifact.submit",
+            "artifact.store",
             "feed.post",
             "storage.submit",
             "sandbox.runs",
@@ -717,7 +718,7 @@ class ToolInvocationGateway:
             )
         requested_target_type = str(arguments.get("target_type") or "")
         requested_target_id = str(arguments.get("target_id") or "")
-        if name in {"artifact.submit", "review.request", "review.status"} and (
+        if name in {"artifact.submit", "artifact.attach", "review.request", "review.status"} and (
             requested_target_type != target_type or requested_target_id != target_id
         ):
             raise AgentSessionScopeError(

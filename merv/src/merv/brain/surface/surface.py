@@ -1,8 +1,9 @@
 """Unified brain composition with local and hosted deployment presets.
 
 The composition wires research records and workflow to the independent
-merv-sandboxes HTTP service. Hosted control requires Postgres and service
-authentication; provider lifecycle and storage credentials live in that service. Checkout I/O never runs here; agents move bounded bytes through
+merv-sandboxes HTTP service for compute and ML data, and Merv's R2 store for
+research evidence. Hosted control requires Postgres and service authentication.
+Checkout I/O never runs here; agents move bounded bytes through
 token-authenticated upload routes, and the brain never dials a user machine.
 """
 
@@ -25,7 +26,7 @@ from ..literature import Literature
 from ..research_core import (
     EXPERIMENT_TERMINAL_STATUSES,
     Research,
-    ResearchTargets,
+    ResearchArtifacts,
 )
 from .config import (
     ALLOWED_ORIGINS_ENV_VAR,
@@ -110,11 +111,8 @@ class Surface:
         )
         self.structured_log = StructuredLogger(enabled=structured_logging)
 
-        self.artifacts = Artifacts(
-            store=store,
-            blobs=blobs,
-            targets=ResearchTargets(),
-        )
+        self.artifact_store = Artifacts(store=store, blobs=blobs)
+        self.artifacts = ResearchArtifacts(store=store, artifacts=self.artifact_store)
         self.research = Research(store=store, artifacts=self.artifacts)
         self.feed = FeedService(
             store=store,
@@ -253,7 +251,7 @@ def build_control_app(
     blobs = (
         blobs
         if blobs is not None
-        else build_blob_store(default_root=state_root / "blobs", env=env, client=infrastructure_client)
+        else build_blob_store(default_root=state_root / "blobs", env=env)
     )
     if storage is _UNSET:
         storage = ObjectStorage(

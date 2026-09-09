@@ -1,166 +1,190 @@
 # If you update this file, you must consult artifacts.md to see whether artifacts.md needs to be updated. artifacts.md must not exceed 100 lines.
-"""Typed artifact records, blob uploads, figures, and immutable history.
+"""Project-scoped immutable content and single-use uploads.
 
-Bytes are stored before rows point at them. Research supplies target facts;
-``seal`` joins Research's transaction so a workflow transition stays atomic.
+Consumers own associations and snapshots. This module knows only content,
+upload limits, and fixed document attachment manifests.
 """
 
 from __future__ import annotations
 
-from contextlib import closing
+from contextlib import closing, nullcontext
 import mimetypes
 import secrets
 from typing import Any
 
-from merv.shared import artifact_roles as roles
 from merv.shared import markdown_images as markdown
-from merv.shared.content_summaries import content_tldr
 
 from ..kernel.ports.blob_store import EvidenceBlobStore
 from ..kernel.state.store import BaseStateStore, Connection, Row, next_created_seq
-from ..kernel.utils import (
-    NotFoundError, ValidationError, iso_after, new_id, now_iso,
-)
+from ..kernel.utils import NotFoundError, ValidationError, iso_after, new_id, now_iso
 from .models import (
-    Artifact, ArtifactTarget, ArtifactTargets, CompletedArtifact, CompletedFigure,
-    PendingFigure, PendingUpload, ReadMode, Submission, TargetHistory, UploadKind,
+    Artifact, CompletedArtifact, CompletedFigure, PendingFigure, PendingUpload,
+    ReadMode, UploadKind,
 )
 
 
 UPLOAD_TOKEN_TTL_SECONDS = 15 * 60
-MAX_SUBMITTED_TEXT_BYTES = 16_000
-
+MAX_ARTIFACT_BYTES = 5_000_000
 _CONTENT_TYPES = {".md": "text/markdown", ".json": "application/json"}
 
 
 class Artifacts:
-    """Submit evidence, store its bytes, read it, and seal immutable history."""
+    """Store independent content versions; completed bytes never change."""
 
-    def __init__(
-        self,
-        *,
-        store: BaseStateStore,
-        blobs: EvidenceBlobStore,
-        targets: ArtifactTargets,
-    ) -> None:
+    def __init__(self, *, store: BaseStateStore, blobs: EvidenceBlobStore) -> None:
         self._store = store
         self._blobs = blobs
-        self._targets = targets
-
-    # Agent upload lifecycle
 
     def submit(
         self,
         *,
-        target: ArtifactTarget,
-        role: str,
+        project_id: str,
         path: str,
-        lens_id: str = "",
         title: str = "",
+        created_by: str = "agent",
+        max_bytes: int = MAX_ARTIFACT_BYTES,
+        discover_figures: bool = False,
+        tx: Connection | None = None,
     ) -> PendingUpload:
-        """Create a pending artifact and return its one-time upload token."""
-        _validate_association(target_type=target.target_type, role=role)
-        if role == roles.REFLECTION_LENS_DOC_ROLE and not lens_id:
-            raise ValidationError(
-                "lens_id is required for reflection_lens_doc artifacts — pass "
-                "the roster lens this reflection covers"
-            )
-        if lens_id and role != roles.REFLECTION_LENS_DOC_ROLE:
-            raise ValidationError(
-                "lens_id only applies to reflection_lens_doc artifacts"
-            )
-
+        """Reserve a new content version with a bounded, expiring upload."""
         path = _clean_path(path)
-        if not path:
-            raise ValidationError("path is required (the local file you wrote)")
-
-        self._sweep_expired()
-        with self._store.transaction() as tx:
-            target = self._resolve_target(tx=tx, target=target, for_submission=True)
-            project_id = str(target.project_id)
-            artifact_id = new_id(prefix="art")
-            token = secrets.token_urlsafe(24)
-            now = now_iso()
-            tx.execute(
+        if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 1:
+            raise ValidationError("max_bytes must be a positive integer")
+        with (nullcontext(tx) if tx is not None else self._store.transaction()) as conn:
+            self._sweep_expired(tx=conn)
+            project_id = self._store.require_project_id(conn=conn, project_id=project_id)
+            artifact_id, token, now = new_id(prefix="art"), secrets.token_urlsafe(24), now_iso()
+            conn.execute(
                 """
                 INSERT INTO artifacts (
-                  id, project_id, target_type, target_id, role, attempt_index,
-                  lens_id, path, title, status, upload_token, expires_at,
-                  created_by, created_at, updated_at, created_seq
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
+                  id, project_id, path, title, status, upload_token, expires_at,
+                  created_by, created_at, updated_at, created_seq,
+                  max_bytes, discover_figures
+                ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    artifact_id,
-                    project_id,
-                    target.target_type,
-                    target.target_id,
-                    role,
-                    target.attempt_index,
-                    lens_id,
-                    path,
-                    title,
-                    token,
-                    iso_after(seconds=UPLOAD_TOKEN_TTL_SECONDS),
-                    "agent",
-                    now,
-                    now,
-                    next_created_seq(conn=tx, table="artifacts"),
+                    artifact_id, project_id, path, title, token,
+                    iso_after(seconds=UPLOAD_TOKEN_TTL_SECONDS), created_by, now, now,
+                    next_created_seq(conn=conn, table="artifacts"), max_bytes,
+                    int(discover_figures),
                 ),
             )
         return PendingUpload(artifact_id=artifact_id, token=token, path=path)
 
-    def upload_cap(self, *, token: str, kind: UploadKind) -> int:
-        """Validate a token and return its byte cap before the body is read."""
-        self._sweep_expired()
-        with closing(self._store.connect()) as tx:
-            if kind == "figure":
-                row = tx.execute(
-                    """
-                    SELECT 1 FROM artifact_figures
-                    WHERE upload_token = ? AND status = 'pending'
-                    """,
-                    (token,),
-                ).fetchone()
-                if row is None:
-                    raise NotFoundError(
-                        "unknown, used, or expired figure token — resubmit the "
-                        "document to mint fresh figure uploads"
-                    )
-                return markdown.MARKDOWN_FIGURE_MAX_BYTES
-            if kind != "artifact":
-                raise ValidationError(f"unknown upload kind: {kind}")
-
-            row = tx.execute(
-                """
-                SELECT role FROM artifacts
-                WHERE upload_token = ? AND status = 'pending'
-                """,
-                (token,),
-            ).fetchone()
-        if row is None:
-            raise NotFoundError(
-                "unknown, used, or expired upload token — call artifact.submit again"
-            )
-        cap = roles.artifact_byte_cap(str(row["role"]))
-        return markdown.MARKDOWN_FIGURE_MAX_BYTES if cap is None else cap
-
-    def complete_upload(
+    def create(
         self,
         *,
-        token: str,
-        kind: UploadKind,
+        project_id: str,
+        path: str,
         data: bytes,
-    ) -> CompletedArtifact | CompletedFigure:
-        """Consume an artifact or figure token and pin the uploaded bytes."""
-        self._sweep_expired()
-        if kind == "figure":
-            return self._complete_figure(token=token, data=data)
-        if kind == "artifact":
-            return self._complete_artifact(token=token, data=data)
-        raise ValidationError(f"unknown upload kind: {kind}")
+        title: str = "",
+        created_by: str = "system",
+        tx: Connection | None = None,
+    ) -> Artifact:
+        """Store a new immutable version from trusted, already available bytes."""
+        path = _clean_path(path)
+        with (nullcontext(tx) if tx is not None else self._store.transaction()) as conn:
+            project_id = self._store.require_project_id(conn=conn, project_id=project_id)
+            content_type = _content_type(path)
+            sha256 = self._blobs.put(namespace=project_id, data=data, content_type=content_type)
+            artifact_id, now = new_id(prefix="art"), now_iso()
+            conn.execute(
+                """
+                INSERT INTO artifacts (
+                  id, project_id, path, title, content_sha256, size_bytes,
+                  content_type, status, created_by, created_at, updated_at, created_seq
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'complete', ?, ?, ?, ?)
+                """,
+                (
+                    artifact_id, project_id, path, title, sha256, len(data), content_type,
+                    created_by, now, now, next_created_seq(conn=conn, table="artifacts"),
+                ),
+            )
+            row = conn.execute("SELECT * FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
+            return Artifact.from_row(row)
 
-    # Reads
+    def pending(
+        self, *, token: str, kind: UploadKind, tx: Connection | None = None,
+    ) -> Artifact:
+        """Resolve a live upload credential to its owning content record."""
+        self._sweep_expired(tx=tx)
+        with (nullcontext(tx) if tx is not None else closing(self._store.connect())) as conn:
+            return Artifact.from_row(self._pending(tx=conn, token=token, kind=kind))
+
+    def upload_cap(self, *, token: str, kind: UploadKind) -> int:
+        """Validate a credential and return its cap before reading the body."""
+        self._sweep_expired()
+        with closing(self._store.connect()) as tx:
+            row = self._pending(tx=tx, token=token, kind=kind)
+            return markdown.MARKDOWN_FIGURE_MAX_BYTES if kind == "figure" else int(row["max_bytes"])
+
+    def complete_upload(
+        self, *, token: str, kind: UploadKind, data: bytes,
+        tx: Connection | None = None,
+    ) -> CompletedArtifact | CompletedFigure:
+        """Commit bytes independently, or join an explicit caller transaction."""
+        self._sweep_expired(tx=tx)
+        with (nullcontext(tx) if tx is not None else self._store.transaction()) as conn:
+            artifact = self._pending(tx=conn, token=token, kind=kind)
+            if kind == "figure":
+                row = conn.execute(
+                    "SELECT * FROM artifact_figures WHERE upload_token = ? AND status = 'pending'",
+                    (token,),
+                ).fetchone()
+                path, cap = str(row["link_path"]), markdown.MARKDOWN_FIGURE_MAX_BYTES
+            else:
+                row = artifact
+                path, cap = str(row["path"]), int(row["max_bytes"])
+            if len(data) > cap:
+                raise ValidationError(
+                    f"{path} is {len(data)} bytes; the maximum for this upload is {cap} bytes",
+                    details={"size_bytes": len(data), "max_bytes": cap},
+                )
+            content_type = _content_type(path)
+            sha256 = self._blobs.put(
+                namespace=str(artifact["project_id"]), data=data, content_type=content_type,
+            )
+            if kind == "figure":
+                conn.execute(
+                    """
+                    UPDATE artifact_figures
+                    SET status = 'complete', upload_token = '', expires_at = NULL,
+                        content_sha256 = ?, size_bytes = ?
+                    WHERE id = ?
+                    """,
+                    (sha256, len(data), row["id"]),
+                )
+                return CompletedFigure(
+                    artifact_id=str(artifact["id"]), link_path=path,
+                    sha256=sha256, size_bytes=len(data),
+                )
+            figures = self._create_figure_uploads(tx=conn, row=artifact, data=data)
+            conn.execute(
+                """
+                UPDATE artifacts
+                SET status = 'complete', upload_token = '', expires_at = NULL,
+                    content_sha256 = ?, size_bytes = ?, content_type = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (sha256, len(data), content_type, now_iso(), artifact["id"]),
+            )
+            return CompletedArtifact(
+                artifact_id=str(artifact["id"]), path=path, sha256=sha256,
+                size_bytes=len(data), figures=figures,
+            )
+
+    def cancel_upload(self, *, token: str, kind: UploadKind, tx: Connection) -> None:
+        """Retire an unconsumed credential without altering completed content."""
+        self._pending(tx=tx, token=token, kind=kind)
+        if kind == "artifact":
+            tx.execute("DELETE FROM artifacts WHERE upload_token = ? AND status = 'pending'", (token,))
+        else:
+            tx.execute(
+                """
+                UPDATE artifact_figures SET status = 'expired', upload_token = '', expires_at = NULL
+                WHERE upload_token = ? AND status = 'pending'
+                """, (token,),
+            )
 
     def get(
         self,
@@ -168,44 +192,32 @@ class Artifacts:
         artifact_ids: tuple[str, ...],
         project_id: str | None = None,
         include: ReadMode = "metadata",
+        tx: Connection | None = None,
     ) -> tuple[Artifact, ...]:
-        """Read artifacts by id, preserving first-seen request order."""
+        """Read versions in request order, with optional bytes and attachments."""
         ids = tuple(dict.fromkeys(str(item) for item in artifact_ids if item))
         if not ids:
             return ()
         if include not in ("metadata", "content", "document"):
             raise ValidationError(f"unknown artifact read mode: {include}")
-
         placeholders = ", ".join("?" for _ in ids)
-        with closing(self._store.connect()) as tx:
+        with (nullcontext(tx) if tx is not None else closing(self._store.connect())) as conn:
+            where, params = f"id IN ({placeholders})", ids
             if project_id is not None:
-                project_id = self._store.require_project_id(
-                    conn=tx, project_id=project_id
-                )
-            where = f"id IN ({placeholders})"
-            params: tuple[Any, ...] = ids
-            if project_id is not None:
+                project_id = self._store.require_project_id(conn=conn, project_id=project_id)
                 where += " AND project_id = ?"
                 params = (*ids, project_id)
-            rows = tx.execute(
-                f"SELECT * FROM artifacts WHERE {where}",
-                params,
-            ).fetchall()
-
-            figure_links: dict[str, list[str]] = {}
+            rows = conn.execute(f"SELECT * FROM artifacts WHERE {where}", params).fetchall()
+            links: dict[str, list[str]] = {}
             if include == "document":
-                for row in tx.execute(
+                for row in conn.execute(
                     f"""
                     SELECT artifact_id, link_path FROM artifact_figures
                     WHERE artifact_id IN ({placeholders}) AND status = 'complete'
                     ORDER BY link_path
-                    """,
-                    ids,
+                    """, ids,
                 ).fetchall():
-                    figure_links.setdefault(str(row["artifact_id"]), []).append(
-                        str(row["link_path"])
-                    )
-
+                    links.setdefault(str(row["artifact_id"]), []).append(str(row["link_path"]))
         by_id = {str(row["id"]): row for row in rows}
         result: list[Artifact] = []
         for artifact_id in ids:
@@ -219,607 +231,92 @@ class Artifacts:
                 except Exception:
                     if include == "document":
                         raise
-            result.append(
-                Artifact.from_row(
-                    row,
-                    data=data,
-                    figures=tuple(figure_links.get(artifact_id, ())),
-                )
-            )
+            result.append(Artifact.from_row(row, data=data, figures=tuple(links.get(artifact_id, ()))))
         return tuple(result)
 
-    def scan(
-        self,
-        *,
-        project_id: str | None = None,
-        target_type: str = "",
-        target_ids: tuple[str, ...] = (),
-        roles: tuple[str, ...] = (),
-    ) -> tuple[Artifact, ...]:
-        """List complete artifact metadata with optional target filters."""
-        ids = tuple(dict.fromkeys(str(item) for item in target_ids if item))
-        role_names = tuple(dict.fromkeys(str(item) for item in roles if item))
-        where = ["status = 'complete'"]
-        params: list[Any] = []
-
-        with closing(self._store.connect()) as tx:
-            if project_id is not None:
-                project_id = self._store.require_project_id(
-                    conn=tx, project_id=project_id
-                )
-                where.append("project_id = ?")
-                params.append(project_id)
-            if target_type:
-                where.append("target_type = ?")
-                params.append(target_type)
-            if ids:
-                placeholders = ", ".join("?" for _ in ids)
-                where.append(f"target_id IN ({placeholders})")
-                params.extend(ids)
-            if role_names:
-                placeholders = ", ".join("?" for _ in role_names)
-                where.append(f"role IN ({placeholders})")
-                params.extend(role_names)
-
-            rows = tx.execute(
-                f"""
-                SELECT * FROM artifacts
-                WHERE {' AND '.join(where)}
-                ORDER BY target_type, target_id, attempt_index, role, path
-                """,
-                params,
-            ).fetchall()
-
-        return tuple(Artifact.from_row(row) for row in rows)
-
     def figure(
-        self,
-        *,
-        artifact_id: str,
-        link_path: str,
-        project_id: str | None = None,
+        self, *, artifact_id: str, link_path: str, project_id: str | None = None,
     ) -> bytes | None:
-        """Return one submitted figure, or ``None`` when it is unavailable."""
+        """Read one immutable attachment within its project's scope."""
         with closing(self._store.connect()) as tx:
-            if project_id is not None:
-                project_id = self._store.require_project_id(
-                    conn=tx, project_id=project_id
-                )
-            where = [
-                "f.artifact_id = ?",
-                "f.link_path = ?",
-                "f.status = 'complete'",
-            ]
+            where = ["f.artifact_id = ?", "f.link_path = ?", "f.status = 'complete'"]
             params: list[Any] = [artifact_id, link_path]
             if project_id is not None:
+                project_id = self._store.require_project_id(conn=tx, project_id=project_id)
                 where.append("a.project_id = ?")
                 params.append(project_id)
             row = tx.execute(
                 f"""
                 SELECT a.project_id, f.content_sha256
-                FROM artifact_figures f
-                JOIN artifacts a ON a.id = f.artifact_id
+                FROM artifact_figures f JOIN artifacts a ON a.id = f.artifact_id
                 WHERE {' AND '.join(where)}
-                """,
-                params,
+                """, params,
             ).fetchone()
         if row is None:
             return None
         try:
-            return self._blobs.get(
-                namespace=str(row["project_id"]),
-                sha256=str(row["content_sha256"]),
-            )
+            return self._blobs.get(namespace=str(row["project_id"]), sha256=str(row["content_sha256"]))
         except NotFoundError:
             return None
 
-    # System writes and immutable history
-
-    def pin(
-        self,
-        *,
-        target: ArtifactTarget,
-        role: str,
-        path: str,
-        data: bytes,
-        title: str = "",
-        tx: Connection | None = None,
+    def assert_complete(
+        self, *, artifact_ids: tuple[str, ...], project_id: str, tx: Connection,
     ) -> None:
-        """Write a complete system-created artifact without an upload token.
-
-        Pass ``tx`` to pin inside a caller's open transaction (a reflection
-        publish pins each proposed task's brief this way); otherwise the pin
-        runs in its own transaction.
-        """
-        path = _clean_path(path)
-        if tx is not None:
-            self._pin(tx=tx, target=target, role=role, path=path, data=data, title=title)
-            return
-        with self._store.transaction() as tx:
-            self._pin(tx=tx, target=target, role=role, path=path, data=data, title=title)
-
-    def _pin(
-        self,
-        *,
-        tx: Connection,
-        target: ArtifactTarget,
-        role: str,
-        path: str,
-        data: bytes,
-        title: str,
-    ) -> None:
-        target = self._resolve_target(tx=tx, target=target)
-        project_id = str(target.project_id)
-        content_type = _content_type(path)
-        sha256 = self._blobs.put(
-            namespace=project_id,
-            data=data,
-            content_type=content_type,
-        )
-        artifact_id = new_id(prefix="art")
-        now = now_iso()
-        order = next_created_seq(conn=tx, table="artifacts")
-
-        # Keep sealed rounds; replace only the live system artifact.
-        tx.execute(
-            """
-            DELETE FROM artifacts
-            WHERE project_id = ? AND target_type = ? AND target_id = ?
-              AND role = ? AND attempt_index = ? AND submission_id = ''
-            """,
-            (
-                project_id,
-                target.target_type,
-                target.target_id,
-                role,
-                target.attempt_index,
-            ),
-        )
-        tx.execute(
-            """
-            INSERT INTO artifacts (
-              id, project_id, target_type, target_id, role, attempt_index,
-              lens_id, path, title, content_sha256, size_bytes, content_type,
-              status, upload_token, created_by, created_at, updated_at, created_seq
-            )
-            VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, 'complete', '', ?, ?, ?, ?)
-            """,
-            (
-                artifact_id,
-                project_id,
-                target.target_type,
-                target.target_id,
-                role,
-                target.attempt_index,
-                path,
-                title,
-                sha256,
-                len(data),
-                content_type,
-                roles.SYSTEM_CREATED_BY,
-                now,
-                now,
-                order,
-            ),
-        )
-        self._store.record_event(
-            conn=tx,
-            project_id=project_id,
-            event_type="artifact.pinned",
-            target_type=target.target_type,
-            target_id=target.target_id,
-            payload={
-                "artifact_id": artifact_id,
-                "role": role,
-                "path": path,
-            },
-        )
-
-    def seal(
-        self,
-        *,
-        tx: Connection,
-        target: ArtifactTarget,
-        transition: str,
-    ) -> None:
-        """Freeze the target's live composition on Research's transaction."""
-        target = self._resolve_target(tx=tx, target=target)
-        project_id = str(target.project_id)
-        submission_id = new_id(prefix="sub")
-        created_at = now_iso()
-        order = next_created_seq(conn=tx, table="submissions")
-        tx.execute(
-            """
-            INSERT INTO submissions (
-              id, project_id, target_type, target_id, attempt_index,
-              transition, created_at, created_seq
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                submission_id,
-                project_id,
-                target.target_type,
-                target.target_id,
-                target.attempt_index,
-                transition,
-                created_at,
-                order,
-            ),
-        )
-        tx.execute(
-            """
-            UPDATE artifacts SET submission_id = ?
-            WHERE project_id = ? AND target_type = ? AND target_id = ?
-              AND attempt_index = ? AND status = 'complete' AND submission_id = ''
-            """,
-            (
-                submission_id,
-                project_id,
-                target.target_type,
-                target.target_id,
-                target.attempt_index,
-            ),
-        )
-
-    def history(
-        self,
-        *,
-        tx: Connection,
-        target_type: str,
-        target_ids: tuple[str, ...],
-        summarize: bool = False,
-    ) -> dict[str, TargetHistory]:
-        """Read artifact and submission history for many targets at once."""
-        ids = tuple(dict.fromkeys(str(item) for item in target_ids if item))
-        if not ids:
-            return {}
-        placeholders = ", ".join("?" for _ in ids)
-
-        artifact_rows = tx.execute(
-            f"""
-            SELECT * FROM artifacts
-            WHERE status = 'complete' AND target_type = ?
-              AND target_id IN ({placeholders})
-            ORDER BY target_id, attempt_index, role, path
-            """,
-            (target_type, *ids),
-        ).fetchall()
-        submission_rows = tx.execute(
-            f"""
-            SELECT id, target_id, attempt_index, transition, created_at, created_seq
-            FROM submissions
-            WHERE target_type = ? AND target_id IN ({placeholders})
-            ORDER BY created_seq
-            """,
-            (target_type, *ids),
-        ).fetchall()
-
-        artifacts: dict[str, list[Artifact]] = {target_id: [] for target_id in ids}
-        submissions: dict[str, list[Submission]] = {
-            target_id: [] for target_id in ids
-        }
-        for row in artifact_rows:
-            tldr = ""
-            if summarize:
-                try:
-                    data = self._content(row)
-                except Exception:
-                    # History is durable even when a best-effort blob read is not.
-                    data = None
-                text = (
-                    None
-                    if data is None
-                    else data.decode("utf-8", errors="replace")
-                )
-                tldr = content_tldr(
-                    text,
-                    role=str(row["role"] or ""),
-                    path=str(row["path"] or ""),
-                )
-            artifacts[str(row["target_id"])].append(
-                Artifact.from_row(row, tldr=tldr)
-            )
-        for row in submission_rows:
-            target_id = str(row["target_id"])
-            submissions[target_id].append(Submission.from_row(row))
-        return {
-            target_id: TargetHistory(
-                artifacts=tuple(artifacts[target_id]),
-                submissions=tuple(submissions[target_id]),
-            )
-            for target_id in ids
-        }
-
-    # Upload internals
-
-    def _complete_artifact(
-        self,
-        *,
-        token: str,
-        data: bytes,
-    ) -> CompletedArtifact:
-        stale_error: ValidationError | None = None
-        completed: CompletedArtifact | None = None
-        with self._store.transaction() as tx:
-            row = tx.execute(
-                """
-                SELECT * FROM artifacts
-                WHERE upload_token = ? AND status = 'pending'
-                """,
-                (token,),
+        """Require immutable content and a fully populated attachment manifest."""
+        ids = tuple(dict.fromkeys(artifact_ids))
+        artifacts = self.get(artifact_ids=ids, project_id=project_id, tx=tx)
+        if len(artifacts) != len(ids):
+            raise NotFoundError("one or more artifacts are unavailable in this project")
+        for artifact in artifacts:
+            if artifact.status != "complete" or not artifact.sha256:
+                raise ValidationError(f"artifact {artifact.id} has no completed content")
+        if ids:
+            placeholders = ", ".join("?" for _ in ids)
+            missing = tx.execute(
+                f"""
+                SELECT artifact_id, link_path FROM artifact_figures
+                WHERE artifact_id IN ({placeholders}) AND status != 'complete'
+                ORDER BY artifact_id, link_path
+                """, ids,
             ).fetchone()
-            if row is None:
-                raise NotFoundError(
-                    "unknown, used, or expired upload token — call artifact.submit again"
+            if missing is not None:
+                raise ValidationError(
+                    f"artifact {missing['artifact_id']} has no completed content "
+                    f"for figure {missing['link_path']!r}"
                 )
 
-            stale_error = self._stale_upload_error(tx=tx, row=row)
-            if stale_error is not None:
-                # Commit the deletion before raising so the stale token dies.
-                tx.execute(
-                    "DELETE FROM artifact_figures WHERE artifact_id = ?",
-                    (row["id"],),
-                )
-                tx.execute("DELETE FROM artifacts WHERE id = ?", (row["id"],))
-            else:
-                role = str(row["role"])
-                path = str(row["path"])
-                cap = roles.artifact_byte_cap(role)
-                if cap is not None and len(data) > cap:
-                    raise ValidationError(
-                        f"{path} is {len(data)} bytes; the maximum for a "
-                        f"role-{role!r} artifact is {cap} bytes — slim the file "
-                        "(move raw data/outputs elsewhere and reference them) "
-                        "and resubmit",
-                        details={
-                            "role": role,
-                            "size_bytes": len(data),
-                            "max_bytes": cap,
-                        },
-                    )
-
-                project_id = str(row["project_id"])
-                content_type = _content_type(path)
-                sha256 = self._blobs.put(
-                    namespace=project_id,
-                    data=data,
-                    content_type=content_type,
-                )
-                self._replace_slot(tx=tx, row=row)
-                tx.execute(
-                    """
-                    UPDATE artifacts
-                    SET status = 'complete', upload_token = '', expires_at = NULL,
-                        content_sha256 = ?, size_bytes = ?, content_type = ?,
-                        updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        sha256,
-                        len(data),
-                        content_type,
-                        now_iso(),
-                        row["id"],
-                    ),
-                )
-                self._store.record_event(
-                    conn=tx,
-                    project_id=project_id,
-                    event_type="artifact.submitted",
-                    target_type=str(row["target_type"]),
-                    target_id=str(row["target_id"]),
-                    payload={
-                        "artifact_id": str(row["id"]),
-                        "role": role,
-                        "path": path,
-                        "attempt_index": int(row["attempt_index"]),
-                    },
-                )
-                figures = self._create_figure_uploads(tx=tx, row=row, data=data)
-                completed = CompletedArtifact(
-                    artifact_id=str(row["id"]),
-                    role=role,
-                    path=path,
-                    sha256=sha256,
-                    size_bytes=len(data),
-                    figures=figures,
-                )
-
-        if stale_error is not None:
-            raise stale_error
-        assert completed is not None
-        return completed
-
-    def _complete_figure(
-        self,
-        *,
-        token: str,
-        data: bytes,
-    ) -> CompletedFigure:
-        stale_error: ValidationError | None = None
-        completed: CompletedFigure | None = None
-        with self._store.transaction() as tx:
-            row = tx.execute(
-                """
-                SELECT f.*, a.project_id, a.target_type, a.target_id,
-                       a.attempt_index
-                FROM artifact_figures f
-                JOIN artifacts a ON a.id = f.artifact_id
-                WHERE f.upload_token = ? AND f.status = 'pending'
-                """,
-                (token,),
-            ).fetchone()
-            if row is None:
-                raise NotFoundError(
-                    "unknown, used, or expired figure token — resubmit the "
-                    "document to mint fresh figure uploads"
-                )
-
-            link_path = str(row["link_path"])
-            stale_error = self._stale_upload_error(tx=tx, row=row)
-            if stale_error is not None:
-                tx.execute(
-                    """
-                    DELETE FROM artifact_figures
-                    WHERE artifact_id = ? AND status = 'pending'
-                    """,
-                    (row["artifact_id"],),
-                )
-            else:
-                if len(data) > markdown.MARKDOWN_FIGURE_MAX_BYTES:
-                    raise ValidationError(
-                        f"figure {link_path!r} is {len(data)} bytes; the maximum "
-                        f"is {markdown.MARKDOWN_FIGURE_MAX_BYTES} bytes",
-                        details={
-                            "size_bytes": len(data),
-                            "max_bytes": markdown.MARKDOWN_FIGURE_MAX_BYTES,
-                        },
-                    )
-                sha256 = self._blobs.put(
-                    namespace=str(row["project_id"]),
-                    data=data,
-                    content_type=_content_type(link_path),
-                )
-                tx.execute(
-                    """
-                    UPDATE artifact_figures
-                    SET status = 'complete', upload_token = '', expires_at = NULL,
-                        content_sha256 = ?, size_bytes = ?
-                    WHERE id = ?
-                    """,
-                    (sha256, len(data), row["id"]),
-                )
-                completed = CompletedFigure(
-                    artifact_id=str(row["artifact_id"]),
-                    link_path=link_path,
-                    sha256=sha256,
-                    size_bytes=len(data),
-                )
-
-        if stale_error is not None:
-            raise stale_error
-        assert completed is not None
-        return completed
-
-    def _stale_upload_error(
-        self,
-        *,
-        tx: Connection,
-        row: Row,
-    ) -> ValidationError | None:
-        """Return the error to raise after its stale token is deleted."""
-        try:
-            target = self._resolve_target(
-                tx=tx,
-                target=ArtifactTarget(
-                    target_type=str(row["target_type"]),
-                    target_id=str(row["target_id"]),
-                    project_id=str(row["project_id"]),
-                    attempt_index=int(row["attempt_index"]),
-                ),
-                for_submission=True,
-            )
-        except (NotFoundError, ValidationError) as exc:
-            reason = getattr(exc, "message", None) or str(exc)
-            return ValidationError(
-                f"upload refused — {reason}. This upload token has expired; "
-                "submit new work against a live target with artifact.submit"
-            )
-
-        minted_for = int(row["attempt_index"])
-        if target.attempt_index != minted_for:
-            return ValidationError(
-                "upload refused — attempt superseded. This token was minted for "
-                f"attempt {minted_for} and attempt {target.attempt_index} is now "
-                "open; call artifact.submit again to upload into the current one"
-            )
-        return None
-
-    def _resolve_target(
-        self,
-        *,
-        tx: Connection,
-        target: ArtifactTarget,
-        for_submission: bool = False,
-    ) -> ArtifactTarget:
-        project_id = self._store.require_project_id(
-            conn=tx, project_id=target.project_id
-        )
-        return self._targets.resolve(
-            tx=tx,
-            target=ArtifactTarget(
-                target.target_type,
-                target.target_id,
-                project_id,
-                target.attempt_index,
-            ),
-            for_submission=for_submission,
-        )
-
-    def _replace_slot(self, *, tx: Connection, row: Row) -> None:
-        """Replace only unsealed rows in the same artifact slot."""
-        stale = tx.execute(
-            """
-            SELECT id FROM artifacts
-            WHERE project_id = ? AND target_type = ? AND target_id = ?
-              AND role = ? AND attempt_index = ? AND lens_id = ? AND path = ?
-              AND status = 'complete' AND submission_id = '' AND id != ?
-            """,
-            (
-                row["project_id"],
-                row["target_type"],
-                row["target_id"],
-                row["role"],
-                row["attempt_index"],
-                row["lens_id"],
-                row["path"],
-                row["id"],
-            ),
-        ).fetchall()
-        for old in stale:
-            artifact_id = str(old["id"])
-            if self._targets.is_protected(tx=tx, artifact_id=artifact_id):
-                continue
-            tx.execute(
-                "DELETE FROM artifact_figures WHERE artifact_id = ?",
-                (artifact_id,),
-            )
-            tx.execute("DELETE FROM artifacts WHERE id = ?", (artifact_id,))
+    def _pending(self, *, tx: Connection, token: str, kind: UploadKind) -> Row:
+        if not token:
+            raise NotFoundError("an upload token is required")
+        if kind == "artifact":
+            where = "upload_token = ? AND status = 'pending'"
+        elif kind == "figure":
+            where = "id = (SELECT artifact_id FROM artifact_figures WHERE upload_token = ? AND status = 'pending')"
+        else:
+            raise ValidationError(f"unknown upload kind: {kind}")
+        row = tx.execute(f"SELECT * FROM artifacts WHERE {where}", (token,)).fetchone()
+        if row is None:
+            raise NotFoundError(f"unknown, used, or expired {kind} upload token — create a new upload")
+        return row
 
     def _create_figure_uploads(
-        self,
-        *,
-        tx: Connection,
-        row: Row,
-        data: bytes,
+        self, *, tx: Connection, row: Row, data: bytes,
     ) -> tuple[PendingFigure, ...]:
-        if str(row["role"]) not in markdown.MARKDOWN_FIGURE_ROLES:
+        if not row["discover_figures"]:
             return ()
-
         pending: list[PendingFigure] = []
-        text = data.decode("utf-8", errors="replace")
-        for link_path in dict.fromkeys(markdown.markdown_image_links(text)):
+        for link_path in dict.fromkeys(markdown.markdown_image_links(data.decode("utf-8", errors="replace"))):
             problem = markdown.figure_link_problem(link_path)
             if problem:
-                raise ValidationError(
-                    f"{problem} — fix the link and re-upload"
-                )
+                raise ValidationError(f"{problem} — fix the link and re-upload")
             token = secrets.token_urlsafe(24)
             tx.execute(
                 """
                 INSERT INTO artifact_figures (
                   id, artifact_id, link_path, status, upload_token, expires_at
-                )
-                VALUES (?, ?, ?, 'pending', ?, ?)
+                ) VALUES (?, ?, ?, 'pending', ?, ?)
                 """,
-                (
-                    new_id(prefix="fig"),
-                    row["id"],
-                    link_path,
-                    token,
-                    iso_after(seconds=UPLOAD_TOKEN_TTL_SECONDS),
-                ),
+                (new_id(prefix="fig"), row["id"], link_path, token, iso_after(seconds=UPLOAD_TOKEN_TTL_SECONDS)),
             )
             pending.append(PendingFigure(link_path=link_path, token=token))
         return tuple(pending)
@@ -828,83 +325,32 @@ class Artifacts:
         if str(row["status"]) != "complete" or not row["content_sha256"]:
             return None
         try:
-            return self._blobs.get(
-                namespace=str(row["project_id"]),
-                sha256=str(row["content_sha256"]),
-            )
+            return self._blobs.get(namespace=str(row["project_id"]), sha256=str(row["content_sha256"]))
         except NotFoundError:
             return None
 
-    def _sweep_expired(self) -> None:
-        """Expire tokens in their own transaction so failed access still sweeps."""
-        now = now_iso()
-        with self._store.transaction() as tx:
-            tx.execute(
+    def _sweep_expired(self, *, tx: Connection | None = None) -> None:
+        with (nullcontext(tx) if tx is not None else self._store.transaction()) as conn:
+            now = now_iso()
+            # Keep the manifest so expiry can never make an incomplete document
+            # appear complete; only its upload credential is retired.
+            conn.execute(
                 """
-                DELETE FROM artifact_figures
+                UPDATE artifact_figures SET status = 'expired', upload_token = '', expires_at = NULL
                 WHERE status = 'pending' AND expires_at < ?
-                """,
-                (now,),
+                """, (now,),
             )
-            tx.execute(
-                """
-                DELETE FROM artifacts
-                WHERE status = 'pending' AND expires_at < ?
-                """,
-                (now,),
-            )
+            conn.execute("DELETE FROM artifacts WHERE status = 'pending' AND expires_at < ?", (now,))
+
 
 def _clean_path(path: str) -> str:
-    return str(path).strip().replace("\\", "/").lstrip("/")
+    cleaned = str(path).strip().replace("\\", "/").lstrip("/")
+    if not cleaned:
+        raise ValidationError("path is required (a display name for the content)")
+    return cleaned
 
 
 def _content_type(path: str) -> str:
     name = path.rsplit("/", 1)[-1]
     suffix = ("." + name.rsplit(".", 1)[-1]).lower() if "." in name else ""
-    return (
-        _CONTENT_TYPES.get(suffix)
-        or mimetypes.guess_type(name)[0]
-        or "application/octet-stream"
-    )
-
-
-def _validate_association(*, target_type: str, role: str) -> None:
-    if target_type not in roles.ARTIFACT_TARGET_TYPES:
-        allowed = sorted(roles.ARTIFACT_TARGET_TYPES)
-        raise ValidationError(
-            f"unknown artifact target type: {target_type}. "
-            f"Allowed target types: {', '.join(allowed)}",
-            details={"allowed_target_types": allowed},
-        )
-    if role in roles.LEGACY_ROLE_REPLACEMENTS:
-        replacement = roles.LEGACY_ROLE_REPLACEMENTS[role]
-        raise ValidationError(
-            f"legacy artifact role {role!r} is read-only for old records; "
-            f"use {replacement!r}",
-            details={"legacy_role": role, "replacement_role": replacement},
-        )
-    if target_type == "reflection" and role == roles.LEGACY_PROJECT_GRAPH_ROLE:
-        raise ValidationError(
-            "use role 'project_graph' for reflection-wave project graphs; "
-            "role 'graph' is only for experiment logic graphs",
-            details={
-                "legacy_role": roles.LEGACY_PROJECT_GRAPH_ROLE,
-                "replacement_role": roles.PROJECT_GRAPH_ROLE,
-            },
-        )
-    if target_type == "task" and role == roles.TASK_BRIEF_ROLE:
-        raise ValidationError(
-            "a task's brief is rendered by Merv from the immutable goal at "
-            "creation and cannot be submitted or replaced; a wrong goal is an "
-            "honest miss in the delivery, or the owner ends the task "
-            "(mark_failed) and creates a better one"
-        )
-    if role not in roles.SUBMITTABLE_ROLES:
-        allowed = sorted(roles.SUBMITTABLE_ROLES)
-        raise ValidationError(
-            f"unknown artifact role: {role}. Allowed roles: {', '.join(allowed)}",
-            details={
-                "allowed_roles": allowed,
-                "recommended_result_role": "result",
-            },
-        )
+    return _CONTENT_TYPES.get(suffix) or mimetypes.guess_type(name)[0] or "application/octet-stream"

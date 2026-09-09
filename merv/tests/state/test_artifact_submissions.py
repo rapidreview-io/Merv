@@ -8,14 +8,9 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 
-from merv.brain.artifacts.artifacts import (
-    MAX_SUBMITTED_TEXT_BYTES,
-    UPLOAD_TOKEN_TTL_SECONDS,
-    ArtifactTarget,
-    Artifacts,
-    CompletedArtifact,
-    CompletedFigure,
-)
+from merv.brain.artifacts import Artifacts, CompletedFigure
+from merv.brain.artifacts.artifacts import UPLOAD_TOKEN_TTL_SECONDS
+from merv.brain.research_core import ArtifactTarget, CompletedArtifact, ResearchArtifacts
 from merv.brain.kernel.state import StateStore
 from merv.brain.kernel.utils import (
     NotFoundError,
@@ -24,10 +19,10 @@ from merv.brain.kernel.utils import (
     now_iso,
 )
 from tests.support.blobs import LocalDirBlobStore
-from merv.brain.research_core.association_targets import AssociationTargets
 from merv.shared.markdown_images import MARKDOWN_FIGURE_MAX_BYTES
 
 
+MAX_SUBMITTED_TEXT_BYTES = 16_000
 PLAN = "## Summary\nBody.\n\n## Objective\nGoal.\n\n## Evaluation\nMetric.\n"
 REPORT = (
     "## Summary\nRan it.\n\n## Results\n![curve](figures/curve.png)\n\n"
@@ -41,10 +36,9 @@ class ArtifactsTest(unittest.TestCase):
         root = Path(self.tmp.name)
         self.store = StateStore(db_path=root / "state.sqlite")
         self.blobs = LocalDirBlobStore(root=root / "blobs")
-        self.artifacts = Artifacts(
+        self.artifacts = ResearchArtifacts(
             store=self.store,
-            blobs=self.blobs,
-            targets=AssociationTargets(),
+            artifacts=Artifacts(store=self.store, blobs=self.blobs),
         )
         with closing(self.store.connect()) as tx:
             self.project_id = str(
@@ -176,10 +170,9 @@ class ArtifactsTest(unittest.TestCase):
         self._complete(pending)
         unavailable_blobs = Mock(wraps=self.blobs)
         unavailable_blobs.get.side_effect = RuntimeError("storage unavailable")
-        artifacts = Artifacts(
+        artifacts = ResearchArtifacts(
             store=self.store,
-            blobs=unavailable_blobs,
-            targets=AssociationTargets(),
+            artifacts=Artifacts(store=self.store, blobs=unavailable_blobs),
         )
 
         with closing(self.store.connect()) as tx:
@@ -458,10 +451,9 @@ class ArtifactsTest(unittest.TestCase):
 
         flaky_blobs = Mock(wraps=self.blobs)
         flaky_blobs.get.side_effect = flaky_get
-        artifacts = Artifacts(
+        artifacts = ResearchArtifacts(
             store=self.store,
-            blobs=flaky_blobs,
-            targets=AssociationTargets(),
+            artifacts=Artifacts(store=self.store, blobs=flaky_blobs),
         )
 
         content = artifacts.get(
@@ -531,7 +523,7 @@ class ArtifactsTest(unittest.TestCase):
         with closing(self.store.connect()) as tx:
             rows = tx.execute(
                 """
-                SELECT id, status, content_sha256 FROM artifacts
+                SELECT id, status, content_sha256 FROM research_artifacts
                 WHERE target_id = ? AND role = 'plan'
                 ORDER BY created_seq
                 """,

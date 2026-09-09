@@ -204,6 +204,14 @@ relative paths and versions and pins selected submitted bytes for gates and
 review. System metrics exhibits and optional heavy storage objects are separate
 brain-managed artifacts.
 
+`artifact.store` uploads immutable content without a workflow role or target;
+`artifact.read` retrieves that content by ID. `artifact.attach` accepts an
+existing content ID into a research target and role, returning its association
+ID. The same content can be used by multiple targets. `artifact.submit` remains
+the combined upload-and-associate operation for existing clients. Research owns
+role validation and freezes exact association IDs at each workflow transition;
+the artifact component owns content, upload limits, and figure manifests.
+
 ## Running a local brain (optional)
 
 For local record-only development:
@@ -215,9 +223,12 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 bin/merv-client configure --control-url http://127.0.0.1:8787
 ```
 
-For uploads or compute, configure `MERV_SANDBOXES_URL` and
+For ML workload transfers or compute, configure `MERV_SANDBOXES_URL` and
 `MERV_SANDBOXES_JWT_SECRET` against a separate merv-sandboxes deployment.
-Provider credentials and physical bytes belong to that service. Startup details:
+Cloud-provider credentials, datasets, and models belong to that service.
+Research artifacts, figures, feed media, and audit payloads use Merv's own R2
+bucket, configured with `MERV_BLOB_BUCKET`, `MERV_BLOB_ENDPOINT_URL`,
+`MERV_BLOB_ACCESS_KEY_ID`, and `MERV_BLOB_SECRET_ACCESS_KEY`. Startup details:
 [docs/STARTUP_CHEATSHEET.md](docs/STARTUP_CHEATSHEET.md).
 
 ## Tests

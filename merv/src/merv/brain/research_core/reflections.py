@@ -50,7 +50,9 @@ from .experiment_workflow import EXPERIMENT_TERMINAL_STATUSES
 from .reflection_workflow import REFLECTION_WORKFLOW
 from .tasks import TaskService
 from .task_workflow import TASK_TERMINAL_STATUSES
-from ..artifacts import MAX_SUBMITTED_TEXT_BYTES, ArtifactTarget, Artifacts
+from .artifacts import ResearchArtifacts as Artifacts
+from merv.shared.artifact_roles import METRIC_RESULT_MAX_BYTES as MAX_SUBMITTED_TEXT_BYTES
+from .artifact_models import ArtifactTarget
 from .policy import (
     ACTIVE_EXPERIMENT_CAP,
     GateEvaluation,

@@ -1,7 +1,7 @@
 """Artifact role and association-target vocabulary.
 
-The artifacts module owns what an artifact may be called (roles), what it may
-attach to (target types), and the per-role upload byte caps. This module is
+Research owns evidence roles, association targets, and per-role byte caps.
+Generic artifact content has no role or workflow target. This module is
 deliberately dependency-free so research_core gates, surface adapters, and the
 artifact upload path can share it without crossing feature boundaries.
 """

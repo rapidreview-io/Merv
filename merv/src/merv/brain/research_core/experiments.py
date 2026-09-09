@@ -36,7 +36,8 @@ from .policy import (
     reflection_create_block_message,
     validate_experiment_name,
 )
-from ..artifacts import Artifact, ArtifactTarget, Artifacts, Submission
+from .artifacts import ResearchArtifacts as Artifacts
+from .artifact_models import Artifact, ArtifactTarget, Submission
 from ..kernel.events import StoredEvent, freeze_json_object
 from ..kernel.state.store import BaseStateStore, row_to_dict, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError

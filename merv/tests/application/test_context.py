@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 from merv.brain.application.project_context import ProjectContextQuery
-from merv.brain.artifacts import Artifact
+from merv.brain.research_core import Artifact, ArtifactTarget
 from merv.brain.kernel.state.store import StateStore
 from merv.brain.research_core import Research
 from tests.support.brain import TestBrain
@@ -431,31 +431,15 @@ class ProjectContextBatchingTest(unittest.TestCase):
     def test_only_plan_and_report_bytes_are_summarized(self) -> None:
         self._seed(project_id="proj_roles", count=1)
         experiment_id = "exp_proj_roles_000"
-        with self.store.transaction() as conn:
-            for sequence, role in enumerate(
-                ("plan", "report", "result", "metrics"), start=1
-            ):
-                conn.execute(
-                    """
-                    INSERT INTO artifacts
-                      (id, project_id, target_type, target_id, role,
-                       attempt_index, lens_id, path, title, content_sha256,
-                       size_bytes, content_type, status, upload_token,
-                       created_by, created_at, updated_at, created_seq)
-                    VALUES (?, 'proj_roles', 'experiment', ?, ?, 1, '', ?,
-                            '', '', 0, 'text/markdown', 'complete', '',
-                            'agent', ?, ?, ?)
-                    """,
-                    (
-                        f"art_{role}",
-                        experiment_id,
-                        role,
-                        f"{role}.md",
-                        "2026-07-27T02:00:00Z",
-                        "2026-07-27T02:00:00Z",
-                        sequence,
-                    ),
-                )
+        for role in ("plan", "report", "result", "metrics"):
+            self.app.artifacts.pin(
+                target=ArtifactTarget("experiment", experiment_id, "proj_roles"),
+                role=role, path=f"{role}.md", data=b"Submitted evidence.",
+            )
+        ids = {
+            artifact.role: artifact.id
+            for artifact in self.app.artifacts.scan(target_ids=(experiment_id,))
+        }
         original = self.app.artifacts.get
         hydrated_ids: list[str] = []
 
@@ -469,7 +453,7 @@ class ProjectContextBatchingTest(unittest.TestCase):
         finally:
             self.app.artifacts.get = original
 
-        self.assertCountEqual(hydrated_ids, ["art_plan", "art_report"])
+        self.assertCountEqual(hydrated_ids, [ids["plan"], ids["report"]])
 
 
 if __name__ == "__main__":  # pragma: no cover

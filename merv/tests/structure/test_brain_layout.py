@@ -348,7 +348,7 @@ load("subprocess")
         self.assertFalse((BACKEND_ROOT / "dataplane").exists())
         self.assertFalse((BACKEND_ROOT / "workspace.py").exists())
 
-    def test_artifacts_is_one_service_with_passive_models_and_injected_targets(
+    def test_artifacts_is_generic_with_research_owned_associations(
         self,
     ) -> None:
         self.assertEqual(
@@ -356,16 +356,21 @@ load("subprocess")
                 path.relative_to(ARTIFACTS_ROOT).as_posix()
                 for path in ARTIFACTS_ROOT.rglob("*.py")
             },
-            {"__init__.py", "artifacts.py", "models.py"},
+            {"__init__.py", "artifacts.py", "models.py", "r2.py"},
         )
         source = (ARTIFACTS_ROOT / "artifacts.py").read_text(encoding="utf-8")
         models = (ARTIFACTS_ROOT / "models.py").read_text(encoding="utf-8")
         imports = _import_segments(ARTIFACTS_ROOT / "artifacts.py")
         composition = (SURFACE_ROOT / "surface.py").read_text(encoding="utf-8")
 
-        self.assertNotIn("research_core", imports)
-        self.assertIn("targets: ArtifactTargets", source)
-        self.assertIn("targets=ResearchTargets()", composition)
+        self.assertFalse({"research_core", "artifact_roles"} & imports)
+        self.assertNotIn("ArtifactTargets", source + models)
+        self.assertNotIn("targets=", composition)
+        self.assertIn("ResearchArtifacts(", composition)
+        for workflow_field in (
+            "target_type", "target_id", "role", "attempt_index", "lens_id", "submission_id",
+        ):
+            self.assertNotIn(f"    {workflow_field}:", models)
         for behavior in (".execute(", ".transaction(", "record_event(", "_blobs"):
             self.assertNotIn(behavior, models)
 

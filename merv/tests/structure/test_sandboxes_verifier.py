@@ -1,7 +1,6 @@
 """Safety bounds for the opt-in production verifier, using no live services."""
 from __future__ import annotations
 
-import argparse
 import hashlib
 import importlib.util
 import os
@@ -60,26 +59,21 @@ def test_failure_report_never_echoes_signed_urls():
 def test_failed_blob_upload_still_deletes_only_its_owned_object():
     calls = []
 
-    class Client:
-        def request(self, method, path, *, namespace, **kwargs):
-            calls.append((method, path, namespace))
-            return {"state": "deleted"}
-
     class Blobs:
-        def __init__(self, **kwargs):
-            pass
-
         def put(self, **kwargs):
             raise RuntimeError("accepted upload response was lost")
 
-        def _find(self, **kwargs):
-            return [{"id": "obj_smoke_only"}]
+        def delete(self, **kwargs):
+            calls.append(kwargs)
+            return True
 
-    with patch.object(verifier, "RemoteBlobStore", Blobs):
+        def get(self, **kwargs):
+            raise verifier.NotFoundError("missing")
+
+    with patch.object(verifier, "build_blob_store", return_value=Blobs()):
         with pytest.raises(RuntimeError, match="response was lost"):
-            verifier.verify_writes(argparse.Namespace(multipart_mib=65), Client())
-    assert calls == [("DELETE", "/storage/objects/obj_smoke_only", "merv-blobs"),
-                     ("GET", "/storage/objects/obj_smoke_only", "merv-blobs")]
+            verifier.verify_artifact_write("smoke_only")
+    assert calls == [{"namespace": "smoke_only", "sha256": hashlib.sha256(b"smoke_only:evidence\n" * 64).hexdigest()}]
 
 
 class SchemaConnection:
@@ -110,11 +104,17 @@ def test_final_verification_rejects_schema57():
         verifier.verify_schema(SchemaConnection(57))
 
 
-def test_schema58_checks_persisted_remote_links_in_both_phases():
+def test_schema59_checks_persisted_remote_links_in_both_phases():
     for pre_cutover in (False, True):
-        connection = SchemaConnection(58)
-        assert verifier.verify_schema(connection, pre_cutover=pre_cutover) == 58
+        connection = SchemaConnection(59)
+        assert verifier.verify_schema(connection, pre_cutover=pre_cutover) == 59
         assert "FROM remote_sandbox_links" in connection.statements[-1]
+
+
+def test_schema58_remains_readable_before_artifact_cutover_only():
+    assert verifier.verify_schema(SchemaConnection(58), pre_cutover=True) == 58
+    with pytest.raises(verifier.CheckFailed, match="verification phase"):
+        verifier.verify_schema(SchemaConnection(58))
 
 
 def test_disposable_composition_uses_synthetic_database_and_authentication(capsys):

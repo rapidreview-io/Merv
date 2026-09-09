@@ -4,8 +4,10 @@ This repository uses one Merv MCP surface backed by a single brain. The agent
 connects directly to `POST /mcp` with `Authorization: Bearer <key>`, where the
 key is an `mk_` key scoped either to one project or to the owner's whole
 account (chosen when it is minted). The brain owns durable
-research records, workflow policy, reviews, and research object metadata. The independent merv-sandboxes service
-owns sandbox lifecycle, provider credentials, durable jobs and physical bytes.
+research records, workflow policy, reviews, and research object metadata. Merv
+owns research artifacts, figures, and feed bytes in its own R2 storage. The
+independent merv-sandboxes service owns sandbox lifecycle, cloud-provider
+credentials, durable jobs, and ML workload storage such as datasets and models.
 
 The brain never receives a checkout root and never reads the agent's filesystem.
 The agent submits explicit metadata and selected evidence bytes through MCP.

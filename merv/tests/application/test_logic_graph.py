@@ -6,7 +6,7 @@ from dataclasses import replace
 import unittest
 
 from merv.brain.application.queries import LogicGraphQuery
-from merv.brain.artifacts import Artifact
+from merv.brain.research_core import Artifact
 
 
 class GraphResearch:
@@ -207,6 +207,25 @@ class LogicGraphTest(unittest.TestCase):
             [call["artifact_ids"] for call in artifacts.get_calls],
             [("res_new",), ("art_results", "art_missing")],
         )
+
+    def test_graph_resolves_reused_content_by_its_workflow_association_handle(self) -> None:
+        class AttachedArtifacts(GraphArtifacts):
+            def _content(self, artifact_id: str) -> bytes | None:
+                if artifact_id == "res_new":
+                    return b'{"version":1,"nodes":[{"id":"n","label":"Evidence","refs":["artref_shared"]}]}'
+                return None
+
+            def _reference(self, artifact_id: str) -> Artifact | None:
+                if artifact_id == "artref_shared":
+                    return replace(_artifact(artifact_id, role="result"), artifact_id="art_content")
+                return None
+
+        result = LogicGraphQuery(
+            research=GraphResearch(), artifacts=AttachedArtifacts()
+        ).experiment(project_id="proj_1", experiment_id="exp_1")
+        reference = result["ref_index"]["artref_shared"]
+        self.assertTrue(reference["resolved"])
+        self.assertEqual(reference["artifact_id"], "artref_shared")
 
     def test_project_graph_keeps_signal_when_no_reflection_exists(self) -> None:
         result = LogicGraphQuery(

@@ -51,6 +51,9 @@ AGENT_EXPERIMENT_SESSION_TOOLS = frozenset(
         "agent.hello",
         "artifact.find",
         "artifact.submit",
+        "artifact.store",
+        "artifact.read",
+        "artifact.attach",
         "claim.list",
         "experiment.exhibit",
         "experiment.get_state",
@@ -91,6 +94,7 @@ AGENT_REVIEW_SESSION_TOOLS = frozenset(
     {
         "agent.hello",
         "artifact.find",
+        "artifact.read",
         "claim.list",
         "consolidation.get",
         "experiment.get_state",

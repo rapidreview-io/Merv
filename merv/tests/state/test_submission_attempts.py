@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from merv.brain.artifacts import ArtifactTarget
+from merv.brain.research_core import ArtifactTarget
 from merv.brain.research_core.evidence import latest_per_slot
 from tests.support.brain import TestBrain
 
@@ -155,7 +155,7 @@ class SubmissionAttemptFlowTest(unittest.TestCase):
         )["id"]
         self._reach_experiment_review(exp_id)
         first_report = self._rows(
-            "SELECT id, submission_id FROM artifacts "
+            "SELECT id, submission_id FROM research_artifacts "
             "WHERE target_id = ? AND role = 'report' AND status = 'complete'",
             (exp_id,),
         )
@@ -182,7 +182,7 @@ class SubmissionAttemptFlowTest(unittest.TestCase):
         )
 
         reports = self._rows(
-            "SELECT id, submission_id FROM artifacts "
+            "SELECT id, submission_id FROM research_artifacts "
             "WHERE target_id = ? AND role = 'report' AND status = 'complete' "
             "ORDER BY created_seq",
             (exp_id,),
@@ -235,8 +235,8 @@ class SubmissionAttemptFlowTest(unittest.TestCase):
             target_id=exp_id, role="plan", path="plan.md", body=VALID_PLAN + "\nRevised.\n"
         )
         plans = self._rows(
-            "SELECT id FROM artifacts WHERE target_id = ? AND role = 'plan' "
-            "AND status = 'complete'",
+            "SELECT id FROM research_artifacts WHERE target_id = ? AND role = 'plan' "
+            "AND status = 'complete' AND active = 1",
             (exp_id,),
         )
         self.assertEqual(
@@ -287,7 +287,7 @@ class SubmissionAttemptFlowTest(unittest.TestCase):
         )
 
         rows = self._rows(
-            "SELECT id, submission_id FROM artifacts WHERE target_id = ? "
+            "SELECT id, submission_id FROM research_artifacts WHERE target_id = ? "
             "AND role = 'exhibit' AND status = 'complete' ORDER BY created_seq",
             (exp_id,),
         )
@@ -315,8 +315,8 @@ class SubmissionAttemptFlowTest(unittest.TestCase):
             if artifact.submission_id == ""
         )
         rows = self._rows(
-            "SELECT id FROM artifacts WHERE target_id = ? AND role = 'exhibit' "
-            "AND status = 'complete' ORDER BY created_seq",
+            "SELECT id FROM research_artifacts WHERE target_id = ? AND role = 'exhibit' "
+            "AND status = 'complete' AND (active = 1 OR submission_id != '') ORDER BY created_seq",
             (exp_id,),
         )
         self.assertEqual([r["id"] for r in rows], [first_id, third_id])

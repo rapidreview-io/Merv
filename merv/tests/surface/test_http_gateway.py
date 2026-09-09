@@ -120,6 +120,21 @@ class HttpGatewayTest(unittest.TestCase):
                 name="claim.list", arguments={"project_id": "proj-b"}, principal=USER
             )
 
+    def test_generic_artifact_tools_enforce_project_key_scope_before_dispatch(self) -> None:
+        for name, arguments in (
+            ("artifact.store", {"path": "evidence.bin"}),
+            ("artifact.read", {"artifact_id": "art_foreign"}),
+            ("artifact.attach", {"artifact_id": "art_foreign", "target_type": "experiment",
+                                 "target_id": "exp_foreign", "role": "plan"}),
+        ):
+            with self.subTest(tool=name):
+                backend = _Backend()
+                with self.assertRaises(ProjectKeyScopeError):
+                    self.gateway(backend).call(
+                        name=name, arguments={"project_id": "proj-b", **arguments}, principal=KEY
+                    )
+                self.assertEqual(backend.calls, [])
+
     def test_indirect_review_scope_uses_the_same_membership_boundary(self) -> None:
         denied_gateway = self.gateway(review_project_id="proj-b")
         with self.assertRaisesRegex(NotFoundError, "project not found: proj-b"):

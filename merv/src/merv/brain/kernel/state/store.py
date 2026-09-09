@@ -850,13 +850,11 @@ CREATE TABLE IF NOT EXISTS sandbox_runs (
   FOREIGN KEY(sandbox_uid) REFERENCES sandboxes(sandbox_uid)
 );
 
--- Typed submitted artifacts (July 2026, dev_docs/artifact_submit_cut_plan.md).
--- One row per submitted object against a workflow target; bytes live in the
--- blob store keyed by (project_id, content_sha256). ``path`` is a trust-based
--- provenance label, never identity. Rows are born 'pending' with a one-time
--- upload token and flip to 'complete' when the PUT lands; resubmitting the
--- same slot mints a NEW id and deletes the old row, so review snapshot ids
--- (artifact_id:role:attempt) invalidate naturally.
+-- Historical artifact baseline for migrations 24 and 36. Migration 59 moves
+-- workflow fields into Research-owned links and drops them here, leaving
+-- immutable project-scoped content plus generic upload settings. Keep this
+-- baseline replayable for pre-artifact databases; CREATE IF NOT EXISTS does
+-- not reintroduce the old fields when an upgraded store opens again.
 CREATE TABLE IF NOT EXISTS artifacts (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
@@ -1508,6 +1506,47 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     (57, "add_oauth_handoff_links", ""),
     # Research associations for independently operated merv-sandboxes.
     (58, "add_remote_sandbox_links", ""),
+    # Generic immutable content; Research owns associations and snapshots.
+    (59, "separate_artifact_content_from_research", ""),
+)
+
+RESEARCH_ARTIFACT_SCHEMA = (
+    """
+    CREATE TABLE IF NOT EXISTS research_artifact_links (
+      id TEXT PRIMARY KEY,
+      artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      attempt_index INTEGER NOT NULL DEFAULT 0,
+      lens_id TEXT NOT NULL DEFAULT '',
+      submission_id TEXT NOT NULL DEFAULT '',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      created_seq INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS research_submission_artifacts (
+      submission_id TEXT NOT NULL REFERENCES submissions(id),
+      link_id TEXT NOT NULL REFERENCES research_artifact_links(id),
+      PRIMARY KEY (submission_id, link_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_research_artifacts_target "
+    "ON research_artifact_links(project_id, target_type, target_id, attempt_index)",
+    "CREATE INDEX IF NOT EXISTS idx_research_artifacts_content "
+    "ON research_artifact_links(artifact_id)",
+    """
+    CREATE VIEW research_artifacts AS
+    SELECT l.id, a.id AS artifact_id, a.project_id,
+           l.target_type, l.target_id, l.role, l.attempt_index, l.lens_id,
+           a.path, a.title, a.content_sha256, a.size_bytes, a.content_type,
+           a.status, a.upload_token, a.expires_at, a.created_by,
+           l.created_at, a.updated_at, l.created_seq, l.submission_id, l.active
+    FROM research_artifact_links l JOIN artifacts a ON a.id = l.artifact_id
+    """,
 )
 
 # Migration 57 indexes — handler-only (they name a ladder-added table).
@@ -1892,6 +1931,8 @@ class BaseStateStore:
             self._ensure_runs_final_observed_at(conn=conn)
         elif name == "add_submission_attempts":
             self._add_submission_attempts(conn=conn)
+        elif name == "separate_artifact_content_from_research":
+            self._separate_artifact_content_from_research(conn=conn)
         elif name == "add_tool_call_ledger":
             self._add_tool_call_ledger(conn=conn)
         elif name == "add_oauth_client_fingerprint":
@@ -2213,6 +2254,109 @@ class BaseStateStore:
             conn.execute(_schema_table_ddl(table="tool_calls"))
         for statement in TOOL_CALL_LEDGER_INDEXES:
             conn.execute(statement)
+
+    def _separate_artifact_content_from_research(self, *, conn: Connection) -> None:
+        """Migration 59: preserve content IDs while transferring research facts.
+
+        Alter in place so figure foreign keys and every external artifact
+        reference survive. The whole extraction and its ledger row share a
+        transaction on both dialects; no content bytes or review IDs change.
+        """
+        for statement in RESEARCH_ARTIFACT_SCHEMA[:-1]:
+            conn.execute(statement)
+        conn.execute(
+            "ALTER TABLE artifacts ADD COLUMN max_bytes INTEGER NOT NULL DEFAULT 5000000"
+        )
+        conn.execute(
+            "ALTER TABLE artifacts ADD COLUMN discover_figures INTEGER NOT NULL DEFAULT 0"
+        )
+        # Frozen historical policy: replay must not depend on today's roles.
+        conn.execute(
+            "UPDATE artifacts SET max_bytes = 16000 WHERE role IN "
+            "('plan','report','graph','project_graph','reflection_lens_doc',"
+            "'reflection_doc','change_spec','brief','delivery','result')"
+        )
+        conn.execute(
+            "UPDATE artifacts SET discover_figures = 1 "
+            "WHERE role IN ('plan','report','reflection_doc')"
+        )
+        conn.execute(
+            """
+            INSERT INTO research_artifact_links (
+              id, artifact_id, project_id, target_type, target_id, role,
+              attempt_index, lens_id, submission_id, active, created_at, created_seq
+            )
+            SELECT id, id, project_id, target_type, target_id, role,
+                   attempt_index, lens_id, submission_id, 0, created_at, created_seq
+            FROM artifacts
+            """
+        )
+        # Only the current complete version of each research slot is active.
+        # Sealed predecessors remain visible through their first-seal marker;
+        # pending uploads remain intents until Research accepts their bytes.
+        conn.execute(
+            """
+            UPDATE research_artifact_links SET active = 1 WHERE id IN (
+              SELECT link_id FROM (
+                SELECT l.id AS link_id, ROW_NUMBER() OVER (
+                  PARTITION BY l.project_id, l.target_type, l.target_id,
+                               l.attempt_index, l.role, l.lens_id, a.path
+                  ORDER BY l.created_seq DESC, a.updated_at DESC, l.id DESC
+                ) AS slot_rank
+                FROM research_artifact_links l JOIN artifacts a ON a.id = l.artifact_id
+                WHERE a.status = 'complete'
+              ) ranked WHERE slot_rank = 1
+            )
+            """
+        )
+        # Trusted system pins replaced the whole role, even when its display
+        # path changed. A later agent submission still owns only its own slot.
+        conn.execute(
+            """
+            UPDATE research_artifact_links SET active = 0 WHERE id IN (
+              SELECT older.id FROM research_artifact_links older
+              JOIN artifacts old_content ON old_content.id = older.artifact_id
+              JOIN research_artifact_links newer ON newer.project_id = older.project_id
+                AND newer.target_type = older.target_type AND newer.target_id = older.target_id
+                AND newer.attempt_index = older.attempt_index AND newer.role = older.role
+              JOIN artifacts new_content ON new_content.id = newer.artifact_id
+              WHERE older.active = 1 AND new_content.status = 'complete'
+                AND new_content.created_by = 'system'
+                AND (newer.created_seq, new_content.updated_at, newer.id)
+                  > (older.created_seq, old_content.updated_at, older.id)
+            )
+            """
+        )
+        # Old rounds carried forward the latest slot sealed at or before that
+        # round. Materialize that exact composition, not just newly sealed rows.
+        conn.execute(
+            """
+            INSERT INTO research_submission_artifacts (submission_id, link_id)
+            SELECT submission_id, link_id FROM (
+              SELECT s.id AS submission_id, l.id AS link_id,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY s.id, l.role, l.lens_id, a.path
+                       ORDER BY l.created_seq DESC, a.updated_at DESC, l.id DESC
+                     ) AS slot_rank
+              FROM submissions s
+              JOIN research_artifact_links l ON l.project_id = s.project_id
+                AND l.target_type = s.target_type AND l.target_id = s.target_id
+                AND l.attempt_index = s.attempt_index
+              JOIN artifacts a ON a.id = l.artifact_id AND a.status = 'complete'
+              JOIN submissions sealed ON sealed.id = l.submission_id
+                AND sealed.project_id = s.project_id
+                AND sealed.target_type = s.target_type AND sealed.target_id = s.target_id
+                AND sealed.attempt_index = s.attempt_index
+              WHERE sealed.created_seq <= s.created_seq
+            ) eligible WHERE slot_rank = 1
+            """
+        )
+        conn.execute("DROP INDEX IF EXISTS idx_artifacts_submission")
+        for column in (
+            "target_type", "target_id", "role", "attempt_index", "lens_id", "submission_id"
+        ):
+            conn.execute(f"ALTER TABLE artifacts DROP COLUMN {column}")
+        conn.execute(RESEARCH_ARTIFACT_SCHEMA[-1])
 
     def _add_submission_attempts(self, *, conn: Connection) -> None:
         """Migration 36: the submissions table plus the two seal columns.

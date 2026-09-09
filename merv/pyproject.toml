@@ -13,6 +13,7 @@ authors = [{ name = "RapidReview" }]
 keywords = ["research", "ml", "mcp", "experiments"]
 # HTTP clients and service authentication are shared by both deployment modes.
 dependencies = [
+    "boto3>=1.36,<2",
     "fastapi>=0.115,<1",
     "httpx>=0.27,<1",
     "PyJWT>=2.10,<3",
@@ -21,7 +22,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# All compute and object-store SDKs belong to merv-sandboxes.
+# Compute and large-object transfers belong to merv-sandboxes; Merv uses R2
+# directly for its own artifacts, figures, feed bytes, and diagnostic payloads.
 local = []
 control = ["psycopg[binary]>=3.1,<4"]
 [project.scripts]

@@ -1,13 +1,13 @@
 # If you update this file, you must consult research_core.md to see whether research_core.md needs to be updated. research_core.md must not exceed 100 lines.
 """Research resolution of artifact-association targets.
 
-Artifacts receives this capability at composition, so it can verify Research
-targets without knowing Research tables or lifecycle rules.
+ResearchArtifacts uses this private resolver for target ownership and lifecycle
+checks. The generic artifact component never receives research targets.
 """
 
 from __future__ import annotations
 
-from ..artifacts import ArtifactTarget
+from .artifact_models import ArtifactTarget
 from ..kernel.utils import NotFoundError, ValidationError
 from .experiment_workflow import EXPERIMENT_TERMINAL_STATUSES
 from .reflection_workflow import REFLECTION_TERMINAL_STATUSES

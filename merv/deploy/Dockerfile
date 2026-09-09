@@ -1,7 +1,7 @@
 # Hosted-brain image for Merv.
 #
-# Installs research HTTP/auth and Postgres dependencies only. Compute and
-# storage infrastructure run in the independent merv-sandboxes deployment.
+# Installs research HTTP/auth, Postgres, and Merv's R2 evidence client.
+# ML compute and workload storage run in the independent merv-sandboxes service.
 # syntax=docker/dockerfile:1
 FROM python:3.11-slim AS base
 
@@ -19,7 +19,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Install the research control plane without provider SDKs.
+# Install the research control plane, including its R2 evidence client.
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY deploy/db_preflight.py ./deploy/db_preflight.py

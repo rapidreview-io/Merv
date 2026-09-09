@@ -8,7 +8,7 @@ from typing import Any
 
 from merv.shared.content_summaries import content_tldr
 
-from ...artifacts import Artifacts
+from ...research_core import ResearchArtifacts as Artifacts
 from ...research_core import (
     EXPERIMENT_TERMINAL_STATUSES,
     EXPERIMENT_WORKFLOW,

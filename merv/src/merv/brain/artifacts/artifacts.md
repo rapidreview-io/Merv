@@ -2,89 +2,68 @@
 
 ## Purpose
 
-`artifacts` owns the durable evidence lifecycle. It associates typed files with
-research targets, stores content-addressed bytes, manages document figures, and
-freezes the evidence composition used by workflow transitions. It does not own
-research-target state, workflow gates, transport/authentication, database schema,
-or the blob-store implementation.
+Artifacts owns project-scoped immutable content records and their upload
+credentials. Consumers own associations, roles, acceptance, and evidence
+snapshots. Artifacts never resolves a research target or interprets a workflow.
+Physical bytes live behind the `EvidenceBlobStore` port in Merv's own R2 bucket.
+Large datasets and models use the separate Object Storage component.
 
 ## Files and responsibilities
 
-- `artifacts.py`: stateful application service for submission, upload, reads,
-  live-slot replacement, system pinning, figure uploads, and history sealing.
-- `models.py`: immutable value types, read modes, completion results, and the
-  `ArtifactTargets` protocol through which Research supplies target facts.
-- `__init__.py`: the deliberately small public import surface.
+- `artifacts.py`: content creation, bounded uploads, reads, attachment manifests,
+  and completeness validation.
+- `models.py`: content metadata and upload receipts without consumer-specific
+  fields.
+- `__init__.py`: public content-store interface.
+- `r2.py`: boto3-backed put/get/delete, project/digest keys, upload integrity,
+  verified downloads, and explicit failure when R2 is not configured.
 
-## Agent upload flow
+## Upload lifecycle
 
-1. `submit` validates the target/role association and reflection-lens rules,
-   normalizes the caller's display path, sweeps expired records, and resolves
-   the target through `ArtifactTargets`.
-2. In one state transaction it creates a `pending` artifact with the resolved
-   project and attempt plus an opaque, single-use token expiring after 15
-   minutes. The returned path is metadata; the brain never reads the caller's
-   filesystem.
-3. `upload_cap` authenticates the token before an HTTP body is accepted and
-   returns the role-specific artifact cap or the shared figure cap.
-4. `complete_upload` re-resolves the target. A deleted target or superseded
-   attempt invalidates and removes the pending token before returning an error.
-5. For a valid artifact, bytes are placed in `EvidenceBlobStore` under the
-   project namespace before the row records their digest. The service replaces
-   the matching live slot, marks the new row complete, clears the token, emits
-   `artifact.submitted`, and returns digest/size metadata.
-6. Markdown roles that support figures are parsed for local image links.
-   Validated, deduplicated links receive independent pending figure tokens;
-   each figure completion enforces its cap and stores content by digest.
+1. `submit` reserves a new content ID in a project and records a byte cap and
+   whether to discover relative Markdown images. These are technical upload
+   options supplied by the caller, not inferred from an artifact's role.
+2. The caller receives a random single-use upload credential lasting 15 minutes.
+   `pending` resolves it to metadata; `upload_cap` authenticates it before a
+   transport reads the body. Display paths are labels, never local file reads.
+3. `complete_upload` stores bytes by digest, marks that record complete, and
+   consumes its credential. It commits independently unless the caller supplies
+   a transaction. A completed upload can subsequently be accepted by a consumer.
+4. Resubmission always creates another ID. Completed records, bytes, and
+   attachment slots are never replaced in this component.
+5. `create` accepts already available trusted bytes and returns a new complete
+   artifact. Callers may include its metadata write in their own transaction.
+6. `cancel_upload` retires only a pending credential. Callers can coordinate it
+   with their own validation without this component knowing their policies.
 
-## Live composition and immutable history
+## Document attachments and immutability
 
-- A slot is `(project, target type/id, role, attempt, lens, path)`. Completing a
-  new agent artifact deletes older unsealed rows in that slot, except artifacts
-  protected by a published reflection. Sealed rows are never replacement
-  candidates.
-- `pin` is the trusted system-write path: it writes bytes without a token and
-  replaces the live system artifact for the same target, role, and attempt
-  while retaining sealed rounds.
-- `seal` must run on Research's existing transaction. It creates a `Submission`
-  and stamps every complete, unsealed artifact for the resolved target attempt
-  with that submission ID, making the workflow transition and evidence snapshot
-  atomic.
-- `history` groups complete artifacts and submissions by target. Optional TLDRs
-  are best-effort: missing blob content must not erase durable history.
+- With `discover_figures`, main-content completion establishes a fixed manifest
+  of validated relative Markdown image links. Duplicate links use one slot.
+- Each slot receives its own bounded, expiring upload credential. Completion
+  writes its digest exactly once. The parent content cannot be re-uploaded.
+- Expired attachment slots remain in the manifest with status `expired` and
+  no upload token. Expiry therefore cannot turn missing content into a complete
+  document. Re-uploading the document creates a new version and fresh slots.
+- `assert_complete` requires all selected project artifacts and every manifest
+  slot to be complete. Consumers call it in the transaction that pins their
+  evidence selection; immutable completed content makes that selection stable.
 
-## Read behavior
+## Reads and ownership
 
-- `get` deduplicates IDs while preserving request order. `metadata` avoids blob
-  reads, `content` adds bytes when available, and `document` additionally lists
-  completed figure links and propagates blob-read failures.
-- `scan` returns complete metadata with optional project, target, and role
-  filters in deterministic order. `figure` returns bytes only for a completed
-  link and returns `None` when the row or blob is unavailable.
-
-## Invariants
-
-- Every write is project-scoped and target-resolved; caller-supplied project or
-  attempt facts are never trusted without `BaseStateStore`/`ArtifactTargets`.
-- Upload credentials are random, expiring, single-use, and stored only on
-  pending rows. Completion clears them; sweeps delete expired pending artifacts
-  and figures.
-- Artifact roles and target types come from `merv.shared.artifact_roles`;
-  legacy roles remain readable but cannot be newly submitted.
-- Blob keys are project namespaces plus SHA-256 digests. State rows point only
-  to successfully stored bytes; orphaned blobs are acceptable after a later
-  transactional validation failure.
-- Database mutations and event emission share state transactions. Blob storage
-  is outside those transactions, so callers must not infer row existence from
-  blob existence.
-
-## Integration boundaries
-
-`BaseStateStore` supplies transactions, project enforcement, ordering, IDs, and
-events. `EvidenceBlobStore` supplies content-addressed byte persistence.
-`ArtifactTargets` is the inversion boundary to Research for target resolution
-and publication protection. Shared role and Markdown helpers own caps and link
-rules. Surface adapters translate MCP/HTTP calls and upload tokens; Research
-calls `seal` and consumes `history`. Changes to row shape require coordinated
-Kernel schema/migration work, and changes to roles or figures require their
-shared-policy owners.
+- `get` preserves first-seen ID order and accepts optional project scope.
+  `metadata` avoids byte reads, `content` adds available bytes, and `document`
+  also includes completed attachment links and propagates storage failures.
+- `figure` reads a completed attachment with optional project scope.
+- Database access, transactions, and project existence checks come from Kernel.
+  Artifact metadata belongs here; workflow associations and snapshots do not.
+- Database transactions serialize one-time completion. Blob writes precede
+  metadata commits; orphaned bytes are acceptable after a failed transaction.
+- Expired pending content records can be removed. Completed unassociated
+  content is retained; retention must account for all consumers before deletion.
+- Surface adapters authorize callers. Consumers select upload policies, validate
+  accepted content, and record their own audit events and associations.
+- R2 configuration requires `MERV_BLOB_BUCKET`, `MERV_BLOB_ENDPOINT_URL`,
+  `MERV_BLOB_ACCESS_KEY_ID`, and `MERV_BLOB_SECRET_ACCESS_KEY`; region defaults
+  to `auto`, and `MERV_BLOB_PREFIX` optionally prefixes `project/sha256` keys.
+  No implicit fallback, cloud bucket creation, or automatic byte expiry occurs.

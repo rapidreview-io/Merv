@@ -10,12 +10,11 @@ from pathlib import Path
 
 from merv.brain.artifacts import Artifacts
 from merv.brain.kernel.state.store import StateStore
-from merv.brain.research_core.association_targets import AssociationTargets
 from merv.brain.research_core.experiments import (
     TRACKING_EVENT_TYPES,
     ExperimentService,
 )
-from merv.brain.research_core import Research
+from merv.brain.research_core import Research, ResearchArtifacts
 from tests.fakes import FakeBlobStore
 
 
@@ -23,10 +22,9 @@ class CommittedEventTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.store = StateStore(db_path=Path(self.tmp.name) / "state.sqlite")
-        self.artifacts = Artifacts(
+        self.artifacts = ResearchArtifacts(
             store=self.store,
-            blobs=FakeBlobStore(),
-            targets=AssociationTargets(),
+            artifacts=Artifacts(store=self.store, blobs=FakeBlobStore()),
         )
         with closing(self.store.connect()) as conn:
             row = conn.execute("SELECT id FROM projects").fetchone()
@@ -225,10 +223,9 @@ class TrackingDeliveryLedgerSqlTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.store = StateStore(db_path=Path(self.tmp.name) / "state.sqlite")
-        artifacts = Artifacts(
+        artifacts = ResearchArtifacts(
             store=self.store,
-            blobs=FakeBlobStore(),
-            targets=AssociationTargets(),
+            artifacts=Artifacts(store=self.store, blobs=FakeBlobStore()),
         )
         self.experiments = ExperimentService(
             store=self.store,
@@ -533,10 +530,9 @@ class TrackingDeliveryLookupCostTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.store = _RecordingStateStore(db_path=Path(self.tmp.name) / "state.sqlite")
-        artifacts = Artifacts(
+        artifacts = ResearchArtifacts(
             store=self.store,
-            blobs=FakeBlobStore(),
-            targets=AssociationTargets(),
+            artifacts=Artifacts(store=self.store, blobs=FakeBlobStore()),
         )
         self.experiments = ExperimentService(
             store=self.store,

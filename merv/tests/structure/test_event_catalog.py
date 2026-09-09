@@ -77,6 +77,12 @@ class EventCatalogStructureTest(unittest.TestCase):
                     and call.args
                 ):
                     expressions.append(call.args[0])
+                if (
+                    isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "_event"
+                    and call.args
+                ):
+                    expressions.append(call.args[-1])
                 for expression in expressions:
                     found.update(
                         str(node.value)

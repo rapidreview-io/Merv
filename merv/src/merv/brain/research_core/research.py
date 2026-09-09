@@ -39,7 +39,7 @@ from .models import (
 from .reflections import ReflectionService
 from .reviews import ReviewService
 from .tasks import TaskService
-from ..artifacts import Artifacts
+from .artifacts import ResearchArtifacts as Artifacts
 from ..kernel.events import StoredEvent
 from ..kernel.state.store import (
     BaseStateStore,

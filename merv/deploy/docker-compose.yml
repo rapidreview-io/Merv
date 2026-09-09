@@ -1,4 +1,4 @@
-# Merv research control. Deploy merv-sandboxes independently for compute/bytes.
+# Merv research control. merv-sandboxes owns ML compute and large workload data.
 # Add docker-compose.postgres.yml or docker-compose.supabase.yml for records.
 services:
   control:
@@ -29,8 +29,15 @@ services:
       # Record store: supplied by a database overlay or by the operator. An
       # empty value fails hosted startup with a named MERV_DB_URL error.
       MERV_DB_URL: ${MERV_DB_URL:-}
-      # Provider keys, SSH certificate authorities and physical bytes belong
-      # exclusively to the independently deployed merv-sandboxes service.
+      # Merv owns research evidence in a dedicated R2 bucket.
+      MERV_BLOB_BUCKET: ${MERV_BLOB_BUCKET:?set MERV_BLOB_BUCKET}
+      MERV_BLOB_ENDPOINT_URL: ${MERV_BLOB_ENDPOINT_URL:?set MERV_BLOB_ENDPOINT_URL}
+      MERV_BLOB_ACCESS_KEY_ID: ${MERV_BLOB_ACCESS_KEY_ID:?set MERV_BLOB_ACCESS_KEY_ID}
+      MERV_BLOB_SECRET_ACCESS_KEY: ${MERV_BLOB_SECRET_ACCESS_KEY:?set MERV_BLOB_SECRET_ACCESS_KEY}
+      MERV_BLOB_REGION: ${MERV_BLOB_REGION:-auto}
+      MERV_BLOB_PREFIX: ${MERV_BLOB_PREFIX:-}
+      # Cloud provider keys, SSH authorities, datasets and models belong to
+      # the independently deployed merv-sandboxes service.
       MERV_SANDBOXES_URL: ${MERV_SANDBOXES_URL:?set MERV_SANDBOXES_URL}
       MERV_SANDBOXES_JWT_SECRET: ${MERV_SANDBOXES_JWT_SECRET:?set MERV_SANDBOXES_JWT_SECRET}
       MERV_REQUIRE_SANDBOX_BACKEND: ${MERV_REQUIRE_SANDBOX_BACKEND:-1}

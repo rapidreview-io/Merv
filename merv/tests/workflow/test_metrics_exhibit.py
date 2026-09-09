@@ -372,7 +372,7 @@ class ExhibitFlowTest(unittest.TestCase):
             row = conn.execute(
                 """
                 SELECT id, path, created_by, content_sha256
-                FROM artifacts
+                FROM research_artifacts
                 WHERE target_type = 'experiment' AND target_id = ?
                   AND role = 'exhibit' AND status = 'complete'
                 ORDER BY created_seq DESC LIMIT 1

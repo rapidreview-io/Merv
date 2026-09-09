@@ -2,21 +2,22 @@
 
 ## Purpose and boundary
 
-`research_core` is the authoritative domain center for a research project. It
-owns projects, claims, experiments, tasks, the wave DAG between them, reflection
+`research_core` owns projects, claims, experiments, tasks, their wave DAG, reflection
 waves, reviews, lifecycle gates, candidates/champion lineage, and the
 transactions that keep those records consistent: what research state exists and
 whether a state change is legal. The workflow declarations also name the agent
 action, tools, template, and review skill for each gate. Application orchestrates
 across modules and formats that guidance; Surface owns auth and wire presentation;
-Sandbox executes work, Artifacts owns evidence, Feed publishes observations,
-Object Storage owns heavy bytes, Literature literature.
+Sandbox executes work, generic Artifacts owns immutable content, Feed publishes
+observations, Object Storage tracks ML workload objects, Literature literature.
 
-`Research` is the one concrete public root, built from a `BaseStateStore` and
-`Artifacts`, imported from `research_core` only; the experiment, task,
-reflection, and review services are private collaborators.
+`Research` is the public root, built from `BaseStateStore` and `ResearchArtifacts`;
+the experiment, task, reflection, and review services are private collaborators.
 
 ## Files
+- `artifacts.py`: research-owned associations, role/target policy, accepted
+  evidence, replacement visibility, and explicit immutable submission members.
+  `artifact_models.py`: association projections and snapshot references.
 - `research.py`: public root; project, claim, candidate writes, workflow delegation,
   snapshots, project context, membership, events, graph refs.
 - `experiments.py`: experiment creation invariants, state machine, gates, sealing,
@@ -87,14 +88,13 @@ durable bytes, a reason, and compare-and-swap against the observed champion.
 
 All writes resolve a project through `BaseStateStore`; target lookups include
 project ownership. Events commit with their state mutations. Review snapshots
-are byte-stable identities of the target state and submitted evidence. Artifact
-sealing uses the caller's Research transaction. Reflection publication is the
-only path that materializes its reviewed change spec; its experiments and tasks
-pass through the same creation invariants as direct ones, a proposed task's
+are byte-stable identities of the target state and submitted evidence. Research
+seals explicit association IDs on its own transaction; generic content stays
+immutable and reusable. Reflection publication materializes its reviewed change
+spec; its experiments and tasks pass through the same creation invariants as direct ones, a proposed task's
 brief is pinned from the spec, and `depends_on` becomes DAG edges.
 Compatibility reads may hydrate older rows; new writes follow current invariants.
 
 ## Maintenance rule
 
-Keep domain decisions here, connectivity elsewhere; stay current, dense, free of
-migration history, and at most 100 lines.
+Keep domain decisions here, connectivity elsewhere; keep this at most 100 lines.

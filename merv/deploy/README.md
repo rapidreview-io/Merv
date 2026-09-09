@@ -1,10 +1,10 @@
 # Deploy Merv research control
 
-Merv owns research records, workflow, authorization, and spending policy.
+Merv owns research records, workflow, authorization, spending policy, and its
+artifact/evidence bytes in a dedicated R2 bucket through boto3.
 Deploy [merv-sandboxes](https://sandboxes.rapidreview.io) independently for
-compute, provider credentials, SSH certificates, jobs, and physical storage.
-Merv has no cloud SDKs, object-store credentials, management SSH keys, or VM
-cleanup workers.
+compute, provider credentials, SSH certificates, jobs, and large dataset/model
+storage. Management SSH keys, compute SDKs, and VM cleanup workers live there.
 
 ## Required configuration
 
@@ -16,6 +16,9 @@ Copy `.env.example` to a private operator env file. Set:
 - `MERV_SANDBOXES_JWT_SECRET`: at least 32 random bytes, identical to
   `SANDBOXES_MERV_JWT_SECRET` in the infrastructure deployment.
 - `MERV_WAIT_SECRET`: stable signing key for bounded run-wait links.
+- `MERV_BLOB_BUCKET`, `MERV_BLOB_ENDPOINT_URL`, `MERV_BLOB_ACCESS_KEY_ID`, and
+  `MERV_BLOB_SECRET_ACCESS_KEY`: Merv's own R2 artifact storage. Region defaults
+  to `auto`; `MERV_BLOB_PREFIX` optionally prefixes project/digest keys.
 - Supabase authentication settings and public UI/CORS/OAuth URLs as documented
   in `.env.example` and [AUTH.md](../docs/AUTH.md).
 
@@ -43,16 +46,16 @@ Startup checks authenticated infrastructure access when
 `MERV_REQUIRE_SANDBOX_BACKEND=1` (the deployment default). A configured URL
 alone does not make infrastructure healthy.
 
-Local record-only development can omit infrastructure configuration. Upload,
-provider, and compute operations then return an explicit unavailable error.
+Local record-only development can omit R2 and infrastructure configuration.
+Each missing capability returns an explicit unavailable error when used.
 There is no automatic fallback to local blob storage or built-in compute.
 
 ## Production changes and rollback
 
-Follow [SANDBOXES_CUTOVER.md](SANDBOXES_CUTOVER.md) for the one-time migration
-from the retired Merv infrastructure. It preserves the research database and
-heavy-object identities, adopts existing R2 bytes, copies submitted blobs,
-and translates outstanding upload sessions without deleting source buckets.
+The historical [SANDBOXES_CUTOVER.md](SANDBOXES_CUTOVER.md) covers retirement
+of built-in compute and migration of large-object storage. Follow
+[ARTIFACT_R2_CUTOVER.md](ARTIFACT_R2_CUTOVER.md) for schema59 and the separate
+artifact migration into Merv-owned R2, preserving content IDs and history.
 
 For subsequent releases, back up the research database, retain the prior
 image, build an immutable release, and restart control against the same env

@@ -9,7 +9,7 @@ from typing import Any
 
 from merv.shared.artifact_roles import PROJECT_GRAPH_ROLE
 
-from ..artifacts import Artifact, Artifacts
+from ..research_core import Artifact, ResearchArtifacts as Artifacts
 from ..research_core import (
     MAX_GRAPH_NODES,
     Research,
@@ -185,7 +185,7 @@ class LogicGraphQuery:
             project_id=project_id, refs=tuple(refs)
         )
         artifact_ids = tuple(
-            ref for ref in refs if ref.startswith("art_") and ref not in research
+            ref for ref in refs if ref.startswith(("art_", "artref_")) and ref not in research
         )
         artifacts = {
             artifact.id: artifact

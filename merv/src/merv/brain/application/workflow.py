@@ -9,7 +9,7 @@ from typing import Any
 
 from merv.shared.artifact_roles import PROJECT_GRAPH_ROLE
 
-from ..artifacts import Artifact
+from ..research_core import Artifact
 from ..kernel.utils import NotFoundError
 from ..research_core import (
     EXPERIMENT_ACTIVE_PROCESS_STATUSES,

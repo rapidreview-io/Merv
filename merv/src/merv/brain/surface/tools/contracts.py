@@ -656,6 +656,25 @@ class ConsolidationSubmitInput(ProjectScopedInput):
     decisions: list[ConsolidationDecisionInput]
 
 
+class ArtifactStoreInput(ProjectScopedInput):
+    path: str = Field(min_length=1, max_length=1000)
+    title: str = Field(default="", max_length=1000)
+    discover_figures: bool = False
+
+
+class ArtifactReadInput(ProjectScopedInput):
+    artifact_id: str = Field(min_length=1)
+    include_content: bool = False
+
+
+class ArtifactAttachInput(ProjectScopedInput):
+    artifact_id: str = Field(min_length=1)
+    target_type: str
+    target_id: str
+    role: str
+    lens_id: str = ""
+
+
 class ArtifactSubmitInput(ProjectScopedInput):
     target_type: str = Field(
         description="Workflow target kind the artifact attaches to.",
@@ -1690,6 +1709,21 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             "After citing, make a targeted litreview.edit so the review stays "
             "current."
         ),
+    ),
+    "artifact.store": ToolContract(
+        handler_identity="artifact_submissions.store",
+        input_model=ArtifactStoreInput,
+        description="Store immutable project content without a workflow target or role. Execute the returned upload command. Use artifact.attach separately to accept it as research evidence.",
+    ),
+    "artifact.read": ToolContract(
+        handler_identity="artifact_submissions.read",
+        input_model=ArtifactReadInput,
+        description="Read generic immutable content by artifact ID. Returns content metadata without workflow associations; optionally include bounded content and figure paths.",
+    ),
+    "artifact.attach": ToolContract(
+        handler_identity="artifact_submissions.attach",
+        input_model=ArtifactAttachInput,
+        description="Accept an existing complete artifact as research evidence. Validates the target and role, returning a distinct association handle for artifact.find and workflow history. The original artifact remains immutable and reusable.",
     ),
     "artifact.submit": ToolContract(
         handler_identity="artifact_submissions.submit",

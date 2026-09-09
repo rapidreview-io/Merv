@@ -1,14 +1,8 @@
 # If you update this file, you must consult artifacts.md to see whether artifacts.md needs to be updated. artifacts.md must not exceed 100 lines.
-"""Artifacts module."""
+"""Immutable content storage, independent of consumer-specific associations."""
 
-from __future__ import annotations
-
-from .artifacts import Artifacts, MAX_SUBMITTED_TEXT_BYTES
+from .artifacts import Artifacts
 from .models import (
-    Artifact,
-    ArtifactTarget,
-    CompletedArtifact,
-    CompletedFigure,
-    PendingUpload,
-    Submission,
+    Artifact, CompletedArtifact, CompletedFigure, PendingFigure, PendingUpload,
+    ReadMode, UploadKind,
 )

@@ -15,6 +15,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from merv.brain.kernel.state.store import MIGRATIONS, SCHEMA, StateStore
 
@@ -64,7 +65,9 @@ class Migration36OnExistingDatabaseTest(unittest.TestCase):
             conn.close()
 
             # The outage: this raised UndefinedColumn and the process died.
-            store = StateStore(db_path=db_path)
+            with patch("merv.brain.kernel.state.store.MIGRATIONS",
+                       tuple(migration for migration in MIGRATIONS if migration[0] <= 36)):
+                store = StateStore(db_path=db_path)
 
             with store.transaction() as conn:
                 columns = {
@@ -99,6 +102,16 @@ class Migration36OnExistingDatabaseTest(unittest.TestCase):
                     ).fetchall()
                 }
                 self.assertIn(36, applied)
+
+            # The later content split transfers the seal marker to Research;
+            # it must still accept the real migration-36 shape just verified.
+            store = StateStore(db_path=db_path)
+            with store.transaction() as conn:
+                content_columns = {row["name"] for row in conn.execute("PRAGMA table_info(artifacts)").fetchall()}
+                link_columns = {row["name"] for row in conn.execute("PRAGMA table_info(research_artifact_links)").fetchall()}
+                self.assertNotIn("submission_id", content_columns)
+                self.assertIn("submission_id", link_columns)
+                self.assertEqual(conn.execute("SELECT COUNT(*) AS n FROM schema_migrations WHERE version IN (36,59)").fetchone()["n"], 2)
 
     def test_schema_declares_no_index_on_a_migration_added_column(self) -> None:
         """The general form of the outage: SCHEMA runs before the ladder, so no

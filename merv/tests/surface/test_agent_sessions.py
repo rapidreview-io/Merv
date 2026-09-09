@@ -224,6 +224,35 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.assertEqual(foreign.status_code, 404, foreign.text)
         self.assertFalse(any(path.endswith("/cancel") or path.endswith("/output") for _, path, *_ in fake.calls))
 
+    def test_generic_artifact_attachment_is_confined_to_the_assigned_work(self) -> None:
+        session_secret = self.secret()
+        self.claim(secret=session_secret, runner_id="artifact-worker")
+        other_id = self.brain.call_tool("experiment.create", {
+            "project_id": self.project_id, "name": "other-artifact-target",
+            "intent": "Must remain outside the assigned worker's authority.",
+        })["id"]
+        stored = self.mcp(secret=session_secret, name="artifact.store", arguments={
+            "project_id": self.project_id, "path": "plan.md",
+        })
+        self.assertEqual(stored.status_code, 200, stored.text)
+        pending = stored.json()["result"]
+        token = pending["run"].rsplit("/", 1)[-1].rstrip("'")
+        uploaded = self.client.put(f"/api/artifacts/u/{token}", content=VALID_PLAN.encode())
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        arguments = {
+            "project_id": self.project_id, "artifact_id": pending["artifact_id"],
+            "target_type": "experiment", "target_id": self.experiment_id, "role": "plan",
+        }
+        foreign = self.mcp(secret=session_secret, name="artifact.attach", arguments={
+            **arguments, "target_id": other_id,
+        })
+        self.assertEqual(foreign.status_code, 400, foreign.text)
+        self.assertEqual(foreign.json()["error_code"], "agent_session_scope_forbidden")
+        self.assertEqual(self.brain.artifacts.scan(target_ids=(other_id,)), ())
+        own = self.mcp(secret=session_secret, name="artifact.attach", arguments=arguments)
+        self.assertEqual(own.status_code, 200, own.text)
+        self.assertEqual(own.json()["result"]["association"]["target_id"], self.experiment_id)
+
     def test_session_is_mcp_only_and_default_denies_other_experiments(self) -> None:
         session_secret = self.secret()
         session = self.claim(secret=session_secret, runner_id="owner")

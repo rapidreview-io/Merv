@@ -14,7 +14,7 @@ from merv.brain.feed.persistence import install_feed_schema
 from merv.brain.kernel.state import StateStore
 from merv.brain.kernel.state.store import MIGRATIONS
 from tests.support.blobs import LocalDirBlobStore
-from merv.brain.research_core.association_targets import AssociationTargets
+from merv.brain.research_core import ResearchArtifacts
 
 FIXTURE = Path(__file__).parent / "fixtures" / "release_f0439ca_v40.sql"
 EXPECTED_SCHEMA_SHA256 = (
@@ -120,7 +120,7 @@ def _data_snapshot(db_path: Path) -> dict[str, dict[str, Any]]:
                 """
                 SELECT name
                 FROM sqlite_master
-                WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
                 ORDER BY name
                 """
             ).fetchall()
@@ -187,11 +187,12 @@ class ReleaseDatabaseCompatibilityTest(unittest.TestCase):
             for table, snap in data_before.items():
                 if table == "schema_migrations":
                     continue
+                migrated = migrated_data["research_artifacts" if table == "artifacts" else table]
                 self.assertLessEqual(
-                    set(snap["columns"]), set(migrated_data[table]["columns"])
+                    set(snap["columns"]), set(migrated["columns"])
                 )
                 self.assertEqual(
-                    _projected_rows(migrated_data[table], snap["columns"]),
+                    _projected_rows(migrated, snap["columns"]),
                     snap["rows"],
                 )
             self.assertEqual(migrated_data["agent_sessions"]["rows"], [])
@@ -213,7 +214,7 @@ class ReleaseDatabaseCompatibilityTest(unittest.TestCase):
                 if table == "schema_migrations":
                     continue
                 self.assertEqual(
-                    _projected_rows(composed_data[table], snap["columns"]),
+                    _projected_rows(composed_data["research_artifacts" if table == "artifacts" else table], snap["columns"]),
                     snap["rows"],
                 )
 
@@ -227,10 +228,9 @@ class ReleaseDatabaseCompatibilityTest(unittest.TestCase):
             fresh_schema = _schema_sha256(fresh_db)
             self.assertEqual(fresh_schema, composed_schema)
 
-            service = Artifacts(
+            service = ResearchArtifacts(
                 store=store,
-                targets=AssociationTargets(),
-                blobs=LocalDirBlobStore(root=root / "blobs"),
+                artifacts=Artifacts(store=store, blobs=LocalDirBlobStore(root=root / "blobs")),
             )
             found = service.scan(
                 project_id="proj_contract_v40",
@@ -246,7 +246,7 @@ class ReleaseDatabaseCompatibilityTest(unittest.TestCase):
                 artifacts = conn.execute(
                     """
                     SELECT id, status, upload_token, submission_id
-                    FROM artifacts
+                    FROM research_artifacts
                     ORDER BY id
                     """
                 ).fetchall()

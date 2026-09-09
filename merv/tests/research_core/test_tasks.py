@@ -185,7 +185,7 @@ class TaskWorkflowTest(ResearchCase):
                 (task_id, TASK_WORKFLOW.event_type),
             ).fetchall()
             sealed = conn.execute(
-                "SELECT COUNT(*) AS n FROM artifacts WHERE target_id = ? AND submission_id <> ''",
+                "SELECT COUNT(*) AS n FROM research_artifact_links WHERE target_id = ? AND submission_id <> ''",
                 (task_id,),
             ).fetchone()["n"]
         self.assertEqual(

@@ -15,7 +15,7 @@ from typing import Any
 from merv.shared.storage_guidance import storage_guidance
 
 from ..agent_sessions import AgentSessions
-from ..artifacts import Artifacts
+from ..research_core import ResearchArtifacts as Artifacts
 from ..feed import FeedService
 from ..kernel.utils import ValidationError, parse_iso
 from ..object_storage import ObjectStorage

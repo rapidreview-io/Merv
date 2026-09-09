@@ -34,7 +34,8 @@ from .policy import (
 )
 from .task_workflow import TASK_WORKFLOW
 from .workflow_schema import ArtifactNeed, RecordNeed, ReviewReturn
-from ..artifacts import Artifact, ArtifactTarget, Artifacts, Submission
+from .artifacts import ResearchArtifacts as Artifacts
+from .artifact_models import Artifact, ArtifactTarget, Submission
 from ..kernel.state.store import BaseStateStore, row_to_dict, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
 from ..kernel.utils import new_id, now_iso

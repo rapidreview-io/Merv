@@ -9,7 +9,7 @@ from typing import Any, Iterable, TypedDict, cast
 from merv.shared.artifact_roles import TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE
 from merv.shared.content_summaries import content_tldr
 
-from ..artifacts import Artifacts
+from ..research_core import ResearchArtifacts as Artifacts
 from ..feed import FeedAdvisory
 from ..kernel.events import StoredEvent
 from ..research_core import (

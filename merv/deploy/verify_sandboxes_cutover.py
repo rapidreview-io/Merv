@@ -15,7 +15,7 @@ import os
 import secrets
 import tempfile
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -25,9 +25,10 @@ import psycopg
 from psycopg.rows import dict_row
 
 from merv.brain.infrastructure.client import InfrastructureClient, build_infrastructure_client
-from merv.brain.infrastructure.storage import RemoteBlobStore, RemoteObjectProvider, _decode_upload
+from merv.brain.infrastructure.storage import RemoteObjectProvider, _decode_upload
 from merv.brain.infrastructure.ports import project_namespace
 from merv.brain.kernel.utils import NotFoundError
+from merv.brain.surface.config import build_blob_store
 
 MIB = 1024 * 1024
 
@@ -92,9 +93,9 @@ def missing_in_namespace(client: InfrastructureClient, object_id: str, namespace
 
 def verify_schema(conn: Any, *, pre_cutover: bool = False) -> int:
     latest = conn.execute("SELECT max(version) AS version FROM schema_migrations").fetchone()["version"]
-    allowed = {57, 58} if pre_cutover else {58}
+    allowed = {57, 58, 59} if pre_cutover else {59}
     require(latest in allowed, "research schema version does not match this verification phase")
-    if latest == 58:
+    if latest >= 58:
         versions = conn.execute("SELECT version,name FROM schema_migrations WHERE version=58").fetchall()
         require(len(versions) == 1 and versions[0]["name"] == "add_remote_sandbox_links", "research schema58 is not installed")
         conn.execute("SELECT project_id,sandbox_uid,experiment_id,public_key FROM remote_sandbox_links LIMIT 0")
@@ -152,15 +153,13 @@ def verify_history(args: argparse.Namespace, client: InfrastructureClient) -> No
     artifacts, heavy, recovered = research_inventory(args)
     require(bool(artifacts), "no bounded artifact samples available")
     require(bool(heavy), "no heavy-object samples available")
-    blobs = RemoteBlobStore(client=client)
+    blobs = build_blob_store(default_root=Path("."))
     provider = RemoteObjectProvider(client=client)
     budget = args.history_budget_mib * MIB
     consumed = 0
     for row in artifacts:
         require(consumed + row["size_bytes"] <= budget, "historical download budget would be exceeded")
-        metadata = blobs.stat(namespace=row["project_id"], sha256=row["content_sha256"])
-        require(metadata is not None and metadata.size_bytes == row["size_bytes"], "native blob size differs from research metadata")
-        data = blobs.get(namespace=row["project_id"], sha256=row["content_sha256"])
+        data = blobs.get(namespace=row["project_id"], sha256=row["content_sha256"], max_bytes=args.full_limit_mib * MIB)
         require(len(data) == row["size_bytes"], "artifact size differs from research metadata")
         require(hashlib.sha256(data).hexdigest() == row["content_sha256"], "artifact full SHA-256 mismatch")
         consumed += len(data)
@@ -225,6 +224,34 @@ def clean_owned(client: InfrastructureClient, owned: list[tuple[str, str]], dead
     return not pending and not errors
 
 
+def verify_artifact_write(run_id: str) -> None:
+    """Exercise Merv's R2 bytes and clean the one precomputed content key."""
+    blobs = build_blob_store(default_root=Path("."))
+    data = (run_id + ":evidence\n").encode() * 64
+    digest = hashlib.sha256(data).hexdigest()
+    emit("new_blob_intent", namespace=run_id, sha256=digest, bytes=len(data))
+    try:
+        actual = blobs.put(namespace=run_id, data=data, content_type="text/plain")
+        require(actual == digest and blobs.get(namespace=run_id, sha256=digest) == data, "new evidence round-trip failed")
+        try:
+            blobs.get(namespace=run_id + "_other", sha256=digest)
+        except NotFoundError:
+            pass
+        else:
+            raise CheckFailed("another evidence namespace found smoke bytes")
+        emit("new_blob", ok=True, namespace=run_id, sha256=digest, bytes=len(data))
+    finally:
+        # The content address is known before PUT, including when an accepted
+        # upload's response is lost. No listing or wildcard deletion is needed.
+        blobs.delete(namespace=run_id, sha256=digest)
+        try:
+            blobs.get(namespace=run_id, sha256=digest)
+        except NotFoundError:
+            emit("blob_cleanup", ok=True, namespace=run_id, sha256=digest)
+        else:
+            raise CheckFailed("artifact smoke bytes need exact-key operator cleanup")
+
+
 def verify_writes(args: argparse.Namespace, client: InfrastructureClient) -> None:
     run_id = "smoke_" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "_" + secrets.token_hex(4)
     namespace = project_namespace(run_id)
@@ -232,22 +259,7 @@ def verify_writes(args: argparse.Namespace, client: InfrastructureClient) -> Non
     owned: list[tuple[str, str]] = []
     cleanup_ok = False
     try:
-        blobs = RemoteBlobStore(client=client)
-        data = (run_id + ":evidence\n").encode() * 64
-        digest = hashlib.sha256(data).hexdigest()
-        # Record intent before PUT, so a failed transfer can still be found
-        # by its unique name and deleted in finally.
-        emit("new_blob_intent", namespace="merv-blobs", smoke_prefix=run_id, sha256=digest, bytes=len(data))
-        try:
-            actual = blobs.put(namespace=run_id, data=data, content_type="text/plain",
-                expires_at=(datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat())
-        finally:
-            owned.extend(("merv-blobs", row["id"]) for row in blobs._find(namespace=run_id, sha256=digest))
-        require(actual == digest and blobs.get(namespace=run_id, sha256=digest) == data, "new evidence round-trip failed")
-        blob_id = owned[-1][1]
-        missing_in_namespace(client, blob_id, wrong_namespace)
-        require(not blobs._find(namespace=run_id + "_other", sha256=digest), "another evidence prefix found smoke bytes")
-        emit("new_blob", ok=True, object_id=blob_id, namespace="merv-blobs", smoke_prefix=run_id, bytes=len(data))
+        verify_artifact_write(run_id)
         provider = RemoteObjectProvider(client=client)
         with tempfile.TemporaryDirectory(prefix="merv-storage-smoke-") as temporary:
             source = Path(temporary) / "payload.bin"
@@ -288,7 +300,6 @@ def verify_writes(args: argparse.Namespace, client: InfrastructureClient) -> Non
             emit("new_heavy", ok=True, object_id=oid, namespace=namespace, resume_verified=True, **checked)
         # Exercise the public adapter deletion path; final cleanup verifies
         # physical deletion after the service worker acknowledges it.
-        require(blobs.delete(namespace=run_id, sha256=digest), "blob deletion did not find smoke object")
         require(provider.delete(namespace=run_id, sha256=sha), "heavy deletion did not find smoke object")
     finally:
         cleanup_ok = clean_owned(client, list(dict.fromkeys(owned)))

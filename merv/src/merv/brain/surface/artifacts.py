@@ -1,6 +1,6 @@
-"""Frozen V1 artifact wire shapes over the typed Artifacts component.
+"""Generic artifact tools and compatible research artifact wire shapes.
 
-Artifacts owns records and bytes.  Surface owns the dictionaries, shell
+Artifacts owns immutable content; Research owns its associations. Surface owns dictionaries, shell
 commands, and content classification exposed to MCP and HTTP callers.
 """
 
@@ -9,13 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from ..artifacts import (
+from ..artifacts import CompletedFigure, PendingUpload
+from ..research_core import (
     Artifact,
     ArtifactTarget,
-    Artifacts,
     CompletedArtifact,
-    CompletedFigure,
-    PendingUpload,
+    ResearchArtifacts as Artifacts,
 )
 from ..kernel.utils import NotFoundError
 
@@ -58,9 +57,7 @@ def upload_command(
     return f"curl -sf -T {_shell_quote(path)} {_shell_quote(url)}"
 
 
-def pending_upload_v1(
-    pending: PendingUpload, *, base_url: str = ""
-) -> dict[str, Any]:
+def pending_upload_v1(pending: PendingUpload, *, base_url: str = "") -> dict[str, Any]:
     return {
         "artifact_id": pending.artifact_id,
         "run": upload_command(
@@ -144,9 +141,7 @@ def content_envelope_v1(artifact: Artifact) -> dict[str, Any]:
 def completed_artifact_v1(
     completed: CompletedArtifact, *, base_url: str
 ) -> dict[str, Any]:
-    document_dir = (
-        completed.path.rsplit("/", 1)[0] if "/" in completed.path else ""
-    )
+    document_dir = completed.path.rsplit("/", 1)[0] if "/" in completed.path else ""
     return {
         "artifact_id": completed.artifact_id,
         "role": completed.role,
@@ -183,9 +178,81 @@ def completed_figure_v1(completed: CompletedFigure) -> dict[str, Any]:
 
 @dataclass(frozen=True, slots=True)
 class ArtifactTools:
-    """The complete MCP shell: one write intent and one read intent."""
+    """Generic content storage and research association commands."""
 
     artifacts: Artifacts
+
+    def store(
+        self,
+        *,
+        project_id: str,
+        path: str,
+        title: str = "",
+        discover_figures: bool = False,
+        base_url: str = "",
+    ) -> dict[str, Any]:
+        """Upload generic immutable content without assigning research meaning."""
+        pending = self.artifacts.contents.submit(
+            project_id=project_id,
+            path=path,
+            title=title,
+            discover_figures=discover_figures,
+        )
+        return pending_upload_v1(pending, base_url=base_url)
+
+    def read(
+        self, *, project_id: str, artifact_id: str, include_content: bool = False
+    ) -> dict[str, Any]:
+        found = self.artifacts.contents.get(
+            artifact_ids=(artifact_id,),
+            project_id=project_id,
+            include="document" if include_content else "metadata",
+        )
+        _require_all((artifact_id,), found, project_id=project_id)
+        artifact = found[0]
+        result = {
+            "artifact": {
+                field: getattr(artifact, field)
+                for field in (
+                    "id",
+                    "project_id",
+                    "path",
+                    "title",
+                    "sha256",
+                    "size_bytes",
+                    "content_type",
+                    "status",
+                    "created_by",
+                    "created_at",
+                    "updated_at",
+                )
+            }
+        }
+        if include_content:
+            result["content"] = content_envelope_v1(artifact)
+            result["artifact"]["figures"] = list(artifact.figures)
+        return result
+
+    def attach(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        target_type: str,
+        target_id: str,
+        role: str,
+        lens_id: str = "",
+    ) -> dict[str, Any]:
+        association = self.artifacts.attach(
+            artifact_id=artifact_id,
+            target=ArtifactTarget(target_type, target_id, project_id),
+            role=role,
+            lens_id=lens_id,
+        )
+        return {
+            "artifact_id": artifact_id,
+            "association": artifact_meta_v1(association),
+        }
 
     def submit(
         self,
@@ -230,9 +297,7 @@ class ArtifactTools:
             _require_all(ids, artifacts, project_id=project_id)
             if artifact_id:
                 artifact = artifacts[0]
-                result: dict[str, Any] = {
-                    "artifact": artifact_meta_v1(artifact)
-                }
+                result: dict[str, Any] = {"artifact": artifact_meta_v1(artifact)}
                 if include_content:
                     result["content"] = content_envelope_v1(artifact)
                 return result

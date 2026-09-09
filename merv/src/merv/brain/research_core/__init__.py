@@ -1,7 +1,8 @@
 # If you update this file, you must consult research_core.md to see whether research_core.md needs to be updated. research_core.md must not exceed 100 lines.
 """Public Research boundary."""
 
-from .association_targets import AssociationTargets as ResearchTargets
+from .artifact_models import Artifact, ArtifactTarget, CompletedArtifact, Submission, TargetHistory
+from .artifacts import ResearchArtifacts
 from .evidence import (
     MAX_GRAPH_NODES,
     graph_problems,
@@ -62,7 +63,12 @@ __all__ = [
     "REVIEW_VERDICT_VALUES",
     "Research",
     "ResearchSnapshot",
-    "ResearchTargets",
+    "ResearchArtifacts",
+    "Artifact",
+    "ArtifactTarget",
+    "CompletedArtifact",
+    "Submission",
+    "TargetHistory",
     "REFLECTION_WORKFLOW",
     "REFLECTION_TRANSITION_VALUES",
     "RequirementEvaluation",

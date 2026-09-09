@@ -95,7 +95,7 @@ class ExperimentWorkflowTest(ResearchCase):
             ).fetchall()
             sealed = conn.execute(
                 """
-                SELECT COUNT(*) AS n FROM artifacts
+                SELECT COUNT(*) AS n FROM research_artifact_links
                 WHERE target_id = ? AND submission_id <> ''
                 """,
                 (experiment_id,),

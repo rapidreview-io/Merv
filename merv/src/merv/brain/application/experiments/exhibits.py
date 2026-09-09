@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from typing import Protocol
 
-from ...artifacts import Artifact, Artifacts
+from ...research_core import Artifact, ResearchArtifacts as Artifacts
 from ...kernel.utils import WorkflowError
 from ...research_core import EXPERIMENT_WORKFLOW, ExperimentState, Research
 from ..mlflow import MlflowIntegration

@@ -1,7 +1,8 @@
 """Ports and value objects for submitted, content-addressed evidence bytes.
 
 Business components need only :class:`EvidenceBlobStore`. Content owners
-may also delete exact objects; physical expiry belongs to merv-sandboxes.
+may also delete exact objects. Merv stores research evidence directly in R2;
+owners such as the tool-call ledger manage their own retention horizon.
 """
 
 from __future__ import annotations
