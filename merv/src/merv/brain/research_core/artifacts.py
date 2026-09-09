@@ -145,6 +145,8 @@ class ResearchArtifacts:
             include="document",
             tx=tx,
         )[0]
+        if content.data is None:
+            raise ValidationError("artifact content is unavailable; upload a new version before attaching it")
         cap = roles.artifact_byte_cap(role)
         if cap is not None and content.size_bytes > cap:
             raise ValidationError(

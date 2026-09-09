@@ -12,6 +12,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import jwt
@@ -127,6 +128,32 @@ class ProjectKeySurfaceTest(unittest.TestCase):
             headers=_bearer(self.jwt_a),
         )
         self.assertEqual(added.status_code, 201, added.text)
+
+    def test_generic_download_url_requires_project_authority_before_blob_access(self) -> None:
+        artifact = self.app.artifacts.contents.create(
+            project_id=self.project_a, path="unattached.bin", data=b"\x00private evidence"
+        )
+        read = self.client.post(
+            "/mcp/call", headers=_bearer(self.key), json={
+                "name": "artifact.read",
+                "arguments": {"project_id": self.project_a, "artifact_id": artifact.id},
+            },
+        )
+        self.assertEqual(read.status_code, 200, read.text)
+        url = read.json()["result"]["download_url"]
+        self.assertTrue(url.startswith("http://testserver/api/projects/"))
+        with patch.object(self.app._blobs, "get", side_effect=AssertionError("unauthorized blob read")) as get:
+            self.assertEqual(self.client.get(url).status_code, 401)
+            self.assertEqual(self.client.get(url, headers=_bearer(self.jwt_b)).status_code, 404)
+            foreign_url = f"/api/projects/{self.project_b}/artifacts/{artifact.id}/file"
+            self.assertEqual(self.client.get(foreign_url, headers=_bearer(self.key)).status_code, 403)
+            # This user belongs to both projects; the content's project still
+            # has to match the requested project before any bytes are read.
+            self.assertEqual(self.client.get(foreign_url, headers=_bearer(self.jwt_a)).status_code, 404)
+            get.assert_not_called()
+        downloaded = self.client.get(url, headers=_bearer(self.key))
+        self.assertEqual(downloaded.status_code, 200, downloaded.text)
+        self.assertEqual(downloaded.content, b"\x00private evidence")
 
     def test_mint_verify_lineage_expiry_and_owner_only_listing(self) -> None:
         self.assertTrue(self.key.startswith("mk_"))
