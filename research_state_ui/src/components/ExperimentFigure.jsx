@@ -10,6 +10,7 @@ import GraphDrawer, { flowCanvasProps, useEscapeToDeselect } from './GraphDrawer
 import ArtifactContentView from './ArtifactContentView';
 import { visibleWidth } from '../utils/graphCamera';
 import { layoutFigure, figureBounds, FIG_NODE_W } from '../utils/figureLayout';
+import { experimentFigure } from '../utils/experimentFigure';
 import { TERMINAL_STATUSES } from '../utils/experiment';
 import { usePanelWidth } from '../store/usePanelWidth';
 import { useProjectHref } from '../store/useProjectStore';
@@ -305,24 +306,22 @@ function FigurePanel({ projectId, node, onClose }) {
 /**
  * ExperimentFigure — the derived figure canvas (Phase 0).
  *
- * Renders the graph served by GET /experiments/{id}/figure: the attempt
- * spine, inputs, review verdicts (with revision loops), sandbox liveness,
- * conclusion, and tested claims. Everything shown is derived server-side.
- * The agent-authored logic graph is a sibling component (LogicGraph) that
- * shares this canvas slot via ExperimentGraphs: `active` decides whether
- * this view renders, `headerExtra` carries the shared view switch, and
- * `onAvailability` tells the parent whether there is anything to show.
+ * Renders the attempt spine, inputs, review verdicts (with revision loops),
+ * sandbox liveness, conclusion, and tested claims, all derived from the
+ * experiment state the page already has (see utils/experimentFigure). The
+ * agent-authored logic graph is a sibling component (LogicGraph) that shares
+ * this canvas slot via ExperimentGraphs: `active` decides whether this view
+ * renders, `headerExtra` carries the shared view switch, and `onAvailability`
+ * tells the parent whether there is anything to show.
  */
 export default function ExperimentFigure({
-  projectId, experimentId, experimentStatus, attemptIndex,
+  projectId, experimentId, experiment, sandboxes,
   active = true, titleTabs = null, onAvailability = null,
   expanded = false, onToggleExpand = null,
 }) {
-  // Stored as a JSON string and only swapped when the content actually
-  // changes: react-flow keys its node measurements to object identity, so
-  // recreating identical node objects on every poll tick would wipe the
-  // measured handle bounds and silently drop every edge.
-  const [figureJson, setFigureJson] = useState(null);
+  // The one fact the figure needs that the page does not already fetch:
+  // review requests with no verdict yet. Only its `requests` are read.
+  const [reviews, setReviews] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const rfRef = useRef(null);
   const canvasRef = useRef(null);
@@ -331,26 +330,33 @@ export default function ExperimentFigure({
   const deselect = useCallback(() => setSelectedId(null), []);
   const selCtx = useMemo(() => ({ selectedId, select }), [selectedId, select]);
 
-  const fetchFigure = useCallback(async () => {
+  const fetchReviews = useCallback(async () => {
     try {
-      const data = await api.getExperimentFigure(projectId, experimentId);
-      const json = JSON.stringify(data);
-      setFigureJson(prev => (prev === json ? prev : json));
+      setReviews(await api.listReviews(projectId, { target_type: 'experiment', target_id: experimentId }));
     } catch {
-      // Non-fatal: the rest of the page still works without the figure.
-      setFigureJson(null);
+      // Non-fatal: an open gate is one card, and the rest of the figure is
+      // already in hand.
+      setReviews(null);
     }
   }, [projectId, experimentId]);
 
   // Terminal experiments fetch once; live ones poll 3s only while the event
   // stream is down, otherwise refetching rides this experiment's events.
-  useStreamAwarePoll(fetchFigure, {
-    enabled: !TERMINAL_STATUSES.includes(experimentStatus),
-    refetchKey: `${experimentStatus}:${attemptIndex}`,
+  useStreamAwarePoll(fetchReviews, {
+    enabled: !TERMINAL_STATUSES.includes(experiment?.status),
+    refetchKey: `${experiment?.status}:${experiment?.attempt_index}`,
     matches: (row) => row.target_id === experimentId || row.payload?.experiment_id === experimentId,
   });
 
-  const figure = useMemo(() => (figureJson ? JSON.parse(figureJson) : null), [figureJson]);
+  // Derived to JSON and only parsed anew when the text actually changes:
+  // react-flow keys its node measurements to object identity, so recreating
+  // identical node objects on every poll tick would wipe the measured handle
+  // bounds and silently drop every edge.
+  const figureJson = useMemo(
+    () => JSON.stringify(experimentFigure({ experiment, reviews, sandboxes })),
+    [experiment, reviews, sandboxes],
+  );
+  const figure = useMemo(() => JSON.parse(figureJson), [figureJson]);
   const { nodes, edges, laid, backboneY, currentId } = useMemo(() => toFlow(figure), [figure]);
 
   // Frame the view: readable zoom, current beat in sight (see frameFigure).
@@ -369,11 +375,11 @@ export default function ExperimentFigure({
   }, [topologyKey, frame]);
 
   const selected = useMemo(
-    () => (figure?.nodes || []).find(n => n.id === selectedId) || null,
+    () => figure.nodes.find(n => n.id === selectedId) || null,
     [figure, selectedId],
   );
 
-  const available = Boolean(figure && (figure.nodes || []).length >= 2);
+  const available = figure.nodes.length >= 2;
   useEffect(() => { onAvailability?.(available); }, [available, onAvailability]);
 
   // Re-frame after the canvas resizes between inline and expanded modes.

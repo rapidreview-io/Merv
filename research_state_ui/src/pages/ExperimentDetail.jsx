@@ -200,8 +200,8 @@ export default function ExperimentDetail() {
       <ExperimentGraphs
         projectId={projectId}
         experimentId={experimentId}
-        experimentStatus={experiment.status}
-        attemptIndex={currentAttempt}
+        experiment={experiment}
+        sandboxes={statusData.sandboxes}
       />
 
       {/* ═════════════  RESULTS  ════════════════════════════════════════
