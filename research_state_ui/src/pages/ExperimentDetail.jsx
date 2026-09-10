@@ -14,6 +14,7 @@ import TerminalTransitionConfirm from '../components/TerminalTransitionConfirm';
 import DetailsDrawer, { DetailsButton, OpsTimeline, OpsVersions, OpsPosition } from '../components/DetailsDrawer';
 import { expName } from '../utils/experiment';
 import { formatBytes } from '../utils/format';
+import { nodeRoute } from '../utils/entityResolve';
 import { ago } from '../utils/time';
 import { gateToSectionId, useScrollToHash } from '../utils/useScrollToHash';
 import { workflowActionButtons } from '../utils/workflowActions';
@@ -403,7 +404,7 @@ function ExperimentFacts({ experiment, designReviews, experimentReviews, px }) {
     pill: String(r.verdict || 'pending').toLowerCase(),
     meta: ago(r.created_at) || '',
   }));
-  const withHref = (d) => ({ ...d, href: px(d.node_type === 'task' ? `/tasks/${d.id}` : `/experiments/${d.id}`) });
+  const withHref = (d) => ({ ...d, href: px(nodeRoute(d)) });
   const upstream = (experiment.dependencies || []).map(withHref);
   const downstream = (experiment.dependents || []).map(withHref);
   return (

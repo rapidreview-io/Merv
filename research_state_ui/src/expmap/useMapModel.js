@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useProjectStore, selectClaims, selectExperiments, selectSandboxes } from '../store/useProjectStore';
 import { classifyExperiment } from '../utils/evidence';
-import { ENTITY_ID_RE, resolveEntity } from '../utils/entityResolve';
+import { ENTITY_ID_RE, entityPrefix, resolveEntity } from '../utils/entityResolve';
 import { expName, TERMINAL_STATUSES } from '../utils/experiment';
 import { sizeLabel } from '../utils/fleet';
 import { clip, fmtStamp, roleWord } from '../utils/format';
@@ -276,8 +276,8 @@ export function useMapModel(viewW) {
       const textClaimIds = [];
       for (const id of new Set(text.match(ENTITY_ID_RE) || [])) {
         if (id === e.id) continue;
-        const kind = id.startsWith('exp_') ? 'exp' : id.startsWith('claim_') ? 'claim' : id.startsWith('art_') ? 'art' : null;
-        if (!kind) continue;
+        const kind = entityPrefix(id);
+        if (kind !== 'exp' && kind !== 'claim' && kind !== 'art') continue;
         const ent = resolveEntity(id, home);
         if (!ent?.navigable) continue; // unknown / unresolvable id — drop
         if (kind === 'claim') { textClaimIds.push(id); continue; } // joins the claim union below

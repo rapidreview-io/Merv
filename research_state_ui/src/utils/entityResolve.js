@@ -48,17 +48,34 @@ export const TYPE_LABEL = {
   paper: 'paper',
 };
 
-// Only these types have a project-scoped detail page; the rest render as a
-// non-navigating chip that still gets a hover card.
+// Where each target type lives, project-relative. Types absent from here have
+// no destination and render as a non-navigating chip that still hover-cards.
+// This is the whole product's route table: event rows, tool-call rows, and
+// dependency links all read it rather than re-listing the paths.
 const ROUTE = {
   experiment: (id) => `/experiments/${id}`,
+  task: (id) => `/tasks/${id}`,
   claim: (id) => `/claims/${id}`,
   artifact: (id) => `/artifacts/${id}`,
+  // No per-review page: the reviews screen is the destination.
+  review: () => '/reviews',
+  // A sandbox is a section of the experiment that ran on it.
+  sandbox: (id) => `/experiments/${id}#execution`,
   // Sections and papers live on the one lit-review screen (no per-id page),
   // deep-linked to the entry so the page can land on it and highlight it.
   litreview_section: sectionRoute,
   paper: paperRoute,
 };
+
+/** The project-relative route for a target, or null when it has no page. */
+export function entityRoute(type, id) {
+  return id && ROUTE[type] ? ROUTE[type](id) : null;
+}
+
+/** A workflow node (task or experiment) → its route. */
+export function nodeRoute(node) {
+  return entityRoute(node?.node_type === 'task' ? 'task' : 'experiment', node?.id);
+}
 
 // Matches a bare entity id in prose. `\b` at the head keeps `myexp_1` from
 // matching; the trailing negative lookahead lets ids carry hyphens without the

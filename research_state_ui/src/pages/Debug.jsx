@@ -5,6 +5,7 @@ import JsonView from '../components/JsonView';
 import ObjId from '../components/ObjId';
 import { tsToTime } from '../utils/format';
 import { tsMs } from '../utils/time';
+import { entityRoute } from '../utils/entityResolve';
 import { expName } from '../utils/experiment';
 import { useProjectStore, selectExperiments, useProjectHref } from '../store/useProjectStore';
 
@@ -66,16 +67,6 @@ function targetFromArgs(args) {
   const review = args.review_id || args.request_id;
   if (review) return ['review', String(review)];
   return [null, null];
-}
-
-function targetHref(type, id) {
-  switch (type) {
-    case 'experiment': return `/experiments/${id}`;
-    case 'claim':      return `/claims/${id}`;
-    case 'artifact':   return `/artifacts/${id}`;
-    case 'review':     return `/reviews`;
-    default:           return null;
-  }
 }
 
 function percentile(sorted, p) {
@@ -423,7 +414,7 @@ function StreamRow({ call, expById, open, onToggle, onFilterTool }) {
   const ok = call.status !== 'error';
   const slow = call.duration_ms >= SLOW_CALL_MS;
   const heavy = call.received_chars >= HOT_RECEIVED_CHARS;
-  const rawHref = call.target_type ? targetHref(call.target_type, call.target_id) : null;
+  const rawHref = entityRoute(call.target_type, call.target_id);
   const href = rawHref ? px(rawHref) : null;
   const exp = call.target_type === 'experiment' ? expById[call.target_id] : null;
   return (

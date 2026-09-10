@@ -12,6 +12,7 @@ import ObjId from '../components/ObjId';
 import InlineMd from '../components/InlineMd';
 import DetailsDrawer, { DetailsButton, OpsTimeline, OpsVersions, OpsPosition } from '../components/DetailsDrawer';
 import { formatBytes } from '../utils/format';
+import { nodeRoute } from '../utils/entityResolve';
 import { ago } from '../utils/time';
 import { workflowActionButtons } from '../utils/workflowActions';
 
@@ -49,7 +50,6 @@ const SECONDARY_TRANSITIONS = [
   { transition: 'mark_failed', label: 'End task (mark failed)' },
 ];
 
-const nodeHref = (px, node) => px(node.node_type === 'task' ? `/tasks/${node.id}` : `/experiments/${node.id}`);
 
 export default function TaskDetail() {
   const { taskId } = useParams();
@@ -457,7 +457,7 @@ function TaskFacts({ task, reviews, px }) {
     pill: String(r.verdict || 'pending').toLowerCase(),
     meta: ago(r.created_at) || '',
   }));
-  const withHref = (d) => ({ ...d, href: nodeHref(px, d) });
+  const withHref = (d) => ({ ...d, href: px(nodeRoute(d)) });
   const upstream = (task.dependencies || []).map(withHref);
   const downstream = (task.dependents || []).map(withHref);
   const isOpen = !TASK_TERMINAL.has(task.status);
