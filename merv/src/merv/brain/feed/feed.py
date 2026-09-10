@@ -45,7 +45,7 @@ from ..kernel.utils import (
 )
 from .attachments import normalize_attachments
 from .persistence import install_feed_schema
-from .refs import parse_refs
+from .refs import RefParser, RefVocabulary
 
 # The product contract is a short post, measured after stripping. Longer
 # thoughts are threads (chained posts), never longer posts.
@@ -71,10 +71,6 @@ POST_KINDS = frozenset(
 REACTION_KINDS = frozenset({"fire", "eyes", "question"})
 
 RESEARCHER_HANDLE = "Researcher"
-
-_KNOWN_REF_PREFIXES = (
-    "exp_", "task_", "claim_", "res_", "rver_", "syn_", "rev_", "lit_", "paper_"
-)
 
 # Backup cadence policy. The agent skill remains the primary editorial policy;
 # these values only decide whether page one carries a soft reminder.
@@ -169,11 +165,15 @@ class FeedService:
         store: BaseStateStore,
         blobs: EvidenceBlobStore,
         web_preview: WebPreview,
+        ref_vocabulary: RefVocabulary,
         figure_lookup: FigureLookup | None = None,
     ) -> None:
         self.store = store
         self.blobs = blobs
         self.web_preview = web_preview
+        # The ids a post may point at are declared by the composition; the
+        # feed matches their prefixes and otherwise treats refs as opaque.
+        self.refs = RefParser(ref_vocabulary)
         self.figure_lookup = figure_lookup
         install_feed_schema(store)
 
@@ -419,7 +419,7 @@ class FeedService:
                     "thread posts cannot carry an image or embed upload; put the visual "
                     "on the root post, or reply to your own post afterwards"
                 )
-            refs = parse_refs(text)
+            refs = self.refs.parse(text)
             items.append(
                 {
                     "text": text,
@@ -437,7 +437,7 @@ class FeedService:
             ref=intent.ref,
             kind=intent.kind,
         )
-        refs = parse_refs(text)
+        refs = self.refs.parse(text)
         if not ref and refs.entities:
             ref = refs.entities[0]
         url = intent.url or (refs.links[0] if refs.links else "")
@@ -919,10 +919,9 @@ class FeedService:
         handle = _validate_handle(handle)
         text = self._validate_text(text)
         ref = (ref or "").strip()
-        if ref and not ref.startswith(_KNOWN_REF_PREFIXES):
+        if ref and not self.refs.accepts(ref):
             raise ValidationError(
-                "ref must point at a project entity "
-                f"({', '.join(p.rstrip('_') for p in _KNOWN_REF_PREFIXES)})"
+                f"ref must point at a project entity ({self.refs.describe()})"
             )
         kind = (kind or "").strip().lower()
         if kind and kind not in POST_KINDS:
@@ -1404,9 +1403,9 @@ def _load_attachments(item: dict[str, Any]) -> list[dict[str, Any]]:
 def _escape_like(value: str) -> str:
     """Escape SQL LIKE metacharacters so ``value`` is matched literally.
 
-    Entity ids commonly contain ``_`` (``exp_``, `claim_``, ...), itself a
-    LIKE single-char wildcard — left unescaped it would make the substring
-    search too permissive. ``LIKE ... ESCAPE '\\'`` is portable across both
+    Entity ids commonly contain ``_`` (every declared prefix ends in one),
+    itself a LIKE single-char wildcard — left unescaped it would make the
+    substring search too permissive. ``LIKE ... ESCAPE '\\'`` is portable across both
     the SQLite and Postgres dialects (unlike SQLite-only ``instr``).
     """
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

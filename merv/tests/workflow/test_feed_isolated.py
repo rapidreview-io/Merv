@@ -25,6 +25,10 @@ from merv.brain.surface import web_preview
 from merv.brain.surface.transport.feed_http import register_feed_routes
 
 
+# The feed learns which ids exist from its composition; these tests declare a
+# vocabulary of their own so nothing below depends on research's prefixes.
+_VOCABULARY = (("exp_", "experiment"), ("gizmo_", "gizmo"))
+
 _PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
     "1f15c4890000000d49444154789c6360000002000100ffff030000060005"
@@ -89,6 +93,7 @@ def feed(tmp_path: Path) -> tuple[FeedService, str, _CountingStore]:
         store=store,
         blobs=LocalDirBlobStore(root=tmp_path / "blobs"),
         web_preview=_UnavailablePreview(),
+        ref_vocabulary=_VOCABULARY,
     )
     project_id = str(project["id"])
     service.register(project_id=project_id, handle="Nova-7")
@@ -151,6 +156,42 @@ def test_core_owns_posts_replies_reactions_and_batched_history(feed) -> None:
         kind="eyes",
         on=False,
     )["post"]["reactions"]["eyes"] is False
+
+
+def test_refs_follow_the_injected_vocabulary(feed) -> None:
+    service, project_id, _store = feed
+
+    parsed = service.post(
+        project_id=project_id,
+        handle="Nova-7",
+        text="gizmo_0badf00d beat exp_c0ffee12 by a hair",
+    )["post"]
+    assert parsed["ref"] == "gizmo_0badf00d"
+
+    explicit = service.post(
+        project_id=project_id,
+        handle="Nova-7",
+        text="on the record",
+        ref="gizmo_000000",
+    )["post"]
+    assert explicit["ref"] == "gizmo_000000"
+
+    with pytest.raises(ValidationError, match="gizmo gizmo_"):
+        service.post(
+            project_id=project_id,
+            handle="Nova-7",
+            text="not a project entity",
+            ref="claim_54962efed0a3",
+        )
+
+
+def test_ref_vocabulary_must_be_declared(tmp_path: Path) -> None:
+    from merv.brain.feed.refs import RefParser
+
+    with pytest.raises(ValueError, match="at least one"):
+        RefParser(())
+    with pytest.raises(ValueError, match="prefix and a kind"):
+        RefParser((("", "nameless"),))
 
 
 def test_transition_advisory_disappears_after_referenced_post(feed) -> None:

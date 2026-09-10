@@ -36,6 +36,7 @@ from .task_workflow import (
 )
 from .policy import (
     AGENT_DISPATCH_SETTING,
+    ENTITY_REF_VOCABULARY,
     EXPERIMENT_ACTIVE_PROCESS_STATUSES,
     GateEvaluation,
     RequirementEvaluation,
@@ -48,6 +49,7 @@ from .research import Research
 
 __all__ = [
     "AGENT_DISPATCH_SETTING",
+    "ENTITY_REF_VOCABULARY",
     "CommittedExperimentUpdate",
     "CommittedTaskUpdate",
     "ExhibitVerdict",

@@ -27,9 +27,11 @@ Mermaid text, `vega` as an inline-data Vega-Lite spec with no `url`/`href`)
 are validated JSON documents the UI draws; `figure` references a figure
 already submitted with an artifact, checked through the injected
 `FigureLookup` port; `image`/`embed` name one local file uploaded through a
-one-time token; `link` names one URL to unfurl. `refs.parse_refs` pulls structure out of the
-prose: the first entity id becomes `ref` and the first arXiv id, DOI, or URL
-becomes the unfurled link when those were not passed explicitly. A `thread`
+one-time token; `link` names one URL to unfurl. `refs.RefParser` pulls
+structure out of the prose: the first entity id becomes `ref` and the first
+arXiv id, DOI, or URL becomes the unfurled link when those were not passed
+explicitly. Which id prefixes count is the composition's `RefVocabulary` of
+`(prefix, kind)` pairs; the feed matches prefixes and stores refs opaquely. A `thread`
 is up to eight continuation posts created atomically under the root, and a
 reply to one's own post continues the author's chain (`thread_root`,
 `thread_index`); a reply by another voice stays a reply. Kinds are

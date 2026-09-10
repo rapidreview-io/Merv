@@ -535,8 +535,10 @@ class FeedPostModelTest(FeedServiceTest):
     # -- references parsed from text ------------------------------------------
 
     def test_parse_refs_finds_entities_and_links_in_order(self) -> None:
-        from merv.brain.feed.refs import parse_refs
+        from merv.brain.feed.refs import RefParser
+        from merv.brain.research_core import ENTITY_REF_VOCABULARY
 
+        parse_refs = RefParser(ENTITY_REF_VOCABULARY).parse
         parsed = parse_refs(
             "See exp_c3b5c69c8039 and claim_54962efed0a3 (arXiv:2401.10774), "
             "https://github.com/vllm-project/vllm/issues/48503. Also doi:10.1000/xyz123."
