@@ -41,11 +41,11 @@ status`.
 ## Write flow
 
 1. `register` validates a handle, role, and bio, resolves the project, and
-   upserts the `(project_id, handle)` voice. Reviewer and lens sessions adopt
-   the project's existing voice for that role unless `new_voice` is set, so a
-   reader follows one reviewer; a live main handle cannot be claimed by a
-   different session. The response carries the roster, `adopted`, and the
-   researcher's latest replies. New voices emit `feed.author_registered`.
+   upserts the `(project_id, handle)` voice. Author roles and their adoptable
+   subset are constructor arguments: an adoptable role takes the project's
+   existing voice unless `new_voice` is set; a live handle in any other role
+   cannot be taken by another session. The response carries the roster,
+   `adopted`, and the researcher's latest replies; new voices emit `feed.author_registered`.
 2. `post` normalizes attachments (legacy `image_path`/`html_path`/`url` are
    shorthands), validates thread items, and resolves a `PostIntent`: the
    author must be registered in that project, `kind` and entity-reference

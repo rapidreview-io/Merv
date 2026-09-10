@@ -1214,7 +1214,7 @@ class FeedNoteForTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_none_when_a_posts_text_mentions_the_entity_inline(self) -> None:
-        self.app.feed.register(handle="Nova-7", project_id=self.pid)
+        self.app.feed.register(handle="Nova-7", role="main", project_id=self.pid)
         self.app.feed.post(
             handle="Nova-7",
             project_id=self.pid,
@@ -1226,7 +1226,7 @@ class FeedNoteForTest(unittest.TestCase):
         self.assertIsNone(note)
 
     def test_an_unrelated_post_does_not_suppress_the_note(self) -> None:
-        self.app.feed.register(handle="Nova-7", project_id=self.pid)
+        self.app.feed.register(handle="Nova-7", role="main", project_id=self.pid)
         self.app.feed.post(
             handle="Nova-7", project_id=self.pid, text="something else entirely"
         )
@@ -1239,7 +1239,7 @@ class FeedNoteForTest(unittest.TestCase):
         # LIKE's "_" matches any single char; left unescaped, a post about an
         # unrelated id that merely has the same shape would falsely look like
         # a mention of exp_12 (the "_" wildcarding one arbitrary character).
-        self.app.feed.register(handle="Nova-7", project_id=self.pid)
+        self.app.feed.register(handle="Nova-7", role="main", project_id=self.pid)
         self.app.feed.post(
             handle="Nova-7",
             project_id=self.pid,

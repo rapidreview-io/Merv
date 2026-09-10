@@ -8,6 +8,7 @@ focused persistence or infrastructure boundaries.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from contextlib import closing, suppress
 from dataclasses import dataclass, replace
 import json
@@ -53,11 +54,6 @@ POST_TEXT_MAX = 280
 THREAD_MAX = 8
 BIO_MAX = 80
 
-AUTHOR_ROLES = frozenset({"main", "reviewer", "lens", "researcher"})
-# Roles that share one persistent voice per project: every reviewer session
-# posts as the project's reviewer, so the reader can follow one voice.
-ADOPTABLE_ROLES = frozenset({"reviewer", "lens"})
-
 # Kinds are self-declared, never inferred. `status` is a live checkpoint;
 # `finding` is a landed result.
 POST_KINDS = frozenset(
@@ -70,7 +66,11 @@ POST_KINDS = frozenset(
 # Reactions are binary because a project has one researcher.
 REACTION_KINDS = frozenset({"fire", "eyes", "question"})
 
+# The one human voice per project is the feed's own: it is created by
+# `researcher_reply`, never registered, and is the only role the feed reads.
+# Agent roles are declared by the composition (`author_roles`).
 RESEARCHER_HANDLE = "Researcher"
+RESEARCHER_ROLE = "researcher"
 
 # Backup cadence policy. The agent skill remains the primary editorial policy;
 # these values only decide whether page one carries a soft reminder.
@@ -166,6 +166,8 @@ class FeedService:
         blobs: EvidenceBlobStore,
         web_preview: WebPreview,
         ref_vocabulary: RefVocabulary,
+        author_roles: Iterable[str],
+        adoptable_roles: Iterable[str],
         figure_lookup: FigureLookup | None = None,
     ) -> None:
         self.store = store
@@ -174,6 +176,15 @@ class FeedService:
         # The ids a post may point at are declared by the composition; the
         # feed matches their prefixes and otherwise treats refs as opaque.
         self.refs = RefParser(ref_vocabulary)
+        # Roles an agent may register under, and the subset that share one
+        # persistent voice per project so the reader follows one name per
+        # role instead of a new one per session. Both are opaque labels here.
+        self.author_roles = frozenset(str(role) for role in author_roles)
+        self.adoptable_roles = frozenset(str(role) for role in adoptable_roles)
+        if RESEARCHER_ROLE in self.author_roles:
+            raise ValueError(f"{RESEARCHER_ROLE!r} is the feed's own voice, not an author role")
+        if not self.adoptable_roles <= self.author_roles:
+            raise ValueError("adoptable roles must be a subset of the author roles")
         self.figure_lookup = figure_lookup
         install_feed_schema(store)
 
@@ -183,27 +194,27 @@ class FeedService:
         self,
         *,
         handle: str,
-        role: str = "main",
+        role: str,
         session_id: str = "",
         project_id: str | None = None,
         bio: str = "",
         new_voice: bool = False,
     ) -> dict[str, Any]:
-        """Claim a voice for this project (idempotent per session).
+        """Take a voice for this project (idempotent per session).
 
         A handle is unique per project so parallel agents post under distinct
         voices. Re-registering the same handle from the same session is a no-op;
-        a different session claiming a live handle is rejected so two agents do
-        not collide on one name. Reviewer and lens sessions adopt the project's
-        existing voice for that role (``adopted``) unless ``new_voice`` is set,
-        so the reader follows one reviewer instead of a new name per review.
-        The response carries the project's roster so an agent can pick up an
-        earlier voice deliberately.
+        a different session taking a live handle is rejected so two agents do
+        not collide on one name. A session in an adoptable role adopts the
+        project's existing voice for that role (``adopted``) unless
+        ``new_voice`` is set, so the reader follows one name per such role
+        instead of a new one per session. The response carries the project's
+        roster so an agent can pick up an earlier voice deliberately.
         """
         handle = _validate_handle(handle)
-        if role not in AUTHOR_ROLES:
+        if role not in self.author_roles:
             raise ValidationError(
-                f"unknown author role: {role}. Allowed: {', '.join(sorted(AUTHOR_ROLES))}"
+                f"unknown author role: {role}. Allowed: {', '.join(sorted(self.author_roles))}"
             )
         bio = (bio or "").strip()
         if len(bio) > BIO_MAX:
@@ -211,7 +222,7 @@ class FeedService:
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             adopted = False
-            if role in ADOPTABLE_ROLES and not new_voice:
+            if role in self.adoptable_roles and not new_voice:
                 voice = conn.execute(
                     "SELECT handle FROM feed_authors WHERE project_id = ? AND role = ? "
                     "ORDER BY COALESCE(last_posted_at, registered_at) DESC LIMIT 1",
@@ -304,7 +315,7 @@ class FeedService:
         return [
             {
                 "handle": str(row["handle"]),
-                "role": str(row["role"] or "main"),
+                "role": str(row["role"] or ""),
                 "bio": str(row["bio"] or ""),
                 "posts": int(row["posts"] or 0),
                 "last_posted_at": row["last_posted_at"],
@@ -453,7 +464,7 @@ class FeedService:
                 raise ValidationError(
                     f"handle '{handle}' is not registered; call feed.register first"
                 )
-            author_role = str(author["role"] or "main")
+            author_role = str(author["role"] or "")
             # A post follows at most one previous post; `quote_of` and
             # `in_reply_to` name the same relation and render as one thread.
             reply_ref = (intent.in_reply_to or "").strip()

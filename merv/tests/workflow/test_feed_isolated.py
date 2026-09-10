@@ -28,6 +28,8 @@ from merv.brain.surface.transport.feed_http import register_feed_routes
 # The feed learns which ids exist from its composition; these tests declare a
 # vocabulary of their own so nothing below depends on research's prefixes.
 _VOCABULARY = (("exp_", "experiment"), ("gizmo_", "gizmo"))
+_ROLES = frozenset({"main", "auditor"})
+_ADOPTABLE = frozenset({"auditor"})
 
 _PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
@@ -94,9 +96,11 @@ def feed(tmp_path: Path) -> tuple[FeedService, str, _CountingStore]:
         blobs=LocalDirBlobStore(root=tmp_path / "blobs"),
         web_preview=_UnavailablePreview(),
         ref_vocabulary=_VOCABULARY,
+        author_roles=_ROLES,
+        adoptable_roles=_ADOPTABLE,
     )
     project_id = str(project["id"])
-    service.register(project_id=project_id, handle="Nova-7")
+    service.register(project_id=project_id, handle="Nova-7", role="main")
     store.statements.clear()
     return service, project_id, store
 
@@ -192,6 +196,45 @@ def test_ref_vocabulary_must_be_declared(tmp_path: Path) -> None:
         RefParser(())
     with pytest.raises(ValueError, match="prefix and a kind"):
         RefParser((("", "nameless"),))
+
+
+def test_roles_follow_the_injected_sets(feed) -> None:
+    service, project_id, _store = feed
+
+    with pytest.raises(ValidationError, match="unknown author role: reviewer"):
+        service.register(project_id=project_id, handle="Cold Equations", role="reviewer")
+    with pytest.raises(ValidationError, match="unknown author role: researcher"):
+        service.register(project_id=project_id, handle="Impostor", role="researcher")
+
+    first = service.register(
+        project_id=project_id, handle="Cold Equations", role="auditor", session_id="s1"
+    )
+    assert first["created"] and not first["adopted"]
+    second = service.register(
+        project_id=project_id, handle="Second Opinion", role="auditor", session_id="s2"
+    )
+    assert second["adopted"] and second["author"]["handle"] == "Cold Equations"
+    assert "auditor voice is 'Cold Equations'" in second["note"]
+    # A non-adoptable role never shares a live handle across sessions.
+    service.register(project_id=project_id, handle="Kestrel-9", role="main", session_id="m1")
+    with pytest.raises(ValidationError, match="already in use"):
+        service.register(project_id=project_id, handle="Kestrel-9", role="main", session_id="m2")
+
+
+def test_role_sets_are_validated_at_construction(tmp_path: Path) -> None:
+    def build(**roles):
+        return FeedService(
+            store=StateStore(db_path=tmp_path / "roles.sqlite3"),
+            blobs=LocalDirBlobStore(root=tmp_path / "blobs"),
+            web_preview=_UnavailablePreview(),
+            ref_vocabulary=_VOCABULARY,
+            **roles,
+        )
+
+    with pytest.raises(ValueError, match="subset of the author roles"):
+        build(author_roles={"main"}, adoptable_roles={"auditor"})
+    with pytest.raises(ValueError, match="feed's own voice"):
+        build(author_roles={"main", "researcher"}, adoptable_roles=())
 
 
 def test_transition_advisory_disappears_after_referenced_post(feed) -> None:

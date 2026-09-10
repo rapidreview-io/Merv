@@ -86,6 +86,12 @@ ENTITY_REF_VOCABULARY: tuple[tuple[str, str], ...] = (
     ("paper_", "paper"),
 )
 
+# Agent voices on the project feed. Adoptable roles share one persistent voice
+# per project so the reader follows one reviewer or lens instead of a new name
+# per session; the feed applies that rule without knowing what the roles are.
+FEED_AUTHOR_ROLES = frozenset({"main", "reviewer", "lens"})
+FEED_ADOPTABLE_ROLES = frozenset({"reviewer", "lens"})
+
 # Task names follow the same folder-safe rules and become tasks/<name>/.
 
 

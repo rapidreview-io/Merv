@@ -38,6 +38,8 @@ from .policy import (
     AGENT_DISPATCH_SETTING,
     ENTITY_REF_VOCABULARY,
     EXPERIMENT_ACTIVE_PROCESS_STATUSES,
+    FEED_ADOPTABLE_ROLES,
+    FEED_AUTHOR_ROLES,
     GateEvaluation,
     RequirementEvaluation,
     REVIEW_ROLE_VALUES,
@@ -50,6 +52,8 @@ from .research import Research
 __all__ = [
     "AGENT_DISPATCH_SETTING",
     "ENTITY_REF_VOCABULARY",
+    "FEED_ADOPTABLE_ROLES",
+    "FEED_AUTHOR_ROLES",
     "CommittedExperimentUpdate",
     "CommittedTaskUpdate",
     "ExhibitVerdict",
