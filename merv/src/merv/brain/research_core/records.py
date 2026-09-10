@@ -184,8 +184,8 @@ class Records:
         dependents = dependent_rows(conn=conn, project_id=project_id, node_ids=record_ids) if kind.dependencies else {}
         for record in records:
             record_id = str(record["id"])
-            for column, field in kind.json_columns.items():
-                record[field] = json.loads(str(record.pop(column, None) or ("[]" if field.endswith("s") else "{}")))
+            for column, (field, empty) in kind.json_columns.items():
+                record[field] = json.loads(str(record.pop(column, None) or empty))
             record["artifacts"] = [{**documents.artifact_state_record(item), "artifact_id": item.artifact_id}
                                    for item in history[record_id].artifacts]
             record["current_attempt_artifacts"] = documents.current_slot_artifacts(
@@ -280,10 +280,9 @@ class Records:
         if action not in kind.seal_exempt_actions:
             self.artifacts.seal(tx=conn, target=ArtifactTarget(kind.name, before.id, before.project_id),
                                 transition=action)
-        columns = ("status", *kind.commit_columns.get(action, ()), "updated_at")
-        values = [kind.status_of(after.state),
-                  *(after.data.get(column, "") for column in kind.commit_columns.get(action, ())),
-                  now_iso()]
+        written = tuple(column for column in kind.commit_columns.get(action, ()) if column in after.data)
+        columns = ("status", *written, "updated_at")
+        values = [kind.status_of(after.state), *(after.data[column] for column in written), now_iso()]
         conn.execute(f"UPDATE {kind.table} SET {', '.join(f'{name} = ?' for name in columns)} "
                      "WHERE id = ? AND project_id = ?", (*values, before.id, before.project_id))
         hooks.after_commit(conn=conn, before=before, after=after, action=action, payload=payload)

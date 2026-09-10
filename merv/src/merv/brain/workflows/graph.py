@@ -9,6 +9,7 @@ from typing import Any, Literal, Protocol, TYPE_CHECKING
 
 from merv.shared.workspace_policy import REFERENCE_BASE_PREFIX, WorkspacePolicy
 
+from .definitions.documents import preferred_artifact
 from ..kernel.utils import WorkflowError
 
 if TYPE_CHECKING:
@@ -227,8 +228,6 @@ class ArtifactNeed:
         return Issue(self.gate, self.error, self.action, self.tools)
 
     def check(self, snapshot: Snapshot, knowledge: Knowledge) -> Issue | None:
-        from .definitions.documents import preferred_artifact
-
         record = knowledge.read(Reference(snapshot.workflow, snapshot.id))
         artifact = preferred_artifact(artifacts=list(record.get("current_attempt_artifacts") or ()), roles=(self.role,))
         if artifact is None:
@@ -560,8 +559,9 @@ class RecordKind:
     """One native record bound to a workflow: what differs between kinds is data.
 
     ``columns`` are the kind's own INSERT columns beyond the shared spine
-    (id, project_id, name, status, attempt_index, revision_context, timestamps);
-    ``json_columns`` map a stored column to the decoded field a read exposes.
+    (id, project_id, status, attempt_index, revision_context, timestamps);
+    ``json_columns`` map a stored column to the field a read exposes and the
+    empty JSON a row without one decodes to.
     ``commit_columns`` say which of the transition's ``after.data`` fields each
     action writes back, and ``status_projection`` maps a workflow state onto the
     row status when the record has no column for it.
@@ -576,7 +576,7 @@ class RecordKind:
     label: str = "name"
     unique_name: bool = True
     columns: tuple[str, ...] = ()
-    json_columns: Mapping[str, str] = field(default_factory=dict)
+    json_columns: Mapping[str, tuple[str, str]] = field(default_factory=dict)
     dependencies: bool = False
     created_seq: bool = False
     seal_exempt_actions: frozenset[str] = frozenset()

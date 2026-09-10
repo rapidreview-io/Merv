@@ -364,7 +364,7 @@ KIND = RecordKind(
     name="reflection", table="reflections", id_prefix="syn", workflow=REFLECTION,
     metadata=METADATA, created_event="reflection.created",
     label="title", unique_name=False, columns=("title", "roster_json", "corpus_json"),
-    json_columns={"roster_json": "roster", "corpus_json": "corpus"}, created_seq=True,
+    json_columns={"roster_json": ("roster", "[]"), "corpus_json": ("corpus", "{}")}, created_seq=True,
     # The row has no consolidation_review status: a wave under code review is
     # still `consolidating` to every reader of the record.
     status_projection={"consolidation_review": "consolidating"},

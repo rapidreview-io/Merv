@@ -118,7 +118,7 @@ class RecordEngineTest(ResearchCase):
                 for key in ("artifacts", "current_attempt_artifacts", "submissions", "reviews",
                             "allowed_transitions", "gate_checklist"):
                     self.assertIn(key, state, key)
-                for column, field in case.kind.json_columns.items():
+                for column, (field, _empty) in case.kind.json_columns.items():
                     self.assertNotIn(column, state)
                     self.assertIn(field, state)
                 self.assertEqual(case.kind.dependencies, "dependencies" in state)
