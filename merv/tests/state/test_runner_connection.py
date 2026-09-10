@@ -20,6 +20,7 @@ from unittest.mock import patch
 
 from merv.client.agent_runner import (
     AgentRunner,
+    CommandHost,
     HostSession,
     LocalSession,
     Platform,
@@ -568,14 +569,11 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class _FakeHost:
+class _FakeHost(CommandHost):
     """A harness stand-in: writes what the child would have written, then stops."""
 
-    trace_format = "jsonl"
-    stdout_filename = "trace.jsonl"
-    trace_filename = "trace.jsonl"
-
     def __init__(self, *, stdout="", stderr="", exit_code=0):
+        super().__init__()
         self.stdout_text = stdout
         self.stderr_text = stderr
         self.code = exit_code
@@ -591,9 +589,6 @@ class _FakeHost:
         return "stopped"
 
     def stop(self, session):
-        return None
-
-    def finalize_trace(self, *, platform, trace_dir):
         return None
 
     def exit_code(self, session):

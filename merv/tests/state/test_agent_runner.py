@@ -526,12 +526,22 @@ class AgentHostTest(unittest.TestCase):
                 ["hermes"],
                 ["-z", instruction],
             ),
+            # The escape hatch: whatever was configured, prompt on stdin.
+            "command": (HOSTS["command"], ["my-agent"], None),
         }
         for name, (host, command, prompt) in native.items():
             with self.subTest(name=name):
                 platform = Platform(name, name, (command[0],))
                 self.assertEqual(host.command_for(platform), command)
                 self.assertEqual(host.instruction_arguments(instruction), prompt)
+        # Hermes is the one row that renames stdout and exports its own trace.
+        self.assertEqual(
+            {name: (host.stdout_filename, host.trace_format) for name, host in HOSTS.items()},
+            {
+                **{name: ("trace.jsonl", "jsonl") for name in HOSTS},
+                "hermes": ("stdout.log", "jsonl-export"),
+            },
+        )
 
         hermes = Platform(
             "hermes-opus",
@@ -1271,12 +1281,9 @@ class AgentSessionProtocolTest(unittest.TestCase):
             self.assertEqual(SessionLedger(path).sessions["ags_old"].status, "stopped")
 
 
-class _FakeHost:
-    trace_format = "jsonl"
-    stdout_filename = "trace.jsonl"
-    trace_filename = "trace.jsonl"
-
+class _FakeHost(CommandHost):
     def __init__(self):
+        super().__init__()
         self.spawns: list[dict[str, object]] = []
         self.stopped: list[HostSession] = []
 
@@ -1289,9 +1296,6 @@ class _FakeHost:
 
     def stop(self, session):
         self.stopped.append(session)
-
-    def finalize_trace(self, *, platform, trace_dir):
-        return None
 
 
 class _FakeClient:

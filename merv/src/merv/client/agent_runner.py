@@ -243,17 +243,24 @@ class HostSpec:
     # subcommand, leaving the child with no Merv MCP server at all, so that
     # adapter's session wiring goes last instead of first.
     session_arguments_last: bool = False
+    # Guidance appended to every instruction this adapter receives.
+    instruction_note: str = ""
+    # Where the CLI's own output lands, what the trace file is called once it
+    # exists, and how to produce it when the CLI does not write JSONL itself.
+    stdout_filename: str = "trace.jsonl"
+    trace_filename: str | None = "trace.jsonl"
+    trace_format: str = "jsonl"
+    finalize_trace: Callable[[Platform, Path], None] | None = None
 
 
 class CommandHost:
     """The one shell-free host: a spec says how its CLI is invoked."""
 
-    trace_format = "jsonl"
-    stdout_filename = "trace.jsonl"
-    trace_filename: str | None = "trace.jsonl"
-
     def __init__(self, spec: HostSpec | None = None) -> None:
         self.spec = spec or HostSpec()
+        self.trace_format = self.spec.trace_format
+        self.stdout_filename = self.spec.stdout_filename
+        self.trace_filename = self.spec.trace_filename
         self._processes: dict[int, subprocess.Popen[bytes]] = {}
         # Exit codes of children this process started and saw stop, so a
         # rapid non-zero exit can be told from a normal completed turn.
@@ -303,11 +310,12 @@ class CommandHost:
 
     def prepare_instruction(self, instruction: str) -> str:
         """Add adapter-specific guidance before choosing stdin or argv."""
-        return instruction
+        return instruction + self.spec.instruction_note
 
     def finalize_trace(self, *, platform: Platform, trace_dir: Path) -> None:
         """Finish provider-specific capture after the child stops."""
-        return None
+        if self.spec.finalize_trace is not None:
+            self.spec.finalize_trace(platform, trace_dir)
 
     def spawn(
         self,
@@ -448,62 +456,58 @@ class CommandHost:
             os.killpg(session.pid, signal.SIGKILL)
 
 
-class HermesHost(CommandHost):
-    """Hermes keeps its own session log; the runner exports it afterwards."""
+# Hermes has no per-run MCP flag and keeps its own session log, so its row
+# carries a bridge note in the instruction and an export step after the child
+# stops. Everything else about it is ordinary table data.
+HERMES_NOTE = (
+    "\nRunner-owned Hermes session: invoke every Merv tool with "
+    "`merv-client call TOOL --arguments JSON`. Do not use an ambient "
+    "native Merv MCP registration; the runner deliberately removed "
+    "its owner credential and supplied only this session's scoped "
+    "credential to merv-client.\n"
+)
 
-    trace_format = "jsonl-export"
-    stdout_filename = "stdout.log"
 
-    def prepare_instruction(self, instruction: str) -> str:
-        return (
-            instruction
-            + "\nRunner-owned Hermes session: invoke every Merv tool with "
-            "`merv-client call TOOL --arguments JSON`. Do not use an ambient "
-            "native Merv MCP registration; the runner deliberately removed "
-            "its owner credential and supplied only this session's scoped "
-            "credential to merv-client.\n"
-        )
-
-    def finalize_trace(self, *, platform: Platform, trace_dir: Path) -> None:
-        usage_path = trace_dir / "hermes-usage.json"
-        if not usage_path.is_file():
-            raise RunnerError("Hermes did not write its usage report")
-        os.chmod(usage_path, 0o600)
-        try:
-            usage = json.loads(usage_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise RunnerError("Hermes wrote an unreadable usage report") from exc
-        session = usage.get("session") if isinstance(usage, dict) else None
-        session_id = str(
-            (usage.get("session_id") if isinstance(usage, dict) else "")
-            or (session.get("id") if isinstance(session, dict) else "")
-            or ""
-        ).strip()
-        if not session_id:
-            raise RunnerError("Hermes usage report has no session id")
-        destination = trace_dir / "trace.jsonl"
-        temporary = trace_dir / "trace.jsonl.tmp"
-        result = subprocess.run(
-            [
-                *platform.command,
-                "sessions",
-                "export",
-                str(temporary),
-                "--session-id",
-                session_id,
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-        if result.returncode:
-            message = result.stderr.strip() or result.stdout.strip() or "export failed"
-            raise RunnerError(f"Hermes trace export failed: {message}")
-        if not temporary.is_file():
-            raise RunnerError("Hermes trace export produced no file")
-        os.chmod(temporary, 0o600)
-        temporary.replace(destination)
+def _export_hermes_trace(platform: Platform, trace_dir: Path) -> None:
+    usage_path = trace_dir / "hermes-usage.json"
+    if not usage_path.is_file():
+        raise RunnerError("Hermes did not write its usage report")
+    os.chmod(usage_path, 0o600)
+    try:
+        usage = json.loads(usage_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RunnerError("Hermes wrote an unreadable usage report") from exc
+    session = usage.get("session") if isinstance(usage, dict) else None
+    session_id = str(
+        (usage.get("session_id") if isinstance(usage, dict) else "")
+        or (session.get("id") if isinstance(session, dict) else "")
+        or ""
+    ).strip()
+    if not session_id:
+        raise RunnerError("Hermes usage report has no session id")
+    destination = trace_dir / "trace.jsonl"
+    temporary = trace_dir / "trace.jsonl.tmp"
+    result = subprocess.run(
+        [
+            *platform.command,
+            "sessions",
+            "export",
+            str(temporary),
+            "--session-id",
+            session_id,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    if result.returncode:
+        message = result.stderr.strip() or result.stdout.strip() or "export failed"
+        raise RunnerError(f"Hermes trace export failed: {message}")
+    if not temporary.is_file():
+        raise RunnerError("Hermes trace export produced no file")
+    os.chmod(temporary, 0o600)
+    temporary.replace(destination)
 
 
 def _codex_session_arguments(child_env: Mapping[str, str]) -> list[str]:
@@ -577,21 +581,22 @@ HOST_SPECS: dict[str, HostSpec] = {
                    "--output-format", "stream-json"),
         model_option="--model",
     ),
-    # Hermes has no per-run MCP flag, so a leased session reaches Merv through
-    # the scoped ``merv-client call`` bridge named in its instruction. Scripted
-    # mode (``-z``) is its only one-shot surface and also approves tools.
+    # Scripted mode (``-z``) is Hermes's only one-shot surface; it also
+    # approves tools. Merv reaches it through the merv-client bridge.
     "hermes": HostSpec(
         model_option="--model",
         prompt_flags=("-z",),
         session_arguments=_hermes_session_arguments,
+        instruction_note=HERMES_NOTE,
+        stdout_filename="stdout.log",
+        trace_format="jsonl-export",
+        finalize_trace=_export_hermes_trace,
     ),
     # The escape hatch: any command that takes its instruction on stdin.
     "command": HostSpec(),
 }
 
-# Hermes is the one adapter whose trace and instruction differ from the rest.
 HOSTS: dict[str, CommandHost] = {n: CommandHost(s) for n, s in HOST_SPECS.items()}
-HOSTS["hermes"] = HermesHost(HOST_SPECS["hermes"])
 
 
 @dataclass
@@ -1971,7 +1976,7 @@ class AgentRunner:
             pass
         stdout_text = _read_tail(active.stdout_path, limit=256 * 1024)
         stderr_text = _read_tail(active.stderr_path, limit=16 * 1024)
-        exit_code = getattr(host, "exit_code", lambda _s: None)(active.host_session)
+        exit_code = host.exit_code(active.host_session)
         answered = bool(self.project_id) and self.project_id in stdout_text
         result: dict[str, Any] = {
             "at": _iso(time.time()),
@@ -2015,7 +2020,7 @@ class AgentRunner:
         it is reported as ``host_process_failed`` and the evidence lands on
         the machine's readiness so the page can say what to do.
         """
-        exit_code = getattr(host, "exit_code", lambda _s: None)(session.host_session())
+        exit_code = host.exit_code(session.host_session())
         no_commits = session.head_sha == session.base_sha
         if not (rapid and no_commits):
             # A turn that ran for a while, or committed work, is a turn: a
@@ -2339,11 +2344,8 @@ class AgentRunner:
     def _finalize_trace(self, *, session: LocalSession, host: CommandHost) -> None:
         if not session.trace_dir:
             return
-        finalize = getattr(host, "finalize_trace", None)
-        if not callable(finalize):
-            return
         try:
-            finalize(
+            host.finalize_trace(
                 platform=self._platform(session.platform),
                 trace_dir=Path(session.trace_dir),
             )
@@ -2562,7 +2564,7 @@ class AgentRunner:
             return _public_telemetry(session.telemetry or {})
         platform = self._platform(session.platform)
         host = HOSTS[session.adapter or platform.adapter]
-        filename = str(getattr(host, "trace_filename", "trace.jsonl") or "")
+        filename = str(host.trace_filename or "")
         if not filename:
             return _public_telemetry(session.telemetry or {})
         path = Path(session.trace_dir) / filename
@@ -2808,12 +2810,7 @@ def _prepare_trace(
         raise RunnerError(
             f"trace directory already exists for session {lease.session_id}"
         ) from exc
-    stdout_filename = str(getattr(host, "stdout_filename", "trace.jsonl"))
-    trace_filename = getattr(host, "trace_filename", "trace.jsonl")
-    command_for = getattr(host, "command_for", None)
-    harness_command = (
-        command_for(platform) if callable(command_for) else list(platform.command)
-    )
+    trace_filename = host.trace_filename
     metadata = {
         "schema_version": 2,
         "merv_agent_session_id": lease.session_id,
@@ -2842,19 +2839,19 @@ def _prepare_trace(
         "agent_setup": {
             "platform": platform.name,
             "harness": platform.adapter,
-            "command": _sanitized_command(harness_command),
+            "command": _sanitized_command(host.command_for(platform)),
             "model": platform.model,
             "effort": platform.effort,
-            "trace_format": str(getattr(host, "trace_format", "jsonl")),
+            "trace_format": host.trace_format,
             "trace_file": str(trace_filename) if trace_filename else None,
-            "stdout_file": stdout_filename,
+            "stdout_file": host.stdout_filename,
             "stderr_file": "stderr.log",
         },
     }
     write_private_json(directory / "metadata.json", metadata)
     return TraceFiles(
         directory=directory,
-        stdout=directory / stdout_filename,
+        stdout=directory / host.stdout_filename,
         stderr=directory / "stderr.log",
     )
 
