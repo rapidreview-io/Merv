@@ -54,8 +54,8 @@ class StructuredLoggerTest(unittest.TestCase):
             status="ok",
             capability="super-secret-token",
             reviewer_capability="another-secret",
-            MLFLOW_TRACKING_PASSWORD="rr_sk_agent",
-            nested={"items": ({"MLFLOW_TRACKING_PASSWORD": "nested-secret"},)},
+            session_secret="rr_sk_agent",
+            nested={"items": ({"session_secret": "nested-secret"},)},
         )
         out = stream.getvalue()
         self.assertNotIn("super-secret-token", out)
@@ -65,9 +65,9 @@ class StructuredLoggerTest(unittest.TestCase):
         record = json.loads(out.splitlines()[0])
         self.assertEqual(record["capability"], "[redacted]")
         self.assertEqual(record["reviewer_capability"], "[redacted]")
-        self.assertEqual(record["MLFLOW_TRACKING_PASSWORD"], "[redacted]")
+        self.assertEqual(record["session_secret"], "[redacted]")
         self.assertEqual(
-            record["nested"]["items"][0]["MLFLOW_TRACKING_PASSWORD"],
+            record["nested"]["items"][0]["session_secret"],
             "[redacted]",
         )
 

@@ -45,9 +45,9 @@ class CapResultTest(unittest.TestCase):
             "reviewer_capability": "rp_secret",
             "nested": {
                 "capability": "rp_nested",
-                "env": {"MLFLOW_TRACKING_PASSWORD": "rr_sk_agent"},
+                "env": {"session_secret": "rr_sk_agent"},
             },
-            "tuple": ({"MLFLOW_TRACKING_PASSWORD": "tuple-secret"},),
+            "tuple": ({"session_secret": "tuple-secret"},),
         }
         self.assertEqual(
             cap_result(value=value),
@@ -55,9 +55,9 @@ class CapResultTest(unittest.TestCase):
                 "reviewer_capability": "[redacted]",
                 "nested": {
                     "capability": "[redacted]",
-                    "env": {"MLFLOW_TRACKING_PASSWORD": "[redacted]"},
+                    "env": {"session_secret": "[redacted]"},
                 },
-                "tuple": ({"MLFLOW_TRACKING_PASSWORD": "[redacted]"},),
+                "tuple": ({"session_secret": "[redacted]"},),
             },
         )
 

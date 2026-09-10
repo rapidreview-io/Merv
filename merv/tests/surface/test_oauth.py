@@ -739,16 +739,6 @@ class OAuthSurfaceTest(unittest.TestCase):
         )
         self.assertEqual(legacy_mcp.status_code, 200, legacy_mcp.text)
 
-        encoded = base64.b64encode(
-            f"merv:{tokens['access_token']}".encode()
-        ).decode()
-        dormant_tracking_gate = self.client.get(
-            "/internal/auth/mlflow", headers={"Authorization": f"Basic {encoded}"}
-        )
-        self.assertEqual(
-            dormant_tracking_gate.status_code, 404, dormant_tracking_gate.text
-        )
-
         initialized = self.client.post(
             "/mcp",
             json={

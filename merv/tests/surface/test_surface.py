@@ -14,7 +14,6 @@ from merv.brain.surface.config import (
     ALLOWED_ORIGINS_ENV_VAR,
     CONTROL_RESTRICT_CORS_ENV_VAR,
     DB_URL_ENV_VAR,
-    REQUIRE_AGENT_MLFLOW_ENV_VAR,
     REQUIRE_AUTH_ENV_VAR,
     REQUIRE_SANDBOX_BACKEND_ENV_VAR,
 )
@@ -22,12 +21,6 @@ from merv.brain.surface.auth import (
     SUPABASE_JWT_SECRET_ENV_VAR,
     SUPABASE_URL_ENV_VAR,
 )
-from merv.brain.mlflow.config import (
-    MLFLOW_MODE_ENV_VAR,
-    MLFLOW_SERVER_URI_ENV_VAR,
-    MLFLOW_TRACKING_URI_ENV_VAR,
-)
-from merv.brain.mlflow import CentralMlflowService
 from tests.support.infrastructure import FakeInfrastructureClient, seed_sandbox
 from merv.brain.surface.transport.api import create_fastapi_app
 from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
@@ -235,46 +228,6 @@ class SurfaceTest(unittest.TestCase):
 
 
 
-    def test_surface_ignores_legacy_mlflow_env_without_injection(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            app = build_control_app(
-                repo_root=root,
-                env={
-                    **_mounted_mgmt_key_env(root),
-                    MLFLOW_MODE_ENV_VAR: "external",
-                    MLFLOW_TRACKING_URI_ENV_VAR: "https://mlflow.example.test/",
-                    MLFLOW_SERVER_URI_ENV_VAR: "http://mlflow:5000/",
-                    REQUIRE_AGENT_MLFLOW_ENV_VAR: "1",
-                    REQUIRE_SANDBOX_BACKEND_ENV_VAR: "1",
-                },
-                infrastructure_client=FakeInfrastructureClient(),
-            )
-            self.addCleanup(app.shutdown)
-
-            self.assertIsNone(app._tracking)
-            tool_names = {tool["name"] for tool in app.tools.list_tools()}
-            self.assertNotIn("mlflow.context", tool_names)
-            self.assertNotIn("mlflow.finalize_run", tool_names)
-            self.assertNotIn("mlflow", app.sandboxes.health(details=True))
-
-    def test_legacy_mlflow_requirement_env_is_inert_without_injection(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            app = build_control_app(
-                repo_root=root,
-                env={
-                    **_mounted_mgmt_key_env(root),
-                    MLFLOW_MODE_ENV_VAR: "external",
-                    MLFLOW_SERVER_URI_ENV_VAR: "http://mlflow:5000",
-                    REQUIRE_AGENT_MLFLOW_ENV_VAR: "1",
-                },
-                infrastructure_client=FakeInfrastructureClient(),
-            )
-            self.addCleanup(app.shutdown)
-
-            self.assertIsNone(app._tracking)
-
     def test_surface_can_require_healthy_sandbox_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -292,64 +245,6 @@ class SurfaceTest(unittest.TestCase):
 
         self.assertIn("merv-sandboxes", ctx.exception.message)
         self.assertIn("startup health check", ctx.exception.message)
-
-    def test_surface_lazy_central_metrics_record_without_archive(self) -> None:
-        snapshot = {
-            "source": "mlflow",
-            "base_url": "http://mlflow:5000",
-            "experiments": [
-                {
-                    "name": "central",
-                    "runs": [
-                        {
-                            "run_id": "run_1",
-                            "metrics": {"loss": {"last": 0.2}},
-                            "params": {},
-                            "history": {},
-                        }
-                    ],
-                }
-            ],
-        }
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            app = build_control_app(
-                repo_root=root,
-                env=_mounted_mgmt_key_env(root),
-                infrastructure_client=FakeInfrastructureClient(),
-                mlflow_tracking=CentralMlflowService(
-                    tracking_uri="https://mlflow.example.test/",
-                    server_uri="http://mlflow:5000/",
-                ),
-            )
-            self.addCleanup(app.shutdown)
-            project_id = app.tools.call_tool("project", {"action": "create", "name": "Control Metrics"})["id"]
-            exp_id = app.tools.call_tool(
-                "experiment.create",
-                {"project_id": project_id, "name": "exp", "intent": "measure"},
-            )["id"]
-            seed_sandbox(
-                app.sandboxes,
-                experiment_id=exp_id,
-                sandbox_uid="uid_control_metrics",
-                project_id=project_id,
-                status="running",
-                sandbox_id="sbx_control",
-            )
-
-            with patch(
-                "merv.brain.mlflow.tracking.snapshot_mlflow",
-                return_value=dict(snapshot),
-            ) as capture:
-                result = app._tracking.results_metrics(
-                    experiment_id=exp_id, project_id=project_id
-                )
-
-            capture.assert_called_once()
-            self.assertEqual(capture.call_args.args[0], "http://mlflow:5000")
-            self.assertTrue(result["available"])
-            self.assertNotIn("base_url", result)
-            self.assertEqual(result["experiments"][0]["name"], "central")
 
     def test_surface_without_repo_root_requires_durable_config(self) -> None:
         with self.assertRaises(ValidationError) as ctx:

@@ -114,8 +114,8 @@ def register_mcp_routes(
             raise ValidationError(
                 "context must be an object", details={"field": "context"}
             )
-        # call_tool is synchronous and may do slow outbound IO (e.g. MLflow
-        # REST calls inside transitions). Run it in the threadpool — like every
+        # call_tool is synchronous and may do slow outbound IO (e.g. sandbox
+        # service calls inside transitions). Run it in the threadpool — like every
         # sync route in http_api — so one slow tool call never stalls the event
         # loop for every other agent and UI request.
         result = await run_in_threadpool(call_tool, name, arguments, context, request)

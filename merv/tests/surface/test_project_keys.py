@@ -662,13 +662,6 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         # The gate covers only global mutators; open mode otherwise serves.
         self.assertEqual(open_client.get("/api/meta").status_code, 200)
 
-    def test_mlflow_auth_route_is_absent_for_every_credential_audience(self) -> None:
-        for credential in (self.key, self.jwt_a):
-            response = self.client.get(
-                "/internal/auth/mlflow", headers=_bearer(credential)
-            )
-            self.assertEqual(response.status_code, 404, response.text)
-
     # ---- per-user Hugging Face token (no-dataplane Phase C) ----
 
     def test_hf_token_set_and_clear_over_a_browser_session(self) -> None:

@@ -22,7 +22,6 @@ from ...research_core import (
     PROJECT_OVERVIEW_CONTENTS, TOOLS as RESEARCH_TOOLS,
 )
 from ...workflows import ARTIFACT_TOOL_VOCABULARY, TOOLS as WORKFLOW_TOOLS
-from .mlflow_contracts import TOOLS as MLFLOW_TOOLS
 
 
 class AgentHelloInput(ContractModel):
@@ -227,7 +226,7 @@ SURFACE_TOOLS: dict[str, ToolContract] = {
 ARTIFACT_TOOLS = artifact_tools(**ARTIFACT_TOOL_VOCABULARY)
 FEED_TOOLS = feed_tools(vocabulary=ENTITY_REF_VOCABULARY, author_roles=FEED_AUTHOR_ROLES, adoptable_roles=FEED_ADOPTABLE_ROLES)
 TOOL_MANIFEST: dict[str, ToolContract] = {}
-for _table in (SURFACE_TOOLS, WORKFLOW_TOOLS, RESEARCH_TOOLS, ARTIFACT_TOOLS, FEED_TOOLS, INFRASTRUCTURE_TOOLS, MLFLOW_TOOLS):
+for _table in (SURFACE_TOOLS, WORKFLOW_TOOLS, RESEARCH_TOOLS, ARTIFACT_TOOLS, FEED_TOOLS, INFRASTRUCTURE_TOOLS):
     if not TOOL_MANIFEST.keys().isdisjoint(_table):
         raise RuntimeError(f"tool names claimed twice: {sorted(TOOL_MANIFEST.keys() & _table.keys())}")
     TOOL_MANIFEST.update(_table)
@@ -237,21 +236,17 @@ TOOL_CONTRACTS = TOOL_MANIFEST
 STORAGE_TOOL_NAMES = {name for name, tool in TOOL_MANIFEST.items() if "storage" in tool.feature_requirements}
 SANDBOX_TOOL_NAMES = {name for name, tool in TOOL_MANIFEST.items() if tool.handler_identity.startswith("sandboxes.")}
 MCP_HIDDEN_TOOL_NAMES = frozenset(name for name, tool in TOOL_MANIFEST.items() if tool.visibility == "internal")
-LEGACY_TRACKING_TOOL_NAMES = frozenset(MLFLOW_TOOLS)
 
 
 def available_tool_names(
     *,
     storage_enabled: bool,
-    tracking_enabled: bool = False,
     sandbox_enabled: bool = True,
 ) -> set[str]:
     """Tool names for the active feature set: an absent capability is not advertised."""
     names = set(TOOL_MANIFEST)
     if not storage_enabled:
         names -= STORAGE_TOOL_NAMES
-    if not tracking_enabled:
-        names -= LEGACY_TRACKING_TOOL_NAMES
     if not sandbox_enabled:
         names -= SANDBOX_TOOL_NAMES
     return names

@@ -32,7 +32,6 @@ from merv.brain.surface.tools.contracts import (
     TOOL_MANIFEST,
     available_tool_names,
 )
-from merv.brain.surface.tools.mlflow_contracts import MlflowFinalizeRunInput
 from merv.brain.workflows import ARTIFACT_TARGET_TYPES, SUBMITTABLE_ROLES
 from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.surface.tools.dispatcher import ToolDispatcher
@@ -115,7 +114,6 @@ STORAGE_PUBLIC_TOOLS = frozenset(
     {"storage.fetch", "storage.find", "storage.object", "storage.submit"}
 )
 STORAGE_INTERNAL_TOOLS = frozenset({"storage.complete_upload", "storage.put_object"})
-TRACKING_PUBLIC_TOOLS = frozenset({"mlflow.context", "mlflow.finalize_run"})
 
 # Normalized Pydantic schemas: prose and non-semantic ordering are deliberately
 # excluded, while fields, requiredness, unions, enums, defaults, bounds, tuple
@@ -152,8 +150,6 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "litreview.cite": "41b1e99b098e985e03ff27958c701057f2b7c82b00c11c8990173ff685933896",
     "litreview.edit": "43fdf886b705bdf60d7b7361179eca819fce296fcabb59d85b74ba5cf8587cf5",
     "litreview.view": "092471f2f3c7d5df39cbfb741f6ddf78ef646303aa9cf367c746292c6f3f2312",
-    "mlflow.context": "73d3324a8c0dddb1281d3a2c32b7736ee47dea9b9c822816eca979cf23b09a39",
-    "mlflow.finalize_run": "6c3723dd4fb2ab9dfeb2a381d35874f2d3c2587ef79bec76db0daa858c9aeffd",
     "project": "ee6b0a43422608b1c6647bd3e6dc7b9316ff4ef4ad9e35716626bfe99ad63b59",
     "project.get": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
     "project.list": "99334726611ccf58a148b0814696bfa6fe08c1b2d027e946beccf5a74331c9aa",
@@ -248,40 +244,16 @@ class ToolContractRegistryTest(unittest.TestCase):
 
     def test_tool_profiles_are_a_frozen_external_inventory(self) -> None:
         profiles = (
-            (
-                False,
-                False,
-                BASE_PUBLIC_TOOLS,
-                BASE_INTERNAL_TOOLS,
-            ),
+            (False, BASE_PUBLIC_TOOLS, BASE_INTERNAL_TOOLS),
             (
                 True,
-                False,
                 BASE_PUBLIC_TOOLS | STORAGE_PUBLIC_TOOLS,
                 BASE_INTERNAL_TOOLS | STORAGE_INTERNAL_TOOLS,
             ),
-            (
-                False,
-                True,
-                BASE_PUBLIC_TOOLS | TRACKING_PUBLIC_TOOLS,
-                BASE_INTERNAL_TOOLS,
-            ),
-            (
-                True,
-                True,
-                BASE_PUBLIC_TOOLS | STORAGE_PUBLIC_TOOLS | TRACKING_PUBLIC_TOOLS,
-                BASE_INTERNAL_TOOLS | STORAGE_INTERNAL_TOOLS,
-            ),
         )
-        for storage_enabled, tracking_enabled, public, internal in profiles:
-            with self.subTest(
-                storage_enabled=storage_enabled,
-                tracking_enabled=tracking_enabled,
-            ):
-                available = available_tool_names(
-                    storage_enabled=storage_enabled,
-                    tracking_enabled=tracking_enabled,
-                )
+        for storage_enabled, public, internal in profiles:
+            with self.subTest(storage_enabled=storage_enabled):
+                available = available_tool_names(storage_enabled=storage_enabled)
                 self.assertEqual(
                     {
                         name
@@ -590,12 +562,6 @@ class ToolContractRegistryTest(unittest.TestCase):
         # producer submit against its own gate. review.request's spawn-ready
         # handoff is the sanctioned one-call path.
         self.assertNotIn("review.request_and_start", TOOL_CONTRACTS)
-
-    def test_mlflow_finalize_run_contract(self) -> None:
-        self.assertIs(
-            TOOL_CONTRACTS["mlflow.finalize_run"].input_model,
-            MlflowFinalizeRunInput,
-        )
 
 
 class ToolDispatcherTest(unittest.TestCase):

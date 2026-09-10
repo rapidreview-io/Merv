@@ -10,7 +10,6 @@ executes on the localhost path.
 
 from __future__ import annotations
 
-import base64
 import logging
 import os
 from collections.abc import Mapping
@@ -97,22 +96,6 @@ class SupabaseVerifier:
         if token.startswith(PROJECT_KEY_PREFIX):
             return self._verify_project_key(token)
         return self._verify_jwt(token)
-
-    def verify_basic_or_bearer(self, authorization: str | None) -> Principal:
-        """Bearer plus HTTP Basic (password slot carries the credential).
-
-        Basic exists for the MLflow gate: browsers answer its 401 challenge
-        with a native prompt, and the MLflow client emits Basic for
-        MLFLOW_TRACKING_USERNAME/PASSWORD pairs.
-        """
-        if authorization and authorization.startswith("Basic "):
-            try:
-                decoded = base64.b64decode(authorization[len("Basic "):]).decode("utf-8")
-                _, _, password = decoded.partition(":")
-            except Exception as exc:
-                raise UnauthorizedError("malformed basic credential") from exc
-            return self.verify_bearer(f"Bearer {password.strip()}")
-        return self.verify_bearer(authorization)
 
     def _verify_jwt(self, token: str) -> Principal:
         # Lazy import: PyJWT ships in the `control` extra; the local preset

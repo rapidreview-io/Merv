@@ -88,7 +88,6 @@ class Surface:
         store: BaseStateStore,
         blobs: EvidenceBlobStore,
         infrastructure_client: Any | None = None,
-        mlflow_tracking: Any | None = None,
         sandbox_enabled: bool = True,
         storage_enabled: bool = False,
         storage_max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
@@ -97,7 +96,6 @@ class Surface:
     ) -> None:
         self._store = store
         self._blobs = blobs
-        self._tracking = mlflow_tracking
         # Kernel installed its own tables when the store opened. Credentials
         # and OAuth have no constructed owner here — they exist only in hosted
         # mode — so their schema installs from composition. Every other
@@ -171,7 +169,6 @@ class Surface:
             artifacts=self.artifacts,
             feed=self.feed,
             agent_sessions=self.agent_sessions,
-            tracking=mlflow_tracking,
         )
         # The runner's central-advance routes call this Protocol; Application
         # keeps the research meaning of an advance behind these method names.
@@ -180,7 +177,6 @@ class Surface:
 
         tool_names = available_tool_names(
             storage_enabled=objects.enabled,
-            tracking_enabled=mlflow_tracking is not None,
             sandbox_enabled=sandbox_enabled,
         )
         tool_owners = {
@@ -260,7 +256,6 @@ def build_control_app(
     infrastructure_client: Any | None = None,
     store: Any | None = None,
     blobs: BlobStore | None = None,
-    mlflow_tracking: Any | None = None,
     storage_enabled: bool | None = None,
     local_deployment: bool = False,
 ) -> Surface:
@@ -295,7 +290,7 @@ def build_control_app(
     app = Surface(
         store=store, blobs=blobs,
         infrastructure_client=infrastructure_client,
-        mlflow_tracking=mlflow_tracking, sandbox_enabled=sandbox_enabled,
+        sandbox_enabled=sandbox_enabled,
         storage_enabled=storage_enabled,
         storage_max_upload_bytes=resolve_storage_max_upload_bytes(env),
         structured_logging=not local_deployment,
@@ -384,7 +379,6 @@ def build_local_server(
     infrastructure_client: Any | None = None,
     store: Any | None = None,
     blobs: BlobStore | None = None,
-    mlflow_tracking: Any | None = None,
     storage_enabled: bool | None = None,
 ) -> ControlPlaneServer:
     """Build the localhost brain using the same Surface composition."""
@@ -395,7 +389,6 @@ def build_local_server(
         infrastructure_client=infrastructure_client,
         store=store,
         blobs=blobs,
-        mlflow_tracking=mlflow_tracking,
         storage_enabled=storage_enabled,
         local_deployment=True,
     )

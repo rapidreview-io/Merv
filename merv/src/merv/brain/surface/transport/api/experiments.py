@@ -98,21 +98,4 @@ def build_router(
             ),
         )
 
-    if application.tracking_enabled:
-        # Compatibility-only routes for explicitly injected legacy adapters.
-        # They are absent from the normal product surface.
-        @api_router.get(
-            "/api/projects/{project_id}/experiments/{experiment_id}/results/metrics"
-        )
-        def experiment_results_metrics(
-            project_id: str, experiment_id: str
-        ) -> dict[str, Any]:
-            return application.tracking_metrics(
-                project_id=project_id, experiment_id=experiment_id
-            )
-
-        @api_router.get("/api/projects/{project_id}/mlflow")
-        def project_mlflow(project_id: str) -> dict[str, Any]:
-            return application.tracking_overview(project_id=project_id)
-
     return api_router
