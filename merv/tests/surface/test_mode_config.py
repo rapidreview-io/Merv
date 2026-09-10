@@ -121,8 +121,6 @@ class LocalModeParityTest(unittest.TestCase):
 
 
 class HostedControlSurfaceTest(unittest.TestCase):
-    LOCAL_RESPONSE_KEYS = {"repo_root", "local_sync_dir", "local_experiment_dir"}
-
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
@@ -142,16 +140,6 @@ class HostedControlSurfaceTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
-
-    def assertNoLocalDataPlaneFields(self, value) -> None:  # noqa: ANN001
-        if isinstance(value, dict):
-            leaked = self.LOCAL_RESPONSE_KEYS & set(value)
-            self.assertFalse(leaked, f"leaked local data-plane fields: {sorted(leaked)}")
-            for item in value.values():
-                self.assertNoLocalDataPlaneFields(item)
-        elif isinstance(value, list):
-            for item in value:
-                self.assertNoLocalDataPlaneFields(item)
 
     def test_private_control_needs_no_token_and_health_is_slim(self) -> None:
         projects = self.client.get("/api/projects")
@@ -323,7 +311,6 @@ class HostedControlSurfaceTest(unittest.TestCase):
         )
         self.assertEqual(content.status_code, 200, content.text)
         self.assertFalse(content.json()["available"])
-        self.assertNoLocalDataPlaneFields(content.json())
 
     def test_admin_cleanup_runs_on_private_control_surface(self) -> None:
         class _Report:

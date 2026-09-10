@@ -12,7 +12,7 @@ from ....infrastructure import RemoteSandboxes as SandboxEngine
 from .shared import conditional_json_from_signal
 
 from .gateway import ToolInvocationGateway
-from .views import present, sandbox_list_view, sandbox_view
+from .views import sandbox_list_view, sandbox_view
 
 
 def build_router(
@@ -42,7 +42,7 @@ def build_router(
     def compute_cost(project_id: str) -> dict[str, Any]:
         # No ETag: open generations bill to now, so the payload moves with the
         # clock even when no row changes.
-        return present(application.compute_cost(project_id=project_id))
+        return application.compute_cost(project_id=project_id)
 
     @api_router.get("/api/sandboxes/health")
     def sandbox_health() -> dict[str, Any]:

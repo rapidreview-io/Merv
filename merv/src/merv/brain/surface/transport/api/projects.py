@@ -22,7 +22,6 @@ from .shared import (
 )
 
 from .gateway import ToolInvocationGateway
-from .views import present
 
 
 class UserDirectory(Protocol):
@@ -186,7 +185,7 @@ def build_router(
                     default=str,
                 ),
             ),
-            payload=lambda: present(application.dashboard(project_id=project_id)),
+            payload=lambda: application.dashboard(project_id=project_id),
         )
 
     return api_router

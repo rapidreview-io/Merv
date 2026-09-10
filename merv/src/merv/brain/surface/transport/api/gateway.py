@@ -49,7 +49,6 @@ from .shared import (
     operator_denial,
     operator_membership_recovery,
 )
-from .views import present
 from . import oauth, project_keys, runner_pairing
 from ...runner_pairing import RunnerPairings
 
@@ -669,15 +668,13 @@ class ToolInvocationGateway:
         arguments: dict[str, Any] | None = None,
         project_scope: str | None = None,
     ) -> dict[str, Any]:
-        return present(
-            self.call(
-                name=name,
-                arguments=arguments,
-                project_scope=project_scope,
-                activity_source="http",
-                principal=getattr(request.state, "principal", LOCAL_PRINCIPAL),
-                base_url=str(request.base_url).rstrip("/"),
-            )
+        return self.call(
+            name=name,
+            arguments=arguments,
+            project_scope=project_scope,
+            activity_source="http",
+            principal=getattr(request.state, "principal", LOCAL_PRINCIPAL),
+            base_url=str(request.base_url).rstrip("/"),
         )
 
     def authorize_project(self, request: Request, project_id: str) -> None:

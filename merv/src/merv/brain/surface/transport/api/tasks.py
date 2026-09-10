@@ -10,7 +10,6 @@ from ....application import Application
 from .shared import JsonBody, path_scoped_body
 
 from .gateway import ToolInvocationGateway
-from .views import present
 
 
 def build_router(
@@ -25,7 +24,7 @@ def build_router(
         items = application.tasks(project_id=project_id, rich=True)
         if status:
             items = [item for item in items if item.get("status") == status]
-        return present({"tasks": items})
+        return {"tasks": items}
 
     @api_router.post("/api/projects/{project_id}/tasks", status_code=201)
     def create_task(
@@ -47,13 +46,11 @@ def build_router(
     @api_router.get("/api/projects/{project_id}/tasks/{task_id}")
     def get_task(project_id: str, task_id: str) -> dict[str, Any]:
         # Full shape for the UI; the task.get_state tool stays slim for the agent.
-        return present(
-            application.task(task_id=task_id, project_id=project_id, rich=True)
-        )
+        return application.task(task_id=task_id, project_id=project_id, rich=True)
 
     @api_router.get("/api/projects/{project_id}/tasks/{task_id}/status")
     def task_status(project_id: str, task_id: str) -> dict[str, Any]:
-        return present(application.status(project_id=project_id, task_id=task_id))
+        return application.status(project_id=project_id, task_id=task_id)
 
     @api_router.post("/api/projects/{project_id}/tasks/{task_id}/transition")
     def transition_task(

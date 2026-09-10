@@ -11,7 +11,6 @@ from ...experiment_figure import build_experiment_figure
 from .shared import JsonBody, path_scoped_body
 
 from .gateway import ToolInvocationGateway
-from .views import experiments_view as render_experiments_view, present
 
 
 def build_router(
@@ -49,39 +48,27 @@ def build_router(
             },
         )
 
-    @api_router.get("/api/projects/{project_id}/experiments/view")
-    def experiments_view(project_id: str) -> dict[str, Any]:
-        return render_experiments_view(
-            application.experiments(project_id=project_id, rich=True)
-        )
-
     @api_router.get("/api/projects/{project_id}/experiments/{experiment_id}")
     def get_experiment(project_id: str, experiment_id: str) -> dict[str, Any]:
         # Full shape for the UI; the experiment.get_state tool stays slim for the agent.
-        return present(
-            application.experiment(
-                experiment_id=experiment_id,
-                project_id=project_id,
-                rich=True,
-            )
+        return application.experiment(
+            experiment_id=experiment_id,
+            project_id=project_id,
+            rich=True,
         )
 
     @api_router.get("/api/projects/{project_id}/experiments/{experiment_id}/status")
     def experiment_status(project_id: str, experiment_id: str) -> dict[str, Any]:
         # Full shape for the UI (see home()); the tool stays slim for the agent.
-        return present(
-            application.status(project_id=project_id, experiment_id=experiment_id)
-        )
+        return application.status(project_id=project_id, experiment_id=experiment_id)
 
     @api_router.get("/api/projects/{project_id}/experiments/{experiment_id}/figure")
     def experiment_figure(project_id: str, experiment_id: str) -> dict[str, Any]:
         # Derived graph for the figure canvas; UI-only read, no agent tool.
-        return present(
-            build_experiment_figure(
-                **application.figure_facts(
-                    project_id=project_id,
-                    experiment_id=experiment_id,
-                )
+        return build_experiment_figure(
+            **application.figure_facts(
+                project_id=project_id,
+                experiment_id=experiment_id,
             )
         )
 
@@ -126,6 +113,6 @@ def build_router(
 
         @api_router.get("/api/projects/{project_id}/mlflow")
         def project_mlflow(project_id: str) -> dict[str, Any]:
-            return present(application.tracking_overview(project_id=project_id))
+            return application.tracking_overview(project_id=project_id)
 
     return api_router

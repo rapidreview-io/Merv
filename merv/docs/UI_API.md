@@ -136,7 +136,6 @@ same control-plane validation as MCP claim mutations.
 ```http
 GET  /api/projects/{project_id}/experiments
 GET  /api/projects/{project_id}/experiments?status={status}
-GET  /api/projects/{project_id}/experiments/view
 POST /api/projects/{project_id}/experiments
 GET  /api/projects/{project_id}/experiments/{experiment_id}
 GET  /api/projects/{project_id}/experiments/{experiment_id}/status
