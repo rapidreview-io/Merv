@@ -47,9 +47,12 @@ The database enforces one live lease per workflow instance/revision and one
 result per runner/idempotency key. Reviewers use independent credentials and
 workspaces; graph completion fences the previous node. Ordinary exits can
 resume. Repeated fast exits without a commit use a launch-failure backoff.
-Schema 60 bound existing leases to workflow instances; schema 61 added the
-policy columns and keyed branch facts (`agent_workspaces`) by instance. A lease
-without a stored policy is read-only with no node tools.
+`persistence.py` declares the six tables this module owns and their ladder
+steps. Schema 60 bound existing leases to workflow instances; 61 added the
+policy columns and keyed branch facts (`agent_workspaces`) by instance; 63
+retired `kind`, `review_request_id` and `source_sha`, which the packet's
+`execution` and `references` already say. A lease without a stored policy is
+read-only with no node tools.
 
 ## Security and workspaces
 

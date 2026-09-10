@@ -34,7 +34,7 @@ its versioned graph/runtime; their record services stay private collaborators.
 - `policy.py`: vocabulary, validation, gate evaluation, snapshot identity, reflection
   signal, limits. `evidence.py`: compatibility exports of workflow-owned pure
   document validation, evidence selection, and brief rendering. `models.py`: typed state shapes. `__init__.py`: narrow imports.
-- `content_summaries.py`: deterministic TLDRs of submitted documents. `paths.py`: safe experiment folder names.
+- `content_summaries.py`: deterministic TLDRs of submitted documents. `paths.py`: safe experiment folder names. `persistence.py`: every research table and the ladder steps that shaped them, including the two historical extractions (resources into artifacts, artifacts into content plus research links).
 
 ## Experiment lifecycle
 
