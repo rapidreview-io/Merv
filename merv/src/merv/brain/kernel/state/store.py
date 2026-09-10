@@ -398,7 +398,7 @@ CREATE TABLE IF NOT EXISTS agent_session_traces (
 );
 
 -- Durable branch identity per leased workflow instance across its sessions.
--- The worktree stays on the runner machine; the brain stores only the Git
+-- The worktree stays on the runner's machine; the brain stores only the Git
 -- facts later sessions continue from and the UI shows as lineage.
 CREATE TABLE IF NOT EXISTS agent_workspaces (
   instance_id TEXT NOT NULL,
