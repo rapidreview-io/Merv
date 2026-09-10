@@ -997,10 +997,25 @@ class ReflectionWorkflowTest(ResearchCase):
         )
         self.assertEqual(state["status"], "consolidating")
         self.assertEqual(state["attempt_index"], 1)
+        self.assertIn("consolidation_reviewer returned needs_changes", state["revision_context"])
         self.assertNotIn(
             "reflecting",
             {transition["leads_to"] for transition in state["allowed_transitions"]},
         )
+        replaced = self.app.application.submit_consolidation(
+            project_id=self.project_id,
+            reflection_id=reflection_id,
+            base_sha="1" * 40,
+            proposal_sha="3" * 40,
+            summary="The reviewer's repair landed in a new proposal.",
+            validation={"tests": "passed"},
+            decisions=[],
+            producer_session_id="consolidator",
+        )
+        # Submitting the repair answers the revision request, so the wave stops
+        # asking for it: the transition's declared commit column clears it.
+        self.assertEqual(replaced["revision_context"], "")
+        self.assertEqual(replaced["consolidation"]["proposal"]["revision"], 2)
 
 
 class ChangeSpecWaveDagTest(unittest.TestCase):
