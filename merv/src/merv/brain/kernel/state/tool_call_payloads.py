@@ -37,16 +37,17 @@ PAYLOAD_PREVIEW_CHARS = 64 * 1024
 
 
 class PayloadBlobStore(Protocol):
-    """The blob-store slice the payload ledger needs (put/get/delete)."""
+    """The blob-store slice this ledger needs.
 
-    def put(
-        self,
-        *,
-        namespace: str,
-        data: bytes,
-        content_type: str = "application/octet-stream",
-        expires_at: str | None = None,
-    ) -> str: ...
+    Not ``kernel.ports.blob_store.BlobStore``, which says the same three
+    things: this module is foundation and that one is a port, and foundation
+    imports only foundation (docs/MODULE_BOUNDARIES.md). The slice is
+    restated at its one consumer rather than the law bent for it.
+    """
+
+    def put(self, *, namespace: str, data: bytes,
+            content_type: str = "application/octet-stream",
+            expires_at: str | None = None) -> str: ...
 
     def get(self, *, namespace: str, sha256: str) -> bytes: ...
 

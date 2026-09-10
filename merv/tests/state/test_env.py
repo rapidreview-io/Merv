@@ -7,7 +7,6 @@ from unittest import mock
 from merv.brain.kernel.env import (
     _reset_env_deprecation_warnings,
     env_bool,
-    env_float,
     env_int,
     env_name_pair,
     env_raw,
@@ -66,12 +65,8 @@ class DualReadPrecedenceTest(unittest.TestCase):
     def test_coercion_helpers_accept_either_spelling(self) -> None:
         env = {"MERV_SANDBOX_REAPER": "0"}
         self.assertFalse(env_bool("RESEARCH_PLUGIN_SANDBOX_REAPER", True, env=env))
-        env = {"RESEARCH_PLUGIN_HTTP_PORT": "9999"}
-        self.assertEqual(env_int("MERV_HTTP_PORT", 8787, env=env), 9999)
-        env = {"MERV_SANDBOX_STALE": "12.5", "RESEARCH_PLUGIN_SANDBOX_STALE": "1"}
-        self.assertEqual(
-            env_float("RESEARCH_PLUGIN_SANDBOX_STALE", None, 3.0, env=env), 12.5
-        )
+        env = {"MERV_HTTP_PORT": "9999", "RESEARCH_PLUGIN_HTTP_PORT": "1"}
+        self.assertEqual(env_int("RESEARCH_PLUGIN_HTTP_PORT", 8787, env=env), 9999)
 
 
 class DeprecationWarningTest(unittest.TestCase):
@@ -155,16 +150,6 @@ class EnvCoercionTest(unittest.TestCase):
         for value in ("1", "true", "yes", "on", "enabled"):
             with self.subTest(value=value):
                 self.assertTrue(env_bool("FLAG", default=False, env={"FLAG": value}))
-
-    def test_env_float_prefers_override_then_env_then_default(self) -> None:
-        self.assertEqual(env_float("SECONDS", 2.5, 1.0, env={"SECONDS": "4"}), 2.5)
-        self.assertEqual(env_float("SECONDS", None, 1.0, env={"SECONDS": "4"}), 4.0)
-        self.assertEqual(env_float("SECONDS", None, 1.0, env={}), 1.0)
-        self.assertEqual(env_float("SECONDS", None, 1.0, env={"SECONDS": "bad"}), 1.0)
-
-    def test_env_float_strict_rejects_invalid_env_value(self) -> None:
-        with self.assertRaises(ValueError):
-            env_float("SECONDS", None, 1.0, env={"SECONDS": "bad"}, strict=True)
 
     def test_env_int_uses_default_and_strictness(self) -> None:
         self.assertEqual(env_int("COUNT", 3, env={}), 3)

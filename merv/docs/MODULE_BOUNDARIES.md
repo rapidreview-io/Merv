@@ -180,9 +180,9 @@ carried, by field name the node supplied.
 
 Brain code may import pure `merv.shared` contracts: error identities, tool-shape
 validation, storage transfer and guidance, feed-media primitives, markdown-image
-parsing, machine directories. Shared imports only the standard library and
-itself. The client (runner, CLI, harness) imports the standard library and
-`merv.shared`, never `merv.brain`. Research vocabulary is not shared: artifact
+parsing, machine directories, the trace-excerpt redactor. Shared imports only
+the standard library and itself. The client (runner, CLI, harness) imports the
+standard library and `merv.shared`, never `merv.brain`. Research vocabulary is not shared: artifact
 roles and association targets live in
 `workflows/definitions/artifact_roles.py`, document summaries and experiment
 folder naming in `research_core`.

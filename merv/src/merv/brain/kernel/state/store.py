@@ -1,8 +1,7 @@
 """Record-store state management: dialect-neutral base + the SQLite dialect.
 
 ``BaseStateStore`` defines the contract the services were written against;
-``StateStore`` (= ``SqliteStateStore``) is the local-mode SQLite dialect and
-the historical default. The Postgres dialect for the cloud control plane
+``StateStore`` is the local-mode SQLite dialect and the historical default. The Postgres dialect for the cloud control plane
 lives in ``dialects.py`` (cloud plan Phase 6).
 
 Tables belong to components, not to this file: each declares a
@@ -182,24 +181,9 @@ class BaseStateStore:
         self, *, project_id: str | None, after_id: int, limit: int = 500
     ) -> dict[str, Any]:
         """Ascending tail of the append-only events table — the SSE cursor read."""
-        with closing(self.connect()) as conn:
-            project_id = self.require_project_id(conn=conn, project_id=project_id)
-            rows = conn.execute(
-                """
-                SELECT id, project_id, type, target_type, target_id, payload_json, created_at
-                FROM events
-                WHERE project_id = ? AND id > ?
-                ORDER BY id ASC
-                LIMIT ?
-                """,
-                (project_id, int(after_id), max(1, min(int(limit), 500))),
-            ).fetchall()
-            events = []
-            for row in rows:
-                item = row_to_dict(row=row) or {}
-                item["payload"] = json.loads(str(item.pop("payload_json", "{}")))
-                events.append(item)
-            return {"events": events}
+        return self.recent_events(
+            project_id=project_id, limit=limit, after_id=after_id
+        )
 
     def add_project_member(self, *, project_id: str, user_id: str) -> None:
         with self.transaction() as conn:
@@ -287,19 +271,22 @@ class BaseStateStore:
         return int(row["n"]) if row is not None else 0
 
     def recent_events(
-        self, *, project_id: str | None, limit: int = 100
+        self, *, project_id: str | None, limit: int = 100, after_id: int | None = None
     ) -> dict[str, Any]:
+        """One project's events: the newest first, or — given a cursor — the
+        ascending tail after it, which is what the SSE stream reads."""
+        cursor = () if after_id is None else (int(after_id),)
         with closing(self.connect()) as conn:
             project_id = self.require_project_id(conn=conn, project_id=project_id)
             rows = conn.execute(
-                """
+                f"""
                 SELECT id, project_id, type, target_type, target_id, payload_json, created_at
                 FROM events
-                WHERE project_id = ?
-                ORDER BY id DESC
+                WHERE project_id = ? {"AND id > ?" if cursor else ""}
+                ORDER BY id {"ASC" if cursor else "DESC"}
                 LIMIT ?
                 """,
-                (project_id, max(1, min(int(limit), 500))),
+                (project_id, *cursor, max(1, min(int(limit), 500))),
             ).fetchall()
             events = []
             for row in rows:
@@ -315,9 +302,7 @@ class StateStore(BaseStateStore):
     Records only — the store does not know where a caller's checkout lives.
     The same record layer serves SQLite-backed test composition and hosted
     Postgres without receiving caller filesystem context.
-    The Postgres dialect lives in ``dialects.PostgresStateStore``; the name
-    ``StateStore`` stays on the SQLite class so every existing call site and
-    test keeps working unchanged (``SqliteStateStore`` is an alias).
+    The Postgres dialect lives in ``dialects.PostgresStateStore``.
     """
 
     def __init__(self, *, db_path: Path) -> None:
@@ -395,9 +380,6 @@ class StateStore(BaseStateStore):
                     payload={"name": "Local Research Project"},
                 )
 
-
-# primary name stays on the class so call sites and reprs are unchanged.
-SqliteStateStore = StateStore
 
 
 def next_created_seq(*, conn: Connection, table: str) -> int:
