@@ -279,17 +279,18 @@ CREATE TABLE IF NOT EXISTS experiments (
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
--- One locally hosted coding-agent process working one experiment. The runner
--- submits a high-entropy session secret once; only its digest is stored. A
--- partial unique index installed by migration 41 makes the live-worker rule a
--- database fact rather than a polling convention.
+-- One locally hosted coding-agent process leased to one workflow instance
+-- revision. The runner submits a high-entropy session secret once; only its
+-- digest is stored. The lease carries the declared execution policy of its
+-- node and the packet references verbatim; kind, review_request_id and
+-- source_sha are legacy columns kept only for the schema-60 replay.
 CREATE TABLE IF NOT EXISTS agent_sessions (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
   target_type TEXT NOT NULL,
   target_id TEXT NOT NULL,
   attempt_index INTEGER NOT NULL,
-  kind TEXT NOT NULL DEFAULT 'experiment',
+  kind TEXT NOT NULL DEFAULT '',
   review_request_id TEXT NOT NULL DEFAULT '',
   source_sha TEXT NOT NULL DEFAULT '',
   runner_id TEXT NOT NULL,
@@ -317,6 +318,10 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   workflow_instance_id TEXT NOT NULL DEFAULT '',
   workflow_revision INTEGER NOT NULL DEFAULT 0,
   workflow_node TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT '',
+  label TEXT NOT NULL DEFAULT '',
+  execution_json TEXT NOT NULL DEFAULT '{}',
+  references_json TEXT NOT NULL DEFAULT '[]',
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
@@ -392,11 +397,11 @@ CREATE TABLE IF NOT EXISTS agent_session_traces (
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
--- Durable code identity for an experiment across owner and reviewer sessions.
--- The worktree stays on the runner's machine; the brain stores only Git facts
--- needed for exact reviews, consolidation handoffs, and truthful UI lineage.
-CREATE TABLE IF NOT EXISTS experiment_workspaces (
-  experiment_id TEXT PRIMARY KEY,
+-- Durable branch identity per leased workflow instance across its sessions.
+-- The worktree stays on the runner machine; the brain stores only the Git
+-- facts later sessions continue from and the UI shows as lineage.
+CREATE TABLE IF NOT EXISTS agent_workspaces (
+  instance_id TEXT NOT NULL,
   project_id TEXT NOT NULL,
   branch TEXT NOT NULL,
   base_sha TEXT NOT NULL,
@@ -406,7 +411,7 @@ CREATE TABLE IF NOT EXISTS experiment_workspaces (
   insertions INTEGER NOT NULL DEFAULT 0,
   deletions INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL,
-  FOREIGN KEY(experiment_id) REFERENCES experiments(id),
+  PRIMARY KEY (project_id, instance_id),
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
@@ -1511,6 +1516,12 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     # Generic immutable content; Research owns associations and snapshots.
     (59, "separate_artifact_content_from_research", ""),
     (60, "add_workflow_runtime", ""),
+    # Node-declared execution policy (September 2026): leases store the packet's
+    # role, label, execution policy and references verbatim, and the branch
+    # facts table is keyed by opaque workflow instance instead of experiment.
+    # Fresh schemas already carry both; the handler adds the columns, moves
+    # experiment_workspaces rows into agent_workspaces and drops the old table.
+    (61, "add_agent_workspaces", ""),
 )
 
 WORKFLOW_SCHEMA = (
@@ -2048,8 +2059,38 @@ class BaseStateStore:
         elif name == "add_remote_sandbox_links":
             if not self._has_table(conn=conn, table="remote_sandbox_links"):
                 conn.execute(_schema_table_ddl(table="remote_sandbox_links"))
+        elif name == "add_agent_workspaces":
+            self._add_agent_workspaces(conn=conn)
         else:
             conn.execute(statement)
+
+    def _add_agent_workspaces(self, *, conn: Connection) -> None:
+        """Migration 61: lease policy columns and instance-keyed workspace facts."""
+        for column, ddl in (
+            ("role", "TEXT NOT NULL DEFAULT ''"),
+            ("label", "TEXT NOT NULL DEFAULT ''"),
+            ("execution_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("references_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ):
+            if not self._has_column(conn=conn, table="agent_sessions", column=column):
+                conn.execute(f"ALTER TABLE agent_sessions ADD COLUMN {column} {ddl}")
+        if not self._has_table(conn=conn, table="agent_workspaces"):
+            conn.execute(_schema_table_ddl(table="agent_workspaces"))
+        if self._has_table(conn=conn, table="experiment_workspaces"):
+            # Native ids are the workflow instance ids, so the key carries over.
+            conn.execute(
+                """
+                INSERT INTO agent_workspaces (
+                  instance_id, project_id, branch, base_sha, head_sha,
+                  commit_count, files_changed, insertions, deletions, updated_at
+                )
+                SELECT experiment_id, project_id, branch, base_sha, head_sha,
+                       commit_count, files_changed, insertions, deletions, updated_at
+                FROM experiment_workspaces
+                ON CONFLICT (project_id, instance_id) DO NOTHING
+                """
+            )
+            conn.execute("DROP TABLE experiment_workspaces")
 
     def _add_workflow_runtime(self, *, conn: Connection) -> None:
         """Explicit v1 adoption, preserving evidence and never replaying work."""
@@ -2365,7 +2406,6 @@ class BaseStateStore:
             conn.execute("DROP TABLE agent_sessions")
             conn.execute("ALTER TABLE agent_sessions_v42 RENAME TO agent_sessions")
         for table in (
-            "experiment_workspaces",
             "consolidation_proposals",
             "consolidation_decisions",
             "reflection_advances",

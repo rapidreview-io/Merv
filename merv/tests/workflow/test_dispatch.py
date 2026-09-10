@@ -10,12 +10,15 @@ from merv.brain.workflows import (
     Brief,
     Change,
     Edge,
+    Execution,
     Issue,
     Node,
     Reference,
+    Scope,
     Workflow,
 )
 from merv.brain.workflows.definitions.checks import review_requested, reviewed
+from merv.brain.workflows.definitions.execution import REVIEW_WORKSPACE
 from tests.research_core.scenarios import ResearchCase
 
 
@@ -30,9 +33,11 @@ class WorkflowDispatchTest(ResearchCase):
                 Node("investigate", "Investigate replication", "researcher",
                      lambda snapshot, knowledge: Brief(self.facts["context"], (Reference("project", snapshot.project_id),)),
                      lambda snapshot, knowledge: () if self.facts["ready"] else (Issue("dependency", "Wait for the dependency"),)),
+                # A plugin verifier with no review capability records its outcome
+                # through the generic exit, so the node grants that one tool.
                 Node("review", "Review replication", "independent_verifier",
                      lambda snapshot, knowledge: Brief("Verify the retained evidence and record one outcome."),
-                     read_only=True, workspace="review"),
+                     execution=Execution(read_only=True, tools=frozenset({"workflow.transition"}), workspace=REVIEW_WORKSPACE)),
             ),
             edges=(Edge("investigate", "submit", "review", change=lambda snapshot, payload, knowledge: Change(data={"evidence": "retained"})),
                    Edge("review", "revise", "investigate"), Edge("review", "accept", "complete")),
@@ -64,7 +69,7 @@ class WorkflowDispatchTest(ResearchCase):
         candidate = self.runtime.assignment(project_id=self.project_id, instance_id=self.instance_id)
         self.facts["context"] = "fresh context at the lease transaction"
         secret = "mas_" + secrets.token_urlsafe(32)
-        session = self.app.agent_sessions.claim(
+        session = self.app.agent_sessions.lease(
             project_id=self.project_id, candidates=[candidate], runner_id="runner", platform="codex",
             idempotency_key="claim", session_secret=secret,
         )
@@ -88,14 +93,14 @@ class WorkflowDispatchTest(ResearchCase):
     def test_stale_candidates_and_changed_dependencies_cannot_receive_lease(self):
         candidate = self.runtime.assignment(project_id=self.project_id, instance_id=self.instance_id)
         self.facts["ready"] = False
-        result = self.app.agent_sessions.claim(
+        result = self.app.agent_sessions.lease(
             project_id=self.project_id, candidates=[candidate], runner_id="blocked", platform="codex",
             idempotency_key="blocked", session_secret="mas_" + secrets.token_urlsafe(32),
         )
         self.assertIsNone(result)
         self.facts["ready"] = True
         self.move("submit", 0)
-        result = self.app.agent_sessions.claim(
+        result = self.app.agent_sessions.lease(
             project_id=self.project_id, candidates=[candidate], runner_id="stale", platform="codex",
             idempotency_key="stale", session_secret="mas_" + secrets.token_urlsafe(32),
         )
@@ -115,7 +120,8 @@ class WorkflowDispatchTest(ResearchCase):
         sessions.authenticate(session_secret=secret)
         sessions.release(session_id=session["id"], runner_id=session["runner_id"], head_sha="a" * 40)
         resumed, resumed_secret = self.claim("resumer")
-        self.assertEqual(resumed["source_sha"], "a" * 40)
+        self.assertEqual(resumed["workflow_instance_id"], self.instance_id)
+        self.assertEqual(resumed["execution"]["workspace"]["mode"], "persistent")
         sessions.authenticate(session_secret=resumed_secret)
         with self.app.store.transaction() as tx:
             self.assertEqual(tx.execute("SELECT COUNT(*) FROM events WHERE type = 'workflow.work_started'").fetchone()[0], 1)
@@ -196,7 +202,10 @@ class WorkflowDispatchTest(ResearchCase):
             "custom_audit", 1, "work",
             (Node("work", "Collect evidence", "collector", lambda snapshot, knowledge: Brief("Collect evidence.")),
              Node("audit", "Audit the evidence", role, review_context, review_requested,
-                  read_only=True, workspace="review")),
+                  execution=Execution(read_only=True, tools=frozenset({"review.start", "review.submit"}),
+                                      scope=(Scope("review_request_id", "reference:review_request",
+                                                   tools=("review.start", "review.submit")),),
+                                      workspace=REVIEW_WORKSPACE))),
             (Edge("work", "submit", "audit", change=lambda snapshot, payload, knowledge: Change(
                 data={"result": "retained conclusion"},
                 actions=(Action("review.request", {"target_type": snapshot.workflow, "target_id": snapshot.id, "role": role}),))),

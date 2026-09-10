@@ -197,14 +197,14 @@ class ReflectionWorkflowTest(ResearchCase):
             verdict="pass",
             producer_session_id="consolidator",
         )
-        return self.app.application.prepare_consolidation_advance(
+        return self.app.research.prepare_reflection_advance(
             project_id=self.project_id,
             reflection_id=reflection_id,
             runner_id="runner",
         )
 
     def _settle(self, advance: dict, runner_id: str = "runner") -> dict:
-        return self.app.application.settle_consolidation_advance(
+        return self.app.research.settle_reflection_advance(
             project_id=self.project_id,
             advance_id=advance["id"],
             runner_id=runner_id,
@@ -297,15 +297,19 @@ class ReflectionWorkflowTest(ResearchCase):
                 )["status"],
                 "consolidating",
             )
-            # Discovery hands the receipt back so the runner retries settle.
-            pending = self.app.application.pending_consolidation_advance(
-                project_id=self.project_id
-            )
+            # Discovery hands the bound receipt back, and preparing it again
+            # returns the same receipt instead of refusing, so the runner's
+            # no-op advance retries the settle through the generic routes.
+            pending = self.app.application.pending_agent_advance(project_id=self.project_id)
             self.assertIsNotNone(pending)
             assert pending is not None
-            self.assertEqual(pending["advance_status"], "bound")
             self.assertEqual(pending["advance_id"], advance["id"])
-            self.assertEqual(pending["observed_sha"], "2" * 40)
+            self.assertEqual((pending["instance_id"], pending["expected_sha"], pending["target_sha"]),
+                             (reflection_id, "1" * 40, "2" * 40))
+            retried = self.app.application.prepare_agent_advance(
+                project_id=self.project_id, instance_id=reflection_id, runner_id="another-runner",
+            )
+            self.assertEqual(retried, pending)
             published = self._settle(advance)
         self.assertEqual(published["status"], "published")
         row = self._advance_row(advance["id"])
@@ -743,8 +747,8 @@ class ReflectionWorkflowTest(ResearchCase):
         with self.app.store.transaction() as tx:
             tx.execute(
                 """
-                INSERT INTO experiment_workspaces (
-                  experiment_id, project_id, branch, base_sha, head_sha,
+                INSERT INTO agent_workspaces (
+                  instance_id, project_id, branch, base_sha, head_sha,
                   commit_count, files_changed, insertions, deletions, updated_at
                 )
                 VALUES (?, ?, ?, ?, ?, 1, 1, 3, 1, ?)
@@ -791,7 +795,7 @@ class ReflectionWorkflowTest(ResearchCase):
             target_id=reflection_id,
             role="consolidation_reviewer",
         )
-        advance = self.app.application.prepare_consolidation_advance(
+        advance = self.app.research.prepare_reflection_advance(
             project_id=self.project_id,
             reflection_id=reflection_id,
             runner_id="runner",
@@ -806,7 +810,7 @@ class ReflectionWorkflowTest(ResearchCase):
                 }
             ],
         )
-        published = self.app.application.settle_consolidation_advance(
+        published = self.app.research.settle_reflection_advance(
             project_id=self.project_id,
             advance_id=advance["id"],
             runner_id="runner",
@@ -842,7 +846,7 @@ class ReflectionWorkflowTest(ResearchCase):
             target_id=reflection_id,
             role="consolidation_reviewer",
         )
-        first = self.app.application.prepare_consolidation_advance(
+        first = self.app.research.prepare_reflection_advance(
             project_id=self.project_id,
             reflection_id=reflection_id,
             runner_id="runner-a",
@@ -859,7 +863,7 @@ class ReflectionWorkflowTest(ResearchCase):
                 producer_session_id="consolidator",
             )
         with self.assertRaisesRegex(WorkflowError, "owned by another runner"):
-            self.app.application.prepare_consolidation_advance(
+            self.app.research.prepare_reflection_advance(
                 project_id=self.project_id,
                 reflection_id=reflection_id,
                 runner_id="runner-b",
@@ -874,7 +878,7 @@ class ReflectionWorkflowTest(ResearchCase):
                 (first["id"],),
             )
 
-        recovered = self.app.application.prepare_consolidation_advance(
+        recovered = self.app.research.prepare_reflection_advance(
             project_id=self.project_id,
             reflection_id=reflection_id,
             runner_id="runner-b",
@@ -890,8 +894,8 @@ class ReflectionWorkflowTest(ResearchCase):
         with self.app.store.transaction() as tx:
             tx.execute(
                 """
-                INSERT INTO experiment_workspaces (
-                  experiment_id, project_id, branch, base_sha, head_sha,
+                INSERT INTO agent_workspaces (
+                  instance_id, project_id, branch, base_sha, head_sha,
                   commit_count, files_changed, insertions, deletions, updated_at
                 )
                 VALUES (?, ?, 'merv/experiment', ?, ?, 1, 1, 1, 0, ?)
@@ -932,7 +936,7 @@ class ReflectionWorkflowTest(ResearchCase):
             target_id=reflection_id,
             role="consolidation_reviewer",
         )
-        advance = self.app.application.prepare_consolidation_advance(
+        advance = self.app.research.prepare_reflection_advance(
             project_id=self.project_id,
             reflection_id=reflection_id,
             runner_id="runner",
@@ -946,17 +950,17 @@ class ReflectionWorkflowTest(ResearchCase):
             diffstat={"commit_count": 1},
         )
         with self.assertRaisesRegex(ValidationError, "must cover every experiment"):
-            self.app.application.settle_consolidation_advance(
+            self.app.research.settle_reflection_advance(
                 **settle,
                 ancestry={},
             )
         with self.assertRaisesRegex(ValidationError, "must be true"):
-            self.app.application.settle_consolidation_advance(
+            self.app.research.settle_reflection_advance(
                 **settle,
                 ancestry={experiment_id: False},
             )
 
-        published = self.app.application.settle_consolidation_advance(
+        published = self.app.research.settle_reflection_advance(
             **settle,
             ancestry={experiment_id: True},
         )

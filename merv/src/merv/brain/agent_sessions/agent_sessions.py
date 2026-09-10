@@ -10,7 +10,7 @@ import re
 from typing import Any, Iterable, Mapping, Protocol
 
 from ..kernel.secret_tokens import hash_secret, secret_digest_matches
-from ..kernel.state import BaseStateStore, row_to_dict, rows_to_dicts
+from ..kernel.state import BaseStateStore, row_to_dict
 from ..kernel.state.store import Connection
 from ..kernel.utils import (
     NotFoundError,
@@ -41,11 +41,12 @@ FAILURE_REASONS = (
 LIVE_STATUSES = ("offered", "active")
 
 _PUBLIC_COLUMNS = """
-id, project_id, target_type, target_id, attempt_index, kind, review_request_id,
-source_sha, workflow_instance_id, workflow_revision, workflow_node,
+id, project_id, target_type, target_id, attempt_index, role, label,
+workflow_instance_id, workflow_revision, workflow_node,
 runner_id, platform, status, host_session_ref,
 workspace_ref, base_sha, head_sha,
-assignment_json, agent_setup_json, telemetry_json, telemetry_at,
+execution_json, references_json, assignment_json, agent_setup_json,
+telemetry_json, telemetry_at,
 created_at, activated_at, last_activity_at, lease_expires_at, hard_deadline_at,
 closed_at, close_reason
 """
@@ -64,44 +65,43 @@ TRACE_GRACE_AFTER_CLOSE_SECONDS = 15 * 60
 
 
 class WorkflowAssignment(Protocol):
+    """Lock one instance revision and build its frozen packet inside the lease transaction."""
+
     def __call__(self, tx: Connection, project_id: str, instance_id: str, revision: int) -> dict[str, Any]: ...
-
-
-class WorkflowValidation(Protocol):
-    def __call__(self, tx: Connection, row: Mapping[str, Any]) -> str: ...
 
 
 class WorkflowActivation(Protocol):
     def __call__(self, tx: Connection, row: Mapping[str, Any]) -> None: ...
 
 
+class InstanceFact(Protocol):
+    """What a lease needs to know about its instance, supplied by research."""
+
+    instance_id: str
+    revision: int
+    terminal: bool
+    label: str
+
+
+class InstanceFacts(Protocol):
+    def instance(self, *, project_id: str, instance_id: str) -> InstanceFact | None: ...
+
+
 class AgentSessions:
     """Own the small server-side half of local coding-agent execution."""
 
-    def __init__(
-        self,
-        *,
-        store: BaseStateStore,
-        terminal_experiment_statuses: Iterable[str] = (),
-    ) -> None:
+    def __init__(self, *, store: BaseStateStore, facts: InstanceFacts | None = None) -> None:
         self.store = store
-        self.terminal_experiment_statuses = tuple(
-            sorted(set(terminal_experiment_statuses))
-        )
+        self._facts = facts
         self._workflow_assignment: WorkflowAssignment | None = None
-        self._workflow_validation: WorkflowValidation | None = None
         self._workflow_activation: WorkflowActivation | None = None
 
-    def bind_workflows(
-        self, *, assignment: WorkflowAssignment, validate: WorkflowValidation,
-        activate: WorkflowActivation,
-    ) -> None:
+    def bind_workflows(self, *, assignment: WorkflowAssignment, activate: WorkflowActivation) -> None:
         """Supply workflow authority while this module retains lease ownership."""
         self._workflow_assignment = assignment
-        self._workflow_validation = validate
         self._workflow_activation = activate
 
-    def claim(
+    def lease(
         self,
         *,
         project_id: str,
@@ -114,7 +114,7 @@ class AgentSessions:
         source_user_id: str = "",
         hard_deadline_seconds: int = DEFAULT_HARD_DEADLINE_SECONDS,
     ) -> dict[str, Any] | None:
-        """Offer the first unchanged experiment, review, or consolidation task."""
+        """Offer the first candidate instance whose assignment still holds."""
         runner_id = _required(runner_id, "runner_id", limit=160)
         platform = _required(platform, "platform", limit=80)
         idempotency_key = _required(idempotency_key, "idempotency_key", limit=160)
@@ -124,7 +124,6 @@ class AgentSessions:
             min(int(hard_deadline_seconds), MAX_HARD_DEADLINE_SECONDS),
         )
         now = datetime.now(UTC)
-        now_text = format_iso(now)
 
         with self.store.transaction() as tx:
             self.store.require_project_id(conn=tx, project_id=project_id)
@@ -154,159 +153,40 @@ class AgentSessions:
                 )
                 if not stable:
                     raise PermissionDeniedError(
-                        "idempotency key is already bound to a different claim"
+                        "idempotency key is already bound to a different lease"
                     )
                 return self._find_retry(
                     tx=tx, runner_id=runner_id, idempotency_key=idempotency_key
                 )
-
-            recent_failures = self._recent_failures(
-                tx=tx,
-                project_id=project_id,
-                platform=platform,
-                since=now - timedelta(seconds=FAILURE_BACKOFF_SECONDS),
-            )
             for candidate in candidates:
                 instance_id = str(candidate.get("instance_id") or "")
-                if instance_id:
-                    session = self._claim_workflow(
-                        tx=tx, project_id=project_id, candidate=candidate,
-                        runner_id=runner_id, platform=platform,
-                        idempotency_key=idempotency_key, digest=digest,
-                        now=now, deadline_seconds=deadline_seconds,
-                        source_key_id=source_key_id, source_user_id=source_user_id,
-                    )
-                    if session is not None:
-                        return session
+                if not instance_id:
                     continue
-                target_type = str(candidate.get("target_type") or "experiment")
-                target_id = str(candidate.get("target_id") or candidate.get("id") or "")
-                expected_status = str(candidate.get("status") or "")
-                expected_attempt = int(candidate.get("attempt_index") or 0)
-                kind = str(candidate.get("kind") or "experiment")
-                review_request_id = str(candidate.get("review_request_id") or "")
-                source_sha = _sha(candidate.get("source_sha") or "", allow_empty=True)
-                if (
-                    target_type not in {"experiment", "reflection"}
-                    or not target_id
-                    or not expected_status
-                    or expected_attempt < 1
-                    or kind not in {"experiment", "review", "consolidation"}
-                ):
-                    continue
-                if not self._target_matches(
-                    tx=tx,
-                    project_id=project_id,
-                    target_type=target_type,
-                    target_id=target_id,
-                    status=expected_status,
-                    attempt_index=expected_attempt,
-                ):
-                    continue
-                if kind == "review":
-                    review = tx.execute(
-                        """
-                        SELECT id FROM review_requests
-                        WHERE id = ? AND project_id = ?
-                          AND target_type = ? AND target_id = ?
-                          AND status IN ('requested', 'started') AND expires_at > ?
-                        """,
-                        (
-                            review_request_id,
-                            project_id,
-                            target_type,
-                            target_id,
-                            now_text,
-                        ),
-                    ).fetchone()
-                    if review is None:
-                        continue
-                elif kind == "experiment" and target_type != "experiment":
-                    continue
-                elif kind == "consolidation" and target_type != "reflection":
-                    continue
-                if (
-                    target_type,
-                    target_id,
-                    kind,
-                    review_request_id,
-                ) in recent_failures:
-                    continue
-                session_id = new_id(prefix="ags")
-                inserted = tx.execute(
-                    """
-                    INSERT INTO agent_sessions (
-                      id, project_id, target_type, target_id, attempt_index, kind,
-                      review_request_id, source_sha, runner_id, platform, idempotency_key,
-                      secret_digest, status, created_at, lease_expires_at,
-                      hard_deadline_at, source_key_id, source_user_id
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offered', ?, ?, ?, ?, ?)
-                    ON CONFLICT DO NOTHING
-                    RETURNING id
-                    """,
-                    (
-                        session_id,
-                        project_id,
-                        target_type,
-                        target_id,
-                        expected_attempt,
-                        kind,
-                        review_request_id,
-                        source_sha,
-                        runner_id,
-                        platform,
-                        idempotency_key,
-                        digest,
-                        now_text,
-                        format_iso(now + timedelta(seconds=OFFER_LEASE_SECONDS)),
-                        format_iso(now + timedelta(seconds=deadline_seconds)),
-                        source_key_id or None,
-                        source_user_id,
-                    ),
-                ).fetchone()
-                if inserted is None:
-                    continue
-                return self._find(tx=tx, session_id=session_id)
+                session = self._lease(
+                    tx=tx, project_id=project_id, instance_id=instance_id,
+                    revision=int(candidate.get("revision", -1)),
+                    runner_id=runner_id, platform=platform,
+                    idempotency_key=idempotency_key, digest=digest,
+                    now=now, deadline_seconds=deadline_seconds,
+                    source_key_id=source_key_id, source_user_id=source_user_id,
+                )
+                if session is not None:
+                    return session
         return None
 
-    def _claim_workflow(
-        self, *, tx: Connection, project_id: str, candidate: Mapping[str, Any],
+    def _lease(
+        self, *, tx: Connection, project_id: str, instance_id: str, revision: int,
         runner_id: str, platform: str, idempotency_key: str, digest: str,
         now: datetime, deadline_seconds: int, source_key_id: str, source_user_id: str,
     ) -> dict[str, Any] | None:
         if self._workflow_assignment is None:
             return None
-        instance_id = str(candidate["instance_id"])
-        revision = int(candidate.get("revision", -1))
         try:
             # This callback locks/rechecks the workflow and builds its exact brief
             # inside the transaction that offers the lease. Candidates are hints.
-            assignment = self._workflow_assignment(tx, project_id, instance_id, revision)
+            packet = self._workflow_assignment(tx, project_id, instance_id, revision)
         except (WorkflowError, NotFoundError):
             return None
-        execution = assignment.get("execution") or {}
-        workspace = str(execution.get("workspace") or "work")
-        kind = workspace if workspace in {"review", "consolidation"} else "workflow"
-        references = assignment.get("references") or []
-        review_request_id = next((str(item["id"]) for item in references if item.get("kind") == "review_request"), "")
-        source_sha = next((str(item["id"]) for item in references if item.get("kind") == "code"), "")
-        if not source_sha:
-            previous = tx.execute(
-                "SELECT head_sha FROM agent_sessions WHERE project_id = ? "
-                "AND target_id = ? AND kind <> 'review' AND head_sha <> '' "
-                "ORDER BY created_at DESC, id DESC LIMIT 1", (project_id, instance_id),
-            ).fetchone()
-            source_sha = str(previous["head_sha"] or "") if previous is not None else ""
-        source_sha = _sha(source_sha, allow_empty=True)
-        if review_request_id:
-            request = tx.execute(
-                "SELECT id FROM review_requests WHERE id = ? AND project_id = ? "
-                "AND target_id = ? AND status IN ('requested','started') AND expires_at > ?",
-                (review_request_id, project_id, instance_id, format_iso(now)),
-            ).fetchone()
-            if request is None:
-                return None
         placeholders = ", ".join("?" for _ in FAILURE_REASONS)
         failed = tx.execute(
             f"SELECT 1 FROM agent_sessions WHERE project_id = ? AND platform = ? "
@@ -317,50 +197,31 @@ class AgentSessions:
         ).fetchone()
         if failed is not None:
             return None
+        execution = packet.get("execution")
+        references = packet.get("references")
         session_id = new_id(prefix="ags")
         inserted = tx.execute(
             """INSERT INTO agent_sessions (
-              id, project_id, target_type, target_id, attempt_index, kind,
-              review_request_id, source_sha, workflow_instance_id, workflow_revision,
-              workflow_node, assignment_json, runner_id, platform, idempotency_key,
-              secret_digest, status, created_at, lease_expires_at, hard_deadline_at,
-              source_key_id, source_user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offered', ?, ?, ?, ?, ?)
+              id, project_id, target_type, target_id, attempt_index, role, label,
+              workflow_instance_id, workflow_revision, workflow_node,
+              execution_json, references_json, assignment_json,
+              runner_id, platform, idempotency_key, secret_digest, status,
+              created_at, lease_expires_at, hard_deadline_at, source_key_id, source_user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offered', ?, ?, ?, ?, ?)
             ON CONFLICT DO NOTHING RETURNING id""",
-            (session_id, project_id, str(assignment["workflow"]), instance_id,
-             int(assignment.get("attempt_index") or 1), kind, review_request_id, source_sha,
-             instance_id, revision, str(assignment["state"]),
-             _bounded_json_object(assignment, field="assignment", limit=MAX_ASSIGNMENT_BYTES),
+            (session_id, project_id, str(packet.get("workflow") or ""), instance_id,
+             int(packet.get("attempt_index") or 0), str(packet.get("role") or "")[:120],
+             str(packet.get("label") or "")[:240], instance_id, revision, str(packet.get("state") or ""),
+             _bounded_json_object(execution if isinstance(execution, Mapping) else {},
+                                  field="execution", limit=MAX_ASSIGNMENT_BYTES),
+             _bounded_json_list(references if isinstance(references, list) else [],
+                                field="references", limit=MAX_ASSIGNMENT_BYTES),
+             _bounded_json_object(packet, field="assignment", limit=MAX_ASSIGNMENT_BYTES),
              runner_id, platform, idempotency_key, digest, format_iso(now),
              format_iso(now + timedelta(seconds=OFFER_LEASE_SECONDS)),
              format_iso(now + timedelta(seconds=deadline_seconds)), source_key_id or None, source_user_id),
         ).fetchone()
         return self._find(tx=tx, session_id=session_id) if inserted is not None else None
-
-    def set_assignment(
-        self, *, session_id: str, assignment: Mapping[str, Any]
-    ) -> dict[str, Any]:
-        """Freeze the human-readable packet Application assigned this session."""
-        encoded = _bounded_json_object(
-            assignment,
-            field="assignment",
-            limit=MAX_ASSIGNMENT_BYTES,
-        )
-        with self.store.transaction() as tx:
-            row = tx.execute(
-                "SELECT assignment_json FROM agent_sessions WHERE id = ?",
-                (session_id,),
-            ).fetchone()
-            if row is None:
-                raise NotFoundError(f"agent session not found: {session_id}")
-            existing = str(row["assignment_json"] or "{}")
-            if existing not in {"", "{}"} and existing != encoded:
-                raise ValidationError("agent session assignment is immutable")
-            tx.execute(
-                "UPDATE agent_sessions SET assignment_json = ? WHERE id = ?",
-                (encoded, session_id),
-            )
-            return self._find(tx=tx, session_id=session_id)
 
     def authenticate(self, *, session_secret: str, activate: bool = True) -> dict[str, Any] | None:
         """Validate, activate, and touch a session credential in one write."""
@@ -370,36 +231,26 @@ class AgentSessions:
             self._expire_due(tx=tx, now=now)
             row = tx.execute(
                 """
-                SELECT s.*, p.tenant_id,
-                       e.status AS experiment_status,
-                       e.attempt_index AS current_attempt_index,
-                       r.status AS reflection_status,
-                       r.attempt_index AS current_reflection_attempt_index,
-                       rr.status AS review_status,
-                       rr.role AS review_role
+                SELECT s.*, p.tenant_id
                 FROM agent_sessions s
                 JOIN projects p ON p.id = s.project_id
-                LEFT JOIN experiments e
-                  ON s.target_type = 'experiment' AND e.id = s.target_id
-                LEFT JOIN reflections r
-                  ON s.target_type = 'reflection' AND r.id = s.target_id
-                LEFT JOIN review_requests rr ON rr.id = s.review_request_id
                 WHERE s.secret_digest = ?
                 """,
                 (digest,),
             ).fetchone()
             if row is None or str(row["status"]) not in LIVE_STATUSES:
                 return None
-            invalid_reason = self._invalid_target_reason(tx=tx, row=row)
+            invalid_reason = self._invalid_target_reason(row=row)
             if invalid_reason:
                 self._close(tx=tx, row=row, now=now, reason=invalid_reason)
                 return None
+            authenticated = _lease_view(row)
             if not activate:
-                return row_to_dict(row=row) or {}
-            if str(row["workflow_instance_id"] or "") and self._workflow_activation is not None:
+                return authenticated
+            if self._workflow_activation is not None:
                 # The workflow's start marker deduplicates this, including
                 # preserved active leases from before the workflow migration.
-                self._workflow_activation(tx, row_to_dict(row=row) or {})
+                self._workflow_activation(tx, authenticated)
             hard_deadline = parse_iso(row["hard_deadline_at"])
             lease_until = min(
                 now + timedelta(seconds=ACTIVE_LEASE_SECONDS),
@@ -417,7 +268,6 @@ class AgentSessions:
                 """,
                 (now_text, now_text, format_iso(lease_until), row["id"]),
             )
-            authenticated = row_to_dict(row=row) or {}
             authenticated["status"] = "active"
             return authenticated
 
@@ -769,14 +619,7 @@ class AgentSessions:
             self._expire_due(tx=tx, now=now)
             rows = tx.execute(
                 f"""
-                SELECT {_PUBLIC_COLUMNS},
-                  (SELECT name FROM experiments
-                   WHERE id = agent_sessions.target_id
-                     AND agent_sessions.target_type = 'experiment') AS target_name,
-                  (SELECT role FROM review_requests
-                   WHERE id = agent_sessions.review_request_id) AS review_role,
-                  (SELECT name FROM projects
-                   WHERE id = agent_sessions.project_id) AS project_name
+                SELECT {_PUBLIC_COLUMNS}
                 FROM agent_sessions
                 WHERE project_id = ?
                 ORDER BY
@@ -806,30 +649,19 @@ class AgentSessions:
             ).fetchone()
             return "" if row is None else str(row["id"])
 
-    def live_targets(self, *, project_id: str) -> set[tuple[str, ...]]:
-        """Keys of every offered/active session, shaped like the one-live-
-        session indexes: ``("review", request_id)`` for reviews, else
-        ``(kind, target_type, target_id)``. What the dispatch queue subtracts."""
+    def live_leases(self, *, project_id: str) -> set[tuple[str, int]]:
+        """``(instance_id, revision)`` of every offered/active session: what the
+        dispatch queue subtracts, matching the one-live-lease index."""
         with self.store.transaction() as tx:
             rows = tx.execute(
                 """
-                SELECT kind, target_type, target_id, review_request_id,
-                       workflow_instance_id, workflow_revision
+                SELECT workflow_instance_id, workflow_revision
                 FROM agent_sessions
                 WHERE project_id = ? AND status IN ('offered', 'active')
                 """,
                 (project_id,),
             ).fetchall()
-        keys: set[tuple[str, ...]] = set()
-        for row in rows:
-            kind = str(row["kind"] or "experiment")
-            if row["workflow_instance_id"]:
-                keys.add(("workflow", str(row["workflow_instance_id"]), str(row["workflow_revision"])))
-            elif kind == "review":
-                keys.add(("review", str(row["review_request_id"] or "")))
-            else:
-                keys.add((kind, str(row["target_type"] or ""), str(row["target_id"] or "")))
-        return keys
+        return {(str(row["workflow_instance_id"]), int(row["workflow_revision"])) for row in rows}
 
     def runner_row(
         self,
@@ -901,9 +733,10 @@ class AgentSessions:
             )
 
     def workspaces(
-        self, *, project_id: str, experiment_ids: Iterable[str] = ()
+        self, *, project_id: str, instance_ids: Iterable[str] = ()
     ) -> dict[str, dict[str, Any]]:
-        ids = tuple(dict.fromkeys(str(item) for item in experiment_ids if item))
+        """The retained branch facts per instance, keyed by instance id."""
+        ids = tuple(dict.fromkeys(str(item) for item in instance_ids if item))
         if not ids:
             return {}
         placeholders = ", ".join("?" for _ in ids)
@@ -911,13 +744,13 @@ class AgentSessions:
             self.store.require_project_id(conn=tx, project_id=project_id)
             rows = tx.execute(
                 f"""
-                SELECT * FROM experiment_workspaces
-                WHERE project_id = ? AND experiment_id IN ({placeholders})
+                SELECT * FROM agent_workspaces
+                WHERE project_id = ? AND instance_id IN ({placeholders})
                 """,
                 (project_id, *ids),
             ).fetchall()
             return {
-                str(row["experiment_id"]): row_to_dict(row=row) or {} for row in rows
+                str(row["instance_id"]): row_to_dict(row=row) or {} for row in rows
             }
 
     def authority(self, *, session_id: str) -> dict[str, str]:
@@ -1081,26 +914,6 @@ class AgentSessions:
                 )
 
     @staticmethod
-    def _target_matches(
-        *,
-        tx: Any,
-        project_id: str,
-        target_type: str,
-        target_id: str,
-        status: str,
-        attempt_index: int,
-    ) -> bool:
-        table = "experiments" if target_type == "experiment" else "reflections"
-        row = tx.execute(
-            f"""
-            SELECT 1 FROM {table}
-            WHERE id = ? AND project_id = ? AND status = ? AND attempt_index = ?
-            """,
-            (target_id, project_id, status, attempt_index),
-        ).fetchone()
-        return row is not None
-
-    @staticmethod
     def _record_workspace(
         *,
         tx: Any,
@@ -1110,23 +923,25 @@ class AgentSessions:
         head_sha: str,
         stats: Mapping[str, Any] | None,
     ) -> None:
-        if (
-            str(row["target_type"]) != "experiment"
-            or str(row["kind"]) not in {"experiment", "workflow"}
-            or not workspace_ref
-            or not base_sha
-            or not head_sha
-        ):
+        """Retain the branch facts of a persistent workspace, keyed by instance.
+
+        Ephemeral and scratch workspaces leave no lineage; a later session on
+        the same instance continues from what is recorded here.
+        """
+        workspace = _json_column(row["execution_json"]).get("workspace")
+        persistent = isinstance(workspace, Mapping) and workspace.get("mode") == "persistent"
+        instance_id = str(row["workflow_instance_id"] or "")
+        if not persistent or not instance_id or not workspace_ref or not base_sha or not head_sha:
             return
         values = dict(stats or {})
         tx.execute(
             """
-            INSERT INTO experiment_workspaces (
-              experiment_id, project_id, branch, base_sha, head_sha,
+            INSERT INTO agent_workspaces (
+              instance_id, project_id, branch, base_sha, head_sha,
               commit_count, files_changed, insertions, deletions, updated_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (experiment_id) DO UPDATE SET
+            ON CONFLICT (project_id, instance_id) DO UPDATE SET
               branch = excluded.branch,
               base_sha = excluded.base_sha,
               head_sha = excluded.head_sha,
@@ -1137,7 +952,7 @@ class AgentSessions:
               updated_at = excluded.updated_at
             """,
             (
-                row["target_id"],
+                instance_id,
                 row["project_id"],
                 workspace_ref,
                 base_sha,
@@ -1152,23 +967,9 @@ class AgentSessions:
 
     def _close_invalid_targets(self, *, tx: Any, now: datetime) -> int:
         rows = tx.execute(
-            """
-            SELECT s.*, e.status AS experiment_status,
-                   e.attempt_index AS current_attempt_index,
-                   r.status AS reflection_status,
-                   r.attempt_index AS current_reflection_attempt_index,
-                   rr.status AS review_status,
-                   rr.role AS review_role
-            FROM agent_sessions s
-            LEFT JOIN experiments e
-              ON s.target_type = 'experiment' AND e.id = s.target_id
-            LEFT JOIN reflections r
-              ON s.target_type = 'reflection' AND r.id = s.target_id
-            LEFT JOIN review_requests rr ON rr.id = s.review_request_id
-            WHERE s.status IN ('offered', 'active')
-            """
+            "SELECT * FROM agent_sessions WHERE status IN ('offered', 'active')"
         ).fetchall()
-        invalid = [(row, self._invalid_target_reason(tx=tx, row=row)) for row in rows]
+        invalid = [(row, self._invalid_target_reason(row=row)) for row in rows]
         invalid = [(row, reason) for row, reason in invalid if reason]
         for row, reason in invalid:
             self._close(
@@ -1182,8 +983,7 @@ class AgentSessions:
     def _expire_due(self, *, tx: Any, now: datetime) -> int:
         rows = tx.execute(
             """
-            SELECT id, project_id, target_type, target_id,
-                   lease_expires_at, hard_deadline_at
+            SELECT id, project_id, lease_expires_at, hard_deadline_at
             FROM agent_sessions
             WHERE status IN ('offered', 'active')
               AND (lease_expires_at <= ? OR hard_deadline_at <= ?)
@@ -1198,79 +998,20 @@ class AgentSessions:
             self._close(tx=tx, row=row, now=now, reason=reason)
         return len(rows)
 
-    @staticmethod
-    def _recent_failures(
-        *,
-        tx: Any,
-        project_id: str,
-        platform: str,
-        since: datetime,
-    ) -> set[tuple[str, str, str, str]]:
-        placeholders = ", ".join("?" for _ in FAILURE_REASONS)
-        rows = tx.execute(
-            f"""
-            SELECT target_type, target_id, kind, review_request_id
-            FROM agent_sessions
-            WHERE project_id = ? AND platform = ?
-              AND close_reason IN ({placeholders})
-              AND closed_at > ?
-            """,
-            (project_id, platform, *FAILURE_REASONS, format_iso(since)),
-        ).fetchall()
-        return {
-            (
-                str(row["target_type"]),
-                str(row["target_id"]),
-                str(row["kind"]),
-                str(row["review_request_id"] or ""),
-            )
-            for row in rows
-        }
-
-    def _invalid_target_reason(self, *, tx: Connection, row: Any) -> str:
-        if str(row["workflow_instance_id"] or ""):
-            if self._workflow_validation is None:
-                return "workflow_authority_unavailable"
-            return self._workflow_validation(tx, row_to_dict(row=row) or {})
-        target_type = str(row["target_type"])
-        kind = str(row["kind"])
-        if target_type == "experiment":
-            if row["experiment_status"] is None:
-                return "experiment_missing"
-            if int(row["current_attempt_index"]) != int(row["attempt_index"]):
-                return "experiment_attempt_changed"
-            if (
-                kind == "experiment"
-                and str(row["experiment_status"]) in self.terminal_experiment_statuses
-            ):
-                return "experiment_terminal"
-        elif target_type == "reflection":
-            if row["reflection_status"] is None:
-                return "reflection_missing"
-            if int(row["current_reflection_attempt_index"]) != int(
-                row["attempt_index"]
-            ):
-                return "reflection_attempt_changed"
-        else:
-            return "target_type_invalid"
-        if kind == "review" and str(row["review_status"]) not in {
-            "requested",
-            "started",
-        }:
-            return "review_closed"
-        if target_type == "reflection":
-            role = str(row["review_role"] or "")
-            reflection_status = str(row["reflection_status"])
-            if kind == "review" and role == "reflection_reviewer":
-                if reflection_status != "reflection_review":
-                    return "reflection_not_reviewing"
-            elif kind == "consolidation" or (
-                kind == "review" and role == "consolidation_reviewer"
-            ):
-                if reflection_status != "consolidating":
-                    return "reflection_not_consolidating"
-            else:
-                return "reflection_session_invalid"
+    def _invalid_target_reason(self, *, row: Any) -> str:
+        """Why a live lease no longer stands, from research's instance facts alone."""
+        instance_id = str(row["workflow_instance_id"] or "")
+        if not instance_id:
+            return "instance_missing"
+        if self._facts is None:
+            return "workflow_authority_unavailable"
+        fact = self._facts.instance(project_id=str(row["project_id"]), instance_id=instance_id)
+        if fact is None:
+            return "instance_missing"
+        if fact.terminal:
+            return "instance_terminal"
+        if int(fact.revision) != int(row["workflow_revision"]):
+            return "workflow_assignment_changed"
         return ""
 
     def _close(
@@ -1357,14 +1098,10 @@ def _sha(value: Any, *, allow_empty: bool = False) -> str:
     return clean
 
 
-def _bounded_json_object(
-    value: Mapping[str, Any], *, field: str, limit: int
-) -> str:
-    if not isinstance(value, Mapping):
-        raise ValidationError(f"{field} must be an object", details={"field": field})
+def _bounded_json(value: Any, *, field: str, limit: int) -> str:
     try:
         encoded = json.dumps(
-            dict(value),
+            value,
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
@@ -1379,6 +1116,20 @@ def _bounded_json_object(
             details={"field": field, "max_bytes": limit},
         )
     return encoded
+
+
+def _bounded_json_object(
+    value: Mapping[str, Any], *, field: str, limit: int
+) -> str:
+    if not isinstance(value, Mapping):
+        raise ValidationError(f"{field} must be an object", details={"field": field})
+    return _bounded_json(dict(value), field=field, limit=limit)
+
+
+def _bounded_json_list(value: list[Any], *, field: str, limit: int) -> str:
+    if not isinstance(value, list):
+        raise ValidationError(f"{field} must be a list", details={"field": field})
+    return _bounded_json(list(value), field=field, limit=limit)
 
 
 def _telemetry_projection(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -1410,6 +1161,14 @@ def _json_column(value: Any) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_list_column(value: Any) -> list[Any]:
+    try:
+        parsed = json.loads(str(value or "[]"))
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 
 _SECRET_KEY = re.compile(r"(?i)(api[-_]?key|token|secret|password|credential|authorization)")
@@ -1610,43 +1369,21 @@ def _harness_projection(value: Any) -> dict[str, Any]:
     return result
 
 
-def _fallback_assignment(result: Mapping[str, Any]) -> dict[str, Any]:
-    kind = str(result.get("kind") or "experiment")
-    role = str(result.get("review_role") or "")
-    target_type = str(result.get("target_type") or "")
-    target_name = str(result.get("target_name") or "").strip()
-    project_name = str(result.get("project_name") or "").strip()
-    title = "Run experiment"
-    if kind == "consolidation":
-        title = "Consolidate reflection"
-    elif kind == "review":
-        title = {
-            "design_reviewer": "Review plan",
-            "attempt_reviewer": "Review results",
-            "reflection_reviewer": "Review reflection",
-            "consolidation_reviewer": "Review consolidation",
-        }.get(role, "Review work")
-    subtitle = target_name or ("Project reflection" if target_type == "reflection" else "Experiment")
-    packet: dict[str, Any] = {
-        "task": title,
-        "attempt": max(int(result.get("attempt_index") or 0), 0),
-    }
-    if project_name:
-        packet["project"] = project_name
-    packet["reflection" if target_type == "reflection" else "experiment"] = subtitle
-    return {"title": title, "subtitle": subtitle, "packet": packet}
+def _lease_view(row: Any) -> dict[str, Any]:
+    """A full row with its lease policy decoded; the secret digest never leaves."""
+    result = row_to_dict(row=row) or {}
+    result.pop("secret_digest", None)
+    result["execution"] = _json_column(result.pop("execution_json", "{}"))
+    result["references"] = _json_list_column(result.pop("references_json", "[]"))
+    return result
 
 
 def _public_row(row: Any) -> dict[str, Any]:
-    result = row_to_dict(row=row) or {}
+    result = _lease_view(row)
     assignment = _json_column(result.pop("assignment_json", "{}"))
-    result["assignment"] = assignment or _fallback_assignment(result)
+    result["assignment"] = assignment
     if assignment.get("instruction"):
         result["instruction"] = str(assignment["instruction"])
     result["agent_setup"] = _json_column(result.pop("agent_setup_json", "{}"))
     result["telemetry"] = _json_column(result.pop("telemetry_json", "{}"))
-    target_type = str(result.get("target_type") or "")
-    target_id = str(result.get("target_id") or "")
-    result["experiment_id"] = target_id if target_type == "experiment" else ""
-    result["reflection_id"] = target_id if target_type == "reflection" else ""
     return result

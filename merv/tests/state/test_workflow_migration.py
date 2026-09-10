@@ -27,7 +27,8 @@ def _legacy_session_schema(conn):
     assert conn.execute("SELECT COUNT(*) FROM agent_sessions").fetchone()[0] == 0
     session_sql = "\n".join(line for line in session_sql.splitlines() if not line.strip().startswith("workflow_"))
     session_sql = session_sql.replace("target_type TEXT NOT NULL,", "target_type TEXT NOT NULL CHECK (target_type IN ('experiment', 'reflection')),")
-    session_sql = session_sql.replace("kind TEXT NOT NULL DEFAULT 'experiment',", "kind TEXT NOT NULL DEFAULT 'experiment' CHECK (kind IN ('experiment', 'review', 'consolidation')),")
+    session_sql = session_sql.replace("kind TEXT NOT NULL DEFAULT '',", "kind TEXT NOT NULL DEFAULT 'experiment' CHECK (kind IN ('experiment', 'review', 'consolidation')),")
+    assert "kind IN" in session_sql
     conn.execute("DROP TABLE agent_session_traces")
     conn.execute("DROP TABLE agent_sessions")
     conn.execute(session_sql)
@@ -349,11 +350,11 @@ class ReflectionMigrationTest(WorkflowMigrationCase):
         reflection_id = self.approved_reflection()
         self.proposal(reflection_id)
         self.pass_review(target_type="reflection", target_id=reflection_id, role="consolidation_reviewer")
-        advance = self.app.application.prepare_consolidation_advance(project_id=self.project_id, reflection_id=reflection_id, runner_id="runner")
+        advance = self.app.research.prepare_reflection_advance(project_id=self.project_id, reflection_id=reflection_id, runner_id="runner")
         # A released runner may have committed its exact receipt before a
         # process stop prevented the subsequent publication transaction.
         with mock.patch.object(self.app.reflection_waves, "_publish_bound_advance", return_value={}):
-            self.app.application.settle_consolidation_advance(
+            self.app.research.settle_reflection_advance(
                 project_id=self.project_id, advance_id=advance["id"], runner_id="runner", observed_sha="2" * 40,
                 proposal_parents=["1" * 40], diffstat={"commit_count": 0, "files_changed": 0, "insertions": 0, "deletions": 0}, ancestry={},
             )

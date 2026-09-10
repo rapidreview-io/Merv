@@ -564,7 +564,9 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.assertEqual(reviewer["target_type"], "reflection")
         self.assertEqual(reviewer["target_id"], reflection_id)
         self.assertEqual(reviewer["review_request_id"], request["review_request_id"])
-        self.assertEqual(reviewer["source_sha"], "")
+        self.assertEqual([item["kind"] for item in reviewer["references"] if item["kind"] == "code"], [])
+        self.assertTrue(reviewer["execution"]["read_only"])
+        self.assertEqual(reviewer["execution"]["workspace"]["mode"], "ephemeral")
         self.assertIn("project-reflection-review", reviewer["instruction"])
         self.assertEqual(authenticated.status_code, 200, authenticated.text)
 
@@ -919,21 +921,33 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.assertEqual(verdict.status_code, 200, verdict.text)
 
         pending = self.client.get(
-            f"/api/projects/{self.project_id}/consolidation/pending"
+            f"/api/projects/{self.project_id}/agent-advances/pending"
         )
         self.assertEqual(pending.status_code, 200, pending.text)
-        self.assertEqual(pending.json()["pending"]["reflection_id"], reflection_id)
+        waiting = pending.json()["advance"]
+        self.assertEqual(waiting["instance_id"], reflection_id)
+        self.assertEqual((waiting["advance_id"], waiting["expected_sha"], waiting["target_sha"]), ("", "1" * 40, "2" * 40))
+        self.assertEqual(waiting["sources"], [])
+        # The deprecated alias answers the same question for runners in the field.
+        alias = self.client.get(f"/api/projects/{self.project_id}/consolidation/pending")
+        self.assertEqual(alias.json()["pending"], waiting)
         prepared = self.client.post(
-            f"/api/projects/{self.project_id}/consolidation/prepare",
+            f"/api/projects/{self.project_id}/agent-advances/prepare",
             json={
-                "reflection_id": reflection_id,
+                "instance_id": reflection_id,
                 "runner_id": "central-runner",
             },
         )
         self.assertEqual(prepared.status_code, 200, prepared.text)
-        advance_id = prepared.json()["advance"]["id"]
+        advance = prepared.json()["advance"]
+        advance_id = advance["advance_id"]
+        self.assertTrue(advance_id)
+        self.assertEqual({**advance, "advance_id": ""}, waiting)
+        self.assertEqual(
+            self.client.get(f"/api/projects/{self.project_id}/agent-advances/pending").json()["advance"], advance,
+        )
         settled = self.client.post(
-            f"/api/projects/{self.project_id}/consolidation/settle",
+            f"/api/projects/{self.project_id}/agent-advances/settle",
             json={
                 "advance_id": advance_id,
                 "runner_id": "central-runner",
@@ -944,7 +958,11 @@ class AgentSessionSurfaceTest(unittest.TestCase):
             },
         )
         self.assertEqual(settled.status_code, 200, settled.text)
-        self.assertEqual(settled.json()["reflection"]["status"], "published")
+        self.assertEqual(settled.json()["advance"]["status"], "bound")
+        self.assertEqual(settled.json()["advance"]["outcome"], "published")
+        self.assertIsNone(
+            self.client.get(f"/api/projects/{self.project_id}/agent-advances/pending").json()["advance"],
+        )
         ledger = self.client.get(
             f"/api/projects/{self.project_id}/reflections/"
             f"{reflection_id}/consolidation"
