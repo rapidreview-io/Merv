@@ -34,10 +34,6 @@ class DeployArtifactsTest(unittest.TestCase):
         ):
             with self.subTest(file=name):
                 self.assertTrue((DEPLOY / name).is_file(), f"missing deploy/{name}")
-        self.assertFalse(
-            (DEPLOY / "Dockerfile.mlflow").exists(),
-            "temporarily removed tracking must not ship a deploy image",
-        )
 
     def test_deploy_dir_keeps_no_completed_one_time_tooling(self) -> None:
         # The sandbox, budget and R2 cutovers finished in production; their
@@ -87,7 +83,6 @@ class DeployArtifactsTest(unittest.TestCase):
         )
         self.assertIn("psycopg", control_extra)
         self.assertNotIn("boto3", control_extra)
-        self.assertNotIn("mlflow", control_extra)
 
     def test_compose_base_wires_research_evidence_and_independent_compute(self) -> None:
         text = (DEPLOY / "docker-compose.yml").read_text(encoding="utf-8")
@@ -159,7 +154,6 @@ class DeployArtifactsTest(unittest.TestCase):
             "MERV_REQUIRE_SANDBOX_BACKEND",
         ):
             self.assertIn(var, text)
-        self.assertNotIn("mlflow", text.lower())
 
     def test_storage_ledger_migration_stays_runnable_until_it_is_applied(self) -> None:
         # research_core still carries the pre-migration columns for this script;

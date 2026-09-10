@@ -326,7 +326,7 @@ research core, workflows, literature, and the cross-component coordination in
 `application/` — and it reaches HTTP through its own routers inside `surface/`.
 Artifacts, Feed, Agent Sessions and the rest of Surface are support: they carry
 research work and never interpret it. Infrastructure adapts merv-sandboxes.
-Kernel is the shared floor under all three, and MLflow is a frozen exception.
+Kernel is the shared floor under all three.
 Each component exposes package-root capabilities; every file is classified
 independently by component and by architectural layer. The exact mappings and
 import laws live in `tests/structure/test_module_boundaries.py`, and the

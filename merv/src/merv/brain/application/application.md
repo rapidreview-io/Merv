@@ -19,7 +19,7 @@ spans them. Research remains the public owner of its event ledger reads.
   workflow and its node-owned brief through the Workflows root.
 - Experiment create/list/get/transition retain native record views while
   Workflows owns decisions and Research owns the transactional record binding.
-- Task create/list/get/transition mirror them without exhibits or tracking:
+- Task create/list/get/transition mirror them without exhibits:
   a task commits through Research, then adds a best-effort Feed advisory.
 - Experiment preparation reads metrics outside the transaction; Research locks
   and rechecks its workflow revision, attempt and source evidence before pinning
@@ -58,14 +58,13 @@ spans them. Research remains the public owner of its event ledger reads.
 - `reviews.py`, `reflections.py`, and `reflection_guidance.py`: review handoff,
   reflection presentation, and guidance.
 - `queries.py`: logic-graph composition only.
-- `mlflow.py`: the only optional MLflow integration contract and behavior.
 - `maintenance.py`: token/log retention and coding-agent lease cleanup.
   merv-sandboxes owns machine and object expiry.
 
 ## Boundaries and invariants
 
 - Workflows owns graph decisions, guards and handoff context; Research owns review
-  security, native records, evidence associations and tracking-delivery receipts.
+  security, native records and evidence associations.
 - Artifacts owns immutable content; workflow definitions validate evidence meaning.
 - Sandbox, object storage, and Feed are called through their concrete package
   roots; the only Application port is `ProducedObjectCatalog`, which Research's
@@ -74,16 +73,12 @@ spans them. Research remains the public owner of its event ledger reads.
   workflow assignment and activation callbacks. The workflow runtime owns
   candidate evaluation, the final transactional check, and the instance facts
   leases are validated against.
-- MLflow is optional. All adapter calls, tracking DTOs, degraded warnings,
-  idempotent post-commit run handling, and overview reads live in `mlflow.py`.
 - Graph changes queue durable actions with their committed event. The delivery
-  worker retries support-system calls using stable keys and fenced leases.
-  Non-idempotent tracking creation fences automatic retries before its remote
-  call; ambiguous outcomes wait for explicit run attachment and remain visible
-  in `workflow.history.actions`. Transient reads and finalization still retry.
+  worker retries support-system calls using stable keys and fenced leases; a
+  non-idempotent effect may fence automatic retries before its remote call and
+  stay visible in `workflow.history.actions`.
 - Artifact sealing and Research mutations retain their existing transaction
-  boundaries. MLflow and Feed effects occur after commit; Feed and automatic
-  MLflow finalization failures remain advisory.
+  boundaries. Feed effects occur after commit and remain advisory.
 - Feed advisories: `experiments/transition.py` phrases what a committed event
   is called; the Feed only decides whether the feed already covers that ref.
 - Large candidates stay in merv-sandboxes. Application validates and pins

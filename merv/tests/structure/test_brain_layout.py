@@ -381,10 +381,6 @@ load("subprocess")
         self.assertNotIn("build_record_core", source)
         self.assertIn("tool_owners = {", source)
         self.assertIn("tool_names = available_tool_names(", source)
-        self.assertIn(
-            "tracking_enabled=mlflow_tracking is not None",
-            source,
-        )
         self.assertIn("tool_names=tool_names", source)
 
     def test_surface_builds_both_deployment_presets(self) -> None:

@@ -183,8 +183,8 @@ not cryptographic proof of independent execution. See
 - Research Core declares states, transitions, gates, attempts, and transaction
   invariants.
 - Artifacts owns submitted evidence and immutable sealing.
-- Application combines Research facts with Sandbox, Feed, MLflow, and other
-  modules to format guidance.
+- Application combines Research facts with Sandbox, Feed, and other modules
+  to format guidance.
 - Surface owns authentication, authorization, MCP/HTTP schemas, and response
   presentation.
 - Skills tell agents how to perform the work; they do not define legal state

@@ -26,8 +26,7 @@ Merv is one science and the machinery that carries it:
    physical object store is part of Merv.
 
 **Kernel** sits under all three: the shared state floor, events, the tool-call
-ledger, IDs, the tool-contract type, and narrow ports. **MLflow** is a frozen,
-suspended integration and the one named exception to the law below.
+ledger, IDs, the tool-contract type, and narrow ports.
 
 The rule that makes this hold is *research declares, support enforces*. When
 support needs to know what a session may do, the answer is data the workflow
@@ -47,7 +46,6 @@ support module**, research or application implements it, and
 | Agent sessions | `agent_sessions/**` | runner identity, pairing, leases, traces, workspaces |
 | ML infrastructure | `infrastructure/**` | the merv-sandboxes transport, sandboxes, providers, spend reporting, the heavy-object facade |
 | Surface | the rest of `surface/**` | HTTP/MCP delivery, auth, OAuth, project keys, agent identity, the tool registry and dispatcher, telemetry, and the composition root |
-| MLflow | `mlflow/**` | the frozen tracking adapter. Do not edit it |
 
 Research lives inside `surface/` wherever the science reaches HTTP: the
 `experiments`, `reflections`, `claims`, `reviews`, `tasks`, `views` and
@@ -64,7 +62,6 @@ them.
 | Artifacts / Feed / Agent sessions | itself, Kernel |
 | ML infrastructure | itself, Kernel |
 | Surface | anyone; its layer classification still applies |
-| MLflow | MLflow, Research, Kernel — the named frozen exception |
 
 A support component sees only itself and Kernel, so no research meaning can
 travel sideways between the things that carry it. Surface composes, so Surface
@@ -89,7 +86,7 @@ else receives a facade or a port.
 | port | `kernel/ports/**`, `infrastructure/ports.py` |
 | domain | `workflows/{graph,composition,registry,definitions/**}` and pure policy |
 | application | component roots, `research_core/**`, the `workflows/` runtime and delivery, `application/**`, `infrastructure/objects.py`, the Surface flows that own their own tables |
-| adapter | `mlflow/**`, `infrastructure/client.py`, `artifacts/r2.py`, `kernel/state/dialects.py`, `surface/{web_preview,oauth_store}.py` |
+| adapter | `infrastructure/client.py`, `artifacts/r2.py`, `kernel/state/dialects.py`, `surface/{web_preview,oauth_store}.py` |
 | delivery | ordinary `surface/**` HTTP/MCP/auth/serialization code |
 | bootstrap | `surface/surface.py`, `surface/config.py`, `surface/transport/http_server.py` |
 
@@ -122,10 +119,10 @@ understandable to the next reader.
 The law admits an allowlist, and every entry carries the reason it cannot be
 fixed where it is written. Today: `lens_id`, a public wire field of
 `artifact.upload` with the relay shapes behind it, whose value Artifacts never
-reads. `experiments.rapidreview.io` is a DNS name, not vocabulary. Three files are outside the scan: the two composition roots
-(`surface/surface.py` and `surface/transport/api/app.py`), whose job is naming
-every owner, and `surface/tools/mlflow_contracts.py`, which is frozen MLflow
-text. A test fails the moment an allowlist entry stops matching anything.
+reads. `experiments.rapidreview.io` is a DNS name, not vocabulary. Two files are
+outside the scan: the composition roots (`surface/surface.py` and
+`surface/transport/api/app.py`), whose job is naming every owner. A test fails
+the moment an allowlist entry stops matching anything.
 
 Where the kernel used to name research fields, owners now register them.
 `kernel/state/activity.py` keeps the generic argument names every component
