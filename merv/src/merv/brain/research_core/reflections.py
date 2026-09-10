@@ -70,6 +70,11 @@ def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
     return rows_to_dicts(rows=conn.execute(sql, parameters).fetchall())
 
 
+def _literals(values) -> str:
+    """A fixed set of declared statuses, spelled into one IN clause."""
+    return ", ".join(f"'{value}'" for value in sorted(values))
+
+
 def _pins(snapshot: dict[str, Any], proposal: dict[str, Any]) -> bool:
     """A review is current only for the exact proposal and code sha it graded."""
     return (snapshot.get("snapshot_token") == proposal["id"]
@@ -121,13 +126,13 @@ class ReflectionService(RecordHooks):
 
     def _create(self, *, conn, project_id, title, lenses, instance=None):
         roster = validate_reflection_roster(lenses=lenses or [])
-        corpus = self._corpus_snapshot(conn=conn, project_id=project_id)
+        fixed = self._corpus_snapshot(conn=conn, project_id=project_id)
         return self.records.create_in_transaction(
             REFLECTION, conn=conn, project_id=project_id, instance=instance,
             values={"title": title.strip(), "roster_json": json.dumps(roster, sort_keys=True),
-                    "corpus_json": json.dumps(corpus, sort_keys=True)},
+                    "corpus_json": json.dumps(fixed, sort_keys=True)},
             event={"title": title.strip(), "lenses": [lens["id"] for lens in roster],
-                   "corpus_terminal_experiments": len(corpus["terminal_experiments"])},
+                   "corpus_terminal_experiments": len(fixed["terminal_experiments"])},
             read={"include_content": True},
         )
 
@@ -167,10 +172,8 @@ class ReflectionService(RecordHooks):
 
     def _terminal_nodes(self, *, conn, project_id: str, kind: str, statuses, roles, columns: str):
         """Every finished node of one kind, each naming its authoritative evidence."""
-        table = f"{kind}s"
-        nodes = _query(conn, f"SELECT {columns} FROM {table} WHERE project_id = ? AND status IN "
-                             f"({', '.join(repr(status) for status in sorted(statuses))}) ORDER BY created_at, id",
-                       (project_id,))
+        nodes = _query(conn, f"SELECT {columns} FROM {kind}s WHERE project_id = ? AND status IN "
+                             f"({_literals(statuses)}) ORDER BY created_at, id", (project_id,))
         history = self.artifacts.history(tx=conn, target_type=kind,
                                          target_ids=tuple(str(node["id"]) for node in nodes))
         for node in nodes:
@@ -1223,7 +1226,7 @@ class ReflectionService(RecordHooks):
     @staticmethod
     def _statuses(*, conn, project_id: str, table: str, statuses: frozenset[str] | None = None) -> dict[str, str]:
         """The status of every row of one kind the drift signal compares."""
-        where = "" if statuses is None else f" AND status IN ({', '.join(repr(s) for s in sorted(statuses))})"
+        where = "" if statuses is None else f" AND status IN ({_literals(statuses)})"
         return {str(row["id"]): str(row["status"]) for row
                 in conn.execute(f"SELECT id, status FROM {table} WHERE project_id = ?{where}",
                                 (project_id,)).fetchall()}
