@@ -16,7 +16,7 @@ from fastapi import Request
 
 from ....research_core import Research
 from ...identity import LOCAL_PRINCIPAL, ProjectKeyScopeError, is_external_key
-from ..http_policy import HOSTED_CONTROL_TOOL_POLICIES
+from ...tools.contracts import TOOL_MANIFEST
 
 Preauthorizer = Callable[[Request, str, dict[str, Any]], None]
 
@@ -62,20 +62,13 @@ def build_mcp_preauthorizer(
             # account-scoped key (no key_project_id) cannot slip through.
             raise ProjectKeyScopeError("project API keys cannot create projects",
                                        details={"key_project_id": key_project_id})
-        policy = HOSTED_CONTROL_TOOL_POLICIES.get(name) if hosted else None
-        if policy is None:
-            return
-        if policy.telemetry_from_review_request:
+        scope_field = getattr(TOOL_MANIFEST.get(name), "telemetry_scope_field", "") if hosted else ""
+        if scope_field:
+            # INV-9: the reviewed request or the session's own project decides
+            # scope, so an mk_ key cannot ride a foreign id into another project.
             authorizer.require_member(
                 project_id=research.review_project_id(
-                    review_request_id=arguments.get("review_request_id")),
-                principal=principal)
-        if policy.telemetry_from_review_session:
-            # INV-9: the session's own project decides scope, so an mk_ key
-            # cannot ride a foreign session id into another project.
-            authorizer.require_member(
-                project_id=research.review_project_id(
-                    review_session_id=arguments.get("review_session_id")),
+                    **{scope_field: arguments.get(scope_field)}),
                 principal=principal)
 
     return preauthorize

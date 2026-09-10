@@ -656,11 +656,7 @@ class ServiceLayoutTest(unittest.TestCase):
         self.assertNotIn("for_auth_present", source)
         self.assertNotIn("for_auth_present", policy_source)
         self.assertNotIn("auth_required", source)
-        for field_name in (
-            "restrict_cors",
-            "hosted_control",
-            "use_hosted_tool_policies",
-        ):
+        for field_name in ("restrict_cors", "hosted_control"):
             with self.subTest(field_name=field_name):
                 self.assertIn(field_name, policy_source)
         self.assertNotIn("require_bearer_auth", policy_source)
@@ -676,39 +672,46 @@ class ServiceLayoutTest(unittest.TestCase):
         self.assertNotIn("target.app.projects.require_project_scope(", source)
         self.assertNotIn("project_ids_for_tenant", source)
 
-    def test_hosted_tool_call_metadata_uses_policy_table(self) -> None:
+    def test_hosted_tool_metadata_and_producer_binding_are_contract_declared(
+        self,
+    ) -> None:
+        # Per-tool hosted policy moved onto the ToolContract its owner
+        # declares: http_policy keeps generic policy and the session
+        # baselines, and the gateway names no tool to resolve either.
         source = _http_gateway_source()
         policy_source = (SURFACE_ROOT / "transport" / "http_policy.py").read_text(
             encoding="utf-8"
         )
-        from merv.brain.surface.transport.http_policy import HOSTED_CONTROL_TOOL_POLICIES
+        from merv.brain.surface.tools.contracts import TOOL_MANIFEST
 
         self.assertEqual(
-            set(HOSTED_CONTROL_TOOL_POLICIES),
-            {"project", "project.list", "review.start", "review.submit"},
+            {
+                name: tool.telemetry_scope_field
+                for name, tool in TOOL_MANIFEST.items()
+                if tool.telemetry_scope_field
+            },
+            {
+                "review.start": "review_request_id",
+                "review.submit": "review_session_id",
+            },
         )
-        self.assertTrue(
-            HOSTED_CONTROL_TOOL_POLICIES["review.start"].telemetry_from_review_request
-        )
-        self.assertTrue(
-            HOSTED_CONTROL_TOOL_POLICIES["review.submit"].telemetry_from_review_session
+        self.assertEqual(
+            {
+                name
+                for name, tool in TOOL_MANIFEST.items()
+                if tool.binds_producer_session
+            },
+            {"consolidation.submit"},
         )
         self.assertNotIn("tenant_id_fallback", policy_source)
-        self.assertNotIn("class _HostedToolPolicy", source)
-        self.assertIn("HOSTED_CONTROL_TOOL_POLICIES", source)
-        self.assertIn("HOSTED_CONTROL_TOOL_POLICIES", policy_source)
-        for tool_name in (
-            "project",
-            "project.list",
-            "review.start",
-            "review.submit",
-        ):
-            self.assertIn(f'"{tool_name}": HostedToolPolicy', policy_source)
+        self.assertNotIn("HostedToolPolicy", policy_source + source)
+        self.assertNotIn("consolidation", source)
+        for tool_name in ("review.start", "review.submit"):
+            self.assertNotIn(f'"{tool_name}": ', policy_source)
             self.assertNotIn(
                 f'if surface.hosted_control and name == "{tool_name}"', source
             )
-        self.assertIn("telemetry_from_review_request=True", policy_source)
-        self.assertEqual(source.count("self.research.review_project_id("), 2)
+        self.assertEqual(source.count("self.research.review_project_id("), 1)
         self.assertNotIn("SELECT project_id FROM review_requests", source)
 
     def test_http_data_plane_capabilities_stay_retired(self) -> None:

@@ -33,6 +33,11 @@ class ToolContract:
     visibility: ToolVisibility = "public"
     scope_strategy: ToolScopeStrategy | None = None
     feature_requirements: tuple[ToolFeature, ...] = ()
+    # producer_session_id is the verified caller's leased session, or its
+    # context-window id when it holds no session — never the model's word.
+    binds_producer_session: bool = False
+    # Hosted mode resolves the telemetry project from this argument's id.
+    telemetry_scope_field: str = ""
 
     def __post_init__(self) -> None:
         if self.scope_strategy is None:

@@ -211,7 +211,7 @@ def create_fastapi_app(
         authorize_scope=mcp_preauth.build_mcp_preauthorizer(
             authorizer=authorizer,
             research=api.research,
-            hosted=surface.use_hosted_tool_policies,
+            hosted=surface.hosted_control,
             authorize_agent_session=gateway.authorize_agent_session,
         ),
         ledger=api.tool_ledger,
