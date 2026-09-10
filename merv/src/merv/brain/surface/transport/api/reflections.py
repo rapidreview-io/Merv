@@ -7,15 +7,21 @@ from typing import Any
 from fastapi import APIRouter
 
 from ....application import Application, LogicGraphQuery
+from ....application.reflections import present_reflection_overview
+from ....research_core import Research
 
 
-def build_router(*, application: Application, graphs: LogicGraphQuery) -> APIRouter:
+def build_router(
+    *, application: Application, research: Research, graphs: LogicGraphQuery
+) -> APIRouter:
     api_router = APIRouter()
 
     @api_router.get("/api/projects/{project_id}/reflections")
     def list_reflections(project_id: str) -> dict[str, Any]:
         # Reflection waves + staleness/coverage signal for the UI panel.
-        return application.reflection_overview(project_id=project_id)
+        return present_reflection_overview(
+            research.reflection_overview(project_id=project_id)
+        )
 
     @api_router.get("/api/projects/{project_id}/reflections/current/graph")
     def project_logic_graph(project_id: str) -> dict[str, Any]:

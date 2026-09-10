@@ -24,7 +24,9 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
    MCP protocol. They delegate tool calls to the dispatcher.
 4. `transport/api/app.py` builds FastAPI once. Its routers parse path/body/query
    input, call the dispatcher or the narrow capability that owns the operation,
-   and serialize HTTP responses.
+   and serialize HTTP responses. Each router names the collaborators it needs —
+   Research, Agent Sessions, the shared logic-graph read — and takes them as
+   keywords here; Application appears only where a route joins two components.
 5. `transport/api/gateway.py` authenticates the caller, resolves project scope,
    applies hosted/local policy, and invokes tools. Middleware supplies CORS,
    error rendering, redaction, and request telemetry.
@@ -34,11 +36,12 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
 - `auth.py`, `identity.py`, `project_keys.py`: caller identity plus project and
   account credential lifecycle. Project-key policy and SQL are intentionally
   together because there is one implementation and rotations must be atomic.
-- `transport/api/agent_sessions.py` and gateway policy: runner control, the
-  generic central-advance routes, and MCP-only, default-deny authority for
-  local agent workers enforced from the node-declared execution policy each
-  lease carries (`http_policy.SessionExecution`); no tool, id field, or
-  workflow name is hardcoded beyond `workflow.transition` and the baselines.
+- `transport/api/agent_sessions.py` and gateway policy: runner control called
+  straight on Agent Sessions, the generic central-advance routes, and MCP-only,
+  default-deny authority for local agent workers enforced from the
+  node-declared execution policy each lease carries
+  (`http_policy.SessionExecution`); no tool, id field, or workflow name is
+  hardcoded beyond `workflow.transition` and the baselines.
 - `runner_pairing.py` plus `transport/api/runner_pairing.py`: device-code
   pairing of an auto-run machine — the runner presents only its key digest, an
   owner approves the printed code, and the digest is registered as a labelled
@@ -76,8 +79,8 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
 
 - Surface may format and authorize; it may not reproduce module workflow rules.
 - HTTP routes receive narrow collaborators, never a dependency bag or facade.
-- Tools bind directly to their owning product roots; Application is used only for
-  genuinely cross-module workflows.
+- Tools and routes bind directly to their owning product roots; Application is
+  used only for genuinely cross-module workflows, never as a way to reach one.
 - Generic workflow tools use instance IDs and ordinary action names; their
   schemas and routing contain no per-workflow cases. Workflows checks project
   scope, definition version, current revision, and durable gate facts.

@@ -448,19 +448,6 @@ class Application:
             ]
         }
 
-    def experiment_context(
-        self,
-        *,
-        state: dict[str, Any],
-        project_id: str | None = None,
-        pinned_artifacts: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
-        return self._experiment_context.build(
-            state=state,
-            project_id=project_id,
-            pinned_artifacts=pinned_artifacts,
-        )
-
     # Experiments ----------------------------------------------------------
 
     def create_experiment(self, **kwargs: Any) -> dict[str, Any]:
@@ -773,11 +760,6 @@ class Application:
                 ),
                 **result,
             }
-        )
-
-    def reflection_overview(self, *, project_id: str) -> dict[str, Any]:
-        return present_reflection_overview(
-            self.research.reflection_overview(project_id=project_id)
         )
 
     def transition_reflection(

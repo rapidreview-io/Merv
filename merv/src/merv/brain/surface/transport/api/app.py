@@ -172,7 +172,9 @@ def create_fastapi_app(
         ),
         tasks.build_router(gateway, application=api.application),
         reflections.build_router(
-            application=api.application, graphs=api.logic_graphs
+            application=api.application,
+            research=api.research,
+            graphs=api.logic_graphs,
         ),
         artifacts.build_router(artifacts=api.artifacts),
         storage.build_router(storage=api.storage),
