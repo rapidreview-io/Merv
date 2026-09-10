@@ -374,7 +374,7 @@ def resolve_artifact_need(need: ArtifactNeed, context: GateContext) -> Requireme
         enforcement_error="" if issue is None else issue.message,
         problems=() if issue is None else (issue.message,),
         items=(_item(need, kind="artifact", status=status, satisfied=issue is None,
-                     validator=need.validator,
+                     validator=need.validator or None,
                      missing=(need.missing or f"{need.role} artifact") if status == "missing" else None,
                      problems=None if issue is None else [issue.message],
                      artifact_id=None if artifact is None else artifact.get("id"),

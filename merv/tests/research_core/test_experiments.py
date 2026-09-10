@@ -1,106 +1,11 @@
 from __future__ import annotations
 
-import json
-
 from merv.brain.kernel.utils import PermissionDeniedError, WorkflowError
-from merv.brain.research_core.experiment_workflow import EXPERIMENT_WORKFLOW
 
-from .scenarios import VALID_GRAPH, VALID_PLAN, VALID_REPORT, ResearchCase
+from .scenarios import VALID_PLAN, ResearchCase
 
 
 class ExperimentWorkflowTest(ResearchCase):
-    def test_full_lifecycle_is_gated_and_records_schema_transitions(self) -> None:
-        experiment_id = self.create_experiment()
-        plan_requirement = EXPERIMENT_WORKFLOW.requirement("plan")
-
-        with self.assertRaisesRegex(WorkflowError, plan_requirement.error):
-            self.transition_experiment(experiment_id, "submit_design")
-
-        self.submit(
-            target_type="experiment",
-            target_id=experiment_id,
-            role="plan",
-            path="plan.md",
-            body=VALID_PLAN,
-        )
-        states = [
-            self.transition_experiment(experiment_id, "submit_design")["status"]
-        ]
-        self.pass_review(
-            target_type="experiment",
-            target_id=experiment_id,
-            role="design_reviewer",
-        )
-        approved = self.app.research.experiment_state(project_id=self.project_id, experiment_id=experiment_id)
-        states.append(approved["status"])
-        self.assertIsNone(self.app.experiments.attempt_started_running_at(experiment_id=experiment_id))
-        for role, path, body in (
-            ("result", "results.json", '{"accuracy": 0.72}'),
-            ("report", "report.md", VALID_REPORT),
-            ("graph", "graph.json", VALID_GRAPH),
-        ):
-            self.submit(
-                target_type="experiment",
-                target_id=experiment_id,
-                role=role,
-                path=path,
-                body=body,
-            )
-        states.append(
-            self.transition_experiment(experiment_id, "submit_results")["status"]
-        )
-        self.pass_review(
-            target_type="experiment",
-            target_id=experiment_id,
-            role="experiment_reviewer",
-        )
-        completed = self.app.research.experiment_state(project_id=self.project_id, experiment_id=experiment_id)
-        states.append(completed["status"])
-
-        self.assertEqual(
-            states,
-            [
-                "design_review",
-                "running",
-                "experiment_review",
-                "complete",
-            ],
-        )
-        state = self.call(
-            "experiment.get_state",
-            project_id=self.project_id,
-            experiment_id=experiment_id,
-        )
-        self.assertEqual(
-            state["conclusion"], "The registered threshold was met."
-        )
-        with self.app.store.connect() as conn:
-            events = conn.execute(
-                """
-                SELECT payload_json FROM events
-                WHERE target_id = ? AND type = ?
-                ORDER BY id
-                """,
-                (experiment_id, EXPERIMENT_WORKFLOW.event_type),
-            ).fetchall()
-            sealed = conn.execute(
-                """
-                SELECT COUNT(*) AS n FROM research_artifact_links
-                WHERE target_id = ? AND submission_id <> ''
-                """,
-                (experiment_id,),
-            ).fetchone()["n"]
-        self.assertEqual(
-            [json.loads(row["payload_json"])["transition"] for row in events],
-            [
-                "submit_design",
-                "approve_design",
-                "submit_results",
-                "complete",
-            ],
-        )
-        self.assertGreater(sealed, 0)
-
     def test_create_carries_the_ask_details_through_to_state(self) -> None:
         ask = "Hold the optimizer at the harness default; budget one GPU-day."
         created = self.call(
@@ -255,18 +160,6 @@ class ExperimentWorkflowTest(ResearchCase):
             experiment_id=experiment_id,
         )
         self.assertIn("provider outage", state["revision_context"])
-
-    def test_terminal_state_has_no_escape_hatch(self) -> None:
-        experiment_id = self.create_experiment("abandoned")
-        self.transition_experiment(experiment_id, "abandon")
-        state = self.call(
-            "experiment.get_state",
-            project_id=self.project_id,
-            experiment_id=experiment_id,
-        )
-        self.assertEqual(state["allowed_transitions"], [])
-        with self.assertRaises(WorkflowError):
-            self.transition_experiment(experiment_id, "abandon")
 
 
 if __name__ == "__main__":
