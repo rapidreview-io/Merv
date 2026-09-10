@@ -970,7 +970,7 @@ class ReflectionService(RecordHooks):
                                 association_ids=(association_id,))
 
     def _reserve_wave_names(self, *, conn, reflection: dict[str, Any]) -> None:
-        """Pin the validated spec and reserve its experiment names.
+        """Pin the validated spec and reserve the names its wave will take.
 
         The reservation rows carry the validated artifact's id, so publish
         materializes exactly the spec whose names were reserved — a change
@@ -979,194 +979,67 @@ class ReflectionService(RecordHooks):
         time instead of blocking an already-bound publish (see
         ExperimentService._reject_reserved_wave_name).
         """
-        document = self._submitted_role_document(
-            reflection=reflection, roles=("change_spec",), what="change spec"
-        )
+        reflection_id, project_id = str(reflection["id"]), str(reflection["project_id"])
+        document = self._submitted_role_document(reflection=reflection, roles=("change_spec",), what="change spec")
         if document is None:
-            raise WorkflowError(
-                "a change spec artifact must be submitted before reflection review"
-            )
-        spec = self._parse_change_spec(
-            conn=conn,
-            project_id=str(reflection["project_id"]),
-            text=document.text,
-            path=document.path,
-            enforce_world=False,
-        )
-        decision = spec.get("decision") or {}
-        names = {
-            str(proposal.get("name") or "").strip().lower()
-            for proposal in decision.get("experiments") or []
-        }
-        task_names = {
-            str(proposal.get("name") or "").strip().lower()
-            for proposal in decision.get("tasks") or []
-        }
-        reflection_id = str(reflection["id"])
-        project_id = str(reflection["project_id"])
-        conn.execute(
-            "DELETE FROM reflection_reserved_names WHERE reflection_id = ?",
-            (reflection_id,),
-        )
-        active_count = len(
-            self._non_terminal_experiments(conn=conn, project_id=project_id)
-        )
-        if active_count + len(names) > ACTIVE_EXPERIMENT_CAP:
-            raise WorkflowError(
-                active_experiment_cap_would_exceed_message(
-                    active_count=active_count, proposed_count=len(names)
-                )
-            )
-        for name in sorted(name for name in names | task_names if name):
+            raise WorkflowError("a change spec artifact must be submitted before reflection review")
+        world = self._world(conn=conn, project_id=project_id)
+        decision = self._parse_change_spec(world=world, document=document).get("decision") or {}
+        proposed = {kind: {name for proposal in decision.get(kind) or ()
+                           if (name := str(proposal.get("name") or "").strip().lower())}
+                    for kind in ("experiments", "tasks")}
+        conn.execute("DELETE FROM reflection_reserved_names WHERE reflection_id = ?", (reflection_id,))
+        active = len(world["non_terminal_experiments"])
+        if active + len(proposed["experiments"]) > ACTIVE_EXPERIMENT_CAP:
+            raise WorkflowError(active_experiment_cap_would_exceed_message(
+                active_count=active, proposed_count=len(proposed["experiments"])))
+        for name in sorted(proposed["experiments"] | proposed["tasks"]):
             # Availability recheck keeps this safe from any caller, not just
             # the gate that world-validated the spec this same transaction.
-            if name in names and self._experiment_name_exists(
-                conn=conn, project_id=project_id, name=name
-            ):
-                raise WorkflowError(
-                    f"experiment name already exists in project: {name}"
-                )
-            if name in task_names and self._task_name_exists(
-                conn=conn, project_id=project_id, name=name
-            ):
-                raise WorkflowError(f"task name already exists in project: {name}")
-            conn.execute(
-                "INSERT INTO reflection_reserved_names "
-                "(reflection_id, project_id, name_lower, artifact_id) "
-                "VALUES (?, ?, ?, ?)",
-                (reflection_id, project_id, name, document.artifact_id),
-            )
+            for kind, taken in (("experiments", world["experiment_names"]), ("tasks", world["task_names"])):
+                if name in proposed[kind] and name in taken:
+                    raise WorkflowError(f"{kind[:-1]} name already exists in project: {name}")
+            conn.execute("INSERT INTO reflection_reserved_names (reflection_id, project_id, name_lower, artifact_id) "
+                         "VALUES (?, ?, ?, ?)", (reflection_id, project_id, name, document.artifact_id))
 
-    def _pinned_change_spec(
-        self, *, conn, reflection: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _pinned_change_spec(self, *, conn, reflection: dict[str, Any]) -> dict[str, Any]:
         """The spec pinned when its names were validated and reserved.
 
         Publish reads the artifact id stored on the wave's reservation rows,
-        never the latest submission — a spec submitted after validation
-        cannot drift into publication. enforce_world=False: availability was
-        checked and reserved in the pinning transaction, and by publish the
-        Git advance is already bound, so a mutable-world recheck could only
-        wedge the wave.
+        never the latest submission — a spec submitted after validation cannot
+        drift into publication. Availability was checked and reserved in the
+        pinning transaction, and by publish the Git advance is already bound,
+        so a mutable-world recheck could only wedge the wave.
         """
-        row = conn.execute(
-            "SELECT artifact_id FROM reflection_reserved_names "
-            "WHERE reflection_id = ? AND artifact_id != '' LIMIT 1",
-            (str(reflection["id"]),),
-        ).fetchone()
-        if row is not None:
-            document = self._read_document(
-                artifact_id=str(row["artifact_id"]), what="change spec"
-            )
-        else:
-            # Upgrade path: a wave already consolidating when the pin shipped
-            # has no reservation rows; fall back to the current sealed spec
-            # (the pre-pin behavior) so its bound publish cannot wedge. New
-            # waves always pin at submit_reflection_artifacts.
-            document = self._submitted_role_document(
-                reflection=reflection, roles=("change_spec",), what="change spec"
-            )
-            if document is None:
-                raise WorkflowError(
-                    "a change spec artifact must be submitted before publish"
-                )
-        return self._parse_change_spec(
-            conn=conn,
-            project_id=str(reflection["project_id"]),
-            text=document.text,
-            path=document.path,
-            enforce_world=False,
-        )
+        row = conn.execute("SELECT artifact_id FROM reflection_reserved_names "
+                           "WHERE reflection_id = ? AND artifact_id != '' LIMIT 1",
+                           (str(reflection["id"]),)).fetchone()
+        # Upgrade path: a wave already consolidating when the pin shipped has
+        # no reservation rows; fall back to the current sealed spec (the
+        # pre-pin behavior) so its bound publish cannot wedge.
+        document = (self._read_document(artifact_id=str(row["artifact_id"]), what="change spec") if row is not None
+                    else self._submitted_role_document(reflection=reflection, roles=("change_spec",),
+                                                       what="change spec"))
+        if document is None:
+            raise WorkflowError("a change spec artifact must be submitted before publish")
+        return self._parse_change_spec(world=self._world(conn=conn, project_id=str(reflection["project_id"])),
+                                       document=document)
 
-    def _parse_change_spec(
-        self,
-        *,
-        conn,
-        project_id: str,
-        text: str,
-        path: str,
-        enforce_world: bool = True,
-    ) -> dict[str, Any]:
-        return parse_change_spec(
-            text=text,
-            path=path,
-            claim_exists=lambda claim_id: self._claim_exists(
-                conn=conn, project_id=project_id, claim_id=claim_id
-            ),
-            experiment_name_taken=(
-                (
-                    lambda name: self._experiment_name_exists(
-                        conn=conn, project_id=project_id, name=name
-                    )
-                )
-                if enforce_world
-                else None
-            ),
-            task_name_taken=(
-                (
-                    lambda name: self._task_name_exists(
-                        conn=conn, project_id=project_id, name=name
-                    )
-                )
-                if enforce_world
-                else None
-            ),
-            node_exists=lambda node_id: self._node_exists(
-                conn=conn, project_id=project_id, node_id=node_id
-            ),
-            non_terminal_experiments=(
-                (
-                    lambda: self._non_terminal_experiments(
-                        conn=conn, project_id=project_id
-                    )
-                )
-                if enforce_world
-                else None
-            ),
-        )
+    def _world(self, *, conn, project_id: str) -> dict[str, Any]:
+        """The project a change spec is read against, as the graph reads it."""
+        return self.read_fact(conn=conn, record={"project_id": project_id},
+                              reference=Reference("reflection_world", project_id))
 
-    def _claim_exists(self, *, conn, project_id: str, claim_id: str) -> bool:
-        row = conn.execute(
-            "SELECT 1 FROM claims WHERE id = ? AND project_id = ? LIMIT 1",
-            (claim_id, project_id),
-        ).fetchone()
-        return row is not None
+    @staticmethod
+    def _parse_change_spec(*, world: dict[str, Any], document: ArtifactDocument) -> dict[str, Any]:
+        """Parse one spec for reservation and publication, never for creation.
 
-    def _task_name_exists(self, *, conn, project_id: str, name: str) -> bool:
-        row = conn.execute(
-            "SELECT 1 FROM tasks WHERE project_id = ? AND lower(name) = lower(?) LIMIT 1",
-            (project_id, name),
-        ).fetchone()
-        return row is not None
-
-    def _node_exists(self, *, conn, project_id: str, node_id: str) -> bool:
-        table = "experiments" if node_id.startswith("exp_") else "tasks"
-        row = conn.execute(
-            f"SELECT 1 FROM {table} WHERE id = ? AND project_id = ? LIMIT 1",
-            (node_id, project_id),
-        ).fetchone()
-        return row is not None
-
-    def _experiment_name_exists(self, *, conn, project_id: str, name: str) -> bool:
-        row = conn.execute(
-            "SELECT 1 FROM experiments WHERE project_id = ? AND lower(name) = lower(?) LIMIT 1",
-            (project_id, name),
-        ).fetchone()
-        return row is not None
-
-    def _non_terminal_experiments(self, *, conn, project_id: str) -> list[str]:
-        terminal = ", ".join(
-            f"'{status}'" for status in sorted(EXPERIMENT_TERMINAL_STATUSES)
-        )
-        rows = conn.execute(
-            f"""
-            SELECT name, id FROM experiments
-            WHERE project_id = ? AND status NOT IN ({terminal})
-            ORDER BY created_at, id
-            """,
-            (project_id,),
-        ).fetchall()
-        return [str(row["name"] or row["id"]) for row in rows]
+        Name availability and the active cap are the gate's question, asked
+        once when the spec is validated; here the names are already this wave's.
+        """
+        return parse_change_spec(text=document.text, path=document.path,
+                                 claim_exists=lambda value: value in world["claim_ids"],
+                                 node_exists=lambda value: value in world["node_ids"])
 
     def _materialize_change_spec(self, *, conn, reflection: dict[str, Any]) -> None:
         """Apply the reviewer-approved belief-state update.
@@ -1175,81 +1048,64 @@ class ReflectionService(RecordHooks):
         passes. Rejected reflections never reach this function, so speculative
         claim edits or experiment specs do not leak into project state.
         """
-        project_id = str(reflection["project_id"])
-        reflection_id = str(reflection["id"])
+        project_id, reflection_id = str(reflection["project_id"]), str(reflection["id"])
         spec = self._pinned_change_spec(conn=conn, reflection=reflection)
-        key_to_claim_id = self._materialize_claim_changes(
-            conn=conn,
-            project_id=project_id,
-            reflection_id=reflection_id,
-            changes=spec.get("claim_changes") or [],
-        )
         self._materialize_wave(
-            conn=conn,
-            project_id=project_id,
-            reflection_id=reflection_id,
-            key_to_claim_id=key_to_claim_id,
+            conn=conn, project_id=project_id, reflection_id=reflection_id,
+            key_to_claim_id=self._materialize_claim_changes(
+                conn=conn, project_id=project_id, reflection_id=reflection_id,
+                changes=spec.get("claim_changes") or []),
             experiments=spec["decision"].get("experiments") or [],
-            tasks=spec["decision"].get("tasks") or [],
-        )
+            tasks=spec["decision"].get("tasks") or [])
 
-    def _materialize_claim_changes(
-        self,
-        *,
-        conn,
-        project_id: str,
-        reflection_id: str,
-        changes: list[dict[str, Any]],
-    ) -> dict[str, str]:
-        key_to_claim_id: dict[str, str] = {}
+    def _materialize_claim_changes(self, *, conn, project_id: str, reflection_id: str,
+                                   changes: list[dict[str, Any]]) -> dict[str, str]:
+        """Apply each claim edit and remember the keys its wave refers to."""
+        by_key: dict[str, str] = {}
         for change in changes:
-            op = str(change["op"])
-            key = str(change.get("key") or "").strip()
-            if op == "create":
-                claim_id = self._create_claim(
-                    conn=conn,
-                    project_id=project_id,
-                    reflection_id=reflection_id,
-                    statement=str(change.get("statement") or ""),
-                    scope=str(change.get("scope") or ""),
-                    status=str(change.get("status") or "active"),
-                    confidence=str(change.get("confidence") or "medium"),
-                    rationale=str(change.get("rationale") or ""),
-                )
-                if key:
-                    key_to_claim_id[key] = claim_id
-            else:
-                claim_id = str(change["claim_id"]).strip()
-                self._update_claim(
-                    conn=conn,
-                    project_id=project_id,
-                    reflection_id=reflection_id,
-                    claim_id=claim_id,
-                    statement=(
-                        str(change["statement"]) if "statement" in change else None
-                    ),
-                    scope=str(change["scope"]) if "scope" in change else None,
-                    status=(
-                        str(change["status"])
-                        if change.get("status") is not None
-                        else None
-                    ),
-                    confidence=(
-                        str(change["confidence"])
-                        if change.get("confidence") is not None
-                        else None
-                    ),
-                    rationale=str(change.get("rationale") or ""),
-                )
-            conn.execute(
-                """
-                INSERT INTO reflection_claim_changes
-                  (reflection_id, claim_id, op, claim_key, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (reflection_id, claim_id, op, key, now_iso()),
-            )
-        return key_to_claim_id
+            op, key = str(change["op"]), str(change.get("key") or "").strip()
+            claim_id = (self._create_claim(conn=conn, project_id=project_id, change=change) if op == "create"
+                        else self._update_claim(conn=conn, project_id=project_id, change=change))
+            if op == "create" and key:
+                by_key[key] = claim_id
+            self._claim_event(conn=conn, project_id=project_id, reflection_id=reflection_id, op=op,
+                              claim_id=claim_id, key=key, change=change)
+        return by_key
+
+    def _create_claim(self, *, conn, project_id: str, change: dict[str, Any]) -> str:
+        claim_id = new_id(prefix="claim")
+        conn.execute(
+            "INSERT INTO claims (id, project_id, statement, scope, status, confidence, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (claim_id, project_id, str(change.get("statement") or "").strip(), str(change.get("scope") or "").strip(),
+             str(change.get("status") or "active"), str(change.get("confidence") or "medium"), now_iso()))
+        return claim_id
+
+    def _update_claim(self, *, conn, project_id: str, change: dict[str, Any]) -> str:
+        """Overwrite only the fields the spec named; the rest stand as they are."""
+        claim_id = str(change["claim_id"]).strip()
+        row = conn.execute("SELECT statement, scope, status, confidence FROM claims WHERE id = ? AND project_id = ?",
+                           (claim_id, project_id)).fetchone()
+        if row is None:
+            raise NotFoundError(f"claim not found: {claim_id}")
+        fields = {name: str(row[name]) if change.get(name) is None else str(change[name]).strip()
+                  for name in ("statement", "scope", "status", "confidence")}
+        conn.execute("UPDATE claims SET statement = ?, scope = ?, status = ?, confidence = ? WHERE id = ?",
+                     (*fields.values(), claim_id))
+        return claim_id
+
+    def _claim_event(self, *, conn, project_id: str, reflection_id: str, op: str, claim_id: str,
+                     key: str, change: dict[str, Any]) -> None:
+        row = conn.execute("SELECT statement, scope, status, confidence FROM claims WHERE id = ?",
+                           (claim_id,)).fetchone()
+        self.store.record_event(
+            conn=conn, project_id=project_id, event_type=f"claim.{'created' if op == 'create' else 'updated'}",
+            target_type="claim", target_id=claim_id,
+            payload={**{name: str(row[name]) for name in ("statement", "scope", "status", "confidence")},
+                     "source_reflection_id": reflection_id,
+                     "rationale": str(change.get("rationale") or "").strip()})
+        conn.execute("INSERT INTO reflection_claim_changes (reflection_id, claim_id, op, claim_key, created_at) "
+                     "VALUES (?, ?, ?, ?, ?)", (reflection_id, claim_id, op, key, now_iso()))
 
     def _materialize_wave(
         self,
@@ -1336,111 +1192,6 @@ class ReflectionService(RecordHooks):
                 node_id=node_id,
                 depends_on_ids=[key_to_node_id.get(ref, ref) for ref in refs],
             )
-
-    def _create_claim(
-        self,
-        *,
-        conn,
-        project_id: str,
-        reflection_id: str,
-        statement: str,
-        scope: str,
-        status: str,
-        confidence: str,
-        rationale: str,
-    ) -> str:
-        claim_id = new_id(prefix="claim")
-        statement = statement.strip()
-        conn.execute(
-            """
-            INSERT INTO claims
-              (id, project_id, statement, scope, status, confidence, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                claim_id,
-                project_id,
-                statement,
-                scope.strip(),
-                status,
-                confidence,
-                now_iso(),
-            ),
-        )
-        self.store.record_event(
-            conn=conn,
-            project_id=project_id,
-            event_type="claim.created",
-            target_type="claim",
-            target_id=claim_id,
-            payload={
-                "statement": statement,
-                "scope": scope.strip(),
-                "status": status,
-                "confidence": confidence,
-                "source_reflection_id": reflection_id,
-                "rationale": rationale.strip(),
-            },
-        )
-        return claim_id
-
-    def _update_claim(
-        self,
-        *,
-        conn,
-        project_id: str,
-        reflection_id: str,
-        claim_id: str,
-        statement: str | None,
-        scope: str | None,
-        status: str | None,
-        confidence: str | None,
-        rationale: str,
-    ) -> None:
-        row = conn.execute(
-            """
-            SELECT * FROM claims
-            WHERE id = ? AND project_id = ?
-            """,
-            (claim_id, project_id),
-        ).fetchone()
-        if row is None:
-            raise NotFoundError(f"claim not found: {claim_id}")
-        next_statement = (
-            str(row["statement"]) if statement is None else statement.strip()
-        )
-        next_scope = str(row["scope"]) if scope is None else scope.strip()
-        next_status = str(row["status"]) if status is None else status
-        next_confidence = str(row["confidence"]) if confidence is None else confidence
-        conn.execute(
-            """
-            UPDATE claims
-            SET statement = ?, scope = ?, status = ?, confidence = ?
-            WHERE id = ?
-            """,
-            (
-                next_statement,
-                next_scope,
-                next_status,
-                next_confidence,
-                claim_id,
-            ),
-        )
-        self.store.record_event(
-            conn=conn,
-            project_id=project_id,
-            event_type="claim.updated",
-            target_type="claim",
-            target_id=claim_id,
-            payload={
-                "statement": next_statement,
-                "scope": next_scope,
-                "status": next_status,
-                "confidence": next_confidence,
-                "source_reflection_id": reflection_id,
-                "rationale": rationale.strip(),
-            },
-        )
 
     def _submitted_role_document(
         self,
