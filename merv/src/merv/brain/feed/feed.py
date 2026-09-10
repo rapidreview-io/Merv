@@ -174,12 +174,10 @@ class FeedService:
         self.store = store
         self.blobs = blobs
         self.web_preview = web_preview
-        # The ids a post may point at are declared by the composition; the
-        # feed matches their prefixes and otherwise treats refs as opaque.
+        # The composition declares which id prefixes and roles exist; both are
+        # opaque here. An adoptable role shares one voice per project, so the
+        # reader follows one name per role instead of one per session.
         self.refs = RefParser(ref_vocabulary)
-        # Roles an agent may register under, and the subset that share one
-        # persistent voice per project so the reader follows one name per
-        # role instead of a new one per session. Both are opaque labels here.
         self.author_roles = frozenset(str(role) for role in author_roles)
         self.adoptable_roles = frozenset(str(role) for role in adoptable_roles)
         if RESEARCHER_ROLE in self.author_roles:
@@ -932,9 +930,8 @@ class FeedService:
         text = self._validate_text(text)
         ref = (ref or "").strip()
         if ref and not self.refs.accepts(ref):
-            raise ValidationError(
-                f"ref must point at a project entity ({self.refs.describe()})"
-            )
+            known = ", ".join(f"{kind} {prefix}…" for prefix, kind in self.refs.vocabulary)
+            raise ValidationError(f"ref must point at a project entity ({known})")
         kind = (kind or "").strip().lower()
         if kind and kind not in POST_KINDS:
             raise ValidationError(
