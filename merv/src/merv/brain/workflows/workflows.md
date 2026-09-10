@@ -42,6 +42,10 @@ migration explicitly preserves or replaces children and never replaces live work
 `definitions/` contains experiment, task, reflection, independent reflection lens,
 and published research-wave graphs. It also owns pure evidence validators,
 context builders, research contracts and passive legacy presentation metadata.
+`documents.py` declares one model per research document and validates from it;
+only what a schema cannot say stays code, each a named rule — cycles, uniqueness
+across entries, references resolved through a caller's callback. Research tool
+inputs import those models instead of restating them.
 `artifacts.py` there pins arbitrary semantic labels to immutable content IDs;
 new plugins need no storage role vocabulary or native research record.
 `artifact_roles.py` holds Merv's own role and association-target vocabulary
