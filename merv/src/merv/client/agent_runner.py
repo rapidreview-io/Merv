@@ -48,9 +48,17 @@ from merv.shared.client_config import (
     resolve_client_control_url,
     safe_control_url,
 )
-from merv.shared.redaction import redact_excerpt, redact_secrets
+from merv.shared.redaction import (
+    MAX_TRACE_EVENT_BYTES,
+    MAX_TRACE_EVENTS,
+    MAX_TRACE_STDERR_BYTES,
+    MAX_TRACE_TAIL_BYTES,
+    redact_secrets,
+)
 from merv.shared.runner_settings import (
     DEFAULT_PLATFORM_EXECUTABLES,
+    TELEMETRY_COUNTERS,
+    TELEMETRY_LABELS,
     WORKSPACE_STRATEGY,
     platform_entry,
     platform_problem,
@@ -2897,16 +2905,14 @@ def _prepare_trace(
     )
 
 
-TRACE_EXCERPT_EVENTS = 60
-TRACE_EXCERPT_EVENT_BYTES = 4 * 1024
-TRACE_EXCERPT_TAIL_BYTES = 256 * 1024
-TRACE_EXCERPT_STDERR_BYTES = 8 * 1024
 def _trace_excerpt(trace_dir: Path, *, complete: bool) -> dict[str, Any] | None:
-    """The last few provider events and the stderr tail, capped and redacted.
+    """The last few provider events and the stderr tail, capped.
 
     Reads only the tail of ``trace.jsonl`` (never the whole file) so a long
     session costs the same as a short one. Returns None when nothing exists
     yet. ``signature`` lets the caller skip re-sending an unchanged excerpt.
+    Redaction is the brain's job at the moment it persists this: a brain that
+    trusted a client to have masked its own secrets would not be masking them.
     """
     trace_path = trace_dir / "trace.jsonl"
     stderr_path = trace_dir / "stderr.log"
@@ -2918,35 +2924,30 @@ def _trace_excerpt(trace_dir: Path, *, complete: bool) -> dict[str, Any] | None:
         trace_size = -1
     if trace_size > 0:
         with trace_path.open("rb") as handle:
-            start = max(trace_size - TRACE_EXCERPT_TAIL_BYTES, 0)
+            start = max(trace_size - MAX_TRACE_TAIL_BYTES, 0)
             handle.seek(start)
             raw = handle.read()
         lines = raw.split(b"\n")
         if start > 0:
             lines = lines[1:]  # the first line is almost surely partial
-        for line in [item for item in lines if item.strip()][-TRACE_EXCERPT_EVENTS:]:
+        for line in [item for item in lines if item.strip()][-MAX_TRACE_EVENTS:]:
             text = line.decode("utf-8", errors="replace")
-            if len(text.encode("utf-8")) > TRACE_EXCERPT_EVENT_BYTES:
+            if len(text.encode("utf-8")) > MAX_TRACE_EVENT_BYTES:
                 events.append(
-                    {"truncated": True,
-                     "preview": redact_secrets(text[: TRACE_EXCERPT_EVENT_BYTES // 2])}
+                    {"truncated": True, "preview": text[: MAX_TRACE_EVENT_BYTES // 2]}
                 )
                 continue
             try:
-                parsed = json.loads(text)
+                events.append(json.loads(text))
             except ValueError:
-                events.append({"raw": redact_secrets(text)})
-                continue
-            events.append(redact_excerpt(parsed))
+                events.append({"raw": text})
     stderr_tail = ""
     stderr_size = -1
     try:
         stderr_size = stderr_path.stat().st_size
         with stderr_path.open("rb") as handle:
-            handle.seek(max(stderr_size - TRACE_EXCERPT_STDERR_BYTES, 0))
-            stderr_tail = redact_secrets(
-                handle.read().decode("utf-8", errors="replace")
-            )
+            handle.seek(max(stderr_size - MAX_TRACE_STDERR_BYTES, 0))
+            stderr_tail = handle.read().decode("utf-8", errors="replace")
     except FileNotFoundError:
         pass
     if trace_size < 0 and stderr_size < 0:
@@ -3178,18 +3179,7 @@ def _assistant_message_id(event: Mapping[str, Any]) -> str:
 
 def _public_telemetry(state: Mapping[str, Any] | None) -> dict[str, Any]:
     current = dict(state or {})
-    allowed = {
-        "input_tokens",
-        "output_tokens",
-        "cached_tokens",
-        "total_tokens",
-        "tool_calls",
-        "messages",
-        "last_event_at",
-        "provider_session",
-        "reporting",
-        "final",
-    }
+    allowed = (*TELEMETRY_COUNTERS, *TELEMETRY_LABELS, "final")
     return {name: current[name] for name in allowed if name in current}
 
 

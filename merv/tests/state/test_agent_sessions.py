@@ -404,12 +404,13 @@ class AgentSessionsTest(unittest.TestCase):
             session_id=session["id"],
             runner_id="runner",
             events=events,
-            stderr_tail="warn: something\n",
+            stderr_tail="warn: refused with Bearer abcdefghijklmnop\n",
             complete=False,
         )
         self.assertEqual(recorded["events"], 3)
         stored = self.sessions.trace(project_id="proj_1", session_id=session["id"])
-        self.assertEqual(stored["stderr_tail"], "warn: something\n")
+        # The runner only caps; masking happens here, where it is persisted.
+        self.assertEqual(stored["stderr_tail"], "warn: refused with <redacted>\n")
         self.assertFalse(stored["complete"])
         self.assertEqual(stored["events"][0]["authorization"], "<redacted>")
         self.assertEqual(stored["events"][1]["args"]["key"], "<redacted>")

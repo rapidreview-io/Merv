@@ -1097,7 +1097,7 @@ class AgentSessionProtocolTest(unittest.TestCase):
         self.assertEqual(bare.reference("code"), "")
         self.assertEqual(bare.reference("review_request"), "")
 
-    def test_trace_excerpt_is_the_redacted_tail_and_changes_signature(self) -> None:
+    def test_trace_excerpt_is_the_capped_tail_and_changes_signature(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             trace_dir = Path(tmp)
             self.assertIsNone(_trace_excerpt(trace_dir, complete=False))
@@ -1113,8 +1113,8 @@ class AgentSessionProtocolTest(unittest.TestCase):
             self.assertLessEqual(len(events), 60)
             self.assertEqual(events[-1].get("truncated"), True)
             self.assertEqual(events[-2], {"raw": "not json at all"})
-            self.assertEqual(events[-3]["authorization"], "<redacted>")
-            self.assertEqual(events[-3]["note"], "key <redacted>")
+            # Redaction is the brain's, at the moment it persists this.
+            self.assertTrue(events[-3]["authorization"].startswith("Bearer "))
             self.assertEqual(events[0], {"type": "message", "n": 100 - (60 - 3)})
             self.assertTrue(excerpt["stderr_tail"].endswith("last line\n"))
             self.assertLessEqual(len(excerpt["stderr_tail"].encode("utf-8")), 8 * 1024)

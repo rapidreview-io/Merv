@@ -20,8 +20,20 @@ from ..kernel.utils import (
     new_id,
     parse_iso,
 )
-from merv.shared.redaction import redact_excerpt
-from merv.shared.runner_settings import RunnerSettingsError, validate_desired_settings
+from merv.shared.redaction import (
+    MAX_TRACE_EVENT_BYTES,
+    MAX_TRACE_EVENTS,
+    MAX_TRACE_EVENTS_BYTES,
+    MAX_TRACE_STDERR_BYTES,
+    redact_excerpt,
+    redact_secrets,
+)
+from merv.shared.runner_settings import (
+    RunnerSettingsError,
+    TELEMETRY_COUNTERS,
+    TELEMETRY_LABELS,
+    validate_desired_settings,
+)
 from .persistence import AGENT_SESSION_SCHEMA
 
 
@@ -57,11 +69,6 @@ MAX_AGENT_SETUP_BYTES = 8 * 1024
 MAX_TELEMETRY_BYTES = 8 * 1024
 MAX_RUNNER_PRESENCE_BYTES = 16 * 1024
 RUNNER_LIVE_SECONDS = 45
-# Trace peek: a bounded, redacted excerpt per session, never the raw trace.
-MAX_TRACE_EVENTS = 60
-MAX_TRACE_EVENT_BYTES = 4 * 1024
-MAX_TRACE_EVENTS_BYTES = 96 * 1024
-MAX_TRACE_STDERR_CHARS = 8 * 1024
 TRACE_GRACE_AFTER_CLOSE_SECONDS = 15 * 60
 
 
@@ -818,7 +825,7 @@ class AgentSessions:
         overwritten; the raw trace never leaves the machine.
         """
         encoded_events, kept = _trace_events_projection(events)
-        tail = str(stderr_tail or "")[-MAX_TRACE_STDERR_CHARS:]
+        tail = redact_secrets(str(stderr_tail or "")[-MAX_TRACE_STDERR_BYTES:])
         now = datetime.now(UTC)
         with self.store.transaction() as tx:
             row = tx.execute(
@@ -1137,18 +1144,11 @@ def _bounded_json_list(value: list[Any], *, field: str, limit: int) -> str:
 def _telemetry_projection(value: Mapping[str, Any]) -> dict[str, Any]:
     """Keep aggregate counters only; provider events stay on the runner."""
     result: dict[str, Any] = {}
-    for name in (
-        "input_tokens",
-        "output_tokens",
-        "cached_tokens",
-        "total_tokens",
-        "tool_calls",
-        "messages",
-    ):
+    for name in TELEMETRY_COUNTERS:
         raw = value.get(name)
         if isinstance(raw, int) and not isinstance(raw, bool):
             result[name] = max(raw, 0)
-    for name in ("last_event_at", "provider_session", "reporting"):
+    for name in TELEMETRY_LABELS:
         raw = value.get(name)
         if isinstance(raw, str) and raw.strip():
             result[name] = raw.strip()[:240]

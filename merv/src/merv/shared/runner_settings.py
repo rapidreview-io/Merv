@@ -34,6 +34,17 @@ DEFAULT_PLATFORM_EXECUTABLES: dict[str, str] = {
 NATIVE_ADAPTERS = tuple(DEFAULT_PLATFORM_EXECUTABLES)
 
 PLATFORM_FIELDS = ("enabled", "model", "effort", "parallelism")
+# The aggregate counters a session may report and the brain may keep. Both
+# sides project against this, so a field one of them invented never appears.
+TELEMETRY_COUNTERS = (
+    "input_tokens",
+    "output_tokens",
+    "cached_tokens",
+    "total_tokens",
+    "tool_calls",
+    "messages",
+)
+TELEMETRY_LABELS = ("last_event_at", "provider_session", "reporting")
 WORKSPACE_FIELDS = ("repository", "root", "base_ref")
 # The only workspace layout the runner implements; stored so a document says
 # what it is rather than relying on the reader's default.
@@ -249,6 +260,8 @@ __all__ = [
     "NATIVE_ADAPTERS",
     "PLATFORM_FIELDS",
     "RunnerSettingsError",
+    "TELEMETRY_COUNTERS",
+    "TELEMETRY_LABELS",
     "WORKSPACE_FIELDS",
     "WORKSPACE_STRATEGY",
     "platform_entry",
