@@ -1,9 +1,10 @@
 # MCP Server Contract
 
 This document describes the current agent-facing MCP architecture. The live
-schemas and descriptions generated from `src/merv/brain/surface/tools/contracts.py` are the
-authoritative per-field contract; `tools/list` is the authoritative catalog for
-the active deployment.
+schemas and descriptions are the authoritative per-field contract; `tools/list`
+is the authoritative catalog for the active deployment. Each component declares
+its own tools (`<component>/tools.py`, exported as `TOOLS` from the package
+root); `surface/tools/contracts.py` merges those tables into one manifest.
 
 ## Authority and topology
 
@@ -92,8 +93,10 @@ sandbox.health
 ```
 
 The manifest is built in code as `TOOL_MANIFEST` in
-`src/merv/brain/surface/tools/contracts.py` and exposed via `tools/list`; there is
-no checked-in catalog JSON file. Because every tool is brain-served, `tools/list`
+`src/merv/brain/surface/tools/contracts.py`, which merges the owners' tables —
+research_core, workflows, artifacts, feed, infrastructure, the frozen
+`mlflow_contracts.py`, and the surface's own `agent.hello` and `project` — and
+is exposed via `tools/list`; there is no checked-in catalog JSON file. Because every tool is brain-served, `tools/list`
 is unavailable until the brain responds.
 
 ## Project scope

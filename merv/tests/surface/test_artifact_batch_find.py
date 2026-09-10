@@ -10,11 +10,11 @@ from unittest.mock import patch
 from pydantic import ValidationError as PydanticValidationError
 
 from merv.brain.kernel.utils import NotFoundError
-from merv.brain.surface.tools.contracts import (
-    ArtifactReadInput,
-    ExperimentGetStateInput,
-)
+from merv.brain.research_core.tools import ExperimentGetStateInput
+from merv.brain.surface.tools.contracts import TOOL_CONTRACTS
 from tests.support.brain import TestBrain
+
+ArtifactReadInput = TOOL_CONTRACTS["artifact.read"].input_model
 
 
 class ArtifactBatchReadTest(unittest.TestCase):

@@ -174,9 +174,10 @@ transition.
 
 ## Tool routing
 
-The brain registry in `src/merv/brain/surface/tools/contracts.py` is the single
-generator and source of truth for tool schemas and plane assignments. Since the
-no-dataplane transition every tool is a control tool that runs in the brain.
+Each component declares its own tools in `<component>/tools.py` and exports the
+table as `TOOLS`; the brain registry in `src/merv/brain/surface/tools/contracts.py`
+merges those tables under unique names and is the served source of truth. Since
+the no-dataplane transition every tool is a control tool that runs in the brain.
 Byte operations (`storage.submit`, `storage.fetch`, `artifact.upload`, and
 `feed.post`) hand back a one-line command. Storage uses presigned provider URLs;
 Artifact and Feed use bounded token endpoints. Sandbox operations are served by

@@ -163,7 +163,8 @@ An Application query combines a Kernel-owned tenant event count with
 Sandbox-owned generation counters and injects the result into admin delivery.
 
 The declarative `TOOL_MANIFEST` owns tool schemas, visibility, scope, execution,
-features, and handler identities. Surface derives its control handlers from
+features, and handler identities; each entry is declared by the component that
+owns the capability, and `surface/tools/contracts.py` only merges the tables. Surface derives its control handlers from
 those identities; every tool is a control tool served by the brain, so
 hidden/handler routing is not separately maintained. The transition adapter
 still sets the agent credential audience. Cross-module project and

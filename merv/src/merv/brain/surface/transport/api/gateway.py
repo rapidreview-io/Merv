@@ -36,11 +36,7 @@ from ...tools.contracts import TOOL_MANIFEST
 from ...tools.dispatcher import ToolDispatcher
 from ....research_core import Research
 from ....infrastructure import RemoteSandboxes as SandboxEngine
-from ..http_policy import (
-    HOSTED_CONTROL_TOOL_POLICIES,
-    HttpSurfacePolicy,
-    SessionExecution,
-)
+from ..http_policy import HttpSurfacePolicy, SessionExecution
 from .shared import (
     CallLedger,
     GLOBAL_MUTATOR_PREFIXES,
@@ -420,7 +416,7 @@ class ToolInvocationGateway:
         principal: Any | None,
         base_url: str,
         mcp_session_id: str = "",
-    ) -> tuple[Any, Any, dict[str, Any] | None, dict[str, Any]]:
+    ) -> tuple[Any, dict[str, Any] | None, dict[str, Any]]:
         """Every denial a call can earn before dispatch, plus the kwargs it needs.
 
         Split from dispatch so one ``except`` owns the durable refusal row: past
@@ -450,7 +446,7 @@ class ToolInvocationGateway:
                 ),
                 mcp_session_id=mcp_session_id,
             )
-        contract, policy, internal_kwargs, call_kwargs = self._preflight_scope(
+        contract, internal_kwargs, call_kwargs = self._preflight_scope(
             name=name,
             arguments=arguments,
             context=context,
@@ -460,25 +456,25 @@ class ToolInvocationGateway:
             base_url=base_url,
         )
         if identities is None:
-            return contract, policy, internal_kwargs, call_kwargs
+            return contract, internal_kwargs, call_kwargs
         if name == HELLO_TOOL:
             # The tool sees who is calling from the credential, never the model.
             internal_kwargs = {**(internal_kwargs or {}), "caller": caller.as_dict()}
-            return contract, policy, internal_kwargs, call_kwargs
+            return contract, internal_kwargs, call_kwargs
         agent_id = identities.resolve(
             agent_id=supplied_agent_id, caller=caller, tool=name
         )
         bind_agent(agent_id=agent_id, mcp_session_id=mcp_session_id)
-        if agent_id and not caller.agent_session_id and name == "consolidation.submit":
-            # The proposal must record its producer, but only Merv-dispatched
-            # mas_ sessions carry a session id and the contract accepts none
-            # from the model. The verified context-window id is the paired
+        if agent_id and not caller.agent_session_id and getattr(contract, "binds_producer_session", False):
+            # The work must record its producer, but only Merv-dispatched mas_
+            # sessions carry a session id and these contracts accept none from
+            # the model. The verified context-window id is the paired
             # credential's provenance equivalent.
             internal_kwargs = {
                 **(internal_kwargs or {}),
                 "producer_session_id": agent_id,
             }
-        return contract, policy, internal_kwargs, call_kwargs
+        return contract, internal_kwargs, call_kwargs
 
     def _preflight_scope(
         self,
@@ -490,7 +486,7 @@ class ToolInvocationGateway:
         activity_source: str,
         principal: Any | None,
         base_url: str,
-    ) -> tuple[Any, Any, dict[str, Any] | None, dict[str, Any]]:
+    ) -> tuple[Any, dict[str, Any] | None, dict[str, Any]]:
         """The scope/visibility/membership half of pre-flight (see _preflight)."""
         contract = TOOL_MANIFEST.get(name)
         # INV-5: an MCP call from any non-local principal (mk_/rr_sk_/JWT) is
@@ -561,7 +557,7 @@ class ToolInvocationGateway:
                 **(internal_kwargs or {}),
                 "producer_session_id": agent_session_id,
             }
-        if agent_session_id and name == "consolidation.submit":
+        if agent_session_id and getattr(contract, "binds_producer_session", False):
             internal_kwargs = {
                 **(internal_kwargs or {}),
                 "producer_session_id": agent_session_id,
@@ -576,34 +572,21 @@ class ToolInvocationGateway:
                 "assigned_agent_session_id": agent_session_id,
                 "assigned_review_request_id": str(bound.get("review_request_id") or ""),
             }
-        policy = (
-            HOSTED_CONTROL_TOOL_POLICIES.get(name)
-            if self.surface.use_hosted_tool_policies
-            else None
-        )
+        scope_field = getattr(contract, "telemetry_scope_field", "") if self.surface.hosted_control else ""
         call_kwargs: dict[str, Any] = {"caller_is_external_mcp": caller_is_external_mcp}
         if project_scope:
             call_kwargs["telemetry_project_id"] = project_scope
-        if policy is not None:
-            if policy.telemetry_from_review_request:
-                project_id = self.research.review_project_id(
-                    review_request_id=arguments.get("review_request_id")
-                )
-                self.projects.require_member(project_id=project_id, principal=principal)
-                if project_scope and project_id != project_scope:
-                    raise NotFoundError(f"project not found: {project_scope}")
-                call_kwargs["telemetry_project_id"] = project_id
-            if policy.telemetry_from_review_session:
-                # INV-9: the session's own project decides scope, so an mk_ key
-                # cannot ride a foreign session id into another project.
-                project_id = self.research.review_project_id(
-                    review_session_id=arguments.get("review_session_id")
-                )
-                self.projects.require_member(project_id=project_id, principal=principal)
-                if project_scope and project_id != project_scope:
-                    raise NotFoundError(f"project not found: {project_scope}")
-                call_kwargs["telemetry_project_id"] = project_id
-            return contract, policy, internal_kwargs, call_kwargs
+        if scope_field:
+            # INV-9: the reviewed request or the session's own project decides
+            # scope, so an mk_ key cannot ride a foreign id into another project.
+            project_id = self.research.review_project_id(
+                **{scope_field: arguments.get(scope_field)}
+            )
+            self.projects.require_member(project_id=project_id, principal=principal)
+            if project_scope and project_id != project_scope:
+                raise NotFoundError(f"project not found: {project_scope}")
+            call_kwargs["telemetry_project_id"] = project_id
+            return contract, internal_kwargs, call_kwargs
         if (
             contract is not None
             and contract.scope_strategy == "linked-project"
@@ -612,7 +595,7 @@ class ToolInvocationGateway:
             raise ValidationError(
                 "project_id is required", details={"field": "project_id"}
             )
-        return contract, policy, internal_kwargs, call_kwargs
+        return contract, internal_kwargs, call_kwargs
 
     def authorize_agent_session(
         self, *, name: str, arguments: dict[str, Any], principal: Any | None
@@ -665,12 +648,12 @@ class ToolInvocationGateway:
         *,
         name: str,
         arguments: dict[str, Any],
-        plan: tuple[Any, Any, dict[str, Any] | None, dict[str, Any]],
+        plan: tuple[Any, dict[str, Any] | None, dict[str, Any]],
         activity_source: str,
         project_id: str,
     ) -> dict[str, Any]:
         """Run the pre-flighted call through the standard dispatcher and ledger."""
-        contract, policy, internal_kwargs, call_kwargs = plan
+        _contract, internal_kwargs, call_kwargs = plan
         return self.tools.call_tool(
             name=name,
             arguments=arguments,

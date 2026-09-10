@@ -207,7 +207,7 @@ class WorkflowSchemaTest(unittest.TestCase):
         self.assertEqual(REVIEW_GATE_EXEMPT_ROLES, {"human", "automated_check"})
 
     def test_surface_choices_are_derived_from_the_workflows(self) -> None:
-        from merv.brain.surface.tools.contracts import (
+        from merv.brain.research_core.tools import (
             ExperimentTransitionInput,
             ReflectionTransitionInput,
             ReviewRequestInput,

@@ -6,3 +6,4 @@ from .models import (
     Artifact, CompletedArtifact, CompletedFigure, PendingFigure, PendingUpload,
     ReadMode, UploadKind,
 )
+from .tools import artifact_tools

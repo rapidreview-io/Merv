@@ -846,6 +846,29 @@ class ModuleBoundaryTest(unittest.TestCase):
     def test_tool_dispatcher_is_delivery(self) -> None:
         self.assertEqual(_layer("surface/tools/dispatcher.py"), DELIVERY)
 
+    def test_tool_contracts_belong_to_the_capability_that_owns_them(self) -> None:
+        # The registry that merges the tables is support; the contract type is
+        # foundation so a component can declare tools without importing
+        # delivery, and each table is owned by its capability.
+        self.assertEqual(_layer("kernel/tools.py"), FOUNDATION)
+        self.assertEqual(
+            {rel: _component(rel) for rel in (
+                "kernel/tools.py", "research_core/tools.py", "workflows/tools.py",
+                "artifacts/tools.py", "feed/tools.py", "infrastructure/tools.py",
+                "surface/tools/contracts.py", "surface/tools/mlflow_contracts.py",
+            )},
+            {
+                "kernel/tools.py": KERNEL,
+                "research_core/tools.py": RESEARCH_CORE,
+                "workflows/tools.py": WORKFLOWS,
+                "artifacts/tools.py": ARTIFACTS,
+                "feed/tools.py": FEED,
+                "infrastructure/tools.py": SANDBOX,
+                "surface/tools/contracts.py": SURFACE,
+                "surface/tools/mlflow_contracts.py": SURFACE,
+            },
+        )
+
     def test_every_backend_file_is_classified_by_component_and_layer(self) -> None:
         for label, classifier in (("component", _component), ("layer", _layer)):
             with self.subTest(classification=label):
