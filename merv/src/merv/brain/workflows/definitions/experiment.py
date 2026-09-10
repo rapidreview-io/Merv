@@ -169,7 +169,7 @@ def build_execution_context(snapshot, knowledge):
     approved = approved_plan_artifacts(snapshot, knowledge)
     return Brief(intro +
         "Execute the exact approved plan referenced below. Read its decision rule before starting, then inspect "
-        "retained results, tracking records and durable run receipts to establish what already finished and what "
+        "retained results and durable run receipts to establish what already finished and what "
         "remains. A new agent assignment does not mean a new experiment: keep completed jobs, attach to live "
         "work and recover its outputs. Start another job only for work still needed or an explicitly justified retry. "
         "Dependencies must have succeeded before execution is dispatched.\n\n"
@@ -179,9 +179,9 @@ def build_execution_context(snapshot, knowledge):
         "Submit compact machine-readable results, a report with Summary, Results, Deviations from plan and "
         "Conclusion, and a logic graph explaining the key decisions. Use the system metrics exhibit when one is "
         "available: preview it with experiment.exhibit; submit_results pins metrics_exhibit.json as the record "
-        "of this attempt's runs. Apply the approved decision rule. Submit results for independent review only when the "
+        "of this attempt's result evidence. Apply the approved decision rule. Submit results for independent review only when the "
         "planned work and requested corrections are complete.",
-        (Reference("experiment", snapshot.id, "Durable progress and tracking"), *_references(approved),
+        (Reference("experiment", snapshot.id, "Durable progress"), *_references(approved),
          *_references(item for item in experiment.get("current_attempt_artifacts") or () if item.get("role") != "plan")))
 
 
@@ -220,12 +220,6 @@ def retry_execution(snapshot, payload, knowledge):
     return Change(data={"revision_context": f"{previous}\n\n{text}".strip()})
 
 
-def tracking_action(kind, snapshot, knowledge):
-    experiment = knowledge.read(Reference("experiment", snapshot.id))
-    return Action(kind, {"experiment_id": snapshot.id, "attempt_index": int(experiment.get("attempt_index") or 1),
-                         "run_id": str(experiment.get("mlflow_run_id") or "")})
-
-
 def request_review(role, snapshot):
     return Action("review.request", {"target_type": snapshot.workflow, "target_id": snapshot.id, "role": role})
 
@@ -235,16 +229,7 @@ def submit_design(snapshot, payload, knowledge):
 
 
 def finish_execution(snapshot, payload, knowledge):
-    return Change(actions=(tracking_action("experiment.finish_tracking", snapshot, knowledge),
-                           request_review("experiment_reviewer", snapshot)))
-
-
-def stop_execution(snapshot, payload, knowledge):
-    return Change(actions=(tracking_action("experiment.stop_tracking", snapshot, knowledge),))
-
-
-def fail_execution(snapshot, payload, knowledge):
-    return Change(actions=(tracking_action("experiment.fail_tracking", snapshot, knowledge),))
+    return Change(actions=(request_review("experiment_reviewer", snapshot),))
 
 
 def conclude(snapshot, payload, knowledge):
@@ -254,8 +239,7 @@ def conclude(snapshot, payload, knowledge):
         report = next((item for item in review.get("artifacts") or () if item.get("role") == "report"), None)
         document = {} if report is None else knowledge.read(Reference("artifact", str(report.get("artifact_id") or report.get("id"))))
         text = markdown_section_body(str(document.get("text") or ""), "conclusion") or str(review.get("notes") or "")
-    return Change(data={"conclusion": text.strip()},
-                  actions=(tracking_action("experiment.finish_tracking", snapshot, knowledge),))
+    return Change(data={"conclusion": text.strip()})
 
 
 def rejected(role, return_to):
@@ -266,17 +250,13 @@ def rejected(role, return_to):
     return check
 
 
-def start_execution(snapshot, payload, knowledge):
-    return Change(actions=(tracking_action("experiment.start_tracking", snapshot, knowledge),))
-
-
 EXPERIMENT = Workflow(
     name="experiment", version=1, initial="planned", event_type="experiment.transitioned", id_prefix="exp",
     nodes=(
         Node("planned", "Design experiment", "experiment_owner", build_plan_context, execution=EXPERIMENT_EXECUTION),
         Node("design_review", "Review experiment design", "design_reviewer", build_design_review_context, review_requested, execution=REVIEW_EXECUTION),
         Node("running", "Execute approved plan", "experiment_owner", build_execution_context, dependencies_ready,
-             execution=EXPERIMENT_EXECUTION, on_start=start_execution),
+             execution=EXPERIMENT_EXECUTION),
         Node("experiment_review", "Review completed attempt", "experiment_reviewer", build_attempt_review_context, review_requested, execution=REVIEW_EXECUTION),
     ),
     edges=(
@@ -288,9 +268,9 @@ EXPERIMENT = Workflow(
         Edge("experiment_review", "complete", "complete", check=reviewed("experiment_reviewer"), change=conclude, label="Accept the reviewed conclusion", tools=("experiment.transition",)),
         Edge("experiment_review", "revise_plan", RETURN_TO_PLANNED.to_status, check=rejected("experiment_reviewer", RETURN_TO_PLANNED.to_status), change=return_plan, label=RETURN_TO_PLANNED.choose_when, event_type=RETURN_TO_PLANNED.event_type),
         Edge("experiment_review", "revise_execution", RETURN_TO_RUNNING.to_status, check=rejected("experiment_reviewer", RETURN_TO_RUNNING.to_status), change=return_execution, label=RETURN_TO_RUNNING.choose_when, event_type=RETURN_TO_RUNNING.event_type),
-        *(Edge(state, name, target, change=change, label=label, tools=("experiment.transition",), suggest=False)
+        *(Edge(state, name, target, label=label, tools=("experiment.transition",), suggest=False)
           for state in ("planned", "design_review", "running", "experiment_review")
-          for name, target, label, change in (("abandon", "abandoned", "Abandon experiment", stop_execution), ("mark_failed", "failed", "End failed experiment", fail_execution))),
+          for name, target, label in (("abandon", "abandoned", "Abandon experiment"), ("mark_failed", "failed", "End failed experiment"))),
     ),
     outcomes={"complete": "completed", "abandoned": "abandoned", "failed": "failed"},
 )
@@ -305,8 +285,7 @@ METADATA = Metadata(
                                         "Experiment review passed", "experiment-attempt-review", "complete", (RETURN_TO_PLANNED, RETURN_TO_RUNNING),
                                         return_choice_required=True, return_required_error="experiment-attempt-review rejections must set return_to: 'planned' if the plan is flawed, or 'running' if execution or the conclusion needs repair"),
     },
-    effects={"submit_results": ("result_submission", "prepare_metrics_exhibit", "finish_tracking"),
+    effects={"submit_results": ("result_submission", "prepare_metrics_exhibit"),
              "retry_running": ("record_retry_context", "show_metrics_exhibit"),
-             "complete": ("record_conclusion", "finish_tracking"),
-             "abandon": ("stop_tracking",), "mark_failed": ("fail_tracking",)},
+             "complete": ("record_conclusion",)},
 )

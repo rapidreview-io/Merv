@@ -19,14 +19,12 @@ from tests.paths import BACKEND_ROOT
 
 # Three layers, one component each side of the line: Research is the science,
 # the support components carry it, ML Infrastructure adapts merv-sandboxes,
-# and Kernel is what every component writes through. MLflow is the frozen
-# integration nobody edits.
+# and Kernel is what every component writes through.
 KERNEL = "kernel"
 RESEARCH = "research"
 ARTIFACTS = "artifacts"
 INFRASTRUCTURE = "infrastructure"
 FEED = "feed"
-MLFLOW = "mlflow"
 AGENT_SESSIONS = "agent_sessions"
 SURFACE = "surface"
 
@@ -36,7 +34,6 @@ MODULES = (
     ARTIFACTS,
     INFRASTRUCTURE,
     FEED,
-    MLFLOW,
     AGENT_SESSIONS,
     SURFACE,
 )
@@ -52,7 +49,6 @@ PACKAGE_COMPONENTS = {
     "artifacts": ARTIFACTS,
     "infrastructure": INFRASTRUCTURE,
     "feed": FEED,
-    "mlflow": MLFLOW,
     "agent_sessions": AGENT_SESSIONS,
     "surface": SURFACE,
 }
@@ -77,8 +73,7 @@ FILE_COMPONENTS = {
 # Component answers "which capability owns this file?"  Research may enter any
 # support component and ML Infrastructure through their public roots; a support
 # component sees only itself and Kernel, so nothing carries research meaning
-# sideways.  Surface composes, so Surface may name anyone.  MLflow is the one
-# frozen exception: a suspended integration that still reaches Research.
+# sideways.  Surface composes, so Surface may name anyone.
 ALLOWED_COMPONENT_EDGES = (
     {(KERNEL, KERNEL)}
     | {
@@ -92,7 +87,6 @@ ALLOWED_COMPONENT_EDGES = (
         for component in (ARTIFACTS, FEED, AGENT_SESSIONS, INFRASTRUCTURE)
         for dependency in (component, KERNEL)
     }
-    | {(MLFLOW, dependency) for dependency in (MLFLOW, RESEARCH, KERNEL)}
     | {(SURFACE, dependency) for dependency in MODULES}
 )
 
@@ -127,7 +121,6 @@ PACKAGE_LAYERS = {
     "artifacts": APPLICATION_LAYER,
     "feed": APPLICATION_LAYER,
     "infrastructure": APPLICATION_LAYER,
-    "mlflow": ADAPTER,
     "agent_sessions": APPLICATION_LAYER,
     "application": APPLICATION_LAYER,
     "surface": DELIVERY,
@@ -236,7 +229,6 @@ TABLE_OWNERS = {
     "workflow_instances": RESEARCH,
     "workflow_history": RESEARCH,
     "workflow_actions": RESEARCH,
-    "tracking_deliveries": RESEARCH,
     # Artifacts: immutable content, its figures, and the sealed round.
     "artifacts": ARTIFACTS,
     "artifact_figures": ARTIFACTS,
@@ -320,7 +312,6 @@ APPLICATION_FORBIDDEN_IMPORT_ROOTS = frozenset(
         "fastapi",
         "flask",
         "httpx",
-        "mlflow",
         "modal",
         "os",
         "psycopg",
@@ -513,11 +504,6 @@ def _public_entrypoint_violations() -> set[tuple[str, str]]:
             continue
         if target in {f"{package}/__init__.py" for package in PUBLIC_COMPONENT_ROOTS}:
             continue
-        if importer_component == MLFLOW and target == "application/mlflow.py":
-            # The optional adapter implements the single integration contract;
-            # exporting its DTO forest from the Application root would turn
-            # that root back into a service bag.
-            continue
         relative_target = target.removeprefix(f"{target_component}/")
         if target_component == ARTIFACTS:
             if relative_target == "__init__.py":
@@ -595,7 +581,7 @@ def _application_purity_violations() -> list[str]:
         for target in _import_targets(path, dotted):
             if target.startswith("kernel/state/") or target == "kernel/env.py":
                 violations.append(f"{rel}: imports state/config module {target}")
-            if _component(target) in (SURFACE, MLFLOW) or _layer(target) == ADAPTER:
+            if _component(target) == SURFACE or _layer(target) == ADAPTER:
                 violations.append(f"{rel}: imports concrete adapter {target}")
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -844,9 +830,9 @@ def _cross_component_constructions_outside_bootstrap() -> list[str]:
 
 class ModuleBoundaryTest(unittest.TestCase):
     def test_no_source_references_tracking_credentials_allowed(self) -> None:
-        # The v29 per-sandbox trust column is moot under the no-dataplane
-        # transition (MLflow suspension + project-shared sandboxes) and must
-        # never be ported: no column, no read site, no reference anywhere.
+        # The v29 per-sandbox trust column is moot under project-shared
+        # sandboxes and must never be ported: no column, no read site, no
+        # reference anywhere.
         offenders = [
             path.relative_to(BACKEND_ROOT).as_posix()
             for path in _backend_files()
@@ -871,7 +857,6 @@ class ModuleBoundaryTest(unittest.TestCase):
                 "feed/tools.py": FEED,
                 "infrastructure/tools.py": INFRASTRUCTURE,
                 "surface/tools/contracts.py": SURFACE,
-                "surface/tools/mlflow_contracts.py": SURFACE,
             },
             {
                 rel: _component(rel)
@@ -879,7 +864,6 @@ class ModuleBoundaryTest(unittest.TestCase):
                     "kernel/tools.py", "research_core/tools.py",
                     "workflows/tools.py", "artifacts/tools.py", "feed/tools.py",
                     "infrastructure/tools.py", "surface/tools/contracts.py",
-                    "surface/tools/mlflow_contracts.py",
                 )
             },
         )
@@ -1218,10 +1202,8 @@ def register_routes(*, feed: FeedService):
         self.assertEqual(control.count("Application("), 1)
         self.assertIn("class StatusAndNextQuery:", workflow)
         self.assertNotIn("class ProjectDashboardQuery:", workflow)
-        for escaped_policy in ("tracking_experiment_name", "ACTIVE_SANDBOX_STATUSES"):
-            self.assertNotIn(escaped_policy, views)
-        for delegate in ("dashboard(", "tracking_overview("):
-            self.assertIn(delegate, routes)
+        self.assertNotIn("ACTIVE_SANDBOX_STATUSES", views)
+        self.assertIn("dashboard(", routes)
 
 
 if __name__ == "__main__":

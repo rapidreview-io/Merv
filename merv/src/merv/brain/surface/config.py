@@ -47,10 +47,6 @@ UI_BASE_URL_ENV_VAR = "MERV_UI_BASE_URL"
 # keys carry it so they are audience-bound once OAuth enforcement lands; unset
 # leaves keys un-audienced (Phase A has no audience enforcement yet).
 OAUTH_RESOURCE_URI_ENV_VAR = "MERV_OAUTH_RESOURCE_URI"
-# MLflow-extension env config (MLFLOW_MODE/TRACKING_URI/SERVER_URI/DASHBOARD)
-# lives in src/merv/brain/mlflow/config.py — the extension owns its own knobs.
-# The enforcement knob below is composition policy, so it stays here.
-REQUIRE_AGENT_MLFLOW_ENV_VAR = "MERV_REQUIRE_AGENT_MLFLOW"
 REQUIRE_SANDBOX_BACKEND_ENV_VAR = "MERV_REQUIRE_SANDBOX_BACKEND"
 # MERV_REQUIRE_AUTH and MERV_ALLOW_OPEN_CONTROL are defined in surface/auth.py
 # alongside the Supabase knobs (SUPABASE_URL/JWT_SECRET/...) they name: the

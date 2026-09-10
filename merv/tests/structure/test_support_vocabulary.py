@@ -59,10 +59,6 @@ UNSCANNED = {
         "the router assembly: it mounts every router by name, the research "
         "ones included"
     ),
-    "brain/surface/tools/mlflow_contracts.py": (
-        "frozen MLflow integration text, moved verbatim from the suspended "
-        "adapter; MLflow is the named exception to the component law"
-    ),
 }
 
 # (file, word) pairs a support file may still carry, and why each survives.

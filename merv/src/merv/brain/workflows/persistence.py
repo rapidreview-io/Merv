@@ -1,14 +1,13 @@
 # If you update this file, you must consult workflows.md to see whether workflows.md needs to be updated. workflows.md must not exceed 100 lines.
-"""Workflow-owned tables: instances, history, actions, tracking deliveries.
+"""Workflow-owned tables: instances, history, actions.
 
 The runtime's durable state: one versioned instance per work node, the
-append-only revision history behind it, the outbound action queue, and the
-keyed-delivery barrier the MLflow tracking writes dedupe on.
+append-only revision history behind it, and the outbound action queue.
 """
 
 from __future__ import annotations
 
-from ..kernel.state.schema import SchemaModule
+from ..kernel.state.schema import Connection, Migration, SchemaModule
 
 
 WORKFLOW_DDL = """\
@@ -72,32 +71,21 @@ CREATE INDEX IF NOT EXISTS idx_workflow_instances_project
 
 CREATE INDEX IF NOT EXISTS idx_workflow_actions_pending
   ON workflow_actions(status, next_attempt_at, lease_until);
-
--- Lookup key for the MLflow tracking delivery barrier (July 2026). One row
--- per KEYED tracking write, inserted in the same transaction as
--- the event it names, so replay detection is one indexed lookup on
--- (project_id, target_type, target_id, delivery_id) instead of a decode of
--- every keyed event the target has accrued. `event_id` names the `events` row
--- the delivery appended, which the barrier then fetches by primary key. The
--- delivery id still rides in that event payload, but only as a readable trace,
--- never as a lookup key. Nothing here is derived state: the row and its event
--- commit together or not at all.
-CREATE TABLE IF NOT EXISTS tracking_deliveries (
-  project_id TEXT NOT NULL,
-  target_type TEXT NOT NULL DEFAULT '',
-  target_id TEXT NOT NULL DEFAULT '',
-  delivery_id INTEGER NOT NULL,
-  event_id INTEGER NOT NULL,
-  created_at TEXT NOT NULL,
-  FOREIGN KEY(project_id) REFERENCES projects(id)
-);
-
--- The lookup the barrier makes, and its uniqueness law: one row per delivery
--- per target, so the database itself — not only the check inside the write
--- transaction — states that a delivery appends at most once.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_tracking_deliveries_key
-  ON tracking_deliveries(project_id, target_type, target_id, delivery_id);
 """
 
 
-WORKFLOW_SCHEMA = SchemaModule(name="workflows", ddl=WORKFLOW_DDL)
+def _drop_tracking_deliveries(conn: Connection) -> None:
+    """Migration 69: the keyed barrier had one writer, and it is gone.
+
+    ``tracking_deliveries`` proved that one external tracking write appended
+    at most once. With that integration deleted no delivery is keyed, so the
+    table and its unique index have nothing left to state.
+    """
+    conn.execute("DROP TABLE IF EXISTS tracking_deliveries")
+
+
+WORKFLOW_SCHEMA = SchemaModule(
+    name="workflows",
+    ddl=WORKFLOW_DDL,
+    migrations=(Migration(69, "drop_tracking_deliveries", _drop_tracking_deliveries),),
+)

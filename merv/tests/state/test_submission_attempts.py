@@ -25,7 +25,7 @@ VALID_PLAN = (
 
 VALID_REPORT = (
     "## Summary\nRan the toy experiment per the approved plan.\n\n"
-    "## Results\nAccuracy 0.72 vs target 0.60.\n\n"
+    "## Results\nPer metrics_exhibit.json, accuracy 0.72 vs target 0.60.\n\n"
     "## Deviations from plan\nNone.\n\n"
     "## Conclusion\nDecision rule met.\n"
 )

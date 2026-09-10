@@ -12,7 +12,6 @@ from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response
 
-from ....kernel.env import mlflow_suspended
 from ....kernel.request_context import bind_agent
 from ....agent_sessions import AGENT_SESSION_SECRET_PREFIX, AgentSessions
 from ....kernel.utils import (
@@ -83,7 +82,7 @@ class RequestAuthenticator:
             runner_pairing.PAIRING_PUBLIC_PREFIX,
         )
         if (
-            path in ("/health", "/api/meta", "/internal/auth/mlflow")
+            path in ("/health", "/api/meta")
             or path.startswith(exempt)
             or oauth.public_request(request, enabled=self.oauth_enabled)
         ):
@@ -731,7 +730,6 @@ def install_auth_routes(
     http: FastAPI,
     *,
     verifier: Any | None,
-    tracking_enabled: bool = False,
     runner_pairings: RunnerPairings | None = None,
     gateway: "ToolInvocationGateway | None" = None,
 ) -> None:
@@ -749,37 +747,6 @@ def install_auth_routes(
             http.include_router(
                 runner_pairing.build_router(pairings=runner_pairings, gateway=gateway)
             )
-
-    if tracking_enabled:
-
-        @http.get("/internal/auth/mlflow")
-        def mlflow_gate(request: Request) -> Response:
-            if mlflow_suspended():
-                return JSONResponse(
-                    {
-                        "detail": "MLflow is temporarily suspended",
-                        "error_code": "mlflow_suspended",
-                    },
-                    status_code=403,
-                )
-            try:
-                principal = verifier.verify_basic_or_bearer(
-                    request.headers.get("Authorization")
-                )
-            except UnauthorizedError:
-                return Response(
-                    status_code=401,
-                    headers={"WWW-Authenticate": 'Basic realm="RapidReview MLflow"'},
-                )
-            if getattr(principal, "key_id", None):
-                return JSONResponse(
-                    {
-                        "detail": "project API keys are not valid for the MLflow audience",
-                        "error_code": "credential_audience_forbidden",
-                    },
-                    status_code=403,
-                )
-            return Response(status_code=204)
 
 
 def _resolve_scope_source(source: str, *, principal: Any, instance_id: str) -> str | None:

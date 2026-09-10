@@ -20,9 +20,8 @@ binds the resolved value into the handler call for mutating tools and for tools
 whose contract declares the field, so every mutating tool must accept its scoped
 fields as keywords. `definitions/execution.py` holds the shared vocabularies.
 
-`persistence.py` declares the four tables this package owns — instances,
-history, the action outbox, and the tracking delivery key — and the unique
-index that makes "one delivery appends at most once" a database fact.
+`persistence.py` declares the three tables this package owns: instances,
+history, and the action outbox.
 
 `runtime.py` stores version-pinned instances, immutable history and requested
 actions. It enforces revision checks and idempotent request keys, records actual
@@ -52,7 +51,7 @@ this package root, and support components never do.
 `workflows.py` is the public root. Its explicit registry keeps every deployed
 version. Optional bindings supply read-only verified facts and transactional
 native record writes. Common project and immutable artifact readers are composed
-by Surface. Application delivers review, tracking and child-start actions through
+by Surface. Application delivers review and child-start actions through
 support-system public roots. Merv artifacts remain in Merv-owned R2; the sandbox
 service owns ML compute and workload storage only.
 

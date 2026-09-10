@@ -32,11 +32,10 @@ def _review(review_id: str, *, created_at: str, **overrides) -> dict:
 
 
 class ExperimentPresentationTest(unittest.TestCase):
-    def test_rich_projection_omits_legacy_tracking_and_appends_storage(self) -> None:
+    def test_rich_projection_appends_storage_without_mutating_state(self) -> None:
         state = {
             "id": "exp_1",
             "current_attempt_artifacts": [],
-            "mlflow_run": None,
             "reviews": [],
         }
         original = deepcopy(state)
@@ -53,38 +52,8 @@ class ExperimentPresentationTest(unittest.TestCase):
                 "storage_objects",
             ],
         )
-        self.assertNotIn("mlflow_run", result)
         self.assertEqual(result["storage_objects"], objects)
         self.assertEqual(state, original)
-
-    def test_explicit_legacy_tracking_projection_preserves_compatibility_shape(
-        self,
-    ) -> None:
-        state = {
-            "id": "exp_1",
-            "gate_checklist": {},
-            "mlflow_run": {"run_id": "run_1"},
-            "reviews": [],
-        }
-        objects = [{"id": "so_1", "name": "model.bin"}]
-
-        rich = rich_experiment_state(
-            state,
-            storage_objects=objects,
-            include_legacy_tracking=True,
-        )
-        slim = slim_experiment_state(
-            state,
-            storage_objects=objects,
-            include_legacy_tracking=True,
-        )
-
-        self.assertLess(
-            list(rich).index("storage_objects"),
-            list(rich).index("mlflow_run"),
-        )
-        self.assertEqual(rich["mlflow_run"]["run_id"], "run_1")
-        self.assertEqual(slim["mlflow_run"]["run_id"], "run_1")
 
     def test_agent_projection_preserves_exact_shape_and_prior_order(self) -> None:
         state = {
@@ -99,7 +68,6 @@ class ExperimentPresentationTest(unittest.TestCase):
             "updated_at": "updated",
             "allowed_transitions": [{"transition": "submit_results"}],
             "gate_checklist": {"result": {"satisfied": False}},
-            "mlflow_run": {"run_id": "run_1"},
             "claim_update_suggestions": [],
             "tested_claims": [
                 {

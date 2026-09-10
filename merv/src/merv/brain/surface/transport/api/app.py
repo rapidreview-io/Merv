@@ -121,7 +121,6 @@ def create_fastapi_app(
     install_auth_routes(
         http,
         verifier=auth,
-        tracking_enabled=api.application.tracking_enabled,
         runner_pairings=runner_pairings,
         gateway=gateway,
     )

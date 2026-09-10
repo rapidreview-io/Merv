@@ -1,61 +1,37 @@
 """System-authored metrics exhibit: generation, gating, and pinning.
 
-The exhibit shifts quantitative evidence from attestation to observation —
-the system generates the record from MLflow readback and pinned result files;
-the agent writes interpretation around it. These tests cover the pure builder
-(windowing, provenance, determinism) and the tool-level flow (finalize+pin at
-submit_results, report-reference gate, preview parity, agent immutability,
-and the no-run qualitative bypass).
+The exhibit shifts quantitative evidence from attestation to observation — the
+system generates the record from the attempt's pinned result files; the agent
+writes interpretation around it. These tests cover the pure builder
+(provenance, determinism) and the tool-level flow (finalize+pin at
+submit_results, report-reference gate, preview parity, agent immutability, and
+the qualitative bypass).
 """
 
 from __future__ import annotations
 
 import json
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
 from tests.support.brain import TestBrain
 from merv.brain.application.experiments.metrics_exhibit import (
-    WINDOW_SKEW_MS,
     build_metrics_exhibit,
     exhibit_bytes,
 )
-from merv.brain.application.mlflow import TrackingCapabilities
-from merv.brain.mlflow.metrics import MAX_METRIC_KEYS, MAX_RUNS
-from merv.brain.mlflow.tracking import MlflowTrackingContext
 from merv.brain.kernel.utils import ValidationError, WorkflowError
 
 WINDOW_START = "2026-07-05T10:00:00Z"
-WINDOW_START_MS = 1_783_245_600_000  # 2026-07-05T10:00:00Z
 
 
-def _run(
-    run_id: str,
-    *,
-    start_ms: int,
-    tags: dict[str, str] | None = None,
-    accuracy: float = 0.5,
-) -> dict:
+def _source(path: str = "metrics.json", *, data: object | None = None) -> dict:
     return {
-        "run_id": run_id,
-        "run_name": run_id,
-        "status": "FINISHED",
-        "start_time": start_ms,
-        "end_time": start_ms + 60_000,
-        "params": {"seed": run_id[-1]},
-        "tags": tags or {},
-        "metrics": {"accuracy": {"last": accuracy, "step": 10, "timestamp": start_ms}},
-        "history": {"accuracy": [[0, 0.1], [10, accuracy]]},
-    }
-
-
-def _snapshot(runs: list[dict], *, name: str = "merv/proj/exp") -> dict:
-    return {
-        "available": True,
-        "source": "mlflow",
-        "experiments": [{"experiment_id": "1", "name": name, "runs": runs}],
+        "path": path,
+        "artifact_id": "art_1",
+        "sha256": "ab" * 32,
+        "submitted_at": WINDOW_START,
+        "data": data,
     }
 
 
@@ -64,10 +40,7 @@ def _build(**overrides) -> dict:
         project_id="proj",
         experiment_id="exp",
         attempt_index=1,
-        experiment_name="merv/proj/exp",
         window_started_at=WINDOW_START,
-        snapshot=None,
-        mlflow_configured=True,
         file_sources=[],
     )
     kwargs.update(overrides)
@@ -75,162 +48,26 @@ def _build(**overrides) -> dict:
 
 
 class ExhibitBuilderTest(unittest.TestCase):
-    def test_all_attempt_window_runs_included_uncurated(self) -> None:
-        # Five seeds, one good one: five rows, ordered by start time.
-        runs = [
-            _run(
-                f"seed-{i}",
-                start_ms=WINDOW_START_MS + i * 1000,
-                accuracy=0.4 + 0.1 * (i == 3),
-            )
-            for i in range(5)
-        ]
-        exhibit = _build(snapshot=_snapshot(runs))
-        self.assertEqual(
-            [r["run_id"] for r in exhibit["runs"]], [f"seed-{i}" for i in range(5)]
-        )
-        self.assertEqual(exhibit["verdict"]["runs_found"], 5)
-        # Provenance on every entry.
-        for entry in exhibit["runs"]:
-            self.assertEqual(entry["source"]["type"], "mlflow")
-            self.assertEqual(entry["source"]["run_id"], entry["run_id"])
-            self.assertTrue(entry["started_at"])
-
-    def test_runs_before_the_attempt_window_are_excluded(self) -> None:
-        runs = [
-            _run("previous-attempt", start_ms=WINDOW_START_MS - 3_600_000),
-            _run("current", start_ms=WINDOW_START_MS + 1000),
-        ]
-        exhibit = _build(snapshot=_snapshot(runs))
-        self.assertEqual([r["run_id"] for r in exhibit["runs"]], ["current"])
-        self.assertEqual(exhibit["mlflow"]["runs_excluded_by_window"], 1)
-
-    def test_attempt_window_tolerates_small_clock_skew(self) -> None:
-        runs = [
-            _run("within-skew", start_ms=WINDOW_START_MS - WINDOW_SKEW_MS + 1),
-            _run("outside-skew", start_ms=WINDOW_START_MS - WINDOW_SKEW_MS - 1),
-        ]
-        exhibit = _build(snapshot=_snapshot(runs))
-        self.assertEqual([run["run_id"] for run in exhibit["runs"]], ["within-skew"])
-        self.assertEqual(exhibit["mlflow"]["runs_excluded_by_window"], 1)
-
-    def test_missing_window_start_includes_all_runs(self) -> None:
-        runs = [_run("early", start_ms=WINDOW_START_MS - 3_600_000)]
-        exhibit = _build(snapshot=_snapshot(runs), window_started_at=None)
-        self.assertEqual(exhibit["verdict"]["runs_found"], 1)
-
     def test_result_file_sources_carry_provenance_and_data(self) -> None:
-        source = {
-            "path": "experiments/exp/metrics.json",
-            "artifact_id": "art_1",
-            "sha256": "ab" * 32,
-            "submitted_at": WINDOW_START,
-            "data": {"accuracy": 0.72},
-        }
-        exhibit = _build(file_sources=[source])
+        exhibit = _build(file_sources=[_source(data={"accuracy": 0.72})])
         entry = exhibit["result_files"][0]
         self.assertEqual(entry["data"], {"accuracy": 0.72})
         self.assertEqual(entry["source"]["type"], "result_file")
         self.assertEqual(entry["source"]["artifact_id"], "art_1")
+        self.assertEqual(entry["source"]["sha256"], "ab" * 32)
         self.assertEqual(exhibit["verdict"]["result_files"], 1)
 
+    def test_the_attempt_window_is_recorded_with_the_record(self) -> None:
+        exhibit = _build(attempt_index=3)
+        self.assertEqual(exhibit["window"]["started_at"], WINDOW_START)
+        self.assertEqual(exhibit["attempt_index"], 3)
+
     def test_generation_is_deterministic_for_identical_state(self) -> None:
-        kwargs = dict(
-            snapshot=_snapshot([_run("seed-0", start_ms=WINDOW_START_MS + 1000)]),
-            file_sources=[
-                {
-                    "path": "metrics.json",
-                    "artifact_id": "art_v",
-                    "sha256": "x",
-                    "submitted_at": WINDOW_START,
-                    "data": {"a": 1},
-                }
-            ],
-        )
+        sources = [_source(data={"a": 1})]
         self.assertEqual(
-            exhibit_bytes(_build(**kwargs)), exhibit_bytes(_build(**kwargs))
+            exhibit_bytes(_build(file_sources=sources)),
+            exhibit_bytes(_build(file_sources=sources)),
         )
-
-    def test_unavailable_snapshot_yields_empty_visible_record(self) -> None:
-        exhibit = _build(snapshot={"available": False})
-        self.assertEqual(exhibit["runs"], [])
-        self.assertFalse(exhibit["mlflow"]["available"])
-        self.assertTrue(exhibit["mlflow"]["configured"])
-
-    def test_full_snapshot_page_flags_the_cap(self) -> None:
-        runs = [_run(f"r{i}", start_ms=WINDOW_START_MS + i) for i in range(MAX_RUNS)]
-        exhibit = _build(snapshot=_snapshot(runs))
-        self.assertEqual(exhibit["mlflow"]["runs_capped_at"], MAX_RUNS)
-
-    def test_run_metric_cap_is_carried_into_exhibit(self) -> None:
-        run = _run("capped", start_ms=WINDOW_START_MS + 1000)
-        run["metrics_capped_at"] = MAX_METRIC_KEYS
-        exhibit = _build(snapshot=_snapshot([run]))
-        self.assertEqual(exhibit["runs"][0]["metrics_capped_at"], MAX_METRIC_KEYS)
-
-
-class FakeMlflowTracking:
-    """results_metrics-shaped double; runs are appended by the tests.
-
-    ``suspended`` mirrors the real adapter's kill-switch contract: capabilities
-    lose readback, context reports unconfigured, and results_metrics returns an
-    explicit suspended-unavailable record.
-    """
-
-    def __init__(self) -> None:
-        self.tracking_uri = "http://mlflow.test"
-        self.server_uri = "http://mlflow.test"
-        self.available = True
-        self.suspended = False
-        self.runs: list[dict] = []
-
-    def context(
-        self, *, project_id: str, experiment_id: str, **_: object
-    ) -> MlflowTrackingContext:
-        return MlflowTrackingContext(
-            configured=not self.suspended,
-            mode="suspended" if self.suspended else "external",
-            tracking_uri="" if self.suspended else self.tracking_uri,
-            dashboard_url="",
-            experiment_name=f"merv/{project_id}/{experiment_id}",
-            env={},
-            note="MLflow is temporarily suspended." if self.suspended else "",
-        )
-
-    def create_run(self, **_: object) -> dict:
-        return {
-            "created": True,
-            "configured": True,
-            "run_id": "run-plugin",
-            "run_name": "plugin",
-            "status": "RUNNING",
-        }
-
-    def capabilities(self) -> TrackingCapabilities:
-        if self.suspended:
-            return TrackingCapabilities(logging=False, control=False, readback=False)
-        return TrackingCapabilities(logging=True, control=True, readback=True)
-
-    def results_metrics(self, *, project_id: str, experiment_id: str) -> dict:
-        if self.suspended or not self.available:
-            return {
-                "experiment_id": experiment_id,
-                "available": False,
-                "suspended": self.suspended,
-                "source": "mlflow",
-            }
-        return {
-            "experiment_id": experiment_id,
-            "available": True,
-            "source": "mlflow",
-            "experiments": [
-                {
-                    "experiment_id": "1",
-                    "name": f"merv/{project_id}/{experiment_id}",
-                    "runs": list(self.runs),
-                }
-            ],
-        }
 
 
 VALID_PLAN = (
@@ -266,11 +103,9 @@ class ExhibitFlowTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
-        self.mlflow = FakeMlflowTracking()
         self.app = TestBrain(
             repo_root=self.repo,
             db_path=self.repo / ".research_plugin" / "state.sqlite",
-            mlflow_tracking=self.mlflow,
         )
         self.project_id = self.call("project", action="create", name="Exhibit Test")[
             "id"
@@ -341,27 +176,22 @@ class ExhibitFlowTest(unittest.TestCase):
             expected_revision=current.revision,
         )
         # The node handoff explains the system record; actual activation owns
-        # the attempt window and queues the tracking operation.
+        # the attempt window.
         self.assertIn("metrics_exhibit.json", started["brief"])
         self.assertIn("experiment.exhibit", started["brief"])
         self.assertIsNotNone(self.app.research.attempt_started_running_at(experiment_id=exp_id))
         self.app.application.workflow_deliveries.run_once(project_id=self.project_id)
         return exp_id
 
-    def _log_run(self, run_id: str, *, offset_ms: int = 0) -> None:
-        self.mlflow.runs.append(
-            _run(run_id, start_ms=int(time.time() * 1000) + offset_ms)
-        )
-
     def _submit_ready(
-        self, exp_id: str, *, report: str = REPORT_WITH_REFERENCE
+        self,
+        exp_id: str,
+        *,
+        report: str = REPORT_WITH_REFERENCE,
+        result: str = '{"accuracy": 0.72}\n',
+        result_path: str = "results.json",
     ) -> None:
-        self._submit(
-            exp_id=exp_id,
-            path="results.json",
-            role="result",
-            body='{"accuracy": 0.72}\n',
-        )
+        self._submit(exp_id=exp_id, path=result_path, role="result", body=result)
         self._submit(exp_id=exp_id, path="report.md", role="report", body=report)
         self._submit(exp_id=exp_id, path="graph.json", role="graph", body=VALID_GRAPH)
 
@@ -396,8 +226,6 @@ class ExhibitFlowTest(unittest.TestCase):
 
     def test_submit_results_pins_a_system_authored_exhibit(self) -> None:
         exp_id = self._drive_to_running()
-        self._log_run("seed-0")
-        self._log_run("seed-1")
         self._submit_ready(exp_id)
         out = self.call(
             "experiment.transition",
@@ -407,37 +235,19 @@ class ExhibitFlowTest(unittest.TestCase):
         )
         self.assertEqual(out["status"], "experiment_review")
         self.assertTrue(out["metrics_exhibit"]["pinned"])
-        self.assertEqual(out["metrics_exhibit"]["verdict"]["runs_found"], 2)
+        self.assertEqual(out["metrics_exhibit"]["verdict"]["result_files"], 1)
 
         exhibit = self._pinned_exhibit(exp_id)
-        self.assertEqual([r["run_id"] for r in exhibit["runs"]], ["seed-0", "seed-1"])
-        # Result-file source ingested with parsed payload.
+        # Result-file source ingested with parsed payload and provenance.
         self.assertEqual(exhibit["result_files"][0]["data"], {"accuracy": 0.72})
+        self.assertEqual(exhibit["result_files"][0]["source"]["type"], "result_file")
 
         association = self._exhibit_association(exp_id)
         self.assertEqual(association["created_by"], "system")
         self.assertTrue(str(association["path"]).endswith("metrics_exhibit.json"))
 
-    def test_runs_logged_after_submit_do_not_exist_for_the_attempt(self) -> None:
+    def test_files_submitted_after_the_transition_are_outside_the_record(self) -> None:
         exp_id = self._drive_to_running()
-        self._log_run("in-window")
-        self._submit_ready(exp_id)
-        self.call(
-            "experiment.transition",
-            project_id=self.project_id,
-            experiment_id=exp_id,
-            transition="submit_results",
-        )
-        self._log_run("late-write")
-        exhibit = self._pinned_exhibit(exp_id)
-        self.assertEqual([r["run_id"] for r in exhibit["runs"]], ["in-window"])
-
-    def test_previous_attempt_runs_stay_out_of_the_window(self) -> None:
-        exp_id = self._drive_to_running()
-        self.mlflow.runs.append(
-            _run("previous-attempt", start_ms=int(time.time() * 1000) - 3_600_000)
-        )
-        self._log_run("current")
         self._submit_ready(exp_id)
         self.call(
             "experiment.transition",
@@ -446,11 +256,14 @@ class ExhibitFlowTest(unittest.TestCase):
             transition="submit_results",
         )
         exhibit = self._pinned_exhibit(exp_id)
-        self.assertEqual([r["run_id"] for r in exhibit["runs"]], ["current"])
+        self.assertEqual(
+            [entry["path"] for entry in exhibit["result_files"]], ["results.json"]
+        )
 
-    def test_report_must_reference_the_exhibit_when_runs_exist(self) -> None:
+    def test_report_must_reference_the_exhibit_when_results_are_machine_readable(
+        self,
+    ) -> None:
         exp_id = self._drive_to_running()
-        self._log_run("seed-0")
         self._submit_ready(exp_id, report=REPORT_WITHOUT_REFERENCE)
         with self.assertRaises(WorkflowError) as ctx:
             self.call(
@@ -472,9 +285,16 @@ class ExhibitFlowTest(unittest.TestCase):
         )
         self.assertEqual(out["status"], "experiment_review")
 
-    def test_no_runs_means_no_exhibit_and_no_gate_machinery(self) -> None:
+    def test_a_qualitative_attempt_needs_no_exhibit_and_no_gate_machinery(self) -> None:
+        # A result artifact the system cannot parse is the agent's own prose:
+        # nothing to be the record of, so no exhibit and no reference demanded.
         exp_id = self._drive_to_running()
-        self._submit_ready(exp_id, report=REPORT_WITHOUT_REFERENCE)
+        self._submit_ready(
+            exp_id,
+            report=REPORT_WITHOUT_REFERENCE,
+            result="observed a qualitative shift, no numbers\n",
+            result_path="results.txt",
+        )
         out = self.call(
             "experiment.transition",
             project_id=self.project_id,
@@ -484,52 +304,9 @@ class ExhibitFlowTest(unittest.TestCase):
         self.assertEqual(out["status"], "experiment_review")
         self.assertIsNone(self._exhibit_association(exp_id))
         self.assertNotIn("metrics_exhibit", out)
-
-    def test_submit_results_under_suspension_pins_nothing_and_does_not_error(
-        self,
-    ) -> None:
-        # A running experiment started before suspension carries a plugin-created
-        # mlflow_run_id. Turning the kill-switch on must NOT KeyError/Assert in
-        # the exhibit finalize path (the design-review trap): capabilities lose
-        # readback, so should_pin_exhibit branch-2 cannot fire and no exhibit is
-        # required for the in-flight attempt.
-        exp_id = self._drive_to_running()
-        self._log_run("pre-suspension")  # a run exists, but readback goes dark
-        self.mlflow.suspended = True
-        # No exhibit reference is demanded, since no runs are found while
-        # suspended — a report without the reference must still pass.
-        self._submit_ready(exp_id, report=REPORT_WITHOUT_REFERENCE)
-        out = self.call(
-            "experiment.transition",
-            project_id=self.project_id,
-            experiment_id=exp_id,
-            transition="submit_results",
-        )
-        self.assertEqual(out["status"], "experiment_review")
-        # Nothing pinned, no gate machinery, and the pre-suspension run id is
-        # still threaded through the response.
-        self.assertIsNone(self._exhibit_association(exp_id))
-        self.assertNotIn("metrics_exhibit", out)
-        self.assertEqual(out["mlflow"]["run"]["run_id"], "run-plugin")
-        self.assertFalse(out["mlflow"]["configured"])
-
-    def test_mlflow_outage_pins_a_visibly_unavailable_exhibit(self) -> None:
-        exp_id = self._drive_to_running()
-        self._submit_ready(exp_id)
-        self.mlflow.available = False
-        self.call(
-            "experiment.transition",
-            project_id=self.project_id,
-            experiment_id=exp_id,
-            transition="submit_results",
-        )
-        exhibit = self._pinned_exhibit(exp_id)
-        self.assertFalse(exhibit["mlflow"]["available"])
-        self.assertEqual(exhibit["runs"], [])
 
     def test_generation_verdict_is_recorded_for_instrumentation(self) -> None:
         exp_id = self._drive_to_running()
-        self._log_run("seed-0")
         self._submit_ready(exp_id)
         self.call(
             "experiment.transition",
@@ -546,14 +323,13 @@ class ExhibitFlowTest(unittest.TestCase):
         finally:
             conn.close()
         payload = json.loads(str(row["payload_json"]))
-        self.assertEqual(payload["runs_found"], 1)
+        self.assertEqual(payload["result_files"], 1)
         self.assertTrue(payload["pinned"])
 
     def test_reviewer_hydration_includes_the_exhibit_content(self) -> None:
         # Review start lists the immutable exhibit id; artifact.read is the
         # reviewer's focused path to the ground-truth numbers.
         exp_id = self._drive_to_running()
-        self._log_run("seed-0")
         self._submit_ready(exp_id)
         self.call(
             "experiment.transition",
@@ -586,13 +362,12 @@ class ExhibitFlowTest(unittest.TestCase):
             include_content=True,
         )
         exhibit = json.loads(found["content"]["content"])
-        self.assertEqual([r["run_id"] for r in exhibit["runs"]], ["seed-0"])
+        self.assertEqual(exhibit["result_files"][0]["data"], {"accuracy": 0.72})
 
     # ---- preview during running ----
 
     def test_preview_matches_final_for_identical_state(self) -> None:
         exp_id = self._drive_to_running()
-        self._log_run("seed-0")
         self._submit_ready(exp_id)
         preview = self.call(
             "experiment.exhibit", project_id=self.project_id, experiment_id=exp_id
@@ -625,7 +400,6 @@ class ExhibitFlowTest(unittest.TestCase):
 
     def test_agents_cannot_author_replace_or_delete_the_exhibit(self) -> None:
         exp_id = self._drive_to_running()
-        self._log_run("seed-0")
         self._submit_ready(exp_id)
         self.call(
             "experiment.transition",

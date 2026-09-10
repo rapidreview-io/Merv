@@ -22,17 +22,6 @@ from merv.brain.application.experiments.transition import (
     TransitionResponse,
 )
 from merv.brain.research_core import ProducedObject
-from merv.brain.application.mlflow import (
-    CreateRunResult,
-    FinalizeRunResult,
-    MetricsSnapshot,
-    TrackingCapabilities,
-    TrackingContextPayload,
-    TrackingExperimentSnapshot,
-    TrackingMetric,
-    TrackingRun,
-    TrackingSnapshotRun,
-)
 from merv.brain.kernel.events import StoredEvent, freeze_json_object
 from merv.brain.research_core.models import (
     LiteratureSignal,
@@ -42,7 +31,6 @@ from merv.brain.research_core.models import (
     ExhibitVerdict,
     ExperimentState,
     ExperimentSummary,
-    PersistedRunState,
     DependencyNode,
     TaskResult,
     TaskState,
@@ -121,53 +109,9 @@ EVENT = StoredEvent(
     payload=freeze_json_object({"transition": "start_running", "steps": [1, 2]}),
     created_at="2026-07-21T12:00:00Z",
 )
-RUN: TrackingRun = {
-    "run_id": "run_1",
-    "run_name": "attempt-1",
-    "status": "RUNNING",
-    "artifact_uri": "s3://runs/1",
-    "created_at": "2026-07-21T12:00:00Z",
-    "created_by_plugin": True,
-    "error": "",
-}
-
 # One non-empty sample per discovered value type. TypedDicts are ordinary dicts
 # at runtime; including every declared field makes their nested shapes visible.
 SAMPLES: dict[type, object] = {
-    TrackingCapabilities: TrackingCapabilities(True, True, True),
-    TrackingContextPayload: {
-        "configured": True,
-        "mode": "control",
-        "tracking_uri": "https://tracking.example",
-        "dashboard_url": "https://tracking.example/ui",
-        "experiment_name": "proj_1.exp_1",
-        "env": {"MLFLOW_TRACKING_URI": "https://tracking.example"},
-        "note": "configured",
-        "project_id": "proj_1",
-        "experiment_namespace_prefix": "proj_1",
-        "experiments": [{"id": "exp_1", "name": "Example"}],
-    },
-    TrackingRun: RUN,
-    CreateRunResult: {"created": True, **RUN},
-    FinalizeRunResult: {"run": RUN},
-    TrackingMetric: {"last": 0.9, "step": 3, "min": 0.4, "max": 0.9},
-    TrackingSnapshotRun: {
-        "run_id": "run_1",
-        "run_name": "attempt-1",
-        "status": "RUNNING",
-        "start_time": 1,
-        "end_time": 2,
-        "params": {"seed": 7},
-        "tags": {"attempt": "1"},
-        "metrics": {"accuracy": {"last": 0.9}},
-        "metrics_capped_at": 50,
-    },
-    TrackingExperimentSnapshot: {"name": "proj_1.exp_1", "runs": [RUN]},
-    MetricsSnapshot: {
-        "available": True,
-        "suspended": False,
-        "experiments": [{"name": "proj_1.exp_1", "runs": []}],
-    },
     ProducedObject: {
         "id": "obj_1",
         "name": "models/checkpoint.bin",
@@ -189,10 +133,6 @@ SAMPLES: dict[type, object] = {
         "details": "Hold the optimizer fixed; budget one GPU-day.",
         "status": "running",
         "attempt_index": 1,
-        "mlflow_run": RUN,
-        "mlflow": {"configured": True},
-        "mlflow_guidance": "Log every run.",
-        "mlflow_warning": {"tracking": "unavailable", "error": "down", "repair": "…"},
         "metrics_exhibit": {"pinned": True},
         "feed_note": "Experiment started.",
     },
@@ -207,13 +147,8 @@ SAMPLES: dict[type, object] = {
         "accepted_at": "2026-07-21T12:00:00Z",
         "metrics_exhibit": {"pinned": True},
         "feed_note": "Experiment started.",
-        "mlflow": {"configured": True},
-        "mlflow_run": RUN,
-        "mlflow_guidance": "Log every run.",
-        "mlflow_warning": {"tracking": "unavailable", "error": "down", "repair": "…"},
     },
     StoredEvent: EVENT,
-    PersistedRunState: {**RUN, "delivery_id": 7},
     ExperimentCreateArgs: {
         "name": "example",
         "intent": "Test one claim",
@@ -238,7 +173,6 @@ SAMPLES: dict[type, object] = {
         "details": "Hold the optimizer fixed; budget one GPU-day.",
         "status": "running",
         "attempt_index": 1,
-        "mlflow_run": RUN,
     },
     ExperimentSummary: {
         "id": "exp_1",
@@ -258,13 +192,10 @@ SAMPLES: dict[type, object] = {
         "details": "Hold the optimizer fixed; budget one GPU-day.",
         "status": "running",
         "attempt_index": 1,
-        "mlflow_run": RUN,
     },
     ExhibitVerdict: {
-        "runs_found": 1,
         "result_files": 1,
         "attempt_index": 1,
-        "mlflow": {"configured": True},
         "pinned": True,
     },
     CommittedExperimentUpdate: CommittedExperimentUpdate(
@@ -386,8 +317,6 @@ JSON_ROUNDTRIP_DEBT: Counter[tuple[str, str]] = Counter()
 
 ANNOTATION_DEBT = frozenset(
     {
-        ("merv.brain.application.mlflow.TrackingMetric.step", "object"),
-        ("merv.brain.application.mlflow.TrackingSnapshotRun.params", "object"),
         (
             "merv.brain.application.experiments.transition.TransitionResponse.metrics_exhibit",
             "object",
@@ -410,7 +339,6 @@ ANNOTATION_DEBT = frozenset(
             "merv.brain.research_core.models.ResearchSnapshot.claim_events_since_reflection",
             "Any",
         ),
-        ("merv.brain.research_core.models.ExhibitVerdict.mlflow", "object"),
     }
 )
 

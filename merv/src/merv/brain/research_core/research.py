@@ -30,7 +30,6 @@ from .models import (
     ExperimentState,
     ExperimentSummary,
     LiteratureSignal,
-    PersistedRunState,
     ResearchSnapshot,
     TaskState,
     TaskSummary,
@@ -1001,46 +1000,6 @@ class Research:
             ),
         )
 
-    def record_tracking_run(
-        self,
-        *,
-        project_id: str,
-        experiment_id: str,
-        run: PersistedRunState,
-        delivery_id: int,
-    ) -> ExperimentState:
-        return cast(
-            ExperimentState,
-            self._experiments.record_mlflow_run(
-                project_id=project_id,
-                experiment_id=experiment_id,
-                run=run,
-                delivery_id=delivery_id,
-            ),
-        )
-
-    def refresh_tracking_run(
-        self,
-        *,
-        project_id: str,
-        experiment_id: str,
-        run: PersistedRunState,
-        if_current: bool = False,
-        expected_run_id: str | None = None,
-    ) -> CommittedExperimentUpdate | None:
-        return cast(
-            CommittedExperimentUpdate | None,
-            self._experiments.record_mlflow_run(
-                project_id=project_id,
-                experiment_id=experiment_id,
-                run=run,
-                event_type="experiment.mlflow_run_refreshed",
-                return_event=True,
-                expected_run_id=(expected_run_id if expected_run_id is not None else
-                                 str(run.get("run_id") or "") if if_current else None),
-            ),
-        )
-
     def record_exhibit_verdict(
         self, *, experiment_id: str, project_id: str, verdict: ExhibitVerdict,
         expected_revision: int | None = None, expected_attempt_index: int | None = None,
@@ -1339,19 +1298,6 @@ class Research:
 
     def review_queue(self, *, project_id: str | None = None) -> dict[str, Any]:
         return self._reviews.queue(project_id=project_id)
-
-    def open_experiment_reviews(
-        self,
-        *,
-        project_id: str | None,
-        experiment_id: str,
-    ) -> list[dict[str, Any]]:
-        return self._reviews.open_requests_for_target(
-            project_id=project_id, experiment_id=experiment_id
-        )
-
-    def review_snapshot(self, *, snapshot_id: str) -> dict[str, Any]:
-        return snapshot_from_id(snapshot_id=snapshot_id)
 
     def review_project_id(
         self,

@@ -33,7 +33,6 @@ from .experiments.presentation import (
     slim_experiment_state,
 )
 from .experiments.transition import TransitionExperiment
-from .mlflow import ExperimentTracking, MlflowIntegration
 from .project_context import ProjectContextQuery
 from .queries import LogicGraphQuery
 from .reflections import (
@@ -75,7 +74,6 @@ class Application:
         objects: RemoteObjects,
         produced_objects: ProducedObjectCatalog,
         agent_sessions: AgentSessions,
-        tracking: ExperimentTracking | None = None,
     ) -> None:
         self.research = research
         self.artifacts = artifacts
@@ -90,14 +88,8 @@ class Application:
             assignment=self._workflow_assignment,
             activate=self._activate_workflow_session,
         )
-        self._mlflow = MlflowIntegration(
-            research=research,
-            feed=feed,
-            objects=produced_objects,
-            adapter=tracking,
-        )
         self.workflow_deliveries = WorkflowDeliveries(workflows=research.workflows, research=research,
-                                                     tracking=self._mlflow, sessions=agent_sessions)
+                                                     sessions=agent_sessions)
 
         self._project_context = ProjectContextQuery(
             research=research,
@@ -106,16 +98,11 @@ class Application:
         self._experiment_context = ExperimentContextQuery(artifacts=artifacts)
         self._task_context = TaskContextQuery(artifacts=artifacts)
         self._task_transition = TransitionTask(research=research, feed=feed)
-        self._exhibits = ExperimentExhibits(
-            research=research,
-            artifacts=artifacts,
-            mlflow=self._mlflow,
-        )
+        self._exhibits = ExperimentExhibits(research=research, artifacts=artifacts)
         self._transition = TransitionExperiment(
             research=research,
             artifacts=artifacts,
             feed=feed,
-            mlflow=self._mlflow,
             exhibits=self._exhibits,
             objects=produced_objects,
         )
@@ -687,7 +674,6 @@ class Application:
                     project_id=resolved_project_id,
                     experiment_ids=(experiment_id,),
                 )[experiment_id],
-                include_legacy_tracking=self._mlflow.enabled,
             )
             response["code_workspace"] = self.agent_sessions.workspaces(
                 project_id=resolved_project_id,
@@ -697,16 +683,6 @@ class Application:
                 project_id=resolved_project_id,
                 experiment_ids=(experiment_id,),
             ).get(experiment_id, [])
-            if not self._mlflow.enabled:
-                response.pop("mlflow_run", None)
-            else:
-                self._mlflow.decorate(
-                    response,
-                    project_id=resolved_project_id,
-                    experiment_id=experiment_id,
-                    include_credentials=False,
-                    include_guidance=False,
-                )
             return response
         state = self.research.experiment_state(
             experiment_id=experiment_id,
@@ -719,7 +695,6 @@ class Application:
                 project_id=resolved_project_id,
                 experiment_ids=(experiment_id,),
             )[experiment_id],
-            include_legacy_tracking=self._mlflow.enabled,
         )
         response["code_workspace"] = self.agent_sessions.workspaces(
             project_id=resolved_project_id,
@@ -741,12 +716,7 @@ class Application:
                     details={"field": "review_id", "review_ids": known},
                 )
             response["review"] = body
-        return self._mlflow.decorate(
-            response,
-            project_id=resolved_project_id,
-            experiment_id=experiment_id,
-            include_credentials=True,
-        )
+        return response
 
     def transition_experiment(
         self,
@@ -1207,13 +1177,7 @@ class Application:
             "workflow": active.get("workflow") if active else status["workflow"],
             "active_experiment": active,
         }
-        health = self._mlflow.health()
-        if health:
-            result["mlflow"] = health
         return result
-
-    def tracking_health(self) -> dict[str, Any]:
-        return dict(self._mlflow.health())
 
     def current_project(self, *, tenant_id: str | None = None) -> dict[str, Any]:
         result = self.research.current_project(tenant_id=tenant_id)
@@ -1226,36 +1190,6 @@ class Application:
             "at_a_glance": project_at_a_glance(
                 self.research.snapshot(project_id=project_id)
             ),
-        }
-
-    def figure_facts(self, *, project_id: str, experiment_id: str) -> dict[str, Any]:
-        """Gather cross-module facts; Surface owns the UI projection."""
-        experiment = self.research.experiment_state(
-            experiment_id=experiment_id,
-            project_id=project_id,
-        )
-        review_attempts = {
-            str(review.get("id")): int(
-                self.research.review_snapshot(
-                    snapshot_id=str(review.get("target_snapshot_id") or "")
-                ).get("attempt_index")
-                or 0
-            )
-            for review in experiment.get("reviews", [])
-        }
-        sandbox, active = self.sandboxes.figure_snapshot(
-            experiment_id=experiment_id,
-            project_id=project_id,
-        )
-        return {
-            "experiment": experiment,
-            "review_attempts": review_attempts,
-            "open_review_requests": self.research.open_experiment_reviews(
-                project_id=project_id,
-                experiment_id=experiment_id,
-            ),
-            "sandbox": sandbox,
-            "sandbox_active": active,
         }
 
     def compute_cost(self, *, project_id: str) -> dict[str, Any]:
@@ -1283,7 +1217,7 @@ class Application:
         result = self.research.recent_events(project_id=project_id, limit=500)
         return {
             **result,
-            "events": _visible_events(result.get("events") or [])[:limit],
+            "events": (result.get("events") or [])[:limit],
         }
 
     def events_since(self, *, project_id: str, after_id: int) -> dict[str, Any]:
@@ -1293,7 +1227,7 @@ class Application:
         )
         return {
             **result,
-            "events": _visible_events(result.get("events") or []),
+            "events": result.get("events") or [],
         }
 
     def experiment_graph(
@@ -1314,49 +1248,6 @@ class Application:
             project_id=project_id,
             reflection_id=reflection_id,
         )
-
-    # Optional MLflow integration -----------------------------------------
-
-    @property
-    def tracking_enabled(self) -> bool:
-        return self._mlflow.enabled
-
-    def tracking_context(
-        self, *, project_id: str, experiment_id: str | None = None
-    ) -> dict[str, Any]:
-        return self._mlflow.context(
-            project_id=project_id,
-            experiment_id=experiment_id,
-        )
-
-    def finalize_tracking(
-        self,
-        *,
-        project_id: str,
-        experiment_id: str,
-        run_id: str | None = None,
-        status: str | None = "FINISHED",
-        wait_seconds: float = 2.0,
-    ) -> dict[str, Any]:
-        return self._mlflow.finalize(
-            project_id=project_id,
-            experiment_id=experiment_id,
-            run_id=run_id,
-            status=status,
-            wait_seconds=wait_seconds,
-        )
-
-    def tracking_overview(self, *, project_id: str) -> dict[str, Any]:
-        return self._mlflow.overview(project_id=project_id)
-
-    def tracking_metrics(
-        self, *, project_id: str, experiment_id: str
-    ) -> dict[str, Any]:
-        return self._mlflow.metrics(
-            project_id=project_id,
-            experiment_id=experiment_id,
-        )
-
 
 __all__ = ["Application"]
 
@@ -1409,22 +1300,3 @@ def _advance_view(advance: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _visible_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Hide dormant integration events and fields without deleting history."""
-    return [
-        _strip_legacy_fields(event)
-        for event in events
-        if "mlflow" not in str(event.get("type") or "").lower()
-    ]
-
-
-def _strip_legacy_fields(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: _strip_legacy_fields(item)
-            for key, item in value.items()
-            if "mlflow" not in str(key).lower()
-        }
-    if isinstance(value, list):
-        return [_strip_legacy_fields(item) for item in value]
-    return value

@@ -508,10 +508,6 @@ class RemoteSandboxes:
             return {"ok": False, "backend": "merv-sandboxes", "error": "merv-sandboxes is not configured"}
         return self.client.health()
 
-    def figure_snapshot(self, *, project_id: str, experiment_id: str) -> tuple[dict[str, Any] | None, bool]:
-        value = self.snapshot(project_id=project_id, experiment_id=experiment_id)
-        return value, bool(value and value["status"] in {"running", "provisioning"})
-
     def project_spend(self, *, project_id: str) -> dict[str, Any]:
         """Present service totals, joining resource amounts to research associations."""
         pid = self._project(project_id)

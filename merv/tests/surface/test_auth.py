@@ -8,7 +8,6 @@ MockTransport-backed PostgREST for the member-directory RPCs.
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import tempfile
@@ -113,11 +112,6 @@ class SupabaseVerifierTest(unittest.TestCase):
     def test_anonymous_sessions_are_rejected(self) -> None:
         with self.assertRaises(UnauthorizedError):
             self.verifier.verify_bearer(f"Bearer {_token(is_anonymous=True)}")
-
-    def test_basic_credential_carries_the_bearer_in_the_password_slot(self) -> None:
-        encoded_jwt = base64.b64encode(f"rp:{_token()}".encode()).decode()
-        principal = self.verifier.verify_basic_or_bearer(f"Basic {encoded_jwt}")
-        self.assertEqual(principal.user_id, USER_A)
 
     def test_meta_exposes_public_values_only(self) -> None:
         meta = self.verifier.meta()
@@ -525,27 +519,6 @@ class AuthedSurfaceTest(unittest.TestCase):
         )
         self.assertEqual(legacy.status_code, 403, legacy.text)
         self.assertEqual(legacy.json()["error_code"], "tool_visibility_forbidden")
-
-    def test_mlflow_auth_route_is_absent_from_default_product(self) -> None:
-        encoded = base64.b64encode(f"rp:{_token()}".encode()).decode()
-        for headers in (
-            None,
-            _bearer(USER_A),
-            {"Authorization": f"Basic {encoded}"},
-        ):
-            response = self.client.get("/internal/auth/mlflow", headers=headers)
-            self.assertEqual(response.status_code, 404, response.text)
-
-    def test_legacy_suspension_env_does_not_reintroduce_mlflow_auth_route(self) -> None:
-        encoded = base64.b64encode(f"rp:{_token()}".encode()).decode()
-        with patch.dict(os.environ, {"MERV_MLFLOW_SUSPENDED": "1"}, clear=False):
-            for headers in (
-                None,
-                _bearer(USER_A),
-                {"Authorization": f"Basic {encoded}"},
-            ):
-                response = self.client.get("/internal/auth/mlflow", headers=headers)
-                self.assertEqual(response.status_code, 404, response.text)
 
 
 if __name__ == "__main__":

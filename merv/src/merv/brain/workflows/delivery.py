@@ -72,38 +72,6 @@ class Deliveries:
                 (kind, iso_after(seconds=-interval_seconds)),
             )
 
-    def protect_external_effect(self, delivery: Delivery, *, reason: str) -> bool:
-        """Stop automatic retries before a non-idempotent external operation."""
-        with self.store.transaction() as conn:
-            row = conn.execute(
-                "UPDATE workflow_actions SET status = 'manual_repair', last_error = ? "
-                "WHERE id = ? AND status = 'delivering' AND lease_token = ? RETURNING id",
-                (reason[:2000], delivery.id, delivery.lease_token),
-            ).fetchone()
-            return row is not None
-
-    def resolve_manual_repair(self, *, project_id: str, instance_id: str, kind: str) -> None:
-        """An owning support adapter confirmed and attached the external result."""
-        with self.store.transaction() as conn:
-            conn.execute(
-                "UPDATE workflow_actions SET status = 'delivered', last_error = '', delivered_at = ?, "
-                "lease_token = '', lease_until = '' WHERE project_id = ? AND instance_id = ? AND kind = ? "
-                "AND status = 'manual_repair' AND (lease_token = '' OR lease_until <= ?) "
-                "AND EXISTS (SELECT 1 FROM workflow_instances w WHERE w.id = workflow_actions.instance_id "
-                "AND w.revision = workflow_actions.revision)",
-                (now_iso(), project_id, instance_id, kind, now_iso()),
-            )
-
-    def needs_manual_repair(self, *, project_id: str, instance_id: str, kind: str) -> bool:
-        with self.store.transaction() as conn:
-            return conn.execute(
-                "SELECT 1 FROM workflow_actions a JOIN workflow_instances w ON w.id = a.instance_id "
-                "WHERE a.project_id = ? AND a.instance_id = ? AND a.kind = ? "
-                "AND a.status = 'manual_repair' AND a.revision = w.revision "
-                "AND (a.lease_token = '' OR a.lease_until <= ?) LIMIT 1",
-                (project_id, instance_id, kind, now_iso()),
-            ).fetchone() is not None
-
     def history(self, *, project_id: str, instance_id: str):
         with self.store.transaction() as conn:
             return [dict(row) for row in conn.execute(
@@ -115,11 +83,10 @@ class Deliveries:
     def settle(self, delivery: Delivery, *, error: str = "") -> bool:
         with self.store.transaction() as conn:
             row = conn.execute(
-                "UPDATE workflow_actions SET status = CASE WHEN status = 'manual_repair' AND ? <> '' "
-                "THEN 'manual_repair' ELSE ? END, lease_token = '', lease_until = '', "
+                "UPDATE workflow_actions SET status = ?, lease_token = '', lease_until = '', "
                 "last_error = ?, next_attempt_at = ?, delivered_at = ? "
-                "WHERE id = ? AND status IN ('delivering', 'manual_repair') AND lease_token = ? RETURNING id",
-                (error, "pending" if error else "delivered", error[:2000],
+                "WHERE id = ? AND status = 'delivering' AND lease_token = ? RETURNING id",
+                ("pending" if error else "delivered", error[:2000],
                  iso_after(seconds=min(3600, 2 ** min(delivery.attempts, 12))) if error else "",
                  None if error else now_iso(), delivery.id, delivery.lease_token),
             ).fetchone()

@@ -31,7 +31,7 @@ LEDGER_LABEL_MAX_CHARS = 120
 # fields every component carries; an owner registers its own at composition
 # (``register_activity_vocabulary``), so the shared log shapes work the same
 # for a record Kernel has never heard of.
-SENSITIVE_KEYS = {"capability", "session_secret", "MLFLOW_TRACKING_PASSWORD"}
+SENSITIVE_KEYS = {"capability", "session_secret"}
 ID_KEYS = {"project_id", "artifact_id", "job_id", "target_type", "target_id",
            "role", "transition", "verdict"}
 TARGET_KEYS: list[tuple[str, str]] = [("artifact", "artifact_id")]

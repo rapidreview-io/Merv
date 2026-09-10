@@ -8,22 +8,15 @@ from threading import Event, Thread
 from ..research_core import Research
 from ..agent_sessions import AgentSessions
 from ..workflows import Delivery, Workflows
-from .mlflow import MlflowIntegration
 
 LOGGER = logging.getLogger(__name__)
 
 
 class WorkflowDeliveries:
-    def __init__(self, *, workflows: Workflows, research: Research, tracking: MlflowIntegration, sessions: AgentSessions) -> None:
+    def __init__(self, *, workflows: Workflows, research: Research, sessions: AgentSessions) -> None:
         self.workflows, self.research = workflows, research
         self.sessions = sessions
-        self.handlers = {
-            "workflow.start": self._start,
-            "review.request": self._review,
-            **{name: tracking.deliver_workflow_action for name in (
-                "experiment.start_tracking", "experiment.finish_tracking",
-                "experiment.stop_tracking", "experiment.fail_tracking")},
-        }
+        self.handlers = {"workflow.start": self._start, "review.request": self._review}
         self._stop = Event()
         self._thread: Thread | None = None
 

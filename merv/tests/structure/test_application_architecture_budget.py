@@ -29,23 +29,16 @@ class ApplicationArchitectureBudgetTest(unittest.TestCase):
         ):
             self.assertFalse((APPLICATION / removed).exists(), removed)
 
-    def test_mlflow_is_one_explicit_optional_integration(self) -> None:
-        integration = (APPLICATION / "mlflow.py").read_text()
+    def test_no_application_file_reaches_an_external_tracking_adapter(self) -> None:
+        # The external run-tracking integration was deleted whole: no adapter,
+        # no optional collaborator, no per-file re-entry point for one.
         root = (APPLICATION / "application.py").read_text()
-        transition = (APPLICATION / "experiments/transition.py").read_text()
-        deliveries = (APPLICATION / "workflow_actions.py").read_text()
-        self.assertIn("class MlflowIntegration:", integration)
-        self.assertIn("self._mlflow = MlflowIntegration(", root)
-        self.assertNotIn("self.mlflow.after_transition(", transition)
-        self.assertIn("tracking.deliver_workflow_action", deliveries)
         self.assertIn("self.workflow_deliveries = WorkflowDeliveries(", root)
         for path in APPLICATION.rglob("*.py"):
-            if path.name == "mlflow.py":
-                continue
             source = path.read_text()
-            self.assertNotIn("adapter.create_run(", source, path)
-            self.assertNotIn("adapter.finalize_run(", source, path)
-            self.assertNotIn("adapter.project_results_snapshot(", source, path)
+            for reintroduced in ("adapter.create_run(", "adapter.finalize_run(",
+                                 "adapter.project_results_snapshot("):
+                self.assertNotIn(reintroduced, source, path)
 
     def test_application_owns_workflow_without_dispatching_events(self) -> None:
         self.assertNotIn(

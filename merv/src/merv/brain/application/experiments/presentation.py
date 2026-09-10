@@ -148,30 +148,10 @@ def rich_experiment_state(
     full: ExperimentState,
     *,
     storage_objects: Iterable[ProducedObject | dict[str, Any]],
-    include_legacy_tracking: bool = False,
 ) -> ExperimentState:
-    """Attach Storage facts without mutating Research's authoritative state.
+    """Attach Storage facts without mutating Research's authoritative state."""
 
-    Legacy tracking state is deliberately omitted from this public projection.
-    The persisted columns remain intact so the integration can be reintroduced
-    without a data migration.
-    """
-
-    result = (
-        dict(full)
-        if include_legacy_tracking
-        else {
-            key: value
-            for key, value in full.items()
-            if "mlflow" not in str(key).lower()
-        }
-    )
-    if isinstance(result.get("mlflow_run"), dict):
-        result["mlflow_run"] = {
-            key: value
-            for key, value in result["mlflow_run"].items()
-            if key != "delivery_id"
-        }
+    result = dict(full)
     if "gate_checklist" in result and "claim_update_suggestions" not in result:
         items = list(result.items())
         index = list(result).index("gate_checklist") + 1
@@ -181,12 +161,7 @@ def rich_experiment_state(
         result = dict(items)
     result.pop("storage_objects", None)
     items = list(result.items())
-    storage_item = ("storage_objects", list(storage_objects))
-    if include_legacy_tracking and "mlflow_run" in result:
-        index = list(result).index("mlflow_run")
-        items.insert(index, storage_item)
-    else:
-        items.append(storage_item)
+    items.append(("storage_objects", list(storage_objects)))
     return cast(ExperimentState, dict(items))
 
 
@@ -194,15 +169,10 @@ def slim_experiment_state(
     full: ExperimentState,
     *,
     storage_objects: Iterable[ProducedObject | dict[str, Any]],
-    include_legacy_tracking: bool = False,
 ) -> SlimExperimentState:
     """Project rich experiment facts to the exact agent-facing wire shape."""
 
-    rich = rich_experiment_state(
-        full,
-        storage_objects=storage_objects,
-        include_legacy_tracking=include_legacy_tracking,
-    )
+    rich = rich_experiment_state(full, storage_objects=storage_objects)
     attempt = rich.get("attempt_index")
     all_artifacts = rich.get("artifacts", [])
     current = rich.get("current_attempt_artifacts")
@@ -232,8 +202,6 @@ def slim_experiment_state(
         "allowed_transitions": rich.get("allowed_transitions", []),
         "gate_checklist": rich.get("gate_checklist", {}),
     }
-    if include_legacy_tracking:
-        slim["mlflow_run"] = rich.get("mlflow_run")
     slim.update(
         {
             "claim_update_suggestions": rich.get("claim_update_suggestions", []),

@@ -34,7 +34,6 @@ class TestBrain:
     _PRIVATE_ALIASES = {
         "store": "_store",
         "blobs": "_blobs",
-        "mlflow_tracking": "_tracking",
     }
 
     def __init__(
@@ -45,7 +44,6 @@ class TestBrain:
         infrastructure_client: Any | None = None,
         store: Any | None = None,
         blobs: Any | None = None,
-        mlflow_tracking: Any | None = None,
         storage_enabled: bool = False,
         env: dict[str, str] | None = None,
     ) -> None:
@@ -73,7 +71,6 @@ class TestBrain:
             ),
             store=self._store,
             blobs=self._blobs,
-            mlflow_tracking=mlflow_tracking,
             # Storage tools stay out of the default manifest; storage tests opt in.
             storage_enabled=storage_enabled,
         )

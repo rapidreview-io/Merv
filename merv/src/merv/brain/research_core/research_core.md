@@ -20,7 +20,7 @@ its versioned graph/runtime; their record services stay private collaborators.
 - `research.py`: public root; project, claim, candidate writes, workflow delegation,
   snapshots, project context, membership, events, graph refs.
 - `experiments.py`: experiment record binding, creation invariants, verified facts,
-  evidence sealing, attempt projection, and the idempotent tracking-delivery ledger.
+  evidence sealing, and attempt projection.
   `tasks.py`: the same for tasks; transitions commit through `workflows.Runtime`.
 - `dependencies.py`: the wave DAG (`node_dependencies`): edges with cycle checks,
   per-node dependency and dependent rows for the shared gate and UI.
@@ -41,14 +41,10 @@ its versioned graph/runtime; their record services stay private collaborators.
 The graph uses `planned -> design_review -> running -> experiment_review ->
 complete`; failure and abandonment are terminal outcomes. Passing design review
 immediately enters execution. Dependencies gate dispatch; actual activation starts
-the attempt clock and tracking. Graph decisions, native state, and evidence sealing
+the attempt clock. Graph decisions, native state, and evidence sealing
 commit together. Rejected design work returns to `planned` and increments the
 attempt; a rejected execution review returns to `planned` (new attempt) or
 `running` (keep the approved plan).
-
-Tracking outcomes update experiment state and append an event atomically; a
-keyed delivery also writes `tracking_deliveries` there, so its unique key proves
-the delivery committed and prevents duplicate external runs.
 
 A task is scoped non-experiment work with no claim: `in_progress -> in_review
 -> done`, `failed` the only other ending. Goal prose + deliverables (each

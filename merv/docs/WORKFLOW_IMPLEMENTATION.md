@@ -54,9 +54,6 @@ live beside their workflow definitions, outside support modules.
 - `workflow_actions` commits requested effects with the transition. Expiring
   leases, stable delivery keys, retry backoff and stale-worker fencing support
   process recovery. External handlers must honor the delivery key or be idempotent.
-  Optional tracking creation is fenced before the remote call; an ambiguous
-  outcome stays visible as `manual_repair` until the existing run is inspected
-  and attached. It is never blindly recreated after a lost receipt.
 - Existing experiment/task/reflection rows remain atomic compatibility projections
   and retain their research-specific fields, claims, evidence and review records.
 - Artifacts remain generic immutable content in **Merv-owned R2**. Workflows keep

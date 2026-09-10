@@ -52,6 +52,7 @@ _VALID_REPORT = (
     "## Summary\n"
     "Ran the toy experiment per the approved plan.\n\n"
     "## Results\n\n"
+    "Read from metrics_exhibit.json:\n\n"
     "| Metric | Target | Achieved |\n"
     "|--------|--------|----------|\n"
     "| accuracy | 0.60 | 0.72 |\n\n"

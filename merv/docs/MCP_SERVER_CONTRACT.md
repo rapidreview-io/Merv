@@ -97,8 +97,8 @@ sandbox.health
 
 The manifest is built in code as `TOOL_MANIFEST` in
 `src/merv/brain/surface/tools/contracts.py`, which merges the owners' tables —
-research_core, workflows, artifacts, feed, infrastructure, the frozen
-`mlflow_contracts.py`, and the surface's own `agent.hello` and `project` — and
+research_core, workflows, artifacts, feed, infrastructure, and the surface's
+own `agent.hello` and `project` — and
 is exposed via `tools/list`; there is no checked-in catalog JSON file. Because every tool is brain-served, `tools/list`
 is unavailable until the brain responds.
 
@@ -213,9 +213,9 @@ they need refreshed context. The HTTP UI uses richer service views.
 `experiment.create` accepts `depends_on` (exp_/task_ ids). An experiment may be
 `running` after plan approval while `dependencies_pending` blocks its execution
 lease. The same prerequisites are rechecked in the lease transaction. Actual
-work start and tracking are recorded when the execution agent activates its
-lease, or an interactive agent calls `workflow.begin` with the current revision;
-plan approval does not start a clock or create an MLflow run.
+work start is recorded when the execution agent activates its lease, or an
+interactive agent calls `workflow.begin` with the current revision; plan
+approval does not start a clock.
 
 ## Task workflow
 

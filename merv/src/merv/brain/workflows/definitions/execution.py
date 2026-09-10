@@ -58,10 +58,10 @@ REVIEW_EXECUTION = Execution(
 EXPERIMENT_EXECUTION = owner_execution(
     "experiment_id",
     tools=KNOWLEDGE_TOOLS | SANDBOX_TOOLS | {
-        "experiment.exhibit", "experiment.transition", "litreview.cite", "mlflow.context",
-        "mlflow.finalize_run", "review.request", "review.status",
+        "experiment.exhibit", "experiment.transition", "litreview.cite",
+        "review.request", "review.status",
     },
-    mutating=SANDBOX_BOUND_TOOLS | {"experiment.transition", "experiment.exhibit", "mlflow.finalize_run"},
+    mutating=SANDBOX_BOUND_TOOLS | {"experiment.transition", "experiment.exhibit"},
     sandbox=True,
     workspace=WorkspacePolicy(namespace="experiments"),
     scope=(Scope("producing_experiment_id", "instance", tools=("storage.submit",)),),

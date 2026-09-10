@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from typing import Any, Protocol
 
@@ -166,11 +165,11 @@ def build_router(
 
     @api_router.get("/api/projects/{project_id}/home")
     def home(project_id: str, request: Request) -> Response:
-        # Composite signal ETag. The home payload is a pure function of three
+        # Composite signal ETag. The home payload is a pure function of two
         # inputs: the event ledger (claims/experiments/reviews/reflections/
-        # artifacts all append events), live sandbox rows (heartbeats bump
-        # updated_at but write no event), and the MLflow reachability probe
-        # (external, 5s-cached). A 304 skips the heavy status/experiment render.
+        # artifacts all append events) and live sandbox rows (heartbeats bump
+        # updated_at but write no event). A 304 skips the heavy
+        # status/experiment render.
         return conditional_json_from_signal(
             request,
             signal_parts=(
@@ -178,12 +177,6 @@ def build_router(
                 project_id,
                 application.timeline_signal(project_id=project_id),
                 sandboxes.project_signal(project_id=project_id),
-                json.dumps(
-                    application.tracking_health(),
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    default=str,
-                ),
             ),
             payload=lambda: application.dashboard(project_id=project_id),
         )
