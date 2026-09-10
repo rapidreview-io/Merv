@@ -36,14 +36,17 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, NamedTuple
-from urllib.parse import urlsplit
 
 from merv.shared.client_config import (
     AGENT_SESSION_KEY_ENV_VAR,
-    CLIENT_CONFIG_ENV_VAR,
+    ClientError,
+    NoRedirect,
     dual_env_value,
+    is_loopback_url,
+    read_client_document,
     resolve_client_config_path,
     resolve_client_control_url,
+    safe_control_url,
 )
 from merv.shared.redaction import redact_excerpt, redact_secrets
 from merv.shared.runner_settings import (
@@ -54,10 +57,9 @@ from merv.shared.runner_settings import (
 from .harness import HarnessError, SkillsInstall
 from . import harness as harness_kit
 from .private_files import (
-    PrivateFileError,
     private_token,
-    read_json_document,
     replace_json_document,
+    write_private_json,
 )
 from .runner_pairing import (
     PairingError,
@@ -101,7 +103,7 @@ SMOKE_LOOPBACK_TOKEN = "local-smoke"
 SETTINGS_VERSION_KEY = "desired_settings_version"
 
 
-class RunnerError(Exception):
+class RunnerError(ClientError):
     """A configuration, protocol, or local-launch failure."""
 
 
@@ -541,7 +543,7 @@ class HermesHost(CommandHost):
 
 def _codex_session_arguments(child_env: Mapping[str, str]) -> list[str]:
     server = "mcp_servers.merv_agent_session"
-    url = json.dumps(_safe_control_url(child_env["MERV_CONTROL_URL"]) + "/mcp")
+    url = json.dumps(safe_control_url(child_env["MERV_CONTROL_URL"]) + "/mcp")
     return [
         "-c", f"{server}.url={url}",
         "-c", f"{server}.bearer_token_env_var={json.dumps(AGENT_SESSION_KEY_ENV_VAR)}",
@@ -552,7 +554,7 @@ def _codex_session_arguments(child_env: Mapping[str, str]) -> list[str]:
 
 
 def _claude_session_arguments(child_env: Mapping[str, str]) -> list[str]:
-    control_url = _safe_control_url(child_env["MERV_CONTROL_URL"])
+    control_url = safe_control_url(child_env["MERV_CONTROL_URL"])
     server = {
         "type": "http",
         "url": f"{control_url}/mcp",
@@ -1221,7 +1223,7 @@ class WorkspaceManager:
     def _try_rev_parse(repository: Path, ref: str) -> str:
         try:
             return WorkspaceManager._rev_parse(repository, ref)
-        except RunnerError:
+        except ClientError:
             return ""
 
     @staticmethod
@@ -1249,11 +1251,6 @@ class WorkspaceManager:
         return result.stdout
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
 class AgentSessionsClient:
     """All assumptions about the Merv Agent Sessions HTTP contract."""
 
@@ -1264,11 +1261,11 @@ class AgentSessionsClient:
         runner_key: str | None,
         timeout: float = 15.0,
     ):
-        self.control_url = _safe_control_url(control_url)
+        self.control_url = safe_control_url(control_url)
         self.runner_key = runner_key
         self.timeout = timeout
         self.last_lease_reason = ""
-        self._opener = urllib.request.build_opener(_NoRedirect())
+        self._opener = urllib.request.build_opener(NoRedirect())
 
     def lease(
         self,
@@ -1650,7 +1647,7 @@ class AgentRunner:
             print(f"settings v{version} rejected: {exc}", file=sys.stderr)
             return
         try:
-            document = read_json_document(self.config_path)
+            document = read_client_document(self.config_path)
             merged = merge_desired_settings(document, normalized)
             merged_workspace = load_workspace_settings_from(merged, self.config_path)
             workspace_changes = merged_workspace != self.workspaces.settings
@@ -1677,7 +1674,7 @@ class AgentRunner:
             else:
                 merged[SETTINGS_VERSION_KEY] = version
                 replace_json_document(self.config_path, merged, validate=_validate_settings)
-        except (PrivateFileError, RunnerError, RunnerSettingsError) as exc:
+        except ClientError as exc:
             self.settings_error = str(exc)
             print(f"settings v{version} could not be applied: {exc}", file=sys.stderr)
             return
@@ -1718,7 +1715,7 @@ class AgentRunner:
             # now, not the snapshot taken when the change arrived, so nothing
             # written meanwhile (test results, a probe nonce) is lost.
             if self.pending_workspace_document is not None:
-                current = read_json_document(self.config_path)
+                current = read_client_document(self.config_path)
                 activated = dict(current)
                 if "agent_workspace" in self.pending_workspace_document:
                     activated["agent_workspace"] = self.pending_workspace_document["agent_workspace"]
@@ -1730,7 +1727,7 @@ class AgentRunner:
                     activated,
                     validate=_validate_settings,
                 )
-        except (PrivateFileError, RunnerError) as exc:
+        except ClientError as exc:
             self.settings_error = str(exc)
             print(f"settings v{self.pending_workspace_version} could not be activated: {exc}", file=sys.stderr)
             return
@@ -1750,7 +1747,7 @@ class AgentRunner:
     def _advance_pending(self) -> bool:
         try:
             return self.client.pending_advance(project_id=self.project_id) is not None
-        except RunnerError:
+        except ClientError:
             return True  # unknown → hold the workspace swap one more cycle
 
     def _pending_reason(self) -> str:
@@ -1845,8 +1842,8 @@ class AgentRunner:
         if not platform_name or not nonce or self.config_path is None:
             return
         try:
-            document = read_json_document(self.config_path)
-        except PrivateFileError:
+            document = read_client_document(self.config_path)
+        except ClientError:
             document = {}
         if str(document.get(SMOKE_NONCE_KEY) or "") == nonce:
             return
@@ -1856,7 +1853,7 @@ class AgentRunner:
                 {**document, SMOKE_NONCE_KEY: nonce},
                 validate=_validate_settings,
             )
-        except (PrivateFileError, RunnerError):
+        except ClientError:
             return
         self.queue_smoke(platform_name, nonce=nonce, why="requested")
 
@@ -1877,8 +1874,8 @@ class AgentRunner:
         if self.config_path is None:
             return {}
         try:
-            raw = read_json_document(self.config_path).get(SMOKE_STATE_KEY)
-        except PrivateFileError:
+            raw = read_client_document(self.config_path).get(SMOKE_STATE_KEY)
+        except ClientError:
             return {}
         if not isinstance(raw, dict):
             return {}
@@ -1893,7 +1890,7 @@ class AgentRunner:
         if self.config_path is None:
             return
         try:
-            document = read_json_document(self.config_path)
+            document = read_client_document(self.config_path)
             stored = document.get(SMOKE_STATE_KEY)
             merged = dict(stored) if isinstance(stored, dict) else {}
             merged[platform_name] = dict(result)
@@ -1902,7 +1899,7 @@ class AgentRunner:
                 {**document, SMOKE_STATE_KEY: merged},
                 validate=_validate_settings,
             )
-        except (PrivateFileError, RunnerError) as exc:
+        except ClientError as exc:
             print(f"could not remember the {platform_name} test result: {exc}", file=sys.stderr)
 
     def advance_smoke(self) -> None:
@@ -2061,7 +2058,7 @@ class AgentRunner:
         adapter = session.adapter or ""
         try:
             adapter = adapter or self._platform(session.platform).adapter
-        except RunnerError:
+        except ClientError:
             pass
         failure = harness_kit.classify_failure(adapter, stderr_text)
         if failure is not None:
@@ -2123,7 +2120,7 @@ class AgentRunner:
                     adapter = session.adapter or self._platform(session.platform).adapter
                     if HOSTS[adapter].inspect(host_session) != "stopped":
                         continue
-                except (RunnerError, KeyError):
+                except (ClientError, KeyError):
                     continue
             session.status = remote_status
 
@@ -2306,7 +2303,7 @@ class AgentRunner:
                     else []
                 ),
             )
-        except RunnerError as exc:
+        except ClientError as exc:
             receipt = {
                 "observed_sha": self.workspaces.central_sha(),
                 "proposal_parents": [],
@@ -2581,7 +2578,7 @@ class AgentRunner:
                 stderr_tail=excerpt["stderr_tail"],
                 complete=complete,
             )
-        except RunnerError as exc:
+        except ClientError as exc:
             print(f"{session.session_id}: trace excerpt not mirrored: {exc}", file=sys.stderr)
             return
         session.trace_excerpt_sig = signature
@@ -2914,7 +2911,7 @@ def _prepare_trace(
             "stderr_file": "stderr.log",
         },
     }
-    _write_private_json(directory / "metadata.json", metadata)
+    write_private_json(directory / "metadata.json", metadata)
     return TraceFiles(
         directory=directory,
         stdout=directory / stdout_filename,
@@ -3243,18 +3240,6 @@ def _sanitized_command(command: Sequence[str]) -> list[str]:
     return result
 
 
-def _write_private_json(path: Path, payload: Mapping[str, Any]) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    descriptor = os.open(
-        temporary,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-        0o600,
-    )
-    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-        output.write(json.dumps(dict(payload), indent=2, sort_keys=True) + "\n")
-    temporary.replace(path)
-
-
 def _append_private_text(path: Path, value: str) -> None:
     descriptor = os.open(
         path,
@@ -3360,22 +3345,6 @@ def _session_marker(session: HostSession) -> str | None:
     return parts[2]
 
 
-def _safe_control_url(raw: str) -> str:
-    url = raw.strip().rstrip("/")
-    parsed = urlsplit(url)
-    if parsed.scheme == "https" and parsed.netloc:
-        return url
-    if parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "::1", "localhost"}:
-        return url
-    raise RunnerError(
-        "control URL must use HTTPS, except for an explicit loopback host"
-    )
-
-
-def _is_loopback_url(raw: str) -> bool:
-    return urlsplit(raw).hostname in {"127.0.0.1", "::1", "localhost"}
-
-
 def _optional_text(value: Any) -> str | None:
     text = str(value).strip() if value is not None else ""
     return text or None
@@ -3455,16 +3424,16 @@ def _detected_commands(config_path: Path) -> dict[str, bool]:
 
 def _stored_settings_version(config_path: Path) -> int:
     try:
-        raw = read_json_document(config_path).get(SETTINGS_VERSION_KEY)
-    except PrivateFileError:
+        raw = read_client_document(config_path).get(SETTINGS_VERSION_KEY)
+    except ClientError:
         return 0
     return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0 else 0
 
 
 def _stored_project_id(config_path: Path) -> str:
     try:
-        return str(read_json_document(config_path).get("project_id") or "").strip()
-    except PrivateFileError:
+        return str(read_client_document(config_path).get("project_id") or "").strip()
+    except ClientError:
         return ""
 
 
@@ -3490,7 +3459,7 @@ def _run_runner(
             runner.fill_available_slots()
         except RunnerCredentialError:
             raise
-        except RunnerError as exc:
+        except ClientError as exc:
             if once:
                 raise
             failures += 1
@@ -3553,7 +3522,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             else resolve_client_config_path()
         )
         control_url = resolve_client_control_url(config_path=config_path)
-        loopback = _is_loopback_url(control_url)
+        loopback = is_loopback_url(control_url)
         # Only one process may pair or dispatch for a config dir; the lock is
         # taken before any file under it is written.
         lock = RunnerLock(config_path.parent / "agent-runner.lock")
@@ -3608,9 +3577,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 try:
                     replace_json_document(
                         config_path,
-                        {**read_json_document(config_path), "project_id": project_id},
+                        {**read_client_document(config_path), "project_id": project_id},
                     )
-                except PrivateFileError as exc:
+                except ClientError as exc:
                     print(f"could not remember --project: {exc}", file=sys.stderr)
             platforms = load_platforms(config_path, include_disabled=True)
             if not any(item.enabled for item in platforms):
@@ -3649,7 +3618,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except RunnerCredentialError as exc:
         print(f"merv-agent-runner: {exc}", file=sys.stderr)
         return 2
-    except (RunnerError, PrivateFileError) as exc:
+    except ClientError as exc:
         print(f"merv-agent-runner: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:

@@ -15,8 +15,10 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from merv.shared.client_config import ClientError, read_client_document
 
-class PrivateFileError(Exception):
+
+class PrivateFileError(ClientError):
     """A private machine file cannot be read or written safely."""
 
 
@@ -62,16 +64,11 @@ def write_private_json(path: Path, value: Mapping[str, Any]) -> None:
 
 
 def read_json_document(path: Path) -> dict[str, Any]:
-    """The JSON object at ``path``, or ``{}`` when it does not exist yet."""
+    """The shared client reader, wearing the error type pairing catches by."""
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {}
-    except (OSError, ValueError) as exc:
-        raise PrivateFileError(f"cannot read machine settings: {path}") from exc
-    if not isinstance(value, dict):
-        raise PrivateFileError(f"machine settings must contain an object: {path}")
-    return value
+        return read_client_document(path)
+    except ClientError as exc:
+        raise PrivateFileError(str(exc)) from exc
 
 
 def replace_json_document(

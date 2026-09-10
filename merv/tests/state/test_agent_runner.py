@@ -32,19 +32,17 @@ from merv.client.agent_runner import (
     WorkspacePolicy,
     WorkspaceSettings,
     _child_environment,
-    _detected_commands,
     _runner_key,
     _read_trace_telemetry,
     _run_runner,
     _trace_excerpt,
-    _safe_control_url,
     _session_key,
     load_platforms,
     load_workspace_settings,
     main as runner_main,
 )
+from merv.shared.client_config import ClientError, safe_control_url
 from merv.client.cli import (
-    ClientError,
     configure_agent,
     configure_client,
     configure_workspace,
@@ -697,14 +695,14 @@ class AgentHostTest(unittest.TestCase):
 
     def test_credentials_are_refused_over_nonlocal_http(self) -> None:
         self.assertEqual(
-            _safe_control_url("http://127.0.0.1:8787/"),
+            safe_control_url("http://127.0.0.1:8787/"),
             "http://127.0.0.1:8787",
         )
         self.assertEqual(
-            _safe_control_url("https://merv.example/"), "https://merv.example"
+            safe_control_url("https://merv.example/"), "https://merv.example"
         )
-        with self.assertRaisesRegex(RunnerError, "must use HTTPS"):
-            _safe_control_url("http://192.0.2.10:8787")
+        with self.assertRaisesRegex(ClientError, "must use HTTPS"):
+            safe_control_url("http://192.0.2.10:8787")
 
     def test_git_workspace_follows_the_declared_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

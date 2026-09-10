@@ -1,4 +1,9 @@
-"""Machine client configuration helpers.
+"""Machine client configuration and the plumbing every client shares.
+
+One error family, one reader of ``client.json``, one rule about which control
+URLs may carry a credential, and one redirect-refusing opener: the CLI, the
+runner, pairing and the harness all come through here, so a machine cannot
+disagree with itself about what it is configured to do.
 
 Env-var names resolve dual-spelled here exactly as in ``merv.brain.kernel.env``:
 ``MERV_X`` primary, ``RESEARCH_PLUGIN_X`` legacy fallback (non-empty wins;
@@ -11,11 +16,22 @@ from __future__ import annotations
 import json
 import os
 import sys
+import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .machine_dirs import resolve_machine_state_dir
+
+
+class ClientError(Exception):
+    """A machine client cannot read its configuration or carry out a command.
+
+    Every client-side failure that a caller is expected to report rather than
+    crash on derives from this: settings outside the closed schema, an
+    unreadable private file, a local launch that failed.
+    """
 
 
 ENV_PREFIX = "MERV_"
@@ -85,6 +101,7 @@ AGENT_SESSION_KEY_ENV_VAR = "MERV_AGENT_SESSION_KEY"
 # deployments opt in via `merv-client configure` or the env var.
 HOSTED_CONTROL_URL = "https://experiments.rapidreview.io"
 LOCAL_BRAIN_URL = "http://127.0.0.1:8787"
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 def default_client_config_path() -> Path:
@@ -121,11 +138,60 @@ def resolve_client_control_url(
 
 
 def read_client_config(env: Mapping[str, str] | None = None) -> dict[str, Any]:
-    path = resolve_client_config_path(env)
+    """The machine client document, or ``{}`` when it cannot be read at all.
+
+    The precedence resolvers must never fail on a damaged file: they fall back
+    to their defaults instead. Everything that edits the document reads it
+    through ``read_client_document`` and hears about the damage.
+    """
     try:
-        parsed = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return read_client_document(resolve_client_config_path(env))
+    except ClientError:
         return {}
-    if not isinstance(parsed, dict):
+
+
+def read_client_document(path: Path) -> dict[str, Any]:
+    """The JSON object at ``path``; ``{}`` when absent, an error when damaged.
+
+    The one reader of a machine client file. "Not written yet" is ordinary and
+    answers ``{}``; unreadable or not-an-object is a failure, so a read-modify-
+    write never silently replaces a document it could not understand.
+    """
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return {}
-    return {str(key): value for key, value in parsed.items() if value is not None}
+    except (OSError, ValueError) as exc:
+        raise ClientError(f"cannot read machine settings: {path}") from exc
+    if not isinstance(value, dict):
+        raise ClientError(f"machine settings must contain an object: {path}")
+    return value
+
+
+def safe_control_url(raw: str) -> str:
+    """``raw`` normalized, refused unless a credential may travel to it.
+
+    HTTPS anywhere, plain HTTP only to an explicit loopback host. Both the
+    runner (wiring a child's MCP server) and the CLI (posting a tool call)
+    apply this before a secret leaves the machine.
+    """
+    url = raw.strip().rstrip("/")
+    parsed = urlsplit(url)
+    if (parsed.scheme == "https" and parsed.netloc) or (
+        parsed.scheme == "http" and parsed.hostname in LOOPBACK_HOSTS
+    ):
+        return url
+    raise ClientError(
+        "control URL must use HTTPS, except for an explicit loopback host"
+    )
+
+
+def is_loopback_url(raw: str) -> bool:
+    return urlsplit(raw).hostname in LOOPBACK_HOSTS
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every redirect: a bearer token follows no unverified hop."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
