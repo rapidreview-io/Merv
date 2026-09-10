@@ -264,7 +264,6 @@ TABLE_OWNERS = {
     "oauth_clients": SURFACE,
     "oauth_authorization_codes": SURFACE,
     "oauth_refresh_tokens": SURFACE,
-    "oauth_handoff_links": SURFACE,
     "user_hf_tokens": SURFACE,
     "agent_identities": SURFACE,
     "mcp_sessions": SURFACE,

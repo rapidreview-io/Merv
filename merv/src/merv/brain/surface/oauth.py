@@ -7,7 +7,6 @@ import hashlib
 import hmac
 import ipaddress
 import re
-import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -16,17 +15,8 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 from ..kernel.secret_tokens import hash_secret, mint_secret, secret_digest_matches
 from ..kernel.utils import NotFoundError, iso_after, new_id, now_iso, parse_iso
 from .project_keys import GRANT_SCOPES, PROJECT_GRANT, ProjectKeyControl
-from .runner_pairing import USER_CODE_ALPHABET, USER_CODE_LENGTH, format_user_code
 
 AUTHORIZATION_CODE_TTL_SECONDS = 60
-# Consent chose "agent on another machine": the code travels by hand (curl or
-# paste on the remote host), so it gets the RFC 6749 §4.1.2 maximum instead of
-# the redirect budget. Still single-use and PKCE-bound.
-HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS = 10 * 60
-# Short single-use handoff links: the typeable curl target that finishes a
-# remote sign-in and the phone pickup code for a pending consent. Same code
-# space as device/runner user codes (32^8 = 2^40), same ten-minute budget.
-HANDOFF_LINK_TTL_SECONDS = 10 * 60
 ACCESS_TOKEN_TTL_SECONDS = 3600
 REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
 # Public DCR is unauthenticated, so a client that registered and never came
@@ -48,7 +38,6 @@ CAP_EVICTION_LIMIT = 100
 
 _PKCE_CHALLENGE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _PKCE_VERIFIER = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
-_CODE_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 # ``refresh_token`` only rides along; the authorization code is the one grant
 # a client can hold on its own, so every client registers redirect URIs.
 _SUPPORTED_GRANTS = frozenset(("authorization_code", "refresh_token"))
@@ -96,16 +85,6 @@ class AuthorizationCode:
     consumed_at: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class HandoffLink:
-    token_digest: str
-    kind: str
-    payload: str
-    client_ip: str
-    created_at: str
-    expires_at: str
-    consumed_at: str | None
-
 
 @dataclass(frozen=True, slots=True)
 class RefreshToken:
@@ -132,10 +111,6 @@ class OAuthRepository(Protocol):
     def insert_code(self, *, code: AuthorizationCode) -> None: ...
     def code_by_digest(self, *, digest: str) -> AuthorizationCode | None: ...
     def consume_code(self, *, digest: str, consumed_at: str) -> bool: ...
-    def insert_handoff_link(self, *, link: HandoffLink) -> None: ...
-    def consume_handoff_link(
-        self, *, digest: str, kind: str, consumed_at: str
-    ) -> str | None: ...
     def insert_refresh_token(self, *, token: RefreshToken) -> None: ...
     def refresh_token_by_digest(self, *, digest: str) -> RefreshToken | None: ...
     def consume_refresh_token(self, *, token_id: str, consumed_at: str) -> bool: ...
@@ -154,9 +129,6 @@ class OAuthControl(Protocol):
     def register_client(self, metadata: dict[str, Any]) -> dict[str, Any]: ...
     def authorization_details(self, **kwargs: object) -> dict[str, Any]: ...
     def authorize(self, **kwargs: object) -> str: ...
-    def authorization_status(self, **kwargs: object) -> str: ...
-    def mint_handoff_link(self, **kwargs: object) -> str: ...
-    def consume_handoff_link(self, **kwargs: object) -> str | None: ...
     def exchange_code(self, **kwargs: object) -> dict[str, Any]: ...
     def refresh(self, **kwargs: object) -> dict[str, Any]: ...
 
@@ -287,7 +259,6 @@ class OAuthService:
         project_id: str,
         approved: bool,
         grant_scope: str = PROJECT_GRANT,
-        handoff: bool = False,
     ) -> str:
         request = self._authorization_request(
             params=params, canonical_resource=canonical_resource
@@ -332,11 +303,7 @@ class OAuthService:
                 code_challenge=request.code_challenge,
                 resource=request.resource,
                 created_at=now_iso(),
-                expires_at=iso_after(
-                    seconds=HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS
-                    if handoff
-                    else AUTHORIZATION_CODE_TTL_SECONDS
-                ),
+                expires_at=iso_after(seconds=AUTHORIZATION_CODE_TTL_SECONDS),
                 consumed_at=None,
             )
         )
@@ -345,68 +312,6 @@ class OAuthService:
             issuer=issuer,
             state=request.state,
             code=secret,
-        )
-
-    def authorization_status(self, *, digest: str) -> str:
-        """Consent-page poll: has the hand-carried code been redeemed yet?
-
-        Keyed by the code's stored sha256 digest, which the consent response
-        hands the page — irreversible, so holding it proves nothing beyond
-        what the page already knows (it holds the code itself).
-        """
-        if not _CODE_DIGEST.fullmatch(digest):
-            return "unknown"
-        code = self._repository.code_by_digest(digest=digest)
-        if code is None:
-            return "unknown"
-        if code.consumed_at is not None:
-            return "redeemed"
-        if _expired(code.expires_at):
-            return "expired"
-        return "pending"
-
-    def mint_handoff_link(
-        self, *, kind: str, payload: str, client_ip: str
-    ) -> str:
-        """Mint a short single-use link token; display form ``AB12-CD34``.
-
-        The insert raises ``slow_down`` at the per-IP mint cap, so a caller
-        minting on the user's behalf (the consent approve) can degrade to the
-        full command instead of failing the approval.
-        """
-        if kind not in ("deliver", "visit"):
-            raise OAuthError("invalid_request", "unknown handoff link kind")
-        ip = str(client_ip or "").strip()[:64]
-        token = "".join(
-            secrets.choice(USER_CODE_ALPHABET) for _ in range(USER_CODE_LENGTH)
-        )
-        self._repository.insert_handoff_link(
-            link=HandoffLink(
-                token_digest=hash_secret(token),
-                kind=kind,
-                payload=payload,
-                client_ip=ip,
-                created_at=now_iso(),
-                expires_at=iso_after(seconds=HANDOFF_LINK_TTL_SECONDS),
-                consumed_at=None,
-            )
-        )
-        return format_user_code(token)
-
-    def consume_handoff_link(self, *, kind: str, token: str) -> str | None:
-        """One-shot payload pickup; forgiving of dashes, case, and O/I slips."""
-        text = "".join(
-            character
-            for character in str(token or "").upper()
-            if character not in " -_"
-        )
-        text = text.replace("I", "1").replace("L", "1").replace("O", "0")
-        if len(text) != USER_CODE_LENGTH or any(
-            c not in USER_CODE_ALPHABET for c in text
-        ):
-            return None
-        return self._repository.consume_handoff_link(
-            digest=hash_secret(text), kind=kind, consumed_at=now_iso()
         )
 
     def exchange_code(
@@ -775,9 +680,6 @@ __all__ = [
     "ACCESS_TOKEN_TTL_SECONDS",
     "AUTHORIZATION_CODE_TTL_SECONDS",
     "DEFAULT_UNUSED_CLIENT_TTL_DAYS",
-    "HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS",
-    "HANDOFF_LINK_TTL_SECONDS",
-    "HandoffLink",
     "OAuthControl",
     "OAuthError",
     "OAuthService",

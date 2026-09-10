@@ -30,7 +30,6 @@ from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.surface.auth import SupabaseVerifier
 from merv.brain.surface.oauth import (
     AUTHORIZATION_CODE_TTL_SECONDS,
-    HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS,
     MAX_CLIENTS_ENV_VAR,
     OAuthError,
     OAuthService,
@@ -808,188 +807,20 @@ class OAuthSurfaceTest(unittest.TestCase):
         expired = self._exchange(client_id=registration["client_id"], code=expiring)
         self.assertEqual(expired.json()["error"], "invalid_grant")
 
-    def _code_window_seconds(self, digest: str) -> float:
-        with self.app.store.transaction() as conn:
+    def test_authorization_codes_carry_the_short_redirect_budget(self) -> None:
+        registration = self._register(grants=["authorization_code"])
+        _redirect, query = self._authorize(registration["client_id"])
+        digest = hashlib.sha256(query["code"][0].encode()).hexdigest()
+        with self.app.store.connect() as conn:
             row = conn.execute(
                 "SELECT created_at, expires_at FROM oauth_authorization_codes"
                 " WHERE code_digest = ?",
                 (digest,),
             ).fetchone()
-        self.assertIsNotNone(row)
-        return (parse_iso(row[1]) - parse_iso(row[0])).total_seconds()
-
-    def test_handoff_consent_mints_a_hand_carry_code_and_reports_pickup(
-        self,
-    ) -> None:
-        registration = self._register(grants=["authorization_code"])
-        response = self.client.post(
-            "/oauth/authorize",
-            json={
-                **self._authorization_params(registration["client_id"]),
-                "decision": "approve",
-                "project_id": self.project_a,
-                "handoff": True,
-            },
-            headers=_bearer(self.jwt_a),
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        body = response.json()
-        code = parse_qs(urlsplit(body["redirect_to"]).query)["code"][0]
-        digest = hashlib.sha256(code.encode()).hexdigest()
-        self.assertEqual(body["code_status"], digest)
-        # Hand-carried codes get the RFC 6749 §4.1.2 maximum, not the
-        # redirect budget.
         self.assertEqual(
-            self._code_window_seconds(digest), HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS
+            (parse_iso(row[1]) - parse_iso(row[0])).total_seconds(),
+            AUTHORIZATION_CODE_TTL_SECONDS,
         )
-
-        pending = self.client.get(
-            f"/oauth/authorize/status?digest={digest}", headers=_bearer(self.jwt_a)
-        )
-        self.assertEqual(pending.status_code, 200, pending.text)
-        self.assertEqual(pending.json(), {"status": "pending"})
-        exchanged = self._exchange(client_id=registration["client_id"], code=code)
-        self.assertEqual(exchanged.status_code, 200, exchanged.text)
-        redeemed = self.client.get(
-            f"/oauth/authorize/status?digest={digest}", headers=_bearer(self.jwt_a)
-        )
-        self.assertEqual(redeemed.json(), {"status": "redeemed"})
-
-    def test_plain_consent_keeps_the_redirect_budget_and_no_status_key(
-        self,
-    ) -> None:
-        registration = self._register(grants=["authorization_code"])
-        response = self.client.post(
-            "/oauth/authorize",
-            json={
-                **self._authorization_params(registration["client_id"]),
-                "decision": "approve",
-                "project_id": self.project_a,
-            },
-            headers=_bearer(self.jwt_a),
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        body = response.json()
-        self.assertNotIn("code_status", body)
-        code = parse_qs(urlsplit(body["redirect_to"]).query)["code"][0]
-        digest = hashlib.sha256(code.encode()).hexdigest()
-        self.assertEqual(
-            self._code_window_seconds(digest), AUTHORIZATION_CODE_TTL_SECONDS
-        )
-
-    def test_authorization_status_needs_a_session_and_answers_edge_states(
-        self,
-    ) -> None:
-        anonymous = self.client.get("/oauth/authorize/status?digest=" + "0" * 64)
-        self.assertEqual(anonymous.status_code, 401, anonymous.text)
-        for junk in ("", "zz", "0" * 63, "0" * 64):
-            answer = self.client.get(
-                f"/oauth/authorize/status?digest={junk}", headers=_bearer(self.jwt_a)
-            )
-            self.assertEqual(answer.status_code, 200, answer.text)
-            self.assertEqual(answer.json(), {"status": "unknown"})
-
-        registration = self._register(grants=["authorization_code"])
-        response = self.client.post(
-            "/oauth/authorize",
-            json={
-                **self._authorization_params(registration["client_id"]),
-                "decision": "approve",
-                "project_id": self.project_a,
-                "handoff": True,
-            },
-            headers=_bearer(self.jwt_a),
-        )
-        digest = response.json()["code_status"]
-        with self.app.store.transaction() as conn:
-            conn.execute(
-                "UPDATE oauth_authorization_codes SET expires_at = ? WHERE code_digest = ?",
-                ("2000-01-01T00:00:00Z", digest),
-            )
-        expired = self.client.get(
-            f"/oauth/authorize/status?digest={digest}", headers=_bearer(self.jwt_a)
-        )
-        self.assertEqual(expired.json(), {"status": "expired"})
-
-    def _handoff_approve(self, registration: dict) -> dict:
-        response = self.client.post(
-            "/oauth/authorize",
-            json={
-                **self._authorization_params(registration["client_id"]),
-                "decision": "approve",
-                "project_id": self.project_a,
-                "handoff": True,
-            },
-            headers=_bearer(self.jwt_a),
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        return response.json()
-
-    def test_handoff_approve_mints_typeable_link_that_delivers_once(self) -> None:
-        registration = self._register(grants=["authorization_code"])
-        body = self._handoff_approve(registration)
-        token = body["go_token"]
-        self.assertRegex(token, r"^[0-9A-Z]{4}-[0-9A-Z]{4}$")
-
-        # A browser opening the link must not burn it.
-        browser = self.client.get(
-            f"/oauth/handoff/{token}", headers={"Accept": "text/html"}
-        )
-        self.assertEqual(browser.status_code, 200, browser.text)
-        self.assertIn("terminal", browser.text)
-
-        # curl -L: one 302 to the exact callback, then the code exchanges.
-        hop = self.client.get(f"/oauth/handoff/{token}", follow_redirects=False)
-        self.assertEqual(hop.status_code, 302, hop.text)
-        self.assertEqual(hop.headers["Location"], body["redirect_to"])
-        replay = self.client.get(f"/oauth/handoff/{token}", follow_redirects=False)
-        self.assertEqual(replay.status_code, 404, replay.text)
-        code = parse_qs(urlsplit(body["redirect_to"]).query)["code"][0]
-        exchanged = self._exchange(client_id=registration["client_id"], code=code)
-        self.assertEqual(exchanged.status_code, 200, exchanged.text)
-
-        # Transcription slips (lowercase, dashes dropped, O for 0) still land.
-        body2 = self._handoff_approve(registration)
-        sloppy = body2["go_token"].replace("-", "").lower().replace("0", "o")
-        hop2 = self.client.get(f"/oauth/handoff/{sloppy}", follow_redirects=False)
-        self.assertEqual(hop2.status_code, 302, hop2.text)
-
-    def test_handoff_visit_code_round_trips_a_pending_consent(self) -> None:
-        query = "response_type=code&client_id=oauthc_x&state=abc"
-        anonymous = self.client.post("/oauth/handoff/visit", json={"query": query})
-        self.assertEqual(anonymous.status_code, 401, anonymous.text)
-        minted = self.client.post(
-            "/oauth/handoff/visit", json={"query": query}, headers=_bearer(self.jwt_a)
-        )
-        self.assertEqual(minted.status_code, 200, minted.text)
-        code = minted.json()["code"]
-        picked = self.client.get(f"/oauth/handoff/visit/{code}")
-        self.assertEqual(picked.status_code, 200, picked.text)
-        self.assertEqual(picked.json(), {"query": query})
-        replay = self.client.get(f"/oauth/handoff/visit/{code}")
-        self.assertEqual(replay.status_code, 404, replay.text)
-
-    def test_handoff_link_mint_cap_degrades_gracefully(self) -> None:
-        for _ in range(10):
-            minted = self.client.post(
-                "/oauth/handoff/visit",
-                json={"query": "state=x"},
-                headers=_bearer(self.jwt_a),
-            )
-            self.assertEqual(minted.status_code, 200, minted.text)
-        over = self.client.post(
-            "/oauth/handoff/visit",
-            json={"query": "state=x"},
-            headers=_bearer(self.jwt_a),
-        )
-        self.assertEqual(over.status_code, 400, over.text)
-        self.assertEqual(over.json()["error"], "slow_down")
-        # The consent approve still succeeds at the cap — just without the
-        # short link.
-        registration = self._register(grants=["authorization_code"])
-        body = self._handoff_approve(registration)
-        self.assertNotIn("go_token", body)
-        self.assertIn("code_status", body)
 
     def test_refresh_rotation_revokes_predecessor_and_replay_fails(self) -> None:
         registration, first = self._mint_oauth_tokens()

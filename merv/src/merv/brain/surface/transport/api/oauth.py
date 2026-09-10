@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl
 
 from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
-from ....kernel.secret_tokens import hash_secret
 from ...oauth import OAuthControl, OAuthError, oauth_error_redirect
 from ...project_keys import PROJECT_GRANT
 from ..request_body import RequestBodyTooLarge, read_limited_body
@@ -17,17 +16,6 @@ from ..request_body import RequestBodyTooLarge, read_limited_body
 _NO_STORE = dict((("Cache-Control", "no-store"), ("Pra" + "gma", "no-cache")))
 _MAX_DCR_BODY_BYTES = 32 * 1024
 _MAX_TOKEN_BODY_BYTES = 8 * 1024
-# Shown when a handoff link is opened in a browser instead of curl.
-_HANDOFF_EXPLAINER = (
-    "<!doctype html><meta charset='utf-8'>"
-    "<title>Merv</title>"
-    "<body style='font-family:system-ui;max-width:34rem;margin:15vh auto;"
-    "padding:0 1rem;color:#1a1a1a'>"
-    "<h1 style='font-size:1.3rem'>This link belongs in a terminal</h1>"
-    "<p>Run it with <code>curl -L</code> on the machine where your coding "
-    "agent is waiting to finish signing in. Opening it here does nothing "
-    "&mdash; the approval has to reach the agent's own machine.</p></body>"
-)
 
 
 def install_routes(
@@ -58,9 +46,7 @@ def public_request(request: Request, *, enabled: bool) -> bool:
         "/.well-known/oauth-protected-resource/mcp",
         "/oauth/register",
         "/oauth/token",
-    ) or path == "/oauth/authorize" and request.method == "GET" or (
-        path.startswith("/oauth/handoff/") and request.method == "GET"
-    )
+    ) or (path == "/oauth/authorize" and request.method == "GET")
 
 
 def challenge_denial(
@@ -240,9 +226,6 @@ def build_router(
         # Absent means the old one-project consent, so an older UI build keeps
         # minting exactly what it minted before.
         grant_scope = str(body.pop("grant_scope", "") or PROJECT_GRANT)
-        # The consent page's "agent on another machine" card: the code is
-        # hand-carried instead of redirected, and the page polls for pickup.
-        handoff = body.pop("handoff", False) is True
         if decision not in ("approve", "deny") or any(
             not isinstance(key, str) or not isinstance(value, str)
             for key, value in body.items()
@@ -260,89 +243,10 @@ def build_router(
                 project_id=project_id,
                 approved=decision == "approve",
                 grant_scope=grant_scope,
-                handoff=handoff,
             )
         except OAuthError as exc:
             return _oauth_error(exc)
-        payload: dict[str, Any] = {"redirect_to": redirect_to}
-        if handoff:
-            code = dict(parse_qsl(urlsplit(redirect_to).query)).get("code")
-            if code:
-                payload["code_status"] = hash_secret(code)
-                try:
-                    payload["go_token"] = service.mint_handoff_link(
-                        kind="deliver",
-                        payload=redirect_to,
-                        client_ip=_client_ip(request),
-                    )
-                except OAuthError:
-                    # At the mint cap the approval still succeeds; the page
-                    # falls back to the full command.
-                    pass
-        return JSONResponse(payload, headers=_NO_STORE)
-
-    @router.get("/oauth/handoff/visit/{code}")
-    def handoff_visit_pickup(code: str):
-        query = service.consume_handoff_link(kind="visit", token=code)
-        if query is None:
-            return JSONResponse(
-                {"error": "not_found"}, status_code=404, headers=_NO_STORE
-            )
-        return JSONResponse({"query": query}, headers=_NO_STORE)
-
-    @router.post("/oauth/handoff/visit")
-    async def handoff_visit_mint(request: Request):
-        denial, body = await _consent_body(request)
-        if denial is not None:
-            return denial
-        query = body.get("query")
-        if (
-            not isinstance(query, str)
-            or not 0 < len(query) <= 4096
-            or any(c in query for c in "\r\n\0")
-        ):
-            return _oauth_error(
-                OAuthError("invalid_request", "query must be a short string")
-            )
-        try:
-            code = service.mint_handoff_link(
-                kind="visit", payload=query, client_ip=_client_ip(request)
-            )
-        except OAuthError as exc:
-            return _oauth_error(exc)
-        return JSONResponse({"code": code}, headers=_NO_STORE)
-
-    @router.get("/oauth/handoff/{token}")
-    def handoff_deliver(token: str, request: Request):
-        # A human opening the link in a browser must not burn it: the token
-        # is meant for curl on the agent's machine. Browsers say text/html;
-        # curl says */*.
-        accept = request.headers.get("Accept") or ""
-        if "text/html" in accept:
-            return HTMLResponse(_HANDOFF_EXPLAINER, headers=_NO_STORE)
-        redirect_to = service.consume_handoff_link(kind="deliver", token=token)
-        if redirect_to is None:
-            return JSONResponse(
-                {
-                    "error": "not_found",
-                    "error_description": "unknown, used, or expired link; "
-                    "restart the sign-in from your agent",
-                },
-                status_code=404,
-                headers=_NO_STORE,
-            )
-        return RedirectResponse(redirect_to, status_code=302, headers=_NO_STORE)
-
-    @router.get("/oauth/authorize/status")
-    def authorization_status(request: Request):
-        denial = _require_supabase_session(request)
-        if denial is not None:
-            return denial
-        digest = request.query_params.get("digest") or ""
-        return JSONResponse(
-            {"status": service.authorization_status(digest=digest)},
-            headers=_NO_STORE,
-        )
+        return JSONResponse({"redirect_to": redirect_to}, headers=_NO_STORE)
 
     @router.post("/oauth/token")
     async def token(request: Request):
@@ -399,10 +303,6 @@ async def _read_form(request: Request, *, what: str) -> dict[str, str]:
         )
     return dict(pairs)
 
-
-def _client_ip(request: Request) -> str:
-    client = getattr(request, "client", None)
-    return str(getattr(client, "host", "") or "")
 
 
 def protected_resource_metadata_url(request: Request) -> str:

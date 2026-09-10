@@ -5,16 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ..kernel.env import env_int
-from ..kernel.secret_tokens import secret_digest_matches
 from ..kernel.state.schema import SchemaModule
 from ..kernel.state.store import BaseStateStore, row_to_dict
-from ..kernel.utils import ThrottledError, format_iso, parse_iso
+from ..kernel.utils import format_iso
 from .oauth import (
     CAP_EVICTION_LIMIT,
     DEFAULT_MAX_CLIENTS,
@@ -23,13 +22,11 @@ from .oauth import (
     OPPORTUNISTIC_PRUNE_LIMIT,
     UNUSED_CLIENT_TTL_DAYS_ENV_VAR,
     AuthorizationCode,
-    HandoffLink,
     OAuthClient,
     OAuthError,
     RefreshToken,
 )
 from .project_keys import PROJECT_GRANT
-from .runner_pairing import IpCreationBudget
 
 LOGGER = logging.getLogger(__name__)
 
@@ -96,18 +93,6 @@ _UNUSED_CLIENT_PREDICATE = f"""
 _BY_FINGERPRINT = """
 SELECT * FROM oauth_clients WHERE metadata_fingerprint = ?
 """
-# The same per-IP budget runner pairing holds. Handoff links keep no pending
-# state, and their mint is often made on the user's behalf mid-consent, so this
-# one refuses with ``slow_down`` for the caller to degrade to the full command
-# rather than fail the approval.
-_HANDOFF_BUDGET = IpCreationBudget(
-    recent_by_ip=(
-        "SELECT COUNT(*) AS n FROM oauth_handoff_links "
-        "WHERE client_ip = ? AND created_at > ?"
-    ),
-    refusal=lambda: OAuthError("slow_down", "too many handoff links; retry shortly"),
-)
-
 
 class SqlOAuthRepository:
     def __init__(
@@ -390,62 +375,6 @@ class SqlOAuthRepository:
             )
         return True
 
-    def insert_handoff_link(self, *, link: HandoffLink) -> None:
-        with self._store.transaction() as conn:
-            _HANDOFF_BUDGET.enforce(
-                conn=conn, client_ip=link.client_ip, now=datetime.now(UTC)
-            )
-            # Opportunistic sweep: expired links leave with each mint, so the
-            # table stays bounded without an external timer.
-            conn.execute(
-                """
-                DELETE FROM oauth_handoff_links WHERE token_digest IN (
-                    SELECT token_digest FROM oauth_handoff_links
-                    WHERE expires_at <= ? LIMIT 100
-                )
-                """,
-                (link.created_at,),
-            )
-            conn.execute(
-                """
-                INSERT INTO oauth_handoff_links
-                  (token_digest, kind, payload, client_ip,
-                   created_at, expires_at, consumed_at)
-                VALUES (?, ?, ?, ?, ?, ?, NULL)
-                """,
-                (
-                    link.token_digest,
-                    link.kind,
-                    link.payload,
-                    link.client_ip,
-                    link.created_at,
-                    link.expires_at,
-                ),
-            )
-
-    def consume_handoff_link(
-        self, *, digest: str, kind: str, consumed_at: str
-    ) -> str | None:
-        with self._store.transaction() as conn:
-            row = conn.execute(
-                """
-                SELECT payload FROM oauth_handoff_links
-                WHERE token_digest = ? AND kind = ?
-                  AND consumed_at IS NULL AND expires_at > ?
-                """,
-                (digest, kind, consumed_at),
-            ).fetchone()
-            if row is None:
-                return None
-            conn.execute(
-                """
-                UPDATE oauth_handoff_links SET consumed_at = ?
-                WHERE token_digest = ? AND consumed_at IS NULL
-                """,
-                (consumed_at, digest),
-            )
-        return str(row["payload"])
-
     def insert_refresh_token(self, *, token: RefreshToken) -> None:
         with self._store.transaction() as conn:
             conn.execute(
@@ -651,22 +580,6 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
   FOREIGN KEY(parent_token_id) REFERENCES oauth_refresh_tokens(id)
 );
 
--- Short single-use consent-handoff links. 'deliver' carries the client's
--- loopback callback URL so a curl -L on the agent's machine can finish the
--- native flow; 'visit' carries a pending authorize query so a phone can pick
--- the consent up by short code. Both are 32^8 tokens stored as digests,
--- ten-minute lifetime, consumed on first use; the authorization code inside
--- a deliver payload stays PKCE-bound to the waiting client either way.
-CREATE TABLE IF NOT EXISTS oauth_handoff_links (
-  token_digest TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('deliver', 'visit')),
-  payload TEXT NOT NULL,
-  client_ip TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  consumed_at TEXT
-);
-
 -- The get-or-create arbiter for a repeated registration. NULLs are distinct
 -- on both dialects, which is exactly the escape hatch legacy duplicates need.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_clients_fingerprint
@@ -678,10 +591,6 @@ CREATE INDEX IF NOT EXISTS idx_oauth_codes_client
   ON oauth_authorization_codes(client_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client
   ON oauth_refresh_tokens(client_id);
-CREATE INDEX IF NOT EXISTS idx_oauth_handoff_links_expiry
-  ON oauth_handoff_links(expires_at);
-CREATE INDEX IF NOT EXISTS idx_oauth_handoff_links_ip
-  ON oauth_handoff_links(client_ip, created_at);
 """
 
 
