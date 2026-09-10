@@ -235,147 +235,11 @@ class Application:
             revision=int(row["workflow_revision"]), session_id=str(row["id"]),
         )
 
-    def attach_agent_session(
-        self,
-        *,
-        session_id: str,
-        runner_id: str,
-        host_session_ref: str,
-        workspace_ref: str = "",
-        base_sha: str = "",
-        head_sha: str = "",
-        workspace_stats: dict[str, Any] | None = None,
-        agent_setup: dict[str, Any] | None = None,
-        telemetry: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        return {
-            "session": present_session(self.agent_sessions.attach(
-                session_id=session_id,
-                runner_id=runner_id,
-                host_session_ref=host_session_ref,
-                workspace_ref=workspace_ref,
-                base_sha=base_sha,
-                head_sha=head_sha,
-                workspace_stats=workspace_stats,
-                agent_setup=agent_setup,
-                telemetry=telemetry,
-            ))
-        }
-
-    def agent_session_authority(self, *, session_id: str) -> dict[str, str]:
-        """The immutable parent authority for one runner-owned session."""
-        return self.agent_sessions.authority(session_id=session_id)
-
     def halt_agent_sessions(self, *, project_id: str) -> dict[str, Any]:
         """Stop every live session now; runners kill their children on reconcile."""
         halted = self.agent_sessions.halt(project_id=project_id)
         listing = self.agent_sessions.list(project_id=project_id)
         return {"halted": halted, **listing, "sessions": [present_session(row) for row in listing["sessions"]]}
-
-    def release_agent_session(
-        self,
-        *,
-        session_id: str,
-        runner_id: str,
-        reason: str,
-        head_sha: str = "",
-        workspace_stats: dict[str, Any] | None = None,
-        telemetry: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        return {
-            "session": present_session(self.agent_sessions.release(
-                session_id=session_id,
-                runner_id=runner_id,
-                reason=reason,
-                head_sha=head_sha,
-                workspace_stats=workspace_stats,
-                telemetry=telemetry,
-            ))
-        }
-
-    def heartbeat_agent_session(
-        self,
-        *,
-        session_id: str,
-        runner_id: str,
-        head_sha: str = "",
-        workspace_stats: dict[str, Any] | None = None,
-        telemetry: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        return {
-            "session": present_session(self.agent_sessions.heartbeat(
-                session_id=session_id,
-                runner_id=runner_id,
-                head_sha=head_sha,
-                workspace_stats=workspace_stats,
-                telemetry=telemetry,
-            ))
-        }
-
-    def heartbeat_agent_runner(
-        self,
-        *,
-        project_id: str,
-        runner_id: str,
-        machine: dict[str, Any],
-        platforms: list[dict[str, Any]],
-        capacity: int,
-        inventory: dict[str, Any] | None = None,
-        applied_version: int | None = None,
-    ) -> dict[str, Any]:
-        """Record presence and answer with the caller's own desired tuning."""
-        response = self.agent_sessions.heartbeat_runner(
-            project_id=project_id,
-            runner_id=runner_id,
-            machine=machine,
-            platforms=platforms,
-            capacity=capacity,
-            inventory=inventory,
-            applied_version=applied_version,
-        )
-        # ``runner`` keeps the pre-existing key for one release; the caller's own
-        # row, the desired version, and the desired settings are the contract.
-        return {"runner": response["presence"], **response}
-
-    def set_agent_runner_settings(
-        self, *, project_id: str, runner_ref: str, settings: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Owner saves runner tuning; the runner pulls it on its next heartbeat."""
-        return {
-            "runner": self.agent_sessions.set_desired_settings(
-                project_id=project_id, runner_ref=runner_ref, settings=settings
-            )
-        }
-
-    def record_agent_session_trace(
-        self,
-        *,
-        session_id: str,
-        runner_id: str,
-        events: list[Any],
-        stderr_tail: str,
-        complete: bool,
-    ) -> dict[str, Any]:
-        """The runner mirrors a bounded, redacted excerpt for the job card."""
-        return self.agent_sessions.record_trace(
-            session_id=session_id,
-            runner_id=runner_id,
-            events=events,
-            stderr_tail=stderr_tail,
-            complete=complete,
-        )
-
-    def agent_session_trace(self, *, project_id: str, session_id: str) -> dict[str, Any]:
-        trace = self.agent_sessions.trace(project_id=project_id, session_id=session_id)
-        return {"trace": trace}
-
-    def halt_agent_session(self, *, project_id: str, session_id: str) -> dict[str, Any]:
-        """Stop one live session now; its runner kills the child on reconcile."""
-        return {
-            "session": present_session(self.agent_sessions.halt_session(
-                project_id=project_id, session_id=session_id
-            ))
-        }
 
     # Workflow and context -------------------------------------------------
 
@@ -1249,7 +1113,7 @@ class Application:
             reflection_id=reflection_id,
         )
 
-__all__ = ["Application"]
+__all__ = ["Application", "present_session"]
 
 
 def session_kind(execution: Mapping[str, Any]) -> str:

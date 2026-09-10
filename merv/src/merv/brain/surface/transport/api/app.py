@@ -149,6 +149,7 @@ def create_fastapi_app(
     routers = (
         agent_sessions.build_router(
             gateway, application=api.application,
+            sessions=api.agent_sessions,
             advances=getattr(api, "agent_advances", api.application),
         ),
         meta.build_router(

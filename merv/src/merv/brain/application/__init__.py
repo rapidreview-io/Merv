@@ -2,6 +2,6 @@
 """Cross-component use cases and the ports they require."""
 """Cross-module orchestration."""
 
-from .application import Application
+from .application import Application, present_session
 
-__all__ = ["Application"]
+__all__ = ["Application", "present_session"]
