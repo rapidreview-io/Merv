@@ -26,11 +26,8 @@ from .oauth import (
     CAP_EVICTION_LIMIT,
     DEFAULT_MAX_CLIENTS,
     DEFAULT_UNUSED_CLIENT_TTL_DAYS,
-    DEVICE_CREATE_PER_IP_PER_MINUTE,
     DEVICE_MISS_LIMIT,
     DEVICE_MISS_WINDOW_SECONDS,
-    DEVICE_PENDING_GLOBAL_CAP,
-    DEVICE_PENDING_PER_IP,
     MAX_CLIENTS_ENV_VAR,
     OPPORTUNISTIC_PRUNE_LIMIT,
     UNUSED_CLIENT_TTL_DAYS_ENV_VAR,
@@ -42,6 +39,7 @@ from .oauth import (
     RefreshToken,
 )
 from .project_keys import PROJECT_GRANT
+from .runner_pairing import IpCreationBudget
 
 LOGGER = logging.getLogger(__name__)
 
@@ -74,6 +72,35 @@ _UNUSED_CLIENT_PREDICATE = f"""
 _BY_FINGERPRINT = """
 SELECT * FROM oauth_clients WHERE metadata_fingerprint = ?
 """
+# The same per-IP budget runner pairing holds, over the two Surface tables an
+# unauthenticated or browser-session caller can grow.
+_DEVICE_BUDGET = IpCreationBudget(
+    recent_by_ip="""
+        SELECT COUNT(*) AS n FROM oauth_device_grants
+        WHERE client_ip = ? AND created_at > ?
+    """,
+    pending_by_ip="""
+        SELECT COUNT(*) AS n FROM oauth_device_grants
+        WHERE client_ip = ? AND status = 'pending'
+    """,
+    pending_total=(
+        "SELECT COUNT(*) AS n FROM oauth_device_grants WHERE status = 'pending'"
+    ),
+    refusal=lambda: ThrottledError(
+        "too many device authorization requests; wait a minute and try again",
+        details={"retry_after_seconds": 60},
+    ),
+)
+# Handoff links keep no pending state, and the mint is often made on the user's
+# behalf mid-consent, so it refuses with ``slow_down`` for the caller to degrade
+# to the full command rather than fail the approval.
+_HANDOFF_BUDGET = IpCreationBudget(
+    recent_by_ip="""
+        SELECT COUNT(*) AS n FROM oauth_handoff_links
+        WHERE client_ip = ? AND created_at > ?
+    """,
+    refusal=lambda: OAuthError("slow_down", "too many handoff links; retry shortly"),
+)
 
 
 class SqlOAuthRepository:
@@ -359,6 +386,9 @@ class SqlOAuthRepository:
 
     def insert_handoff_link(self, *, link: HandoffLink) -> None:
         with self._store.transaction() as conn:
+            _HANDOFF_BUDGET.enforce(
+                conn=conn, client_ip=link.client_ip, now=datetime.now(UTC)
+            )
             # Opportunistic sweep: expired links leave with each mint, so the
             # table stays bounded without an external timer.
             conn.execute(
@@ -409,17 +439,6 @@ class SqlOAuthRepository:
                 (consumed_at, digest),
             )
         return str(row["payload"])
-
-    def recent_handoff_links(self, *, client_ip: str, since: str) -> int:
-        with self._store.transaction() as conn:
-            row = conn.execute(
-                """
-                SELECT COUNT(*) AS n FROM oauth_handoff_links
-                WHERE client_ip = ? AND created_at > ?
-                """,
-                (client_ip, since),
-            ).fetchone()
-        return int(row["n"])
 
     def insert_refresh_token(self, *, token: RefreshToken) -> None:
         with self._store.transaction() as conn:
@@ -492,33 +511,7 @@ class SqlOAuthRepository:
         now = datetime.now(UTC)
         with self._store.transaction() as conn:
             self._sweep_device_grants(conn=conn, now=now)
-            recent = conn.execute(
-                """
-                SELECT COUNT(*) AS n FROM oauth_device_grants
-                WHERE client_ip = ? AND created_at > ?
-                """,
-                (grant.client_ip, format_iso(now - timedelta(minutes=1))),
-            ).fetchone()
-            pending_ip = conn.execute(
-                """
-                SELECT COUNT(*) AS n FROM oauth_device_grants
-                WHERE client_ip = ? AND status = 'pending'
-                """,
-                (grant.client_ip,),
-            ).fetchone()
-            pending_all = conn.execute(
-                "SELECT COUNT(*) AS n FROM oauth_device_grants WHERE status = 'pending'"
-            ).fetchone()
-            if (
-                int(recent["n"]) >= DEVICE_CREATE_PER_IP_PER_MINUTE
-                or int(pending_ip["n"]) >= DEVICE_PENDING_PER_IP
-                or int(pending_all["n"]) >= DEVICE_PENDING_GLOBAL_CAP
-            ):
-                raise ThrottledError(
-                    "too many device authorization requests; wait a minute and "
-                    "try again",
-                    details={"retry_after_seconds": 60},
-                )
+            _DEVICE_BUDGET.enforce(conn=conn, client_ip=grant.client_ip, now=now)
             for _attempt in range(8):
                 user_code = user_codes()
                 inserted = conn.execute(

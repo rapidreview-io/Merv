@@ -27,7 +27,6 @@ HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS = 10 * 60
 # remote sign-in and the phone pickup code for a pending consent. Same code
 # space as device/runner user codes (32^8 = 2^40), same ten-minute budget.
 HANDOFF_LINK_TTL_SECONDS = 10 * 60
-HANDOFF_LINK_CREATE_PER_IP_PER_MINUTE = 10
 ACCESS_TOKEN_TTL_SECONDS = 3600
 REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
 # RFC 8628 device authorization: the lane for a client whose loopback no
@@ -37,9 +36,6 @@ REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 DEVICE_CODE_TTL_SECONDS = 10 * 60
 DEVICE_POLL_INTERVAL_SECONDS = 5
-DEVICE_CREATE_PER_IP_PER_MINUTE = 10
-DEVICE_PENDING_PER_IP = 5
-DEVICE_PENDING_GLOBAL_CAP = 1000
 DEVICE_MISS_LIMIT = 10
 DEVICE_MISS_WINDOW_SECONDS = 10 * 60
 # Public DCR is unauthenticated, so a client that registered and never came
@@ -167,7 +163,6 @@ class OAuthRepository(Protocol):
     def consume_handoff_link(
         self, *, digest: str, kind: str, consumed_at: str
     ) -> str | None: ...
-    def recent_handoff_links(self, *, client_ip: str, since: str) -> int: ...
     def insert_refresh_token(self, *, token: RefreshToken) -> None: ...
     def refresh_token_by_digest(self, *, digest: str) -> RefreshToken | None: ...
     def consume_refresh_token(self, *, token_id: str, consumed_at: str) -> bool: ...
@@ -434,19 +429,13 @@ class OAuthService:
     ) -> str:
         """Mint a short single-use link token; display form ``AB12-CD34``.
 
-        Raises ``slow_down`` at the per-IP mint cap so a caller minting on
-        the user's behalf (the consent approve) can degrade to the full
-        command instead of failing the approval.
+        The insert raises ``slow_down`` at the per-IP mint cap, so a caller
+        minting on the user's behalf (the consent approve) can degrade to the
+        full command instead of failing the approval.
         """
         if kind not in ("deliver", "visit"):
             raise OAuthError("invalid_request", "unknown handoff link kind")
         ip = str(client_ip or "").strip()[:64]
-        window_start = iso_after(seconds=-60)
-        if (
-            self._repository.recent_handoff_links(client_ip=ip, since=window_start)
-            >= HANDOFF_LINK_CREATE_PER_IP_PER_MINUTE
-        ):
-            raise OAuthError("slow_down", "too many handoff links; retry shortly")
         token = "".join(
             secrets.choice(USER_CODE_ALPHABET) for _ in range(USER_CODE_LENGTH)
         )

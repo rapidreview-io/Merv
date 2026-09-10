@@ -161,7 +161,7 @@ def build_router(
     @router.post("/oauth/register", status_code=201)
     async def register(request: Request) -> JSONResponse:
         if _content_type(request) != "application/json":
-            return _dcr_error(
+            return _oauth_error(
                 OAuthError(
                     "invalid_client_metadata", "Content-Type must be application/json"
                 )
@@ -169,7 +169,7 @@ def build_router(
         try:
             body = await read_limited_body(request, limit=_MAX_DCR_BODY_BYTES)
         except RequestBodyTooLarge:
-            return _dcr_error(
+            return _oauth_error(
                 OAuthError(
                     "invalid_client_metadata", "registration request is too large"
                 )
@@ -177,13 +177,13 @@ def build_router(
         try:
             metadata = json.loads(body)
         except Exception:
-            return _dcr_error(
+            return _oauth_error(
                 OAuthError(
                     "invalid_client_metadata", "request body must be a JSON object"
                 )
             )
         if not isinstance(metadata, dict):
-            return _dcr_error(
+            return _oauth_error(
                 OAuthError(
                     "invalid_client_metadata", "request body must be a JSON object"
                 )
@@ -191,7 +191,7 @@ def build_router(
         try:
             result = service.register_client(metadata)
         except OAuthError as exc:
-            return _dcr_error(exc)
+            return _oauth_error(exc)
         return JSONResponse(result, status_code=201, headers=_NO_STORE)
 
     @router.get("/oauth/authorize")
@@ -203,15 +203,15 @@ def build_router(
                 params=params, canonical_resource=canonical_mcp_resource
             )
         except OAuthError as exc:
-            return _authorization_error(exc=exc, issuer=issuer)
+            return _oauth_error(exc, issuer=issuer)
         ui = _ui_origin(
             request,
             allowed_origins=allowed_origins,
             ui_base_url=ui_base_url,
         )
         if ui == issuer:
-            return _authorization_error(
-                exc=OAuthError(
+            return _oauth_error(
+                OAuthError(
                     "server_error", "OAuth consent UI base URL is not configured"
                 ),
                 issuer=issuer,
@@ -234,26 +234,14 @@ def build_router(
                 canonical_resource=canonical_mcp_resource,
             )
         except OAuthError as exc:
-            return _oauth_json_error(exc)
+            return _oauth_error(exc)
         return JSONResponse(result, headers=_NO_STORE)
 
     @router.post("/oauth/authorize")
     async def complete_authorization(request: Request):
-        denial = _require_supabase_session(request)
+        denial, body = await _consent_body(request)
         if denial is not None:
             return denial
-        if _content_type(request) != "application/json":
-            return _oauth_json_error(
-                OAuthError("invalid_request", "Content-Type must be application/json")
-            )
-        try:
-            body = await request.json()
-        except Exception:
-            body = None
-        if not isinstance(body, dict):
-            return _oauth_json_error(
-                OAuthError("invalid_request", "request body must be a JSON object")
-            )
         decision = str(body.pop("decision", ""))
         project_id = str(body.pop("project_id", ""))
         # Absent means the old one-project consent, so an older UI build keeps
@@ -266,7 +254,7 @@ def build_router(
             not isinstance(key, str) or not isinstance(value, str)
             for key, value in body.items()
         ):
-            return _oauth_json_error(
+            return _oauth_error(
                 OAuthError("invalid_request", "invalid consent decision")
             )
         issuer = _origin(request)
@@ -282,7 +270,7 @@ def build_router(
                 handoff=handoff,
             )
         except OAuthError as exc:
-            return _oauth_json_error(exc)
+            return _oauth_error(exc)
         payload: dict[str, Any] = {"redirect_to": redirect_to}
         if handoff:
             code = dict(parse_qsl(urlsplit(redirect_to).query)).get("code")
@@ -311,20 +299,16 @@ def build_router(
 
     @router.post("/oauth/handoff/visit")
     async def handoff_visit_mint(request: Request):
-        denial = _require_supabase_session(request)
+        denial, body = await _consent_body(request)
         if denial is not None:
             return denial
-        try:
-            body = await request.json()
-        except Exception:
-            body = None
-        query = body.get("query") if isinstance(body, dict) else None
+        query = body.get("query")
         if (
             not isinstance(query, str)
             or not 0 < len(query) <= 4096
             or any(c in query for c in "\r\n\0")
         ):
-            return _oauth_json_error(
+            return _oauth_error(
                 OAuthError("invalid_request", "query must be a short string")
             )
         try:
@@ -332,7 +316,7 @@ def build_router(
                 kind="visit", payload=query, client_ip=_client_ip(request)
             )
         except OAuthError as exc:
-            return _oauth_json_error(exc)
+            return _oauth_error(exc)
         return JSONResponse({"code": code}, headers=_NO_STORE)
 
     @router.get("/oauth/handoff/{token}")
@@ -374,14 +358,15 @@ def build_router(
             # RFC 6749 §5.2: a client that attempted to authenticate via the
             # Authorization header must get 401 with a matching challenge.
             scheme = authorization.split(" ", 1)[0] or "Basic"
-            return _client_auth_error(
+            return _oauth_error(
                 OAuthError("invalid_client", "public clients must not authenticate"),
-                scheme=scheme,
+                status_code=401,
+                challenge=scheme,
             )
         try:
             form = await _read_form(request, what="token")
         except OAuthError as exc:
-            return _token_error(exc)
+            return _oauth_error(exc)
         grant_type = form.get("grant_type")
         try:
             if grant_type == "authorization_code":
@@ -401,7 +386,7 @@ def build_router(
                     "unsupported_grant_type", "grant_type is not supported"
                 )
         except OAuthError as exc:
-            return _token_error(exc)
+            return _oauth_error(exc)
         return JSONResponse(result, headers=_NO_STORE)
 
     @router.post("/oauth/device_authorization")
@@ -409,9 +394,10 @@ def build_router(
         authorization = request.headers.get("Authorization")
         if authorization:
             scheme = authorization.split(" ", 1)[0] or "Basic"
-            return _client_auth_error(
+            return _oauth_error(
                 OAuthError("invalid_client", "public clients must not authenticate"),
-                scheme=scheme,
+                status_code=401,
+                challenge=scheme,
             )
         issuer = _origin(request)
         ui = _ui_origin(
@@ -420,7 +406,7 @@ def build_router(
         if ui == issuer:
             # The verification page lives on the UI origin; without one there
             # is no page to send the user to, so refuse up front.
-            return _oauth_json_error(
+            return _oauth_error(
                 OAuthError(
                     "server_error", "OAuth consent UI base URL is not configured"
                 ),
@@ -434,7 +420,7 @@ def build_router(
                 client_ip=_client_ip(request),
             )
         except OAuthError as exc:
-            return _token_error(exc)
+            return _oauth_error(exc)
         verification_uri = f"{ui}/oauth/device"
         result["verification_uri"] = verification_uri
         result["verification_uri_complete"] = (
@@ -453,29 +439,17 @@ def build_router(
                 principal=principal_label(request.state.principal),
             )
         except OAuthError as exc:
-            return _oauth_json_error(exc)
+            return _oauth_error(exc)
         return JSONResponse(result, headers=_NO_STORE)
 
     @router.post("/oauth/device")
     async def device_decide(request: Request):
-        denial = _require_supabase_session(request)
+        denial, body = await _consent_body(request)
         if denial is not None:
             return denial
-        if _content_type(request) != "application/json":
-            return _oauth_json_error(
-                OAuthError("invalid_request", "Content-Type must be application/json")
-            )
-        try:
-            body = await request.json()
-        except Exception:
-            body = None
-        if not isinstance(body, dict):
-            return _oauth_json_error(
-                OAuthError("invalid_request", "request body must be a JSON object")
-            )
         decision = str(body.get("decision", ""))
         if decision not in ("approve", "deny"):
-            return _oauth_json_error(
+            return _oauth_error(
                 OAuthError("invalid_request", "invalid consent decision")
             )
         try:
@@ -488,7 +462,7 @@ def build_router(
                 grant_scope=str(body.get("grant_scope", "") or PROJECT_GRANT),
             )
         except OAuthError as exc:
-            return _oauth_json_error(exc)
+            return _oauth_error(exc)
         return JSONResponse(result, headers=_NO_STORE)
 
     return router
@@ -558,6 +532,28 @@ def _session_owner(request: Request) -> str:
     return str(getattr(request.state.principal, "user_id", "") or "")
 
 
+async def _consent_body(request: Request) -> tuple[Any, dict[str, Any]]:
+    """A signed-in browser session and a JSON object body: what every consent
+    POST demands before it reads a decision. Returns a refusal to hand back
+    as-is, or ``None`` and the parsed body."""
+    denial = _require_supabase_session(request)
+    if denial is not None:
+        return denial, {}
+    if _content_type(request) != "application/json":
+        return _oauth_error(
+            OAuthError("invalid_request", "Content-Type must be application/json")
+        ), {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if not isinstance(body, dict):
+        return _oauth_error(
+            OAuthError("invalid_request", "request body must be a JSON object")
+        ), {}
+    return None, body
+
+
 def _require_supabase_session(request: Request) -> JSONResponse | None:
     principal = getattr(request.state, "principal", None)
     if not str(getattr(principal, "client_id", "")).startswith("jwt:"):
@@ -572,37 +568,33 @@ def _require_supabase_session(request: Request) -> JSONResponse | None:
     return None
 
 
-def _authorization_error(*, exc: OAuthError, issuer: str, status_code: int = 400):
-    redirect = oauth_error_redirect(exc=exc, issuer=issuer)
-    if redirect is not None:
-        return RedirectResponse(redirect, status_code=302, headers=_NO_STORE)
-    return _oauth_json_error(exc, status_code=status_code)
+def _oauth_error(
+    exc: OAuthError,
+    *,
+    status_code: int = 400,
+    issuer: str | None = None,
+    challenge: str | None = None,
+):
+    """The one way this surface says no.
 
-
-def _oauth_json_error(exc: OAuthError, *, status_code: int = 400) -> JSONResponse:
-    return JSONResponse(
+    ``issuer`` offers the failure back to a validated redirect_uri first, as
+    the authorization endpoint must; ``challenge`` echoes the auth scheme a
+    client tried, which RFC 6749 §5.2 requires on a 401. A
+    ``temporarily_unavailable`` is a server condition, not bad input.
+    """
+    if issuer is not None:
+        redirect = oauth_error_redirect(exc=exc, issuer=issuer)
+        if redirect is not None:
+            return RedirectResponse(redirect, status_code=302, headers=_NO_STORE)
+    if exc.error == "temporarily_unavailable":
+        status_code = 503
+    response = JSONResponse(
         {"error": exc.error, "error_description": exc.description},
         status_code=status_code,
         headers=_NO_STORE,
     )
-
-
-def _dcr_error(exc: OAuthError) -> JSONResponse:
-    # A registration this server has no room for is a server condition, not bad
-    # metadata: the caller's identical request succeeds on a later attempt. The
-    # description is deliberately generic — capacity details are logged, not
-    # returned, because this endpoint is unauthenticated.
-    unavailable = exc.error == "temporarily_unavailable"
-    return _oauth_json_error(exc, status_code=503 if unavailable else 400)
-
-
-def _token_error(exc: OAuthError) -> JSONResponse:
-    return _oauth_json_error(exc)
-
-
-def _client_auth_error(exc: OAuthError, *, scheme: str) -> JSONResponse:
-    response = _oauth_json_error(exc, status_code=401)
-    response.headers["WWW-Authenticate"] = scheme
+    if challenge is not None:
+        response.headers["WWW-Authenticate"] = challenge
     return response
 
 
