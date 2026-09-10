@@ -7,7 +7,7 @@ and contains no Feed workflow or delivery behavior.
 
 from __future__ import annotations
 
-from ..kernel.state.schema import Connection, Migration, SchemaModule, ensure_columns
+from ..kernel.state.schema import SchemaModule
 from ..kernel.state.store import BaseStateStore
 
 
@@ -76,50 +76,9 @@ CREATE TABLE IF NOT EXISTS feed_upload_tokens (
 );
 """
 
-# Columns added after a table first shipped. Keep them last in the CREATE
-# statements too: SQLite splices an added column in before the table
-# constraints, and a fresh store must hash like a converged one.
-_LATER_COLUMNS: tuple[tuple[str, dict[str, str]], ...] = (
-    (
-        "posts",
-        {
-            "kind": "TEXT NOT NULL DEFAULT ''",
-            "in_reply_to": "TEXT NOT NULL DEFAULT ''",
-            "embed_sha256": "TEXT NOT NULL DEFAULT ''",
-            "embed_content_type": "TEXT NOT NULL DEFAULT ''",
-            "attachments_json": "TEXT NOT NULL DEFAULT '[]'",
-            "quote_of": "TEXT NOT NULL DEFAULT ''",
-            "thread_root": "TEXT NOT NULL DEFAULT ''",
-            "thread_index": "INTEGER NOT NULL DEFAULT 0",
-        },
-    ),
-    ("feed_authors", {"bio": "TEXT NOT NULL DEFAULT ''"}),
-    ("feed_upload_tokens", {"extra_json": "TEXT NOT NULL DEFAULT '{}'"}),
-)
-
-
-def _add_feed_upload_tokens(conn: Connection) -> None:
-    """Migration 32: historical marker. Feed's own DDL creates the table on
-    every boot, which is what carried it to every database before the ledger
-    learned that components own their schema."""
-
-
-def _converge_feed_columns(conn: Connection) -> None:
-    """Migration 64: the columns Feed grew after its tables first shipped."""
-    for table, columns in _LATER_COLUMNS:
-        ensure_columns(conn, table, columns)
-
-
-FEED_SCHEMA = SchemaModule(
-    name="feed",
-    ddl=FEED_DDL,
-    migrations=(
-        Migration(32, "add_feed_upload_tokens", _add_feed_upload_tokens),
-        Migration(64, "converge_feed_columns", _converge_feed_columns),
-    ),
-)
+FEED_SCHEMA = SchemaModule(name="feed", ddl=FEED_DDL)
 
 
 def install_feed_schema(store: BaseStateStore) -> None:
-    """Install Feed tables and converge stores created before later columns."""
+    """Install Feed's tables."""
     store.install(FEED_SCHEMA)

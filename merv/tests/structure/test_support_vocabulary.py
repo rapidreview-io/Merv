@@ -73,21 +73,9 @@ ALLOWED_WORDS = {
         "behind it; the value is opaque to Artifacts, but the field name is a "
         "contract every agent and runner already sends"
     ),
-    ("brain/artifacts/persistence.py", "lens"): (
-        "the `lens_id` column behind that wire field"
-    ),
     ("brain/surface/artifacts.py", "lens"): (
         "the wire shapes that relay `lens_id` between that field and the "
         "association API, without reading it"
-    ),
-    ("brain/agent_sessions/persistence.py", "experiment"): (
-        "migration 61 is frozen history: it copies the retired "
-        "`experiment_workspaces` rows into `agent_workspaces` and drops the "
-        "old table"
-    ),
-    ("brain/agent_sessions/persistence.py", "consolidation"): (
-        "migration 63 is frozen history: it drops the three partial indexes "
-        "the retired `kind` enum named"
     ),
     ("shared/client_config.py", "experiments"): (
         "experiments.rapidreview.io is the hosted brain's DNS name — a "

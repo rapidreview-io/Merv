@@ -92,8 +92,7 @@ only when no post in that project references or literally mentions the ref.
 `persistence.py` declares four tables: immutable `posts`, project-local
 `feed_authors`, idempotent `post_reactions`, and pending `feed_upload_tokens`.
 It is a `SchemaModule` like every other component's, installed at service
-construction; the columns Feed grew after its tables first shipped converge
-through migration 64, so a legacy store and a fresh one reach one shape. All externally supplied project IDs pass
+construction. All externally supplied project IDs pass
 through `require_project_id`, reply/quote/media/reaction lookups include
 project scope, blob access uses the same project namespace, and exposed post
 order is the monotonic `created_seq`, not timestamp ordering.

@@ -12,14 +12,7 @@ from typing import Any
 
 from ..kernel.env import env_int
 from ..kernel.secret_tokens import secret_digest_matches
-from ..kernel.state.schema import (
-    Connection,
-    Migration,
-    SchemaModule,
-    ensure_columns,
-    has_table,
-    table_ddl,
-)
+from ..kernel.state.schema import SchemaModule
 from ..kernel.state.store import BaseStateStore, row_to_dict
 from ..kernel.utils import ThrottledError, format_iso, parse_iso
 from .oauth import (
@@ -165,7 +158,7 @@ class SqlOAuthRepository:
     def get_or_create_client(self, *, client: OAuthClient) -> OAuthClient:
         """Resolve identical metadata to one row, or insert it.
 
-        Identity is the canonical metadata fingerprint carrying migration 38's
+        Identity is the canonical metadata fingerprint carrying the schema's
         UNIQUE index, so the DATABASE arbitrates the Cursor double-DCR race —
         not merely the store's global writer lock, whose Postgres advisory key
         is a hash of the DSN spelling and therefore does not serialize two
@@ -854,12 +847,11 @@ OAUTH_DDL = """\
 -- never authorized anything are swept by CleanupService. Only public clients
 -- (token_endpoint_auth_method=none) exist, so no client secret is stored.
 -- ``metadata_fingerprint`` is that "identical metadata" statement made a
--- database fact: a digest over the CANONICAL (sorted-array) metadata, carrying
--- the UNIQUE index added by migration 38. NULL is the one legal duplicate — a
--- legacy row whose canonical twin already holds the fingerprint (both dialects
--- treat NULLs as distinct in a unique index), which stays reachable by
--- client_id while new registrations resolve to the twin. That index belongs to
--- migration 38 and never to SCHEMA (see the submissions note below for why).
+-- database fact: a digest over the CANONICAL (sorted-array) metadata, under
+-- the UNIQUE index below. NULL is the one legal duplicate — a legacy row whose
+-- canonical twin already holds the fingerprint (both dialects treat NULLs as
+-- distinct in a unique index), which stays reachable by client_id while new
+-- registrations resolve to the twin.
 CREATE TABLE IF NOT EXISTS oauth_clients (
   client_id TEXT PRIMARY KEY,
   client_name TEXT NOT NULL,
@@ -967,127 +959,31 @@ CREATE TABLE IF NOT EXISTS oauth_handoff_links (
   expires_at TEXT NOT NULL,
   consumed_at TEXT
 );
+
+-- The get-or-create arbiter for a repeated registration. NULLs are distinct
+-- on both dialects, which is exactly the escape hatch legacy duplicates need.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_clients_fingerprint
+  ON oauth_clients(metadata_fingerprint);
+
+-- `client_id NOT IN (SELECT client_id FROM ...)` on the registration sweep,
+-- the expiry sweeps, and the per-principal/per-IP rate windows.
+CREATE INDEX IF NOT EXISTS idx_oauth_codes_client
+  ON oauth_authorization_codes(client_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client
+  ON oauth_refresh_tokens(client_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_client
+  ON oauth_device_grants(client_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_expiry
+  ON oauth_device_grants(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_ip
+  ON oauth_device_grants(client_ip, created_at);
+CREATE INDEX IF NOT EXISTS idx_oauth_device_grant_attempts_principal
+  ON oauth_device_grant_attempts(principal, attempted_at);
+CREATE INDEX IF NOT EXISTS idx_oauth_handoff_links_expiry
+  ON oauth_handoff_links(expires_at);
+CREATE INDEX IF NOT EXISTS idx_oauth_handoff_links_ip
+  ON oauth_handoff_links(client_ip, created_at);
 """
 
 
-def _add_oauth_clients(conn: Connection) -> None:
-    """Migration 28: the OAuth 2.1 DCR registrations. Clients come first —
-    codes and refresh tokens both reference them."""
-    if not has_table(conn, "oauth_clients"):
-        conn.execute(table_ddl(table="oauth_clients"))
-
-
-def _add_oauth_authorization_codes(conn: Connection) -> None:
-    """Migration 29: one-shot PKCE-bound authorization codes."""
-    if not has_table(conn, "oauth_authorization_codes"):
-        conn.execute(table_ddl(table="oauth_authorization_codes"))
-
-
-def _add_oauth_refresh_tokens(conn: Connection) -> None:
-    """Migration 30: rotating refresh tokens, linked to the key they mint."""
-    if not has_table(conn, "oauth_refresh_tokens"):
-        conn.execute(table_ddl(table="oauth_refresh_tokens"))
-
-
-def _add_oauth_client_fingerprint(conn: Connection) -> None:
-    """Migration 38: the canonical DCR fingerprint, its UNIQUE index, and the
-    two child-table client_id indexes.
-
-    Additive. The backfill computes each existing row's fingerprint from
-    CANONICALIZED metadata — the same normalization new registrations apply —
-    so a row written before canonicalization is still found by a canonical
-    lookup. Rows that canonicalize to an already-claimed fingerprint keep NULL:
-    the oldest row owns the identity, the duplicates stay reachable by
-    client_id, and the UNIQUE index can be built."""
-    if not has_table(conn, "oauth_clients"):
-        return
-    ensure_columns(conn, "oauth_clients", {"metadata_fingerprint": "TEXT"})
-    # Seeded from whatever already holds an identity so the backfill is
-    # re-runnable: a second pass can never hand out a taken fingerprint.
-    claimed = {
-        str((row_to_dict(row=row) or {}).get("metadata_fingerprint") or "")
-        for row in conn.execute(
-            "SELECT metadata_fingerprint FROM oauth_clients "
-            "WHERE metadata_fingerprint IS NOT NULL"
-        ).fetchall()
-    }
-    for row in conn.execute(
-        """
-        SELECT client_id, client_name, redirect_uris_json, grant_types_json
-        FROM oauth_clients
-        WHERE metadata_fingerprint IS NULL
-        ORDER BY created_at, client_id
-        """
-    ).fetchall():
-        data = row_to_dict(row=row) or {}
-        fingerprint = oauth_client_fingerprint(
-            client_name=str(data.get("client_name") or ""),
-            redirect_uris_json=str(data.get("redirect_uris_json") or ""),
-            grant_types_json=str(data.get("grant_types_json") or ""),
-        )
-        if fingerprint in claimed:
-            continue
-        claimed.add(fingerprint)
-        conn.execute(
-            "UPDATE oauth_clients SET metadata_fingerprint = ? WHERE client_id = ?",
-            (fingerprint, str(data.get("client_id") or "")),
-        )
-    for statement in (
-        # The get-or-create arbiter. NULLs are distinct on both dialects, which
-        # is exactly the escape hatch legacy duplicate rows need.
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_clients_fingerprint"
-        "  ON oauth_clients(metadata_fingerprint)",
-        # `client_id NOT IN (SELECT client_id FROM ...)` on the registration path.
-        "CREATE INDEX IF NOT EXISTS idx_oauth_codes_client"
-        "  ON oauth_authorization_codes(client_id)",
-        "CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client"
-        "  ON oauth_refresh_tokens(client_id)",
-    ):
-        conn.execute(statement)
-
-
-def _add_oauth_device_grants(conn: Connection) -> None:
-    """Migration 52: RFC 8628 device authorization for MCP OAuth."""
-    for table in ("oauth_device_grants", "oauth_device_grant_attempts"):
-        if not has_table(conn, table):
-            conn.execute(table_ddl(table=table))
-    for statement in (
-        "CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_expiry"
-        "  ON oauth_device_grants(status, expires_at)",
-        "CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_ip"
-        "  ON oauth_device_grants(client_ip, created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_client"
-        "  ON oauth_device_grants(client_id)",
-        "CREATE INDEX IF NOT EXISTS idx_oauth_device_grant_attempts_principal"
-        "  ON oauth_device_grant_attempts(principal, attempted_at)",
-    ):
-        conn.execute(statement)
-
-
-def _add_oauth_handoff_links(conn: Connection) -> None:
-    """Migration 57: short single-use consent-handoff links."""
-    if not has_table(conn, "oauth_handoff_links"):
-        conn.execute(table_ddl(table="oauth_handoff_links"))
-    for statement in (
-        "CREATE INDEX IF NOT EXISTS idx_oauth_handoff_links_ip"
-        "  ON oauth_handoff_links(client_ip, created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_oauth_handoff_links_expiry"
-        "  ON oauth_handoff_links(expires_at)",
-    ):
-        conn.execute(statement)
-
-
-OAUTH_SCHEMA = SchemaModule(
-    name="surface.oauth",
-    ddl=OAUTH_DDL,
-    migrations=(
-        Migration(28, "add_oauth_clients", _add_oauth_clients),
-        Migration(
-            29, "add_oauth_authorization_codes", _add_oauth_authorization_codes
-        ),
-        Migration(30, "add_oauth_refresh_tokens", _add_oauth_refresh_tokens),
-        Migration(38, "add_oauth_client_fingerprint", _add_oauth_client_fingerprint),
-        Migration(52, "add_oauth_device_grants", _add_oauth_device_grants),
-        Migration(57, "add_oauth_handoff_links", _add_oauth_handoff_links),
-    ),
-)
+OAUTH_SCHEMA = SchemaModule(name="surface.oauth", ddl=OAUTH_DDL)

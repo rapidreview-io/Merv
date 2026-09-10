@@ -1,10 +1,9 @@
 # If you update this file, you must consult artifacts.md to see whether artifacts.md needs to be updated. artifacts.md must not exceed 100 lines.
 """Artifact-owned tables: immutable content, its figures, and sealed rounds.
 
-The DDL is the historical baseline the artifact migrations replay against:
-migration 59 (Research) is what strips the association columns out of
-``artifacts`` and adds the generic upload settings, so an existing database
-and a fresh one converge on the same shape through the same ladder step.
+Content only. Which node a file belongs to, in what role, at which attempt is
+Research's fact and lives in ``research_artifact_links`` next door; a row here
+is project-scoped bytes plus the upload settings that gate them.
 """
 
 from __future__ import annotations
@@ -12,20 +11,10 @@ from __future__ import annotations
 from ..kernel.state.schema import SchemaModule
 
 
-# The historical baseline migrations 24 and 36 replay against. Migration 59
-# moves the association fields out to Research-owned links and drops them
-# here, leaving immutable project-scoped content plus generic upload
-# settings. Keep the baseline replayable for pre-artifact databases; CREATE
-# IF NOT EXISTS does not reintroduce the old fields on an upgraded store.
 ARTIFACT_DDL = """\
 CREATE TABLE IF NOT EXISTS artifacts (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
-  target_type TEXT NOT NULL,
-  target_id TEXT NOT NULL,
-  role TEXT NOT NULL,
-  attempt_index INTEGER NOT NULL DEFAULT 0,
-  lens_id TEXT NOT NULL DEFAULT '',
   path TEXT NOT NULL DEFAULT '',
   title TEXT NOT NULL DEFAULT '',
   content_sha256 TEXT NOT NULL DEFAULT '',
@@ -38,7 +27,11 @@ CREATE TABLE IF NOT EXISTS artifacts (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   created_seq INTEGER NOT NULL DEFAULT 0,
-  submission_id TEXT NOT NULL DEFAULT '',
+  -- Upload gates the caller declares per file, not per research role: the
+  -- accepted byte ceiling, and whether relative image links in a markdown
+  -- body are minted as figures.
+  max_bytes INTEGER NOT NULL DEFAULT 5000000,
+  discover_figures INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
@@ -80,6 +73,11 @@ CREATE TABLE IF NOT EXISTS artifact_figures (
   expires_at TEXT,
   FOREIGN KEY(artifact_id) REFERENCES artifacts(id)
 );
+
+-- The round a sealed submission was retrieved by: its own rows plus whatever
+-- earlier round it carried forward (see research_submission_artifacts).
+CREATE INDEX IF NOT EXISTS idx_submissions_target
+  ON submissions(target_type, target_id, attempt_index, created_seq);
 """
 
 

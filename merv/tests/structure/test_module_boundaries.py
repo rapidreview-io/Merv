@@ -164,9 +164,6 @@ FILE_LAYERS = {
     # Write-only per-user HF-token facade over the KERNEL-owned user_hf_tokens
     # store methods (no-dataplane Phase C); the analog of project_keys.py.
     "surface/user_settings.py": APPLICATION_LAYER,
-    # Write-only per-project provider-connection facade over the KERNEL-owned
-    # sandbox_provider_settings store methods; the analog of user_settings.py.
-    # The fleet resolver is composition-injected so it never imports bootstrap.
 }
 
 ALLOWED_LAYER_EDGES = (
@@ -252,17 +249,11 @@ TABLE_OWNERS = {
     "agent_runner_pairings": AGENT_SESSIONS,
     "agent_runner_pairing_attempts": AGENT_SESSIONS,
     "agent_session_traces": AGENT_SESSIONS,
-    # Infrastructure: sandbox machines, spend policy, provider connections,
-    # and the retired heavy-object ledger until its migration script has run.
-    "sandboxes": INFRASTRUCTURE,
-    "sandbox_attachments": INFRASTRUCTURE,
-    "sandbox_generations": INFRASTRUCTURE,
-    "sandbox_runs": INFRASTRUCTURE,
+    # Infrastructure: links to independently operated machines, and the
+    # retired heavy-object ledger until its migration script has run. The
+    # machine, spend and provider-connection rows the brain used to mirror
+    # belong to the merv-sandboxes service; migration 65 dropped them.
     "remote_sandbox_links": INFRASTRUCTURE,
-    "sandbox_provider_settings": INFRASTRUCTURE,
-    "tenant_quotas": INFRASTRUCTURE,
-    "provider_user_caps": INFRASTRUCTURE,
-    "spend_kill_switches": INFRASTRUCTURE,
     "storage_objects": INFRASTRUCTURE,
     # One-time completion tokens for service uploads: the infrastructure
     # facade mints and consumes them; the storage router only relays.

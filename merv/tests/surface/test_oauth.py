@@ -25,7 +25,6 @@ import jwt
 from starlette.requests import Request
 from fastapi.testclient import TestClient
 
-from merv.brain.kernel.state.store import StateStore
 from merv.brain.kernel.utils import format_iso, parse_iso
 from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.surface.auth import SupabaseVerifier
@@ -42,7 +41,6 @@ from merv.brain.surface.project_keys import ProjectKeys
 from merv.brain.surface.transport.api import create_fastapi_app
 from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
 from tests.support.brain import TestBrain
-from tests.support.schema import booted_store
 
 SECRET = "oauth-tests-jwt-secret-at-least-32-bytes"
 USER_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -544,36 +542,6 @@ class OAuthSurfaceTest(unittest.TestCase):
         self.assertIsNotNone(admitted, "the over-cap table never converged")
         self.assertEqual(observed, [5, 4, 3, 2], "a refusal rolled back its prune")
         self.assertEqual(self._client_count(), 2)
-
-    def test_a_legacy_unsorted_registration_is_adopted_not_duplicated(self) -> None:
-        """Migration 38's backfill fingerprints pre-canonicalization rows from
-        their CANONICAL form, so the same client re-registering after the
-        canonicalization shipped resolves to its existing row."""
-        uris = ["https://client.example/b", "https://client.example/a"]
-        with self.app.store.transaction() as conn:
-            conn.execute("DROP INDEX IF EXISTS idx_oauth_clients_fingerprint")
-            conn.execute(
-                "INSERT INTO oauth_clients (client_id, client_name, "
-                "redirect_uris_json, grant_types_json, metadata_fingerprint, "
-                "created_at) VALUES (?, ?, ?, ?, NULL, ?)",
-                (
-                    "oauthc_legacy",
-                    "Legacy Agent",
-                    json.dumps(uris),
-                    json.dumps(["refresh_token", "authorization_code"]),
-                    format_iso(datetime.now(tz=UTC) - timedelta(days=1)),
-                ),
-            )
-            conn.execute("DELETE FROM schema_migrations WHERE version = 38")
-        booted_store(self.app.store.db_path)  # replays migration 38
-
-        again = self._register(
-            client_name="Legacy Agent",
-            redirect_uris=list(reversed(uris)),
-            grants=["authorization_code", "refresh_token"],
-        )
-        self.assertEqual(again["client_id"], "oauthc_legacy")
-        self.assertEqual(self._client_count(), 1)
 
     def test_unused_registrations_expire_and_used_ones_survive(self) -> None:
         unused = self._register(client_name="Abandoned Agent")

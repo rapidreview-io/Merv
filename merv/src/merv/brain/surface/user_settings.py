@@ -11,13 +11,7 @@ from __future__ import annotations
 
 from contextlib import closing
 
-from ..kernel.state.schema import (
-    Connection,
-    Migration,
-    SchemaModule,
-    has_table,
-    table_ddl,
-)
+from ..kernel.state.schema import SchemaModule
 from ..kernel.state.store import BaseStateStore
 from ..kernel.utils import ValidationError, now_iso
 
@@ -90,16 +84,8 @@ CREATE TABLE IF NOT EXISTS user_hf_tokens (
 """
 
 
-def _add_user_hf_tokens(conn: Connection) -> None:
-    """Migration 31: the per-user Hugging Face token."""
-    if not has_table(conn, "user_hf_tokens"):
-        conn.execute(table_ddl(table="user_hf_tokens"))
-
-
 USER_SETTINGS_SCHEMA = SchemaModule(
-    name="surface.user_settings",
-    ddl=USER_SETTINGS_DDL,
-    migrations=(Migration(31, "add_user_hf_tokens", _add_user_hf_tokens),),
+    name="surface.user_settings", ddl=USER_SETTINGS_DDL
 )
 
 

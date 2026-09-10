@@ -14,7 +14,7 @@ from merv.brain.artifacts.persistence import ARTIFACT_SCHEMA
 from merv.brain.feed.persistence import FEED_SCHEMA
 from merv.brain.infrastructure.persistence import INFRASTRUCTURE_SCHEMA
 from merv.brain.kernel.state.persistence import KERNEL_SCHEMA
-from merv.brain.kernel.state.schema import MIGRATION_ORDER
+from merv.brain.kernel.state.schema import BASELINE_VERSION
 from merv.brain.kernel.state.store import BaseStateStore, StateStore
 from merv.brain.research_core.persistence import RESEARCH_SCHEMA
 from merv.brain.surface.agent_identity import AGENT_IDENTITY_SCHEMA
@@ -38,8 +38,9 @@ ALL_SCHEMAS = (
     INFRASTRUCTURE_SCHEMA,
 )
 
-# The whole ladder, in the order a store applies it, as (version, name).
-LADDER = tuple(
+# The ledger a fresh install records: the squashed baseline, then every step
+# above it, in the order a store applies them.
+LADDER = ((BASELINE_VERSION, "baseline"),) + tuple(
     sorted(
         (
             (migration.version, migration.name)
@@ -49,16 +50,8 @@ LADDER = tuple(
     )
 )
 
-# Every component's DDL concatenated in install order — what the one kernel
-# SCHEMA constant used to be, for tests that build a legacy schema from it.
-ALL_DDL = "\n".join(
-    schema.ddl for schema in (KERNEL_SCHEMA, *ALL_SCHEMAS)
-)
-
-
-def ladder_through(version: int) -> tuple[int, ...]:
-    """MIGRATION_ORDER truncated after ``version``, for replay tests."""
-    return tuple(item for item in MIGRATION_ORDER if item <= version)
+# Every component's DDL concatenated in install order.
+ALL_DDL = "\n".join(schema.ddl for schema in (KERNEL_SCHEMA, *ALL_SCHEMAS))
 
 
 def install_all_schemas(store: BaseStateStore) -> BaseStateStore:

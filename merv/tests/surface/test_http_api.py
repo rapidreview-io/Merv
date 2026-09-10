@@ -400,9 +400,6 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.assertEqual(len(listed), 1)
 
         for route in (f"experiments/{exp_id}/sandbox", f"sandboxes/{sandbox_uid}"):
-            metrics = self.request("GET", f"/api/projects/{project_id}/{route}/metrics")
-            self.assertFalse(metrics["available"])
-            self.assertIn("does not publish", metrics["reason"])
             terminal = self.request("GET", f"/api/projects/{project_id}/{route}/terminal")
             self.assertFalse(terminal["available"])
             self.assertIn("sandbox.run", terminal["transcript"])
@@ -1113,35 +1110,6 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
             conn.execute(
                 "UPDATE workflow_instances SET state = 'complete', revision = 4, outcome = 'passed' WHERE id = ?",
                 (complete["id"],),
-            )
-            conn.execute(
-                """
-                INSERT INTO sandboxes (
-                  sandbox_uid, project_id, sandbox_id, status,
-                  created_at, updated_at
-                )
-                VALUES ('uid_active', ?, 'sb_active', 'running', ?, ?)
-                """,
-                (project_id, now, now),
-            )
-            conn.execute(
-                """
-                INSERT INTO sandbox_attachments (
-                  sandbox_uid, experiment_id, attached_at
-                )
-                VALUES ('uid_active', ?, ?)
-                """,
-                (running["id"], now),
-            )
-            conn.execute(
-                """
-                INSERT INTO sandboxes (
-                  sandbox_uid, project_id, sandbox_id, status,
-                  terminated_at, created_at, updated_at
-                )
-                VALUES ('uid_done', ?, 'sb_done', 'terminated', ?, ?, ?)
-                """,
-                (project_id, now, now, now),
             )
 
         seed_sandbox(self.app.sandboxes, project_id=project_id,

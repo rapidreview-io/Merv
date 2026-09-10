@@ -1204,22 +1204,6 @@ html[data-surface="mobile"] .mlive-sub {
   color: var(--muted);
   white-space: nowrap;
 }
-html[data-surface="mobile"] .mumeter {
-  height: 5px;
-  border-radius: 3px;
-  background: var(--bg-soft);
-  position: relative;
-  margin: 11px 0 5px;
-  overflow: hidden;
-}
-html[data-surface="mobile"] .mumeter i {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  border-radius: 3px;
-  background: var(--supports);
-}
 html[data-surface="mobile"] .mumlab {
   display: flex;
   justify-content: space-between;

@@ -45,7 +45,7 @@ support module**, research or application implements it, and
 | Artifacts | `artifacts/**` | immutable content, upload tokens, figures, sealed submissions |
 | Feed | `feed/**` | authors, posts, threads, reactions, previews |
 | Agent sessions | `agent_sessions/**` | runner identity, pairing, leases, traces, workspaces |
-| ML infrastructure | `infrastructure/**` | the merv-sandboxes transport, sandboxes, providers, spend policy, the heavy-object facade |
+| ML infrastructure | `infrastructure/**` | the merv-sandboxes transport, sandboxes, providers, spend reporting, the heavy-object facade |
 | Surface | the rest of `surface/**` | HTTP/MCP delivery, auth, OAuth, project keys, agent identity, the tool registry and dispatcher, telemetry, and the composition root |
 | MLflow | `mlflow/**` | the frozen tracking adapter. Do not edit it |
 
@@ -121,11 +121,8 @@ understandable to the next reader.
 
 The law admits an allowlist, and every entry carries the reason it cannot be
 fixed where it is written. Today: `lens_id`, a public wire field of
-`artifact.upload` with the column and the relay shapes behind it, whose value
-Artifacts never reads; and the frozen migration steps in `agent_sessions` that
-name the retired `experiment_workspaces` table and the indexes the retired
-lease `kind` enum created. `experiments.rapidreview.io` is a DNS name, not
-vocabulary. Three files are outside the scan: the two composition roots
+`artifact.upload` with the relay shapes behind it, whose value Artifacts never
+reads. `experiments.rapidreview.io` is a DNS name, not vocabulary. Three files are outside the scan: the two composition roots
 (`surface/surface.py` and `surface/transport/api/app.py`), whose job is naming
 every owner, and `surface/tools/mlflow_contracts.py`, which is frozen MLflow
 text. A test fails the moment an allowlist entry stops matching anything.
@@ -139,16 +136,22 @@ before it builds anything that can log.
 ## Persistence ownership
 
 Every component declares the tables it reads. Kernel supplies the registration
-API — a `SchemaModule` carrying idempotent DDL plus its numbered `Migration`
-steps, installed through `BaseStateStore.install` — and keeps only what
-everything writes through: projects, membership, events, the tool-call ledger,
-tenants, and `schema_migrations`. Every other table is declared in a
-`persistence` module beside the service that uses it (Surface splits its own
-across the flows that own them), and Surface installs each component's schema
-as it constructs the component. Migration numbering stays global so one ledger
-orders every step; a step whose owner has not installed yet is skipped and
-converges on a later install. Dialect translation stays in Kernel, so SQLite
-and Postgres reach an identical shape.
+API — a `SchemaModule` carrying idempotent DDL plus any numbered `Migration`
+steps above the baseline, installed through `BaseStateStore.install` — and
+keeps only what everything writes through: projects, membership, events, the
+tool-call ledger, tenants, and `schema_migrations`. Every other table is
+declared in a `persistence` module beside the service that uses it (Surface
+splits its own across the flows that own them), and Surface installs each
+component's schema as it constructs the component. Dialect translation stays in
+Kernel, so SQLite and Postgres reach an identical shape.
+
+The DDL is the whole shape, not a starting point. Versions 1..64 were squashed
+into it once production and every other live database had reached that head, so
+an index or a view a step used to create is declared beside the table it names.
+A fresh install records `(64, "baseline")` and applies only what is above it;
+migration numbering above the baseline stays global so one ledger orders every
+step, and a step whose owner has not installed yet is skipped and converges on
+a later install.
 
 `TABLE_OWNERS` in the boundary test is authoritative in both directions: a
 table's `CREATE TABLE` must live in its owner's schema module, an unowned new

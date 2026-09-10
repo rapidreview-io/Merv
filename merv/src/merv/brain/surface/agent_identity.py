@@ -41,14 +41,7 @@ from typing import Any
 from ..kernel.env import env_value
 from ..kernel.request_context import bind_agent
 from ..kernel.state import BaseStateStore, row_to_dict, rows_to_dicts
-from ..kernel.state.schema import (
-    Connection,
-    Migration,
-    SchemaModule,
-    ensure_columns,
-    has_table,
-    table_ddl,
-)
+from ..kernel.state.schema import Connection, SchemaModule
 from ..kernel.state.activity import ledger_label
 from ..kernel.state.tool_call_payloads import ToolCallPayloadStore
 from ..kernel.utils import NotFoundError, ValidationError, now_iso
@@ -513,7 +506,7 @@ __all__ = [
 # -- schema ----------------------------------------------------------------
 
 AGENT_IDENTITY_DDL = """\
--- Agent context-window identities (August 2026, migration 50). One row per
+-- Agent context-window identities (August 2026). One row per
 -- agent.hello: the short random agent_id a model carries for the rest of its
 -- context window, bound to the credential's user/tenant so another caller
 -- cannot ride it, plus the non-secret facts known at hello time. A coding-
@@ -535,7 +528,7 @@ CREATE TABLE IF NOT EXISTS agent_identities (
   created_at TEXT NOT NULL
 );
 
--- MCP transport sessions (August 2026, migration 50). One row per successful
+-- MCP transport sessions (August 2026). One row per successful
 -- initialize: the server-minted Mcp-Session-Id, the client that spoke it, and
 -- the principal it authenticated as. Lets a later agent.hello attach client
 -- name/version to an identity without the model typing it, and lets an
@@ -548,42 +541,16 @@ CREATE TABLE IF NOT EXISTS mcp_sessions (
   protocol_version TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
+
+-- mas_ credential -> its one bound identity, resolved on every call; and the
+-- identities of one user, newest-first, for the operator view.
+CREATE INDEX IF NOT EXISTS idx_agent_identities_session
+  ON agent_identities(agent_session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_identities_user
+  ON agent_identities(user_id, created_at);
 """
 
 
-def _add_agent_identity(conn: Connection) -> None:
-    """Migration 50: identity tables, ledger attribution columns, indexes.
-
-    Additive and idempotent. The table guards are belt-and-braces (the DDL
-    creates them first); the ledger columns and the agent index genuinely need
-    to run here, after tool_calls exists.
-    """
-    for table in ("agent_identities", "mcp_sessions"):
-        if not has_table(conn, table):
-            conn.execute(table_ddl(table=table))
-    ensure_columns(
-        conn,
-        "tool_calls",
-        {
-            "agent_id": "TEXT NOT NULL DEFAULT ''",
-            "mcp_session_id": "TEXT NOT NULL DEFAULT ''",
-            "payload_ref": "TEXT NOT NULL DEFAULT ''",
-        },
-    )
-    for statement in (
-        # The trace read: one agent's calls in append order.
-        "CREATE INDEX IF NOT EXISTS idx_tool_calls_agent ON tool_calls(agent_id, id)",
-        # mas_ credential -> its one bound identity, resolved on every call.
-        "CREATE INDEX IF NOT EXISTS idx_agent_identities_session"
-        "  ON agent_identities(agent_session_id)",
-        "CREATE INDEX IF NOT EXISTS idx_agent_identities_user"
-        "  ON agent_identities(user_id, created_at)",
-    ):
-        conn.execute(statement)
-
-
 AGENT_IDENTITY_SCHEMA = SchemaModule(
-    name="surface.agent_identity",
-    ddl=AGENT_IDENTITY_DDL,
-    migrations=(Migration(50, "add_agent_identity", _add_agent_identity),),
+    name="surface.agent_identity", ddl=AGENT_IDENTITY_DDL
 )

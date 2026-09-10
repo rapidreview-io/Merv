@@ -39,6 +39,8 @@ def translate_schema_to_postgres(schema_sql: str) -> str:
     constraints, ``--`` comments — is already valid on both):
 
     - PRAGMA lines are SQLite-only; dropped.
+    - ``CREATE VIEW IF NOT EXISTS`` is SQLite's spelling of an idempotent
+      view; Postgres spells the same thing ``CREATE OR REPLACE VIEW``.
     - ``INTEGER PRIMARY KEY AUTOINCREMENT`` (events.id) becomes a BIGINT
       identity column (plan §3.1: "identity column for events").
     - ``INTEGER`` becomes ``BIGINT``: SQLite INTEGER is 64-bit while Postgres
@@ -59,6 +61,7 @@ def translate_schema_to_postgres(schema_sql: str) -> str:
         if not line.strip().upper().startswith("PRAGMA")
     ]
     sql = "\n".join(lines)
+    sql = sql.replace("CREATE VIEW IF NOT EXISTS", "CREATE OR REPLACE VIEW")
     sql = sql.replace(
         "INTEGER PRIMARY KEY AUTOINCREMENT",
         "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY",

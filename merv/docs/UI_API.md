@@ -264,7 +264,7 @@ Workflow review substates currently include `none`, `requested`, `started`, and
 
 ## Sandboxes
 
-The browser observes sandbox state, terminal output, and live metrics. It may
+The browser observes sandbox state and terminal output. It may
 release a sandbox after an explicit UI confirmation, but procurement,
 attachment, command execution, output pulls, and extension remain agent/MCP
 operations.
@@ -274,8 +274,6 @@ GET  /api/sandboxes/health
 GET  /api/projects/{project_id}/sandboxes
 GET  /api/projects/{project_id}/experiments/{experiment_id}/sandbox
 GET  /api/projects/{project_id}/sandboxes/{sandbox_uid}
-GET  /api/projects/{project_id}/experiments/{experiment_id}/sandbox/metrics
-GET  /api/projects/{project_id}/sandboxes/{sandbox_uid}/metrics
 GET  /api/projects/{project_id}/experiments/{experiment_id}/sandbox/terminal
 GET  /api/projects/{project_id}/sandboxes/{sandbox_uid}/terminal
 POST /api/projects/{project_id}/experiments/{experiment_id}/sandbox/release
@@ -287,9 +285,8 @@ responses include `transcript`, an absolute byte `cursor`, command status
 fields, and a `running` flag. Pass the previous cursor as `since=` for an
 incremental read; use `tail=` for the initial bounded read.
 
-Metrics are sampled on demand through the brain's management SSH channel and
-are best-effort. They include CPU, memory, and GPU utilization when available.
-Repeated reads are coalesced briefly by the transcript and metrics caches.
+Resource-utilization samples are not available: merv-sandboxes does not
+publish them, and the brain does not hold an SSH channel of its own.
 
 HTTP sandbox rows omit checkout-local paths and caller private-key details.
 Everything left on a sandbox is destroyed at release or expiry; retained light

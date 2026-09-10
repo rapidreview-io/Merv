@@ -81,15 +81,3 @@ class NativeWaitContractTest(unittest.TestCase):
             presented=url.path.rsplit("/", 1)[-1],
         ))
 
-    def test_closed_legacy_runs_remain_scoped_read_only_history(self):
-        with self.store.transaction() as conn:
-            conn.execute("INSERT INTO sandboxes (sandbox_uid,project_id,status,created_at,updated_at) VALUES (?,?,?,?,?)",
-                         ("legacy", "p1", "terminated", "2020-01-01", "2020-01-01"))
-            conn.execute("INSERT INTO sandbox_runs (sandbox_uid,label,exit_code,first_seen_at,updated_at) VALUES (?,?,?,?,?)",
-                         ("legacy", "train", 0, "2020-01-01", "2020-01-01"))
-        result = self.service.runs(project_id="p1", sandbox_uid="legacy", base_url="https://merv.test", wait_secret=b"x" * 32)
-        self.assertEqual(len(result["runs"]), 1)
-        self.assertTrue(result["runs"][0]["archived"])
-        self.assertEqual(result["runs"][0]["status"], "finished")
-        self.assertNotIn("wait_url", result["runs"][0])
-        self.assertEqual(self.client.calls, [])

@@ -7,9 +7,9 @@ lives in ``dialects.py`` (cloud plan Phase 6).
 
 Tables belong to components, not to this file: each declares a
 ``SchemaModule`` in its own ``persistence`` module and hands it to
-``install``, which runs the idempotent DDL and then the numbered ladder in
-``schema.MIGRATION_ORDER``. Kernel's own tables live in ``persistence.py``
-beside this one.
+``install``, which runs the idempotent DDL and then whatever ladder steps
+``schema.MIGRATION_ORDER`` lists above ``schema.BASELINE_VERSION``. Kernel's
+own tables live in ``persistence.py`` beside this one.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from ..utils import new_id
 from ..utils import now_iso
 from .persistence import KERNEL_SCHEMA, record_event
 from .schema import (
+    BASELINE_VERSION,
     MIGRATION_ORDER,
     Connection,
     Migration,
@@ -82,10 +83,10 @@ class BaseStateStore:
         """Create ``module``'s tables and advance the ladder as far as it can.
 
         On a database that already holds some of this module's tables the
-        ladder runs first: it may still have to rename or rekey them, and an
-        idempotent CREATE TABLE landing before that would strand their rows
+        ladder runs first: a step may still have to drop or reshape them, and
+        an idempotent CREATE TABLE landing before that would strand their rows
         beside an empty twin. On a database that holds none of them the DDL
-        goes first, because those same steps create tables whose foreign keys
+        goes first, because a step may create a table whose foreign keys
         Postgres validates against tables only the DDL brings. Re-installing
         an already installed module skips the DDL and keeps only the ladder
         pass, so an operator (or a test) can rewind the ledger and re-converge.
@@ -105,13 +106,25 @@ class BaseStateStore:
             self._apply_migrations(conn=conn)
 
     def _apply_migrations(self, *, conn: Connection) -> None:
-        """Apply unapplied ledger migrations in order, recording each."""
+        """Apply unapplied ledger migrations in order, recording each.
+
+        An empty ledger is a database the DDL just created, so it already has
+        the shape versions 1..``BASELINE_VERSION`` used to build up to: it is
+        stamped with the baseline row rather than replaying a ladder that no
+        longer exists.
+        """
         if not has_table(conn, "schema_migrations"):
             return  # the pre-DDL pass of kernel's own install
         applied = {
             int(row["version"])
             for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
         }
+        if not applied:
+            conn.execute(
+                "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+                (BASELINE_VERSION, "baseline", now_iso()),
+            )
+            applied = {BASELINE_VERSION}
         for version in MIGRATION_ORDER:
             if version in applied:
                 continue
