@@ -7,6 +7,7 @@ from ..kernel.state.schema import (
     Connection,
     Migration,
     SchemaModule,
+    drop_columns,
     ensure_columns,
     has_column,
     has_table,
@@ -18,17 +19,14 @@ AGENT_SESSION_DDL = """\
 -- One locally hosted coding-agent process leased to one workflow instance
 -- revision. The runner submits a high-entropy session secret once; only its
 -- digest is stored. The lease carries the declared execution policy of its
--- node and the packet references verbatim; kind, review_request_id and
--- source_sha are legacy columns kept only for the schema-60 replay.
+-- node and the packet references verbatim: what the session may do is what
+-- the node declared, never a kind this table interprets.
 CREATE TABLE IF NOT EXISTS agent_sessions (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
   target_type TEXT NOT NULL,
   target_id TEXT NOT NULL,
   attempt_index INTEGER NOT NULL,
-  kind TEXT NOT NULL DEFAULT '',
-  review_request_id TEXT NOT NULL DEFAULT '',
-  source_sha TEXT NOT NULL DEFAULT '',
   runner_id TEXT NOT NULL,
   platform TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
@@ -269,6 +267,23 @@ def _add_agent_workspaces(conn: Connection) -> None:
         conn.execute("DROP TABLE experiment_workspaces")
 
 
+def _drop_legacy_lease_columns(conn: Connection) -> None:
+    """Migration 63: the lease stops carrying what the packet already says.
+
+    A node declares what its session may do and the packet's reference list
+    carries the request and base-commit ids, so `kind`, `review_request_id`
+    and `source_sha` have had no reader since the workflow runtime landed.
+    The three partial unique indexes keyed on `kind` were superseded by the
+    instance-keyed one migration 60 created, and SQLite refuses to drop a
+    column an index still names, so they go first.
+    """
+    for name in ("experiment", "review", "consolidation"):
+        conn.execute(f"DROP INDEX IF EXISTS idx_agent_sessions_one_live_{name}")
+    drop_columns(
+        conn, "agent_sessions", ("kind", "review_request_id", "source_sha")
+    )
+
+
 AGENT_SESSION_SCHEMA = SchemaModule(
     name="agent_sessions",
     ddl=AGENT_SESSION_DDL,
@@ -279,5 +294,6 @@ AGENT_SESSION_SCHEMA = SchemaModule(
         Migration(48, "add_agent_runner_pairing", _add_agent_runner_pairing),
         Migration(49, "add_agent_session_traces", _add_agent_session_traces),
         Migration(61, "add_agent_workspaces", _add_agent_workspaces),
+        Migration(63, "drop_legacy_lease_columns", _drop_legacy_lease_columns),
     ),
 )

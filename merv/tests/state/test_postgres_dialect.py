@@ -368,6 +368,7 @@ class PostgresWorkflowMigrationTest(workflow_migration_cases.ReflectionMigration
         request = self.call("review.request", project_id=self.project_id, target_type="experiment", target_id=reviewing,
                             role="design_reviewer", producer_session_id="old-owner")
         with self.app.store.transaction() as conn:
+            workflow_migration_cases.restore_legacy_lease_columns(conn)
             conn.execute("ALTER TABLE agent_sessions ADD CONSTRAINT legacy_target_type CHECK (target_type IN ('experiment', 'reflection'))")
             conn.execute("ALTER TABLE agent_sessions ADD CONSTRAINT legacy_kind CHECK (kind IN ('experiment', 'review', 'consolidation'))")
             active_secret = workflow_migration_cases._legacy_session(conn, session_id="active", project_id=self.project_id, target_id=active)
@@ -381,8 +382,16 @@ class PostgresWorkflowMigrationTest(workflow_migration_cases.ReflectionMigration
         self.migrate()
         with self.app.store.connect() as conn:
             after = dict(conn.execute("SELECT * FROM agent_sessions WHERE id = 'active'").fetchone())
-            self.assertEqual({key: value for key, value in before.items() if not key.startswith("workflow_")},
-                             {key: value for key, value in after.items() if not key.startswith("workflow_")})
+            # Migration 63 retires the three columns the packet already says;
+            # everything else the lease carried survives verbatim.
+            retired = {"kind", "review_request_id", "source_sha"}
+            self.assertFalse(retired & set(after))
+            kept = lambda row: {
+                key: value
+                for key, value in row.items()
+                if not key.startswith("workflow_") and key not in retired
+            }
+            self.assertEqual(kept(before), kept(after))
             self.assertEqual((after["workflow_instance_id"], after["workflow_revision"], after["workflow_node"]), (active, 0, "planned"))
             self.assertEqual(dict(conn.execute("SELECT * FROM agent_session_traces WHERE session_id = 'active'").fetchone()), trace)
             statuses = {row["id"]: row["status"] for row in conn.execute("SELECT id, status FROM agent_sessions").fetchall()}
@@ -406,6 +415,7 @@ class PostgresWorkflowMigrationTest(workflow_migration_cases.ReflectionMigration
                 self.app.store.record_event(conn=conn, project_id=self.project_id, event_type="experiment.transitioned",
                                             target_type="experiment", target_id=experiment_id, payload={"transition": "start_running"})
                 conn.execute("UPDATE experiments SET mlflow_run_id = ? WHERE id = ?", (f"run-{experiment_id}", experiment_id))
+            workflow_migration_cases.restore_legacy_lease_columns(conn)
             ready_secret = workflow_migration_cases._legacy_session(conn, session_id="ready", project_id=self.project_id, target_id=ready)
             offered_secret = workflow_migration_cases._legacy_session(conn, session_id="offered", project_id=self.project_id, target_id=offered, status="offered")
         clocks = {experiment_id: self.app.research.attempt_started_running_at(experiment_id=experiment_id) for experiment_id in (idle, offered)}

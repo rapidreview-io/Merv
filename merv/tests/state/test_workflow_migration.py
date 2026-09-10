@@ -7,6 +7,7 @@ import sqlite3
 from unittest import mock
 
 from merv.brain.kernel.secret_tokens import hash_secret
+from merv.brain.kernel.state.schema import columns_of, ensure_columns
 from tests.support.schema import booted_store
 from tests.research_core.scenarios import LENSES, VALID_CHANGE_SPEC, VALID_PLAN, ResearchCase
 from tests.support.brain import TestBrain
@@ -14,24 +15,75 @@ from tests.support.brain import TestBrain
 
 def _remove_runtime(conn):
     conn.execute("DROP INDEX IF EXISTS idx_agent_sessions_one_live_workflow")
+    conn.execute("DELETE FROM schema_migrations WHERE version = 63")
     conn.execute("DROP TABLE workflow_actions")
     conn.execute("DROP TABLE workflow_history")
     conn.execute("DROP TABLE workflow_instances")
     conn.execute("DELETE FROM schema_migrations WHERE version = 60")
 
 
+# The released schema-59 lease table, verbatim: closed target/kind enums, the
+# three columns migration 63 retires, and none of the workflow ones migration
+# 60 adds. It is written out rather than derived from today's DDL — a fixture
+# for a shape the live schema no longer has cannot be spelled by editing it.
+LEGACY_AGENT_SESSIONS = """
+CREATE TABLE agent_sessions (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  target_type TEXT NOT NULL CHECK (target_type IN ('experiment', 'reflection')),
+  target_id TEXT NOT NULL,
+  attempt_index INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'experiment'
+    CHECK (kind IN ('experiment', 'review', 'consolidation')),
+  review_request_id TEXT NOT NULL DEFAULT '',
+  source_sha TEXT NOT NULL DEFAULT '',
+  runner_id TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  secret_digest TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK (status IN ('offered', 'active', 'released', 'expired')),
+  host_session_ref TEXT NOT NULL DEFAULT '',
+  workspace_ref TEXT NOT NULL DEFAULT '',
+  base_sha TEXT NOT NULL DEFAULT '',
+  head_sha TEXT NOT NULL DEFAULT '',
+  assignment_json TEXT NOT NULL DEFAULT '{}',
+  agent_setup_json TEXT NOT NULL DEFAULT '{}',
+  telemetry_json TEXT NOT NULL DEFAULT '{}',
+  telemetry_at TEXT,
+  created_at TEXT NOT NULL,
+  activated_at TEXT,
+  last_activity_at TEXT,
+  lease_expires_at TEXT NOT NULL,
+  hard_deadline_at TEXT NOT NULL,
+  closed_at TEXT,
+  close_reason TEXT NOT NULL DEFAULT '',
+  source_key_id TEXT,
+  source_user_id TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY(project_id) REFERENCES projects(id)
+)
+"""
+
+
+# What migration 63 retires. A 59-era lease still carries them, so a replay
+# that starts from today's table has to put them back first.
+LEGACY_LEASE_COLUMNS = {
+    "kind": "TEXT NOT NULL DEFAULT 'experiment'",
+    "review_request_id": "TEXT NOT NULL DEFAULT ''",
+    "source_sha": "TEXT NOT NULL DEFAULT ''",
+}
+
+
+def restore_legacy_lease_columns(conn):
+    ensure_columns(conn, "agent_sessions", LEGACY_LEASE_COLUMNS)
+
+
 def _legacy_session_schema(conn):
     """Recreate the released closed enums, including the referencing trace table."""
-    session_sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'agent_sessions'").fetchone()["sql"]
     trace_sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'agent_session_traces'").fetchone()["sql"]
     assert conn.execute("SELECT COUNT(*) FROM agent_sessions").fetchone()[0] == 0
-    session_sql = "\n".join(line for line in session_sql.splitlines() if not line.strip().startswith("workflow_"))
-    session_sql = session_sql.replace("target_type TEXT NOT NULL,", "target_type TEXT NOT NULL CHECK (target_type IN ('experiment', 'reflection')),")
-    session_sql = session_sql.replace("kind TEXT NOT NULL DEFAULT '',", "kind TEXT NOT NULL DEFAULT 'experiment' CHECK (kind IN ('experiment', 'review', 'consolidation')),")
-    assert "kind IN" in session_sql
     conn.execute("DROP TABLE agent_session_traces")
     conn.execute("DROP TABLE agent_sessions")
-    conn.execute(session_sql)
+    conn.execute(LEGACY_AGENT_SESSIONS)
     conn.execute(trace_sql)
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_runner_retry"
@@ -46,17 +98,40 @@ def _legacy_session_schema(conn):
 def _legacy_session(conn, *, session_id, project_id, target_id, target_type="experiment",
                     kind="experiment", status="active", attempt_index=1, review_request_id="",
                     assignment=None, created_at="2026-09-01T00:00:00+00:00"):
+    """Insert one released-shape lease, before or after migration 63.
+
+    `kind` and `review_request_id` exist only until that step retires them, so
+    the row is written against whatever columns the table actually has.
+    """
     secret = f"mas_legacy_test_{session_id}"
     deadline = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    values = {
+        "id": session_id,
+        "project_id": project_id,
+        "target_type": target_type,
+        "target_id": target_id,
+        "attempt_index": attempt_index,
+        "kind": kind,
+        "review_request_id": review_request_id,
+        "runner_id": f"runner-{session_id}",
+        "platform": "codex",
+        "idempotency_key": session_id,
+        "secret_digest": hash_secret(secret),
+        "status": status,
+        "assignment_json": json.dumps(
+            {"instruction": "Continue the existing work."} if assignment is None else assignment
+        ),
+        "created_at": created_at,
+        "activated_at": created_at if status == "active" else None,
+        "lease_expires_at": deadline,
+        "hard_deadline_at": deadline,
+    }
+    present = set(columns_of(conn, "agent_sessions"))
+    columns = [column for column in values if column in present]
     conn.execute(
-        "INSERT INTO agent_sessions (id, project_id, target_type, target_id, attempt_index, kind, "
-        "review_request_id, runner_id, platform, idempotency_key, secret_digest, status, assignment_json, "
-        "created_at, activated_at, lease_expires_at, hard_deadline_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'codex', ?, ?, ?, ?, ?, ?, ?, ?)",
-        (session_id, project_id, target_type, target_id, attempt_index, kind, review_request_id,
-         f"runner-{session_id}", session_id, hash_secret(secret), status,
-         json.dumps({"instruction": "Continue the existing work."} if assignment is None else assignment),
-         created_at, created_at if status == "active" else None, deadline, deadline),
+        f"INSERT INTO agent_sessions ({', '.join(columns)}) "
+        f"VALUES ({', '.join('?' for _ in columns)})",
+        [values[column] for column in columns],
     )
     return secret
 
@@ -119,7 +194,13 @@ class WorkflowLeaseMigrationTest(WorkflowMigrationCase):
         self.migrate()
         with self.app.store.connect() as conn:
             adopted = dict(conn.execute("SELECT * FROM agent_sessions WHERE id = 'owner'").fetchone())
-            self.assertEqual({key: adopted[key] for key in old}, old)
+            # Migration 63 retires the three columns the packet already says.
+            retired = {"kind", "review_request_id", "source_sha"}
+            self.assertFalse(retired & set(adopted))
+            self.assertEqual(
+                {key: adopted[key] for key in old if key not in retired},
+                {key: value for key, value in old.items() if key not in retired},
+            )
             self.assertEqual(adopted["workflow_instance_id"], experiment_id)
             self.assertEqual(adopted["workflow_node"], "planned")
             self.assertEqual(adopted["workflow_revision"], 0)

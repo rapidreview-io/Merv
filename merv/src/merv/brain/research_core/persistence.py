@@ -1002,6 +1002,16 @@ def _add_consolidation(conn: Connection) -> None:
         conn, "agent_sessions", "target_type"
     ):
         conn.execute(table_ddl(table="agent_sessions", name="agent_sessions_v42"))
+        # The lease still carried these when 42 shipped; migration 63 is what
+        # retires them, so the copy has to land somewhere.
+        ensure_columns(
+            conn,
+            "agent_sessions_v42",
+            {
+                "kind": "TEXT NOT NULL DEFAULT ''",
+                "review_request_id": "TEXT NOT NULL DEFAULT ''",
+            },
+        )
         conn.execute(
             """
             INSERT INTO agent_sessions_v42 (

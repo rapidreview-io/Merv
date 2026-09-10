@@ -9,6 +9,7 @@ its work.
 from __future__ import annotations
 
 import json
+import re
 
 from ..kernel.secret_tokens import hash_secret
 from ..kernel.state.persistence import record_event
@@ -139,10 +140,17 @@ def _expand_workflow_sessions(conn: Connection) -> None:
         row = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_sessions'"
         ).fetchone()
-        sql = "" if row is None else row["sql"]
+        sql = "" if row is None else str(row["sql"])
         if "target_type IN" in sql or "kind IN" in sql:
+            # Widen in place: rebuild the table from its own shape with the
+            # closed enums removed, so columns later steps still read survive.
+            widened = re.sub(r"\s*CHECK \((?:target_type|kind) IN \([^)]*\)\)", "", sql)
+            widened = re.sub(
+                r"CREATE TABLE \"?agent_sessions\"?", "CREATE TABLE agent_sessions_v60", widened, count=1
+            )
             names = ", ".join(columns_of(conn, "agent_sessions"))
-            conn.execute(table_ddl(table="agent_sessions", name="agent_sessions_v60"))
+            conn.execute("DROP TABLE IF EXISTS agent_sessions_v60")
+            conn.execute(widened)
             conn.execute(
                 f"INSERT INTO agent_sessions_v60 ({names}) SELECT {names} FROM agent_sessions"
             )
