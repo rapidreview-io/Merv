@@ -364,10 +364,3 @@ export async function fetchEntity(id, pid) {
   if (cachePid === pid) cache.set(id, out);
   return out;
 }
-
-// Drop the memo when the active project changes (call from a project-switch
-// effect); resolveEntity results are snapshot-derived and need no eviction.
-export function invalidateEntityCache() {
-  cachePid = null;
-  cache.clear();
-}

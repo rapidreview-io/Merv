@@ -18,7 +18,6 @@ const DEFAULT = 380;
 // Exported so camera math can reserve the same gutter the CSS paints, and so a
 // canvas can never be squeezed below a usable width by the drag.
 export const PANEL_MIN = MIN;
-export const PANEL_DEFAULT = DEFAULT;
 export const CANVAS_MIN = 300;
 // The panel never takes more than this share of the graph that hosts it. The
 // width is ONE persisted number shared by every graph: dragged wide on an

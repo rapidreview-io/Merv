@@ -15,14 +15,6 @@ export function assignmentFor(session) {
   };
 }
 
-export function friendlyPacket(session) {
-  const packet = assignmentFor(session).packet;
-  if (!packet || typeof packet !== 'object' || Array.isArray(packet)) return {};
-  return Object.fromEntries(Object.entries(packet).filter(([key]) => (
-    key !== 'id' && key !== 'instruction' && !key.endsWith('_id')
-  )));
-}
-
 export function sessionAgent(session) {
   const setup = session?.agent_setup || {};
   const platform = String(setup.platform || session?.platform || 'Agent');
@@ -37,16 +29,6 @@ export function sessionDurationMs(session, now = Date.now()) {
     : Date.parse(session?.closed_at || session?.last_activity_at || '');
   if (!Number.isFinite(start)) return 0;
   return Math.max((Number.isFinite(end) ? end : now) - start, 0);
-}
-
-export function formatDuration(milliseconds) {
-  const seconds = Math.max(Math.floor(Number(milliseconds || 0) / 1000), 0);
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainder = seconds % 60;
-  if (hours) return `${hours}h ${minutes}m`;
-  if (minutes) return `${minutes}m ${remainder}s`;
-  return `${remainder}s`;
 }
 
 export function formatTokens(value) {

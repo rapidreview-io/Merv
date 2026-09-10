@@ -12,7 +12,6 @@ import { fmtDuration } from './format.js';
 
 // Tones are behavioural, not lifecycle: a "running" box can be working, idle,
 // or sitting on a failure, and those are three different things to a watcher.
-export const FLEET_TONES = ['work', 'fail', 'idle', 'quiet'];
 
 /**
  * What this box is doing right now, in the order a watcher cares about:

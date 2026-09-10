@@ -66,10 +66,6 @@ export function useViewport() {
   return useSyncExternalStore(subscribe, () => cached, () => false);
 }
 
-export function surfaceOverride() {
-  return readOverride();
-}
-
 export function setSurfaceOverride(mode) {
   try {
     if (mode) localStorage.setItem(SURFACE_KEY, mode);

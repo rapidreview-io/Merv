@@ -17,8 +17,6 @@ const ADAPTER_CAPABILITIES = {
   hermes: { model: true, effort: false },
 };
 
-export const NATIVE_ADAPTERS = Object.keys(ADAPTER_CAPABILITIES);
-
 export const PLATFORM_PRESETS = [
   ['codex', 'Codex', 'codex', 'gpt-5.6-sol', 'high', 2, true],
   ['claude', 'Claude Code', 'claude', 'opus', 'high', 2, true],
@@ -70,10 +68,6 @@ export function workspaceWithRepository(workspace, repository) {
 
 export function capabilitiesFor(adapter) {
   return ADAPTER_CAPABILITIES[adapter] || { model: false, effort: false };
-}
-
-export function defaultPlatforms() {
-  return PLATFORM_PRESETS.map((platform) => ({ ...platform }));
 }
 
 function text(value) {

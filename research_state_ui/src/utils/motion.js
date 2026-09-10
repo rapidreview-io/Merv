@@ -13,8 +13,3 @@ export function motionMs(ms) {
   if (typeof document !== 'undefined' && document.hidden) return 0;
   return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : ms;
 }
-
-/** Convenience for react-flow's `{ duration }` option bag. */
-export function motionOpts(ms) {
-  return { duration: motionMs(ms) };
-}
