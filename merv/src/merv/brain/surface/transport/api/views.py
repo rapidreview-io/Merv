@@ -4,18 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from ....kernel.utils import NotFoundError
 from ....infrastructure import RemoteSandboxes as SandboxEngine
 from ...telemetry import activity_summary
 
 
 class ActivityTelemetry(Protocol):
     def recent(self, **kwargs: Any) -> dict[str, Any]: ...
-
-
-class ToolCallTelemetry(Protocol):
-    def stats(self, **kwargs: Any) -> dict[str, Any]: ...
-    def get(self, **kwargs: Any) -> dict[str, Any] | None: ...
 
 
 def _event_project_id(event: dict[str, Any]) -> str | None:
@@ -66,18 +60,6 @@ def activity_view(
         "events": events,
         "summary": summary,
     }
-
-
-def tool_call_detail(
-    telemetry: ToolCallTelemetry,
-    call_id: int,
-    *,
-    project_ids: set[str] | list[str] | tuple[str, ...] | None = None,
-) -> dict[str, Any]:
-    record = telemetry.get(call_id=call_id, project_ids=project_ids)
-    if record is None:
-        raise NotFoundError(f"tool call not found: {call_id}")
-    return record
 
 
 def sandbox_view(

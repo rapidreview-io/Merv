@@ -124,10 +124,7 @@ class SurfaceTest(unittest.TestCase):
             )
             self.assertEqual(claim.status_code, 201, claim.text)
 
-            stats = app.tool_calls.stats(project_id=project_id)
-            self.assertGreaterEqual(stats["totals"]["calls"], 1)
-            self.assertIn("filter", stats)
-            app.tool_calls.record(ToolCallRecord(
+            app.activity.tool_call(ToolCallRecord(
                 tool="review.start",
                 source="http",
                 status="ok",
@@ -138,22 +135,16 @@ class SurfaceTest(unittest.TestCase):
                 },
                 result={"capability": "rp_result"},
             ))
-            listed = client.get(
-                "/api/debug/tool-calls?source=all&status=all",
-            )
-            self.assertEqual(listed.status_code, 200, listed.text)
-            calls = listed.json()["calls"]
-            self.assertGreaterEqual(len(calls), 1)
-            review_call = next(call for call in calls if call["tool"] == "review.start")
-            detail = client.get(
-                f"/api/debug/tool-calls/{review_call['id']}",
-            )
-            self.assertEqual(detail.status_code, 200, detail.text)
-            self.assertEqual(detail.json()["args"]["reviewer_capability"], "[redacted]")
-            self.assertEqual(detail.json()["result"]["capability"], "[redacted]")
             activity = client.get("/api/activity")
             self.assertEqual(activity.status_code, 200, activity.text)
             self.assertGreaterEqual(activity.json()["summary"]["total"], 1)
+            logged = next(
+                event
+                for event in activity.json()["events"]
+                if event.get("tool") == "review.start"
+            )
+            self.assertEqual(logged["args"]["reviewer_capability"], "[redacted]")
+            self.assertEqual(logged["result"]["capability"], "[redacted]")
             names = {tool["name"] for tool in app.tools.list_tools()}
             self.assertIn("claim.create", names)
             self.assertNotIn("resource.register", names)

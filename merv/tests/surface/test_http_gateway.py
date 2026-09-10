@@ -302,11 +302,6 @@ class _NoopActivity:
         return None
 
 
-class _NoopToolCalls:
-    def record(self, _call) -> None:
-        return None
-
-
 def _sandbox_dispatch(sandboxes: _Sandboxes) -> ToolDispatcher:
     names = {"sandbox.request", "sandbox.attach", "sandbox.pull_outputs"}
     return ToolDispatcher(
@@ -316,7 +311,6 @@ def _sandbox_dispatch(sandboxes: _Sandboxes) -> ToolDispatcher:
             "sandbox.pull_outputs": sandboxes.pull_outputs_command,
         },
         activity=_NoopActivity(),
-        tool_calls=_NoopToolCalls(),
         tool_names=names,
     )
 

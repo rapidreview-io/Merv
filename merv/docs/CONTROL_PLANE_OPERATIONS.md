@@ -50,11 +50,10 @@ is explicitly distinguished from a newly verified full checksum.
 ## Observability
 
 - `/api/activity?limit=100`: bounded in-memory activity ring.
-- `/api/debug/tool-calls`: bounded in-memory tool-call diagnostics.
 - `/api/projects/{project_id}/events`: durable accepted research events.
 - `/api/projects/{project_id}/events/stream`: SSE notifications for UI refresh.
 
-Diagnostic rings reset on restart. Durable events and records remain in the
+The diagnostic ring resets on restart. Durable events and records remain in the
 research database. Use a dedicated PostgreSQL database and session-compatible
 connections because migrations and other operations use advisory locks.
 
