@@ -2,7 +2,6 @@
 // from what the runner itself reported on its last heartbeat and from the
 // owner's saved settings; the browser never dials the machine.
 
-export const RUNNER_LIVE_MS = 45_000;
 export const RUNNER_STALE_MS = 5 * 60_000;
 
 function systemName(value) {
@@ -14,9 +13,9 @@ export function runnerPresentation(runner, now = Date.now()) {
   const machine = runner?.machine || {};
   const seenAt = Date.parse(runner?.last_seen_at || '');
   const age = Number.isFinite(seenAt) ? Math.max(now - seenAt, 0) : Number.POSITIVE_INFINITY;
-  // The age against the caller's clock is authoritative; the brain's own
-  // `live` flag only fills in when the timestamp is unreadable.
-  const live = Number.isFinite(seenAt) ? age <= RUNNER_LIVE_MS : runner?.live === true;
+  // Liveness is the brain's call, on the brain's clock; the browser only says
+  // how long ago the last heartbeat was, to tell stale from gone.
+  const live = runner?.live === true;
 
   let state = 'Offline';
   let tone = 'error';

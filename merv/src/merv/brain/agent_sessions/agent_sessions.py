@@ -70,6 +70,10 @@ MAX_TELEMETRY_BYTES = 8 * 1024
 MAX_RUNNER_PRESENCE_BYTES = 16 * 1024
 RUNNER_LIVE_SECONDS = 45
 TRACE_GRACE_AFTER_CLOSE_SECONDS = 15 * 60
+# The diff counters a workspace row carries, and the whole of what a browser
+# sees of one: named once here so no caller re-lists them.
+WORKSPACE_STATS = ("commit_count", "files_changed", "insertions", "deletions")
+WORKSPACE_PUBLIC = ("branch", "base_sha", "head_sha", *WORKSPACE_STATS, "updated_at")
 
 
 class WorkflowAssignment(Protocol):
@@ -741,7 +745,7 @@ class AgentSessions:
     def workspaces(
         self, *, project_id: str, instance_ids: Iterable[str] = ()
     ) -> dict[str, dict[str, Any]]:
-        """The retained branch facts per instance, keyed by instance id."""
+        """The public branch facts per instance, keyed by instance id."""
         ids = tuple(dict.fromkeys(str(item) for item in instance_ids if item))
         if not ids:
             return {}
@@ -756,7 +760,8 @@ class AgentSessions:
                 (project_id, *ids),
             ).fetchall()
             return {
-                str(row["instance_id"]): row_to_dict(row=row) or {} for row in rows
+                str(row["instance_id"]): {name: row[name] for name in WORKSPACE_PUBLIC}
+                for row in rows
             }
 
     def authority(self, *, session_id: str) -> dict[str, str]:
@@ -963,10 +968,7 @@ class AgentSessions:
                 workspace_ref,
                 base_sha,
                 head_sha,
-                max(int(values.get("commit_count") or 0), 0),
-                max(int(values.get("files_changed") or 0), 0),
-                max(int(values.get("insertions") or 0), 0),
-                max(int(values.get("deletions") or 0), 0),
+                *(max(int(values.get(name) or 0), 0) for name in WORKSPACE_STATS),
                 format_iso(datetime.now(UTC)),
             ),
         )
@@ -1231,6 +1233,9 @@ def _runner_view(row: Any, *, now: datetime | None = None) -> dict[str, Any]:
         "live": bool(
             seen is not None and (current - seen).total_seconds() <= RUNNER_LIVE_SECONDS
         ),
+        # The runner build a one-shot test call needs, so the browser reads the
+        # requirement rather than carrying its own copy of the date.
+        "probe_min_runner_version": PROBE_MIN_RUNNER_VERSION,
         "desired_settings": _json_column(row["desired_settings_json"]),
         "desired_version": desired_version,
         "applied_version": applied_version,
