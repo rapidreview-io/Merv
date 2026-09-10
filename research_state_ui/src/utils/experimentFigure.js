@@ -1,53 +1,42 @@
 /**
- * The experiment figure, derived here from the state the experiment page has
- * already fetched. Nothing is agent-authored: every node is read off the
- * attempt chain, the sealed submissions, the artifacts, the review verdicts,
- * the sandbox, the conclusion and the tested claims, and is therefore true by
- * construction. `layoutFigure` places what comes out.
+ * The experiment figure, derived from the state the experiment page already
+ * fetched. Nothing here is agent-authored: every node is read off the attempt
+ * chain, the sealed submissions, the artifacts, the review verdicts, the
+ * sandbox, the conclusion and the tested claims, and is true by construction.
+ * `layoutFigure` places what comes out.
  *
- * THE DOCUMENT IS A TIMELINE. Its spine is the sequence of *beats*:
+ * THE DOCUMENT IS A TIMELINE whose spine is the sequence of *beats*:
  *
- *   Attempt k → Design review → Submission k.1 → Experiment review →
- *   Submission k.2 → … → Conclusion → Claims
+ *   Attempt k → Design review → Submission k.1 → Experiment review → … →
+ *   Conclusion → Claims
  *
- * Every marker is followed by the review that judged it, and a rejecting
- * review is what leads to the next round — so round j+1 sits strictly after
- * round j *and* its verdict. Consecutive markers are also linked directly
- * (`then`), so the markers form one straight backbone and the verdicts hang
- * off it as the loop that explains each step. Everything else is a satellite
- * naming the beat it belongs to (`anchor`) and the side of the spine it lives
- * on (`lane`): `evidence` for what a beat put up for review (drawn just before
- * its marker, arrows converging on it), `execution` for the sandbox and for
- * files produced but not yet sealed into a result submission.
+ * A marker is followed by the review that judged it, and a rejecting review is
+ * what leads to the next round, so round j+1 sits strictly after round j *and*
+ * its verdict. Consecutive markers are also linked directly (`then`), so the
+ * markers form one straight backbone and the verdicts hang off it as the loop
+ * that explains each step. Everything else is a satellite naming the beat it
+ * belongs to (`anchor`) and the side of the spine it lives on (`lane`):
+ * `evidence` for what a beat put up for review, drawn just before its marker;
+ * `execution` for the sandbox and for files not yet sealed into a submission.
  *
- * WHICH FACT BECOMES WHICH NODE
- *   attempt k          one `attempt` marker per attempt up to attempt_index.
- *                      The current one wears the experiment's status; earlier
- *                      ones read `superseded`.
- *   a `submit_results` a `submission` marker, numbered k.1, k.2 … in seal
- *   seal               order. Other seals (the plan seal, an approval, a retry)
- *                      are not beats: the attempt marker already draws them.
- *   a submitted review a `review` node chained after the marker it graded — the
- *                      submission it names, else that attempt's marker. Rounds
- *                      sharing a root chain in the order they happened, so a
- *                      re-review is another beat, not a sibling.
- *   an open request    a `review` node ("awaiting verdict", status `open`)
- *                      after the newest verdict on the round under review.
- *   an artifact row    one `artifact` node per (artifact, attempt). Past six
- *                      per beat per lane the remainder rolls into one
- *                      `artifact_group` so the canvas stays readable.
- *   the sandbox        one `sandbox` node under the beat where this attempt's
- *                      execution began: its design approval, else the marker.
- *   a conclusion       one `conclusion` node after the final beat.
- *   a tested claim     one `claim` node after the conclusion, or after the
- *                      final beat when there is none.
+ * ONE NODE PER FACT. An `attempt` marker per attempt up to attempt_index (the
+ * current one wears the experiment's status, earlier ones read `superseded`);
+ * a `submission` marker per `submit_results` seal, numbered k.1, k.2 … in seal
+ * order (other seals are not beats — the attempt marker already draws them); a
+ * `review` per submitted verdict, chained after the marker it graded, so a
+ * re-review is another beat and not a sibling; a `review` per open request
+ * ("awaiting verdict") after the newest verdict on the round under review; an
+ * `artifact` per (artifact, attempt), the overflow past six per beat per lane
+ * rolled into one `artifact_group`; one `sandbox` under the beat where this
+ * attempt's execution began; a `conclusion` after the final beat; and a
+ * `claim` per tested claim, after the conclusion or after the final beat.
  *
  * WHERE AN ARTIFACT SITS is decided by what sealed it: a result seal makes it
  * evidence on that submission, the proposal seal makes it the proposal on the
  * attempt, anything else (an approval or retry seal, an older execution-start
- * seal, or nothing yet) is execution output trailing the latest beat that
- * preceded it. Unsealed rows on an attempt that has never sealed anything go
- * by role instead: inputs are the proposal, outputs are execution.
+ * seal, or nothing yet) is execution output trailing the latest beat before
+ * it. Unsealed rows on an attempt that has sealed nothing go by role instead:
+ * inputs are the proposal, outputs are execution.
  *
  * EDGES
  *   reviewed_by  marker → the review that graded it
@@ -62,25 +51,23 @@
  * `produced` and `ran_on` are attachments the canvas shows as placement — the
  * satellite sits below its anchor's column — rather than as lines.
  *
- * THE OTHER FIELDS
- *   status         normalized for coloring: pending | active | done | failed |
- *                  superseded | abandoned. Except `review` nodes, whose status
- *                  IS the verdict (pass | needs_changes | fail | open);
- *                  `submission` nodes, which add `returned` for a round whose
- *                  verdict sent it back; and `claim` nodes, which carry the
- *                  claim's own status.
- *   qualifier      the round a node is about ("attempt 2", "round 3.1"), so a
- *                  label like `report.md` or `Experiment review` never has to
- *                  be traced back through edges. Markers ARE their round and
- *                  carry none.
- *   group          the attempt a node belongs to.
- *   superseded     an artifact the experiment no longer treats as current.
- *                  Superseded rows survive their round — that is the history.
- *   current        the reader's reference point: the conclusion once there is
- *                  one, else the latest verdict or marker on the spine.
- *   meta.submission_index  which result round of its attempt a submission is.
- *   meta.sandbox_status    the sandbox's own status word, which this module
- *                          does not own and so passes through untouched.
+ * THE OTHER FIELDS. `status` is normalized for coloring (pending | active |
+ * done | failed | superseded | abandoned), except on a `review`, whose status
+ * IS the verdict (pass | needs_changes | fail | open), a `submission`, which
+ * adds `returned` for a round sent back, and a `claim`, which carries the
+ * claim's own status. `qualifier` is the round a node is about ("attempt 2",
+ * "round 3.1") so a label like `report.md` never has to be traced back through
+ * edges; markers ARE their round and carry none. `group` is the attempt.
+ * `meta.superseded` marks an artifact the experiment no longer treats as
+ * current — superseded rows survive their round, which is the history.
+ * `meta.submission_index` is which result round of its attempt a submission
+ * is. `meta.sandbox_status` is the sandbox's own status word, which this
+ * module does not own and passes through untouched. `current` is the reader's
+ * reference point: the conclusion once there is one, else the latest verdict
+ * or marker. The route also stamped a `schema_version`, a `source` and the
+ * experiment's own identity on the payload; nothing ever read them, and a
+ * projection that ships with its reader needs no wire version, so this returns
+ * only {nodes, edges}.
  */
 
 // Artifact roles that read as a proposal when nothing has sealed them yet
@@ -116,6 +103,7 @@ const LIVE_SANDBOX_STATUSES = new Set(['running', 'provisioning']);
 const ACTIVE_SANDBOX_PHASES = new Set(['requested', 'provisioning', 'bootstrapping', 'ready', 'unknown', 'failed']);
 
 const text = (value) => (value == null ? '' : String(value));
+const roleOf = (row) => text(row.role) || 'other';
 const humanize = (value) => text(value).replace(/_/g, ' ');
 const orNull = (value) => (value === undefined ? null : value);
 const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -208,12 +196,9 @@ export function experimentFigure({ experiment, reviews, sandboxes } = {}) {
     const isCurrent = k === currentAttempt;
     const attemptId = `attempt:${k}`;
     nodes.push({
-      id: attemptId,
-      type: 'attempt',
-      label: `Attempt ${k}`,
+      id: attemptId, type: 'attempt', label: `Attempt ${k}`, group: attemptId,
       sublabel: isCurrent ? humanize(status) : 'superseded',
       status: isCurrent ? (ATTEMPT_STATUS[status] || 'pending') : 'superseded',
-      group: attemptId,
       ref: { kind: 'experiment', id: orNull(exp.id) },
     });
     spine.push(attemptId);
@@ -228,12 +213,8 @@ export function experimentFigure({ experiment, reviews, sandboxes } = {}) {
       const nodeId = `submission:${k}.${index}`;
       submissionNodes.set(text(row.id), nodeId);
       nodes.push({
-        id: nodeId,
-        type: 'submission',
-        label: `Submission ${k}.${index}`,
-        sublabel: 'results submitted',
-        status: 'done',
-        group: attemptId,
+        id: nodeId, type: 'submission', label: `Submission ${k}.${index}`,
+        sublabel: 'results submitted', status: 'done', group: attemptId,
         ref: { kind: 'submission', id: orNull(row.id) },
         meta: { attempt_index: k, submission_index: index },
       });
@@ -273,13 +254,9 @@ export function experimentFigure({ experiment, reviews, sandboxes } = {}) {
       const verdict = text(review.verdict);
       const nodeId = `review:${reviewId}`;
       nodes.push({
-        id: nodeId,
-        type: 'review',
-        label: REVIEW_LABELS[text(review.role)] || 'Review',
-        sublabel: humanize(verdict),
-        status: verdict || 'open',
-        group: `attempt:${markerAttempt.get(root)}`,
-        qualifier: roundName.get(root),
+        id: nodeId, type: 'review', label: REVIEW_LABELS[text(review.role)] || 'Review',
+        sublabel: humanize(verdict), status: verdict || 'open',
+        group: `attempt:${markerAttempt.get(root)}`, qualifier: roundName.get(root),
         ref: { kind: 'review', id: reviewId },
         meta: { role: orNull(review.role), synopsis: review.synopsis || '', notes: review.notes || '' },
       });
@@ -303,13 +280,9 @@ export function experimentFigure({ experiment, reviews, sandboxes } = {}) {
   for (const request of openRequests) {
     const nodeId = `review_request:${request.id}`;
     nodes.push({
-      id: nodeId,
-      type: 'review',
-      label: REVIEW_LABELS[text(request.role)] || 'Review',
-      sublabel: 'awaiting verdict',
-      status: 'open',
-      group: `attempt:${currentAttempt}`,
-      qualifier: roundName.get(openRoot),
+      id: nodeId, type: 'review', label: REVIEW_LABELS[text(request.role)] || 'Review',
+      sublabel: 'awaiting verdict', status: 'open',
+      group: `attempt:${currentAttempt}`, qualifier: roundName.get(openRoot),
       ref: { kind: 'review_request', id: orNull(request.id) },
     });
     const [source, verdict] = tails.get(openRoot) || [openRoot, null];
@@ -372,8 +345,9 @@ export function experimentFigure({ experiment, reviews, sandboxes } = {}) {
     }
     // Unsealed. Once this attempt has sealed anything, an unsealed row was
     // registered after that seal: work in progress trailing the latest beat.
-    const role = text(row.role) || 'other';
-    if (!sealedAttempts.has(attempt) && UPSTREAM_ROLES.has(role)) return [attemptId, 'evidence', attemptId, 'feeds'];
+    if (!sealedAttempts.has(attempt) && UPSTREAM_ROLES.has(roleOf(row))) {
+      return [attemptId, 'evidence', attemptId, 'feeds'];
+    }
     return [executionAnchor(attempt, null), 'execution', attemptId, 'produced'];
   };
 
@@ -404,7 +378,6 @@ export function experimentFigure({ experiment, reviews, sandboxes } = {}) {
     || cmpStr(a.key[2], b.key[2]) || cmpStr(a.key[3], b.key[3]));
 
   for (const { key: [anchor, lane, marker, edgeType], rows } of ordered) {
-    const roleOf = (row) => text(row.role) || 'other';
     rows.sort((a, b) =>
       ((ROLE_PRIORITY[roleOf(a)] ?? 9) - (ROLE_PRIORITY[roleOf(b)] ?? 9))
       || cmpStr(text(a.path), text(b.path)));
@@ -416,15 +389,10 @@ export function experimentFigure({ experiment, reviews, sandboxes } = {}) {
       const nodeId = `artifact:${row.id}:a${clampAttempt(row.attempt_index)}`;
       const superseded = currentIds.size > 0 && !currentIds.has(text(row.id));
       nodes.push({
-        id: nodeId,
-        type: 'artifact',
-        label: artifactLabel(row),
+        id: nodeId, type: 'artifact', label: artifactLabel(row),
         sublabel: superseded ? `${role} · superseded` : role,
         status: superseded ? 'superseded' : 'none',
-        group,
-        anchor,
-        lane,
-        qualifier,
+        group, anchor, lane, qualifier,
         ref: { kind: 'artifact', id: orNull(row.id) },
         meta: { role, path: orNull(row.path), superseded },
       });
@@ -434,15 +402,9 @@ export function experimentFigure({ experiment, reviews, sandboxes } = {}) {
       const roles = [...new Set(overflow.map(roleOf))].sort(cmpStr);
       const nodeId = `artifact_group:${anchor}:${lane}`;
       nodes.push({
-        id: nodeId,
-        type: 'artifact_group',
-        label: `${overflow.length} more files`,
-        sublabel: roles.join(' · '),
-        status: 'none',
-        group,
-        anchor,
-        lane,
-        qualifier,
+        id: nodeId, type: 'artifact_group', label: `${overflow.length} more files`,
+        sublabel: roles.join(' · '), status: 'none',
+        group, anchor, lane, qualifier,
         ref: { kind: 'artifact_group', id: null },
         meta: { count: overflow.length, roles, artifact_ids: overflow.map(row => text(row.id)) },
       });
@@ -460,14 +422,10 @@ export function experimentFigure({ experiment, reviews, sandboxes } = {}) {
     const [designTail, designVerdict] = tailOf(attemptId);
     const anchor = designVerdict === 'pass' ? designTail : attemptId;
     nodes.push({
-      id: 'sandbox',
-      type: 'sandbox',
-      label: 'Sandbox',
+      id: 'sandbox', type: 'sandbox', label: 'Sandbox',
       sublabel: text(sandbox.gpu || sandbox.instance_type || sandboxStatus),
       status: LIVE_SANDBOX_STATUSES.has(sandboxStatus) ? 'active' : 'done',
-      group: attemptId,
-      anchor,
-      lane: 'execution',
+      group: attemptId, anchor, lane: 'execution',
       qualifier: beatName.get(anchor) || roundName.get(attemptId),
       ref: { kind: 'sandbox', id: orNull(exp.id) },
       meta: { sandbox_status: sandboxStatus },
@@ -481,12 +439,8 @@ export function experimentFigure({ experiment, reviews, sandboxes } = {}) {
   let claimSource = endSource;
   if (conclusion) {
     nodes.push({
-      id: 'conclusion',
-      type: 'conclusion',
-      label: 'Conclusion',
-      sublabel: conclusion,
-      status: 'done',
-      group: `attempt:${currentAttempt}`,
+      id: 'conclusion', type: 'conclusion', label: 'Conclusion', sublabel: conclusion,
+      status: 'done', group: `attempt:${currentAttempt}`,
       ref: { kind: 'experiment', id: orNull(exp.id) },
     });
     addEdge(endSource, 'conclusion', 'concludes');
@@ -498,11 +452,8 @@ export function experimentFigure({ experiment, reviews, sandboxes } = {}) {
   for (const claim of exp.tested_claims || []) {
     const nodeId = `claim:${claim.id}`;
     nodes.push({
-      id: nodeId,
-      type: 'claim',
-      label: text(claim.statement || claim.id),
-      sublabel: humanize(claim.status),
-      status: text(claim.status) || 'active',
+      id: nodeId, type: 'claim', label: text(claim.statement || claim.id),
+      sublabel: humanize(claim.status), status: text(claim.status) || 'active',
       ref: { kind: 'claim', id: orNull(claim.id) },
     });
     addEdge(claimSource, nodeId, 'tests');
