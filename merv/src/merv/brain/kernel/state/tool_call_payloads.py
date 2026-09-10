@@ -53,29 +53,10 @@ class PayloadBlobStore(Protocol):
     def delete(self, *, namespace: str, sha256: str) -> bool: ...
 
 
-def _durable_redact(value: Any) -> Any:
-    """Redaction for the durable path: field-level plus token-shape scrubbing.
-
-    ``redact_sensitive`` blanks the named credential fields and presigned
-    URLs; the durable record additionally runs every string through the
-    credential-shape scrubber, because a tool result can quote a minted
-    secret inside prose (a reviewer capability, an upload one-liner) and a
-    payload on disk for 180 days must never be where one survives.
-    """
-    safe = redact_sensitive(value=jsonable(value=value))
-    return _scrub_strings(safe)
-
-
-def _scrub_strings(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _scrub_strings(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_scrub_strings(item) for item in value]
-    if isinstance(value, tuple):
-        return [_scrub_strings(item) for item in value]
-    if isinstance(value, str):
-        return scrub_credentials(value)
-    return value
+def _durable(value: Any) -> Any:
+    """Everything the durable path redacts: fields, presigned URLs, and the
+    credential SHAPES a tool result can quote inside prose."""
+    return redact_sensitive(value=jsonable(value=value), credentials=True)
 
 
 def _bounded(value: Any, *, max_chars: int) -> Any:
@@ -149,13 +130,13 @@ class ToolCallPayloadStore:
             "error": scrub_credentials(str(error or ""))[:PAYLOAD_PREVIEW_CHARS],
             "duration_ms": int(duration_ms or 0),
             "arguments": _bounded(
-                _durable_redact(arguments), max_chars=PAYLOAD_MAX_ARGUMENT_CHARS
+                _durable(arguments), max_chars=PAYLOAD_MAX_ARGUMENT_CHARS
             ),
             # An error's "result" is the error text the caller got back.
             "result": (
                 None
                 if status != "ok"
-                else _bounded(_durable_redact(result), max_chars=PAYLOAD_MAX_RESULT_CHARS)
+                else _bounded(_durable(result), max_chars=PAYLOAD_MAX_RESULT_CHARS)
             ),
         }
         data = json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")

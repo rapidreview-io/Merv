@@ -6,7 +6,6 @@ from __future__ import annotations
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 import json
-import re
 from typing import Any, Iterable, Mapping, Protocol
 
 from ..kernel.secret_tokens import hash_secret, secret_digest_matches
@@ -21,6 +20,7 @@ from ..kernel.utils import (
     new_id,
     parse_iso,
 )
+from merv.shared.redaction import redact_excerpt
 from merv.shared.runner_settings import RunnerSettingsError, validate_desired_settings
 from .persistence import AGENT_SESSION_SCHEMA
 
@@ -1173,33 +1173,11 @@ def _json_list_column(value: Any) -> list[Any]:
     return parsed if isinstance(parsed, list) else []
 
 
-_SECRET_KEY = re.compile(r"(?i)(api[-_]?key|token|secret|password|credential|authorization)")
-_SECRET_VALUE = re.compile(r"\b(?:mk_|mas_|rr_sk_|sk-|ghp_|xox[a-z]-)[A-Za-z0-9_\-]{8,}|Bearer\s+[A-Za-z0-9._\-]{8,}")
-
-
-def _redact(value: Any, *, depth: int = 0) -> Any:
-    """Drop secret-looking keys and mask secret-looking strings, recursively."""
-    if depth > 12:
-        return "<nested>"
-    if isinstance(value, Mapping):
-        return {
-            str(key)[:120]: ("<redacted>" if _SECRET_KEY.search(str(key)) else _redact(item, depth=depth + 1))
-            for key, item in list(value.items())[:64]
-        }
-    if isinstance(value, list):
-        return [_redact(item, depth=depth + 1) for item in value[:64]]
-    if isinstance(value, str):
-        return _SECRET_VALUE.sub("<redacted>", value)
-    if isinstance(value, (int, float, bool)) or value is None:
-        return value
-    return str(value)[:240]
-
-
 def _trace_events_projection(events: Iterable[Any]) -> tuple[str, int]:
     """Keep the last few events, each capped and redacted; return JSON and count."""
     kept: list[Any] = []
     for raw in list(events)[-MAX_TRACE_EVENTS:]:
-        cleaned = _redact(raw)
+        cleaned = redact_excerpt(raw)
         encoded = json.dumps(cleaned, sort_keys=True, separators=(",", ":"))
         if len(encoded.encode("utf-8")) > MAX_TRACE_EVENT_BYTES:
             cleaned = {

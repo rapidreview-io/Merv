@@ -42,7 +42,6 @@ class CapResultTest(unittest.TestCase):
     def test_sensitive_result_fields_are_redacted(self) -> None:
         value = {
             "reviewer_capability": "rp_secret",
-            "repo_root": "/private/repo",
             "nested": {
                 "capability": "rp_nested",
                 "env": {"MLFLOW_TRACKING_PASSWORD": "rr_sk_agent"},
@@ -60,7 +59,16 @@ class CapResultTest(unittest.TestCase):
                 "tuple": ({"MLFLOW_TRACKING_PASSWORD": "[redacted]"},),
             },
         )
-        self.assertNotIn("repo_root", cap_result(value=value))
+
+    def test_the_durable_path_also_scrubs_credential_shapes(self) -> None:
+        """The ring keeps the raw text the debug UI drills into; the record
+        that lives on disk for 180 days runs the shape scrubber too."""
+        value = {"run": "curl -H 'x-key: rr_sk_live0123456789'"}
+        self.assertIn("rr_sk_live", redact_sensitive(value=value)["run"])
+        self.assertNotIn(
+            "rr_sk_live",
+            redact_sensitive(value=value, credentials=True)["run"],
+        )
 
     def test_presigned_url_signature_scrubbed_from_result_values(self) -> None:
         # INV-12 value-level scrubbing: a presigned S3 URL is a ~1-hour
@@ -108,19 +116,6 @@ class CapResultTest(unittest.TestCase):
         # A plain string with no secrets is returned unchanged (fast path).
         self.assertEqual(scrub_secret_text("nothing to see"), "nothing to see")
         self.assertIsInstance(redact_sensitive(value="nothing to see"), str)
-
-    def test_truncated_preview_does_not_embed_local_fields(self) -> None:
-        value = {
-            "repo_root": "/private/repo",
-            "local_sync_dir": "/private/sync",
-            "blob": "x" * (RESULT_LOG_MAX_BYTES + 1000),
-        }
-        capped = cap_result(value=value)
-        self.assertTrue(capped["_truncated"])
-        self.assertNotIn("repo_root", capped["preview"])
-        self.assertNotIn("/private/repo", capped["preview"])
-        self.assertNotIn("local_sync_dir", capped["preview"])
-        self.assertNotIn("/private/sync", capped["preview"])
 
     def test_oversized_result_is_truncated(self) -> None:
         value = {"blob": "x" * (RESULT_LOG_MAX_BYTES + 1000)}

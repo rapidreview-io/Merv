@@ -34,9 +34,6 @@ SENSITIVE_KEYS = {"capability", "session_secret", "MLFLOW_TRACKING_PASSWORD"}
 ID_KEYS = {"project_id", "artifact_id", "job_id", "target_type", "target_id",
            "role", "transition", "verdict"}
 TARGET_KEYS: list[tuple[str, str]] = [("artifact", "artifact_id")]
-# Machine-local paths an older runner sent: dropped from the log outright,
-# because a path on somebody's laptop is noise a hosted log should not keep.
-LEGACY_MACHINE_LOCAL_KEYS = {"repo_root", "local_sync_dir"}
 
 
 def register_activity_vocabulary(
@@ -61,19 +58,21 @@ def register_activity_vocabulary(
 # (storage also carries a presigned S3 URL — a ~1-hour replayable credential
 # that bypasses brain auth entirely). Neither may reach a persisted log even
 # when embedded in a string value, so we drop every SigV4 query param (name and
-# value) and the upload-token path segments. The path set MUST stay in lockstep
-# with shared._UPLOAD_TOKEN_PATH_RE (the HTTP access-log scrubber).
+# value) and the upload-token path segments.
 _S3_SIGV4_PARAM_RE = re.compile(
     r"(?i)X-Amz-(?:Signature|Credential|Security-Token|Algorithm|Date|Expires|SignedHeaders)=[^&'\"\s]+"
 )
-_UPLOAD_TOKEN_URL_RE = re.compile(
+# The two path patterns are public because the HTTP access-log scrubber
+# (transport/api/shared.redact_upload_tokens) masks the very same credential in
+# a request path and imports these rather than restating them: two copies that
+# drift is how a bearer token reaches a persisted log.
+UPLOAD_TOKEN_PATH_RE = re.compile(
     r"(/api/(?:artifacts/[uf]|feed/u|storage/u)/)[^/?'\"\s]+"
 )
 # Run-wait URLs are auth-exempt capabilities too, and they are handed to agents
 # to paste into commands — so they reach logs inside string values, not just as
-# request paths. Keep the sandbox and label, mask the tag. Lockstep with
-# shared._WAIT_SIGNATURE_PATH_RE (the HTTP access-log scrubber).
-_WAIT_SIGNATURE_URL_RE = re.compile(
+# request paths. Keep the sandbox and label, mask the tag.
+WAIT_SIGNATURE_PATH_RE = re.compile(
     r"(/wait/[^/?'\"\s]+/[^/?'\"\s]+/)[^/?'\"\s]+"
 )
 
@@ -84,9 +83,9 @@ def scrub_secret_text(text: str) -> str:
     if "X-Amz-" in text:
         text = _S3_SIGV4_PARAM_RE.sub("<redacted>", text)
     if "/api/" in text:
-        text = _UPLOAD_TOKEN_URL_RE.sub(r"\1<redacted>", text)
+        text = UPLOAD_TOKEN_PATH_RE.sub(r"\1<redacted>", text)
     if "/wait/" in text:
-        text = _WAIT_SIGNATURE_URL_RE.sub(r"\1<redacted>", text)
+        text = WAIT_SIGNATURE_PATH_RE.sub(r"\1<redacted>", text)
     return text
 
 
@@ -302,21 +301,32 @@ def jsonable(*, value: Any) -> Any:
     return str(value)
 
 
-def redact_sensitive(*, value: Any) -> Any:
+def redact_sensitive(*, value: Any, credentials: bool = False) -> Any:
+    """Blank the named credential fields and scrub secrets out of string values.
+
+    ``credentials`` adds the credential-SHAPE scrubber to every string. It is
+    the durable path's setting only: a tool result can quote a minted secret
+    inside prose (a capability, an upload one-liner), and a payload record
+    kept on disk for 180 days must never be where one survives. The in-memory
+    rings leave it off — they keep the raw text the debug UI drills into, and
+    four more regex passes over every logged result would buy nothing there.
+    """
     if isinstance(value, dict):
         return {
             key: "[redacted]"
             if key in SENSITIVE_KEYS
-            else redact_sensitive(value=item)
+            else redact_sensitive(value=item, credentials=credentials)
             for key, item in value.items()
-            if key not in LEGACY_MACHINE_LOCAL_KEYS
         }
     if isinstance(value, list):
-        return [redact_sensitive(value=item) for item in value]
+        return [redact_sensitive(value=item, credentials=credentials) for item in value]
     if isinstance(value, tuple):
-        return tuple(redact_sensitive(value=item) for item in value)
+        return tuple(
+            redact_sensitive(value=item, credentials=credentials) for item in value
+        )
     if isinstance(value, str):
-        return scrub_secret_text(value)
+        text = scrub_secret_text(value)
+        return scrub_credentials(text) if credentials else text
     return value
 
 

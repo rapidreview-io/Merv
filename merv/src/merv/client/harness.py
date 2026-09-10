@@ -29,6 +29,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from merv.shared.redaction import redact_secrets
+
 
 SKILLS_DIRNAME = "skills"
 MANIFEST_NAME = ".manifest.json"
@@ -112,19 +114,6 @@ _AUTH_FAILURE = re.compile(
     r"forbidden|\b403\b)",
     re.IGNORECASE,
 )
-# Secret-shaped values a provider may echo back inside its own error text
-# ("Incorrect API key provided: sk-..."). Evidence lines are redacted before
-# they are stored or reported anywhere.
-_SECRET_VALUE = re.compile(
-    r"\b(?:mk_|mas_|rr_sk_|sk-|ghp_|xox[a-z]-|AIza)[A-Za-z0-9_\-]{8,}|Bearer\s+[A-Za-z0-9._\-]{8,}"
-)
-
-
-def redact_secrets(text: str) -> str:
-    """Blank secret-shaped tokens in a line of provider output."""
-    return _SECRET_VALUE.sub("<redacted>", str(text or ""))
-
-
 _QUOTA_FAILURE = re.compile(
     r"(insufficient[_ ]quota|quota exceeded|exceeded your current quota|billing|"
     r"rate[ _-]?limit|too many requests|\b429\b|out of credits|usage limit)",
