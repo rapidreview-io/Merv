@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useProjectStore } from './useProjectStore';
 
 /**
@@ -108,4 +108,32 @@ export function useAsyncData(fetcher, deps) {
     return () => { cancelled = true; };
   }, deps);
   return state;
+}
+
+/**
+ * A workflow record's status document, refetched on demand. An unchanged
+ * payload keeps its state identity, so an idle poll tick re-renders nothing
+ * (the same guard the figure uses on its own document). Returns
+ * `[data, error, refetch, reset]`; `reset` blanks it when the caller moves to
+ * another record without unmounting.
+ */
+export function useRecordStatus(fetcher, deps) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const lastJson = useRef(null);
+  const refetch = useCallback(async () => {
+    try {
+      const next = await fetcher();
+      const json = JSON.stringify(next);
+      if (lastJson.current !== json) {
+        lastJson.current = json;
+        setData(next);
+      }
+      setError(null);
+    } catch (err) {
+      setError(err.message);
+    }
+  }, deps);
+  const reset = useCallback(() => { lastJson.current = null; setData(null); }, []);
+  return [data, error, refetch, reset];
 }

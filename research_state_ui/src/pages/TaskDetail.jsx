@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
+import { useRecordStatus } from '../store/usePolling';
 import { useProjectStore, useProjectHref } from '../store/useProjectStore';
 import { useStreamAwarePoll } from '../store/useEventStream';
 import FSMStrip from '../components/FSMStrip';
@@ -58,8 +59,6 @@ export default function TaskDetail() {
   const projectId = useProjectStore(s => s.projectId);
   const refreshHome = useProjectStore(s => s.refreshHome);
 
-  const [statusData, setStatusData] = useState(null);
-  const [error, setError] = useState(null);
   const [busy, setBusy] = useState(new Set());
   const [actionError, setActionError] = useState(null);
   const [gateOpen, setGateOpen] = useState(false);
@@ -75,20 +74,10 @@ export default function TaskDetail() {
 
   useEffect(() => { setPendingEnd(false); setEndReason(''); setDetailsOpen(false); }, [taskId]);
 
-  const lastStatusJsonRef = useRef(null);
-  const fetchStatus = useCallback(async () => {
-    try {
-      const data = await api.getTaskStatus(projectId, taskId);
-      const json = JSON.stringify(data);
-      if (lastStatusJsonRef.current !== json) {
-        lastStatusJsonRef.current = json;
-        setStatusData(data);
-      }
-      setError(null);
-    } catch (err) {
-      setError(err.message);
-    }
-  }, [projectId, taskId]);
+  const [statusData, error, fetchStatus] = useRecordStatus(
+    () => api.getTaskStatus(projectId, taskId),
+    [projectId, taskId],
+  );
 
   useStreamAwarePoll(fetchStatus, {
     matches: (row) => row.target_id === taskId || row.payload?.task_id === taskId,
