@@ -33,7 +33,7 @@ MIN_PROXY_VERSION = "0.0014"
 
 # Bump only when the agent-facing MCP catalog changes incompatibly. Unlike the
 # retired proxy catalogs, this is a deployment-drift signal, not a file digest.
-MCP_CATALOG_VERSION = "2026-09-08"
+MCP_CATALOG_VERSION = "2026-09-10"
 
 
 def _version_tuple(version: str) -> tuple[int, ...]:
