@@ -26,13 +26,34 @@ LEDGER_ERROR_MAX_CHARS = 200
 # a human will later read. Bound them here, at the one writer.
 LEDGER_LABEL_MAX_CHARS = 120
 
-SENSITIVE_KEYS = {
-    "reviewer_capability",
-    "capability",
-    "session_secret",
-    "MLFLOW_TRACKING_PASSWORD",
-}
-LEGACY_MACHINE_LOCAL_KEYS = {"repo_root", "local_sync_dir", "local_experiment_dir"}
+# What an argument name means to telemetry. Kernel knows only the generic
+# fields every component carries; an owner registers its own at composition
+# (``register_activity_vocabulary``), so the shared log shapes work the same
+# for a record Kernel has never heard of.
+SENSITIVE_KEYS = {"capability", "session_secret", "MLFLOW_TRACKING_PASSWORD"}
+ID_KEYS = {"project_id", "artifact_id", "job_id", "target_type", "target_id",
+           "role", "transition", "verdict"}
+TARGET_KEYS: list[tuple[str, str]] = [("artifact", "artifact_id")]
+# Machine-local paths an older runner sent: dropped from the log outright,
+# because a path on somebody's laptop is noise a hosted log should not keep.
+LEGACY_MACHINE_LOCAL_KEYS = {"repo_root", "local_sync_dir"}
+
+
+def register_activity_vocabulary(
+    *,
+    sensitive_keys: tuple[str, ...] = (),
+    id_keys: tuple[str, ...] = (),
+    targets: tuple[tuple[str, str], ...] = (),
+) -> None:
+    """Let an owner name its own argument fields for the shared log.
+
+    ``sensitive_keys`` are blanked wherever they appear, ``id_keys`` survive
+    the redacted argument summary, and ``targets`` pair a record kind with the
+    argument that carries its id, in the order they should be tried.
+    """
+    SENSITIVE_KEYS.update(sensitive_keys)
+    ID_KEYS.update(id_keys)
+    TARGET_KEYS.extend(target for target in targets if target not in TARGET_KEYS)
 
 # Value-level secret scrubbing (INV-12). storage.submit/fetch AND feed.post
 # results carry a one-time upload-token URL inside their `run` command string
@@ -117,21 +138,6 @@ def ledger_label(value: Any) -> str:
     """
     text = _CONTROL_CHARS_RE.sub(" ", str(value or "")[: LEDGER_LABEL_MAX_CHARS * 4])
     return scrub_credentials(scrub_secret_text(text))[:LEDGER_LABEL_MAX_CHARS]
-ID_KEYS = {
-    "project_id",
-    "claim_id",
-    "experiment_id",
-    "artifact_id",
-    "review_request_id",
-    "review_session_id",
-    "job_id",
-    "target_type",
-    "target_id",
-    "role",
-    "transition",
-    "verdict",
-}
-
 
 class ToolActivityEmitter:
     """Shared tool-call event shaping for activity sinks."""
@@ -217,18 +223,13 @@ def summarize_arguments(*, arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def target_of(arguments: Any) -> tuple[str | None, str | None]:
-    """The workflow entity a call names, so a feed or ledger row can chip it."""
+    """The entity a call names, so a feed or ledger row can chip it."""
     if not isinstance(arguments, dict):
         return None, None
-    for target_type, key in (
-        ("experiment", "experiment_id"),
-        ("claim", "claim_id"),
-        ("artifact", "artifact_id"),
-    ):
+    for target_type, key in TARGET_KEYS:
         if arguments.get(key):
             return target_type, str(arguments[key])
-    review = arguments.get("review_id") or arguments.get("request_id")
-    return ("review", str(review)) if review else (None, None)
+    return None, None
 
 
 def args_digest(*, arguments: Any) -> str:

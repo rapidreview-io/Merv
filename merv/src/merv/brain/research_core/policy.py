@@ -86,6 +86,21 @@ _ENTITY_ID_RE = re.compile(
     % "|".join(prefix for prefix, _ in ENTITY_REF_VOCABULARY)
 )
 
+# What Research's own tool arguments mean to the shared activity log: the
+# capability that must never be persisted, the ids worth keeping in a redacted
+# summary, and the record each call is about. Surface registers this with the
+# kernel vocabulary at composition, so Kernel names no research record.
+ACTIVITY_VOCABULARY: dict[str, tuple[Any, ...]] = {
+    "sensitive_keys": ("reviewer_capability",),
+    "id_keys": ("claim_id", "experiment_id", "review_request_id", "review_session_id"),
+    "targets": (
+        ("experiment", "experiment_id"),
+        ("claim", "claim_id"),
+        ("review", "review_id"),
+        ("review", "request_id"),
+    ),
+}
+
 # What `project` action=overview hands back, in the sentence the caller
 # reads. Research owns the contents, so the tool registry quotes this instead
 # of listing research records itself.
