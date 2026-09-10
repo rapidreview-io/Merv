@@ -6,6 +6,7 @@ from unittest.mock import patch
 from merv.brain.kernel.utils import NotFoundError, PermissionDeniedError, ValidationError, WorkflowError
 from merv.brain.workflows import Brief, Change, Edge, Node, Reference, Workflow, retain_artifacts
 from merv.brain.workflows.definitions.checks import review_requested, reviewed
+from merv.brain.workflows.definitions.execution import REVIEW_EXECUTION
 from tests.research_core.scenarios import ResearchCase, REVIEW_SYNOPSIS
 
 
@@ -23,7 +24,7 @@ def review_context(snapshot, knowledge):
 PLUGIN = Workflow(
     "replication_review", 1, "work",
     (Node("work", role="replicator", build_context=lambda snapshot, knowledge: Brief("Replicate the retained claim.")),
-     Node("audit", role=ROLE, read_only=True, workspace="review", build_context=review_context, dispatch_check=review_requested)),
+     Node("audit", role=ROLE, execution=REVIEW_EXECUTION, build_context=review_context, dispatch_check=review_requested)),
     (Edge("work", "submit", "audit", change=retain_artifacts),
      Edge("audit", "accept", "done", check=reviewed(ROLE)),
      Edge("audit", "repair", "work", check=reviewed(ROLE, verdict="needs_changes", return_to="work")),

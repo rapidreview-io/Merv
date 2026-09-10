@@ -48,7 +48,7 @@ class StatusGuidancePolicy:
         }
         # This is request metadata for older views, not another review policy.
         review = evaluation.review
-        if review is not None and decision.node is not None and decision.node.read_only:
+        if review is not None and decision.node is not None and decision.node.execution.read_only:
             item = next(iter(review.items), {})
             status = "attested_blocked" if review.problems and review.status == "pending" else review.status
             result["review_gate"] = {

@@ -26,7 +26,9 @@ flowchart TB
 ## Definition contract
 
 A node declares its agent role, `build_context(snapshot, knowledge)`, dispatch
-prerequisites, workspace mode, and optional actions on actual work start. Its
+prerequisites, an `Execution` policy (read-only flag, node tools, mutating
+tools, argument scopes, sandbox authority, runner workspace layout), and
+optional actions on actual work start. Its
 brief gives a concise task, the reason this node is active, durable progress, and
 exact artifact/review references. Full documents remain available through tools.
 Wait nodes declare children and a join; terminal states expose named outcomes.
