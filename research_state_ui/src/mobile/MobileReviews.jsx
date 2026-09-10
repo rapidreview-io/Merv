@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useProjectStore, selectExperiments, useProjectHref } from '../store/useProjectStore';
 import { api } from '../api';
+import { useAsyncData } from '../store/usePolling';
 import ObjId from '../components/ObjId';
 import StatusPill from '../components/StatusPill';
 import ReviewCard from '../components/ReviewCard';
@@ -16,18 +16,7 @@ export default function MobileReviews() {
   const projectId = useProjectStore(s => s.projectId);
   const experiments = useProjectStore(selectExperiments);
   const px = useProjectHref();
-  const [queue, setQueue] = useState(null);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setQueue(null);
-    setError(null);
-    api.listReviews(projectId)
-      .then(d => { if (!cancelled) setQueue(d); })
-      .catch(e => { if (!cancelled) setError(e.message); });
-    return () => { cancelled = true; };
-  }, [projectId]);
+  const [queue, error] = useAsyncData(() => api.listReviews(projectId), [projectId]);
 
   const expById = Object.fromEntries(experiments.map(e => [e.id, e]));
 

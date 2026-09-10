@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useProjectStore, selectExperiments } from '../store/useProjectStore';
 import { api } from '../api';
+import { useAsyncData } from '../store/usePolling';
 import EventTimeline from '../components/EventTimeline';
 
 const CATEGORIES = [
@@ -28,20 +29,12 @@ function inCategory(category, type) {
 export default function Events() {
   const projectId = useProjectStore(s => s.projectId);
   const experiments = useProjectStore(selectExperiments);
-  const [events, setEvents] = useState(null);
-  const [error, setError] = useState(null);
   const [category, setCategory] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
-
-  useEffect(() => {
-    let cancelled = false;
-    setEvents(null);
-    setError(null);
-    api.listEvents(projectId, 500)
-      .then(data => !cancelled && setEvents(data.events || data || []))
-      .catch(err => !cancelled && setError(err.message));
-    return () => { cancelled = true; };
-  }, [projectId]);
+  const [events, error] = useAsyncData(
+    () => api.listEvents(projectId, 500).then(d => d.events || d || []),
+    [projectId],
+  );
 
   const allTypes = useMemo(() => {
     const set = new Set();

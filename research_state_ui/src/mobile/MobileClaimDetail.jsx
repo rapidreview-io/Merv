@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
+import { useAsyncData } from '../store/usePolling';
 import { useProjectStore, selectExperiments, useProjectHref } from '../store/useProjectStore';
 import { claimStatusColor } from '../utils/evidence';
 import { ConfidenceDots, ClaimExperimentList } from '../components/ClaimEvidence';
@@ -19,18 +19,7 @@ export default function MobileClaimDetail() {
   const px = useProjectHref();
   const projectId = useProjectStore(s => s.projectId);
   const experiments = useProjectStore(selectExperiments);
-  const [claim, setClaim] = useState(null);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setClaim(null);
-    setError(null);
-    api.getClaim(projectId, claimId)
-      .then(c => !cancelled && setClaim(c))
-      .catch(err => !cancelled && setError(err.message));
-    return () => { cancelled = true; };
-  }, [projectId, claimId]);
+  const [claim, error] = useAsyncData(() => api.getClaim(projectId, claimId), [projectId, claimId]);
 
   const linkedExperiments = experiments.filter(e =>
     Array.isArray(e.tested_claims) && e.tested_claims.some(c => c.id === claimId),

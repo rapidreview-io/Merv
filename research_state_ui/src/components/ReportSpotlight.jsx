@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { api } from '../api';
+import { useAsyncData } from '../store/usePolling';
 import MarkdownView from './MarkdownView';
 import FileRenderer from './FileRenderer';
 import ExperimentReviewStepper from './ExperimentReviewStepper';
@@ -26,24 +27,15 @@ export default function ReportSpotlight({
   experimentReviews,
   experimentStatus,
 }) {
-  const [content, setContent] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+
   const [showBody, setShowBody] = useState(true);
   const [showReview, setShowReview] = useState(false);
 
-  useEffect(() => {
-    if (!reportArtifact) return undefined;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setContent(null);
-    api.getArtifactContent(projectId, reportArtifact.id)
-      .then(d => { if (!cancelled) setContent(d); })
-      .catch(e => { if (!cancelled) setError(e.message); })
-      .finally(() => !cancelled && setLoading(false));
-    return () => { cancelled = true; };
-  }, [projectId, reportArtifact?.id]);
+  const [content, error] = useAsyncData(
+    reportArtifact ? () => api.getArtifactContent(projectId, reportArtifact.id) : null,
+    [projectId, reportArtifact?.id],
+  );
+  const loading = !!reportArtifact && !content && !error;
 
   // Stable identity: MarkdownView keys its `img` component (and its memo) on
   // this — an inline arrow here would remount every figure per re-render.

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useProjectStore } from './useProjectStore';
 
 /**
@@ -88,3 +88,24 @@ export function useIntervalPoll(fn, intervalMs, { enabled = true, immediate = tr
 export const keepIfUnchanged = (next) => (prev) => (
   JSON.stringify(prev) === JSON.stringify(next) ? prev : next
 );
+
+/**
+ * One fetch per key change, with the in-flight answer dropped when the key
+ * moves first. Returns `[data, error]` — both null while the fetch is in
+ * flight, so a caller shows its loading state on `!data && !error`. A null
+ * `fetcher` means "nothing to fetch yet" and leaves both null.
+ */
+export function useAsyncData(fetcher, deps) {
+  const [state, setState] = useState([null, null]);
+  useEffect(() => {
+    setState([null, null]);
+    if (!fetcher) return undefined;
+    let cancelled = false;
+    Promise.resolve().then(fetcher).then(
+      (data) => { if (!cancelled) setState([data, null]); },
+      (err) => { if (!cancelled) setState([null, err?.message || String(err)]); },
+    );
+    return () => { cancelled = true; };
+  }, deps);
+  return state;
+}
