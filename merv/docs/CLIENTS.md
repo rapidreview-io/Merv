@@ -19,12 +19,10 @@ gateway rejects ids outside the credential's scope. Agents never send a checkout
 root. Each client gets a thin adapter on top of the same `bin/`, `skills/`, and
 `agents/` content:
 
-When a client runs on a remote machine whose loopback browser callback is not
-reachable, its normal sign-in still works: the consent page's *on another
-machine* link replaces the redirect with one short typeable command for that
-machine's terminal. Every client keeps
-its native OAuth flow with nothing installed; see
-[Remote machines](AUTH.md#remote-machines).
+Every client keeps its native OAuth flow with nothing installed. A client on a
+machine with no browser — a VM over SSH, a container, CI — uses a project key
+in its `Authorization` header instead of signing in; see
+[Machines with no browser](AUTH.md#machines-with-no-browser).
 
 | Client | Adapter | MCP registration | Skills | Reviewer subagents |
 |---|---|---|---|---|
@@ -205,7 +203,7 @@ Auto-run is not installed from a provider plugin.
 machine-local client closure. The production UI build publishes the archive,
 checksum, and `runner/install.sh` under `rapidreview.io/merv/runner/` after
 every `main` update. The Settings wizard installs or updates it with one
-provider-neutral command and pairs the machine by device code — the runner
+provider-neutral command and pairs the machine by short code — the runner
 generates its own key, the owner approves the printed code, and settings then
 travel through the brain; its launchers live under `~/.merv/bin`.
 
@@ -497,9 +495,9 @@ Notes:
   `verified_agent_review` status.
 - The generated `merv-client` branch is rebuilt after every `main` update; the
   OpenCode source entrypoint remains under `clients/opencode/` in `main`.
-- On a remote machine over SSH, sign in as usual and use the consent page's
-  *on another machine* link; it hands you one short command for that machine.
-  Details in [Remote machines](AUTH.md#remote-machines).
+- On a machine with no browser (a VM over SSH, a container, CI), mint a project
+  key instead of signing in: see
+  [Machines with no browser](AUTH.md#machines-with-no-browser).
 
 ## Use with Kilo
 
@@ -533,9 +531,9 @@ Notes:
   install.
 - The current unified Kilo CLI is required. If `kilo plugin` is unavailable,
   update Kilo before installing Merv.
-- On a remote machine over SSH, sign in as usual and use the consent page's
-  *on another machine* link; it hands you one short command for that machine.
-  Details in [Remote machines](AUTH.md#remote-machines).
+- On a machine with no browser (a VM over SSH, a container, CI), mint a project
+  key instead of signing in: see
+  [Machines with no browser](AUTH.md#machines-with-no-browser).
 
 ## Use with Hermes Agent
 

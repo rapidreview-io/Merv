@@ -1,8 +1,18 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, request } from '../api';
 
 export const ACCOUNT = 'account';
 export const PROJECT = 'project';
+
+// A coarse pointer means a phone or tablet, which is never the machine the
+// client runs on — and a loopback callback is reachable only from there.
+const COARSE_POINTER =
+  typeof window !== 'undefined' &&
+  Boolean(window.matchMedia?.('(pointer: coarse)')?.matches);
+const LOOPBACK_CALLBACK = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(
+  new URLSearchParams(window.location.search).get('redirect_uri') || '',
+);
 
 export default function OAuthConsent() {
   const [state, setState] = useState({ loading: true, client: null, projects: [], error: '' });
@@ -97,6 +107,23 @@ export default function OAuthConsent() {
         homeProject={homeProject}
         busy={busy}
       />
+      {COARSE_POINTER && LOOPBACK_CALLBACK && (
+        <p className="oauth-consent-note">
+          {state.client.client_name} is listening on its own machine, so open
+          this link in a browser there — this device cannot reach it.
+        </p>
+      )}
+      <p className="oauth-consent-note">
+        A machine with no browser — a VM, a container, CI — uses a project key
+        instead of this flow.{' '}
+        {homeProject ? (
+          <Link to={`/p/${homeProject.id}/settings?tab=keys`}>
+            Mint one under MCP keys
+          </Link>
+        ) : 'Mint one under MCP keys'}
+        , or run <code className="mono">merv-agent-runner pair</code> for the
+        auto-run runner.
+      </p>
       <p className="oauth-consent-resource">Resource: {state.client.resource}</p>
       {state.error && <p className="oauth-consent-error">{state.error}</p>}
       <div className="oauth-consent-actions">

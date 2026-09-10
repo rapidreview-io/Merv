@@ -5616,6 +5616,7 @@ a.spend-row-name:hover { color: var(--active); }
 .oauth-consent-resource { margin: 0; font: var(--text-xs)/1.5 var(--font-mono); color: var(--muted); overflow-wrap: anywhere; }
 .oauth-consent-error { margin: 0; color: var(--refutes); font-size: var(--text-sm); }
 .oauth-consent-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.oauth-consent-note { margin: 0; color: var(--muted); font-size: var(--text-xs); line-height: 1.5; }
 .oauth-scope-choices { display: flex; flex-direction: column; gap: 8px; }
 .mcpk-scope-pick { display: inline-flex; align-items: center; }
 .mcpk-scope-pick .auth-input { width: auto; min-width: 150px; }

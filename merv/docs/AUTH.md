@@ -1,24 +1,19 @@
 # Authentication & project membership
 
 The hosted research suite authenticates against the **same Supabase project as
-RapidReview** — same accounts, same `rr_sk_` API keys. Localhost is auth-free:
+RapidReview** — the same accounts sign in to both. Localhost is auth-free:
 `build_local_server` passes no verifier, so the local brain never reads
 `SUPABASE_*` env, never imports PyJWT, and serves every request as the
 implicit local principal exactly as before.
 
 ## How it works
 
-One `Authorization: Bearer <credential>` header, three credential shapes,
-dispatched by prefix (RapidReview's contract, reimplemented in
-`src/merv/brain/surface/auth.py`):
+One `Authorization: Bearer <credential>` header, two credential shapes,
+dispatched by prefix (`src/merv/brain/surface/auth.py`):
 
 - **Supabase session JWT** — browser sign-in via supabase-js in the UI.
   Verified locally (HS256, `SUPABASE_JWT_SECRET`, audience `authenticated`);
   anonymous sessions are rejected. No Supabase round-trip per request.
-- **`rr_sk_` API key** — RapidReview-minted, owner-scoped; everything headless
-  (direct `/mcp` clients, agents, curl). sha256-hashed and looked up in
-  the shared `api_keys` table over PostgREST (`SUPABASE_SERVICE_KEY`), cached 60s.
-  These keys are minted/revoked in RapidReview.
 - **`mk_` key** — minted/revoked **in this repo** via the key-mint UI and
   stored in the `project_api_keys` table. Its `grant_scope` is immutable and is
   one of two shapes:
@@ -89,10 +84,11 @@ for signed-in people; machine credentials remain unable to change membership.
 - **Headless MCP clients and the Merv agent runner** use an explicitly minted
   `mk_` key. Headless clients receive it through `MERV_MCP_KEY`;
   `merv-client configure` writes machine settings and `merv-client env` prints
-  the header-based config for those non-interactive surfaces. The runner reads
+  the header-based config for those non-interactive surfaces (it prints a
+  `${MERV_MCP_KEY}` placeholder, never a key). The runner reads
   `~/.merv/agent-runner.key` first and falls back to `MERV_MCP_KEY` only when no
   paired credential exists. Pairing writes that file: the runner generates the
-  key itself, presents only its sha256 digest with a short device code, and an
+  key itself, presents only its sha256 digest with a short code, and an
   owner's approval on the Auto-run page registers the digest as a
   project-scoped key labelled `auto-run · <hostname>` — the plaintext never
   leaves the machine and is never shown. Never inline a key into a committed
@@ -103,45 +99,36 @@ grant discovers ids with `project(action="list")`; a project-scoped grant may
 only pass its bound project. Project membership remains the authorization
 boundary.
 
-### Remote machines
+## Machines with no browser
 
-Start the client's normal Merv sign-in and open the printed URL in any
-browser. On the consent page, use the *on another machine* link (a phone
-skips this — it is always treated as approving for another machine),
-approve, and type the short command the page shows into a terminal on that
-machine:
+OAuth is the default wherever a browser can reach the client's callback: a
+laptop MCP client redirects to its own loopback listener, and a
+platform-brokered client (claude.ai) redirects to the platform's HTTPS
+callback. A machine with no browser holds a project key instead:
 
-```bash
-curl -L 'https://rapidreview.io/merv/go/AB12-CD34'
-```
+- a **VM you rent** and reach over SSH;
+- a **sandbox a platform rents** for an agent;
+- **CI jobs**, unattended services, and containers;
+- the **Messages API MCP connector**;
+- a client that does not implement MCP OAuth discovery, DCR, PKCE, and refresh,
+  and direct scripts such as `curl` or the keyed `mcp_conformance.py` probe.
 
-That delivers the approval to the waiting client, which stores and
-refreshes its own OAuth grant as usual — nothing is installed, no tunnel is
-opened, and no key is minted or copied. Clients whose terminal prompts for
-a URL paste (Claude Code) get that URL as the first instruction instead.
-The page confirms with "Connected" once the client picks the approval up.
-To approve from your phone, use the consent page's *approve on my phone*
-link and enter the shown code at rapidreview.io/merv/go. Links and
-approvals are single-use and stay valid for ten minutes.
+The reason is not that OAuth cannot start there — it is that it cannot survive
+there. A refresh token is single-use, and several agent processes on one
+machine race on the same stored one, so the first replay revokes the family and
+every process loses its grant at once.
 
-## When a static key is still required
-
-Use browser OAuth by default. Mint a static `mk_` key only when there is no
-interactive browser/redirect loop or when a long-running parent process must
-mint narrower child sessions:
-
-- `merv-agent-runner`, which holds the parent credential and gives each child a
-  short-lived `MERV_AGENT_SESSION_KEY`;
-- CI jobs, unattended services, and containers with no browser and no way to
-  forward the callback port (an interactive SSH session can — see
-  [Remote machines](#remote-machines));
-- a client that does not implement MCP OAuth discovery, DCR, PKCE, and refresh;
-- direct scripts such as `curl` or the full `mcp_conformance.py` keyed probe.
-
-At [rapidreview.io/merv](https://rapidreview.io/merv), open a project, create a
+`merv-agent-runner pair` mints the runner's key without a browser: the runner
+generates the key itself, prints a short code, and an owner approving that code
+on the Auto-run page registers the digest. Everything else mints one in the UI:
+at [rapidreview.io/merv](https://rapidreview.io/merv), open a project, create a
 key, choose **All my projects** unless deliberate project confinement is needed,
 and expose it to the process as `MERV_MCP_KEY`. Treat it as a password and keep
 it out of shell history, logs, and version control.
+
+`merv-agent-runner` also holds the parent credential from which each child
+agent session gets a short-lived `MERV_AGENT_SESSION_KEY`.
+
 ## Hosted configuration
 
 Set `SUPABASE_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_KEY`,
@@ -150,7 +137,8 @@ one `project_members` row for each authorized user/project pair. Interactive
 users then sign in through MCP OAuth; headless callers mint a scoped key.
 Email sharing also expects the service-role-only `lookup_user_for_share` and
 `user_display_profiles` RPCs already installed in the shared authentication
-Supabase project.
+Supabase project; those two RPCs are the only thing `SUPABASE_SERVICE_KEY` is
+still used for.
 
 Keep Supabase secrets and service credentials in managed secret storage. Rotate
 them through the Supabase and deployment runbooks, not through application

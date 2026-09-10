@@ -25,8 +25,7 @@ document.
   default) run every request as the implicit `local` principal, and must remain
   on a trusted network. Hosted control with auth configured enforces Supabase
   end-user sessions on `/api/*` — with `project_members` isolation (foreign
-  projects 404) — plus `rr_sk_` API keys and project-scoped `mk_` keys at the
-  gateway. CORS restrictions are not authentication.
+  projects 404) — plus project-scoped `mk_` keys at the gateway. CORS restrictions are not authentication.
 
 ## Server identity and compatibility
 

@@ -104,8 +104,8 @@ _CREDENTIAL_FIELD_RE = re.compile(
     r"|refresh[_-]?token|password|secret)\s*[:=]\s*[^\s,;&'\"]+"
 )
 # The known prefixes scrub whatever follows them, however short. The verifiers
-# accept a minted key by PREFIX alone — `rr_sk_known` is a live credential —
-# so a scrubber with a length floor would be laxer than the thing it protects,
+# accept a minted key by PREFIX alone — `mk_x` is a live credential — so a
+# scrubber with a length floor would be laxer than the thing it protects,
 # and a short key would land verbatim in an indexed column a human later reads.
 # The cost is that an ordinary `rp_run`-shaped label redacts too; a lost
 # telemetry label is far cheaper than a persisted key.
