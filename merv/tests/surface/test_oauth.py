@@ -42,6 +42,7 @@ from merv.brain.surface.project_keys import ProjectKeys
 from merv.brain.surface.transport.api import create_fastapi_app
 from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
 from tests.support.brain import TestBrain
+from tests.support.schema import booted_store
 
 SECRET = "oauth-tests-jwt-secret-at-least-32-bytes"
 USER_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -564,7 +565,7 @@ class OAuthSurfaceTest(unittest.TestCase):
                 ),
             )
             conn.execute("DELETE FROM schema_migrations WHERE version = 38")
-        StateStore(db_path=self.app.store.db_path)  # replays migration 38
+        booted_store(self.app.store.db_path)  # replays migration 38
 
         again = self._register(
             client_name="Legacy Agent",
@@ -649,6 +650,9 @@ class OAuthSurfaceTest(unittest.TestCase):
 
     def test_a_failing_client_sweep_says_so_instead_of_zero(self) -> None:
         class ExplodingStore:
+            def install(self, module):
+                return None
+
             def transaction(self):
                 raise RuntimeError("clients table unreachable")
 

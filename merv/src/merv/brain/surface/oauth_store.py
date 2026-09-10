@@ -1,4 +1,4 @@
-"""SQL adapter for Surface-owned OAuth state."""
+"""SQL adapter for Surface-owned OAuth state, and the tables behind it."""
 
 from __future__ import annotations
 
@@ -12,6 +12,14 @@ from typing import Any
 from ..kernel.env import env_int
 from ..kernel.secret_tokens import secret_digest_matches
 from ..kernel.state.fingerprints import oauth_client_fingerprint
+from ..kernel.state.schema import (
+    Connection,
+    Migration,
+    SchemaModule,
+    ensure_columns,
+    has_table,
+    table_ddl,
+)
 from ..kernel.state.store import BaseStateStore, row_to_dict
 from ..kernel.utils import ThrottledError, format_iso, parse_iso
 from .oauth import (
@@ -78,6 +86,7 @@ class SqlOAuthRepository:
         env: Mapping[str, str] | None = None,
     ) -> None:
         self._store = store
+        store.install(OAUTH_SCHEMA)
         configured = (
             int(unused_client_ttl_days)
             if unused_client_ttl_days is not None
@@ -813,3 +822,251 @@ def _refresh_token(row: Any) -> RefreshToken | None:
 
 
 __all__ = ["SqlOAuthRepository"]
+
+
+# -- schema ----------------------------------------------------------------
+
+OAUTH_DDL = """\
+-- OAuth 2.1 public DCR registrations (agent-anywhere Phase B). A repeated
+-- registration with identical metadata resolves to the SAME client_id, so the
+-- Cursor double-DCR race is safe without growing the table; registrations that
+-- never authorized anything are swept by CleanupService. Only public clients
+-- (token_endpoint_auth_method=none) exist, so no client secret is stored.
+-- ``metadata_fingerprint`` is that "identical metadata" statement made a
+-- database fact: a digest over the CANONICAL (sorted-array) metadata, carrying
+-- the UNIQUE index added by migration 38. NULL is the one legal duplicate — a
+-- legacy row whose canonical twin already holds the fingerprint (both dialects
+-- treat NULLs as distinct in a unique index), which stays reachable by
+-- client_id while new registrations resolve to the twin. That index belongs to
+-- migration 38 and never to SCHEMA (see the submissions note below for why).
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  client_id TEXT PRIMARY KEY,
+  client_name TEXT NOT NULL,
+  redirect_uris_json TEXT NOT NULL,
+  grant_types_json TEXT NOT NULL,
+  metadata_fingerprint TEXT,
+  created_at TEXT NOT NULL
+);
+
+-- OAuth authorization codes are opaque one-shot credentials. Only a digest
+-- is stored; every security-relevant request value is bound into the row.
+CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+  code_digest TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  redirect_uri TEXT NOT NULL,
+  owner_user_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  -- Carries the consent decision through to the minted key (see
+  -- project_api_keys.grant_scope).
+  grant_scope TEXT NOT NULL DEFAULT 'project'
+    CHECK (grant_scope IN ('project', 'account')),
+  code_challenge TEXT NOT NULL,
+  resource TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT,
+  FOREIGN KEY(client_id) REFERENCES oauth_clients(client_id),
+  FOREIGN KEY(project_id) REFERENCES projects(id)
+);
+
+-- Refresh tokens rotate once. Their opaque value is never persisted, and the
+-- current project-key link makes the existing key revocation path authoritative
+-- for refresh authority as well as direct bearer use.
+CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
+  id TEXT PRIMARY KEY,
+  family_id TEXT NOT NULL,
+  secret_digest TEXT NOT NULL UNIQUE,
+  client_id TEXT NOT NULL,
+  owner_user_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  -- Preserved across every rotation so a refreshed key keeps the scope the
+  -- user consented to (see project_api_keys.grant_scope).
+  grant_scope TEXT NOT NULL DEFAULT 'project'
+    CHECK (grant_scope IN ('project', 'account')),
+  resource TEXT NOT NULL,
+  current_key_id TEXT NOT NULL,
+  parent_token_id TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT,
+  revoked_at TEXT,
+  FOREIGN KEY(client_id) REFERENCES oauth_clients(client_id),
+  FOREIGN KEY(project_id) REFERENCES projects(id),
+  FOREIGN KEY(current_key_id) REFERENCES project_api_keys(id),
+  FOREIGN KEY(parent_token_id) REFERENCES oauth_refresh_tokens(id)
+);
+
+-- OAuth device authorization grants (August 2026, RFC 8628). The lane for a
+-- client on a machine whose loopback a browser can never reach (a VM over
+-- SSH): the client polls /oauth/token with the device_code it alone holds
+-- while a signed-in owner approves the short user_code on the UI. Approval
+-- stamps the consent (owner, project, scope) onto the row; the next poll
+-- consumes it and mints the same mk_/mrt_ pair the redirect flow mints.
+-- Secrets are digests only, exactly like authorization codes.
+CREATE TABLE IF NOT EXISTS oauth_device_grants (
+  id TEXT PRIMARY KEY,
+  device_code_digest TEXT NOT NULL UNIQUE,
+  user_code TEXT NOT NULL UNIQUE,
+  client_id TEXT NOT NULL,
+  resource TEXT NOT NULL,
+  status TEXT NOT NULL
+    CHECK (status IN ('pending', 'approved', 'denied', 'consumed', 'expired')),
+  owner_user_id TEXT,
+  project_id TEXT,
+  grant_scope TEXT CHECK (grant_scope IN ('project', 'account')),
+  client_ip TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  last_polled_at TEXT,
+  decided_at TEXT,
+  consumed_at TEXT,
+  FOREIGN KEY(client_id) REFERENCES oauth_clients(client_id),
+  FOREIGN KEY(project_id) REFERENCES projects(id)
+);
+
+-- Wrong-code misses per principal, so a signed-in user cannot spray the
+-- device user-code space. Mirrors agent_runner_pairing_attempts.
+CREATE TABLE IF NOT EXISTS oauth_device_grant_attempts (
+  principal TEXT NOT NULL,
+  attempted_at TEXT NOT NULL
+);
+
+-- Short single-use consent-handoff links. 'deliver' carries the client's
+-- loopback callback URL so a curl -L on the agent's machine can finish the
+-- native flow; 'visit' carries a pending authorize query so a phone can pick
+-- the consent up by short code. Both are 32^8 tokens stored as digests,
+-- ten-minute lifetime, consumed on first use; the authorization code inside
+-- a deliver payload stays PKCE-bound to the waiting client either way.
+CREATE TABLE IF NOT EXISTS oauth_handoff_links (
+  token_digest TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('deliver', 'visit')),
+  payload TEXT NOT NULL,
+  client_ip TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT
+);
+"""
+
+
+def _add_oauth_clients(conn: Connection) -> None:
+    """Migration 28: the OAuth 2.1 DCR registrations. Clients come first —
+    codes and refresh tokens both reference them."""
+    if not has_table(conn, "oauth_clients"):
+        conn.execute(table_ddl(table="oauth_clients"))
+
+
+def _add_oauth_authorization_codes(conn: Connection) -> None:
+    """Migration 29: one-shot PKCE-bound authorization codes."""
+    if not has_table(conn, "oauth_authorization_codes"):
+        conn.execute(table_ddl(table="oauth_authorization_codes"))
+
+
+def _add_oauth_refresh_tokens(conn: Connection) -> None:
+    """Migration 30: rotating refresh tokens, linked to the key they mint."""
+    if not has_table(conn, "oauth_refresh_tokens"):
+        conn.execute(table_ddl(table="oauth_refresh_tokens"))
+
+
+def _add_oauth_client_fingerprint(conn: Connection) -> None:
+    """Migration 38: the canonical DCR fingerprint, its UNIQUE index, and the
+    two child-table client_id indexes.
+
+    Additive. The backfill computes each existing row's fingerprint from
+    CANONICALIZED metadata — the same normalization new registrations apply —
+    so a row written before canonicalization is still found by a canonical
+    lookup. Rows that canonicalize to an already-claimed fingerprint keep NULL:
+    the oldest row owns the identity, the duplicates stay reachable by
+    client_id, and the UNIQUE index can be built."""
+    if not has_table(conn, "oauth_clients"):
+        return
+    ensure_columns(conn, "oauth_clients", {"metadata_fingerprint": "TEXT"})
+    # Seeded from whatever already holds an identity so the backfill is
+    # re-runnable: a second pass can never hand out a taken fingerprint.
+    claimed = {
+        str((row_to_dict(row=row) or {}).get("metadata_fingerprint") or "")
+        for row in conn.execute(
+            "SELECT metadata_fingerprint FROM oauth_clients "
+            "WHERE metadata_fingerprint IS NOT NULL"
+        ).fetchall()
+    }
+    for row in conn.execute(
+        """
+        SELECT client_id, client_name, redirect_uris_json, grant_types_json
+        FROM oauth_clients
+        WHERE metadata_fingerprint IS NULL
+        ORDER BY created_at, client_id
+        """
+    ).fetchall():
+        data = row_to_dict(row=row) or {}
+        fingerprint = oauth_client_fingerprint(
+            client_name=str(data.get("client_name") or ""),
+            redirect_uris_json=str(data.get("redirect_uris_json") or ""),
+            grant_types_json=str(data.get("grant_types_json") or ""),
+        )
+        if fingerprint in claimed:
+            continue
+        claimed.add(fingerprint)
+        conn.execute(
+            "UPDATE oauth_clients SET metadata_fingerprint = ? WHERE client_id = ?",
+            (fingerprint, str(data.get("client_id") or "")),
+        )
+    for statement in (
+        # The get-or-create arbiter. NULLs are distinct on both dialects, which
+        # is exactly the escape hatch legacy duplicate rows need.
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_clients_fingerprint"
+        "  ON oauth_clients(metadata_fingerprint)",
+        # `client_id NOT IN (SELECT client_id FROM ...)` on the registration path.
+        "CREATE INDEX IF NOT EXISTS idx_oauth_codes_client"
+        "  ON oauth_authorization_codes(client_id)",
+        "CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client"
+        "  ON oauth_refresh_tokens(client_id)",
+    ):
+        conn.execute(statement)
+
+
+def _add_oauth_device_grants(conn: Connection) -> None:
+    """Migration 52: RFC 8628 device authorization for MCP OAuth."""
+    for table in ("oauth_device_grants", "oauth_device_grant_attempts"):
+        if not has_table(conn, table):
+            conn.execute(table_ddl(table=table))
+    for statement in (
+        "CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_expiry"
+        "  ON oauth_device_grants(status, expires_at)",
+        "CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_ip"
+        "  ON oauth_device_grants(client_ip, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_client"
+        "  ON oauth_device_grants(client_id)",
+        "CREATE INDEX IF NOT EXISTS idx_oauth_device_grant_attempts_principal"
+        "  ON oauth_device_grant_attempts(principal, attempted_at)",
+    ):
+        conn.execute(statement)
+
+
+def _add_oauth_handoff_links(conn: Connection) -> None:
+    """Migration 57: short single-use consent-handoff links."""
+    if not has_table(conn, "oauth_handoff_links"):
+        conn.execute(table_ddl(table="oauth_handoff_links"))
+    for statement in (
+        "CREATE INDEX IF NOT EXISTS idx_oauth_handoff_links_ip"
+        "  ON oauth_handoff_links(client_ip, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_oauth_handoff_links_expiry"
+        "  ON oauth_handoff_links(expires_at)",
+    ):
+        conn.execute(statement)
+
+
+OAUTH_SCHEMA = SchemaModule(
+    name="surface.oauth",
+    ddl=OAUTH_DDL,
+    migrations=(
+        Migration(28, "add_oauth_clients", _add_oauth_clients),
+        Migration(
+            29, "add_oauth_authorization_codes", _add_oauth_authorization_codes
+        ),
+        Migration(30, "add_oauth_refresh_tokens", _add_oauth_refresh_tokens),
+        Migration(38, "add_oauth_client_fingerprint", _add_oauth_client_fingerprint),
+        Migration(52, "add_oauth_device_grants", _add_oauth_device_grants),
+        Migration(57, "add_oauth_handoff_links", _add_oauth_handoff_links),
+    ),
+)

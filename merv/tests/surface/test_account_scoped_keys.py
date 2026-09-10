@@ -458,11 +458,12 @@ class GrantScopeMigrationTest(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from merv.brain.kernel.state.store import GRANT_SCOPE_TABLES, StateStore
+        from merv.brain.surface.project_keys import GRANT_SCOPE_TABLES
+        from tests.support.schema import booted_store
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "state.sqlite"
-            StateStore(db_path=path).connect().close()
+            booted_store(db_path=path).connect().close()
             # Simulate a database from before 34 by dropping the column back
             # off every credential table, then re-running migrations. A real
             # pre-migration key row rides along, so the backfill is observed
@@ -482,7 +483,7 @@ class GrantScopeMigrationTest(unittest.TestCase):
                 conn.execute("DELETE FROM schema_migrations WHERE version = 34")
                 conn.commit()
 
-            StateStore(db_path=path).connect().close()
+            booted_store(db_path=path).connect().close()
 
             with sqlite3.connect(path) as conn:
                 conn.row_factory = sqlite3.Row

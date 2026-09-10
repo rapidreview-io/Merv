@@ -7,11 +7,13 @@ from typing import Any
 
 from ..kernel.state import BaseStateStore
 from .ports import InfrastructureTransport, project_namespace
+from .persistence import INFRASTRUCTURE_SCHEMA
 
 
 class RemoteProviders:
     def __init__(self, *, client: InfrastructureTransport | None, store: BaseStateStore) -> None:
         self.client, self._store = client, store
+        store.install(INFRASTRUCTURE_SCHEMA)
 
     def overview(self, *, project_id: str) -> dict[str, Any]:
         with closing(self._store.connect()) as conn:

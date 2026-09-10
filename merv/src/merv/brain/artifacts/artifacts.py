@@ -21,6 +21,7 @@ from .models import (
     Artifact, CompletedArtifact, CompletedFigure, PendingFigure, PendingUpload,
     ReadMode, UploadKind,
 )
+from .persistence import ARTIFACT_SCHEMA
 
 
 UPLOAD_TOKEN_TTL_SECONDS = 15 * 60
@@ -34,6 +35,7 @@ class Artifacts:
     def __init__(self, *, store: BaseStateStore, blobs: EvidenceBlobStore) -> None:
         self._store = store
         self._blobs = blobs
+        store.install(ARTIFACT_SCHEMA)
 
     def submit(
         self,

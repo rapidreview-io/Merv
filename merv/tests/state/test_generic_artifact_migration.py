@@ -10,6 +10,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from merv.brain.kernel.state import store as state
+from merv.brain.kernel.state.schema import Migration, SchemaModule
+from merv.brain.research_core.persistence import (
+    RESEARCH_SCHEMA,
+    _separate_artifact_content_from_research,
+)
+from tests.support.schema import booted_store
 
 
 def seed_legacy_artifacts(store: state.BaseStateStore) -> None:
@@ -69,12 +75,12 @@ class GenericArtifactMigrationTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "state.sqlite"
-        with patch.object(state, "MIGRATIONS", tuple(item for item in state.MIGRATIONS if item[0] < 59)):
-            legacy = state.StateStore(db_path=self.db)
+        with patch.object(state, "MIGRATION_ORDER", tuple(v for v in state.MIGRATION_ORDER if v < 59)):
+            legacy = booted_store(self.db)
         seed_legacy_artifacts(legacy)
 
     def test_extracts_research_fields_without_rewriting_content_or_uploads(self) -> None:
-        upgraded = state.StateStore(db_path=self.db)
+        upgraded = booted_store(self.db)
         with upgraded.transaction() as tx:
             columns = {row["name"] for row in tx.execute("PRAGMA table_info(artifacts)").fetchall()}
             self.assertTrue({"max_bytes", "discover_figures"} <= columns)
@@ -106,7 +112,7 @@ class GenericArtifactMigrationTest(unittest.TestCase):
             self.assertEqual(tx.execute("PRAGMA foreign_key_check").fetchall(), [])
 
     def test_materializes_carried_evidence_without_future_rounds_or_other_projects(self) -> None:
-        upgraded = state.StateStore(db_path=self.db)
+        upgraded = booted_store(self.db)
         with upgraded.transaction() as tx:
             rows = tx.execute(
                 "SELECT submission_id,link_id FROM research_submission_artifacts ORDER BY submission_id,link_id"
@@ -119,9 +125,9 @@ class GenericArtifactMigrationTest(unittest.TestCase):
             )
 
     def test_reopening_and_reusing_content_preserve_history(self) -> None:
-        state.StateStore(db_path=self.db)
+        booted_store(self.db)
 
-        reopened = state.StateStore(db_path=self.db)
+        reopened = booted_store(self.db)
         with reopened.transaction() as tx:
             tx.execute(
                 "INSERT INTO research_artifact_links (id,artifact_id,project_id,target_type,"
@@ -141,22 +147,32 @@ class GenericArtifactMigrationTest(unittest.TestCase):
             self.assertEqual(tx.execute("SELECT COUNT(*) AS n FROM research_submission_artifacts").fetchone()["n"], 6)
 
     def test_failed_migration_rolls_back_fields_data_and_ledger_together(self) -> None:
-        class FailingStore(state.StateStore):
-            def _separate_artifact_content_from_research(self, *, conn) -> None:
-                super()._separate_artifact_content_from_research(conn=conn)
-                raise RuntimeError("injected migration failure")
+        def failing(conn) -> None:
+            _separate_artifact_content_from_research(conn)
+            raise RuntimeError("injected migration failure")
 
+        # Research's ladder with step 59 replaced: same DDL, same numbering.
+        broken = SchemaModule(
+            name="research_core:failing-59",
+            ddl=RESEARCH_SCHEMA.ddl,
+            migrations=tuple(
+                item if item.version != 59 else Migration(59, item.name, failing)
+                for item in RESEARCH_SCHEMA.migrations
+            ),
+        )
         with self.assertRaisesRegex(RuntimeError, "injected migration failure"):
-            FailingStore(db_path=self.db)
+            state.StateStore(db_path=self.db).install(broken)
         with sqlite3.connect(self.db) as tx:
             self.assertEqual(tx.execute("SELECT role,submission_id FROM artifacts WHERE id='plan'").fetchone(),
                              ("plan", "s1"))
             self.assertEqual(tx.execute("SELECT COUNT(*) FROM schema_migrations WHERE version=59").fetchone()[0], 0)
-            self.assertEqual(tx.execute("SELECT COUNT(*) FROM sqlite_master WHERE name='research_artifact_links'").fetchone()[0], 0)
-        state.StateStore(db_path=self.db)
+            # Research declares the link tables in its DDL, so the rollback
+            # shows in their contents: not one backfilled row survived.
+            self.assertEqual(tx.execute("SELECT COUNT(*) FROM research_artifact_links").fetchone()[0], 0)
+        booted_store(self.db)
 
     def test_pending_cleanup_cascades_intents_but_snapshots_protect_content(self) -> None:
-        upgraded = state.StateStore(db_path=self.db)
+        upgraded = booted_store(self.db)
         with upgraded.transaction() as tx:
             tx.execute("DELETE FROM artifacts WHERE id='pending'")
             self.assertIsNone(tx.execute("SELECT id FROM research_artifact_links WHERE id='pending'").fetchone())
@@ -178,7 +194,7 @@ class GenericArtifactMigrationTest(unittest.TestCase):
                 "created_at,updated_at) VALUES ('exp1','p1','Migration','Preserve evidence',"
                 "'running',0,'2026-09-09','2026-09-09')"
             )
-        upgraded = state.StateStore(db_path=self.db)
+        upgraded = booted_store(self.db)
         evidence = ResearchArtifacts(store=upgraded, artifacts=Artifacts(store=upgraded, blobs=FakeBlobStore()))
         with upgraded.transaction() as tx:
             evidence.seal(tx=tx, target=ArtifactTarget("experiment", "exp1", "p1"), transition="submit_results")
@@ -192,7 +208,7 @@ class GenericArtifactMigrationTest(unittest.TestCase):
         with sqlite3.connect(self.db) as tx:
             tx.execute("UPDATE artifacts SET created_by='system',path='old.md' WHERE id='report1'")
             tx.execute("UPDATE artifacts SET created_by='system',path='new.md' WHERE id='report2'")
-        upgraded = state.StateStore(db_path=self.db)
+        upgraded = booted_store(self.db)
         with upgraded.transaction() as tx:
             active = tx.execute(
                 "SELECT id FROM research_artifacts WHERE project_id='p1' AND role='report' AND active=1 ORDER BY id"
@@ -220,7 +236,7 @@ class GenericArtifactPostgresMigrationTest(unittest.TestCase):
         dsn = os.environ["MERV_TEST_POSTGRES_DSN"]
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
-        with patch.object(state, "MIGRATIONS", tuple(item for item in state.MIGRATIONS if item[0] < 59)):
+        with patch.object(state, "MIGRATION_ORDER", tuple(v for v in state.MIGRATION_ORDER if v < 59)):
             legacy = PostgresStateStore(dsn=dsn)
         seed_legacy_artifacts(legacy)
 

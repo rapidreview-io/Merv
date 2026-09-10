@@ -73,7 +73,10 @@ FILE_COMPONENTS = {
 # Application.  Surface is the outer delivery/composition component.
 ALLOWED_COMPONENT_EDGES = (
     {(KERNEL, KERNEL)}
-    | {(RESEARCH_CORE, dependency) for dependency in (RESEARCH_CORE, WORKFLOWS, KERNEL)}
+    | {
+        (RESEARCH_CORE, dependency)
+        for dependency in (RESEARCH_CORE, WORKFLOWS, ARTIFACTS, KERNEL)
+    }
     | {(WORKFLOWS, dependency) for dependency in (WORKFLOWS, KERNEL)}
     | {(ARTIFACTS, dependency) for dependency in (ARTIFACTS, KERNEL)}
     | {(SANDBOX, dependency) for dependency in (SANDBOX, KERNEL)}
@@ -195,105 +198,115 @@ LAYER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset()
 # SQL follows the import law: a module may name its own tables, Kernel tables,
 # and tables behind ratified component edges. Every stable table is explicit;
 # temporary ``*_migrate`` rebuild tables are ignored by the ownership check.
+# Every persistent table, and the component whose persistence module declares
+# it. Authoritative: the CREATE TABLE must live in that component's schema
+# module, and no support module's SQL may name a research table.
 TABLE_OWNERS = {
-    "workflow_instances": WORKFLOWS,
-    "workflow_history": WORKFLOWS,
-    "workflow_actions": WORKFLOWS,
+    # Kernel keeps only what every component writes through.
     "projects": KERNEL,
     "project_members": KERNEL,
-    "user_hf_tokens": KERNEL,
-    # Same shape as user_hf_tokens: kernel owns the rows, the surface facade
-    # (sandbox_providers.py) is the only writer, provisioning the only reader.
-    "sandbox_provider_settings": KERNEL,
-    "project_api_keys": SURFACE,
-    # Device-code runner pairing: the surface registers a runner-presented key
-    # digest as a project key, so it owns the exchange rows and the approval
-    # miss counter the same way it owns project_api_keys.
-    "agent_runner_pairings": SURFACE,
-    "agent_runner_pairing_attempts": SURFACE,
-    "oauth_clients": SURFACE,
-    "oauth_handoff_links": SURFACE,
-    "remote_sandbox_links": SANDBOX,
-    "oauth_authorization_codes": SURFACE,
-    "oauth_refresh_tokens": SURFACE,
-    # RFC 8628 device grants: the surface's oauth_store owns the exchange rows
-    # and the miss counter exactly as it owns codes and refresh tokens.
-    "oauth_device_grants": SURFACE,
-    "oauth_device_grant_attempts": SURFACE,
-    # Agent context-window identities and the MCP transport sessions they
-    # were minted under: surface-owned like project_api_keys, read (never
-    # written) beside the kernel tool_calls ledger for traces.
-    "agent_identities": SURFACE,
-    "mcp_sessions": SURFACE,
     "events": KERNEL,
     # Written from the surface dispatcher through a kernel-owned ledger, the
     # same shape as events: kernel owns the table, everyone feeds it.
     "tool_calls": KERNEL,
     "schema_migrations": KERNEL,
     "tenants": KERNEL,
+    # Research: work nodes, their evidence links, and their literature.
+    "claims": RESEARCH_CORE,
     "experiments": RESEARCH_CORE,
     "experiment_claims": RESEARCH_CORE,
-    # The MLflow delivery barrier's key. Written and read only by the keyed
-    # tracking write in research_core; it names a kernel `events` row the way
-    # experiment_claims names a claim.
-    "tracking_deliveries": RESEARCH_CORE,
-    "claims": RESEARCH_CORE,
+    "tasks": RESEARCH_CORE,
+    "reflection_tasks": RESEARCH_CORE,
+    "node_dependencies": RESEARCH_CORE,
     "reviews": RESEARCH_CORE,
     "review_requests": RESEARCH_CORE,
     "review_sessions": RESEARCH_CORE,
     "reflections": RESEARCH_CORE,
     "reflection_claim_changes": RESEARCH_CORE,
     "reflection_experiments": RESEARCH_CORE,
-    # Tasks: the flat non-experiment work node, its reflection join, and the
-    # wave DAG edges experiments and tasks gate on.
-    "tasks": RESEARCH_CORE,
-    "reflection_tasks": RESEARCH_CORE,
-    "node_dependencies": RESEARCH_CORE,
-    # Written by the wave lifecycle (spec validation reserves and pins,
-    # publish or abandon releases); read by the tool create path to refuse
-    # name races and by the cap check to hold the wave's slots.
     "reflection_reserved_names": RESEARCH_CORE,
+    "reflection_advances": RESEARCH_CORE,
+    "consolidation_proposals": RESEARCH_CORE,
+    "consolidation_decisions": RESEARCH_CORE,
     "project_candidates": RESEARCH_CORE,
     "litreview_sections": RESEARCH_CORE,
     "papers": RESEARCH_CORE,
     "paper_links": RESEARCH_CORE,
-    "artifacts": ARTIFACTS,
-    "artifact_figures": ARTIFACTS,
     # Research owns content associations and complete evidence selections.
     "research_artifact_links": RESEARCH_CORE,
-    "submissions": RESEARCH_CORE,
     "research_submission_artifacts": RESEARCH_CORE,
     # Research's own facts about merv-sandboxes objects: producing target,
     # classification, provenance, and the completion metadata snapshot.
     "research_objects": RESEARCH_CORE,
-    # Retired heavy-object ledger. Only the kernel schema and the historical
-    # migrations name it; deploy/migrate_storage_ledger.py reads it once.
-    "storage_objects": KERNEL,
-    # One-time completion tokens for service uploads: the infrastructure
-    # facade mints and consumes them; the storage router only relays.
-    "storage_completion_tokens": SANDBOX,
+    # Workflows: the runtime's durable state and its delivery barrier key.
+    "workflow_instances": WORKFLOWS,
+    "workflow_history": WORKFLOWS,
+    "workflow_actions": WORKFLOWS,
+    "tracking_deliveries": WORKFLOWS,
+    # Artifacts: immutable content, its figures, and the sealed round.
+    "artifacts": ARTIFACTS,
+    "artifact_figures": ARTIFACTS,
+    "submissions": ARTIFACTS,
+    # Agent sessions: leases, runners, their pairing, traces, workspaces.
+    "agent_sessions": AGENT_SESSIONS,
+    "agent_workspaces": AGENT_SESSIONS,
+    "agent_runners": AGENT_SESSIONS,
+    "agent_runner_pairings": AGENT_SESSIONS,
+    "agent_runner_pairing_attempts": AGENT_SESSIONS,
+    "agent_session_traces": AGENT_SESSIONS,
+    # Infrastructure: sandbox machines, spend policy, provider connections,
+    # and the retired heavy-object ledger until its migration script has run.
     "sandboxes": SANDBOX,
     "sandbox_attachments": SANDBOX,
     "sandbox_generations": SANDBOX,
     "sandbox_runs": SANDBOX,
+    "remote_sandbox_links": SANDBOX,
+    "sandbox_provider_settings": SANDBOX,
     "tenant_quotas": SANDBOX,
     "provider_user_caps": SANDBOX,
     "spend_kill_switches": SANDBOX,
+    "storage_objects": SANDBOX,
+    # One-time completion tokens for service uploads: the infrastructure
+    # facade mints and consumes them; the storage router only relays.
+    "storage_completion_tokens": SANDBOX,
+    # Surface: credentials, OAuth exchange rows, per-user settings, agent
+    # identity, and the router's one-time upload completion tokens.
+    "project_api_keys": SURFACE,
+    "oauth_clients": SURFACE,
+    "oauth_authorization_codes": SURFACE,
+    "oauth_refresh_tokens": SURFACE,
+    "oauth_device_grants": SURFACE,
+    "oauth_device_grant_attempts": SURFACE,
+    "oauth_handoff_links": SURFACE,
+    "user_hf_tokens": SURFACE,
+    "agent_identities": SURFACE,
+    "mcp_sessions": SURFACE,
+    # Feed.
     "posts": FEED,
     "feed_authors": FEED,
     "post_reactions": FEED,
     "feed_upload_tokens": FEED,
-    "agent_sessions": AGENT_SESSIONS,
-    # Branch facts per leased workflow instance, keyed by opaque instance id.
-    "agent_workspaces": AGENT_SESSIONS,
-    # Idle-runner presence plus brain-held desired tuning and runner inventory.
-    "agent_runners": AGENT_SESSIONS,
-    # Bounded, redacted per-session trace excerpt mirrored by the runner.
-    "agent_session_traces": AGENT_SESSIONS,
-    "consolidation_proposals": RESEARCH_CORE,
-    "consolidation_decisions": RESEARCH_CORE,
-    "reflection_advances": RESEARCH_CORE,
 }
+
+# Where each component declares its DDL. Everything else is `persistence.py`
+# in the component package; surface splits its tables across the modules that
+# own the flows behind them.
+SCHEMA_MODULES = {
+    KERNEL: ("kernel/state/persistence.py",),
+    RESEARCH_CORE: ("research_core/persistence.py",),
+    WORKFLOWS: ("workflows/persistence.py",),
+    ARTIFACTS: ("artifacts/persistence.py",),
+    AGENT_SESSIONS: ("agent_sessions/persistence.py",),
+    SANDBOX: ("infrastructure/persistence.py",),
+    FEED: ("feed/persistence.py",),
+    SURFACE: (
+        "surface/project_keys.py",
+        "surface/oauth_store.py",
+        "surface/user_settings.py",
+        "surface/agent_identity.py",
+    ),
+}
+
 SQL_RELATION_OWNERS = {**TABLE_OWNERS, "research_artifacts": RESEARCH_CORE}
 SQL_TABLE_REF = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_]+)\b", re.IGNORECASE)
 CREATE_TABLE_REF = re.compile(
@@ -549,14 +562,15 @@ def _enclosing_function(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str:
 
 def _foreign_artifact_sql() -> Counter[tuple[str, str, str]]:
     references: Counter[tuple[str, str, str]] = Counter()
-    artifact_tables = {
-        table for table, owner in TABLE_OWNERS.items() if owner == ARTIFACTS
-    }
+    # Content, not the seal ledger: `submissions` records the round a
+    # research target sealed, and Research reads it to compose evidence.
+    artifact_tables = {"artifacts", "artifact_figures"}
     for path in _backend_files():
         rel = path.relative_to(BACKEND_ROOT).as_posix()
-        # Kernel owns the schema and released migrations. Runtime Artifact SQL
-        # belongs exclusively to the consolidated Artifacts component.
-        if _component(rel) == ARTIFACTS or rel == "kernel/state/store.py":
+        # A schema module holds released DDL and migrations, including the
+        # extraction that moved research fields out of `artifacts`. Runtime
+        # Artifact SQL belongs exclusively to the Artifacts component.
+        if _component(rel) == ARTIFACTS or path.name == "persistence.py":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         parents = {
@@ -928,6 +942,8 @@ class ModuleBoundaryTest(unittest.TestCase):
             module = _component(rel)
             if module in (None, KERNEL, SURFACE):
                 continue
+            if path.name == "persistence.py":
+                continue  # schema modules: see the ownership assertions below
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):

@@ -7,7 +7,7 @@ import sqlite3
 from unittest import mock
 
 from merv.brain.kernel.secret_tokens import hash_secret
-from merv.brain.kernel.state.store import AGENT_SESSION_INDEXES, StateStore
+from tests.support.schema import booted_store
 from tests.research_core.scenarios import LENSES, VALID_CHANGE_SPEC, VALID_PLAN, ResearchCase
 from tests.support.brain import TestBrain
 
@@ -33,8 +33,14 @@ def _legacy_session_schema(conn):
     conn.execute("DROP TABLE agent_sessions")
     conn.execute(session_sql)
     conn.execute(trace_sql)
-    for sql in AGENT_SESSION_INDEXES:
-        conn.execute(sql)
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_runner_retry"
+        "  ON agent_sessions(runner_id, idempotency_key)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_sessions_project"
+        "  ON agent_sessions(project_id, created_at)"
+    )
 
 
 def _legacy_session(conn, *, session_id, project_id, target_id, target_type="experiment",
@@ -57,7 +63,7 @@ def _legacy_session(conn, *, session_id, project_id, target_id, target_type="exp
 
 def test_existing_tasks_are_adopted_once_without_restarting_work(tmp_path):
     path = tmp_path / "state.sqlite"
-    store = StateStore(db_path=path)
+    store = booted_store(path)
     with store.transaction() as conn:
         project_id = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()["id"]
         for index, state in enumerate(("in_progress", "in_review", "done", "failed")):
@@ -67,7 +73,7 @@ def test_existing_tasks_are_adopted_once_without_restarting_work(tmp_path):
                 (f"task_old_{index}", project_id, f"task-{index}", state),
             )
         _remove_runtime(conn)
-    migrated = StateStore(db_path=path)
+    migrated = booted_store(path)
     with closing(migrated.connect()) as conn:
         instances = conn.execute("SELECT * FROM workflow_instances ORDER BY id").fetchall()
         assert [row["state"] for row in instances] == ["in_progress", "in_review", "done", "failed"]
@@ -79,7 +85,7 @@ def test_existing_tasks_are_adopted_once_without_restarting_work(tmp_path):
         assert len(history) == 4 and all(row["action"] == "migrate" for row in history)
         assert all(json.loads(row["after_json"])["version"] == 1 for row in history)
         assert all(row["revision_context"] == "Keep prior progress" for row in conn.execute("SELECT revision_context FROM tasks").fetchall())
-    StateStore(db_path=path)
+    booted_store(path)
     with closing(migrated.connect()) as conn:
         assert conn.execute("SELECT COUNT(*) AS n FROM workflow_history").fetchone()["n"] == 4
 

@@ -1,10 +1,10 @@
 """Booting migration 36 against a database that predates it.
 
-This is a regression test for a production outage. SCHEMA is executed on every
-boot before the migration ladder, and its `CREATE TABLE IF NOT EXISTS` is a
-no-op on a database that already has the table. So a `CREATE INDEX` in SCHEMA
-naming a column that only a migration adds will fail on every existing
-deployment — before the ALTER that would add it can run — and the container
+This is a regression test for a production outage. A component's DDL is
+executed on every boot before its migration ladder, and its `CREATE TABLE IF
+NOT EXISTS` is a no-op on a database that already has the table. So a `CREATE
+INDEX` in DDL naming a column that only a migration adds will fail on every
+existing deployment — before the ALTER that would add it can run — and the container
 crash-loops. A fresh database never sees it, so neither does the test suite
 unless it simulates an upgrade.
 """
@@ -17,24 +17,33 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from merv.brain.kernel.state.store import MIGRATIONS, SCHEMA, StateStore
+from merv.brain.kernel.state.schema import MIGRATION_ORDER, statements
+from tests.support.schema import ALL_DDL, LADDER, booted_store
 
 
 def _schema_without_submissions() -> str:
-    """SCHEMA as it stood before migration 36: no submissions table, and no
-    submission_id column on artifacts or reviews."""
-    blocks = SCHEMA.split(";")
+    """The installed schema as it stood before migration 36: no submissions
+    table, and no submission_id column on artifacts or reviews."""
     kept = []
-    for block in blocks:
-        if "CREATE TABLE IF NOT EXISTS submissions" in block:
+    for statement in statements(ALL_DDL):
+        # Skip the tables migrations 36 and 59 introduce; the ladder is what
+        # brings them, and stripping their submission_id would leave a
+        # dangling comma behind.
+        if any(
+            table in statement
+            for table in (
+                "submissions",
+                "research_submission_artifacts",
+                "research_artifact_links",
+            )
+        ):
             continue
-        lines = [
-            line
-            for line in block.splitlines()
-            if "submission_id" not in line
-        ]
-        kept.append("\n".join(lines))
-    return ";".join(kept)
+        kept.append(
+            "\n".join(
+                line for line in statement.splitlines() if "submission_id" not in line
+            )
+        )
+    return ";\n".join(kept) + ";"
 
 
 class Migration36OnExistingDatabaseTest(unittest.TestCase):
@@ -47,7 +56,7 @@ class Migration36OnExistingDatabaseTest(unittest.TestCase):
             # deployment is in when it pulls this change.
             conn = sqlite3.connect(db_path)
             conn.executescript(_schema_without_submissions())
-            for version, name, _ in MIGRATIONS:
+            for version, name in LADDER:
                 if version < 36:
                     conn.execute(
                         "INSERT OR IGNORE INTO schema_migrations "
@@ -65,9 +74,9 @@ class Migration36OnExistingDatabaseTest(unittest.TestCase):
             conn.close()
 
             # The outage: this raised UndefinedColumn and the process died.
-            with patch("merv.brain.kernel.state.store.MIGRATIONS",
-                       tuple(migration for migration in MIGRATIONS if migration[0] <= 36)):
-                store = StateStore(db_path=db_path)
+            with patch("merv.brain.kernel.state.store.MIGRATION_ORDER",
+                       tuple(v for v in MIGRATION_ORDER if v <= 36)):
+                store = booted_store(db_path=db_path)
 
             with store.transaction() as conn:
                 columns = {
@@ -105,7 +114,7 @@ class Migration36OnExistingDatabaseTest(unittest.TestCase):
 
             # The later content split transfers the seal marker to Research;
             # it must still accept the real migration-36 shape just verified.
-            store = StateStore(db_path=db_path)
+            store = booted_store(db_path=db_path)
             with store.transaction() as conn:
                 content_columns = {row["name"] for row in conn.execute("PRAGMA table_info(artifacts)").fetchall()}
                 link_columns = {row["name"] for row in conn.execute("PRAGMA table_info(research_artifact_links)").fetchall()}
@@ -114,14 +123,14 @@ class Migration36OnExistingDatabaseTest(unittest.TestCase):
                 self.assertEqual(conn.execute("SELECT COUNT(*) AS n FROM schema_migrations WHERE version IN (36,59)").fetchone()["n"], 2)
 
     def test_schema_declares_no_index_on_a_migration_added_column(self) -> None:
-        """The general form of the outage: SCHEMA runs before the ladder, so no
-        index in it may name a column that a migration introduces."""
+        """The general form of the outage: a module's DDL runs before its
+        ladder, so no index in it may name a column a migration introduces."""
         migration_added = {"submission_id"}
         offenders = [
-            block.strip().splitlines()[0]
-            for block in SCHEMA.split(";")
-            if "CREATE INDEX" in block
-            and any(column in block for column in migration_added)
+            statement.strip().splitlines()[0]
+            for statement in statements(ALL_DDL)
+            if "CREATE INDEX" in statement
+            and any(column in statement for column in migration_added)
         ]
         self.assertEqual(offenders, [])
 

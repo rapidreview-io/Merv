@@ -71,12 +71,12 @@ class ExperimentRuntimeTest(ResearchCase):
     def test_clock_starts_once_on_actual_work_and_retries_keep_the_attempt_window(self):
         experiment_id, _ = self.approved()
         runtime = self.app.research.workflows.runtime
-        with self.app.store.transaction() as conn, patch("merv.brain.kernel.state.store.now_iso", return_value="2026-09-09T12:00:00Z"):
+        with self.app.store.transaction() as conn, patch("merv.brain.kernel.state.persistence.now_iso", return_value="2026-09-09T12:00:00Z"):
             runtime.activate(conn=conn, project_id=self.project_id, instance_id=experiment_id, revision=2, session_id="owner-one")
             runtime.activate(conn=conn, project_id=self.project_id, instance_id=experiment_id, revision=2, session_id="owner-resume")
         self.assertEqual(self.app.experiments.attempt_started_running_at(experiment_id=experiment_id), "2026-09-09T12:00:00Z")
         self.advance(experiment_id, "retry_running", {"reason": "Interrupted process"})
-        with self.app.store.transaction() as conn, patch("merv.brain.kernel.state.store.now_iso", return_value="2026-09-09T13:00:00Z"):
+        with self.app.store.transaction() as conn, patch("merv.brain.kernel.state.persistence.now_iso", return_value="2026-09-09T13:00:00Z"):
             runtime.activate(conn=conn, project_id=self.project_id, instance_id=experiment_id, revision=3, session_id="owner-two")
         self.assertEqual(self.app.experiments.attempt_started_running_at(experiment_id=experiment_id), "2026-09-09T12:00:00Z")
         with self.app.store.connect() as conn:

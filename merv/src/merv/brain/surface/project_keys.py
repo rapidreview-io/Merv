@@ -17,6 +17,13 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from ..kernel.secret_tokens import hash_secret, mint_secret, secret_digest_matches
+from ..kernel.state.schema import (
+    Migration,
+    SchemaModule,
+    ensure_columns,
+    has_table,
+    table_ddl,
+)
 from ..kernel.state.store import BaseStateStore, Connection, row_to_dict
 from ..kernel.utils import NotFoundError, ValidationError, new_id, now_iso, parse_iso
 
@@ -69,6 +76,7 @@ class ProjectKeys:
 
     def __init__(self, *, store: BaseStateStore) -> None:
         self._store = store
+        store.install(PROJECT_KEY_SCHEMA)
 
     def create(
         self,
@@ -542,3 +550,91 @@ __all__ = [
     "ProjectKeyRecord",
     "ProjectKeys",
 ]
+
+
+# -- schema ----------------------------------------------------------------
+
+# Credential tables that carry a scope discriminator (migration 34). The
+# OAuth two live next door; the column is the same on all three.
+GRANT_SCOPE_TABLES = (
+    "project_api_keys",
+    "oauth_authorization_codes",
+    "oauth_refresh_tokens",
+)
+
+PROJECT_KEY_DDL = """\
+-- Surface-owned project credentials (agent-anywhere). The presented mk_ secret
+-- is returned once at mint; only its SHA-256 digest is authoritative here. Key
+-- scope is immutable: there is no update path for either scope column.
+-- Ceilings are stored but not yet enforced (enforcement is a later phase).
+CREATE TABLE IF NOT EXISTS project_api_keys (
+  id TEXT PRIMARY KEY,
+  secret_digest TEXT NOT NULL UNIQUE,
+  owner_user_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  -- 'project' confines the credential to project_id. 'account' authorizes
+  -- every project the owner is a member of, and project_id is then only the
+  -- home project the key is administered from (listed and revoked under the
+  -- existing /api/projects/{id}/keys routes), never a limit on its reach.
+  grant_scope TEXT NOT NULL DEFAULT 'project'
+    CHECK (grant_scope IN ('project', 'account')),
+  -- OAuth access keys bind this to their full RFC 8707 resource URI. Direct
+  -- project keys keep NULL and retain their existing REST + MCP authority.
+  audience TEXT,
+  -- Stable grant identity for OAuth access-key rotations. Direct project keys
+  -- keep NULL and use their immutable key id for idempotency instead.
+  oauth_family_id TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT,
+  revoked_at TEXT,
+  parent_key_id TEXT,
+  sandbox_seconds_ceiling BIGINT CHECK (sandbox_seconds_ceiling IS NULL OR sandbox_seconds_ceiling >= 0),
+  blob_bytes_ceiling BIGINT CHECK (blob_bytes_ceiling IS NULL OR blob_bytes_ceiling >= 0),
+  -- Optional human-readable name (e.g. "auto-run · lucia.local") so an owner
+  -- can tell which key belongs to which paired runner machine. Never secret.
+  label TEXT,
+  FOREIGN KEY(project_id) REFERENCES projects(id),
+  FOREIGN KEY(parent_key_id) REFERENCES project_api_keys(id)
+);
+"""
+
+
+def _add_project_api_keys(conn: Connection) -> None:
+    """Migration 26: the authoritative, project-scoped credential table.
+
+    audience and oauth_family_id are folded into the initial DDL (no separate
+    ALTER migrations) and stay NULL for direct project keys.
+    """
+    if not has_table(conn, "project_api_keys"):
+        conn.execute(table_ddl(table="project_api_keys"))
+
+
+def _add_grant_scope(conn: Connection) -> None:
+    """Migration 34: a credential may be scoped to its owner's whole membership.
+
+    `grant_scope` is the discriminator on all three credential tables.
+    `project_id` stays NOT NULL — for an account grant it is the home project
+    the credential is administered from — so every existing key route,
+    revocation predicate, and foreign key keeps working untouched. Existing
+    rows are all project-scoped, which is exactly what the default states.
+    """
+    for table in GRANT_SCOPE_TABLES:
+        ensure_columns(
+            conn,
+            table,
+            {
+                "grant_scope": "TEXT NOT NULL DEFAULT 'project' "
+                "CHECK (grant_scope IN ('project', 'account'))"
+            },
+        )
+
+
+PROJECT_KEY_SCHEMA = SchemaModule(
+    name="surface.project_keys",
+    ddl=PROJECT_KEY_DDL,
+    migrations=(
+        Migration(26, "add_project_api_keys", _add_project_api_keys),
+        Migration(34, "add_grant_scope", _add_grant_scope),
+    ),
+)

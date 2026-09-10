@@ -6,7 +6,8 @@ accepts ``?`` placeholders and returns mapping rows, and ``transaction()``
 yields one under single-writer semantics. The seam is deliberately thin —
 a string-level placeholder translation (the codebase never uses ``?`` or
 ``%`` inside SQL string literals; tests/state/test_postgres_dialect.py keeps
-that invariant honest) plus a DDL translation of the one SCHEMA constant.
+that invariant honest) plus a DDL translation of each component's schema
+module as it installs.
 
 Single-writer semantics: SQLite gets them from ``BEGIN IMMEDIATE``; here a
 ``pg_advisory_xact_lock`` keyed on the DSN serializes every write transaction.
@@ -26,11 +27,13 @@ from contextlib import contextmanager, suppress
 from types import TracebackType
 from typing import Any
 
-from .store import MIGRATIONS, SCHEMA, BaseStateStore, Connection
+from .persistence import KERNEL_SCHEMA
+from .schema import Connection
+from .store import BaseStateStore
 
 
 def translate_schema_to_postgres(schema_sql: str) -> str:
-    """The SQLite SCHEMA constant rendered as Postgres DDL.
+    """A component's SQLite schema module rendered as Postgres DDL.
 
     Translation rules (everything else — CREATE TABLE IF NOT EXISTS, TEXT,
     constraints, ``--`` comments — is already valid on both):
@@ -42,12 +45,12 @@ def translate_schema_to_postgres(schema_sql: str) -> str:
       INTEGER is 32-bit, and nanosecond-scale counters overflow 32 bits today.
     - ``REAL`` becomes ``DOUBLE PRECISION`` (SQLite REAL is an 8-byte float;
       Postgres REAL is only 4).
-    - BLOB is unused in SCHEMA (verified; guarded below so it stays that way
-      until the translation learns a mapping for it).
+    - BLOB is unused (verified; guarded below so it stays that way until the
+      translation learns a mapping for it).
     """
     if re.search(r"\bBLOB\b", schema_sql):
         raise ValueError(
-            "SCHEMA grew a BLOB column; teach translate_schema_to_postgres "
+            "a schema module grew a BLOB column; teach translate_schema_to_postgres "
             "the BYTEA mapping before using it"
         )
     lines = [
@@ -76,6 +79,10 @@ class PostgresConnection:
     transactions are driven by ``PostgresStateStore.transaction()`` via BEGIN.
     """
 
+    # Read by kernel.state.schema.is_sqlite; every other connection in the
+    # codebase is a sqlite3 one, or a test wrapper that delegates to one.
+    dialect = "postgres"
+
     def __init__(self, raw: Any) -> None:
         self._raw = raw
 
@@ -84,7 +91,7 @@ class PostgresConnection:
         if parameters:
             return self._raw.execute(translated, tuple(parameters))
         # No parameters: skip psycopg's client-side processing entirely so
-        # multi-statement strings (the translated SCHEMA — the executescript
+        # multi-statement strings (a translated schema module — the executescript
         # analog) execute in one round trip.
         return self._raw.execute(translated)
 
@@ -176,92 +183,28 @@ class PostgresStateStore(BaseStateStore):
                 conn.execute("ROLLBACK")
             raise
 
-    def _has_table(self, *, conn: Any, table: str) -> bool:
-        # The base probe tries sqlite_master first and swallows the failure —
-        # harmless on autocommit, but inside _migration_scope's BEGIN that
-        # failed statement aborts the whole transaction. Go straight to
-        # information_schema here.
-        row = conn.execute(
-            """
-            SELECT 1
-            FROM information_schema.tables
-            WHERE table_schema = 'public' AND table_name = ?
-            """,
-            (table,),
-        ).fetchone()
-        return row is not None
+    def _translate_ddl(self, ddl: str) -> str:
+        return translate_schema_to_postgres(ddl)
 
-    def _has_column(self, *, conn: Any, table: str, column: str) -> bool:
-        row = conn.execute(
-            """
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = ? AND column_name = ?
-            """,
-            (table, column),
-        ).fetchone()
-        return row is not None
-
-    def _sandboxes_uid_is_pk(self, *, conn: Any) -> bool:
-        # Same trap as _has_table: the base probe's PRAGMA aborts an open
-        # Postgres transaction, poisoning _migration_scope's BEGIN before the
-        # information_schema fallback runs — which broke every FRESH-database
-        # migration-4 replay. Go straight to information_schema here.
-        row = conn.execute(
-            """
-            SELECT 1
-            FROM information_schema.table_constraints tc
-            JOIN information_schema.key_column_usage kcu
-              ON tc.constraint_name = kcu.constraint_name
-             AND tc.table_schema = kcu.table_schema
-            WHERE tc.table_schema = 'public'
-              AND tc.table_name = 'sandboxes'
-              AND tc.constraint_type = 'PRIMARY KEY'
-              AND kcu.column_name = 'sandbox_uid'
-            """
-        ).fetchone()
-        return row is not None
-
-    def _expand_workflow_sessions(self, *, conn: Any) -> None:
-        rows = conn.execute(
-            "SELECT conname, pg_get_constraintdef(oid) AS definition FROM pg_constraint "
-            "WHERE conrelid = 'agent_sessions'::regclass AND contype = 'c'"
-        ).fetchall()
-        for row in rows:
-            if re.search(r"\b(target_type|kind)\b", row["definition"]):
-                name = str(row["conname"]).replace('"', '""')
-                conn.execute(f'ALTER TABLE agent_sessions DROP CONSTRAINT "{name}"')
-        for column, ddl in (("workflow_instance_id", "TEXT NOT NULL DEFAULT ''"),
-                            ("workflow_revision", "BIGINT NOT NULL DEFAULT 0"),
-                            ("workflow_node", "TEXT NOT NULL DEFAULT ''")):
-            if not self._has_column(conn=conn, table="agent_sessions", column=column):
-                conn.execute(f"ALTER TABLE agent_sessions ADD COLUMN {column} {ddl}")
-
-    def _initialize(self) -> None:
+    @contextmanager
+    def _schema_transaction(self) -> Iterator[Connection]:
+        """Install/migrate scope: an autocommit connection under the session
+        advisory lock (same key as transaction()), so concurrent replicas
+        booting the same upgrade serialize their check-then-ALTER passes
+        instead of crashing on duplicate-column/duplicate-key errors. Each
+        migration commits inside _migration_scope."""
         conn = self.connect()
         try:
-            # Session-level advisory lock (same key as transaction()) so
-            # concurrent replicas booting the same upgrade serialize their
-            # check-then-ALTER migration passes instead of crashing on
-            # duplicate-column/duplicate-key errors.
             conn.execute("SELECT pg_advisory_lock(?)", (self._advisory_lock_key,))
             try:
-                # Upgrade a pre-refactor sandboxes table to the sandbox_uid primary
-                # key before the schema-create adds sandbox_attachments' foreign key
-                # against it (Postgres validates FK targets at CREATE; SQLite reaches
-                # the same shape in _ensure_forward_schema). A no-op on a fresh
-                # database — the schema-create then builds the final shape directly.
-                self._migrate_sandbox_uid_identity(conn=conn)
-                self._rename_syntheses_to_reflections(conn=conn)
-                self._rename_synthesis_wave_tables(conn=conn)
-                conn.execute(translate_schema_to_postgres(SCHEMA))
-                self._apply_migrations(conn=conn)
+                yield conn
             finally:
-                conn.execute(
-                    "SELECT pg_advisory_unlock(?)", (self._advisory_lock_key,)
-                )
+                conn.execute("SELECT pg_advisory_unlock(?)", (self._advisory_lock_key,))
         finally:
             conn.close()
+
+    def _initialize(self) -> None:
+        self.install(KERNEL_SCHEMA)
 
 
 def _psycopg() -> tuple[Any, Any]:
@@ -276,10 +219,7 @@ def _psycopg() -> tuple[Any, Any]:
     return psycopg, dict_row
 
 
-# Imported for re-export so dialect-aware composition/tests can reach the
-# ledger without going through store.py directly.
 __all__ = [
-    "MIGRATIONS",
     "PostgresConnection",
     "PostgresStateStore",
     "translate_schema_to_postgres",

@@ -55,6 +55,7 @@ from ..kernel.utils import (
     new_id,
     now_iso,
 )
+from .persistence import RESEARCH_SCHEMA
 
 
 MIN_PROJECT_NAME_LEN = 3
@@ -106,6 +107,7 @@ class Research:
         self.store = store
         self.artifacts = artifacts
         self.workflows = workflows
+        store.install(RESEARCH_SCHEMA)
         self._experiments = ExperimentService(store=store, artifacts=artifacts, runtime=workflows.runtime)
         self._tasks = TaskService(store=store, artifacts=artifacts, runtime=workflows.runtime)
         self._reflections = ReflectionService(

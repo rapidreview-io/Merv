@@ -24,6 +24,7 @@ from .artifact_models import (
     TargetHistory,
 )
 from .association_targets import AssociationTargets
+from .persistence import RESEARCH_SCHEMA
 
 
 _VISIBLE = "(active = 1 OR submission_id != '' OR status = 'pending')"
@@ -34,6 +35,7 @@ class ResearchArtifacts:
         self._store = store
         self.contents = artifacts
         self._targets = AssociationTargets()
+        store.install(RESEARCH_SCHEMA)
 
     def submit(
         self,

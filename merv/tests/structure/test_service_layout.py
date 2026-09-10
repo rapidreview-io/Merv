@@ -580,17 +580,23 @@ class ServiceLayoutTest(unittest.TestCase):
         source = (BACKEND_ROOT / "kernel" / "state" / "store.py").read_text(
             encoding="utf-8"
         )
+        # The row/cursor/connection protocols every component's persistence
+        # module types against live beside them, in the schema registration
+        # API, not in the SQLite dialect's own file.
+        contract = (BACKEND_ROOT / "kernel" / "state" / "schema.py").read_text(
+            encoding="utf-8"
+        )
         base_source = source[
             source.index("class BaseStateStore:") : source.index("class StateStore(")
         ]
-        self.assertIn("class Row(Protocol)", source)
-        self.assertIn("class ResultCursor(Protocol)", source)
-        self.assertIn("class Connection(Protocol)", source)
+        self.assertIn("class Row(Protocol)", contract)
+        self.assertIn("class ResultCursor(Protocol)", contract)
+        self.assertIn("class Connection(Protocol)", contract)
         self.assertIn("def connect(self) -> Connection:", base_source)
         self.assertIn("def transaction(self) -> Iterator[Connection]:", base_source)
-        self.assertIn("parameters: Sequence[Any] = ()", source)
-        self.assertIn("def __enter__(self) -> Connection:", source)
-        self.assertIn("tb: TracebackType | None", source)
+        self.assertIn("parameters: Sequence[Any] = ()", contract)
+        self.assertIn("def __enter__(self) -> Connection:", contract)
+        self.assertIn("tb: TracebackType | None", contract)
         self.assertNotIn("sqlite3.", base_source)
         self.assertIn("def next_created_seq(*, conn: Connection", source)
         self.assertIn("row: Row | Mapping[str, Any] | None", source)
@@ -813,7 +819,12 @@ class ServiceLayoutTest(unittest.TestCase):
 
         for path in HTTP_TRANSPORT_MODULES:
             with self.subTest(module=path.name):
-                tree = ast.parse(path.read_text(encoding="utf-8"))
+                source = path.read_text(encoding="utf-8")
+                # A router that owns a table declares its SchemaModule here;
+                # the ladder step that creates it is schema, not request-path
+                # persistence, so its DDL execute is not a leak.
+                schema_steps = "SchemaModule(" in source
+                tree = ast.parse(source)
                 parents: dict[ast.AST, ast.AST] = {}
                 for parent in ast.walk(tree):
                     for child in ast.iter_child_nodes(parent):
@@ -829,7 +840,12 @@ class ServiceLayoutTest(unittest.TestCase):
                     if isinstance(node, ast.Call) and isinstance(
                         node.func, ast.Attribute
                     ):
-                        if node.func.attr == "execute":
+                        if node.func.attr == "execute" and not (
+                            schema_steps
+                            and (enclosing_function(node, parents) or "").startswith(
+                                "_add_"
+                            )
+                        ):
                             execute_calls.append(node.lineno)
                         if node.func.attr == "connect":
                             connect_calls.append(
@@ -884,7 +900,10 @@ class ServiceLayoutTest(unittest.TestCase):
         )
         sensitive_paths = (
             RESEARCH_CORE / "reviews.py",
-            BACKEND_ROOT / "kernel" / "state" / "store.py",
+            # The capability rehash and the workflow adoption fingerprint are
+            # the two schema steps that touch opaque secrets.
+            RESEARCH_CORE / "persistence.py",
+            BACKEND_ROOT / "workflows" / "persistence.py",
         )
         for path in sensitive_paths:
             with self.subTest(module=path.relative_to(BACKEND_ROOT).as_posix()):

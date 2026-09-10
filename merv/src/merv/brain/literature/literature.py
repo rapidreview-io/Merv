@@ -18,6 +18,7 @@ from typing import Any
 from ..kernel.ports.web_preview import PaperPreview
 from ..kernel.state.store import BaseStateStore, next_created_seq, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, new_id, now_iso
+from ..research_core.persistence import RESEARCH_SCHEMA
 
 SUMMARY_TITLE = "General Summary"
 MAX_SECTIONS = 64
@@ -107,6 +108,7 @@ class Literature:
     def __init__(self, *, store: BaseStateStore, unfurl: PaperPreview) -> None:
         self.store = store
         self.unfurl = unfurl
+        store.install(RESEARCH_SCHEMA)
 
     # ------------------------------------------------------------------ reads
 

@@ -148,7 +148,7 @@ def test_schema58_remains_readable_before_artifact_cutover_only():
 
 
 def test_current_workflow_schema_preserves_cutover_verification():
-    current = verifier.MIGRATIONS[-1][0]
+    current = verifier.MIGRATION_ORDER[-1]
     assert verifier.verify_schema(SchemaConnection(current)) == current
     with pytest.raises(verifier.CheckFailed, match="verification phase"):
         verifier.verify_schema(SchemaConnection(current + 1))
