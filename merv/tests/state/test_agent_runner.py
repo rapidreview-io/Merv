@@ -21,17 +21,10 @@ from merv.client.agent_runner import (
     AgentRunner,
     AgentSessionsClient,
     Lease,
-    ClaudeHost,
-    CodexHost,
     CommandHost,
-    CopilotHost,
-    CursorHost,
-    GeminiHost,
-    HermesHost,
+    HOSTS,
     HostSession,
-    OpenCodeHost,
     Platform,
-    QwenHost,
     RunnerError,
     SessionLedger,
     Workspace,
@@ -370,7 +363,7 @@ class AgentHostTest(unittest.TestCase):
         )
 
         self.assertEqual(
-            CodexHost().command_for(codex),
+            HOSTS["codex"].command_for(codex),
             [
                 "/opt/codex",
                 "exec",
@@ -391,7 +384,7 @@ class AgentHostTest(unittest.TestCase):
         # Codex removed ``--full-auto`` in favor of an explicit sandbox mode.
         # Keep the runner on the supported spelling so a test call reaches the
         # model instead of dying in argument parsing.
-        codex_command = CodexHost().command_for(codex)
+        codex_command = HOSTS["codex"].command_for(codex)
         self.assertNotIn("--full-auto", codex_command)
         self.assertEqual(
             codex_command[codex_command.index("--sandbox") + 1],
@@ -407,7 +400,7 @@ class AgentHostTest(unittest.TestCase):
             'mcp_servers.merv_agent_session.default_tools_approval_mode="approve"',
         ]
         self.assertEqual(
-            CodexHost().session_arguments(
+            HOSTS["codex"].session_arguments(
                 {"MERV_CONTROL_URL": "http://127.0.0.1:8878"}
             ),
             codex_session,
@@ -415,18 +408,18 @@ class AgentHostTest(unittest.TestCase):
         # ``codex exec`` drops ``-c`` overrides that precede the subcommand,
         # so the session wiring must sit after ``exec`` and before the stdin
         # marker; a claude session keeps its arguments right after argv[0].
-        composed = CodexHost().compose(codex, {"MERV_CONTROL_URL": "http://127.0.0.1:8878"})
+        composed = HOSTS["codex"].compose(codex, {"MERV_CONTROL_URL": "http://127.0.0.1:8878"})
         self.assertGreater(composed.index(codex_session[1]), composed.index("exec"))
         self.assertEqual(composed[-1], "-")
         self.assertEqual(composed[-len(codex_session) - 1 : -1], codex_session)
         self.assertEqual(
-            ClaudeHost().compose(claude, {"MERV_CONTROL_URL": "http://127.0.0.1:8878"})[
+            HOSTS["claude"].compose(claude, {"MERV_CONTROL_URL": "http://127.0.0.1:8878"})[
                 1:3
             ],
             ["--strict-mcp-config", "--mcp-config"],
         )
         self.assertEqual(
-            ClaudeHost().session_arguments(
+            HOSTS["claude"].session_arguments(
                 {"MERV_CONTROL_URL": "http://127.0.0.1:8878"}
             ),
             [
@@ -438,7 +431,7 @@ class AgentHostTest(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            ClaudeHost().command_for(claude),
+            HOSTS["claude"].command_for(claude),
             [
                 "/opt/claude",
                 "--print",
@@ -460,7 +453,7 @@ class AgentHostTest(unittest.TestCase):
             ("/opt/claude", "--permission-mode", "acceptEdits"),
         )
         self.assertEqual(
-            ClaudeHost().command_for(explicit_mode),
+            HOSTS["claude"].command_for(explicit_mode),
             [
                 "/opt/claude",
                 "--permission-mode",
@@ -475,7 +468,7 @@ class AgentHostTest(unittest.TestCase):
         instruction = "Run the assigned work."
         native = {
             "gemini": (
-                GeminiHost(),
+                HOSTS["gemini"],
                 [
                     "gemini",
                     "--approval-mode=yolo",
@@ -485,7 +478,7 @@ class AgentHostTest(unittest.TestCase):
                 None,
             ),
             "cursor": (
-                CursorHost(),
+                HOSTS["cursor"],
                 [
                     "cursor-agent",
                     "--print",
@@ -496,12 +489,12 @@ class AgentHostTest(unittest.TestCase):
                 [instruction],
             ),
             "opencode": (
-                OpenCodeHost(),
+                HOSTS["opencode"],
                 ["opencode", "run", "--auto", "--format", "json"],
                 [instruction],
             ),
             "copilot": (
-                CopilotHost(),
+                HOSTS["copilot"],
                 [
                     "copilot",
                     "--autopilot",
@@ -512,7 +505,7 @@ class AgentHostTest(unittest.TestCase):
                 ["--prompt", instruction],
             ),
             "qwen": (
-                QwenHost(),
+                HOSTS["qwen"],
                 [
                     "qwen",
                     "--approval-mode",
@@ -525,7 +518,7 @@ class AgentHostTest(unittest.TestCase):
                 None,
             ),
             "hermes": (
-                HermesHost(),
+                HOSTS["hermes"],
                 ["hermes"],
                 ["-z", instruction],
             ),
@@ -544,7 +537,7 @@ class AgentHostTest(unittest.TestCase):
             effort="high",
         )
         self.assertEqual(
-            HermesHost().command_for(hermes),
+            HOSTS["hermes"].command_for(hermes),
             [
                 "/opt/hermes",
                 "--profile",
@@ -553,14 +546,14 @@ class AgentHostTest(unittest.TestCase):
                 "anthropic/claude-opus-4-6",
             ],
         )
-        self.assertEqual(HermesHost().session_arguments({}), [])
-        hermes_instruction = HermesHost().prepare_instruction(instruction)
+        self.assertEqual(HOSTS["hermes"].session_arguments({}), [])
+        hermes_instruction = HOSTS["hermes"].prepare_instruction(instruction)
         self.assertIn("invoke every Merv tool", hermes_instruction)
         self.assertIn("merv-client call TOOL --arguments JSON", hermes_instruction)
         self.assertNotIn("MERV_AGENT_SESSION_KEY", hermes_instruction)
         hostile_instruction = "Review `$(touch /tmp/nope)`.\n--model attacker"
         self.assertEqual(
-            HermesHost().instruction_arguments(hostile_instruction),
+            HOSTS["hermes"].instruction_arguments(hostile_instruction),
             ["-z", hostile_instruction],
         )
 
@@ -678,7 +671,7 @@ class AgentHostTest(unittest.TestCase):
                 "merv.client.agent_runner.subprocess.run",
                 side_effect=export,
             ) as run:
-                HermesHost().finalize_trace(
+                HOSTS["hermes"].finalize_trace(
                     platform=platform,
                     trace_dir=trace_dir,
                 )

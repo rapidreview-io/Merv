@@ -32,10 +32,10 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NamedTuple
 from urllib.parse import urlsplit
 
 from merv.shared.client_config import (
@@ -244,39 +244,48 @@ class TraceFiles:
     stderr: Path
 
 
-class AgentHost(Protocol):
-    """The only platform-specific process boundary."""
+class _DefaultOption(NamedTuple):
+    """An option an adapter supplies only when the command has not set it."""
 
-    trace_format: str
-    stdout_filename: str
-    trace_filename: str | None
+    option: str
+    value: str
 
-    def spawn(
-        self,
-        *,
-        platform: Platform,
-        instruction: str,
-        child_env: Mapping[str, str],
-        stdout_path: Path,
-        stderr_path: Path,
-        cwd: Path,
-    ) -> HostSession: ...
 
-    def inspect(self, session: HostSession) -> str: ...
+@dataclass(frozen=True)
+class HostSpec:
+    """One coding-agent CLI's non-interactive invocation, as data.
 
-    def stop(self, session: HostSession) -> None: ...
+    ``arguments`` follow the configured command, skipping any
+    ``_DefaultOption`` that command already sets; then the model flag, the
+    effort flag, and ``stdin_argument``.
+    """
 
-    def finalize_trace(self, *, platform: Platform, trace_dir: Path) -> None: ...
+    arguments: tuple[str | _DefaultOption, ...] = ()
+    model_option: str | None = None
+    # (flag, value template): Codex spells effort as a config override.
+    effort_option: tuple[str, str] | None = None
+    # Argv field that makes the CLI read its prompt from stdin.
+    stdin_argument: str | None = None
+    # Argv fields carrying the instruction; None means the CLI reads stdin,
+    # and an empty tuple passes the instruction as a bare positional.
+    prompt_flags: tuple[str, ...] | None = None
+    # Builds the arguments that connect one process to its Merv session.
+    session_arguments: Callable[[Mapping[str, str]], list[str]] | None = None
+    # ``codex exec`` silently ignores ``-c`` overrides given before its
+    # subcommand, leaving the child with no Merv MCP server at all, so that
+    # adapter's session wiring goes last instead of first.
+    session_arguments_last: bool = False
 
 
 class CommandHost:
-    """A shell-free host for a command that accepts its instruction on stdin."""
+    """The one shell-free host: a spec says how its CLI is invoked."""
 
     trace_format = "jsonl"
     stdout_filename = "trace.jsonl"
     trace_filename: str | None = "trace.jsonl"
 
-    def __init__(self) -> None:
+    def __init__(self, spec: HostSpec | None = None) -> None:
+        self.spec = spec or HostSpec()
         self._processes: dict[int, subprocess.Popen[bytes]] = {}
         # Exit codes of children this process started and saw stop, so a
         # rapid non-zero exit can be told from a normal completed turn.
@@ -286,23 +295,43 @@ class CommandHost:
         return self._exit_codes.get(session.pid)
 
     def command_for(self, platform: Platform) -> list[str]:
-        return list(platform.command)
+        """The configured command plus this adapter's non-interactive flags."""
+        spec = self.spec
+        command = list(platform.command)
+        for argument in spec.arguments:
+            if not isinstance(argument, _DefaultOption):
+                command.append(argument)
+            elif not _has_option(command, argument.option):
+                command.extend(argument)
+        if spec.model_option and platform.model:
+            command.extend((spec.model_option, platform.model))
+        if spec.effort_option and platform.effort:
+            flag, template = spec.effort_option
+            command.extend((flag, template.format(platform.effort)))
+        if spec.stdin_argument:
+            command.append(spec.stdin_argument)
+        return command
 
     def session_arguments(self, child_env: Mapping[str, str]) -> list[str]:
         """Global CLI arguments that connect this process to its Merv session."""
-        return []
+        build = self.spec.session_arguments
+        return build(child_env) if build else []
 
     def compose(self, platform: Platform, child_env: Mapping[str, str]) -> list[str]:
-        """The full argv: session arguments right after the executable."""
+        """The full argv: session arguments after the executable, or last."""
         command = self.command_for(platform)
-        command[len(platform.command) : len(platform.command)] = self.session_arguments(
-            child_env
+        index = (
+            len(command) - (1 if self.spec.stdin_argument else 0)
+            if self.spec.session_arguments_last
+            else len(platform.command)
         )
+        command[index:index] = self.session_arguments(child_env)
         return command
 
     def instruction_arguments(self, instruction: str) -> list[str] | None:
         """Return argv prompt fields, or None when the CLI reads stdin."""
-        return None
+        flags = self.spec.prompt_flags
+        return None if flags is None else [*flags, instruction]
 
     def prepare_instruction(self, instruction: str) -> str:
         """Add adapter-specific guidance before choosing stdin or argv."""
@@ -451,235 +480,11 @@ class CommandHost:
             os.killpg(session.pid, signal.SIGKILL)
 
 
-class CodexHost(CommandHost):
-    """Native non-interactive Codex invocation."""
-
-    trace_format = "jsonl"
-    stdout_filename = "trace.jsonl"
-    trace_filename = "trace.jsonl"
-
-    def command_for(self, platform: Platform) -> list[str]:
-        command = [
-            *platform.command,
-            "exec",
-            "--ignore-user-config",
-            "--sandbox",
-            "workspace-write",
-            "--json",
-            "-c",
-            "sandbox_workspace_write.network_access=true",
-        ]
-        if platform.model:
-            command.extend(("--model", platform.model))
-        if platform.effort:
-            command.extend(("-c", f'model_reasoning_effort="{platform.effort}"'))
-        command.append("-")
-        return command
-
-    def session_arguments(self, child_env: Mapping[str, str]) -> list[str]:
-        control_url = _safe_control_url(child_env["MERV_CONTROL_URL"])
-        return [
-            "-c",
-            "mcp_servers.merv_agent_session.url=" + json.dumps(f"{control_url}/mcp"),
-            "-c",
-            "mcp_servers.merv_agent_session.bearer_token_env_var="
-            + json.dumps(AGENT_SESSION_KEY_ENV_VAR),
-            # ``exec`` cannot ask; without this every Merv call is auto-denied
-            # as "user cancelled MCP tool call".
-            "-c",
-            'mcp_servers.merv_agent_session.default_tools_approval_mode="approve"',
-        ]
-
-    def compose(self, platform: Platform, child_env: Mapping[str, str]) -> list[str]:
-        # ``codex exec`` only honours ``-c`` overrides given after the
-        # subcommand; the same flags before ``exec`` parse fine and are then
-        # silently ignored, leaving the child with no Merv MCP server at all.
-        command = self.command_for(platform)
-        command[-1:-1] = self.session_arguments(child_env)
-        return command
-
-
-class ClaudeHost(CommandHost):
-    """Native non-interactive Claude Code invocation."""
-
-    trace_format = "jsonl"
-    stdout_filename = "trace.jsonl"
-    trace_filename = "trace.jsonl"
-
-    def command_for(self, platform: Platform) -> list[str]:
-        command = [*platform.command, "--print"]
-        if not _has_option(command, "--permission-mode"):
-            command.extend(("--permission-mode", "auto"))
-        command.extend(
-            (
-                "--output-format",
-                "stream-json",
-                "--verbose",
-                "--forward-subagent-text",
-            )
-        )
-        if platform.model:
-            command.extend(("--model", platform.model))
-        if platform.effort:
-            command.extend(("--effort", platform.effort))
-        return command
-
-    def session_arguments(self, child_env: Mapping[str, str]) -> list[str]:
-        control_url = _safe_control_url(child_env["MERV_CONTROL_URL"])
-        config = {
-            "mcpServers": {
-                "merv_agent_session": {
-                    "type": "http",
-                    "url": f"{control_url}/mcp",
-                    "headers": {
-                        "Authorization": (f"Bearer ${{{AGENT_SESSION_KEY_ENV_VAR}}}"),
-                    },
-                },
-            },
-        }
-        return [
-            "--strict-mcp-config",
-            "--mcp-config",
-            json.dumps(config, separators=(",", ":")),
-        ]
-
-
-class GeminiHost(CommandHost):
-    """Native Gemini CLI headless invocation."""
-
-    trace_format = "jsonl"
-    stdout_filename = "trace.jsonl"
-    trace_filename = "trace.jsonl"
-
-    def command_for(self, platform: Platform) -> list[str]:
-        command = [
-            *platform.command,
-            "--approval-mode=yolo",
-            "--output-format",
-            "stream-json",
-        ]
-        if platform.model:
-            command.extend(("--model", platform.model))
-        return command
-
-
-class CursorHost(CommandHost):
-    """Native Cursor Agent headless invocation."""
-
-    trace_format = "jsonl"
-    stdout_filename = "trace.jsonl"
-    trace_filename = "trace.jsonl"
-
-    def command_for(self, platform: Platform) -> list[str]:
-        command = [
-            *platform.command,
-            "--print",
-            "--force",
-            "--output-format",
-            "stream-json",
-        ]
-        if platform.model:
-            command.extend(("--model", platform.model))
-        return command
-
-    def instruction_arguments(self, instruction: str) -> list[str]:
-        return [instruction]
-
-
-class OpenCodeHost(CommandHost):
-    """Native OpenCode non-interactive invocation."""
-
-    trace_format = "jsonl"
-    stdout_filename = "trace.jsonl"
-    trace_filename = "trace.jsonl"
-
-    def command_for(self, platform: Platform) -> list[str]:
-        command = [*platform.command, "run", "--auto", "--format", "json"]
-        if platform.model:
-            command.extend(("--model", platform.model))
-        if platform.effort:
-            command.extend(("--variant", platform.effort))
-        return command
-
-    def instruction_arguments(self, instruction: str) -> list[str]:
-        return [instruction]
-
-
-class CopilotHost(CommandHost):
-    """Native GitHub Copilot CLI autonomous invocation."""
-
-    trace_format = "jsonl"
-    stdout_filename = "trace.jsonl"
-    trace_filename = "trace.jsonl"
-
-    def command_for(self, platform: Platform) -> list[str]:
-        command = [
-            *platform.command,
-            "--autopilot",
-            "--yolo",
-            "--no-ask-user",
-            "--output-format=json",
-        ]
-        if platform.model:
-            command.extend(("--model", platform.model))
-        return command
-
-    def instruction_arguments(self, instruction: str) -> list[str]:
-        return ["--prompt", instruction]
-
-
-class QwenHost(CommandHost):
-    """Native Qwen Code headless invocation."""
-
-    trace_format = "jsonl"
-    stdout_filename = "trace.jsonl"
-    trace_filename = "trace.jsonl"
-
-    def command_for(self, platform: Platform) -> list[str]:
-        command = [
-            *platform.command,
-            "--approval-mode",
-            "yolo",
-            "--input-format",
-            "text",
-            "--output-format",
-            "stream-json",
-        ]
-        if platform.model:
-            command.extend(("--model", platform.model))
-        return command
-
-
 class HermesHost(CommandHost):
-    """Native Hermes Agent scripted invocation.
-
-    Hermes has no per-run MCP configuration flag. Leased sessions therefore
-    use the scoped ``merv-client call`` bridge described in their instruction
-    while preserving the user's normal Hermes model and skill configuration.
-    """
+    """Hermes keeps its own session log; the runner exports it afterwards."""
 
     trace_format = "jsonl-export"
     stdout_filename = "stdout.log"
-    trace_filename = "trace.jsonl"
-
-    def command_for(self, platform: Platform) -> list[str]:
-        command = list(platform.command)
-        if platform.model:
-            command.extend(("--model", platform.model))
-        return command
-
-    def instruction_arguments(self, instruction: str) -> list[str]:
-        # Scripted mode is the only Hermes one-shot surface; it also enables
-        # non-interactive tool approvals.
-        return ["-z", instruction]
-
-    def session_arguments(self, child_env: Mapping[str, str]) -> list[str]:
-        trace_dir = child_env.get("MERV_AGENT_TRACE_DIR")
-        return (
-            ["--usage-file", str(Path(trace_dir) / "hermes-usage.json")]
-            if trace_dir
-            else []
-        )
 
     def prepare_instruction(self, instruction: str) -> str:
         return (
@@ -733,17 +538,92 @@ class HermesHost(CommandHost):
         temporary.replace(destination)
 
 
-HOSTS: dict[str, AgentHost] = {
-    "codex": CodexHost(),
-    "claude": ClaudeHost(),
-    "gemini": GeminiHost(),
-    "cursor": CursorHost(),
-    "opencode": OpenCodeHost(),
-    "copilot": CopilotHost(),
-    "qwen": QwenHost(),
-    "hermes": HermesHost(),
-    "command": CommandHost(),
+def _codex_session_arguments(child_env: Mapping[str, str]) -> list[str]:
+    server = "mcp_servers.merv_agent_session"
+    url = json.dumps(_safe_control_url(child_env["MERV_CONTROL_URL"]) + "/mcp")
+    return [
+        "-c", f"{server}.url={url}",
+        "-c", f"{server}.bearer_token_env_var={json.dumps(AGENT_SESSION_KEY_ENV_VAR)}",
+        # ``exec`` cannot ask; without this every Merv call is auto-denied
+        # as "user cancelled MCP tool call".
+        "-c", f'{server}.default_tools_approval_mode="approve"',
+    ]
+
+
+def _claude_session_arguments(child_env: Mapping[str, str]) -> list[str]:
+    control_url = _safe_control_url(child_env["MERV_CONTROL_URL"])
+    server = {
+        "type": "http",
+        "url": f"{control_url}/mcp",
+        "headers": {"Authorization": f"Bearer ${{{AGENT_SESSION_KEY_ENV_VAR}}}"},
+    }
+    config = {"mcpServers": {"merv_agent_session": server}}
+    return ["--strict-mcp-config", "--mcp-config", json.dumps(config, separators=(",", ":"))]
+
+
+def _hermes_session_arguments(child_env: Mapping[str, str]) -> list[str]:
+    trace_dir = child_env.get("MERV_AGENT_TRACE_DIR")
+    return ["--usage-file", str(Path(trace_dir) / "hermes-usage.json")] if trace_dir else []
+
+
+# One row per adapter: the whole difference between the supported CLIs.
+HOST_SPECS: dict[str, HostSpec] = {
+    "codex": HostSpec(
+        arguments=("exec", "--ignore-user-config", "--sandbox", "workspace-write",
+                   "--json", "-c", "sandbox_workspace_write.network_access=true"),
+        model_option="--model",
+        effort_option=("-c", 'model_reasoning_effort="{}"'),
+        stdin_argument="-",
+        session_arguments=_codex_session_arguments,
+        session_arguments_last=True,
+    ),
+    "claude": HostSpec(
+        arguments=("--print", _DefaultOption("--permission-mode", "auto"),
+                   "--output-format", "stream-json", "--verbose", "--forward-subagent-text"),
+        model_option="--model",
+        effort_option=("--effort", "{}"),
+        session_arguments=_claude_session_arguments,
+    ),
+    "gemini": HostSpec(
+        arguments=("--approval-mode=yolo", "--output-format", "stream-json"),
+        model_option="--model",
+    ),
+    "cursor": HostSpec(
+        arguments=("--print", "--force", "--output-format", "stream-json"),
+        model_option="--model",
+        prompt_flags=(),  # the instruction is a bare positional argument
+    ),
+    "opencode": HostSpec(
+        arguments=("run", "--auto", "--format", "json"),
+        model_option="--model",
+        effort_option=("--variant", "{}"),
+        prompt_flags=(),  # the instruction is a bare positional argument
+    ),
+    "copilot": HostSpec(
+        arguments=("--autopilot", "--yolo", "--no-ask-user", "--output-format=json"),
+        model_option="--model",
+        prompt_flags=("--prompt",),
+    ),
+    "qwen": HostSpec(
+        arguments=("--approval-mode", "yolo", "--input-format", "text",
+                   "--output-format", "stream-json"),
+        model_option="--model",
+    ),
+    # Hermes has no per-run MCP flag, so a leased session reaches Merv through
+    # the scoped ``merv-client call`` bridge named in its instruction. Scripted
+    # mode (``-z``) is its only one-shot surface and also approves tools.
+    "hermes": HostSpec(
+        model_option="--model",
+        prompt_flags=("-z",),
+        session_arguments=_hermes_session_arguments,
+    ),
+    # The escape hatch: any command that takes its instruction on stdin.
+    "command": HostSpec(),
 }
+
+# Hermes is the one adapter whose trace and instruction differ from the rest.
+HOSTS: dict[str, CommandHost] = {n: CommandHost(s) for n, s in HOST_SPECS.items()}
+HOSTS["hermes"] = HermesHost(HOST_SPECS["hermes"])
 
 
 @dataclass
@@ -2110,7 +1990,7 @@ class AgentRunner:
             why=why,
         )
 
-    def _finish_smoke(self, active: _ActiveSmoke, *, host: AgentHost, timed_out: bool) -> None:
+    def _finish_smoke(self, active: _ActiveSmoke, *, host: CommandHost, timed_out: bool) -> None:
         platform = active.platform
         duration_ms = int((time.time() - active.started_at) * 1000)
         try:
@@ -2155,7 +2035,7 @@ class AgentRunner:
         self._save_smoke_result(platform.name, result)
         shutil.rmtree(active.root, ignore_errors=True)
 
-    def _note_stop_evidence(self, session: LocalSession, *, host: AgentHost, rapid: bool) -> str:
+    def _note_stop_evidence(self, session: LocalSession, *, host: CommandHost, rapid: bool) -> str:
         """Read a stopped child's stderr; return the release reason to use.
 
         A rapid stop with a recognisable provider refusal (or a non-zero exit
@@ -2484,7 +2364,7 @@ class AgentRunner:
             )
             return None
 
-    def _finalize_trace(self, *, session: LocalSession, host: AgentHost) -> None:
+    def _finalize_trace(self, *, session: LocalSession, host: CommandHost) -> None:
         if not session.trace_dir:
             return
         finalize = getattr(host, "finalize_trace", None)
@@ -2976,7 +2856,7 @@ def _prepare_trace(
     root: Path,
     lease: Lease,
     platform: Platform,
-    host: AgentHost,
+    host: CommandHost,
     instruction: str,
     workspace: Workspace,
 ) -> TraceFiles:
