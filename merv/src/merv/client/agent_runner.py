@@ -33,31 +33,45 @@ import urllib.error
 import urllib.request
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, NamedTuple
-from urllib.parse import urlsplit
 
 from merv.shared.client_config import (
     AGENT_SESSION_KEY_ENV_VAR,
-    CLIENT_CONFIG_ENV_VAR,
+    ClientError,
+    NoRedirect,
     dual_env_value,
+    is_loopback_url,
+    read_client_document,
     resolve_client_config_path,
     resolve_client_control_url,
+    safe_control_url,
 )
-from merv.shared.redaction import redact_excerpt, redact_secrets
+from merv.shared.redaction import (
+    MAX_TRACE_EVENT_BYTES,
+    MAX_TRACE_EVENTS,
+    MAX_TRACE_STDERR_BYTES,
+    MAX_TRACE_TAIL_BYTES,
+    redact_secrets,
+)
+from merv.shared.workspace_policy import WorkspacePolicy
 from merv.shared.runner_settings import (
     DEFAULT_PLATFORM_EXECUTABLES,
-    RunnerSettingsError,
+    TELEMETRY_COUNTERS,
+    TELEMETRY_LABELS,
+    WORKSPACE_STRATEGY,
+    platform_entry,
+    platform_problem,
     validate_desired_settings,
+    workspace_entry,
 )
 from .harness import HarnessError, SkillsInstall
 from . import harness as harness_kit
 from .private_files import (
-    PrivateFileError,
     private_token,
-    read_json_document,
     replace_json_document,
+    write_private_json,
 )
 from .runner_pairing import (
     PairingError,
@@ -101,7 +115,7 @@ SMOKE_LOOPBACK_TOKEN = "local-smoke"
 SETTINGS_VERSION_KEY = "desired_settings_version"
 
 
-class RunnerError(Exception):
+class RunnerError(ClientError):
     """A configuration, protocol, or local-launch failure."""
 
 
@@ -120,53 +134,6 @@ class Platform:
     model: str | None = None
     effort: str | None = None
     parallelism: int = 1
-
-
-WORKSPACE_MODES = frozenset({"none", "ephemeral", "persistent"})
-REFERENCE_BASE_PREFIX = "reference:"
-
-
-@dataclass(frozen=True)
-class WorkspacePolicy:
-    """A node's declared workspace: ``namespace`` is the branch and directory
-    segment it keeps, ``base`` is ``"central"`` or ``"reference:<kind>"``."""
-
-    mode: str = "persistent"
-    namespace: str = "workflows"
-    base: str = "central"
-    per_base: bool = False
-    retain: bool = True
-
-    def __post_init__(self) -> None:
-        if self.mode not in WORKSPACE_MODES:
-            raise RunnerError(f"unknown workspace mode {self.mode!r}")
-        if self.base != "central" and not self.base_reference_kind:
-            raise RunnerError(f"unknown workspace base {self.base!r}")
-        if _safe_name(self.namespace) != self.namespace:
-            raise RunnerError(
-                f"workspace namespace is not a path segment: {self.namespace!r}"
-            )
-
-    @classmethod
-    def from_execution(cls, execution: Mapping[str, Any]) -> WorkspacePolicy:
-        """The policy a packet declares; fields it omits keep their default."""
-        raw = execution.get("workspace")
-        if raw is not None and not isinstance(raw, Mapping):
-            raise RunnerError("assignment execution.workspace must be an object")
-        raw = raw or {}
-        return cls(
-            **{
-                spec.name: type(spec.default)(value)
-                for spec in fields(cls)
-                if (value := raw.get(spec.name)) not in (None, "")
-            }
-        )
-
-    @property
-    def base_reference_kind(self) -> str:
-        """The reference kind ``base`` names, or "" for the central ref."""
-        prefix = REFERENCE_BASE_PREFIX
-        return self.base[len(prefix):] if self.base.startswith(prefix) else ""
 
 
 @dataclass(frozen=True)
@@ -197,7 +164,7 @@ class Lease:
 
     @property
     def workspace(self) -> WorkspacePolicy:
-        return WorkspacePolicy.from_execution(self.execution)
+        return _workspace_policy(self.execution)
 
     def reference(self, kind: str) -> str:
         """The id of the first brief reference of ``kind``, or ""."""
@@ -276,17 +243,24 @@ class HostSpec:
     # subcommand, leaving the child with no Merv MCP server at all, so that
     # adapter's session wiring goes last instead of first.
     session_arguments_last: bool = False
+    # Guidance appended to every instruction this adapter receives.
+    instruction_note: str = ""
+    # Where the CLI's own output lands, what the trace file is called once it
+    # exists, and how to produce it when the CLI does not write JSONL itself.
+    stdout_filename: str = "trace.jsonl"
+    trace_filename: str | None = "trace.jsonl"
+    trace_format: str = "jsonl"
+    finalize_trace: Callable[[Platform, Path], None] | None = None
 
 
 class CommandHost:
     """The one shell-free host: a spec says how its CLI is invoked."""
 
-    trace_format = "jsonl"
-    stdout_filename = "trace.jsonl"
-    trace_filename: str | None = "trace.jsonl"
-
     def __init__(self, spec: HostSpec | None = None) -> None:
         self.spec = spec or HostSpec()
+        self.trace_format = self.spec.trace_format
+        self.stdout_filename = self.spec.stdout_filename
+        self.trace_filename = self.spec.trace_filename
         self._processes: dict[int, subprocess.Popen[bytes]] = {}
         # Exit codes of children this process started and saw stop, so a
         # rapid non-zero exit can be told from a normal completed turn.
@@ -336,11 +310,12 @@ class CommandHost:
 
     def prepare_instruction(self, instruction: str) -> str:
         """Add adapter-specific guidance before choosing stdin or argv."""
-        return instruction
+        return instruction + self.spec.instruction_note
 
     def finalize_trace(self, *, platform: Platform, trace_dir: Path) -> None:
         """Finish provider-specific capture after the child stops."""
-        return None
+        if self.spec.finalize_trace is not None:
+            self.spec.finalize_trace(platform, trace_dir)
 
     def spawn(
         self,
@@ -481,67 +456,63 @@ class CommandHost:
             os.killpg(session.pid, signal.SIGKILL)
 
 
-class HermesHost(CommandHost):
-    """Hermes keeps its own session log; the runner exports it afterwards."""
+# Hermes has no per-run MCP flag and keeps its own session log, so its row
+# carries a bridge note in the instruction and an export step after the child
+# stops. Everything else about it is ordinary table data.
+HERMES_NOTE = (
+    "\nRunner-owned Hermes session: invoke every Merv tool with "
+    "`merv-client call TOOL --arguments JSON`. Do not use an ambient "
+    "native Merv MCP registration; the runner deliberately removed "
+    "its owner credential and supplied only this session's scoped "
+    "credential to merv-client.\n"
+)
 
-    trace_format = "jsonl-export"
-    stdout_filename = "stdout.log"
 
-    def prepare_instruction(self, instruction: str) -> str:
-        return (
-            instruction
-            + "\nRunner-owned Hermes session: invoke every Merv tool with "
-            "`merv-client call TOOL --arguments JSON`. Do not use an ambient "
-            "native Merv MCP registration; the runner deliberately removed "
-            "its owner credential and supplied only this session's scoped "
-            "credential to merv-client.\n"
-        )
-
-    def finalize_trace(self, *, platform: Platform, trace_dir: Path) -> None:
-        usage_path = trace_dir / "hermes-usage.json"
-        if not usage_path.is_file():
-            raise RunnerError("Hermes did not write its usage report")
-        os.chmod(usage_path, 0o600)
-        try:
-            usage = json.loads(usage_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise RunnerError("Hermes wrote an unreadable usage report") from exc
-        session = usage.get("session") if isinstance(usage, dict) else None
-        session_id = str(
-            (usage.get("session_id") if isinstance(usage, dict) else "")
-            or (session.get("id") if isinstance(session, dict) else "")
-            or ""
-        ).strip()
-        if not session_id:
-            raise RunnerError("Hermes usage report has no session id")
-        destination = trace_dir / "trace.jsonl"
-        temporary = trace_dir / "trace.jsonl.tmp"
-        result = subprocess.run(
-            [
-                *platform.command,
-                "sessions",
-                "export",
-                str(temporary),
-                "--session-id",
-                session_id,
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-        if result.returncode:
-            message = result.stderr.strip() or result.stdout.strip() or "export failed"
-            raise RunnerError(f"Hermes trace export failed: {message}")
-        if not temporary.is_file():
-            raise RunnerError("Hermes trace export produced no file")
-        os.chmod(temporary, 0o600)
-        temporary.replace(destination)
+def _export_hermes_trace(platform: Platform, trace_dir: Path) -> None:
+    usage_path = trace_dir / "hermes-usage.json"
+    if not usage_path.is_file():
+        raise RunnerError("Hermes did not write its usage report")
+    os.chmod(usage_path, 0o600)
+    try:
+        usage = json.loads(usage_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RunnerError("Hermes wrote an unreadable usage report") from exc
+    session = usage.get("session") if isinstance(usage, dict) else None
+    session_id = str(
+        (usage.get("session_id") if isinstance(usage, dict) else "")
+        or (session.get("id") if isinstance(session, dict) else "")
+        or ""
+    ).strip()
+    if not session_id:
+        raise RunnerError("Hermes usage report has no session id")
+    destination = trace_dir / "trace.jsonl"
+    temporary = trace_dir / "trace.jsonl.tmp"
+    result = subprocess.run(
+        [
+            *platform.command,
+            "sessions",
+            "export",
+            str(temporary),
+            "--session-id",
+            session_id,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    if result.returncode:
+        message = result.stderr.strip() or result.stdout.strip() or "export failed"
+        raise RunnerError(f"Hermes trace export failed: {message}")
+    if not temporary.is_file():
+        raise RunnerError("Hermes trace export produced no file")
+    os.chmod(temporary, 0o600)
+    temporary.replace(destination)
 
 
 def _codex_session_arguments(child_env: Mapping[str, str]) -> list[str]:
     server = "mcp_servers.merv_agent_session"
-    url = json.dumps(_safe_control_url(child_env["MERV_CONTROL_URL"]) + "/mcp")
+    url = json.dumps(safe_control_url(child_env["MERV_CONTROL_URL"]) + "/mcp")
     return [
         "-c", f"{server}.url={url}",
         "-c", f"{server}.bearer_token_env_var={json.dumps(AGENT_SESSION_KEY_ENV_VAR)}",
@@ -552,7 +523,7 @@ def _codex_session_arguments(child_env: Mapping[str, str]) -> list[str]:
 
 
 def _claude_session_arguments(child_env: Mapping[str, str]) -> list[str]:
-    control_url = _safe_control_url(child_env["MERV_CONTROL_URL"])
+    control_url = safe_control_url(child_env["MERV_CONTROL_URL"])
     server = {
         "type": "http",
         "url": f"{control_url}/mcp",
@@ -610,21 +581,22 @@ HOST_SPECS: dict[str, HostSpec] = {
                    "--output-format", "stream-json"),
         model_option="--model",
     ),
-    # Hermes has no per-run MCP flag, so a leased session reaches Merv through
-    # the scoped ``merv-client call`` bridge named in its instruction. Scripted
-    # mode (``-z``) is its only one-shot surface and also approves tools.
+    # Scripted mode (``-z``) is Hermes's only one-shot surface; it also
+    # approves tools. Merv reaches it through the merv-client bridge.
     "hermes": HostSpec(
         model_option="--model",
         prompt_flags=("-z",),
         session_arguments=_hermes_session_arguments,
+        instruction_note=HERMES_NOTE,
+        stdout_filename="stdout.log",
+        trace_format="jsonl-export",
+        finalize_trace=_export_hermes_trace,
     ),
     # The escape hatch: any command that takes its instruction on stdin.
     "command": HostSpec(),
 }
 
-# Hermes is the one adapter whose trace and instruction differ from the rest.
 HOSTS: dict[str, CommandHost] = {n: CommandHost(s) for n, s in HOST_SPECS.items()}
-HOSTS["hermes"] = HermesHost(HOST_SPECS["hermes"])
 
 
 @dataclass
@@ -639,8 +611,6 @@ class LocalSession:
     target_type: str = ""
     target_id: str = ""
     role: str = ""
-    label: str = ""
-    source_sha: str = ""
     adapter: str | None = None
     host_ref: str | None = None
     pid: int | None = None
@@ -765,8 +735,6 @@ class SessionLedger:
             target_type=lease.target_type,
             target_id=lease.target_id,
             role=lease.role,
-            label=lease.label,
-            source_sha=lease.reference("code"),
             adapter=platform.adapter,
             workspace_mode=policy.mode,
             workspace_retain=policy.retain,
@@ -1221,7 +1189,7 @@ class WorkspaceManager:
     def _try_rev_parse(repository: Path, ref: str) -> str:
         try:
             return WorkspaceManager._rev_parse(repository, ref)
-        except RunnerError:
+        except ClientError:
             return ""
 
     @staticmethod
@@ -1249,11 +1217,6 @@ class WorkspaceManager:
         return result.stdout
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
 class AgentSessionsClient:
     """All assumptions about the Merv Agent Sessions HTTP contract."""
 
@@ -1264,11 +1227,11 @@ class AgentSessionsClient:
         runner_key: str | None,
         timeout: float = 15.0,
     ):
-        self.control_url = _safe_control_url(control_url)
+        self.control_url = safe_control_url(control_url)
         self.runner_key = runner_key
         self.timeout = timeout
         self.last_lease_reason = ""
-        self._opener = urllib.request.build_opener(_NoRedirect())
+        self._opener = urllib.request.build_opener(NoRedirect())
 
     def lease(
         self,
@@ -1301,70 +1264,31 @@ class AgentSessionsClient:
             return None
         return _lease_from_session(session, project_id=project_id)
 
-    def attach(
+    def report(
         self,
+        route: str,
         *,
         session_id: str,
         runner_id: str,
-        host_session_ref: str,
-        workspace_ref: str = "",
-        base_sha: str = "",
         head_sha: str = "",
         workspace_stats: Mapping[str, Any] | None = None,
-        agent_setup: Mapping[str, Any] | None = None,
         telemetry: Mapping[str, Any] | None = None,
+        **named: Any,
     ) -> None:
-        self._post(
-            f"/api/agent-sessions/{session_id}/attach",
-            {
-                "runner_id": runner_id,
-                "host_session_ref": host_session_ref,
-                "workspace_ref": workspace_ref,
-                "base_sha": base_sha,
-                "head_sha": head_sha,
-                "workspace_stats": dict(workspace_stats or {}),
-                "agent_setup": dict(agent_setup or {}),
-                "telemetry": dict(telemetry or {}),
-            },
-        )
+        """One observation about a leased session: attach, heartbeat, release.
 
-    def release(
-        self,
-        *,
-        session_id: str,
-        runner_id: str,
-        reason: str,
-        head_sha: str = "",
-        workspace_stats: Mapping[str, Any] | None = None,
-        telemetry: Mapping[str, Any] | None = None,
-    ) -> None:
+        All three carry the same worktree and usage report; only attach adds
+        the process reference and its setup, and only release says why it
+        ended, so those ride in ``named``.
+        """
         self._post(
-            f"/api/agent-sessions/{session_id}/release",
-            {
-                "runner_id": runner_id,
-                "reason": reason,
-                "head_sha": head_sha,
-                "workspace_stats": dict(workspace_stats or {}),
-                "telemetry": dict(telemetry or {}),
-            },
-        )
-
-    def heartbeat(
-        self,
-        *,
-        session_id: str,
-        runner_id: str,
-        head_sha: str = "",
-        workspace_stats: Mapping[str, Any] | None = None,
-        telemetry: Mapping[str, Any] | None = None,
-    ) -> None:
-        self._post(
-            f"/api/agent-sessions/{session_id}/heartbeat",
+            f"/api/agent-sessions/{session_id}/{route}",
             {
                 "runner_id": runner_id,
                 "head_sha": head_sha,
                 "workspace_stats": dict(workspace_stats or {}),
                 "telemetry": dict(telemetry or {}),
+                **named,
             },
         )
 
@@ -1552,7 +1476,7 @@ class AgentRunner:
         runner_secret: bytes,
         environment: Mapping[str, str] | None = None,
         config_path: Path | None = None,
-        applied_settings_version: int = 0,
+        applied_settings_version: Any = 0,
     ):
         self.project_id = project_id
         self.platforms = tuple(platforms)
@@ -1568,20 +1492,20 @@ class AgentRunner:
         # Brain-held tuning: which desired version this machine has fully
         # applied, what is still waiting on idle, and the last rejection.
         self.config_path = config_path
-        self.applied_settings_version = max(int(applied_settings_version), 0)
+        self.applied_settings_version = (
+            max(applied_settings_version, 0)
+            if isinstance(applied_settings_version, int)
+            and not isinstance(applied_settings_version, bool)
+            else 0
+        )
         self.pending_workspace: WorkspaceSettings | None = None
         self.pending_workspace_document: dict[str, Any] | None = None
         self.pending_workspace_version = 0
         self.settings_error = ""
         # The Merv skills every child may read, copied beside the traces once
         # per runner build. Missing skills degrade to the old search-the-disk
-        # behaviour rather than blocking dispatch; the inventory says so.
+        # behaviour rather than blocking dispatch; the report says so.
         self.skills: SkillsInstall | None = None
-        self.harness_error = ""
-        try:
-            self.skills = harness_kit.install_skills(trace_dir.parent)
-        except HarnessError as exc:
-            self.harness_error = str(exc)
         self._harness_report: tuple[tuple[Any, ...], dict[str, Any]] | None = None
         # Evidence about each harness beyond the static probe: what a dead
         # child's stderr said (auth, quota), and the outcome of the last test
@@ -1592,6 +1516,9 @@ class AgentRunner:
         self._smoke_queue: list[tuple[str, str, str]] = []  # (platform, nonce, why)
         self._smoke_active: _ActiveSmoke | None = None
         self._smoke_auto_done: set[str] = set()
+        # Installs the skills and probes each harness once, so a launch that
+        # precedes the first heartbeat still has them.
+        self.harness_readiness()
         # First run after pairing or upgrade: prove every enabled harness once.
         for item in self.platforms:
             if item.enabled and item.name not in self._smoke_results:
@@ -1645,14 +1572,14 @@ class AgentRunner:
         assert self.config_path is not None
         try:
             normalized = validate_desired_settings(desired)
-        except RunnerSettingsError as exc:
+        except ClientError as exc:
             self.settings_error = str(exc)
             print(f"settings v{version} rejected: {exc}", file=sys.stderr)
             return
         try:
-            document = read_json_document(self.config_path)
+            document = read_client_document(self.config_path)
             merged = merge_desired_settings(document, normalized)
-            merged_workspace = load_workspace_settings_from(merged, self.config_path)
+            merged_workspace = load_workspace_settings(self.config_path, merged)
             workspace_changes = merged_workspace != self.workspaces.settings
             if workspace_changes:
                 # Ledger rows do not carry the WorkspaceSettings that created
@@ -1677,7 +1604,7 @@ class AgentRunner:
             else:
                 merged[SETTINGS_VERSION_KEY] = version
                 replace_json_document(self.config_path, merged, validate=_validate_settings)
-        except (PrivateFileError, RunnerError, RunnerSettingsError) as exc:
+        except ClientError as exc:
             self.settings_error = str(exc)
             print(f"settings v{version} could not be applied: {exc}", file=sys.stderr)
             return
@@ -1718,7 +1645,7 @@ class AgentRunner:
             # now, not the snapshot taken when the change arrived, so nothing
             # written meanwhile (test results, a probe nonce) is lost.
             if self.pending_workspace_document is not None:
-                current = read_json_document(self.config_path)
+                current = read_client_document(self.config_path)
                 activated = dict(current)
                 if "agent_workspace" in self.pending_workspace_document:
                     activated["agent_workspace"] = self.pending_workspace_document["agent_workspace"]
@@ -1730,7 +1657,7 @@ class AgentRunner:
                     activated,
                     validate=_validate_settings,
                 )
-        except (PrivateFileError, RunnerError) as exc:
+        except ClientError as exc:
             self.settings_error = str(exc)
             print(f"settings v{self.pending_workspace_version} could not be activated: {exc}", file=sys.stderr)
             return
@@ -1750,7 +1677,7 @@ class AgentRunner:
     def _advance_pending(self) -> bool:
         try:
             return self.client.pending_advance(project_id=self.project_id) is not None
-        except RunnerError:
+        except ClientError:
             return True  # unknown → hold the workspace swap one more cycle
 
     def _pending_reason(self) -> str:
@@ -1780,9 +1707,19 @@ class AgentRunner:
                 "root": str(workspace.root or ""),
                 "base_ref": workspace.base_ref,
             }
-        if self.config_path is not None:
-            result["available_commands"] = _detected_commands(self.config_path)
-        result["harness"] = self.harness_readiness()
+        # One PATH sweep answers both "is this agent installed?" (every native
+        # default plus each configured command) and the readiness report.
+        commands = harness_kit.installed_commands(
+            (
+                *DEFAULT_PLATFORM_EXECUTABLES.values(),
+                *(item.command[0] for item in self.platforms if item.command),
+            ),
+            self.environment,
+        )
+        result["available_commands"] = {
+            name: bool(path) for name, path in commands.items()
+        }
+        result["harness"] = self.harness_readiness(commands)
         reason = self._pending_reason()
         if reason:
             result["pending"] = {"reason": reason}
@@ -1790,25 +1727,26 @@ class AgentRunner:
             result["settings_error"] = self.settings_error
         return result
 
-    def harness_readiness(self) -> dict[str, Any]:
+    def harness_readiness(
+        self, executables: Mapping[str, str] | None = None
+    ) -> dict[str, Any]:
         """What each configured harness will get from Merv, cached per tuning.
 
-        Probing executables costs subprocesses, so the report is recomputed
-        only when the platform set changes; the heartbeat carries it to the
-        Settings page.
+        Asking a CLI its version costs a subprocess, so the report — and the
+        skills install it begins with — is redone only when the platform set
+        changes; the heartbeat carries it to the Settings page.
         """
         key = tuple(
             (item.name, item.adapter, tuple(item.command), item.enabled)
             for item in self.platforms
         )
         if self._harness_report is None or self._harness_report[0] != key:
-            report = harness_kit.readiness(
+            self.skills, report = harness_kit.install_and_report(
                 platforms=self.platforms,
-                install=self.skills,
+                state_dir=self.trace_dir.parent,
                 environment=self.environment,
+                executables=executables,
             )
-            if self.harness_error:
-                report["error"] = self.harness_error
             self._harness_report = (key, report)
         report = json.loads(json.dumps(self._harness_report[1]))
         platforms = report.get("platforms")
@@ -1845,8 +1783,8 @@ class AgentRunner:
         if not platform_name or not nonce or self.config_path is None:
             return
         try:
-            document = read_json_document(self.config_path)
-        except PrivateFileError:
+            document = read_client_document(self.config_path)
+        except ClientError:
             document = {}
         if str(document.get(SMOKE_NONCE_KEY) or "") == nonce:
             return
@@ -1856,7 +1794,7 @@ class AgentRunner:
                 {**document, SMOKE_NONCE_KEY: nonce},
                 validate=_validate_settings,
             )
-        except (PrivateFileError, RunnerError):
+        except ClientError:
             return
         self.queue_smoke(platform_name, nonce=nonce, why="requested")
 
@@ -1877,8 +1815,8 @@ class AgentRunner:
         if self.config_path is None:
             return {}
         try:
-            raw = read_json_document(self.config_path).get(SMOKE_STATE_KEY)
-        except PrivateFileError:
+            raw = read_client_document(self.config_path).get(SMOKE_STATE_KEY)
+        except ClientError:
             return {}
         if not isinstance(raw, dict):
             return {}
@@ -1893,7 +1831,7 @@ class AgentRunner:
         if self.config_path is None:
             return
         try:
-            document = read_json_document(self.config_path)
+            document = read_client_document(self.config_path)
             stored = document.get(SMOKE_STATE_KEY)
             merged = dict(stored) if isinstance(stored, dict) else {}
             merged[platform_name] = dict(result)
@@ -1902,7 +1840,7 @@ class AgentRunner:
                 {**document, SMOKE_STATE_KEY: merged},
                 validate=_validate_settings,
             )
-        except (PrivateFileError, RunnerError) as exc:
+        except ClientError as exc:
             print(f"could not remember the {platform_name} test result: {exc}", file=sys.stderr)
 
     def advance_smoke(self) -> None:
@@ -2000,7 +1938,7 @@ class AgentRunner:
             pass
         stdout_text = _read_tail(active.stdout_path, limit=256 * 1024)
         stderr_text = _read_tail(active.stderr_path, limit=16 * 1024)
-        exit_code = getattr(host, "exit_code", lambda _s: None)(active.host_session)
+        exit_code = host.exit_code(active.host_session)
         answered = bool(self.project_id) and self.project_id in stdout_text
         result: dict[str, Any] = {
             "at": _iso(time.time()),
@@ -2044,7 +1982,7 @@ class AgentRunner:
         it is reported as ``host_process_failed`` and the evidence lands on
         the machine's readiness so the page can say what to do.
         """
-        exit_code = getattr(host, "exit_code", lambda _s: None)(session.host_session())
+        exit_code = host.exit_code(session.host_session())
         no_commits = session.head_sha == session.base_sha
         if not (rapid and no_commits):
             # A turn that ran for a while, or committed work, is a turn: a
@@ -2061,7 +1999,7 @@ class AgentRunner:
         adapter = session.adapter or ""
         try:
             adapter = adapter or self._platform(session.platform).adapter
-        except RunnerError:
+        except ClientError:
             pass
         failure = harness_kit.classify_failure(adapter, stderr_text)
         if failure is not None:
@@ -2123,7 +2061,7 @@ class AgentRunner:
                     adapter = session.adapter or self._platform(session.platform).adapter
                     if HOSTS[adapter].inspect(host_session) != "stopped":
                         continue
-                except (RunnerError, KeyError):
+                except (ClientError, KeyError):
                     continue
             session.status = remote_status
 
@@ -2180,7 +2118,8 @@ class AgentRunner:
             self._finalize_trace(session=session, host=host)
             telemetry = self._observe_telemetry(session)
             workspace = self._capture_after_stop(session)
-            self.client.release(
+            self.client.report(
+                "release",
                 session_id=session.session_id,
                 runner_id=self.ledger.runner_id,
                 reason=f"remote_{remote_status}",
@@ -2208,7 +2147,8 @@ class AgentRunner:
                 if self._is_repeated_rapid_stop(session)
                 else self._note_stop_evidence(session, host=host, rapid=rapid)
             )
-            self.client.release(
+            self.client.report(
+                "release",
                 session_id=session.session_id,
                 runner_id=self.ledger.runner_id,
                 reason=reason,
@@ -2231,7 +2171,8 @@ class AgentRunner:
         if remote_session.get("host_session_ref") == host_session.ref:
             session.attached = True
         if not session.attached:
-            self.client.attach(
+            self.client.report(
+                "attach",
                 session_id=session.session_id,
                 runner_id=self.ledger.runner_id,
                 host_session_ref=host_session.ref,
@@ -2244,7 +2185,8 @@ class AgentRunner:
             )
             session.attached = True
         if remote_status == "active":
-            self.client.heartbeat(
+            self.client.report(
+                "heartbeat",
                 session_id=session.session_id,
                 runner_id=self.ledger.runner_id,
                 head_sha=workspace.head_sha if workspace else "",
@@ -2306,7 +2248,7 @@ class AgentRunner:
                     else []
                 ),
             )
-        except RunnerError as exc:
+        except ClientError as exc:
             receipt = {
                 "observed_sha": self.workspaces.central_sha(),
                 "proposal_parents": [],
@@ -2368,11 +2310,8 @@ class AgentRunner:
     def _finalize_trace(self, *, session: LocalSession, host: CommandHost) -> None:
         if not session.trace_dir:
             return
-        finalize = getattr(host, "finalize_trace", None)
-        if not callable(finalize):
-            return
         try:
-            finalize(
+            host.finalize_trace(
                 platform=self._platform(session.platform),
                 trace_dir=Path(session.trace_dir),
             )
@@ -2500,7 +2439,8 @@ class AgentRunner:
                 "launch_failed" if session.cwd is not None else "workspace_failed"
             )
             self.ledger.save()
-            self.client.release(
+            self.client.report(
+                "release",
                 session_id=lease.session_id,
                 runner_id=self.ledger.runner_id,
                 reason=session.status,
@@ -2514,7 +2454,8 @@ class AgentRunner:
         session.status = "running"
         session.started_at = time.time()
         self.ledger.save()
-        self.client.attach(
+        self.client.report(
+            "attach",
             session_id=lease.session_id,
             runner_id=self.ledger.runner_id,
             host_session_ref=host_session.ref,
@@ -2581,7 +2522,7 @@ class AgentRunner:
                 stderr_tail=excerpt["stderr_tail"],
                 complete=complete,
             )
-        except RunnerError as exc:
+        except ClientError as exc:
             print(f"{session.session_id}: trace excerpt not mirrored: {exc}", file=sys.stderr)
             return
         session.trace_excerpt_sig = signature
@@ -2591,7 +2532,7 @@ class AgentRunner:
             return _public_telemetry(session.telemetry or {})
         platform = self._platform(session.platform)
         host = HOSTS[session.adapter or platform.adapter]
-        filename = str(getattr(host, "trace_filename", "trace.jsonl") or "")
+        filename = str(host.trace_filename or "")
         if not filename:
             return _public_telemetry(session.telemetry or {})
         path = Path(session.trace_dir) / filename
@@ -2619,15 +2560,9 @@ def load_platforms(
     configured entry with its ``enabled`` flag so the runner can drain and
     report the ones an owner switched off.
     """
-    try:
-        document = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        document = {}
     # A clean machine file has no agent_platforms yet: that is zero platforms,
     # not an error — the paired runner heartbeats until Settings enables one.
-    configured = (
-        document.get("agent_platforms") if isinstance(document, dict) else None
-    )
+    configured = read_client_document(config_path).get("agent_platforms")
     if configured is None:
         configured = {}
     if not isinstance(configured, dict):
@@ -2639,11 +2574,10 @@ def load_platforms(
         enabled = bool(raw.get("enabled", True))
         if not enabled and not include_disabled:
             continue
-        if str(name).lower() == "aider":
-            raise RunnerError(
-                "Aider is not supported for auto-run because it cannot emit a "
-                "complete JSONL interaction trace"
-            )
+        parallelism = raw.get("parallelism", 1)
+        problem = platform_problem(str(name), parallelism)
+        if problem:
+            raise RunnerError(problem)
         adapter = str(raw.get("adapter") or name)
         if adapter not in HOSTS:
             raise RunnerError(
@@ -2658,11 +2592,6 @@ def load_platforms(
             or not all(isinstance(item, str) and item for item in command)
         ):
             raise RunnerError(f"{name}: command must be a non-empty string array")
-        parallelism = raw.get("parallelism", 1)
-        if not isinstance(parallelism, int) or isinstance(parallelism, bool):
-            raise RunnerError(f"{name}: parallelism must be an integer")
-        if not 1 <= parallelism <= 32:
-            raise RunnerError(f"{name}: parallelism must be between 1 and 32")
         platforms.append(
             Platform(
                 name=str(name),
@@ -2696,67 +2625,38 @@ def merge_desired_settings(
         current = platforms.get(name)
         if isinstance(current, dict) and str(current.get("adapter") or name) == "command":
             continue
-        if not isinstance(current, dict):
-            current = {
-                "adapter": name,
-                "command": [DEFAULT_PLATFORM_EXECUTABLES[name]],
-                "enabled": False,
-            }
-        updated = dict(current)
-        for field in ("enabled", "model", "effort", "parallelism"):
-            if field in entry:
-                if field in ("model", "effort") and not entry[field]:
-                    updated.pop(field, None)
-                else:
-                    updated[field] = entry[field]
-        platforms[name] = updated
+        platforms[name] = platform_entry(
+            current if isinstance(current, dict) else None,
+            name=name,
+            tuning=entry,
+            default_enabled=False,
+        )
     if "platforms" in desired:
         result["agent_platforms"] = platforms
     if "workspace" in desired:
-        current_workspace = result.get("agent_workspace")
-        workspace = (
-            dict(current_workspace) if isinstance(current_workspace, dict) else {}
+        result["agent_workspace"] = workspace_entry(
+            result.get("agent_workspace"), desired["workspace"]
         )
-        for field in ("repository", "root", "base_ref"):
-            if field in desired["workspace"]:
-                value = desired["workspace"][field]
-                if value:
-                    workspace[field] = value
-                else:
-                    workspace.pop(field, None)
-        workspace["strategy"] = "git_worktree"
-        result["agent_workspace"] = workspace
     return result
 
 
 def load_workspace_settings(
-    config_path: Path, *, default_repository: Path | None = None
-) -> WorkspaceSettings:
-    try:
-        document = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        document = {}
-    return load_workspace_settings_from(
-        document if isinstance(document, dict) else {},
-        config_path,
-        default_repository=default_repository,
-    )
-
-
-def load_workspace_settings_from(
-    document: Mapping[str, Any],
     config_path: Path,
+    document: Mapping[str, Any] | None = None,
     *,
     default_repository: Path | None = None,
 ) -> WorkspaceSettings:
-    """Workspace settings from an in-memory client document."""
+    """Workspace settings from ``client.json``, or from a candidate document
+    the caller is about to write there."""
+    if document is None:
+        document = read_client_document(config_path)
     raw = document.get("agent_workspace")
     if raw is None:
         raw = {}
     if not isinstance(raw, dict):
         raise RunnerError("agent_workspace must be an object")
-    strategy = str(raw.get("strategy") or "git_worktree")
-    if strategy != "git_worktree":
+    strategy = str(raw.get("strategy") or WORKSPACE_STRATEGY)
+    if strategy != WORKSPACE_STRATEGY:
         raise RunnerError("agent workspaces must use persistent Git worktrees")
     repository = Path(
         str(raw.get("repository") or default_repository or Path.cwd())
@@ -2871,12 +2771,7 @@ def _prepare_trace(
         raise RunnerError(
             f"trace directory already exists for session {lease.session_id}"
         ) from exc
-    stdout_filename = str(getattr(host, "stdout_filename", "trace.jsonl"))
-    trace_filename = getattr(host, "trace_filename", "trace.jsonl")
-    command_for = getattr(host, "command_for", None)
-    harness_command = (
-        command_for(platform) if callable(command_for) else list(platform.command)
-    )
+    trace_filename = host.trace_filename
     metadata = {
         "schema_version": 2,
         "merv_agent_session_id": lease.session_id,
@@ -2905,33 +2800,31 @@ def _prepare_trace(
         "agent_setup": {
             "platform": platform.name,
             "harness": platform.adapter,
-            "command": _sanitized_command(harness_command),
+            "command": _sanitized_command(host.command_for(platform)),
             "model": platform.model,
             "effort": platform.effort,
-            "trace_format": str(getattr(host, "trace_format", "jsonl")),
+            "trace_format": host.trace_format,
             "trace_file": str(trace_filename) if trace_filename else None,
-            "stdout_file": stdout_filename,
+            "stdout_file": host.stdout_filename,
             "stderr_file": "stderr.log",
         },
     }
-    _write_private_json(directory / "metadata.json", metadata)
+    write_private_json(directory / "metadata.json", metadata)
     return TraceFiles(
         directory=directory,
-        stdout=directory / stdout_filename,
+        stdout=directory / host.stdout_filename,
         stderr=directory / "stderr.log",
     )
 
 
-TRACE_EXCERPT_EVENTS = 60
-TRACE_EXCERPT_EVENT_BYTES = 4 * 1024
-TRACE_EXCERPT_TAIL_BYTES = 256 * 1024
-TRACE_EXCERPT_STDERR_BYTES = 8 * 1024
 def _trace_excerpt(trace_dir: Path, *, complete: bool) -> dict[str, Any] | None:
-    """The last few provider events and the stderr tail, capped and redacted.
+    """The last few provider events and the stderr tail, capped.
 
     Reads only the tail of ``trace.jsonl`` (never the whole file) so a long
     session costs the same as a short one. Returns None when nothing exists
     yet. ``signature`` lets the caller skip re-sending an unchanged excerpt.
+    Redaction is the brain's job at the moment it persists this: a brain that
+    trusted a client to have masked its own secrets would not be masking them.
     """
     trace_path = trace_dir / "trace.jsonl"
     stderr_path = trace_dir / "stderr.log"
@@ -2943,35 +2836,30 @@ def _trace_excerpt(trace_dir: Path, *, complete: bool) -> dict[str, Any] | None:
         trace_size = -1
     if trace_size > 0:
         with trace_path.open("rb") as handle:
-            start = max(trace_size - TRACE_EXCERPT_TAIL_BYTES, 0)
+            start = max(trace_size - MAX_TRACE_TAIL_BYTES, 0)
             handle.seek(start)
             raw = handle.read()
         lines = raw.split(b"\n")
         if start > 0:
             lines = lines[1:]  # the first line is almost surely partial
-        for line in [item for item in lines if item.strip()][-TRACE_EXCERPT_EVENTS:]:
+        for line in [item for item in lines if item.strip()][-MAX_TRACE_EVENTS:]:
             text = line.decode("utf-8", errors="replace")
-            if len(text.encode("utf-8")) > TRACE_EXCERPT_EVENT_BYTES:
+            if len(text.encode("utf-8")) > MAX_TRACE_EVENT_BYTES:
                 events.append(
-                    {"truncated": True,
-                     "preview": redact_secrets(text[: TRACE_EXCERPT_EVENT_BYTES // 2])}
+                    {"truncated": True, "preview": text[: MAX_TRACE_EVENT_BYTES // 2]}
                 )
                 continue
             try:
-                parsed = json.loads(text)
+                events.append(json.loads(text))
             except ValueError:
-                events.append({"raw": redact_secrets(text)})
-                continue
-            events.append(redact_excerpt(parsed))
+                events.append({"raw": text})
     stderr_tail = ""
     stderr_size = -1
     try:
         stderr_size = stderr_path.stat().st_size
         with stderr_path.open("rb") as handle:
-            handle.seek(max(stderr_size - TRACE_EXCERPT_STDERR_BYTES, 0))
-            stderr_tail = redact_secrets(
-                handle.read().decode("utf-8", errors="replace")
-            )
+            handle.seek(max(stderr_size - MAX_TRACE_STDERR_BYTES, 0))
+            stderr_tail = handle.read().decode("utf-8", errors="replace")
     except FileNotFoundError:
         pass
     if trace_size < 0 and stderr_size < 0:
@@ -3203,18 +3091,7 @@ def _assistant_message_id(event: Mapping[str, Any]) -> str:
 
 def _public_telemetry(state: Mapping[str, Any] | None) -> dict[str, Any]:
     current = dict(state or {})
-    allowed = {
-        "input_tokens",
-        "output_tokens",
-        "cached_tokens",
-        "total_tokens",
-        "tool_calls",
-        "messages",
-        "last_event_at",
-        "provider_session",
-        "reporting",
-        "final",
-    }
+    allowed = (*TELEMETRY_COUNTERS, *TELEMETRY_LABELS, "final")
     return {name: current[name] for name in allowed if name in current}
 
 
@@ -3241,18 +3118,6 @@ def _sanitized_command(command: Sequence[str]) -> list[str]:
             continue
         result.append(argument)
     return result
-
-
-def _write_private_json(path: Path, payload: Mapping[str, Any]) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    descriptor = os.open(
-        temporary,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-        0o600,
-    )
-    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-        output.write(json.dumps(dict(payload), indent=2, sort_keys=True) + "\n")
-    temporary.replace(path)
 
 
 def _append_private_text(path: Path, value: str) -> None:
@@ -3317,7 +3182,7 @@ def _lease_from_session(session: Mapping[str, Any], *, project_id: str) -> Lease
     ):
         raise RunnerError("malformed lease response: references must be a list of objects")
     execution = dict(execution or {})
-    WorkspacePolicy.from_execution(execution)
+    _workspace_policy(execution)
     return Lease(
         session_id=session_id, instance_id=instance_id, execution=execution,
         project_id=str(session.get("project_id") or project_id),
@@ -3328,6 +3193,17 @@ def _lease_from_session(session: Mapping[str, Any], *, project_id: str) -> Lease
         instruction=_optional_text(pick("instruction", "prompt")),
         assignment=assignment,
     )
+
+
+def _workspace_policy(execution: Mapping[str, Any]) -> WorkspacePolicy:
+    """The layout a packet declares, refused when this build cannot make it."""
+    try:
+        policy = WorkspacePolicy.from_execution(execution)
+    except ValueError as exc:
+        raise RunnerError(str(exc)) from exc
+    for problem in policy.problems():
+        raise RunnerError(problem)
+    return policy
 
 
 def _advance_of(result: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -3360,22 +3236,6 @@ def _session_marker(session: HostSession) -> str | None:
     return parts[2]
 
 
-def _safe_control_url(raw: str) -> str:
-    url = raw.strip().rstrip("/")
-    parsed = urlsplit(url)
-    if parsed.scheme == "https" and parsed.netloc:
-        return url
-    if parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "::1", "localhost"}:
-        return url
-    raise RunnerError(
-        "control URL must use HTTPS, except for an explicit loopback host"
-    )
-
-
-def _is_loopback_url(raw: str) -> bool:
-    return urlsplit(raw).hostname in {"127.0.0.1", "::1", "localhost"}
-
-
 def _optional_text(value: Any) -> str | None:
     text = str(value).strip() if value is not None else ""
     return text or None
@@ -3397,13 +3257,8 @@ def _runtime_paths(config_path: Path) -> tuple[Path, Path]:
     return state_dir / "agent-sessions.json", state_dir / "agent-traces"
 
 
-def _credential_path(config_path: Path) -> Path:
-    # One definition, shared with pairing, so promotion and lookup agree.
-    return credential_path(config_path)
-
-
 def _stored_runner_key(config_path: Path) -> str | None:
-    path = _credential_path(config_path)
+    path = credential_path(config_path)
     try:
         secret = path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
@@ -3430,42 +3285,12 @@ def _validate_settings(config_path: Path) -> None:
     load_workspace_settings(config_path)
 
 
-def _detected_commands(config_path: Path) -> dict[str, bool]:
-    """Which agent executables resolve on this machine's PATH.
-
-    Covers every native adapter default plus the first argument of each
-    configured platform command, so custom executables are probed too. Reported
-    in the heartbeat inventory so Settings can mark agents installed or not.
-    """
-    names = set(DEFAULT_PLATFORM_EXECUTABLES.values())
+def _stored(config_path: Path, key: str) -> Any:
+    """One remembered value, or None when the file is missing or damaged."""
     try:
-        document = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        document = {}
-    configured = document.get("agent_platforms") if isinstance(document, dict) else {}
-    if isinstance(configured, dict):
-        for raw in configured.values():
-            command = raw.get("command") if isinstance(raw, dict) else None
-            if isinstance(command, list) and command and isinstance(command[0], str):
-                names.add(command[0])
-    return {
-        name: shutil.which(name) is not None for name in sorted(names) if name.strip()
-    }
-
-
-def _stored_settings_version(config_path: Path) -> int:
-    try:
-        raw = read_json_document(config_path).get(SETTINGS_VERSION_KEY)
-    except PrivateFileError:
-        return 0
-    return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0 else 0
-
-
-def _stored_project_id(config_path: Path) -> str:
-    try:
-        return str(read_json_document(config_path).get("project_id") or "").strip()
-    except PrivateFileError:
-        return ""
+        return read_client_document(config_path).get(key)
+    except ClientError:
+        return None
 
 
 def _run_runner(
@@ -3490,7 +3315,7 @@ def _run_runner(
             runner.fill_available_slots()
         except RunnerCredentialError:
             raise
-        except RunnerError as exc:
+        except ClientError as exc:
             if once:
                 raise
             failures += 1
@@ -3553,14 +3378,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             else resolve_client_config_path()
         )
         control_url = resolve_client_control_url(config_path=config_path)
-        loopback = _is_loopback_url(control_url)
+        loopback = is_loopback_url(control_url)
         # Only one process may pair or dispatch for a config dir; the lock is
         # taken before any file under it is written.
         lock = RunnerLock(config_path.parent / "agent-runner.lock")
         try:
             ledger_path, trace_dir = _runtime_paths(config_path)
             ledger = SessionLedger(ledger_path)
-            project_id = str(args.project or "").strip() or _stored_project_id(config_path)
+            project_id = (
+                str(args.project or "").strip()
+                or str(_stored(config_path, "project_id") or "").strip()
+            )
             runner_key = _runner_key(config_path)
             # A pairing file that survived a restart means an exchange is
             # unfinished — possibly with the key already promoted but the
@@ -3601,16 +3429,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             if not runner_key and not loopback:
                 raise RunnerError(f"{MCP_KEY_ENV_VAR} is required")
-            if args.project and _stored_project_id(config_path) != project_id:
+            if args.project and _stored(config_path, "project_id") != project_id:
                 # A machine credentialed before device-code pairing (or headless
                 # with MERV_MCP_KEY) has a key but no remembered project. Remember
                 # the explicit choice so the next start needs no flag.
                 try:
                     replace_json_document(
                         config_path,
-                        {**read_json_document(config_path), "project_id": project_id},
+                        {**read_client_document(config_path), "project_id": project_id},
                     )
-                except PrivateFileError as exc:
+                except ClientError as exc:
                     print(f"could not remember --project: {exc}", file=sys.stderr)
             platforms = load_platforms(config_path, include_disabled=True)
             if not any(item.enabled for item in platforms):
@@ -3635,7 +3463,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 trace_dir=trace_dir,
                 runner_secret=runner_secret.encode("utf-8"),
                 config_path=config_path,
-                applied_settings_version=_stored_settings_version(config_path),
+                applied_settings_version=_stored(config_path, SETTINGS_VERSION_KEY),
             )
             print(f"merv-agent-runner: dispatching for project {project_id}")
             _run_runner(
@@ -3649,7 +3477,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except RunnerCredentialError as exc:
         print(f"merv-agent-runner: {exc}", file=sys.stderr)
         return 2
-    except (RunnerError, PrivateFileError) as exc:
+    except ClientError as exc:
         print(f"merv-agent-runner: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:

@@ -14,7 +14,9 @@ so a partially applied document can never exist.
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
+
+from .client_config import ClientError
 
 # Native process adapters and the executable each resolves to on PATH when a
 # platform entry carries no explicit command. The custom ``command`` adapter has
@@ -32,7 +34,21 @@ DEFAULT_PLATFORM_EXECUTABLES: dict[str, str] = {
 NATIVE_ADAPTERS = tuple(DEFAULT_PLATFORM_EXECUTABLES)
 
 PLATFORM_FIELDS = ("enabled", "model", "effort", "parallelism")
+# The aggregate counters a session may report and the brain may keep. Both
+# sides project against this, so a field one of them invented never appears.
+TELEMETRY_COUNTERS = (
+    "input_tokens",
+    "output_tokens",
+    "cached_tokens",
+    "total_tokens",
+    "tool_calls",
+    "messages",
+)
+TELEMETRY_LABELS = ("last_event_at", "provider_session", "reporting")
 WORKSPACE_FIELDS = ("repository", "root", "base_ref")
+# The only workspace layout the runner implements; stored so a document says
+# what it is rather than relying on the reader's default.
+WORKSPACE_STRATEGY = "git_worktree"
 PROBE_FIELDS = ("platform", "nonce")
 MAX_NONCE_CHARS = 64
 MIN_PARALLELISM = 1
@@ -42,8 +58,79 @@ MAX_PATH_CHARS = 1024
 MAX_SETTINGS_BYTES = 16 * 1024
 
 
-class RunnerSettingsError(ValueError):
+class RunnerSettingsError(ClientError):
     """The payload is outside the closed schema; nothing was applied."""
+
+
+def platform_problem(name: str, parallelism: object = None) -> str:
+    """Why this platform cannot be configured, or ``""`` — the one home of the
+    two standing refusals. Callers raise their own error type with it."""
+    if name.strip().lower() == "aider":
+        return (
+            "Aider is not supported for auto-run because it cannot emit a "
+            "complete JSONL interaction trace"
+        )
+    if parallelism is None:
+        return ""
+    if isinstance(parallelism, bool) or not isinstance(parallelism, int):
+        return f"{name}: parallelism must be an integer"
+    if not MIN_PARALLELISM <= parallelism <= MAX_PARALLELISM:
+        return (
+            f"{name}: parallelism must be between "
+            f"{MIN_PARALLELISM} and {MAX_PARALLELISM}"
+        )
+    return ""
+
+
+def platform_entry(
+    current: Mapping[str, Any] | None,
+    *,
+    name: str,
+    tuning: Mapping[str, Any] = {},
+    adapter: str | None = None,
+    command: Sequence[str] | None = None,
+    default_enabled: bool = True,
+) -> dict[str, Any]:
+    """One ``agent_platforms`` entry, whether an owner or the brain asked.
+
+    A new entry is created around its adapter's default executable; an
+    existing one keeps every field the caller did not name. Blank model or
+    effort removes the field rather than storing emptiness.
+    """
+    entry: dict[str, Any] = dict(current) if isinstance(current, Mapping) else {
+        "adapter": name if name in NATIVE_ADAPTERS else "command",
+        "command": [DEFAULT_PLATFORM_EXECUTABLES.get(name, name)],
+        "enabled": default_enabled,
+        "parallelism": MIN_PARALLELISM,
+    }
+    if adapter is not None:
+        entry["adapter"] = adapter
+    if command is not None:
+        entry["command"] = [str(item) for item in command]
+    for field in PLATFORM_FIELDS:
+        if field not in tuning:
+            continue
+        if field in ("model", "effort") and not tuning[field]:
+            entry.pop(field, None)
+        else:
+            entry[field] = tuning[field]
+    return entry
+
+
+def workspace_entry(
+    current: Mapping[str, Any] | None, values: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The ``agent_workspace`` entry: the fields named, on the one strategy."""
+    entry: dict[str, Any] = dict(current) if isinstance(current, Mapping) else {}
+    for field in WORKSPACE_FIELDS:
+        if field not in values:
+            continue
+        if values[field]:
+            entry[field] = values[field]
+        else:
+            entry.pop(field, None)
+    entry["strategy"] = WORKSPACE_STRATEGY
+    return entry
 
 
 def validate_desired_settings(payload: object) -> dict[str, Any]:
@@ -114,15 +201,10 @@ def _platforms(value: object) -> dict[str, dict[str, Any]]:
             if field in raw_entry:
                 entry[field] = _text(raw_entry[field], field=f"{name}: {field}")
         if "parallelism" in raw_entry:
-            parallelism = raw_entry["parallelism"]
-            if isinstance(parallelism, bool) or not isinstance(parallelism, int):
-                raise RunnerSettingsError(f"{name}: parallelism must be an integer")
-            if not MIN_PARALLELISM <= parallelism <= MAX_PARALLELISM:
-                raise RunnerSettingsError(
-                    f"{name}: parallelism must be between "
-                    f"{MIN_PARALLELISM} and {MAX_PARALLELISM}"
-                )
-            entry["parallelism"] = parallelism
+            problem = platform_problem(name, raw_entry["parallelism"])
+            if problem:
+                raise RunnerSettingsError(problem)
+            entry["parallelism"] = raw_entry["parallelism"]
         platforms[name] = entry
     return platforms
 
@@ -164,15 +246,3 @@ def _is_absolute(path: str) -> bool:
     # Windows drive or UNC.
     return (len(path) > 2 and path[1] == ":" and path[2] in "\\/") or path.startswith("\\\\")
 
-
-__all__ = [
-    "DEFAULT_PLATFORM_EXECUTABLES",
-    "MAX_PARALLELISM",
-    "MAX_SETTINGS_BYTES",
-    "MIN_PARALLELISM",
-    "NATIVE_ADAPTERS",
-    "PLATFORM_FIELDS",
-    "RunnerSettingsError",
-    "WORKSPACE_FIELDS",
-    "validate_desired_settings",
-]

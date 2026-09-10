@@ -1,10 +1,14 @@
-"""One redactor for the trace excerpts three machines produce.
+"""One redactor, and one set of bounds, for provider trace excerpts.
 
 The runner writes provider traces, the harness classifies provider stderr, and
 the brain stores the excerpt an agent session reports. All three carry text a
 provider may have echoed a credential into ("Incorrect API key provided:
 sk-..."), so all three mask the same shapes here instead of each keeping its
 own drifting copy of the pattern.
+
+The runner caps what it sends and the brain redacts what it stores — a brain
+cannot trust a client to have masked anything — so the caps below are the one
+statement of how much of a trace may travel and be kept.
 
 Stdlib only: this module rides the standalone runner archive, which no brain
 code may enter.
@@ -21,6 +25,15 @@ MAX_EXCERPT_DEPTH = 12
 MAX_EXCERPT_ITEMS = 64
 MAX_EXCERPT_KEY_CHARS = 120
 MAX_EXCERPT_VALUE_CHARS = 240
+
+# Bounds on one session's trace peek: the last few provider events and the
+# stderr tail. TAIL_BYTES is how far back the runner reads its own file;
+# EVENTS_BYTES is what the whole encoded batch may weigh once stored.
+MAX_TRACE_EVENTS = 60
+MAX_TRACE_EVENT_BYTES = 4 * 1024
+MAX_TRACE_EVENTS_BYTES = 96 * 1024
+MAX_TRACE_STDERR_BYTES = 8 * 1024
+MAX_TRACE_TAIL_BYTES = 256 * 1024
 
 _SECRET_KEY = re.compile(
     r"(?i)(api[-_]?key|token|secret|password|credential|authorization)"

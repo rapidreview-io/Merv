@@ -156,7 +156,7 @@ class ReadinessTest(unittest.TestCase):
     def test_note_and_readiness_describe_what_each_harness_receives(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            install = harness.install_skills(root)
+            install, _ = harness.install_and_report(platforms=(), state_dir=root)
             note = harness.skills_note(install, adapter="hermes")
             self.assertIn(str(install.root), note)
             self.assertIn("research-workflow", note)
@@ -172,9 +172,9 @@ class ReadinessTest(unittest.TestCase):
                 Platform("codex", "codex", ("codex",)),
                 Platform("hermes", "hermes", ("hermes-missing",)),
             )
-            report = harness.readiness(
+            _, report = harness.install_and_report(
                 platforms=platforms,
-                install=install,
+                state_dir=root,
                 environment={"PATH": str(fake_bin)},
             )
             self.assertEqual(report["skills"]["count"], len(install.names))
@@ -223,9 +223,9 @@ class SignInEvidenceTest(unittest.TestCase):
 
     def test_readiness_carries_the_auth_signal_per_platform(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            report = harness.readiness(
+            _, report = harness.install_and_report(
                 platforms=[Platform(name="codex", adapter="codex", command=("codex",), enabled=True)],
-                install=None,
+                state_dir=Path(tmp),
                 environment={"PATH": tmp, "OPENAI_API_KEY": "x"},
             )
         self.assertEqual(report["platforms"]["codex"]["auth"], {"status": "present", "via": "env OPENAI_API_KEY"})

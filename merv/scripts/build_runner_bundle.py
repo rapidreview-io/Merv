@@ -41,6 +41,7 @@ INCLUDE = (
     "merv/shared/redaction.py",
     "merv/shared/runner_settings.py",
     "merv/shared/user_codes.py",
+    "merv/shared/workspace_policy.py",
 )
 
 

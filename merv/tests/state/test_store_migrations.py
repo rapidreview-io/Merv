@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from merv.brain.kernel.state.schema import BASELINE_VERSION, has_table
+from merv.brain.kernel.state.schema import BASELINE_VERSION, has_column, has_table
 from merv.brain.surface.user_settings import UserHfTokenSettings
 from tests.support.schema import LADDER, booted_store
 
@@ -126,6 +126,30 @@ class BaselineLadderTest(unittest.TestCase):
             for table in ("remote_sandbox_links", "storage_completion_tokens",
                           "storage_objects"):
                 self.assertTrue(has_table(conn, table), table)
+        finally:
+            conn.close()
+
+
+    def test_migration_67_drops_the_agent_session_columns_nothing_read(self) -> None:
+        """A database that still carries them loses them; a fresh one is already
+        without them, so the step is a no-op rather than an error."""
+        booted_store(db_path=self.db)
+        retired = (
+            ("agent_sessions", "label"),
+            ("agent_sessions", "telemetry_at"),
+            ("agent_runners", "started_at"),
+        )
+        with sqlite3.connect(self.db) as conn:
+            for table, column in retired:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+            conn.execute("DELETE FROM schema_migrations WHERE version = 67")
+            conn.commit()
+
+        store = booted_store(db_path=self.db)
+        conn = store.connect()
+        try:
+            for table, column in retired:
+                self.assertFalse(has_column(conn, table, column), column)
         finally:
             conn.close()
 

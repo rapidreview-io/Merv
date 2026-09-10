@@ -35,6 +35,8 @@ from collections.abc import Callable
 from html.parser import HTMLParser
 from typing import Any
 
+from merv.shared.client_config import NoRedirect
+
 from ..kernel.ports.web_preview import WebPreviewError
 
 _USER_AGENT = "merv-feed-unfurl/1.0"
@@ -107,12 +109,7 @@ def _is_allowlisted(host: str) -> bool:
     return any(host == s or host.endswith("." + s) for s in ALLOWLIST_SUFFIXES)
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *args: Any, **kwargs: Any):  # noqa: D401
-        return None
-
-
-_OPENER = urllib.request.build_opener(_NoRedirect)
+_OPENER = urllib.request.build_opener(NoRedirect)
 
 
 def safe_fetch(

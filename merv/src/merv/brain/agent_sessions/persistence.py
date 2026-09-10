@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from ..kernel.state.schema import SchemaModule
+from ..kernel.state.schema import Connection, Migration, SchemaModule, has_column, has_table
 
 
 AGENT_SESSION_DDL = """\
@@ -30,7 +30,6 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   assignment_json TEXT NOT NULL DEFAULT '{}',
   agent_setup_json TEXT NOT NULL DEFAULT '{}',
   telemetry_json TEXT NOT NULL DEFAULT '{}',
-  telemetry_at TEXT,
   created_at TEXT NOT NULL,
   activated_at TEXT,
   last_activity_at TEXT,
@@ -44,7 +43,6 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   workflow_revision INTEGER NOT NULL DEFAULT 0,
   workflow_node TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL DEFAULT '',
-  label TEXT NOT NULL DEFAULT '',
   execution_json TEXT NOT NULL DEFAULT '{}',
   references_json TEXT NOT NULL DEFAULT '[]',
   FOREIGN KEY(project_id) REFERENCES projects(id)
@@ -59,7 +57,6 @@ CREATE TABLE IF NOT EXISTS agent_runners (
   machine_json TEXT NOT NULL DEFAULT '{}',
   platforms_json TEXT NOT NULL DEFAULT '{}',
   capacity INTEGER NOT NULL DEFAULT 0,
-  started_at TEXT NOT NULL,
   last_seen_at TEXT NOT NULL,
   -- Brain-held runner tuning (August 2026). desired_* is what the owner asked
   -- for in Settings; the runner pulls it on its heartbeat, applies it to its
@@ -164,4 +161,25 @@ CREATE INDEX IF NOT EXISTS idx_agent_runner_pairing_attempts_principal
 """
 
 
-AGENT_SESSION_SCHEMA = SchemaModule(name="agent_sessions", ddl=AGENT_SESSION_DDL)
+# Written on every lease or heartbeat and read by nobody: a label the frozen
+# packet beside it already carries, when telemetry last arrived, and when a
+# runner process started.
+_UNREAD_COLUMNS = (
+    ("agent_sessions", "label"),
+    ("agent_sessions", "telemetry_at"),
+    ("agent_runners", "started_at"),
+)
+
+
+def _drop_unread_columns(conn: Connection) -> None:
+    """Migration 67: stop storing three things nothing ever asked for."""
+    for table, column in _UNREAD_COLUMNS:
+        if has_table(conn, table) and has_column(conn, table, column):
+            conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+
+
+AGENT_SESSION_SCHEMA = SchemaModule(
+    name="agent_sessions",
+    ddl=AGENT_SESSION_DDL,
+    migrations=(Migration(67, "drop_unread_agent_session_columns", _drop_unread_columns),),
+)

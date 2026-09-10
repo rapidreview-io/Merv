@@ -9,18 +9,29 @@ import shlex
 import sys
 import urllib.error
 import urllib.request
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from merv.shared.client_config import (
     AGENT_SESSION_KEY_ENV_VAR,
     HOSTED_CONTROL_URL,
     LOCAL_BRAIN_URL,
+    ClientError,
+    NoRedirect,
+    read_client_document,
     resolve_client_config_path,
     resolve_client_control_url,
+    safe_control_url,
 )
+from merv.shared.runner_settings import (
+    NATIVE_ADAPTERS,
+    WORKSPACE_STRATEGY,
+    platform_entry,
+    platform_problem,
+    workspace_entry,
+)
+from .private_files import write_private_json
 from .storage_upload import StorageUploadError, upload_storage_file
 
 # The context window's agent_id (from agent.hello), for `merv call` from a
@@ -36,10 +47,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ClientError as exc:
         print(f"merv-client: {exc}", file=sys.stderr)
         return 2
-
-
-class ClientError(Exception):
-    pass
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -96,23 +103,12 @@ def _parser() -> argparse.ArgumentParser:
     agent.add_argument(
         "platform",
         help=(
-            "Local platform name: codex, claude, gemini, cursor, opencode, "
-            "copilot, qwen, hermes, or a custom name"
+            f"Local platform name: {', '.join(NATIVE_ADAPTERS)}, or a custom name"
         ),
     )
     agent.add_argument(
         "--adapter",
-        choices=(
-            "codex",
-            "claude",
-            "gemini",
-            "cursor",
-            "opencode",
-            "copilot",
-            "qwen",
-            "hermes",
-            "command",
-        ),
+        choices=(*NATIVE_ADAPTERS, "command"),
         help="Native invocation adapter; custom platforms use command.",
     )
     enabled = agent.add_mutually_exclusive_group()
@@ -140,8 +136,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     workspace.add_argument(
         "--strategy",
-        choices=("git_worktree",),
-        default="git_worktree",
+        choices=(WORKSPACE_STRATEGY,),
+        default=WORKSPACE_STRATEGY,
     )
     workspace.add_argument(
         "--repository",
@@ -239,20 +235,9 @@ def _cmd_call(args: argparse.Namespace) -> int:
         raise ClientError(
             f"{AGENT_SESSION_KEY_ENV_VAR} or MERV_MCP_KEY is required"
         )
-    control_url = resolve_client_control_url(config_path=_config_path(args))
-    parsed = urlsplit(control_url)
-    if not (
-        parsed.scheme == "https"
-        or (
-            parsed.scheme == "http"
-            and parsed.hostname in {"127.0.0.1", "::1", "localhost"}
-        )
-    ):
-        raise ClientError(
-            "control URL must use HTTPS, except for an explicit loopback host"
-        )
+    control_url = safe_control_url(resolve_client_control_url(config_path=_config_path(args)))
     request = urllib.request.Request(
-        f"{control_url.rstrip('/')}/mcp/call",
+        f"{control_url}/mcp/call",
         data=json.dumps(
             {"name": args.tool, "arguments": arguments}
         ).encode("utf-8"),
@@ -263,7 +248,7 @@ def _cmd_call(args: argparse.Namespace) -> int:
             "Accept": "application/json",
         },
     )
-    opener = urllib.request.build_opener(_NoRedirect())
+    opener = urllib.request.build_opener(NoRedirect())
     try:
         with opener.open(request, timeout=60) as response:
             body = json.loads(response.read().decode("utf-8"))
@@ -278,11 +263,6 @@ def _cmd_call(args: argparse.Namespace) -> int:
         raise ClientError("Merv returned a malformed tool response")
     print(json.dumps(body["result"], indent=2))
     return 0
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
 
 
 def _cmd_agent(args: argparse.Namespace) -> int:
@@ -302,7 +282,7 @@ def _cmd_agent(args: argparse.Namespace) -> int:
 
 
 def _cmd_agents(args: argparse.Namespace) -> int:
-    config = _read_config(_config_path(args))
+    config = read_client_document(_config_path(args))
     platforms = config.get("agent_platforms")
     print(json.dumps(platforms if isinstance(platforms, dict) else {}, indent=2))
     return 0
@@ -332,16 +312,11 @@ def _cmd_harness(args: argparse.Namespace) -> int:
 
     config_path = _config_path(args)
     _, trace_dir = _runtime_paths(config_path)
-    error = ""
-    install = None
-    try:
-        install = kit.install_skills(trace_dir.parent)
-    except kit.HarnessError as exc:
-        error = str(exc)
-    platforms = load_platforms(config_path, include_disabled=True)
-    report = kit.readiness(platforms=platforms, install=install)
-    if error:
-        report["error"] = error
+    install, report = kit.install_and_report(
+        platforms=load_platforms(config_path, include_disabled=True),
+        state_dir=trace_dir.parent,
+    )
+    error = str(report.get("error") or "")
     ready = not error and all(
         entry["ok"] for entry in report["platforms"].values() if entry["enabled"]
     )
@@ -388,9 +363,9 @@ def configure_client(*, config_path: Path, control_url: str) -> dict[str, Any]:
     normalized = (control_url or HOSTED_CONTROL_URL).strip().rstrip("/")
     if not normalized:
         raise ClientError("control_url is required")
-    config = _read_config(config_path)
+    config = read_client_document(config_path)
     config["control_url"] = normalized
-    _write_json_private(config_path, config)
+    write_private_json(config_path, config)
     return config
 
 
@@ -408,59 +383,34 @@ def configure_agent(
     name = platform.strip()
     if not name:
         raise ClientError("platform is required")
-    if name.lower() == "aider":
-        raise ClientError(
-            "Aider is not supported for auto-run because it cannot emit a "
-            "complete JSONL interaction trace"
-        )
-    if parallelism is not None and not 1 <= parallelism <= 32:
-        raise ClientError("parallelism must be between 1 and 32")
+    problem = platform_problem(name, parallelism)
+    if problem:
+        raise ClientError(problem)
     if command is not None and (not command or not all(str(item) for item in command)):
         raise ClientError("command must not be empty")
 
-    config = _read_config(config_path)
+    config = read_client_document(config_path)
     platforms = config.get("agent_platforms")
     if not isinstance(platforms, dict):
         platforms = {}
         config["agent_platforms"] = platforms
-    current = platforms.get(name)
-    settings = dict(current) if isinstance(current, dict) else {}
-    settings.setdefault(
-        "adapter",
-        adapter
-        or (
-            name
-            if name
-            in {
-                "codex",
-                "claude",
-                "gemini",
-                "cursor",
-                "opencode",
-                "copilot",
-                "qwen",
-                "hermes",
-            }
-            else "command"
-        ),
+    platforms[name] = platform_entry(
+        platforms.get(name),
+        name=name,
+        adapter=adapter,
+        command=command,
+        tuning={
+            field: value
+            for field, value in (
+                ("enabled", enabled),
+                ("model", None if model is None else model.strip()),
+                ("effort", None if effort is None else effort.strip()),
+                ("parallelism", parallelism),
+            )
+            if value is not None
+        },
     )
-    settings.setdefault("enabled", True if enabled is None else enabled)
-    settings.setdefault("command", [name])
-    settings.setdefault("parallelism", 1)
-    if adapter is not None:
-        settings["adapter"] = adapter
-    if enabled is not None:
-        settings["enabled"] = enabled
-    if command is not None:
-        settings["command"] = [str(item) for item in command]
-    if model is not None:
-        settings["model"] = model.strip() or None
-    if effort is not None:
-        settings["effort"] = effort.strip() or None
-    if parallelism is not None:
-        settings["parallelism"] = parallelism
-    platforms[name] = settings
-    _write_json_private(config_path, config)
+    write_private_json(config_path, config)
     return config
 
 
@@ -472,22 +422,22 @@ def configure_workspace(
     root: str | None = None,
     base_ref: str = "HEAD",
 ) -> dict[str, Any]:
-    if strategy != "git_worktree":
+    if strategy != WORKSPACE_STRATEGY:
         raise ClientError("agent workspaces must use persistent Git worktrees")
-    repo_path = str(Path(repository).expanduser().resolve())
-    settings: dict[str, Any] = {
-        "strategy": strategy,
-        "repository": repo_path,
-    }
-    settings["root"] = str(
-        Path(root).expanduser().resolve()
-        if root
-        else (config_path.parent / "worktrees").resolve()
+    config = read_client_document(config_path)
+    config["agent_workspace"] = workspace_entry(
+        None,
+        {
+            "repository": str(Path(repository).expanduser().resolve()),
+            "root": str(
+                Path(root).expanduser().resolve()
+                if root
+                else (config_path.parent / "worktrees").resolve()
+            ),
+            "base_ref": (base_ref or "HEAD").strip(),
+        },
     )
-    settings["base_ref"] = (base_ref or "HEAD").strip()
-    config = _read_config(config_path)
-    config["agent_workspace"] = settings
-    _write_json_private(config_path, config)
+    write_private_json(config_path, config)
     return config
 
 
@@ -495,23 +445,6 @@ def _config_path(args: argparse.Namespace) -> Path:
     if getattr(args, "config", None):
         return Path(args.config).expanduser().resolve()
     return resolve_client_config_path()
-
-
-def _read_config(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return dict(value) if isinstance(value, dict) else {}
-
-
-def _write_json_private(path: Path, payload: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(dict(payload), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    path.chmod(0o600)
 
 
 if __name__ == "__main__":

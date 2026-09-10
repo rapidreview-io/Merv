@@ -1,4 +1,8 @@
-"""Machine client configuration helpers.
+"""Machine client configuration and the plumbing every client shares.
+
+One error family, one reader of ``client.json``, one rule about which control
+URLs may carry a credential, one redirect-refusing opener — so a machine
+cannot disagree with itself about what it is configured to do.
 
 Env-var names resolve dual-spelled here exactly as in ``merv.brain.kernel.env``:
 ``MERV_X`` primary, ``RESEARCH_PLUGIN_X`` legacy fallback (non-empty wins;
@@ -11,11 +15,18 @@ from __future__ import annotations
 import json
 import os
 import sys
+import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .machine_dirs import resolve_machine_state_dir
+
+
+class ClientError(Exception):
+    """Every client failure a caller reports rather than crashes on: settings
+    outside the closed schema, an unreadable private file, a failed launch."""
 
 
 ENV_PREFIX = "MERV_"
@@ -84,6 +95,7 @@ AGENT_SESSION_KEY_ENV_VAR = "MERV_AGENT_SESSION_KEY"
 # deployments opt in via `merv-client configure` or the env var.
 HOSTED_CONTROL_URL = "https://experiments.rapidreview.io"
 LOCAL_BRAIN_URL = "http://127.0.0.1:8787"
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 def default_client_config_path() -> Path:
@@ -120,11 +132,49 @@ def resolve_client_control_url(
 
 
 def read_client_config(env: Mapping[str, str] | None = None) -> dict[str, Any]:
-    path = resolve_client_config_path(env)
+    """The document, or ``{}``: the precedence resolvers fall back to their
+    defaults on a damaged file rather than refusing to start."""
     try:
-        parsed = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return read_client_document(resolve_client_config_path(env))
+    except ClientError:
         return {}
-    if not isinstance(parsed, dict):
+
+
+def read_client_document(path: Path) -> dict[str, Any]:
+    """The one reader of a machine client file. "Not written yet" is ordinary
+    and answers ``{}``; damaged is a failure, so a read-modify-write never
+    silently replaces a document it could not understand."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return {}
-    return {str(key): value for key, value in parsed.items() if value is not None}
+    except (OSError, ValueError) as exc:
+        raise ClientError(f"cannot read machine settings: {path}") from exc
+    if not isinstance(value, dict):
+        raise ClientError(f"machine settings must contain an object: {path}")
+    return value
+
+
+def safe_control_url(raw: str) -> str:
+    """``raw`` normalized, refused unless a credential may travel to it: HTTPS
+    anywhere, plain HTTP only to an explicit loopback host."""
+    url = raw.strip().rstrip("/")
+    parsed = urlsplit(url)
+    if (parsed.scheme == "https" and parsed.netloc) or (
+        parsed.scheme == "http" and parsed.hostname in LOOPBACK_HOSTS
+    ):
+        return url
+    raise ClientError(
+        "control URL must use HTTPS, except for an explicit loopback host"
+    )
+
+
+def is_loopback_url(raw: str) -> bool:
+    return urlsplit(raw).hostname in LOOPBACK_HOSTS
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every redirect: a bearer token follows no unverified hop."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None

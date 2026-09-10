@@ -13,7 +13,7 @@ from .composition import Child, ChildResult, join_guard, wait_for_all
 from .delivery import Deliveries, Delivery
 from .graph import (
     Action, Brief, Change, Edge, Evaluation, Execution, Issue, Knowledge, Node, Reference,
-    Registry, Scope, Snapshot, Workflow, Workspace, all_of,
+    Registry, Scope, Snapshot, Workflow, WorkspacePolicy, all_of,
 )
 from .runtime import InstanceFact, Runtime, snapshot_view
 from .registry import WORKFLOWS
@@ -28,6 +28,6 @@ __all__ = [
     "artifact_references", "retain_artifacts", "join_guard",
     "Action", "Brief", "Change", "Child", "ChildResult", "Edge", "Evaluation", "Execution",
     "InstanceFact", "Issue", "Knowledge", "Node", "Reference", "Registry", "Scope", "Snapshot",
-    "Workflow", "Workspace",
+    "Workflow", "WorkspacePolicy",
     "Binding", "Deliveries", "Delivery", "Runtime", "TOOLS", "WORKFLOWS", "Workflows", "snapshot_view", "all_of", "wait_for_all",
 ]

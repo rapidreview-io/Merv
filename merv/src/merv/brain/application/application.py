@@ -183,17 +183,10 @@ class Application:
                 str(session.get("workflow_instance_id") or "") for session in sessions
             ),
         )
-        public_keys = {
-            "branch", "base_sha", "head_sha", "commit_count",
-            "files_changed", "insertions", "deletions", "updated_at",
-        }
         return {
             **listing,
             "sessions": sessions,
-            "workspaces": {
-                instance_id: {key: value for key, value in row.items() if key in public_keys}
-                for instance_id, row in workspaces.items()
-            },
+            "workspaces": workspaces,
             "queue": queue[:queue_limit],
             "queue_total": len(queue),
         }

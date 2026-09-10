@@ -23,6 +23,7 @@ from merv.client.agent_runner import (
     Lease,
     CommandHost,
     HOSTS,
+    HOST_SPECS,
     HostSession,
     Platform,
     RunnerError,
@@ -32,19 +33,18 @@ from merv.client.agent_runner import (
     WorkspacePolicy,
     WorkspaceSettings,
     _child_environment,
-    _detected_commands,
     _runner_key,
     _read_trace_telemetry,
     _run_runner,
     _trace_excerpt,
-    _safe_control_url,
     _session_key,
     load_platforms,
     load_workspace_settings,
     main as runner_main,
 )
+from merv.shared.client_config import ClientError, safe_control_url
+from merv.shared.runner_settings import NATIVE_ADAPTERS
 from merv.client.cli import (
-    ClientError,
     configure_agent,
     configure_client,
     configure_workspace,
@@ -114,6 +114,10 @@ def _commit(path: Path, message: str) -> None:
 
 class AgentConfigurationTest(unittest.TestCase):
 
+    def test_every_shared_adapter_name_has_an_invocation_row(self) -> None:
+        """The CLI, the brain's schema and the host table name one adapter set."""
+        self.assertEqual(set(HOST_SPECS), {*NATIVE_ADAPTERS, "command"})
+        self.assertEqual(set(HOSTS), set(HOST_SPECS))
 
     def test_built_in_names_select_native_adapters(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -522,12 +526,22 @@ class AgentHostTest(unittest.TestCase):
                 ["hermes"],
                 ["-z", instruction],
             ),
+            # The escape hatch: whatever was configured, prompt on stdin.
+            "command": (HOSTS["command"], ["my-agent"], None),
         }
         for name, (host, command, prompt) in native.items():
             with self.subTest(name=name):
                 platform = Platform(name, name, (command[0],))
                 self.assertEqual(host.command_for(platform), command)
                 self.assertEqual(host.instruction_arguments(instruction), prompt)
+        # Hermes is the one row that renames stdout and exports its own trace.
+        self.assertEqual(
+            {name: (host.stdout_filename, host.trace_format) for name, host in HOSTS.items()},
+            {
+                **{name: ("trace.jsonl", "jsonl") for name in HOSTS},
+                "hermes": ("stdout.log", "jsonl-export"),
+            },
+        )
 
         hermes = Platform(
             "hermes-opus",
@@ -697,14 +711,14 @@ class AgentHostTest(unittest.TestCase):
 
     def test_credentials_are_refused_over_nonlocal_http(self) -> None:
         self.assertEqual(
-            _safe_control_url("http://127.0.0.1:8787/"),
+            safe_control_url("http://127.0.0.1:8787/"),
             "http://127.0.0.1:8787",
         )
         self.assertEqual(
-            _safe_control_url("https://merv.example/"), "https://merv.example"
+            safe_control_url("https://merv.example/"), "https://merv.example"
         )
-        with self.assertRaisesRegex(RunnerError, "must use HTTPS"):
-            _safe_control_url("http://192.0.2.10:8787")
+        with self.assertRaisesRegex(ClientError, "must use HTTPS"):
+            safe_control_url("http://192.0.2.10:8787")
 
     def test_git_workspace_follows_the_declared_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1093,7 +1107,7 @@ class AgentSessionProtocolTest(unittest.TestCase):
         self.assertEqual(bare.reference("code"), "")
         self.assertEqual(bare.reference("review_request"), "")
 
-    def test_trace_excerpt_is_the_redacted_tail_and_changes_signature(self) -> None:
+    def test_trace_excerpt_is_the_capped_tail_and_changes_signature(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             trace_dir = Path(tmp)
             self.assertIsNone(_trace_excerpt(trace_dir, complete=False))
@@ -1109,8 +1123,8 @@ class AgentSessionProtocolTest(unittest.TestCase):
             self.assertLessEqual(len(events), 60)
             self.assertEqual(events[-1].get("truncated"), True)
             self.assertEqual(events[-2], {"raw": "not json at all"})
-            self.assertEqual(events[-3]["authorization"], "<redacted>")
-            self.assertEqual(events[-3]["note"], "key <redacted>")
+            # Redaction is the brain's, at the moment it persists this.
+            self.assertTrue(events[-3]["authorization"].startswith("Bearer "))
             self.assertEqual(events[0], {"type": "message", "n": 100 - (60 - 3)})
             self.assertTrue(excerpt["stderr_tail"].endswith("last line\n"))
             self.assertLessEqual(len(excerpt["stderr_tail"].encode("utf-8")), 8 * 1024)
@@ -1267,12 +1281,9 @@ class AgentSessionProtocolTest(unittest.TestCase):
             self.assertEqual(SessionLedger(path).sessions["ags_old"].status, "stopped")
 
 
-class _FakeHost:
-    trace_format = "jsonl"
-    stdout_filename = "trace.jsonl"
-    trace_filename = "trace.jsonl"
-
+class _FakeHost(CommandHost):
     def __init__(self):
+        super().__init__()
         self.spawns: list[dict[str, object]] = []
         self.stopped: list[HostSession] = []
 
@@ -1285,9 +1296,6 @@ class _FakeHost:
 
     def stop(self, session):
         self.stopped.append(session)
-
-    def finalize_trace(self, *, platform, trace_dir):
-        return None
 
 
 class _FakeClient:
@@ -1311,22 +1319,15 @@ class _FakeClient:
         self.lease_calls.append(kwargs)
         return self.lease_result
 
-    def attach(
-        self,
-        *,
-        session_id,
-        runner_id,
-        host_session_ref,
-        workspace_ref="",
-        **workspace,
-    ):
-        self.attached.append((session_id, host_session_ref, workspace_ref))
-
-    def release(self, *, session_id, runner_id, reason, **workspace):
-        self.released.append((session_id, reason))
-
-    def heartbeat(self, *, session_id, runner_id, **workspace):
-        self.heartbeats.append(session_id)
+    def report(self, route, *, session_id, runner_id, **payload):
+        if route == "attach":
+            self.attached.append(
+                (session_id, payload["host_session_ref"], payload.get("workspace_ref", ""))
+            )
+        elif route == "release":
+            self.released.append((session_id, payload["reason"]))
+        else:
+            self.heartbeats.append(session_id)
 
     def record_trace(self, *, session_id, runner_id, events, stderr_tail, complete):
         self.traces.append(

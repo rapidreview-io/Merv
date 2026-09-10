@@ -20,8 +20,20 @@ from ..kernel.utils import (
     new_id,
     parse_iso,
 )
-from merv.shared.redaction import redact_excerpt
-from merv.shared.runner_settings import RunnerSettingsError, validate_desired_settings
+from merv.shared.redaction import (
+    MAX_TRACE_EVENT_BYTES,
+    MAX_TRACE_EVENTS,
+    MAX_TRACE_EVENTS_BYTES,
+    MAX_TRACE_STDERR_BYTES,
+    redact_excerpt,
+    redact_secrets,
+)
+from merv.shared.runner_settings import (
+    RunnerSettingsError,
+    TELEMETRY_COUNTERS,
+    TELEMETRY_LABELS,
+    validate_desired_settings,
+)
 from .persistence import AGENT_SESSION_SCHEMA
 
 
@@ -42,12 +54,12 @@ FAILURE_REASONS = (
 LIVE_STATUSES = ("offered", "active")
 
 _PUBLIC_COLUMNS = """
-id, project_id, target_type, target_id, attempt_index, role, label,
+id, project_id, target_type, target_id, attempt_index, role,
 workflow_instance_id, workflow_revision, workflow_node,
 runner_id, platform, status, host_session_ref,
 workspace_ref, base_sha, head_sha,
 execution_json, references_json, assignment_json, agent_setup_json,
-telemetry_json, telemetry_at,
+telemetry_json,
 created_at, activated_at, last_activity_at, lease_expires_at, hard_deadline_at,
 closed_at, close_reason
 """
@@ -57,12 +69,11 @@ MAX_AGENT_SETUP_BYTES = 8 * 1024
 MAX_TELEMETRY_BYTES = 8 * 1024
 MAX_RUNNER_PRESENCE_BYTES = 16 * 1024
 RUNNER_LIVE_SECONDS = 45
-# Trace peek: a bounded, redacted excerpt per session, never the raw trace.
-MAX_TRACE_EVENTS = 60
-MAX_TRACE_EVENT_BYTES = 4 * 1024
-MAX_TRACE_EVENTS_BYTES = 96 * 1024
-MAX_TRACE_STDERR_CHARS = 8 * 1024
 TRACE_GRACE_AFTER_CLOSE_SECONDS = 15 * 60
+# The diff counters a workspace row carries, and the whole of what a browser
+# sees of one: named once here so no caller re-lists them.
+WORKSPACE_STATS = ("commit_count", "files_changed", "insertions", "deletions")
+WORKSPACE_PUBLIC = ("branch", "base_sha", "head_sha", *WORKSPACE_STATS, "updated_at")
 
 
 class WorkflowAssignment(Protocol):
@@ -204,16 +215,16 @@ class AgentSessions:
         session_id = new_id(prefix="ags")
         inserted = tx.execute(
             """INSERT INTO agent_sessions (
-              id, project_id, target_type, target_id, attempt_index, role, label,
+              id, project_id, target_type, target_id, attempt_index, role,
               workflow_instance_id, workflow_revision, workflow_node,
               execution_json, references_json, assignment_json,
               runner_id, platform, idempotency_key, secret_digest, status,
               created_at, lease_expires_at, hard_deadline_at, source_key_id, source_user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offered', ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offered', ?, ?, ?, ?, ?)
             ON CONFLICT DO NOTHING RETURNING id""",
             (session_id, project_id, str(packet.get("workflow") or ""), instance_id,
              int(packet.get("attempt_index") or 0), str(packet.get("role") or "")[:120],
-             str(packet.get("label") or "")[:240], instance_id, revision, str(packet.get("state") or ""),
+             instance_id, revision, str(packet.get("state") or ""),
              _bounded_json_object(execution if isinstance(execution, Mapping) else {},
                                   field="execution", limit=MAX_ASSIGNMENT_BYTES),
              _bounded_json_list(references if isinstance(references, list) else [],
@@ -509,9 +520,9 @@ class AgentSessions:
                 """
                 INSERT INTO agent_runners (
                   project_id, runner_id, machine_json, platforms_json,
-                  capacity, started_at, last_seen_at, inventory_json, applied_version
+                  capacity, last_seen_at, inventory_json, applied_version
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (project_id, runner_id) DO UPDATE SET
                   machine_json = excluded.machine_json,
                   platforms_json = excluded.platforms_json,
@@ -526,7 +537,6 @@ class AgentSessions:
                     encoded_machine,
                     encoded_platforms,
                     max(int(capacity), 0),
-                    now,
                     now,
                     encoded_inventory,
                     applied if applied is not None else 0,
@@ -727,17 +737,15 @@ class AgentSessions:
             )
             tx.execute(
                 """
-                UPDATE agent_sessions
-                SET telemetry_json = ?, telemetry_at = ?
-                WHERE id = ?
+                UPDATE agent_sessions SET telemetry_json = ? WHERE id = ?
                 """,
-                (encoded_telemetry, format_iso(datetime.now(UTC)), row["id"]),
+                (encoded_telemetry, row["id"]),
             )
 
     def workspaces(
         self, *, project_id: str, instance_ids: Iterable[str] = ()
     ) -> dict[str, dict[str, Any]]:
-        """The retained branch facts per instance, keyed by instance id."""
+        """The public branch facts per instance, keyed by instance id."""
         ids = tuple(dict.fromkeys(str(item) for item in instance_ids if item))
         if not ids:
             return {}
@@ -752,7 +760,8 @@ class AgentSessions:
                 (project_id, *ids),
             ).fetchall()
             return {
-                str(row["instance_id"]): row_to_dict(row=row) or {} for row in rows
+                str(row["instance_id"]): {name: row[name] for name in WORKSPACE_PUBLIC}
+                for row in rows
             }
 
     def authority(self, *, session_id: str) -> dict[str, str]:
@@ -818,7 +827,7 @@ class AgentSessions:
         overwritten; the raw trace never leaves the machine.
         """
         encoded_events, kept = _trace_events_projection(events)
-        tail = str(stderr_tail or "")[-MAX_TRACE_STDERR_CHARS:]
+        tail = redact_secrets(str(stderr_tail or "")[-MAX_TRACE_STDERR_BYTES:])
         now = datetime.now(UTC)
         with self.store.transaction() as tx:
             row = tx.execute(
@@ -959,10 +968,7 @@ class AgentSessions:
                 workspace_ref,
                 base_sha,
                 head_sha,
-                max(int(values.get("commit_count") or 0), 0),
-                max(int(values.get("files_changed") or 0), 0),
-                max(int(values.get("insertions") or 0), 0),
-                max(int(values.get("deletions") or 0), 0),
+                *(max(int(values.get(name) or 0), 0) for name in WORKSPACE_STATS),
                 format_iso(datetime.now(UTC)),
             ),
         )
@@ -1137,18 +1143,11 @@ def _bounded_json_list(value: list[Any], *, field: str, limit: int) -> str:
 def _telemetry_projection(value: Mapping[str, Any]) -> dict[str, Any]:
     """Keep aggregate counters only; provider events stay on the runner."""
     result: dict[str, Any] = {}
-    for name in (
-        "input_tokens",
-        "output_tokens",
-        "cached_tokens",
-        "total_tokens",
-        "tool_calls",
-        "messages",
-    ):
+    for name in TELEMETRY_COUNTERS:
         raw = value.get(name)
         if isinstance(raw, int) and not isinstance(raw, bool):
             result[name] = max(raw, 0)
-    for name in ("last_event_at", "provider_session", "reporting"):
+    for name in TELEMETRY_LABELS:
         raw = value.get(name)
         if isinstance(raw, str) and raw.strip():
             result[name] = raw.strip()[:240]
@@ -1193,7 +1192,7 @@ def _trace_events_projection(events: Iterable[Any]) -> tuple[str, int]:
 
 
 _RUNNER_SELECT = """
-SELECT project_id, runner_id, machine_json, platforms_json, capacity, started_at,
+SELECT project_id, runner_id, machine_json, platforms_json, capacity,
        last_seen_at, desired_settings_json, desired_version, applied_version,
        inventory_json
 FROM agent_runners
@@ -1230,11 +1229,13 @@ def _runner_view(row: Any, *, now: datetime | None = None) -> dict[str, Any]:
         "machine": _json_column(row["machine_json"]),
         "platforms": platforms if isinstance(platforms, list) else [],
         "capacity": max(int(row["capacity"] or 0), 0),
-        "started_at": str(row["started_at"]),
         "last_seen_at": str(row["last_seen_at"]),
         "live": bool(
             seen is not None and (current - seen).total_seconds() <= RUNNER_LIVE_SECONDS
         ),
+        # The runner build a one-shot test call needs, so the browser reads the
+        # requirement rather than carrying its own copy of the date.
+        "probe_min_runner_version": PROBE_MIN_RUNNER_VERSION,
         "desired_settings": _json_column(row["desired_settings_json"]),
         "desired_version": desired_version,
         "applied_version": applied_version,

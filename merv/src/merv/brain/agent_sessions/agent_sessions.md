@@ -93,6 +93,6 @@ One runner machine owns a project's durable Git repository.
 
 Each session writes immutable metadata, provider trace, and stderr under
 `~/.merv/agent-traces/<session-id>/`. The server stores the frozen assignment,
-sanitized setup, aggregate counters and a bounded/redacted trace excerpt:
-at most 60 events and 8 KiB stderr. The owning runner may update the excerpt
+sanitized setup, aggregate counters and a trace excerpt it bounds and redacts
+as it stores it: at most 60 events and 8 KiB stderr. The runner only caps. The owning runner may update the excerpt
 briefly after close; raw traces stay local. Heartbeats report idle machines too.
