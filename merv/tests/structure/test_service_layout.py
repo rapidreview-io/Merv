@@ -675,9 +675,10 @@ class ServiceLayoutTest(unittest.TestCase):
     def test_hosted_tool_metadata_and_producer_binding_are_contract_declared(
         self,
     ) -> None:
-        # Per-tool hosted policy moved onto the ToolContract its owner
-        # declares: http_policy keeps generic policy and the session
-        # baselines, and the gateway names no tool to resolve either.
+        # Per-tool hosted policy, provenance, transport injection and caller
+        # binding moved onto the ToolContract each owner declares: http_policy
+        # keeps generic policy and the session baselines, and the gateway names
+        # no tool to resolve any of them.
         source = _http_gateway_source()
         policy_source = (SURFACE_ROOT / "transport" / "http_policy.py").read_text(
             encoding="utf-8"
@@ -697,12 +698,49 @@ class ServiceLayoutTest(unittest.TestCase):
         )
         self.assertEqual(
             {
-                name
+                name: tool.binds_producer_session
                 for name, tool in TOOL_MANIFEST.items()
                 if tool.binds_producer_session
             },
-            {"consolidation.submit"},
+            {"consolidation.submit": "agent", "review.request": "session"},
         )
+        self.assertEqual(
+            {name for name, tool in TOOL_MANIFEST.items() if tool.binds_capability},
+            {"review.start"},
+        )
+        self.assertEqual(
+            {name for name, tool in TOOL_MANIFEST.items() if tool.needs_base_url},
+            {
+                "artifact.upload", "artifact.read", "feed.post",
+                "storage.submit", "sandbox.runs",
+            },
+        )
+        self.assertEqual(
+            {name for name, tool in TOOL_MANIFEST.items() if tool.needs_wait_secret},
+            {"sandbox.runs"},
+        )
+        self.assertEqual(
+            {
+                name: tool.binds_caller_project
+                for name, tool in TOOL_MANIFEST.items()
+                if tool.binds_caller_project
+            },
+            {"project": "key_project_id", "project.list": "project_id"},
+        )
+        self.assertEqual(
+            {
+                name: tool.external_key_denied_action
+                for name, tool in TOOL_MANIFEST.items()
+                if tool.external_key_denied_action
+            },
+            {"project": "create"},
+        )
+        # workflow.transition, the sandbox. prefix and the agent.hello constant
+        # are the only tool names the gateway is allowed to know.
+        named = set(re.findall(r'"([a-z_]+\.[a-z_]+)"', source)) - {
+            "context.repo_root"
+        }
+        self.assertEqual(named, {"workflow.transition"})
         self.assertNotIn("tenant_id_fallback", policy_source)
         self.assertNotIn("HostedToolPolicy", policy_source + source)
         self.assertNotIn("consolidation", source)

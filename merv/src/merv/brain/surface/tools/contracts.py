@@ -177,6 +177,8 @@ SURFACE_TOOLS: dict[str, ToolContract] = {
     "project": ToolContract(
         handler_identity="application.project",
         scope_strategy="caller-selected",
+        binds_caller_project="key_project_id",
+        external_key_denied_action="create",
         input_model=ProjectInput,
         description=(
             "Project navigation for this credential, dispatched on 'action'. "
@@ -216,6 +218,7 @@ SURFACE_TOOLS: dict[str, ToolContract] = {
     "project.list": ToolContract(
         handler_identity="application.project_list",
         visibility="internal",
+        binds_caller_project="project_id",
         input_model=ContractModel,
         description="List projects in the current tool scope.",
     ),

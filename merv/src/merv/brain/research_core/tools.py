@@ -842,7 +842,7 @@ TOOLS: dict[str, ToolContract] = {
     ),
     "consolidation.submit": ToolContract(
         handler_identity="application.submit_consolidation",
-        binds_producer_session=True,
+        binds_producer_session="agent",
         input_model=ConsolidationSubmitInput,
         description=(
             "Submit one immutable consolidation proposal. The proposal must "
@@ -855,6 +855,7 @@ TOOLS: dict[str, ToolContract] = {
     ),
     "review.request": ToolContract(
         handler_identity="application.request_review",
+        binds_producer_session="session",
         input_model=ReviewRequestInput,
         description=(
             "Create a review request and request-scoped reviewer capability; "
@@ -871,6 +872,7 @@ TOOLS: dict[str, ToolContract] = {
         handler_identity="application.start_review",
         scope_strategy="capability",
         telemetry_scope_field="review_request_id",
+        binds_capability="review_request_id",
         input_model=ReviewStartInput,
         description=(
             "Start a reviewer session for the pinned request snapshot. The "

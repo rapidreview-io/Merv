@@ -112,6 +112,7 @@ def artifact_tools(*, target_types: Iterable[str], roles: Iterable[str], lens_ro
     return {
         "artifact.upload": ToolContract(
             handler_identity="artifact_submissions.upload",
+            needs_base_url=True,
             input_model=ArtifactUploadInput,
             description=(
                 "Write a local file, call upload, then execute the returned run command "
@@ -124,6 +125,7 @@ def artifact_tools(*, target_types: Iterable[str], roles: Iterable[str], lens_ro
         ),
         "artifact.read": ToolContract(
             handler_identity="artifact_submissions.read",
+            needs_base_url=True,
             input_model=ArtifactReadInput,
             description=(
                 "Read one artifact_id, an ordered batch of 1-50 artifact_ids, or list "

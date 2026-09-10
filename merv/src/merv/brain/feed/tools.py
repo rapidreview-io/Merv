@@ -181,6 +181,7 @@ def feed_tools(*, vocabulary: RefVocabulary, author_roles: Iterable[str], adopta
         ),
         "feed.post": ToolContract(
             handler_identity="feed.post",
+            needs_base_url=True,
             input_model=FeedPostInput,
             description=(
                 "Post to the project feed — what a sharp colleague following this "

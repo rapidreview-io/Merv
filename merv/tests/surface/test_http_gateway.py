@@ -265,10 +265,9 @@ class HttpGatewayTest(unittest.TestCase):
             principal=USER,
         )
         self.assertEqual(backend.calls[1]["name"], "sandbox.request")
-        self.assertEqual(
-            backend.calls[1]["internal_kwargs"],
-            {},
-        )
+        # Nothing is injected: the dispatcher treats the empty mapping this
+        # used to be built for and no mapping at all identically.
+        self.assertIsNone(backend.calls[1]["internal_kwargs"])
 
         self.assertEqual(backend.subject, "user-a")
         self.assertIsNone(_subject.get())
