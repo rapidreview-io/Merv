@@ -872,13 +872,7 @@ class AgentHostTest(unittest.TestCase):
             receipt = manager.advance(
                 expected_sha=experiment.base_sha,
                 target_sha=target,
-                sources=[
-                    {
-                        "experiment_id": "exp_1",
-                        "source_sha": experiment.head_sha,
-                        "integration_kind": "merge",
-                    }
-                ],
+                sources=[{"id": "exp_1", "sha": experiment.head_sha}],
             )
 
             self.assertEqual(receipt["observed_sha"], target)
@@ -1305,8 +1299,7 @@ class _FakeWorkspaces:
             "proposal_parents": [kwargs["expected_sha"]],
             "diffstat": {"commit_count": 1},
             "ancestry": {
-                str(source["experiment_id"]): False
-                for source in kwargs.get("sources", [])
+                str(source["id"]): False for source in kwargs.get("sources", [])
             },
             "error": "",
         }
@@ -1337,21 +1330,18 @@ class AgentRunnerTest(unittest.TestCase):
         runner.advance_ready.assert_called_once_with()
         runner.fill_available_slots.assert_called_once_with()
 
-    def test_reviewed_consolidation_advances_and_settles_once(self) -> None:
+    def test_pending_advance_is_leased_swapped_and_settled_once(self) -> None:
         client = _FakeClient(Claim("unused", "exp_1", "proj_1"))
-        client.pending = {"reflection_id": "ref_1"}
-        client.advance = {
-            "id": "adv_1",
+        advance = {
+            "advance_id": "adv_1",
+            "instance_id": "wf_1",
+            "revision": 7,
             "expected_sha": "1" * 40,
             "target_sha": "2" * 40,
-            "sources": [
-                {
-                    "experiment_id": "exp_1",
-                    "source_sha": "a" * 40,
-                    "integration_kind": "rewrite",
-                }
-            ],
+            "sources": [{"id": "src_1", "sha": "a" * 40}],
         }
+        client.pending = dict(advance)
+        client.advance = dict(advance)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ledger = SessionLedger(root / "sessions.json")
@@ -1367,22 +1357,23 @@ class AgentRunnerTest(unittest.TestCase):
 
             self.assertTrue(runner.advance_ready())
 
+            self.assertEqual(
+                client.prepared,
+                [{"project_id": "proj_1", "instance_id": "wf_1", "runner_id": ledger.runner_id}],
+            )
         self.assertEqual(len(client.settled), 1)
         receipt = client.settled[0]
+        self.assertEqual(receipt["project_id"], "proj_1")
         self.assertEqual(receipt["advance_id"], "adv_1")
         self.assertEqual(receipt["observed_sha"], "2" * 40)
-        self.assertEqual(receipt["ancestry"], {"exp_1": False})
+        self.assertEqual(receipt["proposal_parents"], ["1" * 40])
+        self.assertEqual(receipt["ancestry"], {"src_1": False})
+        self.assertEqual(receipt["error"], "")
 
-    def test_bound_pending_advance_retries_settle_without_git_work(self) -> None:
-        # A bound receipt whose publish was blocked: the Git CAS is done, so
-        # the runner must go straight to settle — no prepare, no Git.
+    def test_advance_waits_until_the_brain_grants_the_lease(self) -> None:
         client = _FakeClient(Claim("unused", "exp_1", "proj_1"))
-        client.pending = {
-            "reflection_id": "ref_1",
-            "advance_status": "bound",
-            "advance_id": "adv_9",
-            "observed_sha": "2" * 40,
-        }
+        client.pending = {"advance_id": "adv_1", "instance_id": "wf_1", "revision": 7}
+        client.advance = None
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             runner = AgentRunner(
@@ -1394,12 +1385,46 @@ class AgentRunnerTest(unittest.TestCase):
                 trace_dir=root / "traces",
                 runner_secret=b"r" * 32,
             )
-            self.assertTrue(runner.advance_ready())
-        self.assertEqual(client.prepared, [])
-        self.assertEqual(len(client.settled), 1)
+            self.assertFalse(runner.advance_ready())
+            self.assertEqual(len(client.prepared), 1)
+            client.pending = None
+            self.assertFalse(runner.advance_ready())
+            self.assertEqual(len(client.prepared), 1)
+            client.pending = {"advance_id": "adv_1"}
+            with self.assertRaisesRegex(RunnerError, "no instance id"):
+                runner.advance_ready()
+        self.assertEqual(client.settled, [])
+
+    def test_a_failed_swap_is_settled_with_its_error(self) -> None:
+        client = _FakeClient(Claim("unused", "exp_1", "proj_1"))
+        advance = {
+            "advance_id": "adv_2",
+            "instance_id": "wf_1",
+            "revision": 7,
+            "expected_sha": "1" * 40,
+            "target_sha": "3" * 40,
+            "sources": [],
+        }
+        client.pending = dict(advance)
+        client.advance = dict(advance)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspaces = _FakeWorkspaces(root)
+            workspaces.advance = MagicMock(side_effect=RunnerError("central moved"))
+            runner = AgentRunner(
+                project_id="proj_1",
+                platforms=(),
+                client=client,
+                ledger=SessionLedger(root / "sessions.json"),
+                workspaces=workspaces,
+                trace_dir=root / "traces",
+                runner_secret=b"r" * 32,
+            )
+            self.assertFalse(runner.advance_ready())
         receipt = client.settled[0]
-        self.assertEqual(receipt["advance_id"], "adv_9")
-        self.assertEqual(receipt["observed_sha"], "2" * 40)
+        self.assertEqual(receipt["advance_id"], "adv_2")
+        self.assertEqual(receipt["observed_sha"], "1" * 40)
+        self.assertEqual(receipt["error"], "central moved")
 
     def test_launch_is_reserved_first_and_secret_reaches_only_child_env(self) -> None:
         claim = Claim(

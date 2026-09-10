@@ -1111,7 +1111,7 @@ class WorkspaceManager:
             check=False,
         )
         if ancestor.returncode:
-            raise RunnerError("consolidation proposal is not a descendant of central")
+            raise RunnerError("advance target is not a descendant of central")
         self._git(
             bare,
             "update-ref",
@@ -1168,10 +1168,10 @@ class WorkspaceManager:
     ) -> dict[str, bool]:
         result: dict[str, bool] = {}
         for source in sources:
-            experiment_id = str(source.get("experiment_id") or "")
-            source_sha = str(source.get("source_sha") or "")
-            if not experiment_id or not source_sha:
-                raise RunnerError("central advance is missing experiment lineage")
+            source_id = str(source.get("id") or "")
+            source_sha = str(source.get("sha") or "")
+            if not source_id or not source_sha:
+                raise RunnerError("central advance is missing source lineage")
             WorkspaceManager._rev_parse(repository, source_sha)
             check = subprocess.run(
                 [
@@ -1190,7 +1190,7 @@ class WorkspaceManager:
             if check.returncode not in {0, 1}:
                 message = check.stderr.strip() or "git ancestry check failed"
                 raise RunnerError(message)
-            result[experiment_id] = check.returncode == 0
+            result[source_id] = check.returncode == 0
         return result
 
     def _workspace(
@@ -1470,25 +1470,24 @@ class AgentSessionsClient:
         )
 
     def prepare_advance(
-        self, *, project_id: str, reflection_id: str, runner_id: str
+        self, *, project_id: str, instance_id: str, runner_id: str
     ) -> dict[str, Any] | None:
+        """Lease the pending advance of ``instance_id`` for this runner."""
         result = self._post(
-            f"/api/projects/{project_id}/consolidation/prepare",
+            f"/api/projects/{project_id}/agent-advances/prepare",
             {
-                "reflection_id": reflection_id,
+                "instance_id": instance_id,
                 "runner_id": runner_id,
             },
             allow_empty=True,
         )
-        if result is None:
-            return None
-        advance = result.get("advance")
-        return advance if isinstance(advance, dict) else None
+        return _advance_of(result)
 
     def pending_advance(self, *, project_id: str) -> dict[str, Any] | None:
-        result = self._get(f"/api/projects/{project_id}/consolidation/pending")
-        pending = result.get("pending")
-        return pending if isinstance(pending, dict) else None
+        """The one brain-approved advance waiting for a runner, if any."""
+        return _advance_of(
+            self._get(f"/api/projects/{project_id}/agent-advances/pending")
+        )
 
     def settle_advance(
         self,
@@ -1503,7 +1502,7 @@ class AgentSessionsClient:
         error: str = "",
     ) -> None:
         self._post(
-            f"/api/projects/{project_id}/consolidation/settle",
+            f"/api/projects/{project_id}/agent-advances/settle",
             {
                 "advance_id": advance_id,
                 "runner_id": runner_id,
@@ -1758,7 +1757,7 @@ class AgentRunner:
             workspace_changes = merged_workspace != self.workspaces.settings
             if workspace_changes:
                 # Ledger rows do not carry the WorkspaceSettings that created
-                # their worktrees and consolidation advances go through the
+                # their worktrees and central advances go through the
                 # one manager, so the workspace half — and the version marker
                 # that would say "applied" to a restart — stays out of
                 # client.json until an idle cycle activates it. Only the
@@ -1861,7 +1860,7 @@ class AgentRunner:
         live = self._live_local_sessions()
         if live:
             return f"workspace change waits for {live} running job{'s' if live != 1 else ''}"
-        return "workspace change waits for the pending consolidation advance"
+        return "workspace change waits for the pending central advance"
 
     def inventory(self) -> dict[str, Any]:
         """Non-secret self-report for the Settings page; never argv."""
@@ -2378,34 +2377,30 @@ class AgentRunner:
         )
 
     def advance_ready(self) -> bool:
-        """Advance one independently reviewed consolidation, if one is ready."""
+        """Perform one brain-approved central advance, if one is pending.
+
+        The brain says which instance's accepted work may move the central
+        ref and, once this runner holds the lease, the exact compare-and-swap
+        (expected and target commits, plus the source lineage to verify).
+        The swap is idempotent: an advance whose target is already central
+        settles again from the observed state without moving anything.
+        """
         pending = self.client.pending_advance(project_id=self.project_id)
         if pending is None:
             return False
-        reflection_id = str(pending.get("reflection_id") or "")
-        if not reflection_id:
-            raise RunnerError("pending consolidation has no reflection id")
-        if str(pending.get("advance_status") or "") == "bound":
-            # The central ref already moved; a prior settle bound the receipt
-            # but its publish was blocked. No Git work remains — retry the
-            # settle so the brain can complete the publish.
-            self.client.settle_advance(
-                project_id=self.project_id,
-                advance_id=str(pending.get("advance_id") or ""),
-                runner_id=self.ledger.runner_id,
-                observed_sha=str(pending.get("observed_sha") or ""),
-                proposal_parents=[],
-                diffstat={},
-                ancestry={},
-            )
-            return True
+        instance_id = str(pending.get("instance_id") or "")
+        if not instance_id:
+            raise RunnerError("pending central advance has no instance id")
         advance = self.client.prepare_advance(
             project_id=self.project_id,
-            reflection_id=reflection_id,
+            instance_id=instance_id,
             runner_id=self.ledger.runner_id,
         )
         if advance is None:
             return False
+        advance_id = str(advance.get("advance_id") or "")
+        if not advance_id:
+            raise RunnerError("prepared central advance has no advance id")
         expected_sha = str(advance.get("expected_sha") or "")
         target_sha = str(advance.get("target_sha") or "")
         try:
@@ -2428,7 +2423,7 @@ class AgentRunner:
             }
         self.client.settle_advance(
             project_id=self.project_id,
-            advance_id=str(advance.get("id") or ""),
+            advance_id=advance_id,
             runner_id=self.ledger.runner_id,
             observed_sha=str(receipt["observed_sha"]),
             proposal_parents=receipt.get("proposal_parents") or [],
@@ -3427,6 +3422,11 @@ def _default_instruction(claim: Claim) -> str:
         "experiment in this session. If native MCP is unavailable, call tools "
         "with `merv-client call TOOL --arguments JSON`.\n"
     )
+
+
+def _advance_of(result: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    advance = (result or {}).get("advance")
+    return dict(advance) if isinstance(advance, Mapping) else None
 
 
 def _process_marker(pid: int) -> str | None:
