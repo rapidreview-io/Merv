@@ -17,6 +17,9 @@ import { hostOf } from './format.js';
 
 const SOURCE_WORD = { arxiv: 'arXiv', doi: 'DOI' };
 
+/** How a paper's row got here, when it wasn't a clean fetch. */
+export const FLAG_LABEL = { manual: 'manual entry', failed: 'fetch failed' };
+
 /** The source word alone — a ledger line's title already carries the link. */
 export function sourceLabel(paper) {
   return SOURCE_WORD[paper?.source_kind] || hostOf(paper?.url);

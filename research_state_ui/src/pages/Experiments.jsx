@@ -6,7 +6,7 @@ import { api } from '../api';
 import ObjId from '../components/ObjId';
 import GraphExpandButton from '../components/GraphExpandButton';
 import StatusPill from '../components/StatusPill';
-import { expName } from '../utils/experiment';
+import { NAME_RE, expName } from '../utils/experiment';
 import { fmtDayTime, fmtDuration } from '../utils/format';
 
 const LIFECYCLE = ['planned', 'design_review', 'running', 'experiment_review', 'complete'];
@@ -244,9 +244,6 @@ function ExperimentTable({ rows, sortKey, sortDir, onSort }) {
     </div>
   );
 }
-
-// Mirrors the backend rule: folder-safe, starts with a letter/digit, ≤48 chars.
-const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/;
 
 function NewExperimentForm({ projectId, claims, onCancel, onCreated }) {
   const [name, setName] = useState('');

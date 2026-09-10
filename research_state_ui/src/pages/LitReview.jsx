@@ -437,8 +437,6 @@ function scrollToEl(el, block) {
   el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block });
 }
 
-const FLAG_LABEL = { manual: 'manual entry', failed: 'fetch failed' };
-
 function PaperEntry({ paper: p, num, sectionsById, flash, onJumpToSection }) {
   const links = p.links || [];
   const sectionLinks = links.filter((l) => l.target_type === 'litreview_section');

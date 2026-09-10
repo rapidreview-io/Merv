@@ -12,6 +12,7 @@ import { layoutFigure, FIG_NODE_W } from '../../utils/figureLayout';
 import { readableViewport, visibleWidth } from '../../utils/graphCamera';
 import { motionMs } from '../../utils/motion';
 import { usePanelWidth } from '../../store/usePanelWidth';
+import { FIGURE_GLYPH, figureStatusClass } from '../../utils/graphStatus';
 import { buildWaveFigure } from './waveModel.js';
 
 /**
@@ -22,27 +23,6 @@ import { buildWaveFigure } from './waveModel.js';
  * carries — no extra endpoint. Same canvas conventions as the figure:
  * layoutFigure, MeasureSync, JSON-keyed identity, click-to-open panel.
  */
-
-const GLYPH = {
-  attempt: '◇', review: '☑', submission: '▣',
-  artifact_group: '▣', consolidation: '▦', conclusion: '∴',
-};
-
-// Same normalization as the experiment figure, for the subset of statuses a
-// wave process graph produces.
-function statusClass(node) {
-  const s = String(node.status || '');
-  if (node.type === 'review') {
-    return { pass: 'done', needs_changes: 'revise', fail: 'failed', open: 'open' }[s] || 'neutral';
-  }
-  if (node.type === 'submission') {
-    return { open: 'open', done: 'done' }[s] || 'done';
-  }
-  return {
-    active: 'open', done: 'done', failed: 'failed',
-    superseded: 'faded', abandoned: 'faded',
-  }[s] || 'neutral';
-}
 
 /**
  * Selection reaches the nodes through context, not node data: threading it
@@ -73,7 +53,7 @@ function WaveFigNode({ data }) {
     >
       <Handle type="target" position={Position.Left} className="fig-handle" />
       <div className="fig-node-head">
-        <span className="fig-node-glyph" aria-hidden="true">{GLYPH[data.type] || '•'}</span>
+        <span className="fig-node-glyph" aria-hidden="true">{FIGURE_GLYPH[data.type] || '•'}</span>
         <span className="fig-node-type">{data.type.replace(/_/g, ' ')}</span>
         {data.statusClass === 'open' && <span className="fig-node-live" aria-hidden="true" />}
       </div>
@@ -88,12 +68,12 @@ const nodeTypes = { wavefig: WaveFigNode };
 
 function toFlow(figure) {
   const laid = layoutFigure(figure);
-  const liveIds = new Set(laid.nodes.filter(n => statusClass(n) === 'open').map(n => n.id));
+  const liveIds = new Set(laid.nodes.filter(n => figureStatusClass(n) === 'open').map(n => n.id));
   const nodes = laid.nodes.map(n => ({
     id: n.id,
     type: 'wavefig',
     position: { x: n.x, y: n.y },
-    data: { ...n, statusClass: statusClass(n) },
+    data: { ...n, statusClass: figureStatusClass(n) },
     draggable: false,
     connectable: false,
   }));

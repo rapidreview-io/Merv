@@ -1,23 +1,8 @@
 import StatusPill from './StatusPill';
+import { ConfidenceDots } from './ClaimEvidence';
 import { TYPE_GLYPH, TYPE_LABEL } from '../utils/entityResolve';
-import { authorLine } from '../utils/litreview';
+import { FLAG_LABEL, authorLine } from '../utils/litreview';
 import { ago } from '../utils/time';
-
-const CONF_N = { low: 1, medium: 2, high: 3 };
-
-// Confidence dots reusing the claim visual language — but title-less (a native
-// `title` here would pop a grey tooltip over the card); the row label + aria
-// carry the meaning instead.
-function ConfidenceDots({ level }) {
-  const n = CONF_N[(level || '').toLowerCase()] || 0;
-  return (
-    <span className="claim-conf" aria-label={level ? `${level} confidence` : undefined}>
-      {[1, 2, 3].map((i) => (
-        <span key={i} className={`claim-conf-dot${i <= n ? ' is-on' : ''}`} aria-hidden="true" />
-      ))}
-    </span>
-  );
-}
 
 // One label/value line — omitted entirely when the value is empty, so the card
 // only shows facts it actually has (ledger dialect: one field per line).
@@ -48,7 +33,7 @@ function ClaimBody({ d }) {
     <>
       {d.statement && <p className="ehover-lead ehover-clamp3">{d.statement}</p>}
       <Row label="status">{d.status && <StatusPill value={d.status} />}</Row>
-      <Row label="confidence">{d.confidence && <ConfidenceDots level={d.confidence} />}</Row>
+      <Row label="confidence">{d.confidence && <ConfidenceDots level={d.confidence} titled={false} />}</Row>
       <Row label="tests">{d.linked != null && `${d.linked} experiment${d.linked === 1 ? '' : 's'}`}</Row>
     </>
   );
@@ -82,8 +67,6 @@ function ReflectionBody({ d }) {
     </>
   );
 }
-
-const FLAG_LABEL = { manual: 'manual entry', failed: 'fetch failed' };
 
 // Two section titles, then a count — a card lists where a paper is cited, it
 // does not reproduce the ledger's back-links.

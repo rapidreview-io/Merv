@@ -6,7 +6,7 @@ import {
 import { api } from '../api';
 import ObjId from '../components/ObjId';
 import StatusPill from '../components/StatusPill';
-import { expName } from '../utils/experiment';
+import { NAME_RE, expName } from '../utils/experiment';
 import { fmtDayTime, fmtDuration } from '../utils/format';
 
 // Task lifecycle: two working states, two endings (mirrors task_workflow.py).
@@ -198,9 +198,6 @@ function TaskTable({ rows, sortKey, sortDir, onSort }) {
     </div>
   );
 }
-
-// Mirrors the backend rule: folder-safe, starts with a letter/digit, ≤48 chars.
-const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/;
 const OPEN_EXPERIMENT = new Set(['planned', 'design_review', 'ready_to_run', 'running', 'experiment_review']);
 const OPEN_TASK = new Set(['in_progress', 'in_review']);
 

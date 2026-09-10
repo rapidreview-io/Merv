@@ -8,6 +8,10 @@ export function expName(exp) {
   return (exp?.name || '').trim() || exp?.id || '';
 }
 
+// The backend's name rule for experiments and tasks alike: folder-safe,
+// starts with a letter/digit, <= 48 chars.
+export const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/;
+
 // Statuses where an experiment is done evolving — the figure/logic-graph
 // canvases stop polling once an experiment reaches one of these.
 export const TERMINAL_STATUSES = ['complete', 'failed', 'abandoned'];

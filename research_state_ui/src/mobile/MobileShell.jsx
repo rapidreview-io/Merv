@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, Link, useLocation } from 'react-router-dom';
 import { useProjectStore, useProjectHref, selectStats, selectSandboxes } from '../store/useProjectStore';
 import { useAutorunStatus } from '../store/useAutorunStatus';
-import { useTheme } from '../store/useTheme';
+import { NEXT_THEME_MODE, useTheme } from '../store/useTheme';
 import ProjectSwitcher from '../components/ProjectSwitcher';
 import { setSurfaceOverride } from '../store/useViewport';
 import BottomSheet from './BottomSheet';
@@ -10,7 +10,6 @@ import ToastHost from './Toast';
 import { usePullToRefresh } from './usePullToRefresh';
 import { IconFeed, IconHome, IconExperiments, IconActivity, IconMore } from './icons';
 
-const NEXT_THEME_MODE = { light: 'dark', dark: 'system', system: 'light' };
 
 function fmtSyncedAgo(ms, now) {
   if (!ms) return 'never';

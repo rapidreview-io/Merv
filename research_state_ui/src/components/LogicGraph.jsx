@@ -15,30 +15,7 @@ import { readableViewport, visibleWidth } from '../utils/graphCamera';
 import { motionMs } from '../utils/motion';
 import { usePanelWidth } from '../store/usePanelWidth';
 import { useStreamAwarePoll } from '../store/useEventStream';
-
-// Node `kind` is the agent's own vocabulary — there is no fixed taxonomy, so
-// each kind gets an accent color by order of first appearance, used as the
-// node's left border (each node also prints its kind as text).
-const KIND_COLORS = [
-  'var(--active)',
-  'var(--supports)',
-  'var(--qualifies)',
-  'var(--refutes)',
-  'var(--mcp)',
-  'var(--ice)',
-];
-const NEUTRAL_COLOR = 'var(--line-strong)';
-
-function kindColorMap(graph) {
-  const colors = new Map();
-  for (const node of graph?.nodes || []) {
-    const kind = String(node.kind || '').trim();
-    if (kind && !colors.has(kind)) {
-      colors.set(kind, KIND_COLORS[colors.size % KIND_COLORS.length]);
-    }
-  }
-  return colors;
-}
+import { KIND_NEUTRAL, kindColorMap } from '../utils/graphStatus';
 
 /**
  * Selection reaches the nodes through context rather than node data, so
@@ -106,7 +83,7 @@ function toFlow(graph) {
     data: {
       ...n,
       kind: String(n.kind || '').trim(),
-      color: colors.get(String(n.kind || '').trim()) || NEUTRAL_COLOR,
+      color: colors.get(String(n.kind || '').trim()) || KIND_NEUTRAL,
       dead: String(n.status || '') === 'dead_end',
     },
     draggable: false,

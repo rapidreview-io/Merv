@@ -14,42 +14,7 @@ import { TERMINAL_STATUSES } from '../utils/experiment';
 import { usePanelWidth } from '../store/usePanelWidth';
 import { useProjectHref } from '../store/useProjectStore';
 import { useStreamAwarePoll } from '../store/useEventStream';
-
-const TYPE_GLYPH = {
-  attempt: '◇',
-  submission: '▣',
-  artifact: '▤',
-  artifact_group: '▣',
-  review: '☑',
-  sandbox: '▶',
-  conclusion: '∴',
-  claim: '◎',
-};
-
-/**
- * Normalize per-type statuses from the figure document into the small set of
- * visual states the CSS knows: done | open | revise | failed | faded | neutral.
- * (`open` = blue/in-motion, `revise` = amber, `faded` = superseded history.)
- */
-function statusClass(node) {
-  const s = String(node.status || '');
-  if (node.type === 'review') {
-    return { pass: 'done', needs_changes: 'revise', fail: 'failed', open: 'open' }[s] || 'neutral';
-  }
-  if (node.type === 'claim') {
-    return {
-      supported: 'done', weakened: 'revise', contradicted: 'failed',
-      active: 'open', draft: 'neutral', abandoned: 'faded',
-    }[s] || 'open';
-  }
-  if (node.type === 'submission') {
-    return { open: 'open', done: 'done', returned: 'revise', failed: 'failed' }[s] || 'done';
-  }
-  return {
-    pending: 'neutral', active: 'open', done: 'done', failed: 'failed',
-    superseded: 'faded', abandoned: 'faded', none: 'neutral',
-  }[s] || 'neutral';
-}
+import { FIGURE_GLYPH, figureStatusClass } from '../utils/graphStatus';
 
 // Attachment edges that are shown as placement, not lines: an execution-lane
 // file or the sandbox simply sits next to the beat it trails. Evidence edges
@@ -124,7 +89,7 @@ function FigureNode({ data }) {
     >
       <Handle type="target" position={Position.Left} className="fig-handle" style={{ top: HANDLE_TOP }} />
       <div className="fig-node-head">
-        <span className="fig-node-glyph" aria-hidden="true">{TYPE_GLYPH[data.type] || '•'}</span>
+        <span className="fig-node-glyph" aria-hidden="true">{FIGURE_GLYPH[data.type] || '•'}</span>
         <span className="fig-node-type">{String(data.type || '').replace(/_/g, ' ')}</span>
         {data.statusClass === 'open' && <span className="fig-node-live" aria-hidden="true" />}
         {/* Which round this node is about ("attempt 2", "round 3.1"): the
@@ -178,13 +143,13 @@ export function MeasureSync({ topologyKey }) {
 function toFlow(figure) {
   const laid = layoutFigure(figure, { timeline: true });
   const liveIds = new Set(
-    laid.nodes.filter(n => statusClass(n) === 'open').map(n => n.id),
+    laid.nodes.filter(n => figureStatusClass(n) === 'open').map(n => n.id),
   );
   const nodes = laid.nodes.map(n => ({
     id: n.id,
     type: 'figure',
     position: { x: n.x, y: n.y },
-    data: { ...n, statusClass: statusClass(n) },
+    data: { ...n, statusClass: figureStatusClass(n) },
     draggable: false,
     connectable: false,
   }));

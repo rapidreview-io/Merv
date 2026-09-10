@@ -46,8 +46,6 @@ const REFL_GAP = (STEP - EXP_W - REFL_W) / 2;
 const expX = (c) => X0 + (c + 1) * STEP;
 const reflX = (i) => X0 + i * STEP + EXP_W + REFL_GAP;
 
-const statusWord = (s) => String(s || '').replace(/_/g, ' ') || '—';
-
 // Lifecycle tone → the figure graph's status-tint vocabulary (fig-st--*).
 // Queued work stays neutral: no tint is what "not judged yet" looks like.
 const FIG_ST = { done: 'done', failed: 'failed', live: 'open', abandoned: 'faded' };

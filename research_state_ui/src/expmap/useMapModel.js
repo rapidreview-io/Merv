@@ -5,7 +5,7 @@ import { classifyExperiment } from '../utils/evidence';
 import { ENTITY_ID_RE, resolveEntity } from '../utils/entityResolve';
 import { expName, TERMINAL_STATUSES } from '../utils/experiment';
 import { sizeLabel } from '../utils/fleet';
-import { clip, fmtStamp } from '../utils/format';
+import { clip, fmtStamp, roleWord } from '../utils/format';
 import { extractPaperCitations } from '../utils/paperCitations';
 import { computeLayout, nowX as clampNowX } from './mapLayout';
 
@@ -118,19 +118,13 @@ const VERDICT = {
   needs_changes: { result: 'needs changes', tone: 'qualifies' },
 };
 
-// 'design_reviewer' → 'design review', 'human' → 'human review'.
-const gateRole = (role) => {
-  const r = String(role || 'review');
-  return r === 'human' ? 'human review' : `${r.replace(/_reviewer$/, '').replace(/_/g, ' ')} review`;
-};
-
 function gatesFor(e) {
   const rows = (e.reviews || [])
     .slice()
     .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
     .map((r) => {
       const v = VERDICT[r.verdict] || { result: r.verdict || 'pending', tone: 'qualifies' };
-      return { label: gateRole(r.role), result: v.result, tone: v.tone };
+      return { label: roleWord(r.role), result: v.result, tone: v.tone };
     });
   const gc = e.gate_checklist;
   const unsatisfied = (gc?.items || []).some((i) => !i.satisfied);

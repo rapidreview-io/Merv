@@ -7,16 +7,9 @@
  * derivations can be unit-tested without a DOM.
  */
 
-const TERMINAL_TONES = new Set(['done', 'failed', 'abandoned']);
+import { roleWord, statusWord } from '../../utils/format.js';
 
-export const ROLE_WORD = {
-  design_reviewer: 'design review',
-  experiment_reviewer: 'experiment review',
-  task_reviewer: 'task review',
-  reflection_reviewer: 'reflection review',
-  consolidation_reviewer: 'consolidation review',
-  human: 'human review',
-};
+export const TERMINAL_TONES = new Set(['done', 'failed', 'abandoned']);
 
 // Verdict vocabulary shared by every review row the sidebar draws. `word` is
 // the past-tense event ("sent back", not "needs changes") because the panel
@@ -26,16 +19,6 @@ export const VERDICT = {
   needs_changes: { word: 'sent back', tone: 'qualifies', glyph: '↩' },
   fail: { word: 'failed', tone: 'refutes', glyph: '✗' },
 };
-
-export function roleWord(role) {
-  if (ROLE_WORD[role]) return ROLE_WORD[role];
-  const r = String(role || 'review').replace(/_reviewer$/, '').replace(/_/g, ' ');
-  return /review$/.test(r) ? r : `${r} review`;
-}
-
-export function statusWord(s) {
-  return String(s || '').replace(/_/g, ' ');
-}
 
 // Second-resolution timestamps tie when two reviews land within one second
 // (a send-back and its fix); the insertion sequence breaks the tie.

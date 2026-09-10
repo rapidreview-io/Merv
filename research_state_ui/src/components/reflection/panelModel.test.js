@@ -4,8 +4,9 @@ import test from 'node:test';
 import { buildBraid } from './braidModel.js';
 import {
   consolidationSummary, debtMeter, expTimeline, gateSummary, hasGhost,
-  lineageOf, outcomeOf, reviewHistory, roleWord, seedStrands, waveLenses, waveStory,
+  lineageOf, outcomeOf, reviewHistory, seedStrands, waveLenses, waveStory,
 } from './panelModel.js';
+import { roleWord } from '../../utils/format.js';
 
 const wave = (id, status, extra = {}) => ({
   id, status, title: id, attempt_index: 1,

@@ -11,7 +11,7 @@
  * called on hover-intent only and memoised per project.
  */
 import { api } from '../api';
-import { basename, clip } from './format';
+import { basename, clip, roleWord } from './format';
 import { expName } from './experiment';
 import { citedSections, paperRoute, paperSeed, sectionRoute, sectionSeed } from './litreview';
 
@@ -130,7 +130,7 @@ function headlineMetric(e) {
 }
 
 function reviewLabel(rv) {
-  const role = (rv.role || 'review').replace(/_reviewer$/, '');
+  const role = roleWord(rv.role);
   return rv.verdict ? `${role} · ${rv.verdict}` : role;
 }
 

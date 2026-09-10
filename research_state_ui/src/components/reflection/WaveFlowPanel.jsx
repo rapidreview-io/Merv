@@ -7,7 +7,7 @@ import { fmtSpan } from '../../utils/format';
 import { dayAgo, fmtDay } from '../../utils/time';
 import {
   buildIntentIndex, consolidationSummary, debtMeter, expTimeline, gateSummary,
-  lineageOf, outcomeOf, reviewHistory, seedStrands, statusWord,
+  TERMINAL_TONES, lineageOf, outcomeOf, reviewHistory, seedStrands,
   waveLenses, waveStory,
 } from './panelModel.js';
 
@@ -24,8 +24,6 @@ import {
  * reader can walk the braid from inside the panel: an experiment to the wave
  * that proposed it, the wave to what it consumed, and back.
  */
-
-const TERMINAL_TONES = new Set(['done', 'failed', 'abandoned']);
 
 function Eyebrow({ children }) {
   return <div className="refl-eyebrow wflow-panel-eyebrow">{children}</div>;
