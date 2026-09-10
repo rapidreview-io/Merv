@@ -852,13 +852,13 @@ class StorageCompleteUploadInput(ProjectScopedInput):
 
 
 class StorageFindInput(ProjectScopedInput):
-    """List the storage ledger, or resolve a single object.
+    """List the project's storage objects, or resolve a single object.
 
     A union of the former ``storage.list`` and ``storage.resolve`` inputs.
     Passing ``object_id`` or ``name`` (with optional ``version`` /
-    ``include_download``) selects resolve mode; omitting both lists the ledger
-    with the ``kind`` / ``status`` filters and ``limit`` / ``offset`` / ``compact``
-    pagination.
+    ``include_download``) selects resolve mode; omitting both lists the
+    objects merv-sandboxes holds, filtered by ``status`` (available by
+    default) with ``limit`` / ``offset`` / ``compact`` pagination.
     """
 
     # Resolve-mode selectors (former storage.resolve).
@@ -867,11 +867,10 @@ class StorageFindInput(ProjectScopedInput):
     version: int | None = Field(default=None, ge=1)
     include_download: bool = True
     # List-mode filters (former storage.list).
-    kind: Literal["dataset", "model", "other"] | None = None
     status: (
-        Literal["uploading", "completing", "available", "expired", "deleted"] | None
+        Literal["uploading", "completing", "available", "delete_pending", "deleted"]
+        | None
     ) = None
-    include_expired: bool = False
     limit: int | None = Field(default=None, ge=1)
     offset: int = Field(default=0, ge=0)
     compact: bool = False
@@ -1783,8 +1782,8 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         feature_requirements=("storage",),
         input_model=StoragePutObjectInput,
         description=(
-            "Register a heavy storage object intent. Returns a presigned upload "
-            "target unless the content is already present in the project. "
+            "Create a heavy storage object in merv-sandboxes and return its "
+            "upload target. The service assigns the version. "
             f"{STORAGE_RULE_OF_THUMB}"
         ),
     ),
@@ -1796,8 +1795,9 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
             "Register a heavy file and get a one-line `run` command to upload it. "
             "Compute the file's sha256 and size, call this, then execute the "
             "returned command verbatim — it PUTs the bytes straight to object "
-            "storage and finalizes the ledger object (bytes never pass through "
-            "the agent context or the brain). Omit name to use the path. "
+            "storage and completes the object once merv-sandboxes verifies them "
+            "(bytes never pass through the agent context or the brain). Omit "
+            "name to use the path; the service assigns the version. "
             f"{STORAGE_RULE_OF_THUMB}"
         ),
     ),
@@ -1806,7 +1806,7 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         visibility="internal",
         feature_requirements=("storage",),
         input_model=StorageCompleteUploadInput,
-        description="Complete a storage upload and mark the ledger object available.",
+        description="Complete a storage upload; merv-sandboxes verifies the bytes.",
     ),
     "storage.find": ToolContract(
         handler_identity="storage.find",
@@ -1814,11 +1814,11 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         input_model=StorageFindInput,
         description=(
             "Find project storage objects. Pass object_id or name (with optional "
-            "version, include_download) to resolve ONE object to its ledger row "
-            "and, with include_download=true, a presigned download URL that renews "
-            "TTL. Omit both to list the ledger: filter by kind/status, include "
-            "expired rows with include_expired, paginate with limit/offset, and "
-            "pass compact=true for a lean projection."
+            "version, include_download) to resolve ONE object and, with "
+            "include_download=true, a presigned download URL that renews its "
+            "retention. Omit both to list objects: filter by status (available "
+            "by default), paginate with limit/offset, and pass compact=true for "
+            "a lean projection."
         ),
     ),
     "storage.fetch": ToolContract(
@@ -1838,9 +1838,10 @@ TOOL_MANIFEST: dict[str, ToolManifest] = {
         input_model=StorageObjectInput,
         description=(
             "Apply a lifecycle action to one storage object by object_id: pin "
-            "(expiry cleanup keeps it), unpin (restore its default expiry), renew "
-            "(renew its default expiry window), or delete (drop the ledger alias, "
-            "keeping history, and reclaim bytes when unreferenced)."
+            "(retention removed; kept permanently), renew (extend retention by "
+            "the default window), or delete (merv-sandboxes reclaims the bytes). "
+            "unpin is refused: service retention only extends, so a pinned "
+            "object stays pinned until deleted."
         ),
     ),
     "review.request": ToolContract(

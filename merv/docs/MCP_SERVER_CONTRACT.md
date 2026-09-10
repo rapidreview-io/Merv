@@ -431,7 +431,7 @@ The brain selects its record and blob adapters at composition time:
 
 - local preset: SQLite and local-directory blobs under the brain state root;
 - control preset: Postgres and an S3-compatible submitted-byte blob store;
-- optional heavy-object storage: a separate S3-compatible bucket.
+- optional heavy-object storage: merv-sandboxes object storage (`MERV_SANDBOXES_URL`).
 
 The checkout never contains the brain database. There is no machine-local routing
 state; project files remain ordinary checkout files until explicitly submitted.

@@ -12,7 +12,6 @@ from ...research_core import ResearchArtifacts as Artifacts
 from ...workflows import Snapshot
 from ...feed import FeedAdvisory
 from ...kernel.events import StoredEvent
-from ...object_storage import ObjectStorage
 from ...research_core import (
     EXPERIMENT_TERMINAL_STATUSES,
     EXPERIMENT_WORKFLOW,
@@ -24,7 +23,7 @@ from ..mlflow import MlflowIntegration, TrackingContextPayload
 from .create import experiment_folder
 from .exhibits import ExhibitBuilder, should_pin_exhibit
 from .metrics_exhibit import METRICS_EXHIBIT_FILENAME, exhibit_bytes
-from .presentation import SlimExperimentState, slim_experiment_state
+from .presentation import ProducedObjectCatalog, SlimExperimentState, slim_experiment_state
 
 
 class TransitionResponse(SlimExperimentState, total=False):
@@ -87,7 +86,7 @@ class TransitionExperiment:
     feed: FeedAdvisory
     mlflow: MlflowIntegration
     exhibits: ExhibitBuilder
-    objects: ObjectStorage
+    objects: ProducedObjectCatalog
 
     def agent(
         self,

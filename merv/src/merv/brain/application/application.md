@@ -11,7 +11,7 @@ module directly.
 ## Main flow
 
 `application.py` is the readable root. It composes Research facts with
-Artifacts, Sandbox, Feed, and Object Storage only when an operation genuinely
+Artifacts, Feed, and the merv-sandboxes facades only when an operation genuinely
 spans them. Research remains the public owner of its event ledger reads.
 
 - `status` and `status_for_agent` preserve rich UI and slim agent views, in
@@ -30,7 +30,7 @@ spans them. Research remains the public owner of its event ledger reads.
   compact agent documents or the richer UI overview.
 - Dashboard, cost, timeline, graph, and figure-fact reads join facts without
   exposing module internals to Surface.
-- Candidate submission resolves and pins an Artifact/Object Storage pointer, or
+- Candidate submission resolves and pins an Artifact or storage-object pointer, or
   records a pathless experiment-workspace nomination for evaluator staging;
   Research owns the immutable candidate and champion lineage.
 - Agent-session claims enumerate dispatchable workflow nodes. Each node declares
@@ -59,16 +59,17 @@ spans them. Research remains the public owner of its event ledger reads.
   reflection presentation, and guidance.
 - `queries.py`: logic-graph composition only.
 - `mlflow.py`: the only optional MLflow integration contract and behavior.
-- `maintenance.py`: research object-ledger expiry, token/log retention and
-  coding-agent lease cleanup. Infrastructure workers own machine and byte expiry.
+- `maintenance.py`: token/log retention and coding-agent lease cleanup.
+  merv-sandboxes owns machine and object expiry.
 
 ## Boundaries and invariants
 
 - Workflows owns graph decisions, guards and handoff context; Research owns review
   security, native records, evidence associations and tracking-delivery receipts.
 - Artifacts owns immutable content; workflow definitions validate evidence meaning.
-- Sandbox, Feed, and Object Storage are called through their concrete package
-  roots; Application defines no mirror facades or forwarding ports.
+- Sandbox, object storage, and Feed are called through their concrete package
+  roots; the only Application port is `ProducedObjectCatalog`, which Research's
+  completion snapshot implements so experiment views need no service call.
 - Agent Sessions owns worker identity and leases; Application binds narrow
   workflow assignment and activation callbacks. The workflow runtime owns
   candidate evaluation, the final transactional check, and the instance facts
@@ -85,8 +86,9 @@ spans them. Research remains the public owner of its event ledger reads.
   MLflow finalization failures remain advisory.
 - Feed advisories: `experiments/transition.py` phrases what a committed event
   is called; the Feed only decides whether the feed already covers that ref.
-- Large candidates stay in Object Storage. Application validates candidate
-  pointers through module roots and never queries sibling persistence tables.
+- Large candidates stay in merv-sandboxes. Application validates and pins
+  candidate pointers through the object facade and reads the producing
+  experiment from Research; it never queries sibling persistence tables.
 - Surface owns HTTP/MCP models, authentication, formatting, and UI-only
   projections such as `surface/experiment_figure.py`.
 

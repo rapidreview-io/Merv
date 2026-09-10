@@ -36,11 +36,10 @@ classification plus file overrides handles mixed packages.
 | Research | `research_core/**`, `literature/**` | project, claim, experiment, review, reflection, and literature authority |
 | Workflows | `workflows/**` | versioned graphs, transition evaluation, context builders, durable runtime, and composition |
 | Artifacts | `artifacts/**` | submitted artifacts, upload tokens, pinned evidence |
-| Infrastructure | `infrastructure/**` | native HTTP adapters, research associations, and spending policy |
+| Infrastructure | `infrastructure/**` | native HTTP adapters, sandbox associations, and the heavy-object facade over merv-sandboxes |
 | Feed | `feed/**` | authors, posts, replies, reactions, history, and advisories |
 | Application | `application/**` | cross-component commands, reactions, and composite reads |
 | Tracking integration | `mlflow/**` | MLflow implementation of tracking ports |
-| Storage | `object_storage/**` | heavy-object ledger and retention policy |
 | Surface | `surface/**` | HTTP/MCP delivery and the co-located composition root |
 
 The exact component import matrix is:
@@ -51,11 +50,10 @@ The exact component import matrix is:
 | Research | Research, Workflows, Artifacts, Kernel |
 | Workflows | Workflows, Kernel |
 | Artifacts | Artifacts, Kernel |
-| Infrastructure | Infrastructure, Storage, Kernel |
+| Infrastructure | Infrastructure, Kernel |
 | Feed | Feed, Kernel |
-| Application | Application, Workflows, Research, Artifacts, Infrastructure, Feed, Storage, Agent sessions, Kernel |
+| Application | Application, Workflows, Research, Artifacts, Infrastructure, Feed, Agent sessions, Kernel |
 | Tracking integration | Tracking integration, Application, Kernel |
-| Storage | Storage, Application, Kernel |
 | Surface | any component; its independent layer classification still applies |
 
 Outside bootstrap, code enters another component only through its declared
@@ -93,18 +91,22 @@ The current layer mapping is deliberately honest about mixed directories:
 | Layer | Representative paths |
 |---|---|
 | foundation | `kernel/**` |
-| port | `kernel/ports/**`, `application/ports/**`, `infrastructure/ports.py`, `object_storage/provider.py` |
+| port | `kernel/ports/**`, `infrastructure/ports.py`, the `ProducedObjectCatalog` and `ObjectLifecycle` protocols |
 | domain | `workflows/{graph,composition,definitions/**}` and pure component policy |
-| application | component roots such as `object_storage/storage.py` and cross-component work under `application/**` |
-| adapter | `mlflow/**`, `infrastructure/{client,storage}.py` |
+| application | component roots such as `infrastructure/objects.py` and cross-component work under `application/**` |
+| adapter | `mlflow/**`, `infrastructure/client.py` |
 | delivery | ordinary `surface/**` HTTP/MCP/auth/serialization code |
 | bootstrap | Surface composition/config/control wiring, the HTTP process launcher |
 
-`object_storage/storage.py` owns versioning, TTL, deduplication, lifecycle
-events, concurrency, and reclamation policy, so it is Storage-component
-**application** code. `object_storage/provider.py` is the component-owned
-heavy-byte port. `infrastructure/storage.py` implements both this port and
-Kernel's submitted-byte port through authenticated native HTTP. No cloud SDK
+merv-sandboxes owns heavy objects outright: names, auto-incremented versions,
+state, verification, retention, quota, expiry and bytes. `infrastructure/objects.py`
+(`RemoteObjects`) is Infrastructure-component **application** code that
+composes the transfer-target and run-command helpers in
+`infrastructure/storage.py` over the `InfrastructureTransport` port and keeps
+only one-time completion tokens. It declares an `ObjectLifecycle` protocol;
+`research_core/objects.py` implements it to record which experiment produced
+an object, the submitter's classification and provenance, and a metadata
+snapshot at completion. The facade never reads those facts back. No cloud SDK
 or physical object-store implementation is part of Merv.
 
 Imports must point inward:
@@ -146,16 +148,17 @@ and response hardening are the real delivery boundaries. The narrow
 outbound previews are supplied through the Kernel `WebPreview` port by the
 Surface adapter, which is also shared with Literature's allowlisted paper
   preview.
-Application response composition depends on its batch
-`ProducedObjectCatalog` port; the provider-optional `ObjectStorage` root
-implements that port so historical ledger rows remain readable when no heavy
-byte provider is enabled. Artifacts and Feed consume only `put/get` from their
-binary blob port; cleanup consumes its separate expiry capability. Local and S3
-binary implementations remain replaceable adapters, while heavy S3 presigned
-transfer stays behind the component-owned `ObjectProvider`.
+Application response composition depends on its `ProducedObjectCatalog` port
+(`application/experiments/presentation.py`); `ResearchObjects` implements it
+from Research's completion snapshot, so experiment views need no service call
+and stay readable when storage is disabled. Artifacts and Feed consume only
+`put/get` from their binary blob port; cleanup consumes its separate expiry
+capability. Local and S3 binary implementations remain replaceable adapters,
+while heavy transfers stay behind the Infrastructure transport port.
 
 Operator-triggered cleanup is a cross-component use case in
 `application/maintenance.py`; Surface only exposes its injected entry point.
+Heavy-object expiry is not part of it: merv-sandboxes reaps its own objects.
 An Application query combines a Kernel-owned tenant event count with
 Sandbox-owned generation counters and injects the result into admin delivery.
 
@@ -165,7 +168,7 @@ those identities; every tool is a control tool served by the brain, so
 hidden/handler routing is not separately maintained. The transition adapter
 still sets the agent credential audience. Cross-module project and
 experiment-list decisions live in `application/tool_commands.py`; storage-only
-tool operations call the owning `ObjectStorage` root directly.
+tool operations call the owning `RemoteObjects` root directly.
 
 These are dependency changes, not service extraction: everything still runs in
 one brain process and shares the existing transaction/event ledger.

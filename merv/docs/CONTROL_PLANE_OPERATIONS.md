@@ -35,10 +35,11 @@ policy check. Historical terminated sandbox records remain read-only.
 
 ## Storage
 
-Merv retains the object ledger, artifact identities, retention policy, and
-research relationships. Its storage adapters use the external HTTP API for
-both submitted blobs and heavy objects. Native storage owns multipart uploads,
-presigned URLs, checksum validation, physical deletion, and expiry. Repair
+Merv retains artifact identities and the research association of each heavy
+object to the experiment that produced it. merv-sandboxes owns the heavy-object
+catalog (names, versions, state, retention), multipart uploads, presigned URLs,
+checksum validation, physical deletion, and expiry; Merv keeps only one-time
+completion tokens. Artifact and feed bytes use Merv's own R2 adapter. Repair
 provider access in that service, never by adding S3 credentials to Merv.
 
 Use the migration report and native object catalog when diagnosing legacy

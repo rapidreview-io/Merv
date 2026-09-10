@@ -12,7 +12,8 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
 ## Main flow
 
 1. `surface.py` builds one `Surface`: Research, Workflows, Application, Agent Sessions,
-   Artifacts, Feed, Literature, Object Storage, Sandbox, telemetry, and tools.
+   Artifacts, Feed, Literature, the merv-sandboxes object and sandbox facades,
+   telemetry, and tools.
    Machine setting `features.sandbox=false` substitutes a fail-closed backend
    and omits Sandbox tools and HTTP routes; absence keeps Sandbox enabled.
 2. `tools/contracts.py` defines the public MCP input schemas and descriptions.

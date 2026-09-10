@@ -1,4 +1,3 @@
-# If you update this file, you must consult object_storage.md to see whether object_storage.md needs to be updated. object_storage.md must not exceed 100 lines.
 """Local content-addressed bytes for Artifacts and Feed."""
 
 from __future__ import annotations

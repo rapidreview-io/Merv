@@ -1,155 +1,129 @@
-"""Large dataset and model transfers through native merv-sandboxes storage.
+"""Byte transfer through merv-sandboxes storage.
 
-Research names, versions, associations and retention policy remain in Merv.
-Artifact and figure bytes use the independent Merv-owned R2 adapter.
+The service owns object names, versions, state, retention and physical bytes.
+This module only shapes resumable transfer targets from the service's upload
+status and renders the one-line commands agents run to move bytes. Artifact
+and figure bytes use the independent Merv-owned R2 adapter.
 """
 
 from __future__ import annotations
 
 import base64
-import json
-import re
 from typing import Any
 
-from ..kernel.ports.blob_store import validate_blob_keys
-from ..kernel.utils import NotFoundError, ValidationError
-from ..object_storage import ObjectStat
-from .client import InfrastructureClient, InfrastructureUnavailableError, project_namespace
+from ..kernel.utils import ValidationError
+from .ports import InfrastructureTransport
+
+_LOCAL_API_BASE = "http://127.0.0.1:8787"
+_PART_PAGE = 100
 
 
-def _encode_upload(namespace: str, object_id: str, *, row_id: str | None = None) -> str:
-    identity = [namespace, object_id]
-    if row_id is not None:
-        identity.append(row_id)
-    payload = json.dumps(identity, separators=(",", ":")).encode()
-    return "msbx_" + base64.urlsafe_b64encode(payload).decode().rstrip("=")
+def _shell_quote(value: str) -> str:
+    """Quote one POSIX shell argument."""
+    return "'" + value.replace("'", "'\\''") + "'"
 
 
-def _decode_upload(upload_id: str) -> tuple[str, str]:
-    try:
-        if not upload_id.startswith("msbx_") or len(upload_id) > 512:
-            raise ValueError
-        raw = upload_id[5:]
-        identity = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
-        if not isinstance(identity, list) or len(identity) not in {2, 3}:
-            raise ValueError
-        namespace, object_id = identity[:2]
-        if len(identity) == 3 and (
-            not isinstance(identity[2], str)
-            or not re.fullmatch(r"sto_[A-Za-z0-9_]{1,128}", identity[2])
-        ):
-            raise ValueError
-        validate_blob_keys(namespace=namespace)
-        if not isinstance(object_id, str) or not object_id.startswith("obj_"):
-            raise ValueError
-        validate_blob_keys(namespace=object_id)
-        return namespace, object_id
-    except (ValueError, TypeError, UnicodeError) as exc:
-        raise ValidationError("invalid merv-sandboxes upload identity") from exc
+def checksum_sha256_b64(sha256: str) -> str:
+    """Encode the checksum format required by S3."""
+    return base64.b64encode(bytes.fromhex(sha256)).decode("ascii")
 
 
-class RemoteObjectProvider:
-    def __init__(self, *, client: InfrastructureClient) -> None:
-        self.client = client
+def storage_submit_command(
+    *,
+    base_url: str,
+    path: str,
+    presigned_url: str,
+    checksum_b64: str,
+    content_type: str,
+    token: str,
+    headers: dict[str, str] | None = None,
+) -> str:
+    """Build the direct single-PUT upload and completion command."""
+    base = (base_url or _LOCAL_API_BASE).rstrip("/")
+    # Provider-specific signed headers are opaque service output. The fallback
+    # preserves existing callers of this command builder.
+    signed_headers = headers if headers is not None else {
+        "x-amz-checksum-sha256": checksum_b64, "Content-Type": content_type,
+    }
+    header_flags = " ".join(
+        f"-H {_shell_quote(f'{key}: {value}')}" for key, value in signed_headers.items()
+    )
+    put = (
+        f"curl -sf -X PUT {header_flags} "
+        f"-T {_shell_quote(path)} {_shell_quote(presigned_url)}"
+    )
+    complete = (
+        f"curl -sf -X POST {_shell_quote(f'{base}/api/storage/u/{token}/complete')}"
+    )
+    return f"{put} && {complete}"
 
-    def _namespace(self, namespace: str) -> str:
-        return project_namespace(namespace)
 
-    def _name(self, namespace: str, sha256: str) -> str:
-        validate_blob_keys(namespace=namespace, sha256=sha256)
-        return sha256
+def storage_multipart_submit_command(*, base_url: str, path: str, token: str) -> str:
+    """Build the client-assisted multipart upload command.
 
-    def _find(self, *, namespace: str, sha256: str) -> list[dict[str, Any]]:
-        name = self._name(namespace, sha256)
-        records: list[dict[str, Any]] = []
-        offset = 0
-        while True:
-            page = self.client.request("GET", "/storage/objects", namespace=self._namespace(namespace),
-                                       params={"name": name, "limit": 1000, "offset": offset})["objects"]
-            records.extend(row for row in page if row["sha256"] == sha256)
-            if len(page) < 1000:
-                return records
-            offset += len(page)
+    The one-time URL contains no presigned provider credentials. ``merv-client``
+    fetches fresh part URLs from it, streams the parts concurrently, and posts
+    back to its ``/complete`` child route.
+    """
+    base = (base_url or _LOCAL_API_BASE).rstrip("/")
+    target_url = f"{base}/api/storage/u/{token}"
+    return (
+        f"merv-client storage-upload --path {_shell_quote(path)} "
+        f"--target-url {_shell_quote(target_url)}"
+    )
 
-    def _available(self, *, namespace: str, sha256: str) -> dict[str, Any] | None:
-        return next((row for row in self._find(namespace=namespace, sha256=sha256)
-                     if row["state"] == "available"), None)
 
-    def presign_upload(
-        self, *, namespace: str, sha256: str, size_bytes: int,
-        content_type: str = "application/octet-stream", expires_in: int,
-    ) -> dict[str, Any]:
-        name = self._name(namespace, sha256)
-        status = self.client.request("POST", "/storage/objects", namespace=self._namespace(namespace),
-                                     json={"name": name, "sha256": sha256, "size_bytes": size_bytes,
-                                           "content_type": content_type})
-        return self._target(namespace=namespace, status=status)
+def storage_fetch_command(*, path: str, presigned_url: str, sha256: str) -> str:
+    """Build a direct download with checksum verification."""
+    fetch = f"curl -sf -o {_shell_quote(path)} {_shell_quote(presigned_url)}"
+    verify = f"printf '%s  %s\\n' {sha256} {_shell_quote(path)} | shasum -a 256 -c"
+    return f"{fetch} && {verify}"
 
-    def _target(self, *, namespace: str, status: dict[str, Any]) -> dict[str, Any]:
-        obj = status["object"]
-        parts = list(status["parts"])
-        completed = list(status.get("completed_parts", []))
-        next_part = status.get("next_part")
-        seen: set[int] = set()
-        while next_part is not None:
-            if next_part in seen:
-                raise InfrastructureUnavailableError("invalid upload pagination from merv-sandboxes")
-            seen.add(next_part)
-            page = self.client.request("GET", f"/storage/objects/{obj['id']}/upload",
-                                       namespace=self._namespace(namespace),
-                                       params={"start_part": next_part, "limit": 100})
-            parts.extend(page["parts"])
-            completed.extend(page.get("completed_parts", []))
-            next_part = page.get("next_part")
-        target = {"upload_id": _encode_upload(namespace, obj["id"]), "parts": parts,
-                "completed_parts": sorted(set(completed)), "part_count": status["part_count"],
-                "part_size": status["part_size"], "size_bytes": obj["size_bytes"],
-                "content_type": obj["content_type"],
-                "checksum_sha256": base64.b64encode(bytes.fromhex(obj["sha256"])).decode()}
-        if status["part_count"] == 1 and len(parts) == 1 and not completed:
-            target.update(url=parts[0]["url"], headers=parts[0].get("headers", {}))
-        return target
 
-    def resume_upload(self, *, upload_id: str, expires_in: int) -> dict[str, Any]:
-        namespace, object_id = _decode_upload(upload_id)
-        status = self.client.request("GET", f"/storage/objects/{object_id}/upload",
-                                     namespace=self._namespace(namespace))
-        target = self._target(namespace=namespace, status=status)
-        # Several historical ledger rows can share one native content object.
-        # Their row-specific completion handles must survive URL refreshes.
-        target["upload_id"] = upload_id
-        return target
+def upload_target(
+    client: InfrastructureTransport, *, namespace: str, status: dict[str, Any]
+) -> dict[str, Any]:
+    """Assemble one resumable transfer target from a service upload status.
 
-    def complete_upload(self, *, upload_id: str, parts: Any = None) -> ObjectStat:
-        namespace, object_id = _decode_upload(upload_id)
-        obj = self.client.request("POST", f"/storage/objects/{object_id}/complete",
-                                  namespace=self._namespace(namespace))
-        return self._stat(namespace, obj)
+    Part URLs arrive in pages; every page is followed so ``merv-client`` sees
+    the complete contiguous set. A single-part upload also exposes ``url`` and
+    its signed ``headers`` for the plain ``curl -T`` command.
+    """
+    obj = status["object"]
+    parts = list(status.get("parts", []))
+    completed = list(status.get("completed_parts", []))
+    next_part = status.get("next_part")
+    seen: set[int] = set()
+    while next_part is not None:
+        if next_part in seen:
+            raise ValidationError("invalid upload pagination from merv-sandboxes")
+        seen.add(next_part)
+        page = client.request(
+            "GET", f"/storage/objects/{obj['id']}/upload", namespace=namespace,
+            params={"start_part": next_part, "limit": _PART_PAGE},
+        )
+        parts.extend(page.get("parts", []))
+        completed.extend(page.get("completed_parts", []))
+        next_part = page.get("next_part")
+    target: dict[str, Any] = {
+        "upload_id": obj["id"],
+        "parts": parts,
+        "completed_parts": sorted(set(completed)),
+        "part_count": status["part_count"],
+        "part_size": status["part_size"],
+        "size_bytes": obj["size_bytes"],
+        "content_type": obj["content_type"],
+        "checksum_sha256": checksum_sha256_b64(obj["sha256"]),
+    }
+    if status["part_count"] == 1 and len(parts) == 1 and not completed:
+        target.update(url=parts[0]["url"], headers=parts[0].get("headers", {}))
+    return target
 
-    @staticmethod
-    def _stat(namespace: str, obj: dict[str, Any]) -> ObjectStat:
-        if obj["state"] != "available":
-            raise ValidationError("merv-sandboxes has not completed the upload")
-        return ObjectStat(namespace=namespace, sha256=obj["sha256"], size_bytes=obj["size_bytes"],
-                          content_type=obj["content_type"])
 
-    def stat(self, *, namespace: str, sha256: str) -> ObjectStat | None:
-        obj = self._available(namespace=namespace, sha256=sha256)
-        return self._stat(namespace, obj) if obj else None
-
-    def presign_download(self, *, namespace: str, sha256: str, expires_in: int) -> dict[str, str]:
-        obj = self._available(namespace=namespace, sha256=sha256)
-        if obj is None:
-            raise NotFoundError(f"stored content not found: {namespace}/{sha256}")
-        target = self.client.request("GET", f"/storage/objects/{obj['id']}/download",
-                                     namespace=self._namespace(namespace))
-        return {"url": target["url"]}
-
-    def delete(self, *, namespace: str, sha256: str) -> bool:
-        found = False
-        for obj in self._find(namespace=namespace, sha256=sha256):
-            if obj["state"] not in {"deleted", "delete_pending"}:
-                self.client.request("DELETE", f"/storage/objects/{obj['id']}",
-                                    namespace=self._namespace(namespace))
-                found = True
-        return found
+__all__ = [
+    "checksum_sha256_b64",
+    "storage_fetch_command",
+    "storage_multipart_submit_command",
+    "storage_submit_command",
+    "upload_target",
+]

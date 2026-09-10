@@ -3,15 +3,26 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, cast
+from typing import Any, Iterable, Protocol, cast
 
-from ...research_core import ExperimentState, SYNOPSIS_MAX_LEN
-from ...object_storage import ProducedObject
+from ...research_core import ExperimentState, ProducedObject, SYNOPSIS_MAX_LEN
 from .claim_guidance import claim_update_suggestions
 
 
 class SlimExperimentState(ExperimentState, total=False):
     """Agent-facing experiment detail: workflow substance without bookkeeping."""
+
+
+class ProducedObjectCatalog(Protocol):
+    """Research's own record of the heavy objects its experiments produced."""
+
+    def by_experiment(
+        self, *, project_id: str, experiment_ids: tuple[str, ...]
+    ) -> dict[str, list[ProducedObject]]: ...
+
+    def association(
+        self, *, project_id: str, object_id: str
+    ) -> dict[str, Any] | None: ...
 
 
 _SLIM_ARTIFACT_FIELDS = (
@@ -24,9 +35,7 @@ _SLIM_ARTIFACT_FIELDS = (
     "tldr",
 )
 _SLIM_STORAGE_FIELDS = tuple(
-    field
-    for field in ProducedObject.__annotations__
-    if field not in {"created_at", "updated_at", "last_accessed_at"}
+    field for field in ProducedObject.__annotations__ if field != "created_at"
 )
 _PRIOR_ARTIFACT_FIELDS = (
     "id",
@@ -247,6 +256,7 @@ def slim_experiment_state(
 
 
 __all__ = [
+    "ProducedObjectCatalog",
     "SlimExperimentState",
     "claim_update_suggestions",
     "project_fields",

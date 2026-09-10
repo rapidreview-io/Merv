@@ -18,7 +18,6 @@ from typing import Any, Final, Protocol, TypedDict, cast, runtime_checkable
 from merv.shared.errors import TrackingPersistenceError, WorkflowError
 
 from ..feed import FeedAdvisory
-from ..object_storage import ObjectStorage
 from ..research_core import (
     ExperimentState,
     ExperimentSummary,
@@ -26,7 +25,7 @@ from ..research_core import (
     Research,
 )
 from ..workflows import Delivery
-from .experiments.presentation import slim_experiment_state
+from .experiments.presentation import ProducedObjectCatalog, slim_experiment_state
 
 LOGGER = logging.getLogger(__name__)
 
@@ -241,7 +240,7 @@ class MlflowIntegration:
         *,
         research: Research,
         feed: FeedAdvisory,
-        objects: ObjectStorage,
+        objects: ProducedObjectCatalog,
         adapter: ExperimentTracking | None,
     ) -> None:
         self.research = research

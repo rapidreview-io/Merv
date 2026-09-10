@@ -21,12 +21,12 @@ from ..research_core import (
 )
 from ..infrastructure import RemoteSandboxes as SandboxEngine
 from .experiments.presentation import (
+    ProducedObjectCatalog,
     project_fields,
     project_rows,
     rich_experiment_state,
 )
 from .experiments.context import ExperimentContextQuery
-from ..object_storage import ObjectStorage
 from .project_context import ProjectContextQuery
 from .reflection_guidance import literature_hint
 from .status_guidance import StatusGuidancePolicy
@@ -73,7 +73,7 @@ class StatusAndNextQuery:
     research: Research
     sandboxes: SandboxEngine
     policy: StatusGuidancePolicy
-    objects: ObjectStorage
+    objects: ProducedObjectCatalog
     context: ExperimentContextQuery
     project_context: ProjectContextQuery
     task_context: TaskContextQuery | None = None

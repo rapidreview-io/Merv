@@ -452,7 +452,8 @@ CREATE TABLE IF NOT EXISTS storage_objects (
 -- POST /api/storage/u/<token>/complete is the ONLY wire-reachable completion for
 -- a key agent (storage.complete_upload is internal and rejected over MCP), so
 -- without it a direct-to-S3 object stays uploading forever. Single-use: the row
--- is deleted once a head-verified completion succeeds.
+-- is deleted once the service verifies the completion. object_id and upload_id
+-- both name the merv-sandboxes object (migration 61); the ledger FK is gone.
 CREATE TABLE IF NOT EXISTS storage_completion_tokens (
   token TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
@@ -461,8 +462,35 @@ CREATE TABLE IF NOT EXISTS storage_completion_tokens (
   status TEXT NOT NULL DEFAULT 'pending',
   expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  FOREIGN KEY(project_id) REFERENCES projects(id),
-  FOREIGN KEY(object_id) REFERENCES storage_objects(id)
+  FOREIGN KEY(project_id) REFERENCES projects(id)
+);
+
+-- Research facts about merv-sandboxes objects (migration 61): the producing
+-- target, the classification and provenance the submitter declared, and the
+-- metadata snapshot captured at completion, so experiment views need no
+-- service call.
+-- The service owns the object; storage_objects above is the retired ledger,
+-- kept only for deploy/migrate_storage_ledger.py.
+CREATE TABLE IF NOT EXISTS research_objects (
+  object_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  target_type TEXT NOT NULL DEFAULT '',
+  target_id TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL,
+  producing_run TEXT NOT NULL DEFAULT '',
+  source_uri TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  name TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  content_sha256 TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+  object_created_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  created_seq INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
 CREATE TABLE IF NOT EXISTS review_requests (
@@ -1522,6 +1550,10 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     # Fresh schemas already carry both; the handler adds the columns, moves
     # experiment_workspaces rows into agent_workspaces and drops the old table.
     (61, "add_agent_workspaces", ""),
+    # Object storage moved to merv-sandboxes (September 2026): research keeps
+    # only its association table, and completion tokens name service object
+    # ids, so the token table is rebuilt without its ledger foreign key.
+    (62, "add_research_objects", ""),
 )
 
 WORKFLOW_SCHEMA = (
@@ -1814,6 +1846,12 @@ TOOL_CALL_LEDGER_INDEXES = (
     "  ON sandbox_generations(project_id, created_seq)",
 )
 
+# Migration 61's index: same rule as above, never in SCHEMA.
+RESEARCH_OBJECTS_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_research_objects_target"
+    "  ON research_objects(project_id, target_type, target_id, status)",
+)
+
 # Credential tables that carry a scope discriminator (migration 34).
 GRANT_SCOPE_TABLES = (
     "project_api_keys",
@@ -2061,6 +2099,8 @@ class BaseStateStore:
                 conn.execute(_schema_table_ddl(table="remote_sandbox_links"))
         elif name == "add_agent_workspaces":
             self._add_agent_workspaces(conn=conn)
+        elif name == "add_research_objects":
+            self._add_research_objects(conn=conn)
         else:
             conn.execute(statement)
 
@@ -2091,6 +2131,38 @@ class BaseStateStore:
                 """
             )
             conn.execute("DROP TABLE experiment_workspaces")
+
+    def _add_research_objects(self, *, conn: Connection) -> None:
+        """Research associations for merv-sandboxes objects.
+
+        The completion-token table is rebuilt from SCHEMA so it no longer
+        references the retired storage_objects ledger: tokens now name service
+        object ids. Pending rows survive the rebuild.
+        """
+        if not self._has_table(conn=conn, table="research_objects"):
+            conn.execute(_schema_table_ddl(table="research_objects"))
+        for sql in RESEARCH_OBJECTS_INDEXES:
+            conn.execute(sql)
+        conn.execute("DROP TABLE IF EXISTS storage_completion_tokens_migrate")
+        conn.execute(
+            _schema_table_ddl(
+                table="storage_completion_tokens",
+                name="storage_completion_tokens_migrate",
+            )
+        )
+        if self._has_table(conn=conn, table="storage_completion_tokens"):
+            conn.execute(
+                """
+                INSERT INTO storage_completion_tokens_migrate
+                  (token, project_id, object_id, upload_id, status, expires_at, created_at)
+                SELECT token, project_id, object_id, upload_id, status, expires_at, created_at
+                FROM storage_completion_tokens
+                """
+            )
+            conn.execute("DROP TABLE storage_completion_tokens")
+        conn.execute(
+            "ALTER TABLE storage_completion_tokens_migrate RENAME TO storage_completion_tokens"
+        )
 
     def _add_workflow_runtime(self, *, conn: Connection) -> None:
         """Explicit v1 adoption, preserving evidence and never replaying work."""

@@ -34,7 +34,6 @@ class TestBrain:
     _PRIVATE_ALIASES = {
         "store": "_store",
         "blobs": "_blobs",
-        "storage": "storage",
         "mlflow_tracking": "_tracking",
     }
 
@@ -46,8 +45,8 @@ class TestBrain:
         infrastructure_client: Any | None = None,
         store: Any | None = None,
         blobs: Any | None = None,
-        storage: Any | None = None,
         mlflow_tracking: Any | None = None,
+        storage_enabled: bool = False,
         env: dict[str, str] | None = None,
     ) -> None:
         self.repo_root = Path(repo_root).expanduser().resolve()
@@ -74,8 +73,9 @@ class TestBrain:
             ),
             store=self._store,
             blobs=self._blobs,
-            storage=storage,
             mlflow_tracking=mlflow_tracking,
+            # Storage tools stay out of the default manifest; storage tests opt in.
+            storage_enabled=storage_enabled,
         )
         self._app = self.server.app
         research = self._app.research

@@ -6,12 +6,12 @@
 artifact associations and candidate lineage. It supplies project-scoped verified
 facts and transactional record bindings to Workflows, which owns graph decisions
 and agent briefs. Application composes modules; Surface owns auth and transport.
-Generic Artifacts owns immutable content, Feed publishes observations, Sandbox
-executes workloads, and Object Storage tracks ML workload objects.
+Generic Artifacts owns immutable content, Feed publishes observations, and
+merv-sandboxes runs workloads and stores ML objects; Research records their producer.
 
 `Research` is the public root, built from `BaseStateStore` and `ResearchArtifacts`;
-Surface also injects `Workflows`. Experiment, task and reflection lifecycles use its
-versioned graph/runtime; their record services remain private collaborators.
+Surface also injects `Workflows`. Experiment, task and reflection lifecycles use
+its versioned graph/runtime; their record services stay private collaborators.
 
 ## Files
 - `artifacts.py`: research-owned associations, role/target policy, accepted
@@ -20,16 +20,16 @@ versioned graph/runtime; their record services remain private collaborators.
 - `research.py`: public root; project, claim, candidate writes, workflow delegation,
   snapshots, project context, membership, events, graph refs.
 - `experiments.py`: experiment record binding, creation invariants, verified facts,
-  evidence sealing, attempt projection, and idempotent tracking-delivery ledger. `tasks.py`: the
-  task record binding, creation invariants, validated facts, and evidence sealing;
-  its transitions and review returns commit through `workflows.Runtime`.
-- `dependencies.py`: the wave DAG (`node_dependencies`): edges with cycle
-  checks, per-node dependency and dependent rows for the shared gate and UI.
+  evidence sealing, attempt projection, and the idempotent tracking-delivery ledger.
+  `tasks.py`: the same for tasks; transitions commit through `workflows.Runtime`.
+- `dependencies.py`: the wave DAG (`node_dependencies`): edges with cycle checks,
+  per-node dependency and dependent rows for the shared gate and UI.
 - `reflections.py`: reflection record binding, corpus snapshots, lens coverage,
   graph comparison, atomic change-spec materialization and drift facts.
-- `reviews.py`: review requests, one-time capabilities, isolated sessions,
-  pinned snapshots, verdicts, return routing. `association_targets.py`:
-  target resolution and publication protection.
+- `reviews.py`: review requests, one-time capabilities, isolated sessions, pinned
+  snapshots, verdicts, return routing. `association_targets.py`: target resolution.
+- `objects.py`: `ResearchObjects` — the object facade's lifecycle hook, the
+  per-experiment `ProducedObject` snapshot captured at completion, and adoption.
 - `*_workflow.py` and `workflow_schema.py`: compatibility views of canonical graphs.
 - `policy.py`: vocabulary, validation, gate evaluation, snapshot identity, reflection
   signal, limits. `evidence.py`: compatibility exports of workflow-owned pure
@@ -42,9 +42,9 @@ The graph uses `planned -> design_review -> running -> experiment_review ->
 complete`; failure and abandonment are terminal outcomes. Passing design review
 immediately enters execution. Dependencies gate dispatch; actual activation starts
 the attempt clock and tracking. Graph decisions, native state, and evidence sealing
-commit together. Rejected design work
-returns to `planned` and increments the attempt; a rejected execution review
-returns to `planned` (new attempt) or `running` (keep the approved plan).
+commit together. Rejected design work returns to `planned` and increments the
+attempt; a rejected execution review returns to `planned` (new attempt) or
+`running` (keep the approved plan).
 
 Tracking outcomes update experiment state and append an event atomically; a
 keyed delivery also writes `tracking_deliveries` there, so its unique key proves
@@ -82,7 +82,7 @@ submission rechecks that snapshot before a verdict can route a workflow.
 hydrates experiment, task, and reflection state in batches and returns gate
 evaluations with the records they govern. Focused reads may be smaller but keep
 the same project scope, attempt rules, and snapshot identity. Candidates point
-to an Artifact, Object Storage object, or pathless experiment workspace awaiting
+to an Artifact, a merv-sandboxes object, or pathless experiment workspace awaiting
 evaluator staging; staging and promotions are append-only, and promotion needs
 durable bytes, a reason, and compare-and-swap against the observed champion.
 
