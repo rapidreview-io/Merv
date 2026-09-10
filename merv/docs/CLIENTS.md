@@ -88,84 +88,41 @@ Shared invariants across all clients:
   `bin/merv-http`; local mode is auth-free. `merv-client env` remains the
   static-key config generator for runners and other headless surfaces.
 
-## Long runs (merv_run) per client
+## Long runs per client
 
-Long sandbox work is client-neutral in core: launch with
-`merv_run <label> -- <command>` over SSH, then check `sandbox.runs` — either a
-`wait_seconds` long-poll inside the session or a plain call when next attending
-the experiment. The long-poll cap is 300s server-side, but most MCP clients cut
-tool calls around ~60s; unless you know your client's tool timeout is higher,
-pass `wait_seconds<=45` (the same bound `sandbox.request` uses) and call again.
-Run-oriented sandbox responses include compact receipts; `sandbox.runs` is the
-authoritative status/readback call, and on HTTP surfaces configured with a wait
-key its rows carry the `wait_url` that lets a client be *woken* by the run
-instead of polling for it.
+Waiting for a run is one mechanism everywhere: call `sandbox.runs` with the
+run's label and `wait_seconds=30`. The call blocks until any run finishes or the
+cap elapses, then returns the rows; a row with `status: "finished"` carries the
+`exit_code`. Anything short of terminal means call again. 30s is the cap
+merv-sandboxes honours on the underlying job wait, so asking for more would only
+promise a hold nobody keeps — and it sits well inside the ~60s tool timeout most
+MCP clients enforce. Launch the work with `sandbox.run`, which returns the job
+ID that is the label.
 
-## Waking on run completion
+The loop spans only the current turn. A run that finishes after you end the turn
+is not noticed until you next call `sandbox.runs`, so arm the loop right after
+the launch rather than leaving a box billing with nobody reading the receipts.
+`sandbox.runs` is the authoritative status readback; the compact receipts on
+run-oriented responses are not.
 
-On the hosted and local HTTP surfaces (any composition holding a wait key),
-each `sandbox.runs` row carries a `wait_url`: a per-run URL signed for exactly
-that `(sandbox_uid, label)` pair, served by an auth-exempt route, so an agent
-can wait on a run without holding a credential. It reveals only that the run
-ended and how (`status`, `exit_code`) — logs, outputs and receipts stay behind
-the authenticated tools — and it stops answering roughly six hours after the
-brain last observed a terminal run, or once the sandbox lease plus a day has
-passed. Anyone holding the URL can read that much, so treat it like a status
-pager rather than a secret: fine to hand to a local background process, not
-something to paste anywhere public.
+What differs per client is only how long it will let you keep looping:
 
-`bin/merv-runs-wait` (in the client bundle) is the portable watcher. It blocks
-until the run settles and its **exit** is the wake signal; stdout carries
-exactly one line, `MERV_RUNS_WAIT <state> <label> [status=... exit_code=...]`,
-with heartbeats confined to stderr. One exception the contract names: a watcher
-killed outright (SIGKILL, a signal during interpreter startup, a broken Python
-install) exits with no line at all — treat a missing line exactly like
-`poll_error`: read truth with one authenticated `sandbox.runs`, then re-arm.
-Arming it right after a launch is what keeps a finished run from billing idle
-until someone looks. Per-client
-recipes — documentation only, nothing in core depends on them:
+- **Claude Code**: loop in the turn. Each 30s call is well under the tool
+  timeout, and the turn continues until a row goes terminal. Subagents loop the
+  same way.
+- **Cursor (3.0+)**: loop in the turn. If the session is interrupted, re-read
+  `sandbox.runs` once on resume before deciding anything — the row is durable.
+- **Codex CLI**: loop in the turn; no terminal timeout applies, because the wait
+  happens inside the tool call rather than in a shell.
+- **Hermes Agent**: loop in the turn. A delegated child that launched the run
+  waits on it itself and reports the terminal row back.
+- **Kilo**: loop in the turn.
+- **No-shell surfaces** (Claude Desktop and similar MCP-only clients): the same
+  loop, and the only one they ever needed.
 
-- **Claude Code**: run `merv-runs-wait --url <wait_url>` as a background Bash
-  task (`run_in_background`). The turn ends immediately; the task's exit fires
-  the client's native background-task notification and brings the agent back.
-  Works from subagents too. On a machine with no bundle, `curl -N <wait_url>`
-  streams the same final line, but the exit codes are curl's, not the
-  contract's.
-- **Cursor (3.0+)**: background shell with notify-on-output armed on the
-  sentinel regex `^MERV_RUNS_WAIT `; the shell's exit or the matched line
-  resumes the agent. If a long-idle reattach fails, re-run the watcher or fall
-  back to a stop-hook loop.
-- **Codex CLI**: run the watcher in the foreground blocking terminal (raise
-  `background_terminal_max_timeout` when holds outlast the default), or use a
-  background terminal plus an empty `write_stdin` poll, which unblocks the
-  instant the process exits.
-- **Hermes Agent**: start the watcher with the background terminal and
-  completion notification enabled. Its exit wakes the agent; then read
-  `sandbox.runs` for authoritative status and receipts.
-- **Kilo**: `background_process` with `ready.pattern` `^MERV_RUNS_WAIT `
-  (block-until-sentinel).
-- **No-shell surfaces** (Claude Desktop and similar MCP-only clients): no
-  watcher is possible. Long-poll `sandbox.runs` with `wait_seconds` and never
-  call tighter than 60s apart; abandoning that loop leaves the box billing with
-  nobody reading the receipts.
-
-Rows minted by surfaces that have no caller-reachable base URL or no wait key
-(library and direct callers) carry no `wait_url`. The same binary then polls
-`sandbox.runs` with `MERV_MCP_KEY` and produces the same final line:
-
-```bash
-merv-runs-wait --project-id <project_id> --sandbox-uid <sandbox_uid> \
-  --label <label> [--deadline 3600]
-```
-
-The exit code is the state, in both modes:
-
-| Exit | State | Meaning |
-|---|---|---|
-| 0 | `done` | terminal observation — read `status=`/`exit_code=` on the line; exit 0 never means the workload succeeded |
-| 2 | `still_running` | the server's hold cap (60 min) or `--deadline` elapsed; re-arm the same command |
-| 3 | `poll_error` | the wait itself failed (transport, auth, rate limit); read truth with one authenticated `sandbox.runs`, then re-arm |
-| 4 | `no_such_run` | absence OR an expired/rejected URL — in URL mode the run may still exist behind auth; read truth with one authenticated `sandbox.runs`, and conclude absence only when that row is missing past keyed registration grace |
+For a run expected to outlast a turn, end the turn and call `sandbox.runs` once
+when you next attend the experiment: the row, its `exit_code`, and its retained
+output survive both the turn and the sandbox's release.
 
 ## Packaging the client bundle (maintainers)
 
@@ -175,9 +132,8 @@ never runs. The generated *slim* bundle keeps distribution independent from
 the backend and test tree.
 
 [`scripts/build_client_bundle.py`](../scripts/build_client_bundle.py) assembles
-that bundle (skills, agents, manifests, `.mcp.json`, `bin/merv-client` and
-`bin/merv-runs-wait` plus their self-contained `src/merv/{client,shared}`, and
-the conformance probe) from
+that bundle (skills, agents, manifests, `.mcp.json`, `bin/merv-client` plus its
+self-contained `src/merv/{client,shared}`, and the conformance probe) from
 the real sources — nothing is duplicated in git, and
 `tests/surface/test_client_bundle.py` fails if the backend or tests ever leak in
 or a new skill/agent is left out.

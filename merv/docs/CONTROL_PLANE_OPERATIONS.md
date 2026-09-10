@@ -8,7 +8,7 @@ and cleanup. Operate and back up both services separately.
 ## Startup and health
 
 Hosted control requires `MERV_DB_URL`, `MERV_SANDBOXES_URL`,
-`MERV_SANDBOXES_JWT_SECRET`, `MERV_WAIT_SECRET`, and the end-user authentication
+`MERV_SANDBOXES_JWT_SECRET`, and the end-user authentication
 configuration in [AUTH.md](AUTH.md). Set `MERV_REQUIRE_SANDBOX_BACKEND=1` to
 check authenticated service access at startup. Invalid or incomplete
 configuration fails startup instead of selecting a built-in backend.
