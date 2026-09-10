@@ -40,14 +40,14 @@ spans them. Research remains the public owner of its event ledger reads.
   immutable candidate and champion lineage.
 - Agent-session leases enumerate dispatchable workflow nodes. Runner control
   itself — attach, heartbeat, release, halt, traces, tuning — is Agent
-  Sessions' own and is called there. Each node declares
-  its role, concise brief, exact references and execution policy (tools, scopes,
-  sandbox, workspace). Agent Sessions rechecks the pinned revision inside the
-  lease transaction and freezes the packet. Authentication records actual work
+  Sessions' own and is called there. Each node declares its role, concise
+  brief, exact references and execution policy (tools, scopes, sandbox,
+  workspace). Agent Sessions rechecks the pinned revision inside the lease
+  transaction and freezes the packet. Authentication records actual work
   start; a revision change fences its old credential. Application decorates
-  listed leases with native ids and the job kind, and maps the runner's generic
-  central-advance routes onto the reflection receipt. New plugins need no
-  dispatch cases.
+  listed leases with native ids and the job kind, and maps the runner's
+  generic central-advance routes onto the reflection receipt. New plugins need
+  no dispatch cases.
 
 ## Files
 
@@ -56,41 +56,40 @@ spans them. Research remains the public owner of its event ledger reads.
 - `status_guidance.py`: formats graph evaluations; it evaluates no gate itself.
 - `project_context.py` and `experiments/context.py`: bounded context packets.
 - `experiments/transition.py`: experiment transition ordering and exhibit pin.
-- `tasks.py`: task presentation, transition receipts, and the bounded task
-  context (brief, delivery, deliverables, dependencies) for status and review start.
+- `tasks.py`: task presentation, transition receipts, and the bounded task context
+  (brief, delivery, deliverables, dependencies) for status and review start.
 - `experiments/exhibits.py`/`metrics_exhibit.py`: deterministic exhibits.
-- `experiments/presentation.py`, `create.py`, and `claim_guidance.py`: the
-  experiment's declared public shape, its create inputs, and claim follow-ups.
+- `experiments/presentation.py`, `create.py`, and `claim_guidance.py`: the experiment's
+  declared public shape, its create inputs, and claim follow-ups.
 - `reviews.py`, `reflections.py`, and `reflection_guidance.py`: review handoff,
   reflection presentation, and guidance.
 - `queries.py`: logic-graph composition, built once and shared by its routes.
-- `maintenance.py`: token/log retention and lease cleanup; merv-sandboxes owns
-  machine and object expiry.
-
+- `maintenance.py`: token/log retention and lease cleanup; merv-sandboxes owns machine
+  and object expiry.
 ## Boundaries and invariants
 
 - Workflows owns graph decisions, guards and handoff context; Research owns review
   security, native records and evidence associations.
 - Artifacts owns immutable content; workflow definitions validate evidence meaning.
-- Sandbox, object storage, and Feed are called through their concrete package
-  roots; the only Application port is `ProducedObjectCatalog`, which Research's
-  completion snapshot implements so experiment views need no service call.
-- Agent Sessions owns worker identity and leases; Application binds narrow
-  workflow assignment and activation callbacks. The workflow runtime owns
-  candidate evaluation, the final transactional check, and the instance facts.
-- Graph changes queue durable actions with their committed event. The delivery
-  worker retries support-system calls using stable keys and fenced leases; a
-  non-idempotent effect may fence automatic retries before its remote call and
-  stay visible in `workflow.history.actions`.
-- Artifact sealing and Research mutations retain their existing transaction
-  boundaries. Feed effects occur after commit and remain advisory.
-- Feed advisories: `experiments/transition.py` phrases what a committed event
-  is called; the Feed only decides whether the feed already covers that ref.
-- Large candidates stay in merv-sandboxes. Application pins candidate pointers
-  through the object facade and reads the producing experiment from Research;
-  it never queries a sibling's persistence tables.
-- Surface owns HTTP/MCP models, authentication, formatting, and UI-only
-  projections.
+- Sandbox, object storage, and Feed are called through their concrete package roots; the
+  only Application port is `ProducedObjectCatalog`, which Research's completion snapshot
+  implements so experiment views need no service call.
+- Agent Sessions owns worker identity and leases; Application binds narrow workflow
+  assignment and activation callbacks. The workflow runtime owns candidate evaluation,
+  the final transactional check, and the instance facts.
+- Graph changes queue durable actions with their committed event. The composition root
+  supplies one handler per effect kind an installed program declares, so the worker
+  knows only that a name has a handler. It retries support-system calls using stable
+  keys and fenced leases; a non-idempotent effect may fence retries before its remote
+  call and stay visible in `workflow.history.actions`.
+- Artifact sealing and Research mutations retain their existing transaction boundaries.
+  Feed effects occur after commit and remain advisory.
+- Feed advisories: `experiments/transition.py` phrases what a committed event is called;
+  the Feed only decides whether the feed already covers that ref.
+- Large candidates stay in merv-sandboxes. Application pins candidate pointers through
+  the object facade and reads the producing experiment from Research; it never queries a
+  sibling's persistence tables.
+- Surface owns HTTP/MCP models, authentication, formatting, and UI-only projections.
 
 ## Forbidden regression
 

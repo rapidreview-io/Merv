@@ -11,13 +11,17 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
 
 ## Main flow
 
-1. `surface.py` builds one `Surface`: Research, Workflows, Application, Agent Sessions,
+1. `surface.py` builds one `Surface` from `programs.INSTALLED`: each program's
+   graphs become the workflow registry, its records bind through Research, and it
+   must declare no effect without a handler and no requirement without a resolver.
+   It composes Research, Workflows, Application, Agent Sessions,
    Artifacts, Feed, Literature, the merv-sandboxes object and sandbox facades,
    telemetry, and tools.
    Machine setting `features.sandbox=false` substitutes a fail-closed backend
    and omits Sandbox tools and HTTP routes; absence keeps Sandbox enabled.
-2. `tools/contracts.py` merges each component's own `TOOLS` table into one
-   manifest (unique names, fixed order) and declares the surface's own tools.
+2. `tools/contracts.py` merges each installed program's tools and each support
+   component's own `TOOLS` table into one manifest (unique names, fixed order),
+   and declares the surface's own tools.
    `tools/dispatcher.py` binds each manifest entry directly to its owning module,
    validates input, enforces reviewer read-only access, and records the outcome.
 3. `transport/mcp_http.py` and `transport/mcp_streamable_http.py` implement the

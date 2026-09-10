@@ -40,7 +40,7 @@ support module**, research or application implements it, and
 | Component | Code | Owns |
 |---|---|---|
 | Kernel | `kernel/**` | state floor and dialects, events, tool-call ledger and payloads, request context, IDs, `ToolContract`, ports |
-| Research | `research_core/**`, `workflows/**`, `literature/**`, `application/**`, and the research files inside `surface/` | claims, experiments, tasks, reviews, reflections, papers, evidence associations, the versioned graphs and their runtime, cross-component commands and composite reads |
+| Research | `research_core/**`, `workflows/**`, `programs/**`, `literature/**`, `application/**`, and the research files inside `surface/` | claims, experiments, tasks, reviews, reflections, papers, evidence associations, the versioned graphs, their runtime and the programs that install them, cross-component commands and composite reads |
 | Artifacts | `artifacts/**` | immutable content, upload tokens, figures, sealed submissions |
 | Feed | `feed/**` | authors, posts, threads, reactions, previews |
 | Agent sessions | `agent_sessions/**` | runner identity, pairing, leases, traces, workspaces |
@@ -83,8 +83,8 @@ else receives a facade or a port.
 |---|---|
 | foundation | `kernel/**` |
 | port | `kernel/ports/**`, `infrastructure/ports.py` |
-| domain | `workflows/{graph,composition,registry,definitions/**}` and pure policy |
-| application | component roots, `research_core/**`, the `workflows/` runtime and delivery, `application/**`, `infrastructure/objects.py`, the Surface flows that own their own tables |
+| domain | `workflows/{graph,composition,definitions/**}` and pure policy |
+| application | component roots, `research_core/**`, the `workflows/` runtime and delivery, `programs/**`, `application/**`, `infrastructure/objects.py`, the Surface flows that own their own tables |
 | adapter | `infrastructure/client.py`, `artifacts/r2.py`, `kernel/state/dialects.py`, `surface/{web_preview,oauth_store}.py` |
 | delivery | ordinary `surface/**` HTTP/MCP/auth/serialization code |
 | bootstrap | `surface/surface.py`, `surface/config.py`, `surface/transport/http_server.py` |
@@ -156,14 +156,25 @@ only its own component's tables, Kernel tables, and tables behind a ratified
 component edge — and the Kernel store's own SQL now names nothing but Kernel
 tables: projects, project_members, events, schema_migrations.
 
+## Programs
+
+A research program is one module that exports everything a brain must install
+to run it: its graphs, the native record kinds bound to them, the effect kinds
+its edges emit, the requirement classes its nodes declare, and its tool table.
+`brain/programs/__init__.py` lists the installed programs, and bootstrap
+installs those instead of naming parts — so a second program is an entry there
+plus a handler for each effect it emits and a resolver for each requirement
+class it brings. `brain/programs/**` is the only place a workflow definition
+module is imported by name, and a structure ratchet holds that.
+
 ## Tool contracts
 
 `ToolContract` lives in `kernel/tools.py`, so a component can declare its tools
-without importing delivery. Each owner exports a `TOOLS` table from its package
-root; `surface/tools/contracts.py` merges those tables in a fixed order,
-asserts unique names, and keeps the few Surface itself owns: `agent.hello`, the
-merged `project` tool, and the internal `project.get`/`list`/`update` the UI
-reads.
+without importing delivery. Each support owner exports a `TOOLS` table from its
+package root and a research program carries its own;
+`surface/tools/contracts.py` merges them in a fixed order, asserts unique
+names, and keeps the few Surface itself owns: `agent.hello`, the merged
+`project` tool, and the internal `project.get`/`list`/`update` the UI reads.
 
 The gateway names no tool. What it must inject is declared on the contract by
 the tool's owner: `binds_producer_session`, `binds_capability`,
@@ -205,7 +216,8 @@ internal implementation, reaches through to no store, transaction or cursor, and
 receives no whole-app carrier; boundary value objects round-trip as JSON
 primitives; every tool is a control tool the brain can serve; no brain-owned
 policy module depends on a checkout, a process, or local IO; the record store
-never learns a `repo_root`.
+never learns a `repo_root`; only a program imports a workflow definition, and
+every effect kind a definition emits is declared by an installed program.
 
 Each component also keeps a design note beside its code, at
 `brain/<component>/<component>.md`: agent_sessions, application, artifacts,
