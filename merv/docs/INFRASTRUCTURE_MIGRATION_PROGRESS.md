@@ -1,5 +1,9 @@
 # Infrastructure ownership implementation checkpoint
 
+**Production update, 2026-09-10 UTC:** The ownership cutover is live. See
+[the production release record](INFRASTRUCTURE_PRODUCTION_RELEASE.md) for deployed
+checks, retained history and recovery details. Checkpoints below are historical.
+
 2026-09-09. The objective remains the complete ownership migration in
 [the plan](INFRASTRUCTURE_BUDGET_OWNERSHIP_PLAN.md), including a lightweight,
 application-neutral service contract. This checkpoint is not a cutover approval

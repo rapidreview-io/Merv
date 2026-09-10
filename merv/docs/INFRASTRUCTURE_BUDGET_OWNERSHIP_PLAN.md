@@ -1,5 +1,9 @@
 # Infrastructure budget ownership migration
 
+**Production update, 2026-09-10 UTC:** The ownership cutover is live. See
+[the production release record](INFRASTRUCTURE_PRODUCTION_RELEASE.md) for deployed
+checks, retained history and recovery details. Checkpoints below are historical.
+
 Status: target design and delivery plan. The working tree contains partial
 implementation; this document does not certify completion or production cutover.
 

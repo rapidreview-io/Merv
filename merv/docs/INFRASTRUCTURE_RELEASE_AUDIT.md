@@ -1,5 +1,9 @@
 # Infrastructure ownership release audit
 
+**Production update, 2026-09-10 UTC:** The ownership cutover is live. See
+[the production release record](INFRASTRUCTURE_PRODUCTION_RELEASE.md) for deployed
+checks, retained history and recovery details. Checkpoints below are historical.
+
 2026-09-09. This records working-tree evidence for the
 [ownership plan](INFRASTRUCTURE_BUDGET_OWNERSHIP_PLAN.md), not operational release
 approval. Native paths below refer to the sibling `merv-sandboxes` repository.
