@@ -354,7 +354,6 @@ def build_control_server(
         app=app,
         allowed_origins=origins,
         cleanup=cleanup,
-        tenant_counters=app.application.tenant_counters,
         surface_policy=surface,
         auth=auth,
         user_directory=auth if auth is not None and auth.service_key else None,
@@ -400,7 +399,6 @@ def build_local_server(
         app=app,
         allowed_origins=allowed_origins or [],
         cleanup=cleanup,
-        tenant_counters=app.application.tenant_counters,
         surface_policy=_local_http_surface(),
     )
     return ControlPlaneServer(

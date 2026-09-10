@@ -1024,7 +1024,7 @@ class Application:
             "artifacts": artifacts,
             "reviews": reviews,
             "pending_change_sets": [],
-            "recent_events": self.recent_events(
+            "recent_events": self.research.recent_events(
                 project_id=project_id,
                 limit=25,
             )["events"],
@@ -1067,32 +1067,6 @@ class Application:
         for entry in spend["by_experiment"]:
             entry["experiment_name"] = names.get(entry["experiment_id"], "")
         return spend
-
-    def tenant_counters(self, *, tenant_id: str) -> dict[str, Any]:
-        return {
-            "tenant_id": tenant_id,
-            "tool_calls": self.research.tenant_event_count(tenant_id=tenant_id),
-        }
-
-    def timeline_signal(self, *, project_id: str) -> str:
-        return self.research.project_event_signal(project_id=project_id)
-
-    def recent_events(self, *, project_id: str, limit: int) -> dict[str, Any]:
-        result = self.research.recent_events(project_id=project_id, limit=500)
-        return {
-            **result,
-            "events": (result.get("events") or [])[:limit],
-        }
-
-    def events_since(self, *, project_id: str, after_id: int) -> dict[str, Any]:
-        result = self.research.events_since(
-            project_id=project_id,
-            after_id=after_id,
-        )
-        return {
-            **result,
-            "events": result.get("events") or [],
-        }
 
     def experiment_graph(
         self, *, project_id: str, experiment_id: str

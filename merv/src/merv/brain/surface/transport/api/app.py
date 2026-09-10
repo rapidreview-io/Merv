@@ -178,7 +178,7 @@ def create_fastapi_app(
             research=api.research,
         ),
         *sandbox_routers,
-        events.build_router(application=api.application),
+        events.build_router(research=api.research),
         user_settings.build_router(user_settings=api.user_settings),
     )
     for router in routers:
@@ -218,7 +218,6 @@ def create_fastapi_app(
         )
 
     if cleanup is not None:
-        counters = tenant_counters or api.application.tenant_counters
 
         @http.post("/api/admin/cleanup")
         def admin_cleanup() -> dict[str, Any]:
@@ -226,6 +225,11 @@ def create_fastapi_app(
 
         @http.get("/api/admin/tenants/{tenant_id}/counters")
         def admin_tenant_counters(tenant_id: str) -> dict[str, Any]:
-            return counters(tenant_id=tenant_id)
+            if tenant_counters is not None:
+                return tenant_counters(tenant_id=tenant_id)
+            return {
+                "tenant_id": tenant_id,
+                "tool_calls": api.research.tenant_event_count(tenant_id=tenant_id),
+            }
 
     return http
