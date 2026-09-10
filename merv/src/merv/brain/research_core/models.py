@@ -9,17 +9,6 @@ from typing import Any, TypedDict
 from ..kernel.events import StoredEvent
 
 
-class PersistedRunState(TypedDict, total=False):
-    run_id: str | None
-    run_name: str
-    status: str
-    artifact_uri: str
-    created_at: str | None
-    created_by_plugin: bool
-    error: str
-    delivery_id: int
-
-
 class ExperimentState(TypedDict, total=False):
     id: str
     project_id: str
@@ -28,7 +17,6 @@ class ExperimentState(TypedDict, total=False):
     details: str
     status: str
     attempt_index: int
-    mlflow_run: PersistedRunState | None
 
 
 class ExperimentSummary(TypedDict):
@@ -43,10 +31,8 @@ class ExperimentSummary(TypedDict):
 
 
 class ExhibitVerdict(TypedDict, total=False):
-    runs_found: int
     result_files: int
     attempt_index: int
-    mlflow: dict[str, object]
     pinned: bool
 
 
@@ -182,7 +168,6 @@ __all__ = [
     "ExperimentState",
     "ExperimentSummary",
     "LiteratureSignal",
-    "PersistedRunState",
     "ResearchSnapshot",
     "TaskState",
     "TaskSummary",

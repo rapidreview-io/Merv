@@ -81,23 +81,19 @@ class ExperimentRuntimeTest(ResearchCase):
         self.assertEqual(self.app.experiments.attempt_started_running_at(experiment_id=experiment_id), "2026-09-09T12:00:00Z")
         with self.app.store.connect() as conn:
             count = conn.execute("SELECT COUNT(*) AS n FROM events WHERE target_id = ? AND type = 'workflow.work_started'", (experiment_id,)).fetchone()["n"]
-            tracking = conn.execute("SELECT COUNT(*) AS n FROM workflow_actions WHERE instance_id = ? AND kind = 'experiment.start_tracking'", (experiment_id,)).fetchone()["n"]
-        self.assertEqual((count, tracking), (2, 2))
+        self.assertEqual(count, 2)
 
-    def test_rejected_attempt_opens_a_new_plan_and_clears_old_tracking_and_clock(self):
+    def test_rejected_attempt_opens_a_new_plan_and_clears_the_clock(self):
         experiment_id, _ = self.approved()
         runtime = self.app.research.workflows.runtime
         with self.app.store.transaction() as conn:
             runtime.activate(conn=conn, project_id=self.project_id, instance_id=experiment_id, revision=2, session_id="owner")
         self.results(experiment_id)
         self.advance(experiment_id, "submit_results")
-        with self.app.store.transaction() as conn:
-            conn.execute("UPDATE experiments SET mlflow_run_id = 'old-run', mlflow_run_status = 'FINISHED' WHERE id = ?", (experiment_id,))
         self.review(target_type="experiment", target_id=experiment_id, role="experiment_reviewer", verdict="needs_changes", return_to="planned")
         state = self.app.research.experiment_state(project_id=self.project_id, experiment_id=experiment_id)
         current = runtime.get(project_id=self.project_id, instance_id=experiment_id)
         self.assertEqual((state["status"], state["attempt_index"]), ("planned", 2))
-        self.assertEqual(state["mlflow_run_id"], "")
         self.assertEqual(tuple(current.data["approved_plan_artifacts"]), ())
         self.assertIsNone(self.app.experiments.attempt_started_running_at(experiment_id=experiment_id))
 

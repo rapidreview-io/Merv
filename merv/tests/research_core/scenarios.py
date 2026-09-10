@@ -26,6 +26,9 @@ The candidate was evaluated against the baseline.
 
 ## Results
 
+The system record of this attempt is [metrics_exhibit.json](metrics_exhibit.json);
+the table below reads it.
+
 | Metric | Target | Achieved |
 |--------|--------|----------|
 | accuracy | 0.60 | 0.72 |

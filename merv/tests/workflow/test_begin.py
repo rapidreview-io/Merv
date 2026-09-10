@@ -240,11 +240,3 @@ class WorkflowBeginTest(ResearchCase):
             self.app.research.attempt_started_running_at(experiment_id=experiment_id)
         )
         self.assertEqual(len(self.starts(experiment_id)), 1)
-        with self.app.store.transaction() as conn:
-            self.assertEqual(
-                conn.execute(
-                    "SELECT COUNT(*) FROM workflow_actions WHERE instance_id = ? AND kind = 'experiment.start_tracking'",
-                    (experiment_id,),
-                ).fetchone()[0],
-                1,
-            )

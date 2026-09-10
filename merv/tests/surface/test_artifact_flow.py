@@ -26,7 +26,7 @@ VALID_PLAN = (
 
 VALID_REPORT = (
     "## Summary\nRan the toy experiment per the approved plan.\n\n"
-    "## Results\nAccuracy 0.72 vs target 0.60.\n\n"
+    "## Results\nPer metrics_exhibit.json, accuracy 0.72 vs target 0.60.\n\n"
     "## Deviations from plan\nNone.\n\n"
     "## Conclusion\nDecision rule met.\n"
 )
@@ -388,7 +388,8 @@ class ArtifactFlowTest(unittest.TestCase):
         )
         self._submit(
             target_type="experiment", target_id=exp_id,
-            role="report", path="report.md", body=VALID_REPORT,
+            role="report", path="report.md",
+            body=VALID_REPORT.replace("Per metrics_exhibit.json, accuracy", "Accuracy"),
         )
         with self.assertRaises(Exception) as caught:
             self.call(
@@ -398,10 +399,7 @@ class ArtifactFlowTest(unittest.TestCase):
         self.assertIn("metrics_exhibit.json", str(caught.exception))
         self._submit(
             target_type="experiment", target_id=exp_id,
-            role="report", path="report.md",
-            body=VALID_REPORT.replace(
-                "Accuracy 0.72", "Per metrics_exhibit.json, accuracy 0.72"
-            ),
+            role="report", path="report.md", body=VALID_REPORT,
         )
         self.call(
             "experiment.transition", project_id=self.project_id,

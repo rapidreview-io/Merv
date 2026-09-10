@@ -9,7 +9,13 @@ keeps about heavy objects the sandbox service stores.
 
 from __future__ import annotations
 
-from ..kernel.state.schema import SchemaModule
+from ..kernel.state.schema import (
+    Connection,
+    Migration,
+    SchemaModule,
+    has_column,
+    has_table,
+)
 
 
 RESEARCH_DDL = """\
@@ -33,12 +39,6 @@ CREATE TABLE IF NOT EXISTS experiments (
   attempt_index INTEGER NOT NULL DEFAULT 1,
   revision_context TEXT NOT NULL DEFAULT '',
   conclusion TEXT NOT NULL DEFAULT '',
-  mlflow_run_id TEXT NOT NULL DEFAULT '',
-  mlflow_run_name TEXT NOT NULL DEFAULT '',
-  mlflow_run_status TEXT NOT NULL DEFAULT '',
-  mlflow_run_artifact_uri TEXT NOT NULL DEFAULT '',
-  mlflow_run_created_at TEXT,
-  mlflow_run_error TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   -- What the creator asked for beyond the one-line intent: free prose the
@@ -475,4 +475,30 @@ SELECT l.id, a.id AS artifact_id, a.project_id,
 FROM research_artifact_links l JOIN artifacts a ON a.id = l.artifact_id;
 """
 
-RESEARCH_SCHEMA = SchemaModule(name="research_core", ddl=RESEARCH_DDL)
+# The tracking columns of a deleted integration. Nothing reads a run id, a run
+# name, its status, its artifact URI, when it was created, or the error that
+# replaced it, so the experiments row stops carrying them.
+_TRACKING_COLUMNS = (
+    "mlflow_run_id",
+    "mlflow_run_name",
+    "mlflow_run_status",
+    "mlflow_run_artifact_uri",
+    "mlflow_run_created_at",
+    "mlflow_run_error",
+)
+
+
+def _drop_tracking_columns(conn: Connection) -> None:
+    """Migration 68: an experiment no longer records an external run."""
+    if not has_table(conn, "experiments"):
+        return
+    for column in _TRACKING_COLUMNS:
+        if has_column(conn, "experiments", column):
+            conn.execute(f"ALTER TABLE experiments DROP COLUMN {column}")
+
+
+RESEARCH_SCHEMA = SchemaModule(
+    name="research_core",
+    ddl=RESEARCH_DDL,
+    migrations=(Migration(68, "drop_experiment_tracking_columns", _drop_tracking_columns),),
+)

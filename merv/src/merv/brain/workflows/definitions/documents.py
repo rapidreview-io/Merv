@@ -310,8 +310,8 @@ def report_problems(
             problems.append(
                 "the report must reference the system metrics exhibit "
                 f"({exhibit_path}): it is the authoritative record of this "
-                "attempt's runs and result files — write the Results section "
-                "around it and cite it by name"
+                "attempt's result files — write the Results section around it "
+                "and cite it by name"
             )
     size = len(report_text.encode("utf-8"))
     if size > MAX_REPORT_BYTES:

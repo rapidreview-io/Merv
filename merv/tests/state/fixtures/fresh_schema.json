@@ -181,12 +181,6 @@
       "details",
       "id",
       "intent",
-      "mlflow_run_artifact_uri",
-      "mlflow_run_created_at",
-      "mlflow_run_error",
-      "mlflow_run_id",
-      "mlflow_run_name",
-      "mlflow_run_status",
       "name",
       "project_id",
       "revision_context",
@@ -613,14 +607,6 @@
       "target_type",
       "tool",
       "ts"
-    ],
-    "tracking_deliveries": [
-      "created_at",
-      "delivery_id",
-      "event_id",
-      "project_id",
-      "target_id",
-      "target_type"
     ],
     "user_hf_tokens": [
       "token",

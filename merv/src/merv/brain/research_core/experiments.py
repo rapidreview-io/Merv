@@ -1,5 +1,5 @@
 # If you update this file, you must consult research_core.md to see whether research_core.md needs to be updated. research_core.md must not exceed 100 lines.
-"""Experiment records, verified workflow facts and tracking ledger."""
+"""Experiment records and verified workflow facts."""
 
 from __future__ import annotations
 
@@ -35,7 +35,6 @@ from .policy import (
 from .artifacts import ResearchArtifacts as Artifacts
 from .artifact_models import Artifact, ArtifactTarget, Submission
 from ..workflows import Reference, Runtime, Snapshot, WORKFLOWS
-from ..kernel.events import StoredEvent, freeze_json_object
 from ..kernel.state.store import BaseStateStore, row_to_dict, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
 from ..kernel.utils import new_id
@@ -47,39 +46,7 @@ def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
     return rows_to_dicts(rows=conn.execute(sql, parameters).fetchall())
 
 
-# Events that a tracking update may append.
-TRACKING_EVENT_TYPES = (
-    "experiment.mlflow_run_created",
-    "experiment.mlflow_run_unavailable",
-    "experiment.mlflow_run_refreshed",
-)
-# A keyed delivery derives one of these types; callers cannot override it and
-# make an ordinary refresh look like the delivery's committed outcome.
-TRACKING_DELIVERY_EVENT_TYPES = (
-    "experiment.mlflow_run_created",
-    "experiment.mlflow_run_unavailable",
-)
 EXPERIMENT = WORKFLOWS["experiment"]
-
-
-def reject_keyed_event_type_override(
-    *, event_type: str | None, delivery_id: int | None
-) -> None:
-    """A keyed tracking write names its own event type; an override is invalid.
-
-    A delivery's durable record is one of the two types above and nothing else:
-    letting a caller name the type would let a keyed write masquerade as an
-    unkeyed refresh, so the ledger would describe a delivery that never
-    happened. Enforced at the writer, where it is binding.
-    """
-    if event_type is not None and delivery_id is not None:
-        raise ValueError(
-            "A keyed tracking write derives its own event type: "
-            f"event_type={event_type!r} is invalid alongside "
-            f"delivery_id={delivery_id!r}. Keyed writes may only append "
-            + " or ".join(TRACKING_DELIVERY_EVENT_TYPES)
-            + "."
-        )
 
 
 class ExperimentService:
@@ -417,16 +384,6 @@ class ExperimentService:
                 target_ids=(experiment_id,),
                 summarize=True,
             )[experiment_id]
-            delivery = conn.execute(
-                """
-                SELECT delivery_id FROM tracking_deliveries
-                WHERE project_id = ? AND target_type = 'experiment'
-                  AND target_id = ?
-                ORDER BY event_id DESC
-                LIMIT 1
-                """,
-                (data["project_id"], data["id"]),
-            ).fetchone()
             return self._assemble_state_with_gate(
                 conn=conn,
                 experiment=data,
@@ -459,11 +416,6 @@ class ExperimentService:
                     (experiment_id,),
                 ),
                 submissions=history.submissions,
-                tracking_delivery_id=(
-                    None
-                    if delivery is None
-                    else int(delivery["delivery_id"])
-                ),
             )
         finally:
             if owns_conn:
@@ -513,29 +465,6 @@ class ExperimentService:
             target_ids=experiment_ids,
             summarize=True,
         )
-        delivery_ids: dict[str, int] = {}
-        if any(
-            row.get("mlflow_run_id") or row.get("mlflow_run_error")
-            for row in experiment_rows
-        ):
-            for row in conn.execute(
-                """
-                SELECT td.target_id, td.delivery_id
-                FROM tracking_deliveries td
-                JOIN (
-                    SELECT target_id, MAX(event_id) AS event_id
-                    FROM tracking_deliveries
-                    WHERE project_id = ? AND target_type = 'experiment'
-                    GROUP BY target_id
-                ) latest
-                  ON latest.target_id = td.target_id
-                 AND latest.event_id = td.event_id
-                WHERE td.project_id = ?
-                  AND td.target_type = 'experiment'
-                """,
-                (project_id, project_id),
-            ).fetchall():
-                delivery_ids[str(row["target_id"])] = int(row["delivery_id"])
         dependencies = dependency_rows(
             conn=conn, project_id=project_id, node_ids=experiment_ids
         )
@@ -553,9 +482,6 @@ class ExperimentService:
                 evidence=history[str(experiment["id"])].artifacts,
                 reviews=reviews.get(str(experiment["id"]), []),
                 submissions=history[str(experiment["id"])].submissions,
-                tracking_delivery_id=delivery_ids.get(
-                    str(experiment["id"])
-                ),
             )
             for experiment in experiment_rows
         ]
@@ -570,7 +496,6 @@ class ExperimentService:
         evidence: tuple[Artifact, ...],
         reviews: list[dict[str, Any]],
         submissions: tuple[Submission, ...],
-        tracking_delivery_id: int | None,
         dependencies: list[dict[str, Any]] | None = None,
         dependents: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], GateEvaluation]:
@@ -588,10 +513,6 @@ class ExperimentService:
         data["submissions"] = [
             submission_state_record(submission) for submission in submissions
         ]
-        data["mlflow_run"] = self._mlflow_run_from_row(
-            experiment=data,
-            delivery_id=tracking_delivery_id,
-        )
         for review in reviews:
             review["findings"] = json.loads(review.pop("findings_json", "[]"))
             review["evidence"] = json.loads(review.pop("evidence_json", "{}"))
@@ -607,287 +528,6 @@ class ExperimentService:
             row = conn.execute("SELECT 1 FROM experiments WHERE id = ? AND project_id = ?", (experiment_id, project_id)).fetchone()
         if row is None:
             raise NotFoundError(f"experiment not found in project {project_id}: {experiment_id}")
-
-    def _mlflow_run_from_row(
-        self, *, experiment: dict[str, Any], delivery_id: int | None
-    ) -> dict[str, Any] | None:
-        run_id = str(experiment.get("mlflow_run_id") or "")
-        error = str(experiment.get("mlflow_run_error") or "")
-        if not run_id and not error:
-            return None
-        result: dict[str, Any] = {
-            "run_id": run_id or None,
-            "run_name": str(experiment.get("mlflow_run_name") or ""),
-            "status": str(experiment.get("mlflow_run_status") or ""),
-            "artifact_uri": str(experiment.get("mlflow_run_artifact_uri") or ""),
-            "created_at": experiment.get("mlflow_run_created_at"),
-            "created_by_plugin": bool(run_id),
-        }
-        if error:
-            result["error"] = error
-        if delivery_id is not None:
-            result["delivery_id"] = delivery_id
-        return result
-
-    def record_mlflow_run(
-        self,
-        *,
-        project_id: str | None = None,
-        experiment_id: str,
-        run: dict[str, Any],
-        event_type: str | None = None,
-        return_event: bool = False,
-        delivery_id: int | None = None,
-        expected_run_id: str | None = None,
-    ) -> dict[str, Any] | CommittedExperimentUpdate | None:
-        """``delivery_id`` names the committed event this tracking outcome
-        belongs to. A keyed write records it in ``tracking_deliveries`` in the
-        SAME transaction as the append, so the row's existence is exact proof
-        this delivery's write committed — the mutable experiments row cannot
-        distinguish it from an identical earlier one.
-
-        A keyed write derives its own event type; pairing ``delivery_id`` with
-        an ``event_type`` override is rejected here, at the only boundary that
-        can bind it."""
-        reject_keyed_event_type_override(
-            event_type=event_type, delivery_id=delivery_id
-        )
-
-        def result(
-            state: dict[str, Any], event: StoredEvent
-        ) -> dict[str, Any] | CommittedExperimentUpdate:
-            return CommittedExperimentUpdate(state, event) if return_event else state
-
-        delivery = (
-            {} if delivery_id is None else {"delivery_id": int(delivery_id)}
-        )
-
-        with self.store.transaction() as conn:
-            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            if delivery_id is not None and (
-                landed := self._delivery_event(
-                    conn=conn,
-                    project_id=project_id,
-                    experiment_id=experiment_id,
-                    delivery_id=int(delivery_id),
-                )
-            ) is not None:
-                # The barrier lives here because only here is it atomic with
-                # the append: a caller that reads the ledger in one transaction
-                # and writes in another can be overtaken between the two, and
-                # would then overwrite a newer outcome or append this delivery
-                # twice. Callers may still pre-read as a fast path. The landed
-                # event is returned as this call's own, because it is.
-                return result(
-                    self.get_state(
-                        experiment_id=experiment_id, project_id=project_id, conn=conn
-                    ),
-                    landed,
-                )
-            # Lock and compare together so a waiting refresh cannot overwrite
-            # an attachment that committed while it was waiting on PostgreSQL.
-            if expected_run_id is not None and conn.execute(
-                """UPDATE experiments SET mlflow_run_id = mlflow_run_id
-                   WHERE id = ? AND project_id = ? AND COALESCE(mlflow_run_id, '') = ?
-                   RETURNING id""",
-                (experiment_id, project_id, expected_run_id),
-            ).fetchone() is None:
-                return None
-            existing = self.get_state(
-                experiment_id=experiment_id,
-                project_id=project_id,
-                conn=conn,
-            )
-            now = now_iso()
-            run_id = str(run.get("run_id") or "")
-            run_name = str(run.get("run_name") or "")
-            status = str(run.get("status") or "")
-            artifact_uri = str(run.get("artifact_uri") or "")
-            created_at = str(run.get("created_at") or "") or now
-            error = str(run.get("error") or run.get("note") or "")
-            if not run_id and not error:
-                return existing
-            if not run_id and str(existing.get("mlflow_run_id") or ""):
-                # An error-only update (e.g. a failed re-create on retry) must
-                # not blank an existing run identity — keep the run, attach
-                # the error beside it.
-                conn.execute(
-                    "UPDATE experiments SET mlflow_run_error = ?, updated_at = ? WHERE id = ?",
-                    (error, now, experiment_id),
-                )
-                event = self.store.record_event(
-                    conn=conn,
-                    project_id=project_id,
-                    event_type=event_type or "experiment.mlflow_run_unavailable",
-                    target_type="experiment",
-                    target_id=experiment_id,
-                    payload={
-                        "run_id": str(existing.get("mlflow_run_id") or ""),
-                        "error": error,
-                        "previous_run_id": str(existing.get("mlflow_run_id") or ""),
-                        **delivery,
-                    },
-                )
-                self._record_delivery(
-                    conn=conn,
-                    project_id=project_id,
-                    experiment_id=experiment_id,
-                    delivery_id=delivery_id,
-                    event=event,
-                )
-                state = self.get_state(experiment_id=experiment_id, conn=conn)
-                return result(state, event)
-            conn.execute(
-                """
-                UPDATE experiments
-                SET mlflow_run_id = ?,
-                    mlflow_run_name = ?,
-                    mlflow_run_status = ?,
-                    mlflow_run_artifact_uri = ?,
-                    mlflow_run_created_at = ?,
-                    mlflow_run_error = ?,
-                    updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    run_id,
-                    run_name,
-                    status,
-                    artifact_uri,
-                    created_at if (run_id or error) else None,
-                    "" if run_id else error,
-                    now,
-                    experiment_id,
-                ),
-            )
-            event = self.store.record_event(
-                conn=conn,
-                project_id=project_id,
-                event_type=(
-                    event_type
-                    or (
-                        "experiment.mlflow_run_created"
-                        if run_id
-                        else "experiment.mlflow_run_unavailable"
-                    )
-                ),
-                target_type="experiment",
-                target_id=experiment_id,
-                payload={
-                    "run_id": run_id,
-                    "run_name": run_name,
-                    "status": status,
-                    "error": "" if run_id else error,
-                    "previous_run_id": existing.get("mlflow_run_id") or "",
-                    **delivery,
-                },
-            )
-            self._record_delivery(
-                conn=conn,
-                project_id=project_id,
-                experiment_id=experiment_id,
-                delivery_id=delivery_id,
-                event=event,
-            )
-            state = self.get_state(experiment_id=experiment_id, conn=conn)
-            return result(state, event)
-
-    def _record_delivery(
-        self,
-        *,
-        conn,
-        project_id: str,
-        experiment_id: str,
-        delivery_id: int | None,
-        event: StoredEvent,
-    ) -> None:
-        """Key this delivery to the event it just appended, same transaction.
-
-        The row is the barrier's only lookup key, so it must be exactly as
-        durable as the append it describes: written here, beside it, under the
-        one commit. An unkeyed write has no delivery to name and writes none.
-        The UNIQUE index makes "at most one append per delivery" the database's
-        statement rather than the check above's — a second insert raises
-        instead of quietly duplicating.
-        """
-        if delivery_id is None:
-            return
-        conn.execute(
-            """
-            INSERT INTO tracking_deliveries
-              (project_id, target_type, target_id, delivery_id, event_id, created_at)
-            VALUES (?, 'experiment', ?, ?, ?, ?)
-            """,
-            (
-                project_id,
-                experiment_id,
-                int(delivery_id),
-                int(event.id),
-                event.created_at,
-            ),
-        )
-
-    def _delivery_event(
-        self, *, conn, project_id: str, experiment_id: str, delivery_id: int
-    ) -> StoredEvent | None:
-        """Return the event committed for this exact tracking delivery.
-
-        The unique delivery key points directly to one event. Both rows commit
-        together, so this constant-cost lookup is the idempotency proof; mutable
-        experiment fields cannot safely prove which delivery wrote them.
-        """
-        keyed = conn.execute(
-            """
-            SELECT event_id
-            FROM tracking_deliveries
-            WHERE project_id = ? AND target_type = 'experiment'
-              AND target_id = ? AND delivery_id = ?
-            """,
-            (project_id, experiment_id, int(delivery_id)),
-        ).fetchone()
-        if keyed is None:
-            return None
-        row = conn.execute(
-            """
-            SELECT id, type, target_type, target_id, payload_json, created_at
-            FROM events WHERE id = ?
-            """,
-            (int(keyed["event_id"]),),
-        ).fetchone()
-        if row is None:  # pragma: no cover - the two rows commit together
-            return None
-        return StoredEvent(
-            id=int(row["id"]),
-            project_id=project_id,
-            type=str(row["type"]),
-            target_type=str(row["target_type"]),
-            target_id=str(row["target_id"]),
-            payload=freeze_json_object(json.loads(str(row["payload_json"] or "{}"))),
-            created_at=str(row["created_at"]),
-        )
-
-    def tracking_delivery_state(
-        self, *, project_id: str | None = None, experiment_id: str, delivery_id: int
-    ) -> dict[str, Any] | None:
-        """The durable state when this delivery's tracking event is committed.
-
-        Answers "did THIS delivery's write land?" from the append-only ledger,
-        so a stale identical run id or adapter error from an earlier delivery
-        can never be mistaken for it. This is the callers' fast path; the
-        binding barrier is the same check inside ``record_mlflow_run``.
-        """
-        with closing(self.store.connect()) as conn:
-            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            if self._delivery_event(
-                conn=conn,
-                project_id=project_id,
-                experiment_id=experiment_id,
-                delivery_id=int(delivery_id),
-            ) is None:
-                return None
-            return self.get_state(
-                experiment_id=experiment_id, project_id=project_id, conn=conn
-            )
 
     def _evaluate_gate(self, *, conn, experiment: dict[str, Any], snapshots=None) -> GateEvaluation:
         """Evaluate the registered graph once; legacy checklist metadata is presentation only."""
@@ -974,9 +614,8 @@ class ExperimentService:
         now = now_iso()
         if action == "revise_plan":
             conn.execute(
-                """UPDATE experiments SET status = ?, attempt_index = ?, revision_context = ?, updated_at = ?,
-                   mlflow_run_id = '', mlflow_run_name = '', mlflow_run_status = '', mlflow_run_artifact_uri = '',
-                   mlflow_run_created_at = NULL, mlflow_run_error = '' WHERE id = ? AND project_id = ?""",
+                """UPDATE experiments SET status = ?, attempt_index = ?, revision_context = ?, updated_at = ?
+                   WHERE id = ? AND project_id = ?""",
                 (after.state, after.data["attempt_index"], after.data["revision_context"], now, before.id, before.project_id),
             )
         elif action in {"revise_execution", "retry_running"}:
