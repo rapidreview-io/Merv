@@ -136,32 +136,32 @@ class RemoteObjectsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "invalid storage kind"):
             self._submit(b"x", kind="bogus")
         self.assertIn(("DELETE", "/storage/objects/obj_1"), [call[:2] for call in self.client.calls])
-        listed = self.objects.list_objects(project_id=self.project_id, status="uploading")
+        listed = self.objects.find(project_id=self.project_id, status="uploading")
         self.assertEqual(listed["objects"], [])
 
     def test_list_defaults_to_available_and_paginates(self) -> None:
         a = self._submit_and_complete(b"aa", path="datasets/a.tar", kind="dataset")
         b = self._submit_and_complete(b"bbbb", path="models/b.bin", kind="model")
         self._submit(b"pending", path="models/c.bin", kind="model")
-        listed = self.objects.list_objects(project_id=self.project_id)
+        listed = self.objects.find(project_id=self.project_id)
         self.assertEqual([item["id"] for item in listed["objects"]], [a["id"], b["id"]])
         self.assertEqual((listed["count"], listed["total"], listed["has_more"]), (2, 2, False))
         self.assertTrue(listed["guidance"]["enabled"])
-        page = self.objects.list_objects(project_id=self.project_id, limit=1, offset=1, compact=True)
+        page = self.objects.find(project_id=self.project_id, limit=1, offset=1, compact=True)
         self.assertEqual([item["id"] for item in page["objects"]], [b["id"]])
         self.assertEqual(set(page["objects"][0]), {
             "id", "project_id", "name", "version", "kind", "content_sha256",
             "size_bytes", "status", "expires_at", "updated_at",
         })
         self.assertFalse(page["has_more"])
-        uploading = self.objects.list_objects(project_id=self.project_id, status="uploading")
+        uploading = self.objects.find(project_id=self.project_id, status="uploading")
         self.assertEqual([item["name"] for item in uploading["objects"]], ["models/c.bin"])
         with self.assertRaises(ValidationError):
-            self.objects.list_objects(project_id=self.project_id, status="expired")
+            self.objects.find(project_id=self.project_id, status="expired")
 
     def test_list_entries_carry_service_facts_only(self) -> None:
         obj = self._submit_and_complete(b"facts", kind="model", producing_run="run-1", notes="n")
-        entry = self.objects.list_objects(project_id=self.project_id)["objects"][0]
+        entry = self.objects.find(project_id=self.project_id)["objects"][0]
         self.assertEqual(entry["id"], obj["id"])
         self.assertEqual(set(entry), {
             "id", "project_id", "name", "version", "kind", "status", "content_sha256",
@@ -175,19 +175,19 @@ class RemoteObjectsTest(unittest.TestCase):
         first = self._submit_and_complete(b"one", path="models/w.bin", kind="model")
         second = self._submit_and_complete(b"two", path="models/w.bin", kind="model")
         self._submit(b"three", path="models/w.bin", kind="model")  # still uploading
-        latest = self.objects.resolve(project_id=self.project_id, name="models/w.bin", include_download=False)
+        latest = self.objects.find(project_id=self.project_id, name="models/w.bin", include_download=False)
         self.assertEqual(latest["object"]["id"], second["id"])
         self.assertNotIn("download", latest)
-        pinned_version = self.objects.resolve(project_id=self.project_id, name="models/w.bin", version=1)
+        pinned_version = self.objects.find(project_id=self.project_id, name="models/w.bin", version=1)
         self.assertEqual(pinned_version["object"]["id"], first["id"])
         self.assertTrue(pinned_version["download"]["url"].startswith("file://"))
         before = parse_iso(first["expires_at"])
         after = parse_iso(pinned_version["object"]["expires_at"])
         self.assertGreaterEqual(after, before)
         with self.assertRaises(NotFoundError):
-            self.objects.resolve(project_id=self.project_id, name="models/w.bin", version=3)
+            self.objects.find(project_id=self.project_id, name="models/w.bin", version=3)
         with self.assertRaises(ValidationError):
-            self.objects.resolve(project_id=self.project_id, object_id=first["id"], name="x")
+            self.objects.find(project_id=self.project_id, object_id=first["id"], name="x")
 
     def test_fetch_returns_verified_download_command(self) -> None:
         data = b"fetch me"
@@ -204,7 +204,7 @@ class RemoteObjectsTest(unittest.TestCase):
         pinned = self.objects.manage(project_id=self.project_id, object_id=obj["id"], action="pin")
         self.assertIsNone(pinned["expires_at"])
         # Pinned stays pinned: the service only extends retention.
-        still = self.objects.renew(project_id=self.project_id, object_id=obj["id"])
+        still = self.objects.manage(project_id=self.project_id, object_id=obj["id"], action="renew")
         self.assertIsNone(still["expires_at"])
         with self.assertRaises(RetentionConflictError) as ctx:
             self.objects.manage(project_id=self.project_id, object_id=obj["id"], action="unpin")
@@ -216,7 +216,7 @@ class RemoteObjectsTest(unittest.TestCase):
         self.assertNotIn("reclaimed", deleted)
         self.assertEqual(self.lifecycle.calls[-1], ("deleted", {"project_id": self.project_id, "object_id": obj["id"]}))
         with self.assertRaises(NotFoundError):
-            self.objects.resolve(project_id=self.project_id, object_id=obj["id"])
+            self.objects.find(project_id=self.project_id, object_id=obj["id"])
         with self.assertRaises(ValidationError):
             self.objects.manage(project_id=self.project_id, object_id=obj["id"], action="thaw")
 
@@ -237,7 +237,7 @@ class RemoteObjectsTest(unittest.TestCase):
         disabled = RemoteObjects(client=None, store=self.store)
         self.assertFalse(disabled.enabled)
         with self.assertRaisesRegex(NotFoundError, "not enabled"):
-            disabled.list_objects(project_id=self.project_id)
+            disabled.find(project_id=self.project_id)
         with self.assertRaises(NotFoundError):
             disabled.upload_target_via_token(token="nope")
 

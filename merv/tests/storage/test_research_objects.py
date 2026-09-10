@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import tempfile
 import unittest
 from contextlib import closing
@@ -10,6 +11,16 @@ from pathlib import Path
 from merv.brain.kernel.state.store import StateStore
 from merv.brain.kernel.utils import NotFoundError, ValidationError
 from merv.brain.research_core import ProducedObject, ResearchObjects
+from tests.paths import TESTS_ROOT
+
+
+def _migration():
+    """The storage-ledger migration script, loaded from deploy/ by path."""
+    path = TESTS_ROOT.parent / "deploy" / "migrate_storage_ledger.py"
+    spec = importlib.util.spec_from_file_location("migrate_storage_ledger", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class CountingStateStore(StateStore):
@@ -71,7 +82,7 @@ class ResearchObjectsTest(unittest.TestCase):
                      producing_run="run-1", source_uri="s3://x", notes="kept")
         # Pending objects are not yet produced.
         self.assertEqual(
-            self.objects.by_target(project_id=self.project_id, target_ids=(self.experiment_id,)),
+            self.objects.by_experiment(project_id=self.project_id, experiment_ids=(self.experiment_id,)),
             {self.experiment_id: []},
         )
         self.objects.completed(
@@ -95,7 +106,7 @@ class ResearchObjectsTest(unittest.TestCase):
         self.objects.completed(project_id=self.project_id, record=_record("obj_1", name="a"))
         self.objects.deleted(project_id=self.project_id, object_id="obj_1")
         self.assertEqual(
-            self.objects.by_target(project_id=self.project_id, target_ids=(self.experiment_id,)),
+            self.objects.by_experiment(project_id=self.project_id, experiment_ids=(self.experiment_id,)),
             {self.experiment_id: []},
         )
         self.assertEqual(self.objects.association(project_id=self.project_id, object_id="obj_1")["status"], "deleted")
@@ -108,7 +119,7 @@ class ResearchObjectsTest(unittest.TestCase):
         self.objects.completed(project_id=self.project_id, record=_record("obj_free", name="loose.bin"))
         link = self.objects.association(project_id=self.project_id, object_id="obj_free")
         self.assertEqual((link["target_type"], link["target_id"], link["kind"]), ("", "", "model"))
-        self.assertEqual(self.objects.by_target(project_id=self.project_id, target_ids=(self.experiment_id,)),
+        self.assertEqual(self.objects.by_experiment(project_id=self.project_id, experiment_ids=(self.experiment_id,)),
                          {self.experiment_id: []})
         self.assertIsNone(self.objects.association(project_id=self.project_id, object_id="obj_unknown"))
 
@@ -127,7 +138,7 @@ class ResearchObjectsTest(unittest.TestCase):
             self._submit("obj_z", name="z", producing_experiment_id=foreign)
         self.assertIsNone(self.objects.association(project_id=self.project_id, object_id="obj_z"))
 
-    def test_by_target_orders_batches_and_isolates_projects(self) -> None:
+    def test_by_experiment_orders_batches_and_isolates_projects(self) -> None:
         other_project = "proj_other"
         with self.store.transaction() as conn:
             conn.execute("INSERT INTO projects (id, name, summary, created_at) VALUES (?, 'Other', '', '2026-09-01T00:00:00Z')",
@@ -149,45 +160,41 @@ class ResearchObjectsTest(unittest.TestCase):
             self.objects.completed(project_id=project_id, record=_record(object_id, name=name, version=version))
         self.store.statements.clear()
 
-        result = self.objects.by_target(
-            project_id=self.project_id, target_ids=(self.experiment_id, second, "exp_missing", self.experiment_id)
+        result = self.objects.by_experiment(
+            project_id=self.project_id, experiment_ids=(self.experiment_id, second, "exp_missing", self.experiment_id)
         )
         self.assertEqual(list(result), [self.experiment_id, second, "exp_missing"])
         self.assertEqual([item["id"] for item in result[self.experiment_id]], ["obj_new", "obj_old"])
         self.assertEqual([item["id"] for item in result[second]], ["obj_data"])
         self.assertEqual(result["exp_missing"], [])
         self.assertEqual(sum("FROM research_objects" in s for s in self.store.statements), 1)
-        self.assertEqual(self.objects.by_target(project_id=other_project, target_ids=(shared,))[shared][0]["id"], "obj_other")
-        self.assertEqual(self.objects.by_target(project_id=self.project_id, target_ids=(shared,)), {shared: []})
-        self.assertEqual(self.objects.by_target(project_id=self.project_id, target_ids=()), {})
+        self.assertEqual(self.objects.by_experiment(project_id=other_project, experiment_ids=(shared,))[shared][0]["id"], "obj_other")
+        self.assertEqual(self.objects.by_experiment(project_id=self.project_id, experiment_ids=(shared,)), {shared: []})
+        self.assertEqual(self.objects.by_experiment(project_id=self.project_id, experiment_ids=()), {})
 
     def test_large_batches_are_chunked_below_sql_parameter_limits(self) -> None:
         target_ids = tuple(f"exp_{index}" for index in range(801))
         self.store.statements.clear()
-        result = self.objects.by_target(project_id=self.project_id, target_ids=target_ids)
+        result = self.objects.by_experiment(project_id=self.project_id, experiment_ids=target_ids)
         self.assertEqual(list(result), list(target_ids))
         self.assertEqual(sum("FROM research_objects" in s for s in self.store.statements), 3)
 
-    def test_adopt_records_historical_objects_once(self) -> None:
+    def test_the_ledger_migration_adopts_historical_objects_once(self) -> None:
+        # `adopt` belongs to the one-shot migration, not to the facade: only it
+        # writes an association for an object Merv did not submit.
+        adopt = _migration().adopt
         snapshot = _record("obj_hist", name="datasets/h.tar")
-        adopted = self.objects.adopt(
+        row = dict(
             project_id=self.project_id, object_id="obj_hist", kind="dataset",
-            target_type="experiment", target_id=self.experiment_id, producing_run="r", source_uri="",
+            target_id=self.experiment_id, producing_run="r", source_uri="",
             notes="migrated", snapshot=snapshot, created_at="2026-01-01T00:00:00Z",
         )
-        self.assertTrue(adopted)
-        self.assertFalse(self.objects.adopt(
-            project_id=self.project_id, object_id="obj_hist", kind="dataset",
-            target_type="experiment", target_id=self.experiment_id, producing_run="r", source_uri="",
-            notes="migrated", snapshot=snapshot, created_at="2026-01-01T00:00:00Z",
-        ))
-        produced = self.objects.by_target(project_id=self.project_id, target_ids=(self.experiment_id,))
+        self.assertTrue(adopt(self.store, **row))
+        self.assertFalse(adopt(self.store, **row))
+        produced = self.objects.by_experiment(project_id=self.project_id, experiment_ids=(self.experiment_id,))
         self.assertEqual([item["created_at"] for item in produced[self.experiment_id]], ["2026-01-01T00:00:00Z"])
         with self.assertRaises(ValidationError):
-            self.objects.adopt(
-                project_id=self.project_id, object_id="obj_bad", kind="dataset", target_type="experiment",
-                target_id="", producing_run="", source_uri="", notes="", snapshot=snapshot, created_at="x",
-            )
+            adopt(self.store, **{**row, "object_id": "obj_bad", "kind": "nonsense"})
 
 
 if __name__ == "__main__":  # pragma: no cover

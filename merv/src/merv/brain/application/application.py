@@ -514,7 +514,7 @@ class Application:
         item = self.objects.get_object(project_id=project_id, object_id=ref)["object"]
         if item.get("status") != "available":
             raise ValidationError(f"storage object is not available: {ref}")
-        self.objects.pin(project_id=project_id, object_id=ref)
+        self.objects.manage(project_id=project_id, object_id=ref, action="pin")
         link = self.produced_objects.association(project_id=project_id, object_id=ref)
         source = (
             str(link["target_id"])
