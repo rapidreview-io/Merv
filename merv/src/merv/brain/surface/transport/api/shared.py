@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, Response
 
 from ....kernel.env import env_value
 from ....kernel.request_context import bind_principal
-from ....kernel.state.activity import UPLOAD_TOKEN_PATH_RE, WAIT_SIGNATURE_PATH_RE
+from ....kernel.state.activity import UPLOAD_TOKEN_PATH_RE
 from ....kernel.utils import ValidationError
 from ...identity import (
     HumanSessionRequiredError, is_human_session, is_local_principal,
@@ -54,16 +54,14 @@ UI_CORS_EXPOSE_HEADERS = ["ETag"]
 
 
 def redact_upload_tokens(path: str) -> str:
-    """Mask the two bearer credentials that live in a request path (INV-12).
+    """Mask the bearer credential that lives in a request path (INV-12).
 
     Upload tokens (artifact document/figure PUTs, feed-media PUTs, the storage
-    completion POST) and the run-wait tag are credentials the access log must
-    never persist. The patterns are the activity log's own, imported rather
-    than restated so the two scrubbers cannot drift apart.
+    completion POST) are credentials the access log must never persist. The
+    pattern is the activity log's own, imported rather than restated so the two
+    scrubbers cannot drift apart.
     """
-    return WAIT_SIGNATURE_PATH_RE.sub(
-        r"\1<redacted>", UPLOAD_TOKEN_PATH_RE.sub(r"\1<redacted>", path)
-    )
+    return UPLOAD_TOKEN_PATH_RE.sub(r"\1<redacted>", path)
 
 
 def path_scoped_body(body: JsonBody, **scope: str) -> dict[str, Any]:

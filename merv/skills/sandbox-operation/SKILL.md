@@ -39,17 +39,18 @@ job ID. An idempotency key can safely retry the same submitted job; reuse it
 only with identical inputs.
 
 Read `sandbox.job` for state and exit code. Pass the previous `after` cursor
-and `wait_seconds` up to 45 to wait for a change. For output, select
+and `wait_seconds` up to 30 to wait for a change. For output, select
 `stream=stdout` or `stderr` with an offset and bounded limit; use the returned
 extent to detect truncated or expired bytes. `sandbox.runs` lists an
 experiment's jobs, including jobs from released machines. Cancellation is
 `sandbox.job(cancel=true)`.
 
 Plain SSH commands are not automatically durable jobs. The retired
-`merv_run` wrapper is not installed on new machines. When Merv has a stable
-run-wait signing key configured, `sandbox.runs` also returns signed wait URLs
-for durable jobs. These URLs report job completion through Merv while job
-execution remains owned by merv-sandboxes.
+`merv_run` wrapper is not installed on new machines. To wait for a job, call
+`sandbox.runs` with its label and `wait_seconds=30` and call again until the row
+is `finished`; 30s is the cap merv-sandboxes honours, so a longer ask would only
+promise a hold nobody keeps. The wait spans one turn — a job that finishes after
+the turn ends is read back on the next `sandbox.runs` call.
 Passive SSH terminal transcripts and utilization samples are unavailable;
 use job output and retained results for evidence. Do not infer success from
 a connection closing or from a missing receipt.

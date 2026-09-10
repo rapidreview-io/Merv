@@ -46,9 +46,6 @@ def _mounted_mgmt_key_env(root: Path) -> dict[str, str]:
     return {
         "MERV_MGMT_KEY_PATH": str(key_path),
         "MERV_MGMT_PUBLIC_KEY": "ssh-ed25519 AAAAmanaged",
-        # Hosted control keeps no writable state root, so the run-wait signing
-        # key is mounted configuration like the management key beside it.
-        "MERV_WAIT_SECRET": "hosted-wait-secret-0123456789abcdef",
     }
 
 

@@ -37,10 +37,9 @@ For a project-reflection wave, launch the five independent lens prompts with
 tasks, so five lenses normally run in two waves unless the user changes the
 delegate-task concurrency setting.
 
-For long sandbox work, start `merv-runs-wait --url <wait_url>` through Hermes'
-background terminal with completion notification enabled. When it exits,
-re-read `sandbox.runs`; the watcher wakes the agent but is not the source of
-truth.
+For long sandbox work, wait on the run inside the turn: call `sandbox.runs`
+with the job's label and `wait_seconds=30`, and call again until the row is
+`finished`. A delegated child that launched the run waits on it itself.
 
 ## Use with the local agent runner
 

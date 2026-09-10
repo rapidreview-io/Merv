@@ -68,9 +68,9 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
 - Those two, and the experiment, task, claim, review, reflection, sandbox and
   view routers, are research files hosted in this delivery tree. Everything
   else here is support, and the support-vocabulary law reads it.
-- `feed_http.py`, `runs_wait.py`, storage routes, and user settings: protocols
-  whose byte streaming, long-polling, token, or security behavior cannot be
-  represented as an ordinary tool call.
+- `feed_http.py`, storage routes, and user settings: protocols whose byte
+  streaming, token, or security behavior cannot be represented as an ordinary
+  tool call.
 
 ## Boundary rules
 
@@ -83,8 +83,8 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
   scope, definition version, current revision, and durable gate facts.
 - Public MCP/HTTP names, schemas, status codes, response dictionaries, token
   behavior, and auth scope are compatibility contracts.
-- Token-bearing paths are redacted before telemetry. Upload tokens, run-wait
-  signatures, project keys, and OAuth credentials are never logged as plaintext.
+- Token-bearing paths are redacted before telemetry. Upload tokens, project
+  keys, and OAuth credentials are never logged as plaintext.
 - Optional capabilities are omitted from their tool and HTTP surfaces when
   disabled rather than advertised as failing operations.
 - New helper files require real protocol, security, persistence, or presentation

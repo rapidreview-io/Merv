@@ -716,14 +716,7 @@ class ServiceLayoutTest(unittest.TestCase):
         )
         self.assertEqual(
             {name for name, tool in TOOL_MANIFEST.items() if tool.needs_base_url},
-            {
-                "artifact.upload", "artifact.read", "feed.post",
-                "storage.submit", "sandbox.runs",
-            },
-        )
-        self.assertEqual(
-            {name for name, tool in TOOL_MANIFEST.items() if tool.needs_wait_secret},
-            {"sandbox.runs"},
+            {"artifact.upload", "artifact.read", "feed.post", "storage.submit"},
         )
         self.assertEqual(
             {
@@ -919,25 +912,12 @@ class ServiceLayoutTest(unittest.TestCase):
         self.assertNotIn("services.identity", _rc_source("reviews.py"))
 
     def test_opaque_secret_token_helpers_are_single_sourced(self) -> None:
-        # The set grew when the run-wait key loader landed here: that key is
-        # read from the environment or generated into the state root, so the
-        # module owns file and env access now. Still exact — a token helper
-        # that starts reaching for anything else has stopped being one.
-        # urllib.parse encodes the authenticated subject in v2 wait URLs; it
-        # performs no network access and remains part of this URL helper.
+        # Exact, and deliberately tiny: these helpers mint, hash and compare
+        # secrets and nothing else. A token helper that starts reaching for the
+        # environment, the filesystem or the network has stopped being one.
         self.assertEqual(
             _import_module_names(BACKEND_ROOT / "kernel" / "secret_tokens.py"),
-            {
-                "collections.abc",
-                "env",
-                "hashlib",
-                "hmac",
-                "merv.shared.errors",
-                "os",
-                "pathlib",
-                "secrets",
-                "urllib.parse",
-            },
+            {"hashlib", "hmac", "secrets"},
         )
         sensitive_paths = (RESEARCH_CORE / "reviews.py",)
         for path in sensitive_paths:

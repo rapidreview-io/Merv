@@ -19,7 +19,6 @@ import uvicorn
 
 from ..config import Mode, resolve_mode
 from ...kernel.env import env_bool, env_value
-from ...kernel.secret_tokens import WAIT_SECRET_ENV_VAR, load_wait_secret
 from ...kernel.utils import ValidationError
 from .api import create_fastapi_app
 from .http_policy import HttpSurfacePolicy
@@ -119,9 +118,6 @@ class UvicornHttpServer:
     loopback bind. Only ``hosted_control`` — which has already made the auth
     decision at the gate — may bind off-machine.
 
-    It keeps no state root of its own, so the run-wait key is configuration or
-    nothing: a hosted posture requires it and fails here rather than at the
-    first request, and a local one without it simply serves no wait route.
     """
 
     def __init__(
@@ -143,11 +139,6 @@ class UvicornHttpServer:
             surface_policy=surface_policy,
             auth=auth,
             env=env,
-            wait_secret=(
-                load_wait_secret(env=env, require_env=True)
-                if hosted or env_value(WAIT_SECRET_ENV_VAR, env=env)
-                else None
-            ),
         )
         self.fastapi_app = fastapi_app
         self._socket = _bind_socket(host=bind_host, port=port)

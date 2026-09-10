@@ -14,6 +14,7 @@ from merv.shared.storage_guidance import STORAGE_RULE_OF_THUMB
 from merv.shared.tool_validation import validate_openssh_public_key
 
 from ..kernel.tools import ContractModel, ProjectScopedInput, ToolContract
+from .sandboxes import MAX_WAIT_SECONDS
 
 
 class StoragePutObjectInput(ProjectScopedInput):
@@ -276,14 +277,14 @@ class SandboxRunsInput(ProjectScopedInput):
     wait_seconds: int = Field(
         default=0,
         ge=0,
-        le=300,
+        le=MAX_WAIT_SECONDS,
         description=(
             "Long-poll: block up to this many seconds, returning early when "
             "any run finishes (or nothing is running). 0 answers immediately. "
-            "Keep <=45 unless your MCP client's tool timeout is known to allow "
-            "more (many clients cut tool calls at ~60s). This spans only the "
-            "current turn: a run that finishes after you end the turn is not "
-            "noticed until you next call this."
+            f"{MAX_WAIT_SECONDS}s is the cap merv-sandboxes honours, and it "
+            "sits well inside the ~60s tool timeout most MCP clients enforce. "
+            "This spans only the current turn: a run that finishes after you "
+            "end the turn is not noticed until you next call this."
         ),
     )
 
@@ -301,7 +302,7 @@ class SandboxRunInput(SandboxGetInput):
 class SandboxJobInput(ProjectScopedInput):
     job_id: str = Field(description="Job ID returned by sandbox.run or sandbox.runs.")
     after: str | None = Field(default=None, description="Cursor from the previous status for long-polling.")
-    wait_seconds: int = Field(default=0, ge=0, le=45)
+    wait_seconds: int = Field(default=0, ge=0, le=MAX_WAIT_SECONDS)
     cancel: bool = Field(default=False, description="Request cancellation of this job.")
     stream: Literal["stdout", "stderr"] | None = Field(default=None, description="Optionally read a bounded slice of retained job output.")
     offset: int = Field(default=0, ge=0)
@@ -439,12 +440,11 @@ TOOLS: dict[str, ToolContract] = {
     ),
     "sandbox.job": ToolContract(
         handler_identity="sandboxes.job", input_model=SandboxJobInput,
-        description="Read or cancel a project job. Use after plus wait_seconds to wait for a change, or stream with offset/limit to read bounded retained output. Job status and retained logs remain available after sandbox release.",
+        description=f"Read or cancel a project job. Use after plus wait_seconds (up to {MAX_WAIT_SECONDS}s per call) to wait for a change, or stream with offset/limit to read bounded retained output. Job status and retained logs remain available after sandbox release.",
     ),
     "sandbox.runs": ToolContract(
         handler_identity="sandboxes.runs", input_model=SandboxRunsInput,
-        needs_base_url=True, needs_wait_secret=True,
-        description="List durable jobs launched with sandbox.run for a sandbox or experiment. SSH commands are not automatically jobs. Use sandbox.job to inspect output or wait for status changes.",
+        description="List durable jobs launched with sandbox.run for a sandbox or experiment. SSH commands are not automatically jobs. Pass wait_seconds to long-poll: one call blocks at most 30s, which is what merv-sandboxes honours. Use sandbox.job to inspect output or wait for status changes.",
     ),
     "sandbox.terminal": ToolContract(
         handler_identity="sandboxes.terminal", input_model=SandboxTerminalInput,

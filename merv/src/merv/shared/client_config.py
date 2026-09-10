@@ -63,10 +63,9 @@ def _warn(text: str) -> None:
 
     ``print(file=None)`` FALLS BACK TO STDOUT, and a client spawned with fd 2
     closed has exactly that: ``sys.stderr`` is None for the life of the
-    process, however the descriptor is reopened afterwards. Clients like
-    ``merv-runs-wait`` carry their wake signal on stdout, where a stray note
-    reads as a protocol line nobody sent — so a note that cannot reach stderr
-    is dropped instead.
+    process, however the descriptor is reopened afterwards. A client that
+    carries a protocol line on stdout would read a stray note as a line nobody
+    sent — so a note that cannot reach stderr is dropped instead.
     """
     stream = sys.stderr
     if stream is None:

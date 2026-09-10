@@ -90,7 +90,6 @@ class ClientBundleTest(unittest.TestCase):
             "AGENTS.md",
             "bin/merv-agent-runner",
             "bin/merv-client",
-            "bin/merv-runs-wait",
             "clients/hermes/README.md",
             "clients/hermes/build_bundle.py",
             "clients/hermes/install.sh",
@@ -111,7 +110,6 @@ class ClientBundleTest(unittest.TestCase):
             "clients/qwen/qwen-extension.json",
             "src/merv/client/agent_runner.py",
             "src/merv/client/cli.py",
-            "src/merv/client/runs_wait.py",
             # Codex manifest's composerIcon must resolve inside the bundle.
             "assets/icon.svg",
         }
@@ -256,32 +254,6 @@ class ClientBundleTest(unittest.TestCase):
                 list((conflict_home / "skills").iterdir()),
                 [conflict],
                 "preflight failure must not leave a partial skill install",
-            )
-
-    def test_the_run_watcher_ships_runnable(self) -> None:
-        # Platforms arm the watcher by path, so a shim that arrives without its
-        # executable bit is a wake signal nobody can start; and it has to run
-        # from the bundle's own src like the onboarding CLI does.
-        with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "plugin"
-            build_client_bundle.build(out)
-            shim = out / "bin" / "merv-runs-wait"
-            self.assertTrue(shim.is_file())
-            self.assertTrue(os.access(shim, os.X_OK), "merv-runs-wait is not executable")
-
-            result = subprocess.run(
-                [sys.executable, "-m", "merv.client.runs_wait",
-                 "--url", "ftp://nowhere/wait/sbx-1/seed0/sig"],
-                cwd=out,
-                env={"PYTHONPATH": str(out / "src"), "PATH": ""},
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            self.assertEqual(result.returncode, 3, result.stderr)
-            self.assertEqual(
-                result.stdout.splitlines()[-1],
-                "MERV_RUNS_WAIT poll_error seed0 bad_url",
             )
 
     def test_slim_src_is_self_contained(self) -> None:
