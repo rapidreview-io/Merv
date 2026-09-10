@@ -4,6 +4,7 @@
 from .artifact_models import Artifact, ArtifactTarget, CompletedArtifact, Submission, TargetHistory
 from .artifacts import ResearchArtifacts
 from .content_summaries import content_tldr
+from .paths import safe_experiment_dirname
 from .evidence import (
     MAX_GRAPH_NODES,
     graph_problems,
@@ -85,4 +86,5 @@ __all__ = [
     "graph_problems",
     "historical_latest_artifacts",
     "preferred_artifact",
+    "safe_experiment_dirname",
 ]

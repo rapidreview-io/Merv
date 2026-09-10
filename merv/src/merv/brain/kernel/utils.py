@@ -26,7 +26,6 @@ from merv.shared.errors import (
     ValidationError,
     WorkflowError,
 )
-from merv.shared.path_utils import safe_experiment_dirname
 
 
 # ---------------------------------------------------------------------------
