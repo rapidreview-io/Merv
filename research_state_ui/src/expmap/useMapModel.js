@@ -4,6 +4,7 @@ import { useProjectStore, selectClaims, selectExperiments, selectSandboxes } fro
 import { classifyExperiment } from '../utils/evidence';
 import { ENTITY_ID_RE, resolveEntity } from '../utils/entityResolve';
 import { expName, TERMINAL_STATUSES } from '../utils/experiment';
+import { fmtStamp } from '../utils/format';
 import { extractPaperCitations } from '../utils/paperCitations';
 import { computeLayout, nowX as clampNowX } from './mapLayout';
 
@@ -99,10 +100,6 @@ function satTrunc(s) {
   const cut = midWord && head.includes(' ') ? head.slice(0, head.lastIndexOf(' ')) : head;
   return `${cut.replace(/[\s,;:.]+$/, '')}…`;
 }
-
-// "Jul 10 08:00" — prototype card-header stamp (local time).
-const fmtT = (ms) =>
-  `${new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${new Date(ms).toTimeString().slice(0, 5)}`;
 
 // Newest review carrying a synopsis (experiment_reviewer/human preferred),
 // else the experiment's own intent line.
@@ -372,7 +369,7 @@ export function useMapModel(viewW) {
         status: outcome === 'inflight' ? 'running' : outcome,
         startMs,
         endMs,
-        when: fmtT(startMs) + (endMs ? ` → ${fmtT(endMs)}` : ' → …'),
+        when: fmtStamp(startMs) + (endMs ? ` → ${fmtStamp(endMs)}` : ' → …'),
         ...pickTldr(e),
         sats,
         refs,

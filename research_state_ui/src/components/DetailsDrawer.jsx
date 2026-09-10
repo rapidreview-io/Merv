@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import StatusPill from './StatusPill';
-import { fmtAgo, fmtSpan } from '../utils/format';
+import { fmtSpan } from '../utils/format';
+import { ago, msBetween } from '../utils/time';
 
 /*
  * DetailsDrawer — the operational sidecar of a work node (experiment or
@@ -92,15 +93,6 @@ export default function DetailsDrawer({ id, open, onClose, title = 'Details', ch
 
 /* ── Shared drawer sections: the operations grammar. The pages hand in rows;
    nothing here repeats what a page already shows. ── */
-const ago = (iso) => {
-  const t = Date.parse(iso || '');
-  return Number.isFinite(t) ? fmtAgo(Date.now() - t) : null;
-};
-const msBetween = (a, b) => {
-  const t0 = Date.parse(a || ''), t1 = Date.parse(b || '');
-  return Number.isFinite(t0) && Number.isFinite(t1) ? Math.max(0, t1 - t0) : null;
-};
-
 export function OpsTimeline({ items, done, createdAt, endedAt }) {
   if (!items.length) return null;
   const spans = items.map((item, i) => {

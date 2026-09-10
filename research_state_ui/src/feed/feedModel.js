@@ -3,6 +3,7 @@
 // thread continuations and its replies) plus the client-side filters.
 import { useEffect, useState } from 'react';
 import { fmtAgo } from '../utils/format.js';
+import { dayKey } from '../utils/time.js';
 
 // Shared ticking clock. One instance lives in Feed and flows down as a prop.
 export function useNow(intervalMs = 30000) {
@@ -12,11 +13,6 @@ export function useNow(intervalMs = 30000) {
     return () => clearInterval(t);
   }, [intervalMs]);
   return now;
-}
-
-function dayKey(ts) {
-  const d = new Date(ts);
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
 // Calendar-aware (setDate handles DST days that aren't 24h long).

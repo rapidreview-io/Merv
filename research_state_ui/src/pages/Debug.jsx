@@ -4,6 +4,7 @@ import { api } from '../api';
 import JsonView from '../components/JsonView';
 import ObjId from '../components/ObjId';
 import { tsToTime } from '../utils/format';
+import { tsMs } from '../utils/time';
 import { expName } from '../utils/experiment';
 import { useProjectStore, selectExperiments, useProjectHref } from '../store/useProjectStore';
 
@@ -81,11 +82,6 @@ function percentile(sorted, p) {
   if (!sorted.length) return 0;
   const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
   return sorted[idx];
-}
-
-function tsMs(ts) {
-  const v = Date.parse(ts);
-  return Number.isFinite(v) ? v : 0;
 }
 
 export default function Debug() {

@@ -11,7 +11,8 @@ import StatusPill from '../components/StatusPill';
 import ObjId from '../components/ObjId';
 import InlineMd from '../components/InlineMd';
 import DetailsDrawer, { DetailsButton, OpsTimeline, OpsVersions, OpsPosition } from '../components/DetailsDrawer';
-import { fmtAgo, fmtSpan, formatBytes } from '../utils/format';
+import { formatBytes } from '../utils/format';
+import { ago } from '../utils/time';
 import { workflowActionButtons } from '../utils/workflowActions';
 
 /*
@@ -48,14 +49,6 @@ const SECONDARY_TRANSITIONS = [
   { transition: 'mark_failed', label: 'End task (mark failed)' },
 ];
 
-const ago = (iso) => {
-  const t = Date.parse(iso || '');
-  return Number.isFinite(t) ? fmtAgo(Date.now() - t) : null;
-};
-const msBetween = (a, b) => {
-  const t0 = Date.parse(a || ''), t1 = Date.parse(b || '');
-  return Number.isFinite(t0) && Number.isFinite(t1) ? Math.max(0, t1 - t0) : null;
-};
 const nodeHref = (px, node) => px(node.node_type === 'task' ? `/tasks/${node.id}` : `/experiments/${node.id}`);
 
 export default function TaskDetail() {

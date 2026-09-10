@@ -13,11 +13,11 @@ import {
 } from '../store/useProjectStore';
 import { expName } from '../utils/experiment';
 import { fmtDuration, fmtUsd, fmtHrs } from '../utils/format';
+import { DAY_MS } from '../utils/time';
 import { densifyDaily } from '../utils/spend';
 
 const REVIEW_STATES = new Set(['design_review', 'experiment_review']);
 const SOON_MS = 30 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
 const METRICS_POLL_MS = 12000;
 
 // "8×H100" / "8x H100" → 8; bare "H100" → 1; no gpu → 0.

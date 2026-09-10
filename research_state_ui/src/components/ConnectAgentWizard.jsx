@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api, mcpEndpoint } from '../api';
+import { tsMs } from '../utils/time';
 import {
   NATIVE_CLIENTS,
   OTHER_CLIENT_NAMES,
@@ -24,11 +25,6 @@ import {
 
 const STEPS = ['client', 'setup', 'verify', 'done'];
 const POLL_MS = 2500;
-
-function tsMs(ts) {
-  const v = Date.parse(ts);
-  return Number.isFinite(v) ? v : 0;
-}
 
 function CommandRow({ id, text, copied, onCopy }) {
   return (

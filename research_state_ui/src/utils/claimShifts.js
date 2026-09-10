@@ -42,13 +42,3 @@ export function computeClaimShifts(events) {
   }
   return shifts.reverse(); // newest first
 }
-
-/** "today" / "yesterday" / "Nd ago" — the calm relative stamp. */
-export function relDays(iso) {
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return '';
-  const days = Math.floor((Date.now() - t) / (24 * 60 * 60 * 1000));
-  if (days <= 0) return 'today';
-  if (days === 1) return 'yesterday';
-  return `${days}d ago`;
-}

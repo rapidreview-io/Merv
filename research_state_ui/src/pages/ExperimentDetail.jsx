@@ -13,7 +13,8 @@ import ArtifactList from '../components/ArtifactList';
 import TerminalTransitionConfirm from '../components/TerminalTransitionConfirm';
 import DetailsDrawer, { DetailsButton, OpsTimeline, OpsVersions, OpsPosition } from '../components/DetailsDrawer';
 import { expName } from '../utils/experiment';
-import { fmtAgo, formatBytes } from '../utils/format';
+import { formatBytes } from '../utils/format';
+import { ago } from '../utils/time';
 import { gateToSectionId, useScrollToHash } from '../utils/useScrollToHash';
 import { workflowActionButtons } from '../utils/workflowActions';
 import InlineMd from '../components/InlineMd';
@@ -385,10 +386,6 @@ function buildExperimentTimeline(experiment, designReviews, experimentReviews) {
 }
 
 function ExperimentFacts({ experiment, designReviews, experimentReviews, px }) {
-  const ago = (iso) => {
-    const t = Date.parse(iso || '');
-    return Number.isFinite(t) ? fmtAgo(Date.now() - t) : null;
-  };
   const isClosed = ['complete', 'failed', 'abandoned'].includes(experiment.status);
   const timeline = buildExperimentTimeline(experiment, designReviews, experimentReviews);
   const arts = (experiment.artifacts || []).slice().sort((a, b) =>

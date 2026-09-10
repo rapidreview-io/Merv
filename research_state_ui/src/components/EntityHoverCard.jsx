@@ -1,12 +1,7 @@
 import StatusPill from './StatusPill';
 import { TYPE_GLYPH, TYPE_LABEL } from '../utils/entityResolve';
 import { authorLine } from '../utils/litreview';
-import { fmtAgo } from '../utils/format';
-
-function ago(iso) {
-  const t = Date.parse(iso || '');
-  return Number.isFinite(t) ? fmtAgo(Date.now() - t) : null;
-}
+import { ago } from '../utils/time';
 
 const CONF_N = { low: 1, medium: 2, high: 3 };
 

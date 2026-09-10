@@ -9,6 +9,7 @@ import ReflectionSpotlight from '../components/reflection/ReflectionSpotlight';
 import ConsolidationLedger from '../components/reflection/ConsolidationLedger';
 import { buildBraid } from '../components/reflection/braidModel';
 import { TERMINAL_WAVE, reflectionsByLens, secondaryDocs, resolveReflectionDoc } from '../components/reflection/waveModel';
+import { shortDateTime } from '../utils/time';
 
 /**
  * ReflectionDetail — one wave's own page, the reflection sibling of
@@ -19,15 +20,6 @@ import { TERMINAL_WAVE, reflectionsByLens, secondaryDocs, resolveReflectionDoc }
  * footer disclosures. A past wave renders FAITHFULLY from the artifacts it
  * submitted (artifact ids pin exact bytes).
  */
-
-function shortDateTime(iso) {
-  if (!iso) return '';
-  try {
-    return new Date(iso).toLocaleString([], {
-      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-    });
-  } catch { return ''; }
-}
 
 // Quiet disclosure for the secondary artifacts (change spec, review).
 function Collapsible({ label, count, children }) {

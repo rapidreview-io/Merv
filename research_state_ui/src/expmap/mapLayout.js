@@ -10,6 +10,8 @@
  * Pure data → data; no React, no fetches, unit-testable with node.
  */
 
+import { DAY_MS, dayKey } from '../utils/time';
+
 export const CARD_W = 284;
 export const CARD_H = 122;
 export const ROW_H = 200;
@@ -73,14 +75,6 @@ export function packRows(items) {
   return pos;
 }
 
-const p2 = (n) => String(n).padStart(2, '0');
-// Local-time day key, matching the local-time labels the cards render.
-const dayKey = (ms) => {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
-};
-
-const DAY_MS = 86400000;
 // Margin days stop where the elastic tails flatten below this per-day step —
 // the calendar fades out instead of piling labels onto a saturated scale.
 const MARGIN_STEP_MIN = 30;

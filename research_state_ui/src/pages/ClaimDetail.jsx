@@ -7,7 +7,8 @@ import StatusPill from '../components/StatusPill';
 import { ConfidenceSignal } from '../components/ClaimEvidence';
 import { classifyExperiment, outcomeColor, outcomeLabel, outcomeGlyph, claimStatusColor } from '../utils/evidence';
 import { expName } from '../utils/experiment';
-import { computeClaimShifts, relDays } from '../utils/claimShifts';
+import { computeClaimShifts } from '../utils/claimShifts';
+import { relDays } from '../utils/time';
 import { fmtStamp } from '../utils/format';
 
 export default function ClaimDetail() {

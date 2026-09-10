@@ -86,19 +86,18 @@ export function fmtSpan(ms) {
 
 // Split timestamp for compact two-line table cells: "Jun 11" over "1:36 PM".
 export function fmtDayTime(iso) {
-  if (!iso) return null;
-  try {
-    const d = new Date(iso);
-    const sameYear = d.getFullYear() === new Date().getFullYear();
-    return {
-      day: d.toLocaleDateString([], {
-        month: 'short',
-        day: 'numeric',
-        ...(sameYear ? {} : { year: 'numeric' }),
-      }),
-      time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-    };
-  } catch { return null; }
+  const t = Date.parse(iso || '');
+  if (!Number.isFinite(t)) return null;
+  const d = new Date(t);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return {
+    day: d.toLocaleDateString([], {
+      month: 'short',
+      day: 'numeric',
+      ...(sameYear ? {} : { year: 'numeric' }),
+    }),
+    time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+  };
 }
 
 export function isMarkdown(path) {

@@ -10,7 +10,8 @@ import {
 import { api } from '../api';
 import { tallyOutcomes, claimStatusColor } from '../utils/evidence';
 import { ConfidenceSignal } from '../components/ClaimEvidence';
-import { computeClaimShifts, relDays } from '../utils/claimShifts';
+import { computeClaimShifts } from '../utils/claimShifts';
+import { relDays } from '../utils/time';
 
 /**
  * The state-of-knowledge page: a claims board. Claims are shelved by what
