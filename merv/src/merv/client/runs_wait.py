@@ -320,7 +320,7 @@ def _row_for(
     view: dict[str, Any], *, sandbox_uid: str, label: str
 ) -> dict[str, Any] | None:
     """The one run this watcher named. Labels are unique per sandbox only, so
-    an experiment-scoped listing can carry a namesake from another box."""
+    a listing that spans sandboxes can carry a namesake from another box."""
     for run in view.get("runs") or []:
         if not isinstance(run, dict) or str(run.get("label") or "") != label:
             continue
