@@ -63,7 +63,7 @@ class EventCatalogStructureTest(unittest.TestCase):
                 expressions = [
                     keyword.value
                     for keyword in call.keywords
-                    if keyword.arg in {"event", "event_type"}
+                    if keyword.arg in {"event", "event_type", "created_event"}
                 ]
                 if (
                     isinstance(call.func, ast.Name)

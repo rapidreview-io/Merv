@@ -14,10 +14,11 @@ from merv.brain.workflows import (
     Issue,
     Node,
     Reference,
+    ReviewGate,
     Scope,
     Workflow,
 )
-from merv.brain.workflows.definitions.checks import review_requested, reviewed
+from merv.brain.workflows.definitions.checks import reviewed
 from merv.brain.workflows.definitions.execution import REVIEW_WORKSPACE
 from tests.research_core.scenarios import ResearchCase
 
@@ -201,15 +202,17 @@ class WorkflowDispatchTest(ResearchCase):
         plugin = Workflow(
             "custom_audit", 1, "work",
             (Node("work", "Collect evidence", "collector", lambda snapshot, knowledge: Brief("Collect evidence.")),
-             Node("audit", "Audit the evidence", role, review_context, review_requested,
+             Node("audit", "Audit the evidence", role, review_context,
                   execution=Execution(read_only=True, tools=frozenset({"review.start", "review.submit"}),
                                       scope=(Scope("review_request_id", "reference:review_request",
                                                    tools=("review.start", "review.submit")),),
-                                      workspace=REVIEW_WORKSPACE))),
+                                      workspace=REVIEW_WORKSPACE),
+                  requires=(ReviewGate(role, f"An independent {role} review is required.", f"{role}_required",
+                                       "Evidence audited", "", "accept", (), actions=("accept",)),))),
             (Edge("work", "submit", "audit", change=lambda snapshot, payload, knowledge: Change(
                 data={"result": "retained conclusion"},
                 actions=(Action("review.request", {"target_type": snapshot.workflow, "target_id": snapshot.id, "role": role}),))),
-             Edge("audit", "accept", "done", check=reviewed(role))),
+             Edge("audit", "accept", "done")),
             {"done": "passed"},
         )
         self.runtime.registry.register(plugin)

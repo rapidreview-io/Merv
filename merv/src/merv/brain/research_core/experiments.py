@@ -1,5 +1,5 @@
 # If you update this file, you must consult research_core.md to see whether research_core.md needs to be updated. research_core.md must not exceed 100 lines.
-"""Experiment records and verified workflow facts."""
+"""What is true of experiments alone: creation invariants, claims, exhibits."""
 
 from __future__ import annotations
 
@@ -7,273 +7,137 @@ from contextlib import closing, nullcontext
 import json
 from typing import Any
 
-from ..workflows import EXHIBIT_ROLE
-
-
-from .evidence import (
-    artifact_state_record,
-    current_slot_artifacts,
-    submission_state_record,
-)
-from .dependencies import dependency_rows, dependent_rows, record_dependencies
+from ..workflows import EXHIBIT_ROLE, KINDS, Snapshot
 from .experiment_workflow import EXPERIMENT_WORKFLOW
-from .workflow_schema import Workflow
 from .reflection_workflow import REFLECTION_WORKFLOW
 from .policy import (
     ACTIVE_EXPERIMENT_CAP,
     GateEvaluation,
     active_experiment_cap_reached_message,
     covered_terminal_ids,
-    evaluate_artifact_requirement,
-    evaluate_review_gate,
     reflection_create_block_message,
-    review_snapshot_id,
-    snapshot_from_id,
-    read_review_fact,
     validate_experiment_name,
 )
-from .artifacts import ResearchArtifacts as Artifacts
-from .artifact_models import Artifact, ArtifactTarget, Submission
-from ..workflows import Reference, Runtime, Snapshot, WORKFLOWS
+from .artifact_models import ArtifactTarget
+from .records import RecordHooks, Records
 from ..kernel.state.store import BaseStateStore, row_to_dict, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
-from ..kernel.utils import new_id
-from ..kernel.utils import now_iso
 from .models import CommittedExperimentUpdate
 
-
-def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
-    return rows_to_dicts(rows=conn.execute(sql, parameters).fetchall())
+EXPERIMENT = KINDS["experiment"]
 
 
-EXPERIMENT = WORKFLOWS["experiment"]
+class ExperimentService(RecordHooks):
+    """The experiment's own rules; every lifecycle step runs on ``Records``."""
 
-
-class ExperimentService:
-    def __init__(
-        self,
-        *,
-        store: BaseStateStore,
-        artifacts: Artifacts,
-        runtime: Runtime,
-    ) -> None:
+    def __init__(self, *, store: BaseStateStore, records: Records) -> None:
         self.store = store
-        self.artifacts = artifacts
-        self.runtime = runtime
+        self.records = records
+        self.runtime = records.runtime
+        self.artifacts = records.artifacts
+        records.register(EXPERIMENT, self)
+
+    # ---- create ----
 
     def create(
-        self,
-        *,
-        name: str,
-        intent: str,
-        details: str = "",
+        self, *, name: str, intent: str, details: str = "",
         tested_claim_ids: list[str] | str | None = None,
-        depends_on: list[str] | str | None = None,
-        project_id: str | None = None,
+        depends_on: list[str] | str | None = None, project_id: str | None = None,
     ) -> dict[str, Any]:
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            return self._create_in_transaction(
-                conn=conn,
-                project_id=project_id,
-                name=name,
-                intent=intent,
-                details=details,
-                tested_claim_ids=tested_claim_ids,
-                depends_on=depends_on,
-            )
+            return self._create(conn=conn, project_id=project_id, name=name, intent=intent, details=details,
+                                tested_claim_ids=tested_claim_ids, depends_on=depends_on)
 
     def create_from_reflection(
-        self,
-        *,
-        conn,
-        project_id: str,
-        reflection_id: str,
-        name: str,
-        intent: str,
-        details: str = "",
-        tested_claim_ids: list[str] | str | None = None,
-        proposal_key: str = "",
-        parallelism: str = "",
-        depends_on: list[str] | str | None = None,
+        self, *, conn, project_id: str, reflection_id: str, name: str, intent: str, details: str = "",
+        tested_claim_ids: list[str] | str | None = None, proposal_key: str = "",
+        parallelism: str = "", depends_on: list[str] | str | None = None,
     ) -> dict[str, Any]:
-        """Create one reviewed reflection proposal through normal invariants."""
-        reflection_id = str(reflection_id or "").strip()
-        source = conn.execute(
-            "SELECT id FROM reflections WHERE id = ? AND project_id = ?",
-            (reflection_id, project_id),
-        ).fetchone()
-        if source is None:
-            raise NotFoundError(f"reflection not found: {reflection_id}")
-        return self._create_in_transaction(
-            conn=conn,
-            project_id=project_id,
-            name=name,
-            intent=intent,
-            details=details,
-            tested_claim_ids=tested_claim_ids,
-            source_reflection_id=reflection_id,
-            proposal_key=proposal_key,
-            parallelism=parallelism,
-            depends_on=depends_on,
-        )
+        """Create one reviewed reflection proposal through normal invariants.
 
-    def _create_in_transaction(
-        self,
-        *,
-        conn,
-        project_id: str,
-        name: str,
-        intent: str,
-        details: str = "",
-        tested_claim_ids: list[str] | str | None = None,
-        source_reflection_id: str = "",
-        proposal_key: str = "",
-        parallelism: str = "",
-        depends_on: list[str] | str | None = None,
-        workflow_instance: Snapshot | None = None,
-    ) -> dict[str, Any]:
+        The cap, reserved name and reflection-debt blocks were checked when the
+        change spec passed reflection review; re-checking here could only wedge
+        an already-bound publish over a mid-wave tool create.
+        """
+        reflection_id = str(reflection_id or "").strip()
+        if conn.execute("SELECT id FROM reflections WHERE id = ? AND project_id = ?",
+                        (reflection_id, project_id)).fetchone() is None:
+            raise NotFoundError(f"reflection not found: {reflection_id}")
+        return self._create(conn=conn, project_id=project_id, name=name, intent=intent, details=details,
+                            tested_claim_ids=tested_claim_ids, depends_on=depends_on, guard=False,
+                            source={"source_reflection_id": reflection_id, "proposal_key": proposal_key.strip(),
+                                    "parallelism": parallelism.strip()})
+
+    def initialize_workflow(self, conn, snapshot: Snapshot) -> None:
+        self._create(conn=conn, project_id=snapshot.project_id, instance=snapshot,
+                     name=str(snapshot.data.get("name") or ""), intent=str(snapshot.data.get("intent") or ""),
+                     details=str(snapshot.data.get("details") or ""),
+                     tested_claim_ids=snapshot.data.get("tested_claim_ids"),
+                     depends_on=snapshot.data.get("depends_on"))
+
+    def _create(self, *, conn, project_id, name, intent, details="", tested_claim_ids=None,
+                depends_on=None, guard=True, source=None, instance=None) -> dict[str, Any]:
         # Order-preserving dedupe: distinct refs (a create key and a literal
         # claim id) can resolve to one claim, and experiment_claims has a
         # composite primary key — a duplicate insert would abort the caller's
         # whole transaction (reflection publish included).
-        tested_claim_ids = (
-            [tested_claim_ids]
-            if isinstance(tested_claim_ids, str)
-            else list(dict.fromkeys(tested_claim_ids or []))
-        )
+        claim_ids = ([tested_claim_ids] if isinstance(tested_claim_ids, str)
+                     else list(dict.fromkeys(tested_claim_ids or [])))
         name = validate_experiment_name(name)
         if not intent.strip():
             raise ValidationError("intent is required")
-        if not source_reflection_id:
-            # Reflection-sourced creates were counted against the cap when the
-            # change spec passed reflection review; re-checking here could only
-            # wedge an already-bound publish over a mid-wave tool create.
-            self._reject_active_experiment_cap(conn=conn, project_id=project_id)
-            self._reject_reflection_blocked_experiment_create(
-                conn=conn, project_id=project_id
-            )
-            self._reject_reserved_wave_name(
-                conn=conn, project_id=project_id, name=name
-            )
-        duplicate = conn.execute(
-            "SELECT id FROM experiments WHERE project_id = ? AND lower(name) = lower(?)",
-            (project_id, name),
-        ).fetchone()
-        if duplicate is not None:
-            raise ValidationError(
-                f"an experiment named {name!r} already exists in this project "
-                "— choose a new name"
-            )
-        for claim_id in tested_claim_ids or []:
-            if (
-                conn.execute(
-                    "SELECT id FROM claims WHERE id = ? AND project_id = ?",
-                    (claim_id, project_id),
-                ).fetchone()
-                is None
-            ):
+        return self.records.create_in_transaction(
+            EXPERIMENT, conn=conn, project_id=project_id, guard=guard, instance=instance,
+            values={"name": name, "intent": intent.strip(), "details": details.strip(),
+                    "tested_claim_ids": claim_ids},
+            event={"name": name, "intent": intent, **(source or {})}, depends_on=depends_on,
+        )
+
+    # ---- declared hooks ----
+
+    def before_create(self, *, conn, project_id: str, values: dict[str, Any]) -> None:
+        self._reject_active_experiment_cap(conn=conn, project_id=project_id)
+        self._reject_reflection_blocked_experiment_create(conn=conn, project_id=project_id)
+        self._reject_reserved_wave_name(conn=conn, project_id=project_id, name=str(values["name"]))
+
+    def after_create(self, *, conn, project_id: str, record_id: str, values: dict[str, Any]) -> None:
+        for claim_id in values.get("tested_claim_ids") or []:
+            if conn.execute("SELECT id FROM claims WHERE id = ? AND project_id = ?",
+                            (claim_id, project_id)).fetchone() is None:
                 raise NotFoundError(f"claim not found: {claim_id}")
-        experiment_id = new_id(prefix="exp") if workflow_instance is None else workflow_instance.id
-        now = now_iso()
-        conn.execute(
-            """
-            INSERT INTO experiments
-              (id, project_id, name, intent, details, status, attempt_index, revision_context, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 1, '', ?, ?)
-            """,
-            (
-                experiment_id,
-                project_id,
-                name,
-                intent.strip(),
-                details.strip(),
-                EXPERIMENT.initial if workflow_instance is None else workflow_instance.state,
-                now,
-                now,
-            ),
-        )
-        for claim_id in tested_claim_ids or []:
-            conn.execute(
-                "INSERT INTO experiment_claims (experiment_id, claim_id) VALUES (?, ?)",
-                (experiment_id, claim_id),
-            )
-        depends_on_ids = (
-            [depends_on] if isinstance(depends_on, str) else list(depends_on or [])
-        )
-        recorded = record_dependencies(
-            conn=conn,
-            project_id=project_id,
-            node_id=experiment_id,
-            depends_on_ids=depends_on_ids,
-        )
-        event_payload: dict[str, Any] = {"name": name, "intent": intent}
-        if recorded:
-            event_payload["depends_on"] = recorded
-        if source_reflection_id:
-            event_payload.update(
-                source_reflection_id=source_reflection_id,
-                proposal_key=proposal_key.strip(),
-                parallelism=parallelism.strip(),
-            )
-        self.store.record_event(
-            conn=conn,
-            project_id=project_id,
-            event_type="experiment.created",
-            target_type="experiment",
-            target_id=experiment_id,
-            payload=event_payload,
-        )
-        if workflow_instance is None:
-            self.runtime.adopt(conn=conn, project_id=project_id, instance_id=experiment_id,
-                               workflow="experiment", state=EXPERIMENT.initial, data={"attempt_index": 1})
-        return self.get_state(experiment_id=experiment_id, conn=conn)
+            conn.execute("INSERT INTO experiment_claims (experiment_id, claim_id) VALUES (?, ?)",
+                         (record_id, claim_id))
 
-    def initialize_workflow(self, conn, snapshot: Snapshot) -> None:
-        self._create_in_transaction(
-            conn=conn, project_id=snapshot.project_id, workflow_instance=snapshot,
-            name=str(snapshot.data.get("name") or ""), intent=str(snapshot.data.get("intent") or ""),
-            details=str(snapshot.data.get("details") or ""),
-            tested_claim_ids=snapshot.data.get("tested_claim_ids"),
-            depends_on=snapshot.data.get("depends_on"),
-        )
+    def hydrate(self, *, conn, project_id: str, records: list[dict[str, Any]], detail_ids=()) -> None:
+        claims: dict[str, list[dict[str, Any]]] = {}
+        for claim in rows_to_dicts(rows=conn.execute(
+            """SELECT ec.experiment_id AS _experiment_id, c.* FROM experiment_claims ec
+               JOIN experiments e ON e.id = ec.experiment_id JOIN claims c ON c.id = ec.claim_id
+               WHERE e.project_id = ? ORDER BY e.created_at, e.id, c.created_at, c.id""",
+            (project_id,)).fetchall()):
+            claims.setdefault(str(claim.pop("_experiment_id")), []).append(claim)
+        for record in records:
+            record["tested_claims"] = claims.get(str(record["id"]), [])
 
-    def _active_experiment_count(self, *, conn, project_id: str) -> int:
-        terminal = ", ".join(
-            f"'{status}'"
-            for status in sorted(EXPERIMENT_WORKFLOW.terminal_statuses)
-        )
-        row = conn.execute(
-            f"""
-            SELECT COUNT(*) AS count FROM experiments
-            WHERE project_id = ? AND status NOT IN ({terminal})
-            """,
-            (project_id,),
-        ).fetchone()
-        return int(row["count"] if row is not None else 0)
+    # ---- create blocks ----
 
     def _reject_active_experiment_cap(self, *, conn, project_id: str) -> None:
         # Reserved wave names hold their cap slots: the wave passed the cap
         # check when its spec was validated, so tool creates must not consume
         # the slots its publish will materialize into.
-        active_count = self._active_experiment_count(conn=conn, project_id=project_id)
-        reserved_count = int(
-            conn.execute(
-                "SELECT COUNT(*) AS count FROM reflection_reserved_names "
-                "WHERE project_id = ?",
-                (project_id,),
-            ).fetchone()["count"]
-        )
+        terminal = ", ".join(f"'{status}'" for status in sorted(EXPERIMENT_WORKFLOW.terminal_statuses))
+        active_count = int(conn.execute(
+            f"SELECT COUNT(*) AS count FROM experiments WHERE project_id = ? AND status NOT IN ({terminal})",
+            (project_id,)).fetchone()["count"])
+        reserved_count = int(conn.execute(
+            "SELECT COUNT(*) AS count FROM reflection_reserved_names WHERE project_id = ?",
+            (project_id,)).fetchone()["count"])
         if active_count + reserved_count >= ACTIVE_EXPERIMENT_CAP:
-            raise WorkflowError(
-                active_experiment_cap_reached_message(
-                    active_count=active_count, reserved_count=reserved_count
-                )
-            )
+            raise WorkflowError(active_experiment_cap_reached_message(
+                active_count=active_count, reserved_count=reserved_count))
 
-    def _reject_reserved_wave_name(
-        self, *, conn, project_id: str, name: str
-    ) -> None:
+    def _reject_reserved_wave_name(self, *, conn, project_id: str, name: str) -> None:
         """Refuse names an in-flight wave's validated spec will materialize.
 
         Taking one mid-wave would block the wave's already-bound publish at
@@ -282,351 +146,77 @@ class ExperimentService:
         """
         row = conn.execute(
             "SELECT reflection_id FROM reflection_reserved_names "
-            "WHERE project_id = ? AND name_lower = lower(?) LIMIT 1",
-            (project_id, name),
-        ).fetchone()
+            "WHERE project_id = ? AND name_lower = lower(?) LIMIT 1", (project_id, name)).fetchone()
         if row is not None:
             raise WorkflowError(
                 f"experiment name {name!r} is reserved by reflection wave "
                 f"{row['reflection_id']} — it will be created when the wave "
-                "publishes; choose a different name"
-            )
+                "publishes; choose a different name")
 
-    def _reject_reflection_blocked_experiment_create(
-        self, *, conn, project_id: str
-    ) -> None:
-        debt, published_id = self._terminal_experiments_since_last_reflection(
-            conn=conn, project_id=project_id
-        )
+    def _reject_reflection_blocked_experiment_create(self, *, conn, project_id: str) -> None:
+        debt, published_id = self._terminal_experiments_since_last_reflection(conn=conn, project_id=project_id)
         terminal = tuple(sorted(REFLECTION_WORKFLOW.terminal_statuses))
-        placeholders = ", ".join("?" for _ in terminal)
         open_wave = conn.execute(
-            f"""
-            SELECT id, status FROM reflections
-            WHERE project_id = ? AND status NOT IN ({placeholders})
-            ORDER BY created_seq DESC LIMIT 1
-            """,
-            (project_id, *terminal),
-        ).fetchone()
+            f"""SELECT id, status FROM reflections WHERE project_id = ?
+                AND status NOT IN ({", ".join("?" for _ in terminal)})
+                ORDER BY created_seq DESC LIMIT 1""", (project_id, *terminal)).fetchone()
         message = reflection_create_block_message(
-            debt=debt,
-            published_id=published_id,
-            open_wave=row_to_dict(row=open_wave),
-        )
+            debt=debt, published_id=published_id, open_wave=row_to_dict(row=open_wave))
         if message:
             raise WorkflowError(message)
 
-    def _terminal_experiments_since_last_reflection(
-        self, *, conn, project_id: str
-    ) -> tuple[int, str | None]:
-        terminal = ", ".join(
-            f"'{status}'"
-            for status in sorted(EXPERIMENT_WORKFLOW.terminal_statuses)
-        )
+    def _terminal_experiments_since_last_reflection(self, *, conn, project_id: str) -> tuple[int, str | None]:
+        terminal = ", ".join(f"'{status}'" for status in sorted(EXPERIMENT_WORKFLOW.terminal_statuses))
         current_terminal = {
-            str(row["id"])
-            for row in conn.execute(
-                f"""
-                SELECT id FROM experiments
-                WHERE project_id = ? AND status IN ({terminal})
-                """,
-                (project_id,),
-            ).fetchall()
-        }
+            str(row["id"]) for row in conn.execute(
+                f"SELECT id FROM experiments WHERE project_id = ? AND status IN ({terminal})",
+                (project_id,)).fetchall()}
         published = conn.execute(
-            """
-            SELECT id, corpus_json FROM reflections
-            WHERE project_id = ? AND status = ?
-            ORDER BY published_at DESC, created_seq DESC LIMIT 1
-            """,
-            (project_id, REFLECTION_WORKFLOW.success_status),
-        ).fetchone()
+            """SELECT id, corpus_json FROM reflections WHERE project_id = ? AND status = ?
+               ORDER BY published_at DESC, created_seq DESC LIMIT 1""",
+            (project_id, REFLECTION_WORKFLOW.success_status)).fetchone()
         if published is None:
             return len(current_terminal), None
         try:
             corpus = json.loads(str(published["corpus_json"] or "{}"))
         except json.JSONDecodeError:
             corpus = {}
-        covered = covered_terminal_ids(corpus)
-        return len(current_terminal - covered), str(published["id"])
+        return len(current_terminal - covered_terminal_ids(corpus)), str(published["id"])
 
-    def get_state(
-        self, *, experiment_id: str, project_id: str | None = None, conn=None
-    ) -> dict[str, Any]:
-        return self.get_state_with_gate(
-            experiment_id=experiment_id, project_id=project_id, conn=conn
-        )[0]
+    # ---- reads and transitions ----
 
-    def get_state_with_gate(
-        self, *, experiment_id: str, project_id: str | None = None, conn=None
-    ) -> tuple[dict[str, Any], GateEvaluation]:
-        owns_conn = conn is None
-        if conn is None:
-            conn = self.store.connect()
-        try:
-            if owns_conn:
-                project_id = self.store.require_project_id(
-                    conn=conn, project_id=project_id
-                )
-            row = conn.execute(
-                "SELECT * FROM experiments WHERE id = ?", (experiment_id,)
-            ).fetchone()
-            if row is None:
-                raise NotFoundError(f"experiment not found: {experiment_id}")
-            data = row_to_dict(row=row) or {}
-            if project_id is not None and data["project_id"] != project_id:
-                raise NotFoundError(
-                    f"experiment not found in project {project_id}: {experiment_id}"
-                )
-            history = self.artifacts.history(
-                tx=conn,
-                target_type="experiment",
-                target_ids=(experiment_id,),
-                summarize=True,
-            )[experiment_id]
-            return self._assemble_state_with_gate(
-                conn=conn,
-                experiment=data,
-                dependencies=dependency_rows(
-                    conn=conn,
-                    project_id=str(data["project_id"]),
-                    node_ids=(experiment_id,),
-                )[experiment_id],
-                dependents=dependent_rows(
-                    conn=conn,
-                    project_id=str(data["project_id"]),
-                    node_ids=(experiment_id,),
-                )[experiment_id],
-                tested_claims=_query(
-                    conn,
-                    """
-                    SELECT c.* FROM claims c
-                    JOIN experiment_claims ec ON ec.claim_id = c.id
-                    WHERE ec.experiment_id = ?
-                    ORDER BY c.created_at, c.id
-                    """,
-                    (experiment_id,),
-                ),
-                evidence=history.artifacts,
-                reviews=_query(
-                    conn,
-                    """SELECT * FROM reviews
-                    WHERE target_type = 'experiment' AND target_id = ?
-                    ORDER BY created_seq DESC""",
-                    (experiment_id,),
-                ),
-                submissions=history.submissions,
-            )
-        finally:
-            if owns_conn:
-                conn.close()
+    def get_state(self, *, experiment_id: str, project_id: str | None = None, conn=None) -> dict[str, Any]:
+        return self.records.get_state(EXPERIMENT, record_id=experiment_id, project_id=project_id, conn=conn)
 
-    def list_states_with_gates(
-        self, *, conn, project_id: str
-    ) -> list[tuple[dict[str, Any], GateEvaluation]]:
-        """Hydrate a project's experiment states with one read per child table."""
-        experiment_rows = _query(
-            conn,
-            "SELECT * FROM experiments WHERE project_id = ? ORDER BY created_at, id",
-            (project_id,),
-        )
-        experiment_ids = tuple(str(row["id"]) for row in experiment_rows)
-        if not experiment_ids:
-            return []
+    def get_state_with_gate(self, *, experiment_id: str, project_id: str | None = None,
+                            conn=None) -> tuple[dict[str, Any], GateEvaluation]:
+        return self.records.get_state_with_gate(EXPERIMENT, record_id=experiment_id,
+                                                project_id=project_id, conn=conn)
 
-        claims: dict[str, list[dict[str, Any]]] = {}
-        for claim in _query(
-            conn,
-            """SELECT ec.experiment_id AS _experiment_id, c.*
-            FROM experiment_claims ec
-            JOIN experiments e ON e.id = ec.experiment_id
-            JOIN claims c ON c.id = ec.claim_id
-            WHERE e.project_id = ?
-            ORDER BY e.created_at, e.id, c.created_at, c.id""",
-            (project_id,),
-        ):
-            experiment_id = str(claim.pop("_experiment_id"))
-            claims.setdefault(experiment_id, []).append(claim)
-
-        reviews: dict[str, list[dict[str, Any]]] = {}
-        for review in _query(
-            conn,
-            """SELECT r.* FROM reviews r
-            JOIN experiments e ON e.id = r.target_id
-            WHERE r.target_type = 'experiment' AND e.project_id = ?
-            ORDER BY e.created_at, e.id, r.created_seq DESC""",
-            (project_id,),
-        ):
-            reviews.setdefault(str(review["target_id"]), []).append(review)
-
-        history = self.artifacts.history(
-            tx=conn,
-            target_type="experiment",
-            target_ids=experiment_ids,
-            summarize=True,
-        )
-        dependencies = dependency_rows(
-            conn=conn, project_id=project_id, node_ids=experiment_ids
-        )
-        dependents = dependent_rows(
-            conn=conn, project_id=project_id, node_ids=experiment_ids
-        )
-        snapshots = self.runtime.snapshots(project_id=project_id, conn=conn)
-        return [
-            self._assemble_state_with_gate(
-                conn=conn, snapshots=snapshots,
-                experiment=experiment,
-                dependencies=dependencies.get(str(experiment["id"]), []),
-                dependents=dependents.get(str(experiment["id"]), []),
-                tested_claims=claims.get(str(experiment["id"]), []),
-                evidence=history[str(experiment["id"])].artifacts,
-                reviews=reviews.get(str(experiment["id"]), []),
-                submissions=history[str(experiment["id"])].submissions,
-            )
-            for experiment in experiment_rows
-        ]
-
-    def _assemble_state_with_gate(
-        self,
-        *,
-        conn,
-        snapshots: dict[str, Snapshot] | None = None,
-        experiment: dict[str, Any],
-        tested_claims: list[dict[str, Any]],
-        evidence: tuple[Artifact, ...],
-        reviews: list[dict[str, Any]],
-        submissions: tuple[Submission, ...],
-        dependencies: list[dict[str, Any]] | None = None,
-        dependents: list[dict[str, Any]] | None = None,
-    ) -> tuple[dict[str, Any], GateEvaluation]:
-        data = dict(experiment)
-        data["tested_claims"] = tested_claims
-        data["dependencies"] = list(dependencies or [])
-        data["dependents"] = list(dependents or [])
-        data["artifacts"] = [artifact_state_record(item) for item in evidence]
-        # Newest row per slot, not every row: sealed rounds leave the
-        # superseded report alive as history, and only the current one is
-        # "current". A no-op on rows written before submissions existed.
-        data["current_attempt_artifacts"] = current_slot_artifacts(
-            data["artifacts"], attempt=data["attempt_index"]
-        )
-        data["submissions"] = [
-            submission_state_record(submission) for submission in submissions
-        ]
-        for review in reviews:
-            review["findings"] = json.loads(review.pop("findings_json", "[]"))
-            review["evidence"] = json.loads(review.pop("evidence_json", "{}"))
-        data["reviews"] = reviews
-        evaluation = self._evaluate_gate(conn=conn, experiment=data, snapshots=snapshots)
-        data["allowed_transitions"] = [dict(x) for x in evaluation.legal_transitions]
-        data["gate_checklist"] = evaluation.checklist()
-        return data, evaluation
+    def list_states_with_gates(self, *, conn, project_id: str) -> list[tuple[dict[str, Any], GateEvaluation]]:
+        return self.records.list_states_with_gates(EXPERIMENT, conn=conn, project_id=project_id)
 
     def assert_in_project(self, *, experiment_id: str, project_id: str) -> None:
-        """Verify experiment identity/scope without hydrating its child records."""
-        with closing(self.store.connect()) as conn:
-            row = conn.execute("SELECT 1 FROM experiments WHERE id = ? AND project_id = ?", (experiment_id, project_id)).fetchone()
-        if row is None:
-            raise NotFoundError(f"experiment not found in project {project_id}: {experiment_id}")
+        self.records.assert_in_project(EXPERIMENT, record_id=experiment_id, project_id=project_id)
 
-    def _evaluate_gate(self, *, conn, experiment: dict[str, Any], snapshots=None) -> GateEvaluation:
-        """Evaluate the registered graph once; legacy checklist metadata is presentation only."""
-        status = str(experiment.get("status") or "")
-        if snapshots is None:
-            try:
-                snapshot = self.runtime.get(project_id=experiment["project_id"], instance_id=experiment["id"], conn=conn)
-            except NotFoundError:
-                snapshot = None
-        else:
-            snapshot = snapshots.get(experiment["id"])
-        if snapshot is None:
-            snapshot = Snapshot(id=experiment["id"], project_id=experiment["project_id"], workflow="experiment",
-                                version=1, state=status, revision=0,
-                                data={"attempt_index": experiment["attempt_index"]}, outcome=EXPERIMENT.outcomes.get(status, ""))
-        definition = self.runtime.registry.get("experiment", snapshot.version)
-        decision = definition.evaluate(
-            snapshot, _ExperimentKnowledge(self, conn, experiment, snapshot))
-        workflow = Workflow(self.runtime.registry.get("experiment", snapshot.version), EXPERIMENT_WORKFLOW.metadata)
-        workflow_state = workflow.state(snapshot.state)
-        requirements = []
-        artifacts = experiment.get("current_attempt_artifacts") or []
-        for need in () if workflow_state is None else workflow_state.requirements:
-            role = need.role
-            present = any(item.get("role") == role for item in artifacts)
-            problem = next((issue.message for action in decision.blocked for issue in action.issues
-                            if issue.code == f"{role}_invalid"), "")
-            requirements.append(evaluate_artifact_requirement(need, present=present, problems=(problem,) if problem else ()))
-        review = None if workflow_state is None or workflow_state.review is None else evaluate_review_gate(
-            conn=conn, target_type="experiment", target=experiment, review=workflow_state.review, snapshot=snapshot)
-        return GateEvaluation(workflow=workflow, status=status, requirements=tuple(requirements),
-                              review=review, decision=decision)
-
-    def _workflow_knowledge(self, snapshot: Snapshot, conn):
-        experiment = self.get_state(experiment_id=snapshot.id, project_id=snapshot.project_id, conn=conn)
-        if experiment["status"] != snapshot.state:
-            raise WorkflowError("experiment state differs from its workflow instance; an explicit migration is required")
-        return _ExperimentKnowledge(self, conn, experiment, snapshot)
-
-    def list_experiment_summaries(
-        self, *, project_id: str | None = None
-    ) -> list[dict[str, Any]]:
+    def list_experiment_summaries(self, *, project_id: str | None = None) -> list[dict[str, Any]]:
         with closing(self.store.connect()) as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            rows = conn.execute(
-                """
-                SELECT id, project_id, name, intent, status, attempt_index,
-                       created_at, updated_at
-                FROM experiments
-                WHERE project_id = ?
-                ORDER BY created_at, id
-                """,
-                (project_id,),
-            ).fetchall()
-            return rows_to_dicts(rows=rows)
+            return rows_to_dicts(rows=conn.execute(
+                """SELECT id, project_id, name, intent, status, attempt_index, created_at, updated_at
+                   FROM experiments WHERE project_id = ? ORDER BY created_at, id""",
+                (project_id,)).fetchall())
 
     def transition_with_event(
         self, *, experiment_id: str, transition: str, evidence: dict[str, Any] | None = None,
         project_id: str | None = None, expected_revision: int | None = None,
     ) -> CommittedExperimentUpdate:
-        with self.store.transaction() as conn:
-            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            experiment = self.get_state(experiment_id=experiment_id, project_id=project_id, conn=conn)
-            current = self.runtime.adopt(conn=conn, project_id=project_id, instance_id=experiment_id,
-                                         workflow="experiment", state=experiment["status"],
-                                         data={"attempt_index": experiment["attempt_index"]})
-            after = self.runtime.apply_in_transaction(
-                conn=conn, project_id=project_id, instance_id=experiment_id, action=transition,
-                expected_revision=current.revision if expected_revision is None else expected_revision,
-                request_id=new_id(prefix="experiment_action"), payload=evidence or {},
-            )
-            return CommittedExperimentUpdate(
-                state=self.get_state(experiment_id=experiment_id, project_id=project_id, conn=conn),
-                event=self.runtime.event(conn=conn, snapshot=after),
-            )
+        state, event = self.records.transition(
+            EXPERIMENT, record_id=experiment_id, transition=transition, evidence=evidence,
+            project_id=project_id, expected_revision=expected_revision)
+        return CommittedExperimentUpdate(state=state, event=event)
 
-    def _commit_workflow_change(self, conn, before, after, action, payload) -> None:
-        # Lifecycle decisions live in the graph. This binding only preserves
-        # the native record and seals its submitted evidence on the same tx.
-        if action == "start_work":
-            return  # Runtime's idempotent workflow.work_started event owns the clock.
-        if action not in {"revise_plan", "revise_execution", "migrate"}:
-            self.artifacts.seal(tx=conn, target=ArtifactTarget("experiment", before.id, before.project_id), transition=action)
-        now = now_iso()
-        if action == "revise_plan":
-            conn.execute(
-                """UPDATE experiments SET status = ?, attempt_index = ?, revision_context = ?, updated_at = ?
-                   WHERE id = ? AND project_id = ?""",
-                (after.state, after.data["attempt_index"], after.data["revision_context"], now, before.id, before.project_id),
-            )
-        elif action in {"revise_execution", "retry_running"}:
-            conn.execute("UPDATE experiments SET status = ?, revision_context = ?, updated_at = ? WHERE id = ? AND project_id = ?",
-                         (after.state, after.data["revision_context"], now, before.id, before.project_id))
-        elif action == "complete":
-            conn.execute("UPDATE experiments SET status = ?, conclusion = ?, updated_at = ? WHERE id = ? AND project_id = ?",
-                         (after.state, after.data["conclusion"], now, before.id, before.project_id))
-        else:
-            conn.execute("UPDATE experiments SET status = ?, updated_at = ? WHERE id = ? AND project_id = ?",
-                         (after.state, now, before.id, before.project_id))
+    # ---- experiment-only facts ----
 
     def attempt_started_running_at(self, *, experiment_id: str) -> str | None:
         """First actual execution start in this attempt; approval never starts a clock."""
@@ -677,66 +267,4 @@ class ExperimentService:
                                     target_type="experiment", target_id=experiment_id, payload=verdict)
 
 
-class _ExperimentKnowledge:
-    """Transaction- and project-bound facts; graph functions own every decision."""
-
-    def __init__(self, service, conn, experiment, snapshot):
-        self.service, self.conn, self.experiment, self.snapshot = service, conn, experiment, snapshot
-        self._documents = {}
-
-    def read(self, reference: Reference):
-        experiment, conn = self.experiment, self.conn
-        if reference.kind == "experiment" and reference.id == experiment["id"]:
-            return experiment
-        if reference.kind == "project" and reference.id == experiment["project_id"]:
-            row = conn.execute("SELECT id, name, summary FROM projects WHERE id = ?", (reference.id,)).fetchone()
-            return {} if row is None else dict(row)
-        if reference.kind == "artifact":
-            return self._artifact(reference.id)
-        if reference.kind == "review":
-            return self._review(reference.id)
-        if reference.kind == "review_snapshot" and reference.id == experiment["id"]:
-            node = self.service.runtime.registry.get(self.snapshot.workflow, self.snapshot.version).node(self.snapshot.state)
-            role = node.role if node is not None else ""
-            return read_review_fact(conn=conn, project_id=experiment["project_id"], target_type="experiment",
-                                    target_id=experiment["id"], role=role, request=True,
-                                    snapshot_id=review_snapshot_id(target_type="experiment", target=experiment, snapshot=self.snapshot))
-        if reference.kind == "review_history":
-            rows = conn.execute(
-                "SELECT r.target_snapshot_id, r.verdict, r.return_to, r.notes, s.independence FROM reviews r "
-                "JOIN review_sessions s ON s.id = r.session_id WHERE r.project_id = ? AND r.target_id = ? "
-                "AND r.target_type = 'experiment' AND r.role = ? AND s.status = 'submitted' ORDER BY r.created_seq DESC",
-                (experiment["project_id"], experiment["id"], reference.id),
-            ).fetchall()
-            return {"reviews": [{**dict(row), **snapshot_from_id(snapshot_id=row["target_snapshot_id"])} for row in rows]}
-        raise NotFoundError(f"experiment fact not available: {reference.kind}/{reference.id}")
-
-    def _artifact(self, artifact_id):
-        if artifact_id in self._documents:
-            return self._documents[artifact_id]
-        experiment = self.experiment
-        history = self.service.artifacts.history(tx=self.conn, target_type="experiment", target_ids=(experiment["id"],))[experiment["id"]]
-        artifact = next((item for item in history.artifacts if item.id == artifact_id), None)
-        if artifact is None or artifact.project_id != experiment["project_id"]:
-            raise NotFoundError(f"artifact not found for this experiment: {artifact_id}")
-        fact = {"id": artifact.id, "artifact_id": artifact.artifact_id, "path": artifact.path, "role": artifact.role, "error": ""}
-        try:
-            self.service.artifacts.contents.assert_complete(artifact_ids=(artifact.artifact_id,), project_id=experiment["project_id"], tx=self.conn)
-            content = self.service.artifacts.contents.get(artifact_ids=(artifact.artifact_id,), project_id=experiment["project_id"], include="document", tx=self.conn)[0]
-            if content.data is None:
-                raise WorkflowError(f"{artifact.path} has no submitted content — resubmit it with artifact.upload")
-            fact["figure_links"] = content.figures
-            if artifact.role in {"plan", "report", "graph"}:
-                try:
-                    fact["text"] = content.data.decode("utf-8")
-                except UnicodeDecodeError as exc:
-                    raise WorkflowError(f"{artifact.path} is not valid UTF-8 text") from exc
-        except (NotFoundError, ValidationError, WorkflowError) as exc:
-            fact["error"] = str(exc)
-        self._documents[artifact_id] = fact
-        return fact
-
-    def _review(self, role):
-        return read_review_fact(conn=self.conn, project_id=self.experiment["project_id"], target_type="experiment",
-                                target_id=self.experiment["id"], role=role,
-                                snapshot_id=review_snapshot_id(target_type="experiment", target=self.experiment, snapshot=self.snapshot))
+__all__ = ["ExperimentService"]

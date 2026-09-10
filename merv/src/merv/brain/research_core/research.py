@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from contextlib import closing
+from functools import partial
 import hashlib
 import json
 import math
@@ -20,7 +21,6 @@ from .policy import (
     GateEvaluation,
     parse_project_settings,
     reflection_signal_state,
-    snapshot_from_id,
 )
 from .experiments import ExperimentService
 from .models import (
@@ -35,9 +35,10 @@ from .models import (
     TaskSummary,
 )
 from .reflections import ReflectionService
+from .records import Records
 from .reviews import ReviewService
 from .tasks import TaskService
-from ..workflows import Binding, Workflows
+from ..workflows import Binding, KINDS, Workflows
 from .artifacts import ResearchArtifacts as Artifacts
 from ..kernel.events import StoredEvent
 from ..kernel.state.store import (
@@ -94,6 +95,7 @@ class Research:
     __slots__ = (
         "store",
         "artifacts",
+        "records",
         "_experiments",
         "_tasks",
         "_reflections",
@@ -106,31 +108,32 @@ class Research:
         self.artifacts = artifacts
         self.workflows = workflows
         store.install(RESEARCH_SCHEMA)
-        self._experiments = ExperimentService(store=store, artifacts=artifacts, runtime=workflows.runtime)
-        self._tasks = TaskService(store=store, artifacts=artifacts, runtime=workflows.runtime)
+        self.records = Records(store=store, artifacts=artifacts, runtime=workflows.runtime)
+        self._experiments = ExperimentService(store=store, records=self.records)
+        self._tasks = TaskService(store=store, records=self.records)
         self._reflections = ReflectionService(
             store=store,
             artifacts=artifacts,
             experiments=self._experiments,
             tasks=self._tasks,
-            runtime=workflows.runtime,
+            records=self.records,
         )
         self._reviews = ReviewService(
             store=store,
-            experiments=self._experiments,
+            records=self.records,
             reflections=self._reflections,
             artifacts=artifacts,
-            tasks=self._tasks,
-            runtime=workflows.runtime,
         )
-        self.workflows.bind("task", Binding(self._tasks._workflow_knowledge, self._tasks._commit_workflow_change,
-                                           self._tasks.initialize_workflow))
-        self.workflows.bind("experiment", Binding(self._experiments._workflow_knowledge,
-                                                 self._experiments._commit_workflow_change,
-                                                 self._experiments.initialize_workflow))
-        self.workflows.bind("reflection", Binding(self._reflections._workflow_knowledge,
-                                                 self._reflections._commit_workflow_change,
-                                                 self._reflections.initialize_workflow))
+        # Every native record binds through the one engine; the lens and the
+        # published wave have no row of their own and stay hand-written.
+        for name, service in (("experiment", self._experiments), ("task", self._tasks),
+                              ("reflection", self._reflections)):
+            kind = KINDS[name]
+            self.workflows.bind(name, Binding(
+                partial(self.records.knowledge, kind),
+                partial(self.records.commit_change, kind),
+                service.initialize_workflow,
+            ))
         self.workflows.bind("reflection_lens", Binding(self._reflections._lens_knowledge,
                                                       self._reflections._commit_lens_change,
                                                       self._reflections.initialize_lens))

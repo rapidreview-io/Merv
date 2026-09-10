@@ -7,12 +7,9 @@ these views retain the old labels, review-input contract and figure metadata.
 
 from dataclasses import dataclass
 
-from ..workflows import Workflow as Graph, metadata
-
-ArtifactNeed = metadata.ArtifactNeed
-RecordNeed = metadata.RecordNeed
-ReviewGate = metadata.ReviewGate
-ReviewReturn = metadata.ReviewReturn
+from ..workflows import (
+    ArtifactNeed, Metadata, RecordNeed, Requirement, ReviewGate, ReviewReturn, Workflow as Graph,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,14 +29,14 @@ class Transition:
 class State:
     name: str
     transitions: tuple[Transition, ...]
-    requirements: tuple[ArtifactNeed | RecordNeed, ...] = ()
+    requirements: tuple[Requirement, ...] = ()
     review: ReviewGate | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class Workflow:
     graph: Graph
-    metadata: metadata.Metadata
+    metadata: Metadata
 
     @property
     def target_type(self) -> str:
@@ -80,15 +77,15 @@ class Workflow:
 
     def state(self, status: str) -> State | None:
         node = self.graph.node(status)
-        if node is not None:
-            review = None
-            if node.execution.read_only:
-                review = self.review(node.role) or ReviewGate(
-                    node.role, f"An independent {node.role} review is required.",
-                    f"{node.role}_required", node.label or node.name, "", "", ())
-            return State(status, tuple(edge for edge in self.transitions if edge.source == status),
-                         self.metadata.requirements.get(status, ()), review)
-        return None
+        if node is None:
+            return None
+        review = None
+        if node.execution.read_only:
+            review = next((need for need in node.requires if isinstance(need, ReviewGate)), None) or ReviewGate(
+                node.role, f"An independent {node.role} review is required.",
+                f"{node.role}_required", node.label or node.name, "", "", ())
+        return State(status, tuple(edge for edge in self.transitions if edge.source == status),
+                     tuple(need for need in node.requires if not isinstance(need, ReviewGate)), review)
 
     def allowed_transitions_for(self, status: str) -> list[dict[str, str]]:
         return [edge.public() for edge in self.transitions if edge.source == status]
@@ -96,12 +93,19 @@ class Workflow:
     def transition(self, name: str) -> Transition | None:
         return next((edge for edge in self.transitions if edge.name == name), None)
 
+    @property
+    def _needs(self) -> tuple[Requirement, ...]:
+        return tuple(need for node in self.graph.nodes for need in node.requires)
+
     def requirement(self, role: str) -> ArtifactNeed | None:
-        return next((need for needs in self.metadata.requirements.values() for need in needs
-                     if isinstance(need, ArtifactNeed) and need.role == role), None)
+        return next((need for need in self._needs if isinstance(need, ArtifactNeed) and need.role == role), None)
 
     def review(self, role: str) -> ReviewGate | None:
-        return next((review for review in self.metadata.reviews.values() if review.role == role), None)
+        return next((need for need in self._needs if isinstance(need, ReviewGate) and need.role == role), None)
+
+    @property
+    def reviews(self) -> tuple[ReviewGate, ...]:
+        return tuple(need for need in self._needs if isinstance(need, ReviewGate))
 
     def review_state(self, role: str) -> State | None:
         return next((state for state in self.states if state.review is not None and state.review.role == role), None)
@@ -114,7 +118,7 @@ class Workflow:
 
     @property
     def review_returns(self) -> tuple[ReviewReturn, ...]:
-        return tuple(dict.fromkeys(route for review in self.metadata.reviews.values() for route in review.returns))
+        return tuple(dict.fromkeys(route for review in self.reviews for route in review.returns))
 
     @property
     def review_return_statuses(self) -> tuple[str, ...]:
@@ -122,7 +126,7 @@ class Workflow:
 
     @property
     def fail_routes(self) -> tuple[ReviewReturn, ...]:
-        return tuple(dict.fromkeys(review.fail_route for review in self.metadata.reviews.values() if review.fail_route))
+        return tuple(dict.fromkeys(review.fail_route for review in self.reviews if review.fail_route))
 
     @property
     def review_fail_statuses(self) -> tuple[str, ...]:
@@ -155,18 +159,20 @@ def resolve_review_return(*, workflow: Workflow, role: str, verdict: str, return
 
 
 def validate_workflow(workflow: Workflow) -> None:
-    """Check that compatibility descriptions name real graph nodes and edges."""
-    names = {node.name for node in workflow.graph.nodes}
-    if not set(workflow.metadata.requirements) <= names or not set(workflow.metadata.reviews) <= names:
-        raise ValueError("workflow metadata names an unknown node")
+    """Check that the declared requirements and effects name real edges."""
     if not set(workflow.metadata.effects) <= set(workflow.transition_names):
         raise ValueError("workflow metadata names an unknown action")
-    for state, review in workflow.metadata.reviews.items():
-        destinations = {edge.target for edge in workflow.graph.edges if edge.source == state}
-        for route in (*review.returns, *((review.fail_route,) if review.fail_route else ())):
-            if route.to_status not in destinations:
-                raise ValueError(f"{review.role} describes a return without a graph edge")
+    for node in workflow.graph.nodes:
+        actions = {edge.name for edge in workflow.graph.edges if edge.source == node.name}
+        destinations = {edge.target for edge in workflow.graph.edges if edge.source == node.name}
+        for need in node.requires:
+            if not set(need.actions) <= actions:
+                raise ValueError(f"{node.name} declares a requirement on an unknown action")
+            for route in () if not isinstance(need, ReviewGate) else (
+                    *need.returns, *((need.fail_route,) if need.fail_route else ())):
+                if route.to_status not in destinations:
+                    raise ValueError(f"{need.role} describes a return without a graph edge")
 
 
-__all__ = ["ArtifactNeed", "RecordNeed", "ReviewGate", "ReviewReturn", "State", "Transition", "Workflow",
+__all__ = ["ArtifactNeed", "RecordNeed", "Requirement", "ReviewGate", "ReviewReturn", "State", "Transition", "Workflow",
            "resolve_review_return", "validate_workflow"]

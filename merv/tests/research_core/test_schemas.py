@@ -112,13 +112,13 @@ class WorkflowSchemaTest(unittest.TestCase):
         self.assertEqual(TASK_WORKFLOW.review_return_statuses, ("in_progress",))
 
     def test_compatibility_view_preserves_branches_and_cycles(self) -> None:
-        from merv.brain.workflows import Edge, Node, Workflow as Graph, metadata
+        from merv.brain.workflows import Edge, Metadata, Node, Workflow as Graph
         from merv.brain.research_core.workflow_schema import Workflow
 
         graph = Graph("revision", 1, "draft", (Node("draft"), Node("review")),
                       (Edge("draft", "submit", "review"), Edge("review", "repair", "draft"),
                        Edge("review", "accept", "done")), {"done": "completed"})
-        view = Workflow(graph, metadata.Metadata())
+        view = Workflow(graph, Metadata())
         validate_workflow(view)
         self.assertEqual(view.allowed_transitions_for("review"), [
             {"transition": "repair", "leads_to": "draft"}, {"transition": "accept", "leads_to": "done"}])

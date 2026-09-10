@@ -1,54 +1,41 @@
 """Task graph: immutable goal, delivery, and independent review."""
 
-from ..graph import Action, Brief, Change, Edge, Issue, Node, Reference, Workflow, all_of
-from .checks import review_requested, reviewed, review_summary
+from ..graph import (
+    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Metadata, Node, RecordKind,
+    Reference, ReviewGate, ReviewReturn, Workflow,
+)
+from .checks import reviewed, review_summary
 from .execution import REVIEW_EXECUTION, TASK_EXECUTION
-from .documents import brief_problems, delivery_problems, preferred_artifact
-from .metadata import ArtifactNeed, DEPENDENCIES_NEED, Metadata, ReviewGate, ReviewReturn
+from .documents import brief_problems, delivery_problems
+
+
+def _document_problems(role):
+    def problems(document, snapshot, knowledge):
+        task = knowledge.read(Reference("task", snapshot.id))
+        checks = [str(item) for item in task.get("deliverables", ())]
+        found = (brief_problems(document["text"]) if role == "brief" else
+                 ["This task has no deliverables to confirm; end it and create a task with deliverables."] if not checks else
+                 delivery_problems(document["text"], checks=checks))
+        return ("; ".join(found),) if found else ()
+    return problems
 
 
 ARTIFACTS = {
     role: ArtifactNeed(role, f"a {role} artifact must be submitted before task review", f"{role}_required",
                        f"write_and_submit_{role}", validator=role, label=f"{role.capitalize()} submitted and valid",
-                       missing=f"task {role} artifact", artifact_key=role)
+                       missing=f"task {role} artifact", artifact_key=role, actions=("submit_delivery",),
+                       validate=_document_problems(role), invalid=f"task {role} is not ready: {{problems}}",
+                       invalid_action=f"fix_{role}_artifact")
     for role in ("brief", "delivery")
 }
+DEPENDENCIES = DependenciesDone(actions=("submit_delivery",))
 RETURN_TO_IN_PROGRESS = ReviewReturn("in_progress", "same", event_type="task.returned_to_in_progress",
                                     choose_when="The goal stands, but the delivery needs work.", default=True,
                                     revision="Address the review findings, then submit the revised delivery.")
 FAIL_TO_FAILED = ReviewReturn("failed", "same", event_type="task.failed_by_review", choose_when="The task goal cannot be achieved within its scope.")
-
-
-def dependencies_ready(snapshot, knowledge):
-    task = knowledge.read(Reference("task", snapshot.id))
-    pending = [item for item in task.get("dependencies", ()) if not item.get("settled")]
-    if pending:
-        failed = [item for item in pending if item.get("failed")]
-        names = ", ".join(f"{item.get('node_type')} {item.get('name') or item.get('id')} ({item.get('status')})" for item in failed or pending)
-        return Issue("dependency_failed" if failed else "dependencies_pending",
-                     f"A dependency has ended without succeeding: {names}. End this task or replan the wave." if failed
-                     else f"Task is waiting on unfinished dependencies: {names}.",
-                     "mark_failed" if failed else "wait_for_dependencies", ("workflow.status_and_next",))
-
-
-def document_ready(role):
-    def check(snapshot, knowledge):
-        task = knowledge.read(Reference("task", snapshot.id))
-        artifact = preferred_artifact(artifacts=task.get("current_attempt_artifacts") or [], roles=(role,))
-        if artifact is None:
-            return ARTIFACTS[role].issue()
-        document = knowledge.read(Reference("artifact", str(artifact["id"])))
-        error = str(document.get("error") or "")
-        if not error:
-            checks = [str(item) for item in task.get("deliverables", ())]
-            problems = (brief_problems(document["text"]) if role == "brief" else
-                        ["This task has no deliverables to confirm; end it and create a task with deliverables."] if not checks else
-                        delivery_problems(document["text"], checks=checks))
-            error = "; ".join(problems)
-        if error:
-            return Issue(f"{role}_invalid", f"task {role} is not ready: {error}",
-                         f"fix_{role}_artifact", ("artifact.upload",))
-    return check
+DELIVERY_REVIEW = ReviewGate("task_reviewer", "task review must pass before done", "task_review_required",
+                             "Delivery review passed", "task-review", "accept", (RETURN_TO_IN_PROGRESS,),
+                             fail_route=FAIL_TO_FAILED, actions=("accept",))
 
 
 def request_delivery_review(snapshot, payload, knowledge):
@@ -122,17 +109,15 @@ def build_review_context(snapshot, knowledge):
 TASK = Workflow(
     name="task", version=1, initial="in_progress", event_type="task.transitioned", id_prefix="task",
     nodes=(
-        Node("in_progress", "Complete task", "task_owner", build_work_context, dependencies_ready, execution=TASK_EXECUTION),
-        Node("in_review", "Review task delivery", "task_reviewer", build_review_context, review_requested,
-             execution=REVIEW_EXECUTION),
+        Node("in_progress", "Complete task", "task_owner", build_work_context, execution=TASK_EXECUTION,
+             requires=(ARTIFACTS["brief"], DEPENDENCIES, ARTIFACTS["delivery"])),
+        Node("in_review", "Review task delivery", "task_reviewer", build_review_context, execution=REVIEW_EXECUTION,
+             requires=(DELIVERY_REVIEW,)),
     ),
     edges=(
-        Edge("in_progress", "submit_delivery", "in_review",
-             check=all_of(document_ready("brief"), dependencies_ready, document_ready("delivery")),
-             change=request_delivery_review,
+        Edge("in_progress", "submit_delivery", "in_review", change=request_delivery_review,
              label="Submit the complete delivery for independent review", tools=("task.transition",)),
-        Edge("in_review", "accept", "done", check=reviewed("task_reviewer"),
-             change=record_verdict,
+        Edge("in_review", "accept", "done", change=record_verdict,
              label="Accept the reviewed delivery", tools=("task.transition",)),
         Edge("in_review", "revise", RETURN_TO_IN_PROGRESS.to_status, check=reviewed("task_reviewer", verdict="needs_changes", return_to=RETURN_TO_IN_PROGRESS.to_status),
              change=record_verdict,
@@ -146,9 +131,13 @@ TASK = Workflow(
     outcomes={"done": "completed", "failed": "failed"},
 )
 
-METADATA = Metadata(
-    requirements={"in_progress": (ARTIFACTS["brief"], DEPENDENCIES_NEED, ARTIFACTS["delivery"])},
-    reviews={"in_review": ReviewGate("task_reviewer", "task review must pass before done", "task_review_required",
-                                     "Delivery review passed", "task-review", "accept", (RETURN_TO_IN_PROGRESS,), fail_route=FAIL_TO_FAILED)},
-    effects={"accept": ("record_outcome",), "mark_failed": ("record_failure",)},
+METADATA = Metadata(effects={"accept": ("record_outcome",), "mark_failed": ("record_failure",)})
+
+KIND = RecordKind(
+    name="task", table="tasks", id_prefix="task", workflow=TASK,
+    metadata=METADATA, created_event="task.created",
+    columns=("name", "goal", "deliverables_json"), json_columns={"deliverables_json": "deliverables"},
+    dependencies=True, seal_exempt_actions=frozenset({"revise", "fail_review", "migrate"}),
+    commit_columns={"revise": ("revision_context",), "fail_review": ("revision_context",),
+                    "accept": ("outcome",)},
 )

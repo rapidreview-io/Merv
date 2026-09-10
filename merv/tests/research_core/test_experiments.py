@@ -133,13 +133,13 @@ class ExperimentWorkflowTest(ResearchCase):
             "claim.create", project_id=self.project_id, statement="One claim."
         )
         with self.app.store.transaction() as conn:
-            created = self.app.experiments._create_in_transaction(
+            created = self.app.experiments._create(
                 conn=conn,
                 project_id=self.project_id,
                 name="dedupe-test",
                 intent="Materialize with duplicate refs.",
                 tested_claim_ids=[claim["id"], claim["id"]],
-                source_reflection_id="rfl_defensive",
+                guard=False,
             )
         with self.app.store.connect() as conn:
             linked = conn.execute(
