@@ -346,6 +346,7 @@ TOOLS: dict[str, ToolContract] = {
     "storage.submit": ToolContract(
         handler_identity="storage.submit",
         feature_requirements=("storage",),
+        needs_base_url=True,
         input_model=StorageSubmitInput,
         description=(
             "Register a heavy file and get a one-line `run` command to upload it. "
@@ -442,6 +443,7 @@ TOOLS: dict[str, ToolContract] = {
     ),
     "sandbox.runs": ToolContract(
         handler_identity="sandboxes.runs", input_model=SandboxRunsInput,
+        needs_base_url=True, needs_wait_secret=True,
         description="List durable jobs launched with sandbox.run for a sandbox or experiment. SSH commands are not automatically jobs. Use sandbox.job to inspect output or wait for status changes.",
     ),
     "sandbox.terminal": ToolContract(

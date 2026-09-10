@@ -33,11 +33,24 @@ class ToolContract:
     visibility: ToolVisibility = "public"
     scope_strategy: ToolScopeStrategy | None = None
     feature_requirements: tuple[ToolFeature, ...] = ()
-    # producer_session_id is the verified caller's leased session, or its
-    # context-window id when it holds no session — never the model's word.
-    binds_producer_session: bool = False
+    # producer_session_id is the verified caller's leased session; "agent"
+    # also accepts its context-window id when it holds no session — never the
+    # model's word.
+    binds_producer_session: Literal["", "session", "agent"] = ""
     # Hosted mode resolves the telemetry project from this argument's id.
     telemetry_scope_field: str = ""
+    # A reviewer handoff: the caller's session id and the id its lease scoped
+    # this argument to arrive as caller_session_id and assigned_*.
+    binds_capability: str = ""
+    # The reply renders absolute URLs against the caller-reachable base, and
+    # signs the wait capabilities it mints into them.
+    needs_base_url: bool = False
+    needs_wait_secret: bool = False
+    # The caller's verified user id, and their key's bound project under this
+    # argument name, replace whatever the model sent.
+    binds_caller_project: str = ""
+    # An action a machine key (mk_/rr_sk_) may not take on this tool.
+    external_key_denied_action: str = ""
 
     def __post_init__(self) -> None:
         if self.scope_strategy is None:

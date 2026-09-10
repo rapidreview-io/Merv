@@ -928,9 +928,6 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.assertEqual(waiting["instance_id"], reflection_id)
         self.assertEqual((waiting["advance_id"], waiting["expected_sha"], waiting["target_sha"]), ("", "1" * 40, "2" * 40))
         self.assertEqual(waiting["sources"], [])
-        # The deprecated alias answers the same question for runners in the field.
-        alias = self.client.get(f"/api/projects/{self.project_id}/consolidation/pending")
-        self.assertEqual(alias.json()["pending"], waiting)
         prepared = self.client.post(
             f"/api/projects/{self.project_id}/agent-advances/prepare",
             json={

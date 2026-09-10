@@ -155,15 +155,6 @@ class ProjectUpdateInput(ProjectScopedInput):
             "leave unchanged."
         ),
     )
-    storage_max_upload_bytes: int | None = Field(
-        default=None,
-        gt=0,
-        description=(
-            "Project Object Storage policy: maximum bytes accepted by "
-            "storage.submit. The server-wide maximum remains an upper bound. "
-            "Omit to leave unchanged."
-        ),
-    )
 
 
 SURFACE_TOOLS: dict[str, ToolContract] = {
@@ -186,6 +177,8 @@ SURFACE_TOOLS: dict[str, ToolContract] = {
     "project": ToolContract(
         handler_identity="application.project",
         scope_strategy="caller-selected",
+        binds_caller_project="key_project_id",
+        external_key_denied_action="create",
         input_model=ProjectInput,
         description=(
             "Project navigation for this credential, dispatched on 'action'. "
@@ -225,6 +218,7 @@ SURFACE_TOOLS: dict[str, ToolContract] = {
     "project.list": ToolContract(
         handler_identity="application.project_list",
         visibility="internal",
+        binds_caller_project="project_id",
         input_model=ContractModel,
         description="List projects in the current tool scope.",
     ),

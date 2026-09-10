@@ -1,11 +1,9 @@
 """Heavy objects through merv-sandboxes.
 
-The service is the catalog: it owns names, auto-incremented versions, state,
-sha256/size/content-type verification, retention (``expires_at``; null pins
-permanently and retention only extends), quotas, expiry and physical bytes.
-Merv keeps only the transfer glue — one-time completion tokens and the run
-commands — plus an opaque lifecycle hook so Research can record its own facts
-about objects Merv submits. Nothing here interprets those facts.
+The service is the catalog: names, versions, state, checksum verification,
+retention (null pins permanently; retention only extends), quota and bytes.
+Merv keeps the transfer glue — one-time completion tokens and run commands —
+and an opaque lifecycle hook whose facts it never interprets.
 """
 
 from __future__ import annotations
@@ -16,53 +14,32 @@ from contextlib import closing, suppress
 from typing import Any, Mapping, Protocol
 
 from merv.shared.errors import ResearchPluginError
-from merv.shared.storage_guidance import (
-    DEFAULT_STORAGE_MAX_UPLOAD_BYTES,
-    storage_guidance,
-)
+from merv.shared.storage_guidance import DEFAULT_STORAGE_MAX_UPLOAD_BYTES, storage_guidance
 
 from ..kernel.ports.blob_store import validate_blob_keys
 from ..kernel.state import BaseStateStore
 from ..kernel.utils import (
-    NotFoundError,
-    ValidationError,
-    format_iso,
-    iso_after,
-    now_iso,
-    parse_iso,
+    NotFoundError, ValidationError, format_iso, iso_after, now_iso, parse_iso,
 )
 from .ports import InfrastructureTransport, project_namespace
 from .storage import (
-    storage_fetch_command,
-    storage_multipart_submit_command,
-    storage_submit_command,
-    upload_target,
+    storage_fetch_command, storage_multipart_submit_command,
+    storage_submit_command, upload_target,
 )
 
 # Merv's retention window: applied at creation and by ``renew``; reads that
 # hand out a download renew it too, so objects in active use never lapse.
 STORAGE_DEFAULT_TTL_SECONDS = 60 * 24 * 3600
-PRESIGN_TTL_SECONDS = 24 * 3600
-# Leave time to finalize after the presigned transfer expires.
-COMPLETION_TOKEN_TTL_SECONDS = PRESIGN_TTL_SECONDS + 3600
+# The presigned transfer window plus an hour to finalize after it expires.
+COMPLETION_TOKEN_TTL_SECONDS = 24 * 3600 + 3600
 # The server-wide ceiling for one submission; the service enforces quota.
 DEFAULT_MAX_UPLOAD_BYTES = DEFAULT_STORAGE_MAX_UPLOAD_BYTES
-STORAGE_STATES = frozenset(
-    {"uploading", "completing", "available", "delete_pending", "deleted"}
-)
+STORAGE_STATES = frozenset({"uploading", "completing", "available", "delete_pending", "deleted"})
 _CATALOG_PAGE = 1000
 _OBJECT_ID = re.compile(r"[A-Za-z0-9._-]{1,128}")
 _COMPACT_FIELDS = (
-    "id",
-    "project_id",
-    "name",
-    "version",
-    "kind",
-    "content_sha256",
-    "size_bytes",
-    "status",
-    "expires_at",
-    "updated_at",
+    "id", "project_id", "name", "version", "kind", "content_sha256",
+    "size_bytes", "status", "expires_at", "updated_at",
 )
 
 
@@ -73,18 +50,11 @@ class RetentionConflictError(ResearchPluginError):
 
 
 class ObjectLifecycle(Protocol):
-    """Bookkeeping hooks for objects Merv submits.
-
-    ``attributes`` are the caller's extra submission fields, echoed verbatim;
-    the facade stores nothing it interprets and never reads these facts back.
-    """
+    """Bookkeeping hooks for objects Merv submits; ``attributes`` are the
+    caller's own submission fields, echoed verbatim and never read back."""
 
     def submitted(
-        self,
-        *,
-        project_id: str,
-        record: Mapping[str, Any],
-        attributes: Mapping[str, Any],
+        self, *, project_id: str, record: Mapping[str, Any], attributes: Mapping[str, Any]
     ) -> None: ...
 
     def completed(self, *, project_id: str, record: Mapping[str, Any]) -> None: ...
@@ -123,14 +93,20 @@ def _object_path(object_id: str) -> str:
     return f"/storage/objects/{object_id}"
 
 
+def _pick(records: list[dict[str, Any]], version: int | None) -> dict[str, Any] | None:
+    """The named version, or the latest available one."""
+    if version is not None:
+        return next((row for row in records if int(row["version"]) == int(version)), None)
+    available = [row for row in records if str(row.get("state")) == "available"]
+    return max(available, key=lambda row: int(row["version"]), default=None)
+
+
 def _validate_name(name: str) -> str:
     """Mirror the service's relative-path rule with a message agents can act on."""
-    parts = name.split("/")
     if (
         not name
-        or name.startswith("/")
         or "\\" in name
-        or any(part in ("", ".", "..") for part in parts)
+        or any(part in ("", ".", "..") for part in name.split("/"))
         or any(ord(char) < 32 or ord(char) == 127 for char in name)
         or len(name.encode()) > 1024
     ):
@@ -145,10 +121,7 @@ class RemoteObjects:
     """Merv's heavy-object API backed exclusively by merv-sandboxes objects."""
 
     def __init__(
-        self,
-        *,
-        client: InfrastructureTransport | None,
-        store: BaseStateStore,
+        self, *, client: InfrastructureTransport | None, store: BaseStateStore,
         lifecycle: ObjectLifecycle | None = None,
         max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
     ) -> None:
@@ -194,18 +167,12 @@ class RemoteObjects:
     # Submission ------------------------------------------------------------
 
     def put_object(
-        self,
-        *,
-        project_id: str | None,
-        name: str,
-        sha256: str,
-        size_bytes: int,
-        content_type: str = "application/octet-stream",
-        **attributes: Any,
+        self, *, project_id: str | None, name: str, sha256: str, size_bytes: int,
+        content_type: str = "application/octet-stream", **attributes: Any,
     ) -> dict[str, Any]:
         """Create the object in the service and return its transfer target.
 
-        Extra keyword arguments are the caller's own attributes; they reach the
+        Extra keyword arguments are the caller's own attributes: they reach the
         lifecycle hook untouched and never influence the service request.
         """
         project_id = self._project(project_id)
@@ -217,13 +184,9 @@ class RemoteObjects:
             "POST",
             "/storage/objects",
             project_id=project_id,
-            json={
-                "name": name,
-                "sha256": sha256,
-                "size_bytes": int(size_bytes),
-                "content_type": content_type,
-                "expires_in_seconds": STORAGE_DEFAULT_TTL_SECONDS,
-            },
+            json={"name": name, "sha256": sha256, "size_bytes": int(size_bytes),
+                  "content_type": content_type,
+                  "expires_in_seconds": STORAGE_DEFAULT_TTL_SECONDS},
         )
         record = present(status["object"], project_id=project_id)
         if self.lifecycle is not None:
@@ -244,16 +207,8 @@ class RemoteObjects:
         }
 
     def submit(
-        self,
-        *,
-        project_id: str | None,
-        path: str,
-        sha256: str,
-        size_bytes: int,
-        name: str = "",
-        content_type: str = "",
-        base_url: str = "",
-        **attributes: Any,
+        self, *, project_id: str | None, path: str, sha256: str, size_bytes: int,
+        name: str = "", content_type: str = "", base_url: str = "", **attributes: Any,
     ) -> dict[str, Any]:
         """Create an object and return the one-line command that uploads it."""
         if not str(path).strip():
@@ -270,40 +225,28 @@ class RemoteObjects:
         token = self._mint_completion_token(
             project_id=str(obj["project_id"]), object_id=str(obj["id"])
         )
-        if "url" in upload:
-            run = storage_submit_command(
-                base_url=base_url,
-                path=str(path),
-                presigned_url=str(upload["url"]),
+        run = (
+            storage_submit_command(
+                base_url=base_url, path=str(path), presigned_url=str(upload["url"]),
                 checksum_b64=str(upload["checksum_sha256"]),
                 content_type=str(upload.get("content_type") or content_type),
-                token=token,
-                headers=upload.get("headers"),
+                token=token, headers=upload.get("headers"),
             )
-        else:
-            run = storage_multipart_submit_command(
-                base_url=base_url, path=str(path), token=token
-            )
+            if "url" in upload
+            else storage_multipart_submit_command(base_url=base_url, path=str(path), token=token)
+        )
         return {"object": obj, "upload_id": str(obj["id"]), "uploaded": False, "run": run}
 
     def complete_upload(
-        self,
-        *,
-        project_id: str | None,
-        upload_id: str,
+        self, *, project_id: str | None, upload_id: str,
         parts: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Finalize an upload by its handle (the service object id).
-
-        The service lists and verifies the uploaded parts itself; ``parts`` is
-        accepted for the wire contract and not forwarded.
-        """
+        """Finalize by handle (the service object id). The service lists and
+        verifies the parts itself, so ``parts`` is accepted and not forwarded."""
         del parts
-        return self._complete(project_id=self._project(project_id), object_id=upload_id)
-
-    def _complete(self, *, project_id: str, object_id: str) -> dict[str, Any]:
+        project_id = self._project(project_id)
         record = self._call(
-            "POST", f"{_object_path(object_id)}/complete", project_id=project_id
+            "POST", f"{_object_path(upload_id)}/complete", project_id=project_id
         )
         if record.get("state") != "available":
             raise ValidationError(
@@ -324,11 +267,9 @@ class RemoteObjects:
         status = self._call(
             "GET", f"{_object_path(str(row['object_id']))}/upload", project_id=project_id
         )
-        return {
-            "upload": upload_target(
-                self.client, namespace=project_namespace(project_id), status=status
-            )
-        }
+        return {"upload": upload_target(
+            self.client, namespace=project_namespace(project_id), status=status
+        )}
 
     def complete_via_token(
         self, *, token: str, parts: list[dict[str, Any]] | None = None
@@ -336,8 +277,8 @@ class RemoteObjects:
         """Finalize through an expiring token consumed only after success."""
         del parts
         row = self._completion_token_row(token=token)
-        completed = self._complete(
-            project_id=str(row["project_id"]), object_id=str(row["object_id"])
+        completed = self.complete_upload(
+            project_id=str(row["project_id"]), upload_id=str(row["object_id"])
         )
         with self._store.transaction() as conn:
             conn.execute(
@@ -354,24 +295,16 @@ class RemoteObjects:
                   (token, project_id, object_id, upload_id, status, expires_at, created_at)
                 VALUES (?, ?, ?, ?, 'pending', ?, ?)
                 """,
-                (
-                    token,
-                    project_id,
-                    object_id,
-                    object_id,
-                    iso_after(seconds=COMPLETION_TOKEN_TTL_SECONDS),
-                    now_iso(),
-                ),
+                (token, project_id, object_id, object_id,
+                 iso_after(seconds=COMPLETION_TOKEN_TTL_SECONDS), now_iso()),
             )
         return token
 
     def _completion_token_row(self, *, token: str) -> Any:
         with self._store.transaction() as conn:
             conn.execute(
-                "DELETE FROM storage_completion_tokens WHERE expires_at < ?",
-                (now_iso(),),
+                "DELETE FROM storage_completion_tokens WHERE expires_at < ?", (now_iso(),)
             )
-        with closing(self._store.connect()) as conn:
             row = conn.execute(
                 """
                 SELECT project_id, object_id
@@ -387,209 +320,132 @@ class RemoteObjects:
     # Reads -----------------------------------------------------------------
 
     def find(
-        self,
-        *,
-        project_id: str | None = None,
-        object_id: str | None = None,
-        name: str | None = None,
-        version: int | None = None,
-        include_download: bool = True,
-        status: str | None = None,
-        limit: int | None = None,
-        offset: int = 0,
-        compact: bool = False,
+        self, *, project_id: str | None = None, object_id: str | None = None,
+        name: str | None = None, version: int | None = None,
+        include_download: bool = True, status: str | None = None,
+        limit: int | None = None, offset: int = 0, compact: bool = False,
+        select_one: bool | None = None,
     ) -> dict[str, Any]:
-        """Resolve one object when selected; otherwise list the project's objects."""
-        if object_id or name:
-            return self.resolve(
-                project_id=project_id,
-                object_id=object_id,
-                name=name,
-                version=version,
-                include_download=include_download,
-            )
-        return self.list_objects(
-            project_id=project_id,
-            status=status,
-            limit=limit,
-            offset=offset,
-            compact=compact,
-        )
+        """One catalog read: resolve the object a selector names, or page the list.
 
-    def list_objects(
-        self,
-        *,
-        project_id: str | None,
-        name: str | None = None,
-        status: str | None = None,
-        limit: int | None = None,
-        offset: int = 0,
-        compact: bool = False,
-    ) -> dict[str, Any]:
-        if status is not None and status not in STORAGE_STATES:
-            raise ValidationError(
-                f"invalid storage status: {status}; allowed: {', '.join(sorted(STORAGE_STATES))}"
-            )
+        A selector (``object_id``, or ``name`` with an optional ``version``)
+        answers with that one available object and, when ``include_download``,
+        a presigned URL whose issue renews retention. Without one the objects
+        are listed by ``status`` (available by default) and paged;
+        ``select_one=False`` forces that so the browser can filter by name.
+        """
         project_id = self._project(project_id)
-        wanted = status or "available"
-        rows = [
-            record
-            for record in self._catalog(project_id=project_id, name=name)
-            if str(record.get("state")) == wanted
-        ]
-        rows.sort(key=lambda record: (str(record["name"]), -int(record["version"])))
-        total = len(rows)
-        start = int(offset)
-        page = rows[start:] if limit is None else rows[start : start + int(limit)]
-        objects = [self._entry(record, project_id=project_id, compact=compact) for record in page]
-        returned = len(objects)
-        return {
-            "objects": objects,
-            "count": returned,
-            "returned": returned,
-            "total": total,
-            "offset": start,
-            "has_more": (start + returned) < total,
-            "compact": bool(compact),
-            "guidance": storage_guidance(enabled=True),
-        }
-
-    def get_object(self, *, project_id: str | None, object_id: str) -> dict[str, Any]:
-        project_id = self._project(project_id)
-        record = self._call("GET", _object_path(object_id), project_id=project_id)
-        return {"object": present(record, project_id=project_id)}
-
-    def resolve(
-        self,
-        *,
-        project_id: str | None,
-        object_id: str | None = None,
-        name: str | None = None,
-        version: int | None = None,
-        include_download: bool = True,
-    ) -> dict[str, Any]:
-        if bool(object_id) == bool(name):
-            raise ValidationError("provide exactly one of object_id or name")
-        project_id = self._project(project_id)
-        if object_id:
-            record: dict[str, Any] | None = self._call(
-                "GET", _object_path(object_id), project_id=project_id
-            )
-        else:
-            record = self._by_name(project_id=project_id, name=str(name), version=version)
-        if record is None or str(record.get("state")) != "available":
-            target = (
-                object_id
+        if select_one is None:
+            select_one = bool(object_id or name)
+        if select_one:
+            if bool(object_id) == bool(name):
+                raise ValidationError("provide exactly one of object_id or name")
+            record = (
+                self._call("GET", _object_path(object_id), project_id=project_id)
                 if object_id
-                else (f"{name}@{version}" if version is not None else name)
+                else _pick(self._catalog(project_id=project_id, name=str(name)), version)
             )
-            raise NotFoundError(
-                f"storage object not available in project {project_id}: {target}"
-            )
-        result: dict[str, Any] = {"object": present(record, project_id=project_id)}
-        if include_download:
+            if record is None or str(record.get("state")) != "available":
+                target = object_id or (f"{name}@{version}" if version is not None else name)
+                raise NotFoundError(
+                    f"storage object not available in project {project_id}: {target}"
+                )
+            if not include_download:
+                return {"object": present(record, project_id=project_id)}
             target_id = str(record["id"])
             download = self._call(
                 "GET", f"{_object_path(target_id)}/download", project_id=project_id
             )
-            result["download"] = {"url": str(download["url"])}
-            # A read renews the retention window, as the ledger's did.
-            result["object"] = present(
-                self._retention(
-                    project_id=project_id,
-                    object_id=target_id,
-                    expires_at=iso_after(seconds=STORAGE_DEFAULT_TTL_SECONDS),
-                ),
-                project_id=project_id,
+            renewed = self._retention(
+                project_id=project_id, object_id=target_id,
+                expires_at=iso_after(seconds=STORAGE_DEFAULT_TTL_SECONDS),
             )
-        return result
+            return {"object": present(renewed, project_id=project_id),
+                    "download": {"url": str(download["url"])}}
+        if status is not None and status not in STORAGE_STATES:
+            raise ValidationError(
+                f"invalid storage status: {status}; allowed: {', '.join(sorted(STORAGE_STATES))}"
+            )
+        rows = [
+            record
+            for record in self._catalog(project_id=project_id, name=name)
+            if str(record.get("state")) == (status or "available")
+        ]
+        rows.sort(key=lambda record: (str(record["name"]), -int(record["version"])))
+        start = int(offset)
+        page = rows[start:] if limit is None else rows[start : start + int(limit)]
+        objects = [
+            {key: entry.get(key) for key in _COMPACT_FIELDS} if compact else entry
+            for entry in (present(record, project_id=project_id) for record in page)
+        ]
+        return {
+            "objects": objects, "count": len(objects), "returned": len(objects),
+            "total": len(rows), "offset": start, "compact": bool(compact),
+            "has_more": (start + len(objects)) < len(rows),
+            "guidance": storage_guidance(enabled=True),
+        }
 
-    def _by_name(
-        self, *, project_id: str, name: str, version: int | None
-    ) -> dict[str, Any] | None:
-        records = self._catalog(project_id=project_id, name=name)
-        if version is not None:
-            return next(
-                (row for row in records if int(row["version"]) == int(version)), None
-            )
-        available = [row for row in records if str(row.get("state")) == "available"]
-        return max(available, key=lambda row: int(row["version"]), default=None)
+    def get_object(self, *, project_id: str | None, object_id: str) -> dict[str, Any]:
+        """One object in any state, as the browser's detail read needs it."""
+        project_id = self._project(project_id)
+        record = self._call("GET", _object_path(object_id), project_id=project_id)
+        return {"object": present(record, project_id=project_id)}
 
     def fetch(
-        self,
-        *,
-        project_id: str | None,
-        path: str,
-        object_id: str | None = None,
-        name: str | None = None,
-        version: int | None = None,
+        self, *, project_id: str | None, path: str, object_id: str | None = None,
+        name: str | None = None, version: int | None = None,
     ) -> dict[str, Any]:
         """Resolve an object and return its verified download command."""
         if not str(path).strip():
             raise ValidationError("path is required (the local destination file)")
-        resolved = self.resolve(
-            project_id=project_id,
-            object_id=object_id,
-            name=name,
-            version=version,
-            include_download=True,
+        resolved = self.find(
+            project_id=project_id, object_id=object_id, name=name, version=version,
         )
         obj = resolved["object"]
-        run = storage_fetch_command(
-            path=str(path),
-            presigned_url=str(resolved["download"]["url"]),
-            sha256=str(obj["content_sha256"]),
-        )
-        return {"object": obj, "run": run}
+        return {
+            "object": obj,
+            "run": storage_fetch_command(
+                path=str(path),
+                presigned_url=str(resolved["download"]["url"]),
+                sha256=str(obj["content_sha256"]),
+            ),
+        }
 
     # Lifecycle -------------------------------------------------------------
-
-    def pin(self, *, project_id: str | None, object_id: str) -> dict[str, Any]:
-        project_id = self._project(project_id)
-        return present(
-            self._retention(project_id=project_id, object_id=object_id, expires_at=None),
-            project_id=project_id,
-        )
-
-    def renew(self, *, project_id: str | None, object_id: str) -> dict[str, Any]:
-        project_id = self._project(project_id)
-        return present(
-            self._retention(
-                project_id=project_id,
-                object_id=object_id,
-                expires_at=iso_after(seconds=STORAGE_DEFAULT_TTL_SECONDS),
-            ),
-            project_id=project_id,
-        )
-
-    def unpin(self, *, project_id: str | None, object_id: str) -> dict[str, Any]:
-        self._project(project_id)
-        raise RetentionConflictError(
-            "merv-sandboxes cannot release a pinned object: retention only extends "
-            "and null pins permanently. Delete the object instead, or leave it pinned.",
-            details={"object_id": object_id, "action": "unpin"},
-        )
-
-    def delete(self, *, project_id: str | None, object_id: str) -> dict[str, Any]:
-        project_id = self._project(project_id)
-        record = self._call("DELETE", _object_path(object_id), project_id=project_id)
-        entry = present(record, project_id=project_id)
-        if self.lifecycle is not None:
-            self.lifecycle.deleted(project_id=project_id, object_id=str(entry["id"]))
-        return {"deleted": True, "object": entry}
 
     def manage(
         self, *, object_id: str, action: str, project_id: str | None = None
     ) -> dict[str, Any]:
-        operation = {
-            "pin": self.pin,
-            "unpin": self.unpin,
-            "renew": self.renew,
-            "delete": self.delete,
-        }.get(action)
-        if operation is None:
+        """pin (retention removed), renew (extend by Merv's window), delete.
+        unpin cannot be expressed on a service whose retention only extends,
+        so it is refused rather than silently ignored."""
+        project_id = self._project(project_id)
+        if action == "unpin":
+            raise RetentionConflictError(
+                "merv-sandboxes cannot release a pinned object: retention only extends "
+                "and null pins permanently. Delete the object instead, or leave it pinned.",
+                details={"object_id": object_id, "action": "unpin"},
+            )
+        if action == "delete":
+            entry = present(
+                self._call("DELETE", _object_path(object_id), project_id=project_id),
+                project_id=project_id,
+            )
+            if self.lifecycle is not None:
+                self.lifecycle.deleted(project_id=project_id, object_id=str(entry["id"]))
+            return {"deleted": True, "object": entry}
+        if action not in ("pin", "renew"):
             raise ValidationError(f"unknown storage object action: {action}")
-        return operation(project_id=project_id, object_id=object_id)
+        return present(
+            self._retention(
+                project_id=project_id,
+                object_id=object_id,
+                expires_at=(
+                    None if action == "pin" else iso_after(seconds=STORAGE_DEFAULT_TTL_SECONDS)
+                ),
+            ),
+            project_id=project_id,
+        )
 
     def _retention(
         self, *, project_id: str, object_id: str, expires_at: str | None
@@ -601,16 +457,6 @@ class RemoteObjects:
             json={"expires_at": expires_at},
         )
 
-    # Helpers ---------------------------------------------------------------
-
-    def _entry(
-        self, record: Mapping[str, Any], *, project_id: str, compact: bool
-    ) -> dict[str, Any]:
-        entry = present(record, project_id=project_id)
-        if compact:
-            return {key: entry.get(key) for key in _COMPACT_FIELDS}
-        return entry
-
     def _enforce_upload_size(self, *, size_bytes: int) -> None:
         if size_bytes < 0:
             raise ValidationError("size_bytes must be non-negative")
@@ -618,22 +464,13 @@ class RemoteObjects:
             raise ValidationError(
                 f"upload is {size_bytes} bytes; the maximum is "
                 f"{self.max_upload_bytes} bytes on this backend",
-                details={
-                    "size_bytes": size_bytes,
-                    "max_bytes": self.max_upload_bytes,
-                    "server_max_bytes": self.max_upload_bytes,
-                },
+                details={"size_bytes": size_bytes, "max_bytes": self.max_upload_bytes,
+                         "server_max_bytes": self.max_upload_bytes},
             )
 
 
 __all__ = [
-    "COMPLETION_TOKEN_TTL_SECONDS",
-    "DEFAULT_MAX_UPLOAD_BYTES",
-    "PRESIGN_TTL_SECONDS",
-    "STORAGE_DEFAULT_TTL_SECONDS",
-    "STORAGE_STATES",
-    "ObjectLifecycle",
-    "RemoteObjects",
-    "RetentionConflictError",
-    "present",
+    "COMPLETION_TOKEN_TTL_SECONDS", "DEFAULT_MAX_UPLOAD_BYTES",
+    "STORAGE_DEFAULT_TTL_SECONDS", "STORAGE_STATES", "ObjectLifecycle",
+    "RemoteObjects", "RetentionConflictError", "present",
 ]

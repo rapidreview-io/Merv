@@ -54,7 +54,9 @@ from typing import Any
 from merv.brain.infrastructure.client import build_infrastructure_client
 from merv.brain.infrastructure.objects import present
 from merv.brain.infrastructure.ports import project_namespace
-from merv.brain.research_core import ResearchObjects
+from merv.brain.kernel.state.store import next_created_seq
+from merv.brain.kernel.utils import ValidationError, now_iso
+from merv.brain.research_core.objects import STORAGE_KINDS, snapshot_values
 from merv.brain.surface.config import build_state_store
 from merv.shared.errors import ResearchPluginError
 
@@ -106,8 +108,47 @@ def service_object(client: Any, *, project_id: str, sha256: str) -> dict[str, An
         offset += len(page)
 
 
+def adopt(
+    store: Any, *, project_id: str, object_id: str, kind: str, target_id: str,
+    producing_run: str, source_uri: str, notes: str, snapshot: Any, created_at: str,
+) -> bool:
+    """Record an already-available service object as an active association.
+
+    This is the migration's own writer: ResearchObjects only ever creates
+    associations for objects Merv itself submits, and never backdates one.
+    Idempotent — returns False when the association already exists.
+    """
+    if kind not in STORAGE_KINDS:
+        raise ValidationError(f"invalid storage kind: {kind}")
+    now = now_iso()
+    with store.transaction() as conn:
+        project_id = store.require_project_id(conn=conn, project_id=project_id)
+        existing = conn.execute(
+            "SELECT 1 FROM research_objects WHERE project_id = ? AND object_id = ?",
+            (project_id, object_id),
+        ).fetchone()
+        if existing is not None:
+            return False
+        conn.execute(
+            """
+            INSERT INTO research_objects (
+              object_id, project_id, target_type, target_id, kind, producing_run,
+              source_uri, notes, status, name, version, content_sha256, size_bytes,
+              content_type, object_created_at, created_at, updated_at, created_seq
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                object_id, project_id, "experiment" if target_id else "", target_id,
+                kind, producing_run, source_uri, notes,
+                *snapshot_values({**snapshot, "created_at": created_at}), now, now,
+                next_created_seq(conn=conn, table="research_objects"),
+            ),
+        )
+    return True
+
+
 def migrate(*, store: Any, client: Any, project_id: str | None, dry_run: bool) -> dict[str, Any]:
-    research = ResearchObjects(store=store)
     report: dict[str, Any] = {
         "dry_run": dry_run, "adopted": 0, "skipped_existing": 0,
         "unmatched": [], "untargeted_missing_experiment": [], "mapping": [],
@@ -140,11 +181,11 @@ def migrate(*, store: Any, client: Any, project_id: str | None, dry_run: bool) -
         })
         if dry_run:
             continue
-        adopted = research.adopt(
-            project_id=row["project_id"], object_id=entry["id"], kind=str(row["kind"]),
-            target_type="experiment" if target_id else "", target_id=target_id,
-            producing_run=str(row["producing_run"] or ""), source_uri=str(row["source_uri"] or ""),
-            notes=str(row["notes"] or ""), snapshot=entry, created_at=str(entry["created_at"] or row["created_at"]),
+        adopted = adopt(
+            store, project_id=row["project_id"], object_id=entry["id"], kind=str(row["kind"]),
+            target_id=target_id, producing_run=str(row["producing_run"] or ""),
+            source_uri=str(row["source_uri"] or ""), notes=str(row["notes"] or ""),
+            snapshot=entry, created_at=str(entry["created_at"] or row["created_at"]),
         )
         report["adopted" if adopted else "skipped_existing"] += 1
     return report

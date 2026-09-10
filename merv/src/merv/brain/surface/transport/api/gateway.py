@@ -465,7 +465,7 @@ class ToolInvocationGateway:
             agent_id=supplied_agent_id, caller=caller, tool=name
         )
         bind_agent(agent_id=agent_id, mcp_session_id=mcp_session_id)
-        if agent_id and not caller.agent_session_id and getattr(contract, "binds_producer_session", False):
+        if agent_id and not caller.agent_session_id and getattr(contract, "binds_producer_session", "") == "agent":
             # The work must record its producer, but only Merv-dispatched mas_
             # sessions carry a session id and these contracts accept none from
             # the model. The verified context-window id is the paired
@@ -513,64 +513,46 @@ class ToolInvocationGateway:
         )
         for scope in (arguments.get("project_id"), project_scope):
             self.projects.require_member(project_id=scope, principal=principal)
-        if (
-            is_external_key(principal)
-            and name == "project"
-            and arguments.get("action") == "create"
-        ):
+        denied = getattr(contract, "external_key_denied_action", "")
+        if denied and arguments.get("action") == denied and is_external_key(principal):
             # Shape, not binding: account keys are machine credentials too.
             raise ProjectKeyScopeError(
-                "project API keys cannot create projects",
+                f"project API keys cannot {denied} projects",
                 details={"key_project_id": key_project_id},
             )
         internal_kwargs = None
-        if user_id and name in ("project", "project.list"):
+        caller_project_field = getattr(contract, "binds_caller_project", "")
+        if user_id and caller_project_field:
             internal_kwargs = {"user_id": user_id}
-            if (
-                key_project_id
-            ):  # list -> scope to bound project; project -> pass through
-                internal_kwargs[
-                    "project_id" if name == "project.list" else "key_project_id"
-                ] = key_project_id
-        if base_url and name in (
-            "artifact.upload",
-            "artifact.read",
-            "feed.post",
-            "storage.submit",
-            "sandbox.runs",
-        ):
-            # Each renders an absolute URL against the caller-reachable base: an
-            # upload token-curl one-liner, or a run's signed wait capability.
+            if key_project_id:  # the bound project, under the name this tool takes
+                internal_kwargs[caller_project_field] = key_project_id
+        if base_url and getattr(contract, "needs_base_url", False):
+            # The reply renders an absolute URL against the caller-reachable
+            # base: an upload token-curl one-liner, or a signed wait capability.
             internal_kwargs = {"base_url": base_url}
-            if name == "sandbox.runs":
+            if contract.needs_wait_secret:
                 internal_kwargs["wait_secret"] = self.wait_secret
-        if name == "sandbox.request":
-            internal_kwargs = {}
         if bound:
             # The node's scope rules bind these arguments to the leased
             # instance; the handler receives the resolved values, never the
             # model's.
             internal_kwargs = {**(internal_kwargs or {}), **bound}
         agent_session_id = str(getattr(principal, "agent_session_id", "") or "")
-        if agent_session_id and name == "review.request":
+        if agent_session_id and getattr(contract, "binds_producer_session", ""):
             internal_kwargs = {
                 **(internal_kwargs or {}),
                 "producer_session_id": agent_session_id,
             }
-        if agent_session_id and getattr(contract, "binds_producer_session", False):
-            internal_kwargs = {
-                **(internal_kwargs or {}),
-                "producer_session_id": agent_session_id,
-            }
-        if agent_session_id and name == "review.start":
-            # The assigned request is whatever scope rule the node declared
-            # for this argument resolved to; without one the capability
-            # handoff has nothing to bind and the tool refuses "assigned".
+        capability_field = getattr(contract, "binds_capability", "")
+        if agent_session_id and capability_field:
+            # The assigned id is whatever scope rule the node declared for this
+            # argument resolved to; without one the capability handoff has
+            # nothing to bind and the tool refuses "assigned".
             internal_kwargs = {
                 **(internal_kwargs or {}),
                 "caller_session_id": agent_session_id,
                 "assigned_agent_session_id": agent_session_id,
-                "assigned_review_request_id": str(bound.get("review_request_id") or ""),
+                f"assigned_{capability_field}": str(bound.get(capability_field) or ""),
             }
         scope_field = getattr(contract, "telemetry_scope_field", "") if self.surface.hosted_control else ""
         call_kwargs: dict[str, Any] = {"caller_is_external_mcp": caller_is_external_mcp}

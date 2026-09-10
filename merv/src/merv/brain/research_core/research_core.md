@@ -28,8 +28,8 @@ its versioned graph/runtime; their record services stay private collaborators.
   graph comparison, atomic change-spec materialization and drift facts.
 - `reviews.py`: review requests, one-time capabilities, isolated sessions, pinned
   snapshots, verdicts, return routing. `association_targets.py`: target resolution.
-- `objects.py`: `ResearchObjects` — the object facade's lifecycle hook, the
-  per-experiment `ProducedObject` snapshot captured at completion, and adoption.
+- `objects.py`: `ResearchObjects` — the object facade's lifecycle hook and the
+  per-experiment `ProducedObject` snapshot captured at completion.
 - `*_workflow.py` and `workflow_schema.py`: compatibility views of canonical graphs.
 - `policy.py`: vocabulary, validation, gate evaluation, snapshot identity, reflection
   signal, limits. `evidence.py`: compatibility exports of workflow-owned pure

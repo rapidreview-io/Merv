@@ -169,9 +169,7 @@ def create_fastapi_app(
             tool_calls=api.tool_calls,
             research=api.research,
             project_member_directory=user_directory is not None,
-            storage_max_upload_bytes=(
-                api.storage.max_upload_bytes if api.storage is not None else None
-            ),
+            storage_enabled=api.storage is not None,
         ),
         projects.build_router(
             gateway,
