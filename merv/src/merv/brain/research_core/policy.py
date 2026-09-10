@@ -66,10 +66,6 @@ EXPERIMENT_ACTIVE_PROCESS_STATUSES = frozenset({"provisioning", "running"})
 
 SYNOPSIS_MIN_LEN = 40
 SYNOPSIS_MAX_LEN = 420
-_ENTITY_ID_RE = re.compile(
-    r"\b(exp|claim|res|rev|rver|syn|lit|paper|task)_[A-Za-z0-9]"
-)
-
 # Entity id prefixes agents may cite from prose, each with the kind it names.
 # Support surfaces (the feed) receive this at composition and match prefixes
 # only; the kinds label validation messages. `res_` and `rver_` predate the
@@ -84,6 +80,10 @@ ENTITY_REF_VOCABULARY: tuple[tuple[str, str], ...] = (
     ("rev_", "review"),
     ("lit_", "literature"),
     ("paper_", "paper"),
+)
+_ENTITY_ID_RE = re.compile(
+    r"\b(?:%s)[A-Za-z0-9]"
+    % "|".join(prefix for prefix, _ in ENTITY_REF_VOCABULARY)
 )
 
 # Agent voices on the project feed. Adoptable roles share one persistent voice
@@ -484,9 +484,10 @@ def validate_synopsis(value: str) -> str:
     if synopsis.startswith("#"):
         raise ValueError(f"{hint} (no markdown headings)")
     if _ENTITY_ID_RE.search(synopsis):
+        prefixes = "/".join(prefix for prefix, _ in ENTITY_REF_VOCABULARY)
         raise ValueError(
-            f"{hint} (no entity ids like exp_/claim_/res_/rev_/rver_/syn_/"
-            "lit_/paper_ — name things by their human names instead)"
+            f"{hint} (no entity ids like {prefixes} — name things by their "
+            "human names instead)"
         )
     return synopsis
 
