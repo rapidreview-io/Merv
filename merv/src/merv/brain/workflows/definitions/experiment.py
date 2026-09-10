@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from merv.shared.artifact_roles import EXHIBIT_ROLE
+from .artifact_roles import EXHIBIT_ROLE
 from merv.shared.markdown_images import markdown_image_links
 
 from ..graph import Action, Brief, Change, Edge, Issue, Node, Reference, Workflow, all_of

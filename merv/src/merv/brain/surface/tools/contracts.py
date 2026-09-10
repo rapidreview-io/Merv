@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from merv.shared.artifact_roles import ARTIFACT_TARGET_TYPES, SUBMITTABLE_ROLES
+from ...workflows import ARTIFACT_TARGET_TYPES, SUBMITTABLE_ROLES
 from merv.shared.storage_guidance import STORAGE_RULE_OF_THUMB
 from merv.shared.tool_validation import validate_openssh_public_key
 

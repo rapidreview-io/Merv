@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from merv.shared.artifact_roles import PROJECT_GRAPH_ROLE
+from ..workflows import PROJECT_GRAPH_ROLE
 from merv.shared.content_summaries import content_tldr
 
 from ..research_core import Artifact, ResearchArtifacts as Artifacts

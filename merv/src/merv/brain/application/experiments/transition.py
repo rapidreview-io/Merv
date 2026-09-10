@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, TypedDict, cast
 
-from merv.shared.artifact_roles import EXHIBIT_ROLE
+from ...workflows import EXHIBIT_ROLE
 
 from ...research_core import ResearchArtifacts as Artifacts
 from ...workflows import Snapshot

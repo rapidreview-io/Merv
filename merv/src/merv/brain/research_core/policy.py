@@ -22,7 +22,7 @@ import json
 import re
 from typing import Any, Literal, TypeAlias
 
-from merv.shared.artifact_roles import PROJECT_GRAPH_ROLE, REFLECTION_LENS_DOC_ROLE
+from ..workflows import PROJECT_GRAPH_ROLE, REFLECTION_LENS_DOC_ROLE
 
 from ..kernel.utils import ValidationError, WorkflowError, now_iso
 from ..workflows import Evaluation

@@ -7,7 +7,7 @@ from contextlib import closing, nullcontext
 import json
 from typing import Any
 
-from merv.shared.artifact_roles import EXHIBIT_ROLE
+from ..workflows import EXHIBIT_ROLE
 
 
 from .evidence import (

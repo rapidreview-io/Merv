@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from merv.shared.artifact_roles import EXHIBIT_ROLE, GATED_ROLES
+from ..workflows import EXHIBIT_ROLE, GATED_ROLES
 
 from ..feed import FeedAdvisory
 from ..kernel.utils import parse_iso
