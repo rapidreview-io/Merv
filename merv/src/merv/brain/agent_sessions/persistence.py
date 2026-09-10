@@ -161,10 +161,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_runner_pairing_attempts_principal
 """
 
 
-# Written on every lease or heartbeat and read by nobody: the lease's copy of
-# the packet label (the packet itself is stored beside it), the moment
-# telemetry last arrived (the counters carry their own), and when a runner
-# process started (the UI shows last seen).
+# Written on every lease or heartbeat and read by nobody: a label the frozen
+# packet beside it already carries, when telemetry last arrived, and when a
+# runner process started.
 _UNREAD_COLUMNS = (
     ("agent_sessions", "label"),
     ("agent_sessions", "telemetry_at"),

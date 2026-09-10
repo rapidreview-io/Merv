@@ -415,40 +415,13 @@ def install_and_report(
     environment: Mapping[str, str] | None = None,
     executables: Mapping[str, str] | None = None,
 ) -> tuple[SkillsInstall | None, dict[str, Any]]:
-    """Install the skills, then say what each harness will get from Merv.
+    """Install the skills, then say what each configured harness will get.
 
-    Setup (``merv-client harness``) and the daemon's heartbeat ask the same
-    question and must get the same answer, including how the install failed.
-    """
-    install: SkillsInstall | None = None
-    failure = ""
-    try:
-        install = install_skills(state_dir)
-    except HarnessError as exc:
-        failure = str(exc)
-    report = readiness(
-        platforms=platforms,
-        install=install,
-        environment=environment,
-        executables=executables,
-    )
-    if failure:
-        report["error"] = failure
-    return install, report
-
-
-def readiness(
-    *,
-    platforms: Iterable[Any],
-    install: SkillsInstall | None,
-    environment: Mapping[str, str] | None = None,
-    executables: Mapping[str, str] | None = None,
-) -> dict[str, Any]:
-    """Static readiness of every configured platform; no model call.
-
+    Setup (``merv-client harness``) and the daemon's heartbeat ask this one
+    question and must get one answer, including how the install itself failed.
     ``platforms`` are objects with ``name``, ``adapter``, ``command`` and
-    ``enabled``. The result is safe to publish: executables, versions, and
-    what each harness will receive from the runner, never argv or secrets.
+    ``enabled``. No model is called, and the report is safe to publish:
+    executables, versions and what each harness receives, never argv.
     """
     environment = dict(os.environ if environment is None else environment)
     platforms = tuple(platforms)
@@ -457,6 +430,12 @@ def readiness(
             (tuple(getattr(item, "command", ()) or ("",))[0] for item in platforms),
             environment,
         )
+    install: SkillsInstall | None = None
+    failure = ""
+    try:
+        install = install_skills(state_dir)
+    except HarnessError as exc:
+        failure = str(exc)
     report: dict[str, Any] = {
         "skills": (
             {
@@ -498,4 +477,6 @@ def readiness(
         if problems:
             entry["problems"] = problems
         report["platforms"][str(getattr(platform, "name", adapter))] = entry
-    return report
+    if failure:
+        report["error"] = failure
+    return install, report

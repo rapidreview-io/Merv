@@ -611,8 +611,6 @@ class LocalSession:
     target_type: str = ""
     target_id: str = ""
     role: str = ""
-    label: str = ""
-    source_sha: str = ""
     adapter: str | None = None
     host_ref: str | None = None
     pid: int | None = None
@@ -737,8 +735,6 @@ class SessionLedger:
             target_type=lease.target_type,
             target_id=lease.target_id,
             role=lease.role,
-            label=lease.label,
-            source_sha=lease.reference("code"),
             adapter=platform.adapter,
             workspace_mode=policy.mode,
             workspace_retain=policy.retain,
@@ -1268,70 +1264,31 @@ class AgentSessionsClient:
             return None
         return _lease_from_session(session, project_id=project_id)
 
-    def attach(
+    def report(
         self,
+        route: str,
         *,
         session_id: str,
         runner_id: str,
-        host_session_ref: str,
-        workspace_ref: str = "",
-        base_sha: str = "",
         head_sha: str = "",
         workspace_stats: Mapping[str, Any] | None = None,
-        agent_setup: Mapping[str, Any] | None = None,
         telemetry: Mapping[str, Any] | None = None,
+        **named: Any,
     ) -> None:
-        self._post(
-            f"/api/agent-sessions/{session_id}/attach",
-            {
-                "runner_id": runner_id,
-                "host_session_ref": host_session_ref,
-                "workspace_ref": workspace_ref,
-                "base_sha": base_sha,
-                "head_sha": head_sha,
-                "workspace_stats": dict(workspace_stats or {}),
-                "agent_setup": dict(agent_setup or {}),
-                "telemetry": dict(telemetry or {}),
-            },
-        )
+        """One observation about a leased session: attach, heartbeat, release.
 
-    def release(
-        self,
-        *,
-        session_id: str,
-        runner_id: str,
-        reason: str,
-        head_sha: str = "",
-        workspace_stats: Mapping[str, Any] | None = None,
-        telemetry: Mapping[str, Any] | None = None,
-    ) -> None:
+        All three carry the same worktree and usage report; only attach adds
+        the process reference and its setup, and only release says why it
+        ended, so those ride in ``named``.
+        """
         self._post(
-            f"/api/agent-sessions/{session_id}/release",
-            {
-                "runner_id": runner_id,
-                "reason": reason,
-                "head_sha": head_sha,
-                "workspace_stats": dict(workspace_stats or {}),
-                "telemetry": dict(telemetry or {}),
-            },
-        )
-
-    def heartbeat(
-        self,
-        *,
-        session_id: str,
-        runner_id: str,
-        head_sha: str = "",
-        workspace_stats: Mapping[str, Any] | None = None,
-        telemetry: Mapping[str, Any] | None = None,
-    ) -> None:
-        self._post(
-            f"/api/agent-sessions/{session_id}/heartbeat",
+            f"/api/agent-sessions/{session_id}/{route}",
             {
                 "runner_id": runner_id,
                 "head_sha": head_sha,
                 "workspace_stats": dict(workspace_stats or {}),
                 "telemetry": dict(telemetry or {}),
+                **named,
             },
         )
 
@@ -1519,7 +1476,7 @@ class AgentRunner:
         runner_secret: bytes,
         environment: Mapping[str, str] | None = None,
         config_path: Path | None = None,
-        applied_settings_version: int = 0,
+        applied_settings_version: Any = 0,
     ):
         self.project_id = project_id
         self.platforms = tuple(platforms)
@@ -1535,7 +1492,12 @@ class AgentRunner:
         # Brain-held tuning: which desired version this machine has fully
         # applied, what is still waiting on idle, and the last rejection.
         self.config_path = config_path
-        self.applied_settings_version = max(int(applied_settings_version), 0)
+        self.applied_settings_version = (
+            max(applied_settings_version, 0)
+            if isinstance(applied_settings_version, int)
+            and not isinstance(applied_settings_version, bool)
+            else 0
+        )
         self.pending_workspace: WorkspaceSettings | None = None
         self.pending_workspace_document: dict[str, Any] | None = None
         self.pending_workspace_version = 0
@@ -1617,7 +1579,7 @@ class AgentRunner:
         try:
             document = read_client_document(self.config_path)
             merged = merge_desired_settings(document, normalized)
-            merged_workspace = load_workspace_settings_from(merged, self.config_path)
+            merged_workspace = load_workspace_settings(self.config_path, merged)
             workspace_changes = merged_workspace != self.workspaces.settings
             if workspace_changes:
                 # Ledger rows do not carry the WorkspaceSettings that created
@@ -2156,7 +2118,8 @@ class AgentRunner:
             self._finalize_trace(session=session, host=host)
             telemetry = self._observe_telemetry(session)
             workspace = self._capture_after_stop(session)
-            self.client.release(
+            self.client.report(
+                "release",
                 session_id=session.session_id,
                 runner_id=self.ledger.runner_id,
                 reason=f"remote_{remote_status}",
@@ -2184,7 +2147,8 @@ class AgentRunner:
                 if self._is_repeated_rapid_stop(session)
                 else self._note_stop_evidence(session, host=host, rapid=rapid)
             )
-            self.client.release(
+            self.client.report(
+                "release",
                 session_id=session.session_id,
                 runner_id=self.ledger.runner_id,
                 reason=reason,
@@ -2207,7 +2171,8 @@ class AgentRunner:
         if remote_session.get("host_session_ref") == host_session.ref:
             session.attached = True
         if not session.attached:
-            self.client.attach(
+            self.client.report(
+                "attach",
                 session_id=session.session_id,
                 runner_id=self.ledger.runner_id,
                 host_session_ref=host_session.ref,
@@ -2220,7 +2185,8 @@ class AgentRunner:
             )
             session.attached = True
         if remote_status == "active":
-            self.client.heartbeat(
+            self.client.report(
+                "heartbeat",
                 session_id=session.session_id,
                 runner_id=self.ledger.runner_id,
                 head_sha=workspace.head_sha if workspace else "",
@@ -2473,7 +2439,8 @@ class AgentRunner:
                 "launch_failed" if session.cwd is not None else "workspace_failed"
             )
             self.ledger.save()
-            self.client.release(
+            self.client.report(
+                "release",
                 session_id=lease.session_id,
                 runner_id=self.ledger.runner_id,
                 reason=session.status,
@@ -2487,7 +2454,8 @@ class AgentRunner:
         session.status = "running"
         session.started_at = time.time()
         self.ledger.save()
-        self.client.attach(
+        self.client.report(
+            "attach",
             session_id=lease.session_id,
             runner_id=self.ledger.runner_id,
             host_session_ref=host_session.ref,
@@ -2673,22 +2641,15 @@ def merge_desired_settings(
 
 
 def load_workspace_settings(
-    config_path: Path, *, default_repository: Path | None = None
-) -> WorkspaceSettings:
-    return load_workspace_settings_from(
-        read_client_document(config_path),
-        config_path,
-        default_repository=default_repository,
-    )
-
-
-def load_workspace_settings_from(
-    document: Mapping[str, Any],
     config_path: Path,
+    document: Mapping[str, Any] | None = None,
     *,
     default_repository: Path | None = None,
 ) -> WorkspaceSettings:
-    """Workspace settings from an in-memory client document."""
+    """Workspace settings from ``client.json``, or from a candidate document
+    the caller is about to write there."""
+    if document is None:
+        document = read_client_document(config_path)
     raw = document.get("agent_workspace")
     if raw is None:
         raw = {}
@@ -3296,13 +3257,8 @@ def _runtime_paths(config_path: Path) -> tuple[Path, Path]:
     return state_dir / "agent-sessions.json", state_dir / "agent-traces"
 
 
-def _credential_path(config_path: Path) -> Path:
-    # One definition, shared with pairing, so promotion and lookup agree.
-    return credential_path(config_path)
-
-
 def _stored_runner_key(config_path: Path) -> str | None:
-    path = _credential_path(config_path)
+    path = credential_path(config_path)
     try:
         secret = path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
@@ -3329,19 +3285,12 @@ def _validate_settings(config_path: Path) -> None:
     load_workspace_settings(config_path)
 
 
-def _stored_settings_version(config_path: Path) -> int:
+def _stored(config_path: Path, key: str) -> Any:
+    """One remembered value, or None when the file is missing or damaged."""
     try:
-        raw = read_client_document(config_path).get(SETTINGS_VERSION_KEY)
+        return read_client_document(config_path).get(key)
     except ClientError:
-        return 0
-    return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0 else 0
-
-
-def _stored_project_id(config_path: Path) -> str:
-    try:
-        return str(read_client_document(config_path).get("project_id") or "").strip()
-    except ClientError:
-        return ""
+        return None
 
 
 def _run_runner(
@@ -3436,7 +3385,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             ledger_path, trace_dir = _runtime_paths(config_path)
             ledger = SessionLedger(ledger_path)
-            project_id = str(args.project or "").strip() or _stored_project_id(config_path)
+            project_id = (
+                str(args.project or "").strip()
+                or str(_stored(config_path, "project_id") or "").strip()
+            )
             runner_key = _runner_key(config_path)
             # A pairing file that survived a restart means an exchange is
             # unfinished — possibly with the key already promoted but the
@@ -3477,7 +3429,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             if not runner_key and not loopback:
                 raise RunnerError(f"{MCP_KEY_ENV_VAR} is required")
-            if args.project and _stored_project_id(config_path) != project_id:
+            if args.project and _stored(config_path, "project_id") != project_id:
                 # A machine credentialed before device-code pairing (or headless
                 # with MERV_MCP_KEY) has a key but no remembered project. Remember
                 # the explicit choice so the next start needs no flag.
@@ -3511,7 +3463,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 trace_dir=trace_dir,
                 runner_secret=runner_secret.encode("utf-8"),
                 config_path=config_path,
-                applied_settings_version=_stored_settings_version(config_path),
+                applied_settings_version=_stored(config_path, SETTINGS_VERSION_KEY),
             )
             print(f"merv-agent-runner: dispatching for project {project_id}")
             _run_runner(

@@ -246,21 +246,3 @@ def _is_absolute(path: str) -> bool:
     # Windows drive or UNC.
     return (len(path) > 2 and path[1] == ":" and path[2] in "\\/") or path.startswith("\\\\")
 
-
-__all__ = [
-    "DEFAULT_PLATFORM_EXECUTABLES",
-    "MAX_PARALLELISM",
-    "MAX_SETTINGS_BYTES",
-    "MIN_PARALLELISM",
-    "NATIVE_ADAPTERS",
-    "PLATFORM_FIELDS",
-    "RunnerSettingsError",
-    "TELEMETRY_COUNTERS",
-    "TELEMETRY_LABELS",
-    "WORKSPACE_FIELDS",
-    "WORKSPACE_STRATEGY",
-    "platform_entry",
-    "platform_problem",
-    "validate_desired_settings",
-    "workspace_entry",
-]

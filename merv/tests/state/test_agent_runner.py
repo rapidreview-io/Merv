@@ -1319,22 +1319,15 @@ class _FakeClient:
         self.lease_calls.append(kwargs)
         return self.lease_result
 
-    def attach(
-        self,
-        *,
-        session_id,
-        runner_id,
-        host_session_ref,
-        workspace_ref="",
-        **workspace,
-    ):
-        self.attached.append((session_id, host_session_ref, workspace_ref))
-
-    def release(self, *, session_id, runner_id, reason, **workspace):
-        self.released.append((session_id, reason))
-
-    def heartbeat(self, *, session_id, runner_id, **workspace):
-        self.heartbeats.append(session_id)
+    def report(self, route, *, session_id, runner_id, **payload):
+        if route == "attach":
+            self.attached.append(
+                (session_id, payload["host_session_ref"], payload.get("workspace_ref", ""))
+            )
+        elif route == "release":
+            self.released.append((session_id, payload["reason"]))
+        else:
+            self.heartbeats.append(session_id)
 
     def record_trace(self, *, session_id, runner_id, events, stderr_tail, complete):
         self.traces.append(
