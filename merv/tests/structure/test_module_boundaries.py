@@ -308,6 +308,10 @@ SCHEMA_MODULES = {
 }
 
 SQL_RELATION_OWNERS = {**TABLE_OWNERS, "research_artifacts": RESEARCH_CORE}
+
+# Research declares; support enforces. These components may never name a
+# research record, in SQL or anywhere else.
+SUPPORT_COMPONENTS = frozenset({ARTIFACTS, FEED, AGENT_SESSIONS, KERNEL, SURFACE})
 SQL_TABLE_REF = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_]+)\b", re.IGNORECASE)
 CREATE_TABLE_REF = re.compile(
     r"\bCREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+([a-z_]+)\s*\(",
@@ -962,6 +966,57 @@ class ModuleBoundaryTest(unittest.TestCase):
             "module SQL crosses an unratified boundary; inject the query from "
             "the owning module at composition instead: "
             + ", ".join(sorted(set(offenders))),
+        )
+
+    def test_every_create_table_lives_in_its_owner_schema_module(self) -> None:
+        """Ownership is a fact about where the DDL is, not a comment.
+
+        A component's tables are declared in its own schema module, so a table
+        can be read, moved and reasoned about with the service that uses it.
+        """
+        offenders: list[str] = []
+        for path in _backend_files():
+            rel = path.relative_to(BACKEND_ROOT).as_posix()
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                    continue
+                for match in CREATE_TABLE_REF.finditer(node.value):
+                    table = match.group(1).lower()
+                    if table.endswith("_migrate") or table not in TABLE_OWNERS:
+                        continue
+                    if rel not in SCHEMA_MODULES[TABLE_OWNERS[table]]:
+                        offenders.append(f"{rel}:{node.lineno} declares {table}")
+        self.assertFalse(
+            offenders,
+            "a CREATE TABLE outside its owner's schema module: "
+            + ", ".join(sorted(set(offenders))),
+        )
+
+    def test_support_sql_never_names_a_research_table(self) -> None:
+        """Support stores and echoes what research hands it; it never joins to
+        research's own records, not even in a migration."""
+        research_tables = {
+            table
+            for table, owner in SQL_RELATION_OWNERS.items()
+            if owner in (RESEARCH_CORE, WORKFLOWS)
+        }
+        offenders: list[str] = []
+        for path in _backend_files():
+            rel = path.relative_to(BACKEND_ROOT).as_posix()
+            if _component(rel) not in SUPPORT_COMPONENTS:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                    continue
+                for match in FOREIGN_SQL_TABLE_REF.finditer(node.value):
+                    if match.group(1).lower() in research_tables:
+                        offenders.append(f"{rel}:{node.lineno} names {match.group(1)}")
+        self.assertFalse(
+            offenders,
+            "support SQL names a research table; the owning component must "
+            "supply the query at composition: " + ", ".join(sorted(set(offenders))),
         )
 
     def test_every_stable_table_has_one_explicit_owner(self) -> None:
