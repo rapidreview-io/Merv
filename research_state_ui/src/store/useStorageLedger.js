@@ -23,7 +23,7 @@ export function useStorageLedger(projectId) {
     if (!projectId) return;
     setError(null);
     try {
-      const data = await api.listStorage(projectId, { includeExpired: true });
+      const data = await api.listStorage(projectId);
       setObjects(data?.objects || []);
       setUnsupported(false);
     } catch (err) {

@@ -413,12 +413,10 @@ export const api = {
   // S3-compatible storage, R2 first). The UI browses + manages lifecycle; bytes
   // are produced and saved by the agent via the storage.* MCP tools, never
   // uploaded from here. A 404 means the backend storage API isn't present yet.
-  listStorage: (pid, { kind, status, name, includeExpired } = {}) => {
+  listStorage: (pid, { status, name } = {}) => {
     const p = new URLSearchParams();
-    if (kind && kind !== 'all') p.set('kind', kind);
     if (status && status !== 'all') p.set('status', status);
     if (name) p.set('name', name);
-    if (includeExpired) p.set('include_expired', '1');
     const q = p.toString();
     return request(`/api/projects/${encodeURIComponent(pid)}/storage${q ? '?' + q : ''}`);
   },

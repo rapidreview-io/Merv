@@ -12,11 +12,6 @@ const DAY = 86400000;
 // The expiry verdict — one phrase per object. `sort` orders by how loudly the
 // object needs attention: expiring soonest first, then the rest, kept, gone cold.
 function expiryState(o) {
-  if (o.status === 'expired') {
-    const past = o.expires_at ? Date.now() - new Date(o.expires_at).getTime() : 0;
-    const ago = past >= DAY ? `${Math.round(past / DAY)}d` : past > 0 ? fmtDuration(past) : '';
-    return { key: 'cold', label: ago ? `gone cold ${ago}` : 'gone cold', sort: 2e15 };
-  }
   if (!o.expires_at) return { key: 'kept', label: 'kept', sort: 1e15 };
   const ms = new Date(o.expires_at).getTime() - Date.now();
   if (ms <= 0) return { key: 'cold', label: 'gone cold', sort: 2e15 };
@@ -252,8 +247,8 @@ function RetrievalRecord({ o, projectId, onChanged, onDiscarded }) {
     try { await fn(); } catch (e) { setErr(e.message); } finally { setBusy(''); }
   }
 
-  const pinned = !o.expires_at && o.status !== 'expired';
-  const expired = o.status === 'expired';
+  const pinned = !o.expires_at;
+  const expired = !pinned && new Date(o.expires_at).getTime() <= Date.now();
   const sha = o.content_sha256 || '';
 
   return (
