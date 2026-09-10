@@ -14,7 +14,8 @@ from .definitions.documents import (
     artifact_submission_recency_key, brief_checks, claim_refs, delivery_results,
     delivery_section, depends_on_refs, graph_diff, graph_diff_summary, graph_problems,
     latest_per_slot, parse_change_spec, preferred_artifact, reflection_coverage_for,
-    render_task_brief, require_artifact_document, validate_reflection_roster,
+    render_task_brief, require_artifact_document, task_deliverables,
+    validate_reflection_roster,
 )
 from .composition import Child, ChildResult, join_guard, wait_for_all
 from .delivery import Deliveries, Delivery
@@ -39,7 +40,7 @@ __all__ = [
     "delivery_section", "depends_on_refs", "graph_diff", "graph_diff_summary",
     "graph_problems", "latest_per_slot", "parse_change_spec", "preferred_artifact",
     "reflection_coverage_for", "render_task_brief", "require_artifact_document",
-    "validate_reflection_roster",
+    "task_deliverables", "validate_reflection_roster",
     "Action", "ArtifactNeed", "Brief", "Change", "Child", "ChildResult", "DependenciesDone",
     "Edge", "Evaluation", "Execution", "InstanceFact", "Issue", "Knowledge", "Metadata", "Node", "Public", "RecordKind",
     "RecordNeed", "Reference", "Registry", "Requirement", "ReviewGate", "ReviewReturn", "Scope",

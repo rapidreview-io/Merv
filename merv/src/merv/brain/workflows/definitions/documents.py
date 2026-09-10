@@ -79,6 +79,8 @@ DELIVERY_LIST_SECTIONS: tuple[str, ...] = ("confirmations", "checks")
 REQUIRED_DELIVERY_SECTIONS: tuple[tuple[str, str], ...] = (("Confirmations", "confirmations"),)
 MAX_BRIEF_BYTES = 16_000
 MAX_DELIVERY_BYTES = 16_000
+MAX_DELIVERABLES = 12
+MAX_DELIVERABLE_CHARS = 500
 _NUMBERED_ITEM_RE = re.compile(r"^[ \t]*(\d+)[.)][ \t]+(.*\S)?[ \t]*$")
 MAX_REPORT_BYTES = 16_000
 GRAPH_SCHEMA_VERSION = 1
@@ -538,12 +540,42 @@ class ExperimentProposal(NodeProposal):
 
 
 def _one_thing_each(value: list[str]) -> list[str]:
+    """The goal's contract: 1..N deliverables, each verifiable as written."""
     if not value:
         raise ValueError(
             "needs at least one item — a thing that must exist when the task "
             "is done, verifiable as written"
         )
+    if len(value) > MAX_DELIVERABLES:
+        raise ValueError(
+            f"{len(value)} deliverables is too many (max {MAX_DELIVERABLES}; "
+            "the rule of thumb is 1-7) — this is probably two tasks"
+        )
+    for index, item in enumerate(value, start=1):
+        if len(item) > MAX_DELIVERABLE_CHARS:
+            raise ValueError(
+                f"deliverable {index} is {len(item)} characters; keep each "
+                f"under {MAX_DELIVERABLE_CHARS} — one thing, stated so it "
+                "can be checked"
+            )
     return value
+
+
+Deliverables = Annotated[Refs, AfterValidator(_one_thing_each)]
+_DELIVERABLES = TypeAdapter(Deliverables)
+
+
+def task_deliverables(value: Any) -> list[str]:
+    """The same contract for a direct create, checked by the model that owns it."""
+    if value is None:
+        raise ValidationError(
+            "deliverables is required: a list of the things that must exist "
+            "when the task is done — each one thing, verifiable as written"
+        )
+    try:
+        return _DELIVERABLES.validate_python(value)
+    except SchemaBreach as breach:
+        raise ValidationError(_problem(breach.errors()[0], "deliverables")) from None
 
 
 class TaskProposal(NodeProposal):
@@ -551,7 +583,7 @@ class TaskProposal(NodeProposal):
 
     name: TaskName
     goal: str = Field(min_length=1)
-    deliverables: Annotated[Refs, AfterValidator(_one_thing_each)] = Field(
+    deliverables: Deliverables = Field(
         validation_alias=AliasChoices("deliverables", "done_when")
     )
     scope: str = ""
