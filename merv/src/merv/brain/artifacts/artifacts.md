@@ -59,6 +59,10 @@ Large datasets and models live in merv-sandboxes behind the Infrastructure facad
 - `figure` reads a completed attachment with optional project scope.
 - Database access, transactions, and project existence checks come from Kernel.
   Artifact metadata belongs here; workflow associations and snapshots do not.
+- `persistence.py` declares this module's tables: `artifacts`, `artifact_figures`
+  and the `submissions` seal ledger. It carries the shape those tables had when
+  the artifact migrations were written; Research's migration 59 is what strips
+  the association columns out of `artifacts` and adds the upload settings.
 - Database transactions serialize one-time completion. Blob writes precede
   metadata commits; orphaned bytes are acceptable after a failed transaction.
 - Expired pending content records can be removed. Completed unassociated

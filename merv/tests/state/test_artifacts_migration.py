@@ -8,7 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from merv.brain.kernel.state.store import MIGRATIONS, StateStore
+from merv.brain.kernel.state.schema import MIGRATION_ORDER
+from tests.support.schema import booted_store
 
 
 class ArtifactsBackfillMigrationTest(unittest.TestCase):
@@ -65,8 +66,8 @@ class ArtifactsBackfillMigrationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tmp.name) / "state.sqlite"
-        with patch("merv.brain.kernel.state.store.MIGRATIONS", tuple(item for item in MIGRATIONS if item[0] < 59)):
-            StateStore(db_path=self.db_path)
+        with patch("merv.brain.kernel.state.store.MIGRATION_ORDER", tuple(v for v in MIGRATION_ORDER if v < 59)):
+            booted_store(db_path=self.db_path)
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DROP TABLE IF EXISTS artifact_figures")
             conn.execute("DROP TABLE IF EXISTS artifacts")
@@ -223,7 +224,7 @@ class ArtifactsBackfillMigrationTest(unittest.TestCase):
             )
 
     def test_backfill_maps_rows_figures_and_refs(self) -> None:
-        StateStore(db_path=self.db_path)  # replays migrations 24 (backfill) + 25 (drop)
+        booted_store(db_path=self.db_path)  # replays migrations 24 (backfill) + 25 (drop)
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         artifacts = {
@@ -330,7 +331,7 @@ class ArtifactsBackfillMigrationTest(unittest.TestCase):
 
     def test_backfill_is_a_noop_on_fresh_databases(self) -> None:
         with tempfile.TemporaryDirectory() as fresh:
-            StateStore(db_path=Path(fresh) / "state.sqlite")
+            booted_store(db_path=Path(fresh) / "state.sqlite")
             conn = sqlite3.connect(Path(fresh) / "state.sqlite")
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0], 0

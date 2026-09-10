@@ -20,6 +20,10 @@ binds the resolved value into the handler call for mutating tools and for tools
 whose contract declares the field, so every mutating tool must accept its scoped
 fields as keywords. `definitions/execution.py` holds the shared vocabularies.
 
+`persistence.py` declares the four tables this package owns — instances,
+history, the action outbox, and the tracking delivery key — plus the ladder
+step that adopted every pre-runtime work node into a versioned instance.
+
 `runtime.py` stores version-pinned instances, immutable history and requested
 actions. It enforces revision checks and idempotent request keys, records actual
 work activation separately from state transitions, and calls transactional native

@@ -12,6 +12,7 @@ from .graph import Data, Knowledge, Registry, Snapshot, Workflow
 from .delivery import Deliveries
 from .registry import WORKFLOWS
 from .runtime import CommitRecord, CreateRecord, EmptyKnowledge, KnowledgeFactory, Runtime, snapshot_view
+from .persistence import WORKFLOW_SCHEMA
 
 
 class PrepareTransition(Protocol):
@@ -42,6 +43,7 @@ class Workflows:
         definitions: Mapping[str, Workflow] | None = None,
         knowledge: KnowledgeFactory | None = None,
     ) -> None:
+        store.install(WORKFLOW_SCHEMA)
         self.bindings = dict(bindings or {})
         self.preparations: dict[str, PrepareTransition] = {}
         self.deliveries = Deliveries(store=store)

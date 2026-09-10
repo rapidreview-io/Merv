@@ -26,6 +26,7 @@ from .storage import (
     storage_fetch_command, storage_multipart_submit_command,
     storage_submit_command, upload_target,
 )
+from .persistence import INFRASTRUCTURE_SCHEMA
 
 # Merv's retention window: applied at creation and by ``renew``; reads that
 # hand out a download renew it too, so objects in active use never lapse.
@@ -128,6 +129,7 @@ class RemoteObjects:
         self.client = client
         self._store = store
         self.lifecycle = lifecycle
+        store.install(INFRASTRUCTURE_SCHEMA)
         self.max_upload_bytes = int(max_upload_bytes)
 
     @property

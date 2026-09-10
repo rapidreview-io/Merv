@@ -40,6 +40,7 @@ from ..kernel.utils import (
 )
 from ..agent_sessions import runner_ref
 from .project_keys import PROJECT_GRANT, ProjectKeys, public_key_record
+from ..agent_sessions import AGENT_SESSION_SCHEMA
 
 # Crockford base32 minus I, L, O, U: unambiguous when read aloud or typed.
 USER_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -63,6 +64,7 @@ class RunnerPairings:
     def __init__(self, *, store: BaseStateStore, project_keys: ProjectKeys) -> None:
         self._store = store
         self._keys = project_keys
+        store.install(AGENT_SESSION_SCHEMA)
 
     # -- runner side --------------------------------------------------------
 

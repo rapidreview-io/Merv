@@ -23,6 +23,7 @@ from ..kernel.utils import NotFoundError, ValidationError, now_iso, parse_iso
 from ..kernel.state import BaseStateStore
 from ..kernel.secret_tokens import MIN_WAIT_SECRET_BYTES, wait_url
 from .ports import InfrastructureTransport, _subject, project_namespace
+from .persistence import INFRASTRUCTURE_SCHEMA
 
 
 _ACTIVE = frozenset({"requested", "provisioning", "bootstrapping", "ready", "unknown", "failed"})
@@ -61,6 +62,7 @@ class RemoteSandboxes:
         self.client = client
         self._store = store
         self.attachment_check = attachment_check
+        store.install(INFRASTRUCTURE_SCHEMA)
         self.storage_enabled = storage_enabled
 
     def _project(self, project_id: str | None) -> str:

@@ -356,7 +356,7 @@ load("subprocess")
                 path.relative_to(ARTIFACTS_ROOT).as_posix()
                 for path in ARTIFACTS_ROOT.rglob("*.py")
             },
-            {"__init__.py", "artifacts.py", "models.py", "r2.py", "tools.py"},
+            {"__init__.py", "artifacts.py", "models.py", "persistence.py", "r2.py", "tools.py"},
         )
         source = (ARTIFACTS_ROOT / "artifacts.py").read_text(encoding="utf-8")
         models = (ARTIFACTS_ROOT / "models.py").read_text(encoding="utf-8")

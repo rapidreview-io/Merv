@@ -14,6 +14,7 @@ from typing import Any, Mapping, TypedDict, cast
 
 from ..kernel.state.store import BaseStateStore, next_created_seq, row_to_dict
 from ..kernel.utils import NotFoundError, ValidationError, now_iso
+from .persistence import RESEARCH_SCHEMA
 
 STORAGE_KINDS = frozenset({"dataset", "model", "other"})
 _TARGET_ID_BATCH_SIZE = 400
@@ -44,6 +45,7 @@ class ResearchObjects:
 
     def __init__(self, *, store: BaseStateStore) -> None:
         self.store = store
+        store.install(RESEARCH_SCHEMA)
 
     # Lifecycle hook (bound to the infrastructure facade at composition) ---
 

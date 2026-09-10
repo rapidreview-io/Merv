@@ -62,12 +62,12 @@ from ..kernel.utils import ValidationError
 from ..infrastructure.client import build_infrastructure_client
 from ..infrastructure import RemoteObjects, RemoteProviders, RemoteSandboxes
 from ..infrastructure.objects import DEFAULT_MAX_UPLOAD_BYTES
-from .agent_identity import AgentIdentities, resolve_agent_identity_mode
+from .agent_identity import AGENT_IDENTITY_SCHEMA, AgentIdentities, resolve_agent_identity_mode
 from .artifacts import ArtifactTools
 from .auth import SupabaseVerifier
 from .oauth import OAuthService
-from .oauth_store import SqlOAuthRepository
-from .project_keys import ProjectKeys
+from .oauth_store import OAUTH_SCHEMA, SqlOAuthRepository
+from .project_keys import PROJECT_KEY_SCHEMA, ProjectKeys
 from .runner_pairing import RunnerPairings
 from .telemetry import ControlActivitySink, ControlToolCallSink, StructuredLogger
 from .tools.contracts import TOOL_MANIFEST, available_tool_names
@@ -97,6 +97,12 @@ class Surface:
         self._store = store
         self._blobs = blobs
         self._tracking = mlflow_tracking
+        # Kernel installed its own tables when the store opened. Credentials
+        # and OAuth have no constructed owner here — they exist only in hosted
+        # mode — so their schema installs from composition. Every other
+        # component installs its own as it is built.
+        for schema in (PROJECT_KEY_SCHEMA, OAUTH_SCHEMA):
+            store.install(schema)
         self.sandbox_enabled = sandbox_enabled
         self.activity = ControlActivitySink()
         self.tool_calls = ControlToolCallSink()

@@ -22,6 +22,7 @@ from ..kernel.utils import (
     parse_iso,
 )
 from merv.shared.runner_settings import RunnerSettingsError, validate_desired_settings
+from .persistence import AGENT_SESSION_SCHEMA
 
 
 AGENT_SESSION_SECRET_PREFIX = "mas_"
@@ -93,6 +94,7 @@ class AgentSessions:
     def __init__(self, *, store: BaseStateStore, facts: InstanceFacts | None = None) -> None:
         self.store = store
         self._facts = facts
+        store.install(AGENT_SESSION_SCHEMA)
         self._workflow_assignment: WorkflowAssignment | None = None
         self._workflow_activation: WorkflowActivation | None = None
 

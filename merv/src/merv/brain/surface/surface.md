@@ -46,7 +46,10 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
   runner-facing routes are the only unauthenticated ones besides `/health`; it
   is mounted exactly where owner key management is (hosted auth).
 - `oauth.py`, `oauth_store.py`, and `transport/api/oauth.py`: OAuth policy,
-  race-safe persistence, and protocol routes. Persistence stays separate because
+  race-safe persistence, and protocol routes. `oauth_store.py`, `project_keys.py`,
+  `user_settings.py` and `agent_identity.py` each declare the tables behind the
+  flow they own; composition installs them, kernel first, then every other
+  component's as it is constructed. Persistence stays separate because
   both halves are substantial and transactional behavior must remain explicit.
 - `artifacts.py` plus `transport/api/artifacts.py`: stable artifact wire shapes
   and token-authenticated uploads. Project-authenticated content/file/figure

@@ -139,9 +139,10 @@ an explicit foreign run keeps the old advisory response but writes no event and
 never changes the experiment's canonical run identity.
 
 Artifacts and Feed depend on the narrow `EvidenceBlobStore` port owned by
-Kernel. Feed behavior lives in the single readable `feed/feed.py`
-implementation; only Feed-owned DDL and compatibility upgrades live in its
-narrow `feed/persistence.py` helper. MCP and HTTP delivery use the public
+Kernel. Every component declares the tables it owns the same way Feed does: an
+idempotent DDL string plus its numbered migrations in a narrow `persistence`
+module, handed to `BaseStateStore.install`. Feed behavior stays in the single
+readable `feed/feed.py` implementation. MCP and HTTP delivery use the public
 package-root `FeedService` directly; their frozen schemas, routes, authorization,
 and response hardening are the real delivery boundaries. The narrow
 `FeedAdvisory` protocol preserves the independent post-commit boundary. Safe
@@ -273,9 +274,12 @@ imports only the standard library and `merv.shared`, never `merv.brain`.
 function-local imports, classifies every brain file twice, enforces both laws,
 checks component-owned SQL, and rejects stale table entries and stale exception
 pairs. Every stable table has an explicit owner; an unclassified new table
-fails closed. SQL may name only tables owned by the file's component, Kernel
-tables, or tables behind a ratified component dependency. Research has a
-zero-entry foreign-Artifact-table counter, so any new direct evidence SQL fails
+fails closed. That ownership is executable in both directions: a table's
+`CREATE TABLE` must appear in its owner's schema module, and no support
+component's SQL — query or migration — may name a research table. Runtime SQL
+may name only tables owned by the file's component, Kernel tables, or tables
+behind a ratified component dependency. Research has a zero-entry
+foreign-Artifact-content counter, so any new direct evidence SQL fails
 immediately.
 
 Application has a zero-exception purity check: it may not import delivery,

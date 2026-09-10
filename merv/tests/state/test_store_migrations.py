@@ -6,7 +6,10 @@ import unittest
 from pathlib import Path
 
 from tests.support.brain import TestBrain
-from merv.brain.kernel.state.store import MIGRATIONS, StateStore
+from merv.brain.infrastructure.persistence import LAST_COMMAND_COLUMNS
+from merv.brain.kernel.state.schema import has_table
+from merv.brain.kernel.state.store import StateStore
+from tests.support.schema import LADDER, booted_store
 
 
 OLD_SCHEMA = """
@@ -97,18 +100,18 @@ class StoreMigrationTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_migration_58_adds_remote_links_and_preserves_legacy_history(self) -> None:
-        store = StateStore(db_path=self.db)
+        store = booted_store(db_path=self.db)
         with store.transaction() as conn:
             conn.execute("DROP TABLE remote_sandbox_links")
             conn.execute("DELETE FROM schema_migrations WHERE version = 58")
             conn.execute("INSERT INTO projects (id,name,created_at) VALUES ('p1','Legacy','2026-09-08')")
             conn.execute("INSERT INTO sandboxes (sandbox_uid,project_id,status,created_at,updated_at) VALUES ('old','p1','terminated','2026-09-08','2026-09-08')")
-        upgraded = StateStore(db_path=self.db)
+        upgraded = booted_store(db_path=self.db)
         with upgraded.transaction() as conn:
             self.assertEqual(conn.execute("SELECT name FROM schema_migrations WHERE version=58").fetchone()["name"], "add_remote_sandbox_links")
             self.assertEqual(conn.execute("SELECT status FROM sandboxes WHERE sandbox_uid='old'").fetchone()["status"], "terminated")
             conn.execute("INSERT INTO remote_sandbox_links (project_id,sandbox_uid,experiment_id,public_key,created_at) VALUES ('p1','native','exp','ssh-public','2026-09-08')")
-        reopened = StateStore(db_path=self.db)
+        reopened = booted_store(db_path=self.db)
         with reopened.transaction() as conn:
             self.assertEqual(conn.execute("SELECT public_key FROM remote_sandbox_links WHERE sandbox_uid='native'").fetchone()["public_key"], "ssh-public")
             self.assertEqual(conn.execute("SELECT COUNT(*) AS n FROM schema_migrations WHERE version=58").fetchone()["n"], 1)
@@ -188,8 +191,8 @@ class StoreMigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
-        StateStore(db_path=self.db)  # converge, then re-boot for idempotence
-        store = StateStore(db_path=self.db)
+        booted_store(db_path=self.db)  # converge, then re-boot for idempotence
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             tables = {
@@ -243,8 +246,8 @@ class StoreMigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
-        StateStore(db_path=self.db)  # converge, then re-boot for idempotence
-        store = StateStore(db_path=self.db)
+        booted_store(db_path=self.db)  # converge, then re-boot for idempotence
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             columns = {
@@ -252,8 +255,8 @@ class StoreMigrationTest(unittest.TestCase):
                 for row in conn.execute("PRAGMA table_info(sandboxes)").fetchall()
             }
             self.assertTrue(
-                set(StateStore.SANDBOX_LAST_COMMAND_COLUMNS) <= columns,
-                sorted(set(StateStore.SANDBOX_LAST_COMMAND_COLUMNS) - columns),
+                set(LAST_COMMAND_COLUMNS) <= columns,
+                sorted(set(LAST_COMMAND_COLUMNS) - columns),
             )
         finally:
             conn.close()
@@ -281,8 +284,8 @@ class StoreMigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
-        StateStore(db_path=self.db)  # converge, then re-boot for idempotence
-        store = StateStore(db_path=self.db)
+        booted_store(db_path=self.db)  # converge, then re-boot for idempotence
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             row = conn.execute("SELECT provider FROM sandboxes").fetchone()
@@ -319,8 +322,8 @@ class StoreMigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
-        StateStore(db_path=self.db)  # converge, then re-boot for idempotence
-        store = StateStore(db_path=self.db)
+        booted_store(db_path=self.db)  # converge, then re-boot for idempotence
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             columns = {
@@ -407,13 +410,13 @@ class StoreMigrationTest(unittest.TestCase):
                 INSERT INTO schema_migrations (version, name, applied_at)
                 VALUES (?, ?, '2026-01-01T00:00:00Z')
                 """,
-                [(version, name) for version, name, _ in MIGRATIONS if version < 10],
+                [item for item in LADDER if item[0] < 10],
             )
             conn.commit()
         finally:
             conn.close()
 
-        store = StateStore(db_path=self.db)
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             row = conn.execute(
@@ -478,7 +481,7 @@ class StoreMigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
-        store = StateStore(db_path=self.db)
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             columns = self._sandbox_columns(conn)
@@ -498,7 +501,7 @@ class StoreMigrationTest(unittest.TestCase):
             conn.close()
 
         # Idempotent: a second boot with the columns already gone is a no-op.
-        StateStore(db_path=self.db)
+        booted_store(db_path=self.db)
 
     def test_legacy_sandboxes_gain_uid_and_attachments(self) -> None:
         self._seed_legacy_db()
@@ -530,8 +533,8 @@ class StoreMigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
-        StateStore(db_path=self.db)
-        store = StateStore(db_path=self.db)
+        booted_store(db_path=self.db)
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             pk = [
@@ -622,7 +625,7 @@ class StoreMigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
-        store = StateStore(db_path=self.db)
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             self.assertNotIn(
@@ -708,7 +711,7 @@ class StoreMigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
-        store = StateStore(db_path=self.db)
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             pk = [
@@ -737,7 +740,7 @@ class StoreMigrationTest(unittest.TestCase):
             conn.close()
 
     def test_fresh_db_has_no_machine_local_sandbox_columns(self) -> None:
-        store = StateStore(db_path=self.db)
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             columns = self._sandbox_columns(conn)
@@ -797,8 +800,8 @@ class StoreMigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
-        StateStore(db_path=self.db)  # converge, then re-boot for idempotence
-        store = StateStore(db_path=self.db)
+        booted_store(db_path=self.db)  # converge, then re-boot for idempotence
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             row = conn.execute(
@@ -827,7 +830,7 @@ class StoreMigrationTest(unittest.TestCase):
     def test_fresh_db_has_phase7_tables_and_columns(self) -> None:
         # Cloud-split Phase 7: identity + cost-governance schema lands on fresh
         # DBs, the reviewer capability is hashed, and sandboxes record price.
-        store = StateStore(db_path=self.db)
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             tables = {
@@ -911,8 +914,8 @@ class StoreMigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
-        StateStore(db_path=self.db)  # converge, then re-boot for idempotence
-        store = StateStore(db_path=self.db)
+        booted_store(db_path=self.db)  # converge, then re-boot for idempotence
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             cols = {
@@ -942,7 +945,7 @@ class StoreMigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
-        store = StateStore(db_path=self.db)
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             columns = self._sandbox_columns(conn)
@@ -1137,8 +1140,8 @@ class StoreMigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
-        StateStore(db_path=self.db)  # converge, then re-boot for idempotence
-        store = StateStore(db_path=self.db)
+        booted_store(db_path=self.db)  # converge, then re-boot for idempotence
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             tables = {
@@ -1230,7 +1233,7 @@ class StoreMigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
-        store = StateStore(db_path=self.db)
+        store = booted_store(db_path=self.db)
         conn = store.connect()
         try:
             columns = self._sandbox_columns(conn)
@@ -1249,7 +1252,7 @@ class StoreMigrationTest(unittest.TestCase):
         # because the migration-26 handler is _has_table-gated: the next migrate
         # no-ops the DDL and re-inserts the ledger row (the shipped 24/25
         # pattern), so no error is raised and the schema never drifts.
-        StateStore(db_path=self.db)  # fresh: creates the table and ledger row 26
+        booted_store(db_path=self.db)  # fresh: creates the table and ledger row 26
         with sqlite3.connect(self.db) as conn:
             self.assertIsNotNone(
                 conn.execute(
@@ -1266,8 +1269,8 @@ class StoreMigrationTest(unittest.TestCase):
             )
             conn.commit()
 
-        StateStore(db_path=self.db)  # converges cleanly (no error)
-        store = StateStore(db_path=self.db)  # idempotent second boot
+        booted_store(db_path=self.db)  # converges cleanly (no error)
+        store = booted_store(db_path=self.db)  # idempotent second boot
         conn = store.connect()
         try:
             self.assertIsNotNone(
@@ -1291,7 +1294,7 @@ class UserHfTokenStoreTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = Path(self.tmp.name) / ".research_plugin" / "state.sqlite"
         self.db.parent.mkdir(parents=True, exist_ok=True)
-        self.store = StateStore(db_path=self.db)
+        self.store = booted_store(db_path=self.db)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -1299,7 +1302,7 @@ class UserHfTokenStoreTest(unittest.TestCase):
     def test_fresh_db_has_user_hf_tokens_table(self) -> None:
         conn = self.store.connect()
         try:
-            self.assertTrue(self.store._has_table(conn=conn, table="user_hf_tokens"))
+            self.assertTrue(has_table(conn, "user_hf_tokens"))
         finally:
             conn.close()
 
@@ -1346,7 +1349,7 @@ class Migration39Test(unittest.TestCase):
 
     def test_fresh_database_gets_the_index_and_records_the_migration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            store = StateStore(db_path=Path(tmp) / "state.sqlite")
+            store = booted_store(db_path=Path(tmp) / "state.sqlite")
             conn = store.connect()
             try:
                 self.assertIn(self.INDEX, self._indexes(conn))
@@ -1372,7 +1375,7 @@ class Migration39Test(unittest.TestCase):
     def test_a_store_stopped_at_migration_38_converges(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "state.sqlite"
-            StateStore(db_path=db_path)
+            booted_store(db_path=db_path)
             conn = sqlite3.connect(db_path)
             try:
                 conn.execute(f"DROP INDEX IF EXISTS {self.INDEX}")
@@ -1382,7 +1385,7 @@ class Migration39Test(unittest.TestCase):
             finally:
                 conn.close()
 
-            StateStore(db_path=db_path)
+            booted_store(db_path=db_path)
 
             conn = sqlite3.connect(db_path)
             try:
@@ -1414,7 +1417,7 @@ class Migration40Test(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            store = StateStore(db_path=Path(tmp) / "state.sqlite")
+            store = booted_store(db_path=Path(tmp) / "state.sqlite")
             conn = store.connect()
             try:
                 self.assertIn(self.INDEX, self._indexes(conn))
@@ -1448,7 +1451,7 @@ class Migration40Test(unittest.TestCase):
     def test_a_store_stopped_at_migration_39_converges(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "state.sqlite"
-            StateStore(db_path=db_path)
+            booted_store(db_path=db_path)
             conn = sqlite3.connect(db_path)
             try:
                 conn.execute(f"DROP INDEX IF EXISTS {self.INDEX}")
@@ -1459,7 +1462,7 @@ class Migration40Test(unittest.TestCase):
             finally:
                 conn.close()
 
-            StateStore(db_path=db_path)
+            booted_store(db_path=db_path)
 
             conn = sqlite3.connect(db_path)
             try:

@@ -23,13 +23,16 @@ from typing import Any
 from unittest.mock import patch
 
 from merv.brain.kernel.state.fingerprints import oauth_client_fingerprint
-from merv.brain.kernel.state.store import MIGRATIONS, StateStore
+from merv.brain.kernel.state.schema import MIGRATION_ORDER
+from merv.brain.surface.oauth_store import _add_oauth_client_fingerprint
+from merv.brain.kernel.state.store import StateStore
+from tests.support.schema import LADDER, booted_store
 
 
 class OAuthMigrationTest(unittest.TestCase):
     def test_fresh_schema_has_surface_owned_oauth_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            store = StateStore(db_path=Path(tmp) / "state.sqlite")
+            store = booted_store(db_path=Path(tmp) / "state.sqlite")
             with store.connect() as conn:
                 columns = {
                     table: {
@@ -106,8 +109,7 @@ class OAuthMigrationTest(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            [(version, name) for version, name, _statement in MIGRATIONS
-             if 28 <= version <= 30],
+            [item for item in LADDER if 28 <= item[0] <= 30],
             migrations,
         )
 
@@ -119,9 +121,9 @@ class OAuthMigrationTest(unittest.TestCase):
             # Build the pre-upgrade ledger before removing these historical
             # table shapes. Rewinding a fully migrated content store would
             # incorrectly replay destructive later migrations against it.
-            with patch("merv.brain.kernel.state.store.MIGRATIONS",
-                       tuple(migration for migration in MIGRATIONS if migration[0] < 28)):
-                StateStore(db_path=db_path)
+            with patch("merv.brain.kernel.state.store.MIGRATION_ORDER",
+                       tuple(v for v in MIGRATION_ORDER if v < 28)):
+                booted_store(db_path=db_path)
             conn = sqlite3.connect(db_path)
             try:
                 conn.execute("PRAGMA foreign_keys = OFF")
@@ -135,7 +137,7 @@ class OAuthMigrationTest(unittest.TestCase):
             finally:
                 conn.close()
 
-            migrated = StateStore(db_path=db_path)
+            migrated = booted_store(db_path=db_path)
             with migrated.connect() as conn:
                 after = [
                     (row["version"], row["name"])
@@ -151,12 +153,11 @@ class OAuthMigrationTest(unittest.TestCase):
                 }
         self.assertEqual(
             before,
-            [(version, name) for version, name, _statement in MIGRATIONS
-             if version < 28],
+            [item for item in LADDER if item[0] < 28],
         )
         self.assertEqual(
             after,
-            [(version, name) for version, name, _statement in MIGRATIONS],
+            list(LADDER),
         )
         self.assertTrue(
             {
@@ -177,9 +178,9 @@ class OAuthClientFingerprintMigrationTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         db_path = Path(tmp.name) / "state.sqlite"
-        with patch("merv.brain.kernel.state.store.MIGRATIONS",
-                   tuple(migration for migration in MIGRATIONS if migration[0] < 38)):
-            StateStore(db_path=db_path)
+        with patch("merv.brain.kernel.state.store.MIGRATION_ORDER",
+                   tuple(v for v in MIGRATION_ORDER if v < 38)):
+            booted_store(db_path=db_path)
         conn = sqlite3.connect(db_path)
         try:
             # The index must go before the column SQLite refuses to drop under it.
@@ -211,7 +212,7 @@ class OAuthClientFingerprintMigrationTest(unittest.TestCase):
                 )
             ]
         )
-        migrated = StateStore(db_path=db_path)
+        migrated = booted_store(db_path=db_path)
         with migrated.connect() as conn:
             stored = conn.execute(
                 "SELECT client_id, metadata_fingerprint FROM oauth_clients"
@@ -252,7 +253,7 @@ class OAuthClientFingerprintMigrationTest(unittest.TestCase):
                 ),
             ]
         )
-        migrated = StateStore(db_path=db_path)
+        migrated = booted_store(db_path=db_path)
         with migrated.connect() as conn:
             rows = {
                 str(row["client_id"]): row["metadata_fingerprint"]
@@ -296,15 +297,15 @@ class OAuthClientFingerprintMigrationTest(unittest.TestCase):
                 ),
             ]
         )
-        store = StateStore(db_path=db_path)
+        store = booted_store(db_path=db_path)
         before = self._fingerprints(store)
         self.assertIsNotNone(before["oauthc_first"])
         self.assertIsNone(before["oauthc_second"])
 
         with store.transaction() as conn:
             # Twice: the second pass proves replay is not a one-shot allowance.
-            store._add_oauth_client_fingerprint(conn=conn)
-            store._add_oauth_client_fingerprint(conn=conn)
+            _add_oauth_client_fingerprint(conn)
+            _add_oauth_client_fingerprint(conn)
 
         self.assertEqual(self._fingerprints(store), before)
         with store.connect() as conn:
@@ -330,7 +331,7 @@ class OAuthClientFingerprintMigrationTest(unittest.TestCase):
 
     def test_v38_indexes_exist_and_the_fingerprint_one_is_unique(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            store = StateStore(db_path=Path(tmp) / "state.sqlite")
+            store = booted_store(db_path=Path(tmp) / "state.sqlite")
             with store.connect() as conn:
                 indexes = {
                     str(row["name"]): bool(row["unique"])

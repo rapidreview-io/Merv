@@ -41,6 +41,14 @@ from typing import Any
 from ..kernel.env import env_value
 from ..kernel.request_context import bind_agent
 from ..kernel.state import BaseStateStore, row_to_dict, rows_to_dicts
+from ..kernel.state.schema import (
+    Connection,
+    Migration,
+    SchemaModule,
+    ensure_columns,
+    has_table,
+    table_ddl,
+)
 from ..kernel.state.activity import ledger_label
 from ..kernel.state.tool_call_payloads import ToolCallPayloadStore
 from ..kernel.utils import NotFoundError, ValidationError, now_iso
@@ -138,6 +146,7 @@ class AgentIdentities:
     ) -> None:
         if mode not in AGENT_IDENTITY_MODES:
             raise ValidationError(f"invalid agent identity mode: {mode!r}")
+        store.install(AGENT_IDENTITY_SCHEMA)
         self.store = store
         self.mode = mode
         self.payloads = payloads
@@ -499,3 +508,82 @@ __all__ = [
     "CallerFacts",
     "resolve_agent_identity_mode",
 ]
+
+
+# -- schema ----------------------------------------------------------------
+
+AGENT_IDENTITY_DDL = """\
+-- Agent context-window identities (August 2026, migration 50). One row per
+-- agent.hello: the short random agent_id a model carries for the rest of its
+-- context window, bound to the credential's user/tenant so another caller
+-- cannot ride it, plus the non-secret facts known at hello time. A coding-
+-- agent session credential (mas_) is bound to exactly one identity through
+-- agent_session_id, minted lazily. Never a token, never a digest of one.
+CREATE TABLE IF NOT EXISTS agent_identities (
+  agent_id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT '',
+  user_id TEXT NOT NULL DEFAULT '',
+  principal_id TEXT NOT NULL DEFAULT '',
+  oauth_family_id TEXT NOT NULL DEFAULT '',
+  agent_session_id TEXT NOT NULL DEFAULT '',
+  mcp_session_id TEXT NOT NULL DEFAULT '',
+  client_name TEXT NOT NULL DEFAULT '',
+  client_version TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT '',
+  parent_agent_id TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+-- MCP transport sessions (August 2026, migration 50). One row per successful
+-- initialize: the server-minted Mcp-Session-Id, the client that spoke it, and
+-- the principal it authenticated as. Lets a later agent.hello attach client
+-- name/version to an identity without the model typing it, and lets an
+-- operator see several agent_ids sharing one client process.
+CREATE TABLE IF NOT EXISTS mcp_sessions (
+  session_id TEXT PRIMARY KEY,
+  principal_id TEXT NOT NULL DEFAULT '',
+  client_name TEXT NOT NULL DEFAULT '',
+  client_version TEXT NOT NULL DEFAULT '',
+  protocol_version TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+"""
+
+
+def _add_agent_identity(conn: Connection) -> None:
+    """Migration 50: identity tables, ledger attribution columns, indexes.
+
+    Additive and idempotent. The table guards are belt-and-braces (the DDL
+    creates them first); the ledger columns and the agent index genuinely need
+    to run here, after tool_calls exists.
+    """
+    for table in ("agent_identities", "mcp_sessions"):
+        if not has_table(conn, table):
+            conn.execute(table_ddl(table=table))
+    ensure_columns(
+        conn,
+        "tool_calls",
+        {
+            "agent_id": "TEXT NOT NULL DEFAULT ''",
+            "mcp_session_id": "TEXT NOT NULL DEFAULT ''",
+            "payload_ref": "TEXT NOT NULL DEFAULT ''",
+        },
+    )
+    for statement in (
+        # The trace read: one agent's calls in append order.
+        "CREATE INDEX IF NOT EXISTS idx_tool_calls_agent ON tool_calls(agent_id, id)",
+        # mas_ credential -> its one bound identity, resolved on every call.
+        "CREATE INDEX IF NOT EXISTS idx_agent_identities_session"
+        "  ON agent_identities(agent_session_id)",
+        "CREATE INDEX IF NOT EXISTS idx_agent_identities_user"
+        "  ON agent_identities(user_id, created_at)",
+    ):
+        conn.execute(statement)
+
+
+AGENT_IDENTITY_SCHEMA = SchemaModule(
+    name="surface.agent_identity",
+    ddl=AGENT_IDENTITY_DDL,
+    migrations=(Migration(50, "add_agent_identity", _add_agent_identity),),
+)

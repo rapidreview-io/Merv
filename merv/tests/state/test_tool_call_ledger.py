@@ -20,12 +20,10 @@ from unittest import mock
 from merv.brain.kernel.request_context import begin_request, bind_principal, reset_request
 from merv.brain.kernel.state import tool_call_ledger as ledger_module
 from merv.brain.kernel.state.activity import LEDGER_LABEL_MAX_CHARS
-from merv.brain.kernel.state.store import (
-    MIGRATIONS,
-    SCHEMA,
-    TOOL_CALL_LEDGER_INDEXES,
-    StateStore,
-)
+from merv.brain.kernel.state.persistence import TOOL_CALL_LEDGER_INDEXES
+from merv.brain.kernel.state.schema import statements
+from merv.brain.kernel.state.store import StateStore
+from tests.support.schema import ALL_DDL, LADDER, booted_store
 from merv.brain.kernel.state.tool_call_ledger import (
     DEFAULT_RETENTION_DAYS,
     LEDGER_BUSY_TIMEOUT_MS,
@@ -128,12 +126,12 @@ LEDGER_INDEX_NAMES = frozenset(
 
 
 def _schema_without_tool_calls() -> str:
-    """SCHEMA as it stood before migration 37: no tool_calls table at all."""
-    return ";".join(
-        block
-        for block in SCHEMA.split(";")
-        if "CREATE TABLE IF NOT EXISTS tool_calls" not in block
-    )
+    """The installed schema as it stood before migration 37: no tool_calls."""
+    return ";\n".join(
+        statement
+        for statement in statements(ALL_DDL)
+        if "CREATE TABLE IF NOT EXISTS tool_calls" not in statement
+    ) + ";"
 
 
 def _indexes(conn: sqlite3.Connection) -> set[str]:
@@ -148,7 +146,7 @@ def _indexes(conn: sqlite3.Connection) -> set[str]:
 class Migration37Test(unittest.TestCase):
     def test_fresh_database_gets_the_table_and_every_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            store = StateStore(db_path=Path(tmp) / "state.sqlite")
+            store = booted_store(db_path=Path(tmp) / "state.sqlite")
             with store.transaction() as conn:
                 columns = {
                     str(row["name"])
@@ -179,7 +177,7 @@ class Migration37Test(unittest.TestCase):
             db_path = Path(tmp) / "legacy.sqlite"
             conn = sqlite3.connect(db_path)
             conn.executescript(_schema_without_tool_calls())
-            for version, name, _ in MIGRATIONS:
+            for version, name in LADDER:
                 if version < 37:
                     conn.execute(
                         "INSERT OR IGNORE INTO schema_migrations "
@@ -197,7 +195,7 @@ class Migration37Test(unittest.TestCase):
             self.assertFalse(LEDGER_INDEX_NAMES & _indexes(conn))
             conn.close()
 
-            StateStore(db_path=db_path)
+            booted_store(db_path=db_path)
 
             conn = sqlite3.connect(db_path)
             try:
@@ -214,25 +212,25 @@ class Migration37Test(unittest.TestCase):
                 conn.close()
 
     def test_schema_declares_no_index_at_all(self) -> None:
-        """The migration-36 outage in general form: SCHEMA runs before the
-        ladder, so migration 37's indexes may only live in the migration."""
+        """The migration-36 outage in general form: a module's DDL runs before
+        its ladder, so migration 37's indexes may only live in the migration."""
         for name in LEDGER_INDEX_NAMES:
-            self.assertNotIn(name, SCHEMA)
+            self.assertNotIn(name, ALL_DDL)
 
     def test_reapplying_the_migration_is_a_no_op(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "state.sqlite"
-            store = StateStore(db_path=db_path)
+            store = booted_store(db_path=db_path)
             with store.transaction() as conn:
                 conn.execute("DELETE FROM schema_migrations WHERE version = 37")
-            StateStore(db_path=db_path)  # boots without raising
+            booted_store(db_path=db_path)  # boots without raising
 
 
 class ToolCallLedgerTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tmp.name) / "state.sqlite"
-        self.store = StateStore(db_path=self.db_path)
+        self.store = booted_store(db_path=self.db_path)
         self.ledger = ToolCallLedger(store=self.store, env={})
 
     def tearDown(self) -> None:
@@ -726,7 +724,7 @@ class ToolCallLedgerTest(unittest.TestCase):
         self.assertFalse(ledger.prune()["ok"])
         self.assertEqual(ledger.failures, 2)
 
-        StateStore(db_path=self.db_path)  # the table is back
+        booted_store(db_path=self.db_path)  # the table is back
 
         ledger.record(tool="claim.list", source="mcp", arguments={})
         self._ancient(1)

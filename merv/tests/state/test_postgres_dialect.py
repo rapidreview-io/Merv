@@ -37,25 +37,25 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from tests.support.brain import TestBrain
+from tests.state.test_schema_snapshot import expected_schema
 from tests.state import test_workflow_migration as workflow_migration_cases
 from merv.brain.artifacts import Artifacts
-from merv.brain.feed.persistence import install_feed_schema
+from merv.brain.feed.persistence import FEED_SCHEMA
 from merv.brain.surface.config import build_state_store, resolve_db_url
 from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.kernel.state.dialects import (
     PostgresStateStore,
     translate_schema_to_postgres,
 )
-from merv.brain.kernel.state.store import (
-    EXPERIMENT_MLFLOW_COLUMNS,
-    MIGRATIONS,
-    SCHEMA,
-    StateStore,
-    next_created_seq,
-)
+from merv.brain.infrastructure import persistence as infrastructure_persistence
+from merv.brain.kernel.state.schema import MIGRATION_ORDER, has_column, has_table
+from merv.brain.kernel.state.store import StateStore, next_created_seq
+from merv.brain.research_core.persistence import _EXPERIMENT_MLFLOW_COLUMNS as EXPERIMENT_MLFLOW_COLUMNS
+from tests.support.schema import ALL_DDL as SCHEMA, ALL_SCHEMAS, LADDER, install_all_schemas
 from merv.brain.kernel.utils import ValidationError, now_iso
 from merv.brain.research_core.experiments import ExperimentService
 from merv.brain.research_core.artifacts import ResearchArtifacts
@@ -162,6 +162,28 @@ def setUpModule() -> None:
 def tearDownModule() -> None:
     if HAVE_DOCKER:
         subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True)
+
+
+class _FakeConnection:
+    """A recording stand-in that answers as the Postgres dialect."""
+
+    dialect = "postgres"
+
+    def __init__(self, *, row: dict[str, int] | None) -> None:
+        self.calls: list[tuple[str, tuple[str, ...] | None]] = []
+        self._row = row
+
+    def execute(self, sql: str, params: tuple[str, ...] | None = None):
+        self.calls.append((sql, params))
+        return SimpleNamespace(fetchone=lambda: self._row, fetchall=lambda: [])
+
+
+def _booted_postgres(dsn: str, *, schemas=None) -> PostgresStateStore:
+    """A Postgres store with every component installed — composition's schema."""
+    store = PostgresStateStore(dsn=dsn)
+    for schema in ALL_SCHEMAS if schemas is None else schemas:
+        store.install(schema)
+    return store
 
 
 def _reset_database() -> str:
@@ -328,7 +350,7 @@ class PostgresWorkflowMigrationTest(workflow_migration_cases.ReflectionMigration
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
         self.app = TestBrain(repo_root=self.repo, db_path=self.repo / ".research_plugin" / "unused.sqlite",
-                             store=PostgresStateStore(dsn=_reset_database()))
+                             store=_booted_postgres(_reset_database()))
         self.project_id = self.call("project", action="create", name=self.__class__.__name__)["id"]
 
     def migrate(self) -> None:
@@ -346,6 +368,7 @@ class PostgresWorkflowMigrationTest(workflow_migration_cases.ReflectionMigration
         request = self.call("review.request", project_id=self.project_id, target_type="experiment", target_id=reviewing,
                             role="design_reviewer", producer_session_id="old-owner")
         with self.app.store.transaction() as conn:
+            workflow_migration_cases.restore_legacy_lease_columns(conn)
             conn.execute("ALTER TABLE agent_sessions ADD CONSTRAINT legacy_target_type CHECK (target_type IN ('experiment', 'reflection'))")
             conn.execute("ALTER TABLE agent_sessions ADD CONSTRAINT legacy_kind CHECK (kind IN ('experiment', 'review', 'consolidation'))")
             active_secret = workflow_migration_cases._legacy_session(conn, session_id="active", project_id=self.project_id, target_id=active)
@@ -359,8 +382,16 @@ class PostgresWorkflowMigrationTest(workflow_migration_cases.ReflectionMigration
         self.migrate()
         with self.app.store.connect() as conn:
             after = dict(conn.execute("SELECT * FROM agent_sessions WHERE id = 'active'").fetchone())
-            self.assertEqual({key: value for key, value in before.items() if not key.startswith("workflow_")},
-                             {key: value for key, value in after.items() if not key.startswith("workflow_")})
+            # Migration 63 retires the three columns the packet already says;
+            # everything else the lease carried survives verbatim.
+            retired = {"kind", "review_request_id", "source_sha"}
+            self.assertFalse(retired & set(after))
+            kept = lambda row: {
+                key: value
+                for key, value in row.items()
+                if not key.startswith("workflow_") and key not in retired
+            }
+            self.assertEqual(kept(before), kept(after))
             self.assertEqual((after["workflow_instance_id"], after["workflow_revision"], after["workflow_node"]), (active, 0, "planned"))
             self.assertEqual(dict(conn.execute("SELECT * FROM agent_session_traces WHERE session_id = 'active'").fetchone()), trace)
             statuses = {row["id"]: row["status"] for row in conn.execute("SELECT id, status FROM agent_sessions").fetchall()}
@@ -384,6 +415,7 @@ class PostgresWorkflowMigrationTest(workflow_migration_cases.ReflectionMigration
                 self.app.store.record_event(conn=conn, project_id=self.project_id, event_type="experiment.transitioned",
                                             target_type="experiment", target_id=experiment_id, payload={"transition": "start_running"})
                 conn.execute("UPDATE experiments SET mlflow_run_id = ? WHERE id = ?", (f"run-{experiment_id}", experiment_id))
+            workflow_migration_cases.restore_legacy_lease_columns(conn)
             ready_secret = workflow_migration_cases._legacy_session(conn, session_id="ready", project_id=self.project_id, target_id=ready)
             offered_secret = workflow_migration_cases._legacy_session(conn, session_id="offered", project_id=self.project_id, target_id=offered, status="offered")
         clocks = {experiment_id: self.app.research.attempt_started_running_at(experiment_id=experiment_id) for experiment_id in (idle, offered)}
@@ -412,7 +444,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
     """(a), (c), (d): schema/ledger application and record-layer semantics."""
 
     def setUp(self) -> None:
-        self.store = PostgresStateStore(dsn=_reset_database())
+        self.store = _booted_postgres(_reset_database())
 
     def _seed_project(self, project_id: str = "proj_pg") -> str:
         with self.store.transaction() as conn:
@@ -421,6 +453,42 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                 (project_id, "PG Project", "", now_iso()),
             )
         return project_id
+
+    def test_fresh_install_matches_the_pre_move_schema_snapshot(self) -> None:
+        """Component-owned DDL is a move: the Postgres shape is unchanged."""
+        install_all_schemas(self.store)
+        conn = self.store.connect()
+        try:
+            kinds = {
+                str(row["table_name"]): str(row["table_type"])
+                for row in conn.execute(
+                    "SELECT table_name, table_type FROM information_schema.tables "
+                    "WHERE table_schema = 'public'"
+                ).fetchall()
+            }
+            columns: dict[str, list[str]] = {}
+            for row in conn.execute(
+                "SELECT table_name, column_name FROM information_schema.columns "
+                "WHERE table_schema = 'public'"
+            ).fetchall():
+                columns.setdefault(str(row["table_name"]), []).append(
+                    str(row["column_name"])
+                )
+        finally:
+            conn.close()
+        observed = {
+            "tables": {
+                name: sorted(cols)
+                for name, cols in columns.items()
+                if kinds.get(name) != "VIEW"
+            },
+            "views": [
+                {"name": name, "columns": sorted(cols)}
+                for name, cols in sorted(columns.items())
+                if kinds.get(name) == "VIEW"
+            ],
+        }
+        self.assertEqual(observed, expected_schema())
 
     def test_schema_and_ledger_apply_cleanly_and_idempotently(self) -> None:
         conn = self.store.connect()
@@ -439,7 +507,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
             ).fetchall()
             self.assertEqual(
                 [(int(r["version"]), str(r["name"])) for r in ledger],
-                [(version, name) for version, name, _statement in MIGRATIONS],
+                list(LADDER),
             )
             # No default-project bootstrap: that is local-mode-only behavior.
             count = conn.execute("SELECT COUNT(*) AS n FROM projects").fetchone()
@@ -492,7 +560,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                 ("uid_exp_old", "proj_old", "failed", now_iso(), now_iso()),
             )
 
-        store = PostgresStateStore(dsn=dsn)
+        store = _booted_postgres(dsn)
         conn = store.connect()
         try:
             col = conn.execute(
@@ -515,7 +583,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
             ).fetchall()
             self.assertEqual(
                 [(int(r["version"]), str(r["name"])) for r in ledger],
-                [(version, name) for version, name, _statement in MIGRATIONS],
+                list(LADDER),
             )
         finally:
             conn.close()
@@ -528,7 +596,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         created = now_iso()
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute(translate_schema_to_postgres(legacy_schema))
-            for version, name, _statement in MIGRATIONS:
+            for version, name in LADDER:
                 if version >= 12:
                     continue
                 conn.execute(
@@ -563,7 +631,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                 ),
             )
 
-        store = PostgresStateStore(dsn=dsn)
+        store = _booted_postgres(dsn)
         conn = store.connect()
         try:
             rows = conn.execute(
@@ -595,7 +663,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
             ).fetchall()
             self.assertEqual(
                 [(int(r["version"]), str(r["name"])) for r in ledger],
-                [(version, name) for version, name, _statement in MIGRATIONS],
+                list(LADDER),
             )
         finally:
             conn.close()
@@ -608,7 +676,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         created = now_iso()
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute(translate_schema_to_postgres(legacy_schema))
-            for version, name, _statement in MIGRATIONS:
+            for version, name in LADDER:
                 if version >= 13:
                     continue
                 conn.execute(
@@ -685,7 +753,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                 ),
             )
 
-        store = PostgresStateStore(dsn=dsn)
+        store = _booted_postgres(dsn)
         conn = store.connect()
         try:
             rows = conn.execute(
@@ -708,7 +776,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
             ).fetchall()
             self.assertEqual(
                 [(int(r["version"]), str(r["name"])) for r in ledger],
-                [(version, name) for version, name, _statement in MIGRATIONS],
+                list(LADDER),
             )
         finally:
             conn.close()
@@ -737,7 +805,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         created = now_iso()
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute(translate_schema_to_postgres(legacy_schema))
-            for version, name, _statement in MIGRATIONS:
+            for version, name in LADDER:
                 if version >= 26:
                     continue
                 conn.execute(
@@ -760,20 +828,18 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                 (created,),
             )
 
-        store = PostgresStateStore(dsn=dsn)
+        store = _booted_postgres(dsn)
         conn = store.connect()
         try:
-            self.assertTrue(store._has_table(conn=conn, table="project_api_keys"))
+            self.assertTrue(has_table(conn, "project_api_keys"))
             for column in ("audience", "oauth_family_id", "sandbox_seconds_ceiling"):
                 self.assertTrue(
-                    store._has_column(
-                        conn=conn, table="project_api_keys", column=column
+                    has_column(conn, "project_api_keys", column
                     ),
                     column,
                 )
             self.assertTrue(
-                store._has_column(
-                    conn=conn, table="sandbox_generations", column="key_id"
+                has_column(conn, "sandbox_generations", "key_id"
                 )
             )
             key_id = conn.execute(
@@ -785,25 +851,25 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
             ).fetchall()
             self.assertEqual(
                 [(int(r["version"]), str(r["name"])) for r in ledger],
-                [(version, name) for version, name, _statement in MIGRATIONS],
+                list(LADDER),
             )
         finally:
             conn.close()
 
     def test_migration_58_preserves_legacy_rows_and_persists_remote_links(self) -> None:
         dsn = _reset_database()
-        store = PostgresStateStore(dsn=dsn)
+        store = _booted_postgres(dsn)
         with store.transaction() as conn:
             conn.execute("DROP TABLE remote_sandbox_links")
             conn.execute("DELETE FROM schema_migrations WHERE version=58")
             conn.execute("INSERT INTO projects (id,name,created_at) VALUES ('p1','Legacy','2026-09-08')")
             conn.execute("INSERT INTO sandboxes (sandbox_uid,project_id,status,created_at,updated_at) VALUES ('old','p1','terminated','2026-09-08','2026-09-08')")
-        upgraded = PostgresStateStore(dsn=dsn)
+        upgraded = _booted_postgres(dsn)
         with upgraded.transaction() as conn:
             self.assertEqual(conn.execute("SELECT name FROM schema_migrations WHERE version=58").fetchone()["name"], "add_remote_sandbox_links")
             self.assertEqual(conn.execute("SELECT status FROM sandboxes WHERE sandbox_uid='old'").fetchone()["status"], "terminated")
             conn.execute("INSERT INTO remote_sandbox_links (project_id,sandbox_uid,experiment_id,public_key,created_at) VALUES ('p1','native','exp','ssh-public','2026-09-08')")
-        reopened = PostgresStateStore(dsn=dsn)
+        reopened = _booted_postgres(dsn)
         with reopened.transaction() as conn:
             self.assertEqual(conn.execute("SELECT public_key FROM remote_sandbox_links WHERE sandbox_uid='native'").fetchone()["public_key"], "ssh-public")
             self.assertEqual(conn.execute("SELECT COUNT(*) AS n FROM schema_migrations WHERE version=58").fetchone()["n"], 1)
@@ -825,7 +891,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         created = now_iso()
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute(translate_schema_to_postgres(legacy_schema))
-            for version, name, _statement in MIGRATIONS:
+            for version, name in LADDER:
                 if version >= 28:
                     continue
                 conn.execute(
@@ -839,7 +905,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                 ("proj_oauth_old", "Old", "", created),
             )
 
-        store = PostgresStateStore(dsn=dsn)
+        store = _booted_postgres(dsn)
         conn = store.connect()
         try:
             for table in (
@@ -847,26 +913,28 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                 "oauth_authorization_codes",
                 "oauth_refresh_tokens",
             ):
-                self.assertTrue(store._has_table(conn=conn, table=table), table)
+                self.assertTrue(has_table(conn, table), table)
             ledger = conn.execute(
                 "SELECT version, name FROM schema_migrations ORDER BY version"
             ).fetchall()
             self.assertEqual(
                 [(int(r["version"]), str(r["name"])) for r in ledger],
-                [(version, name) for version, name, _statement in MIGRATIONS],
+                list(LADDER),
             )
         finally:
             conn.close()
 
     def test_feed_installer_upgrades_legacy_postgres_store(self) -> None:
-        """Feed, not Kernel, creates its tables after a legacy ledger replay."""
+        """Feed, not any other component, creates its tables after a replay."""
         dsn = _reset_database()
         import psycopg
 
         created = now_iso()
         with psycopg.connect(dsn, autocommit=True) as conn:
-            conn.execute(translate_schema_to_postgres(SCHEMA))
-            for version, name, _statement in MIGRATIONS:
+            conn.execute(
+                translate_schema_to_postgres(SCHEMA.replace(FEED_SCHEMA.ddl, ""))
+            )
+            for version, name in LADDER:
                 if version >= 32:
                     continue
                 conn.execute(
@@ -875,21 +943,22 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                     (version, name, created),
                 )
 
-        store = PostgresStateStore(dsn=dsn)
+        store = _booted_postgres(
+            dsn, schemas=[item for item in ALL_SCHEMAS if item is not FEED_SCHEMA]
+        )
         conn = store.connect()
         try:
-            self.assertFalse(store._has_table(conn=conn, table="feed_upload_tokens"))
+            self.assertFalse(has_table(conn, "feed_upload_tokens"))
         finally:
             conn.close()
 
-        install_feed_schema(store)
+        install_all_schemas(store)
         conn = store.connect()
         try:
-            self.assertTrue(store._has_table(conn=conn, table="feed_upload_tokens"))
+            self.assertTrue(has_table(conn, "feed_upload_tokens"))
             for column in ("token", "post_id", "media_kind", "expires_at"):
                 self.assertTrue(
-                    store._has_column(
-                        conn=conn, table="feed_upload_tokens", column=column
+                    has_column(conn, "feed_upload_tokens", column
                     ),
                     column,
                 )
@@ -898,7 +967,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
             ).fetchall()
             self.assertEqual(
                 [(int(r["version"]), str(r["name"])) for r in ledger],
-                [(version, name) for version, name, _statement in MIGRATIONS],
+                list(LADDER),
             )
         finally:
             conn.close()
@@ -916,7 +985,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         created = now_iso()
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute(translate_schema_to_postgres(legacy_schema))
-            for version, name, _statement in MIGRATIONS:
+            for version, name in LADDER:
                 if version >= 31:
                     continue
                 conn.execute(
@@ -925,16 +994,16 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                     (version, name, created),
                 )
 
-        store = PostgresStateStore(dsn=dsn)
+        store = _booted_postgres(dsn)
         conn = store.connect()
         try:
-            self.assertTrue(store._has_table(conn=conn, table="user_hf_tokens"))
+            self.assertTrue(has_table(conn, "user_hf_tokens"))
             ledger = conn.execute(
                 "SELECT version, name FROM schema_migrations ORDER BY version"
             ).fetchall()
             self.assertEqual(
                 [(int(r["version"]), str(r["name"])) for r in ledger],
-                [(version, name) for version, name, _statement in MIGRATIONS],
+                list(LADDER),
             )
         finally:
             conn.close()
@@ -959,7 +1028,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         created = now_iso()
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute(translate_schema_to_postgres(legacy_schema))
-            for version, name, _statement in MIGRATIONS:
+            for version, name in LADDER:
                 if version >= 33:
                     continue
                 conn.execute(
@@ -983,11 +1052,11 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                 (created, created),
             )
 
-        store = PostgresStateStore(dsn=dsn)
+        store = _booted_postgres(dsn)
         conn = store.connect()
         try:
             self.assertTrue(
-                store._has_table(conn=conn, table="storage_completion_tokens")
+                has_table(conn, "storage_completion_tokens")
             )
             for column in (
                 "token",
@@ -999,8 +1068,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                 "created_at",
             ):
                 self.assertTrue(
-                    store._has_column(
-                        conn=conn, table="storage_completion_tokens", column=column
+                    has_column(conn, "storage_completion_tokens", column
                     ),
                     column,
                 )
@@ -1014,7 +1082,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
             ).fetchall()
             self.assertEqual(
                 [(int(r["version"]), str(r["name"])) for r in ledger],
-                [(version, name) for version, name, _statement in MIGRATIONS],
+                list(LADDER),
             )
         finally:
             conn.close()
@@ -1073,7 +1141,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                 ),
             )
 
-        store = PostgresStateStore(dsn=dsn)
+        store = _booted_postgres(dsn)
         conn = store.connect()
         try:
             # sandbox_uid is now the sole primary key.
@@ -1111,7 +1179,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
             ).fetchall()
             self.assertEqual(
                 [(int(r["version"]), str(r["name"])) for r in ledger],
-                [(version, name) for version, name, _statement in MIGRATIONS],
+                list(LADDER),
             )
         finally:
             conn.close()
@@ -1481,8 +1549,8 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         canonicalizes legacy roles, rewrites the pinned snapshot token, and
         migration 25 drops the resource tables (each migration + its ledger
         row inside its own transaction on the autocommit connection)."""
-        with patch("merv.brain.kernel.state.store.MIGRATIONS", tuple(item for item in MIGRATIONS if item[0] < 59)):
-            self.store = PostgresStateStore(dsn=_reset_database())
+        with patch("merv.brain.kernel.state.store.MIGRATION_ORDER", tuple(v for v in MIGRATION_ORDER if v < 59)):
+            self.store = _booted_postgres(_reset_database())
         project_id = self._seed_project()
         conn = self.store.connect()
         try:
@@ -1572,7 +1640,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         finally:
             conn.close()
 
-        replay = PostgresStateStore(dsn=self.store.dsn)
+        replay = _booted_postgres(self.store.dsn)
         conn = replay.connect()
         try:
             artifact = conn.execute(
@@ -1711,74 +1779,31 @@ class SchemaParityTest(unittest.TestCase):
         self.assertNotIn("UNIQUE(experiment_id)", match.group(1))
 
     def test_postgres_has_column_uses_information_schema_directly(self) -> None:
-        class _Rows:
-            def fetchone(self):
-                return {"exists": 1}
+        """A failed statement aborts an open Postgres transaction, so the
+        probe must never try a PRAGMA first."""
+        conn = _FakeConnection(row={"exists": 1})
 
-        class _Conn:
-            def __init__(self) -> None:
-                self.calls: list[tuple[str, tuple[str, ...] | None]] = []
-
-            def execute(self, sql: str, params: tuple[str, ...] | None = None):
-                self.calls.append((sql, params))
-                return _Rows()
-
-        conn = _Conn()
-        store = object.__new__(PostgresStateStore)
-
-        self.assertTrue(
-            store._has_column(
-                conn=conn, table="projects", column="hard_stop_synthesis_id"
-            )
-        )
-        self.assertEqual(len(conn.calls), 1)
-        sql, params = conn.calls[0]
-        self.assertNotIn("PRAGMA", sql.upper())
+        self.assertTrue(has_column(conn, "projects", "hard_stop_synthesis_id"))
+        self.assertFalse([sql for sql, _ in conn.calls if "PRAGMA" in sql.upper()])
+        sql, params = conn.calls[-1]
         self.assertIn("information_schema.columns", sql)
         self.assertEqual(params, ("projects", "hard_stop_synthesis_id"))
 
     def test_postgres_drop_sandbox_experiment_unique_is_constraint_ddl(self) -> None:
-        class _Rows:
-            def fetchone(self):
-                return None
-
-        class _Conn:
-            def __init__(self) -> None:
-                self.calls: list[str] = []
-
-            def execute(self, sql: str, params: tuple[str, ...] | None = None):
-                self.calls.append(sql)
-                return _Rows()
-
-        conn = _Conn()
-        store = object.__new__(PostgresStateStore)
-        store._drop_sandboxes_experiment_unique(conn=conn)
-        self.assertEqual(len(conn.calls), 1)
+        conn = _FakeConnection(row={"exists": 1})
+        infrastructure_persistence._drop_sandboxes_experiment_unique(conn)
         self.assertIn(
             "ALTER TABLE sandboxes DROP CONSTRAINT IF EXISTS sandboxes_experiment_id_key",
-            conn.calls[0],
+            conn.calls[-1][0],
         )
 
     def test_postgres_attachment_history_migration_drops_pair_primary_key(self) -> None:
-        class _Rows:
-            def fetchone(self):
-                return None
-
-        class _Conn:
-            def __init__(self) -> None:
-                self.calls: list[str] = []
-
-            def execute(self, sql: str, params: tuple[str, ...] | None = None):
-                self.calls.append(sql)
-                return _Rows()
-
-        conn = _Conn()
-        store = object.__new__(PostgresStateStore)
-        store._allow_sandbox_attachment_history(conn=conn)
+        conn = _FakeConnection(row=None)
+        infrastructure_persistence._allow_sandbox_attachment_history(conn)
         self.assertEqual(len(conn.calls), 1)
         self.assertIn(
             "ALTER TABLE sandbox_attachments DROP CONSTRAINT IF EXISTS sandbox_attachments_pkey",
-            conn.calls[0],
+            conn.calls[0][0],
         )
 
     def test_no_question_marks_inside_sql_string_literals(self) -> None:

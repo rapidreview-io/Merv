@@ -46,6 +46,9 @@ class _Store:
     def connect(self):
         return self.connection
 
+    def install(self, module):
+        return None
+
 
 class GraphRefResolverTest(unittest.TestCase):
     def test_resolves_only_research_owned_prefixes(self) -> None:

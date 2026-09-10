@@ -160,6 +160,18 @@ Research records live in the brain's selected record store. There is no durable
 checkout-local state: a project is bound by its key, not by a machine-local link
 database; research repos contain experiment files, not the brain database.
 
+Each component owns the tables it reads. Kernel supplies the registration API —
+a `SchemaModule` carrying idempotent DDL and its numbered `Migration` steps,
+installed through `BaseStateStore.install` — and keeps only what everything
+writes through: projects, membership, events, the tool-call ledger, tenants and
+the `schema_migrations` ledger itself. Every other table is declared in a
+`persistence` module beside the service that uses it, and `Surface` installs
+each component's schema as it constructs the component. Because one ledger
+records the numbering, the order is global (`MIGRATION_ORDER` in kernel) while
+the handlers belong to their owners; a step whose owner has not installed yet
+is skipped and converges on a later install. Dialect translation stays in
+kernel, so the SQLite and Postgres stores reach the identical shape.
+
 Core research-record mutations and workflow milestones append project events in
 the same transaction as their state change. The UI reads those durable events
 for the research timeline. Recent tool-call traffic is a bounded in-memory

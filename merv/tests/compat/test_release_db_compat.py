@@ -10,9 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from merv.brain.artifacts import Artifacts
-from merv.brain.feed.persistence import install_feed_schema
-from merv.brain.kernel.state import StateStore
-from merv.brain.kernel.state.store import MIGRATIONS
+from merv.brain.kernel.state.schema import MIGRATION_ORDER
+from tests.support.schema import booted_store, install_all_schemas
 from tests.support.blobs import LocalDirBlobStore
 from merv.brain.research_core import ResearchArtifacts
 
@@ -33,11 +32,19 @@ def _normalized_sql(value: str | None) -> str:
         r"\bIF\s+NOT\s+EXISTS\b", "", value, flags=re.IGNORECASE
     )
     # ALTER TABLE ADD COLUMN splices new columns into sqlite_master's stored
-    # text without the SCHEMA constant's comments or line spacing (first hit:
+    # text without the DDL's comments or line spacing (first hit:
     # migration 44's sandboxes/sandbox_generations columns), so comments and
     # punctuation spacing are presentation, not structure. Structural drift —
     # names, types, defaults, constraints, order — still changes the hash.
-    without_comments = re.sub(r"--[^\n]*", "", without_conditional)
+    # SQLite quotes a name it renamed a table into (the rebuild-and-swap the
+    # ladder does), so quoting is presentation too.
+    without_quotes = re.sub(
+        r'\b(CREATE\s+(?:TABLE|INDEX|VIEW))\s+"([^"]+)"',
+        r"\1 \2",
+        without_conditional,
+        flags=re.IGNORECASE,
+    )
+    without_comments = re.sub(r"--[^\n]*", "", without_quotes)
     collapsed = " ".join(without_comments.split())
     collapsed = re.sub(r"\s*,\s*", ", ", collapsed)
     collapsed = re.sub(r"\(\s+", "(", collapsed)
@@ -182,7 +189,7 @@ class ReleaseDatabaseCompatibilityTest(unittest.TestCase):
             data_before = _data_snapshot(release_db)
             self.assertEqual(release_schema_before, EXPECTED_SCHEMA_SHA256)
 
-            store = StateStore(db_path=release_db)
+            store = booted_store(db_path=release_db)
             migrated_data = _data_snapshot(release_db)
             for table, snap in data_before.items():
                 if table == "schema_migrations":
@@ -207,7 +214,7 @@ class ReleaseDatabaseCompatibilityTest(unittest.TestCase):
                 42,
                 [int(row[0]) for row in migrated_data["schema_migrations"]["rows"]],
             )
-            install_feed_schema(store)
+            install_all_schemas(store)
             composed_schema = _schema_sha256(release_db)
             composed_data = _data_snapshot(release_db)
             for table, snap in data_before.items():
@@ -218,13 +225,13 @@ class ReleaseDatabaseCompatibilityTest(unittest.TestCase):
                     projected = [row for row in projected if row[2] != "workflow.migrated"]
                 self.assertEqual(projected, snap["rows"])
 
-            reopened = StateStore(db_path=release_db)
-            install_feed_schema(reopened)
+            reopened = booted_store(db_path=release_db)
+            install_all_schemas(reopened)
             self.assertEqual(_schema_sha256(release_db), composed_schema)
             self.assertEqual(_data_snapshot(release_db), composed_data)
 
-            fresh = StateStore(db_path=fresh_db)
-            install_feed_schema(fresh)
+            fresh = booted_store(db_path=fresh_db)
+            install_all_schemas(fresh)
             fresh_schema = _schema_sha256(fresh_db)
             self.assertEqual(fresh_schema, composed_schema)
 
@@ -322,7 +329,7 @@ class ReleaseDatabaseCompatibilityTest(unittest.TestCase):
                 ).fetchone()[0]
                 # A v40 database must boot all the way to the current ladder,
                 # whatever its length is today.
-                self.assertEqual(latest_migration, MIGRATIONS[-1][0])
+                self.assertEqual(latest_migration, MIGRATION_ORDER[-1])
             finally:
                 conn.close()
 

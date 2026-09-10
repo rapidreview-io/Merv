@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 from merv.brain.artifacts import Artifact, Artifacts
-from merv.brain.kernel.state import StateStore
+from tests.support.schema import booted_store
 from merv.brain.kernel.utils import NotFoundError, ValidationError, new_id, now_iso
 from merv.brain.research_core.artifact_models import ArtifactTarget
 from merv.brain.research_core.artifacts import ResearchArtifacts
@@ -20,7 +20,7 @@ class ArtifactFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.store = StateStore(db_path=Path(self.tmp.name) / "state.sqlite")
+        self.store = booted_store(Path(self.tmp.name) / "state.sqlite")
         self.core = Artifacts(store=self.store, blobs=FakeBlobStore())
         with closing(self.store.connect()) as tx:
             self.project_id = str(tx.execute("SELECT id FROM projects").fetchone()["id"])
