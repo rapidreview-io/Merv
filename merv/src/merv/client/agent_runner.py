@@ -1297,7 +1297,7 @@ class AgentSessionsClient:
     ) -> dict[str, Any] | None:
         """Lease the pending advance of ``instance_id`` for this runner."""
         result = self._post(
-            f"/api/projects/{project_id}/agent-advances/prepare",
+            f"/api/projects/{project_id}/workspace-advances/prepare",
             {
                 "instance_id": instance_id,
                 "runner_id": runner_id,
@@ -1309,7 +1309,7 @@ class AgentSessionsClient:
     def pending_advance(self, *, project_id: str) -> dict[str, Any] | None:
         """The one brain-approved advance waiting for a runner, if any."""
         return _advance_of(
-            self._get(f"/api/projects/{project_id}/agent-advances/pending")
+            self._get(f"/api/projects/{project_id}/workspace-advances/pending")
         )
 
     def settle_advance(
@@ -1325,7 +1325,7 @@ class AgentSessionsClient:
         error: str = "",
     ) -> None:
         self._post(
-            f"/api/projects/{project_id}/agent-advances/settle",
+            f"/api/projects/{project_id}/workspace-advances/settle",
             {
                 "advance_id": advance_id,
                 "runner_id": runner_id,

@@ -9,9 +9,10 @@ evidence, reserved names, central receipts, and materialized wave consistent.
 from __future__ import annotations
 
 from contextlib import closing, suppress
-from datetime import UTC, datetime, timedelta
 import json
 from typing import Any
+
+from ..agent_sessions import WorkspaceAdvances
 
 from ..workflows import (
     KINDS,
@@ -70,7 +71,6 @@ from ..kernel.utils import (
 )
 
 REFLECTION = KINDS["reflection"]
-ADVANCE_OWNER_LEASE_SECONDS = 10 * 60
 
 
 def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
@@ -95,6 +95,11 @@ class ReflectionService(RecordHooks):
         self.tasks = tasks
         self.records = records
         self.runtime = records.runtime
+        # The runner's compare-and-swap receipt is a workspace fact Agent
+        # Sessions keeps; this wave decides what may advance and what a bound
+        # receipt means. Research constructs it because the composition root
+        # builds Research from the store alone.
+        self.advances = WorkspaceAdvances(store=store)
         records.register(REFLECTION, self)
 
     # ---- create ----
@@ -440,27 +445,8 @@ class ReflectionService(RecordHooks):
                     break
         advance = None
         if proposal is not None:
-            advance = row_to_dict(
-                row=conn.execute(
-                    """
-                    SELECT * FROM reflection_advances
-                    WHERE proposal_id = ?
-                    ORDER BY intended_at DESC
-                    LIMIT 1
-                    """,
-                    (proposal["id"],),
-                ).fetchone()
-            )
-            if advance is not None:
-                advance["proposal_parents"] = json.loads(
-                    str(advance.pop("proposal_parents_json", "[]"))
-                )
-                advance["diffstat"] = json.loads(
-                    str(advance.pop("diffstat_json", "{}"))
-                )
-                advance["ancestry"] = json.loads(
-                    str(advance.pop("ancestry_json", "{}"))
-                )
+            receipt = self.advances.latest(conn=conn, proposal_ids=(str(proposal["id"]),))
+            advance = self._advance_view(receipt.get(str(proposal["id"])))
         ancestry = (advance or {}).get("ancestry") or {}
         for decision in decisions:
             disposition = str(decision.get("disposition") or "")
@@ -726,24 +712,24 @@ class ReflectionService(RecordHooks):
             rows = conn.execute(
                 f"""
                 SELECT d.*, p.reflection_id, p.revision, p.base_sha,
-                       p.proposal_sha, p.summary, p.created_at,
-                       a.status AS advance_status,
-                       a.observed_sha AS central_sha,
-                       a.ancestry_json,
-                       a.bound_at
+                       p.proposal_sha, p.summary, p.created_at
                 FROM consolidation_decisions d
                 JOIN consolidation_proposals p ON p.id = d.proposal_id
-                LEFT JOIN reflection_advances a ON a.proposal_id = p.id
                 WHERE p.project_id = ?
                   AND d.experiment_id IN ({placeholders})
                 ORDER BY p.created_at, p.revision
                 """,
                 (project_id, *ids),
             ).fetchall()
+            receipts = self.advances.latest(conn=conn, proposal_ids=tuple(
+                dict.fromkeys(str(row["proposal_id"]) for row in rows)))
             for row in rows:
                 item = row_to_dict(row=row) or {}
-                ancestry = json.loads(str(item.pop("ancestry_json", "{}") or "{}"))
-                verified = bool(ancestry.get(str(item["experiment_id"]), False))
+                receipt = receipts.get(str(item["proposal_id"])) or {}
+                item["advance_status"] = receipt.get("status")
+                item["central_sha"] = receipt.get("observed_sha")
+                item["bound_at"] = receipt.get("bound_at")
+                verified = bool((receipt.get("ancestry") or {}).get(str(item["experiment_id"]), False))
                 item["ancestry_verified"] = verified
                 merged = verified and item.get("integration_kind") in {
                     "merge",
@@ -1089,17 +1075,7 @@ class ReflectionService(RecordHooks):
                     "consolidation proposals are accepted only after the "
                     "authoritative reflection review has passed"
                 )
-            unsettled_advance = conn.execute(
-                """
-                SELECT a.id
-                FROM reflection_advances a
-                JOIN consolidation_proposals p ON p.id = a.proposal_id
-                WHERE p.reflection_id = ? AND a.status IN ('intended', 'bound')
-                LIMIT 1
-                """,
-                (reflection_id,),
-            ).fetchone()
-            if unsettled_advance is not None:
+            if self.advances.unsettled(conn=conn, instance_id=reflection_id):
                 raise WorkflowError(
                     "cannot replace a consolidation proposal while its central "
                     "advance is in progress or already bound"
@@ -1230,140 +1206,56 @@ class ReflectionService(RecordHooks):
             )
             if reflection["status"] != "consolidating":
                 raise WorkflowError("reflection is not awaiting consolidation")
-            self.require_consolidation_proposal(
-                conn=conn,
-                reflection=reflection,
-            )
+            self.require_consolidation_proposal(conn=conn, reflection=reflection)
             if gate.review is None or not gate.review.satisfied:
                 raise WorkflowError(
                     "the exact consolidation proposal must pass independent "
                     "review before central can advance"
                 )
             proposal = (reflection.get("consolidation") or {}).get("proposal") or {}
-            existing = conn.execute(
-                """
-                SELECT * FROM reflection_advances
-                WHERE proposal_id = ?
-                """,
-                (proposal["id"],),
-            ).fetchone()
-            if existing is not None:
-                status = str(existing["status"])
-                current_runner = str(existing["runner_id"])
-                if status in {"bound", "stale"}:
-                    raise WorkflowError(
-                        f"central advance is already {status}; submit a proposal "
-                        "against the current central head"
-                    )
-                intended = parse_iso(existing["intended_at"])
-                owned = (
-                    status == "intended"
-                    and current_runner != runner_id
-                    and intended is not None
-                    and intended + timedelta(seconds=ADVANCE_OWNER_LEASE_SECONDS)
-                    > datetime.now(UTC)
-                )
-                if owned:
-                    raise WorkflowError(
-                        "central advance is owned by another runner; retry after "
-                        "its intent lease expires"
-                    )
-                intended_at = now_iso()
-                conn.execute(
-                    """
-                    UPDATE reflection_advances
-                    SET status = 'intended', runner_id = ?, intended_at = ?,
-                        observed_sha = '', error = ''
-                    WHERE id = ?
-                    """,
-                    (runner_id, intended_at, existing["id"]),
-                )
-                if current_runner != runner_id:
-                    self.store.record_event(
-                        conn=conn,
-                        project_id=project_id,
-                        event_type="reflection.central_advance_intended",
-                        target_type="reflection",
-                        target_id=reflection_id,
-                        payload={
-                            "advance_id": str(existing["id"]),
-                            "proposal_id": proposal["id"],
-                            "expected_sha": proposal["base_sha"],
-                            "target_sha": proposal["proposal_sha"],
-                            "runner_id": runner_id,
-                            "previous_runner_id": current_runner,
-                            "takeover": True,
-                        },
-                    )
-                return self._advance_payload(
+            advance, previous = self.advances.intend(
+                conn=conn,
+                instance_id=reflection_id,
+                proposal_id=proposal["id"],
+                expected_sha=proposal["base_sha"],
+                target_sha=proposal["proposal_sha"],
+                runner_id=runner_id,
+            )
+            if previous != runner_id:
+                self.store.record_event(
                     conn=conn,
-                    row=conn.execute(
-                        "SELECT * FROM reflection_advances WHERE id = ?",
-                        (existing["id"],),
-                    ).fetchone(),
+                    project_id=project_id,
+                    event_type="reflection.central_advance_intended",
+                    target_type="reflection",
+                    target_id=reflection_id,
+                    payload={
+                        "advance_id": advance["id"],
+                        "proposal_id": proposal["id"],
+                        "expected_sha": proposal["base_sha"],
+                        "target_sha": proposal["proposal_sha"],
+                        "runner_id": runner_id,
+                        **({"previous_runner_id": previous, "takeover": True} if previous else {}),
+                    },
                 )
-            advance_id = new_id(prefix="adv")
-            intended_at = now_iso()
-            conn.execute(
-                """
-                INSERT INTO reflection_advances (
-                  id, reflection_id, proposal_id, expected_sha, target_sha,
-                  status, runner_id, intended_at
-                )
-                VALUES (?, ?, ?, ?, ?, 'intended', ?, ?)
-                """,
-                (
-                    advance_id,
-                    reflection_id,
-                    proposal["id"],
-                    proposal["base_sha"],
-                    proposal["proposal_sha"],
-                    runner_id,
-                    intended_at,
-                ),
-            )
-            self.store.record_event(
-                conn=conn,
-                project_id=project_id,
-                event_type="reflection.central_advance_intended",
-                target_type="reflection",
-                target_id=reflection_id,
-                payload={
-                    "advance_id": advance_id,
-                    "proposal_id": proposal["id"],
-                    "expected_sha": proposal["base_sha"],
-                    "target_sha": proposal["proposal_sha"],
-                    "runner_id": runner_id,
-                },
-            )
-            return self._advance_payload(
-                conn=conn,
-                row=conn.execute(
-                    "SELECT * FROM reflection_advances WHERE id = ?",
-                    (advance_id,),
-                ).fetchone(),
-            )
+            return self._advance_payload(conn=conn, advance=advance)
 
     @staticmethod
-    def _advance_payload(*, conn, row) -> dict[str, Any]:
-        result = row_to_dict(row=row) or {}
-        result["proposal_parents"] = json.loads(
-            str(result.pop("proposal_parents_json", "[]") or "[]")
-        )
-        result["diffstat"] = json.loads(str(result.pop("diffstat_json", "{}") or "{}"))
-        result["ancestry"] = json.loads(str(result.pop("ancestry_json", "{}") or "{}"))
-        result["sources"] = rows_to_dicts(
-            rows=conn.execute(
-                """
-                SELECT experiment_id, source_sha, integration_kind
-                FROM consolidation_decisions
-                WHERE proposal_id = ? AND integration_kind != 'none'
-                ORDER BY experiment_id
-                """,
-                (result.get("proposal_id"),),
-            ).fetchall()
-        )
-        return result
+    def _advance_view(receipt: dict[str, Any] | None) -> dict[str, Any] | None:
+        """One receipt in this wave's own words: the instance it names is the wave."""
+        if receipt is None:
+            return None
+        return {"reflection_id" if key == "instance_id" else key: value for key, value in receipt.items()}
+
+    def _advance_payload(self, *, conn, advance: dict[str, Any]) -> dict[str, Any]:
+        """The receipt plus the experiment branches its proposal carried."""
+        return {
+            **(self._advance_view(advance) or {}),
+            "sources": rows_to_dicts(rows=conn.execute(
+                "SELECT experiment_id, source_sha, integration_kind FROM consolidation_decisions "
+                "WHERE proposal_id = ? AND integration_kind != 'none' ORDER BY experiment_id",
+                (advance["proposal_id"],),
+            ).fetchall()),
+        }
 
     def settle_advance(
         self,
@@ -1379,7 +1271,7 @@ class ReflectionService(RecordHooks):
     ) -> dict[str, Any]:
         """Settle one CAS receipt and atomically publish when it reached target."""
         observed_sha = documents.git_sha(observed_sha)
-        parents = [documents.git_sha(value) for value in (proposal_parents or [])]
+        parents = tuple(documents.git_sha(value) for value in (proposal_parents or []))
         try:
             diffstat_json = json.dumps(diffstat or {}, sort_keys=True)
         except (TypeError, ValueError) as exc:
@@ -1393,63 +1285,28 @@ class ReflectionService(RecordHooks):
         ancestry_json = json.dumps(ancestry, sort_keys=True)
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            advance = conn.execute(
-                """
-                SELECT a.*, p.project_id
-                FROM reflection_advances a
-                JOIN consolidation_proposals p ON p.id = a.proposal_id
-                WHERE a.id = ? AND p.project_id = ?
-                """,
-                (advance_id, project_id),
-            ).fetchone()
-            if advance is None:
-                raise NotFoundError(f"central advance not found: {advance_id}")
-            caller_runner = str(runner_id or "").strip()
-            if str(advance["runner_id"]) != caller_runner:
-                # The CAS itself is never transferable, but the publish retry
-                # of an already-durable bound receipt is: after the owner's
-                # lease any project runner may complete it (no Git work
-                # remains, mirroring prepare_advance's intent-lease recovery).
-                bound_at = parse_iso(advance["bound_at"])
-                takeover = (
-                    str(advance["status"]) == "bound"
-                    and bound_at is not None
-                    and bound_at
-                    + timedelta(seconds=ADVANCE_OWNER_LEASE_SECONDS)
-                    <= datetime.now(UTC)
-                )
-                if not takeover:
-                    raise ValidationError(
-                        "central advance belongs to another runner"
-                    )
-            reflection_id = str(advance["reflection_id"])
-            wave_status = str(
-                conn.execute(
-                    "SELECT status FROM reflections WHERE id = ?",
-                    (reflection_id,),
-                ).fetchone()["status"]
-            )
-            if (
+            receipt = self.advances.receipt(conn=conn, advance_id=advance_id)
+            reflection_id = self._proposal_owner(conn=conn, proposal_id=str(receipt["proposal_id"]),
+                                                 project_id=project_id)
+            wave_status = str(conn.execute(
+                "SELECT status FROM reflections WHERE id = ?", (reflection_id,)).fetchone()["status"])
+            orphaned = (
                 wave_status in REFLECTION_WORKFLOW.terminal_statuses
                 and wave_status != REFLECTION_WORKFLOW.success_status
-            ):
-                # The wave closed while the receipt was in flight (abandon is
-                # legal until a receipt is bound): never bind or publish into
-                # a terminal wave — record the orphaned CAS for the operator.
-                conn.execute(
-                    """
-                    UPDATE reflection_advances
-                    SET status = 'stale', observed_sha = ?, error = ?,
-                        ancestry_json = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        observed_sha,
-                        f"wave {wave_status} before settle — central advance orphaned",
-                        ancestry_json,
-                        advance_id,
-                    ),
-                )
+            )
+            if not orphaned and receipt["status"] != "bound" and observed_sha == str(receipt["target_sha"]):
+                self._require_carried_ancestry(conn=conn, proposal_id=str(receipt["proposal_id"]),
+                                               ancestry=ancestry)
+            # The wave closed while the receipt was in flight (abandon is legal
+            # until a receipt is bound): never bind or publish into a terminal
+            # wave — record the orphaned CAS for the operator.
+            advance = self.advances.settle(
+                conn=conn, advance_id=advance_id, runner_id=runner_id, observed_sha=observed_sha,
+                proposal_parents=parents, diffstat=diffstat_json, ancestry=ancestry_json, error=error,
+                stale_reason=(f"wave {wave_status} before settle — central advance orphaned"
+                              if orphaned else ""),
+            )
+            if advance["status"] == "stale":
                 self.store.record_event(
                     conn=conn,
                     project_id=project_id,
@@ -1460,116 +1317,11 @@ class ReflectionService(RecordHooks):
                         "advance_id": advance_id,
                         "expected_sha": str(advance["expected_sha"]),
                         "observed_sha": observed_sha,
-                        "reason": f"wave {wave_status} before settle",
+                        **({"reason": f"wave {wave_status} before settle"} if orphaned else {}),
                     },
                 )
-                return self.get_state(
-                    reflection_id=reflection_id,
-                    conn=conn,
-                    include_content=True,
-                )
-            if str(advance["status"]) == "bound":
-                # Already bound: fall through to the publish attempt below so
-                # a settle retried after a blocked publish can complete it.
-                pass
-            elif observed_sha == str(advance["target_sha"]):
-                source_kinds = {
-                    str(row["experiment_id"]): str(row["integration_kind"])
-                    for row in conn.execute(
-                        """
-                        SELECT experiment_id, integration_kind
-                        FROM consolidation_decisions
-                        WHERE proposal_id = ? AND integration_kind != 'none'
-                        """,
-                        (advance["proposal_id"],),
-                    ).fetchall()
-                }
-                if set(ancestry) != set(source_kinds):
-                    raise ValidationError(
-                        "ancestry receipt must cover every experiment whose "
-                        "code was carried"
-                    )
-                mismatches = sorted(
-                    experiment_id
-                    for experiment_id, kind in source_kinds.items()
-                    if kind in {"merge", "fast_forward"}
-                    and ancestry[experiment_id] is not True
-                )
-                if mismatches:
-                    raise ValidationError(
-                        "ancestry must be true for merge or fast-forward "
-                        "sources: " + ", ".join(mismatches)
-                    )
-                conn.execute(
-                    """
-                    UPDATE reflection_advances
-                    SET status = 'bound', observed_sha = ?, bound_at = ?,
-                        proposal_parents_json = ?, diffstat_json = ?,
-                        ancestry_json = ?, error = ''
-                    WHERE id = ?
-                    """,
-                    (
-                        observed_sha,
-                        now_iso(),
-                        json.dumps(parents, sort_keys=True),
-                        diffstat_json,
-                        ancestry_json,
-                        advance_id,
-                    ),
-                )
-            elif observed_sha == str(advance["expected_sha"]):
-                conn.execute(
-                    """
-                    UPDATE reflection_advances
-                    SET status = ?, observed_sha = ?, error = ?,
-                        ancestry_json = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        "failed" if error else "intended",
-                        observed_sha,
-                        str(error or "")[:1000],
-                        ancestry_json,
-                        advance_id,
-                    ),
-                )
-                return self.get_state(
-                    reflection_id=str(advance["reflection_id"]),
-                    conn=conn,
-                    include_content=True,
-                )
-            else:
-                conn.execute(
-                    """
-                    UPDATE reflection_advances
-                    SET status = 'stale', observed_sha = ?, error = ?,
-                        ancestry_json = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        observed_sha,
-                        str(error or "central moved")[:1000],
-                        ancestry_json,
-                        advance_id,
-                    ),
-                )
-                self.store.record_event(
-                    conn=conn,
-                    project_id=project_id,
-                    event_type="reflection.central_advance_stale",
-                    target_type="reflection",
-                    target_id=str(advance["reflection_id"]),
-                    payload={
-                        "advance_id": advance_id,
-                        "expected_sha": str(advance["expected_sha"]),
-                        "observed_sha": observed_sha,
-                    },
-                )
-                return self.get_state(
-                    reflection_id=str(advance["reflection_id"]),
-                    conn=conn,
-                    include_content=True,
-                )
+            if advance["status"] != "bound":
+                return self.get_state(reflection_id=reflection_id, conn=conn, include_content=True)
         # The bound receipt is durable before publish is attempted: the Git
         # ref already moved, so a publish failure must mark the advance, not
         # unwind the record of an irreversible external fact.
@@ -1578,6 +1330,31 @@ class ReflectionService(RecordHooks):
             reflection_id=reflection_id,
             project_id=project_id,
         )
+
+    def _proposal_owner(self, *, conn, proposal_id: str, project_id: str) -> str:
+        """The wave one proposal belongs to, refused across a project boundary."""
+        row = conn.execute(
+            "SELECT reflection_id FROM consolidation_proposals WHERE id = ? AND project_id = ?",
+            (proposal_id, project_id)).fetchone()
+        if row is None:
+            raise NotFoundError(f"central advance not found: {proposal_id}")
+        return str(row["reflection_id"])
+
+    def _require_carried_ancestry(self, *, conn, proposal_id: str, ancestry: dict[str, bool]) -> None:
+        """The runner's independent ancestry result must cover the code it carried."""
+        carried = {
+            str(row["experiment_id"]): str(row["integration_kind"])
+            for row in conn.execute(
+                "SELECT experiment_id, integration_kind FROM consolidation_decisions "
+                "WHERE proposal_id = ? AND integration_kind != 'none'", (proposal_id,)).fetchall()
+        }
+        if set(ancestry) != set(carried):
+            raise ValidationError("ancestry receipt must cover every experiment whose code was carried")
+        mismatches = sorted(experiment_id for experiment_id, kind in carried.items()
+                            if kind in {"merge", "fast_forward"} and ancestry[experiment_id] is not True)
+        if mismatches:
+            raise ValidationError("ancestry must be true for merge or fast-forward sources: "
+                                  + ", ".join(mismatches))
 
     def _publish_bound_advance(
         self, *, advance_id: str, reflection_id: str, project_id: str
@@ -1593,10 +1370,7 @@ class ReflectionService(RecordHooks):
             with self.store.transaction() as conn:
                 # Cleared first so success leaves no stale diagnostic; a
                 # failed publish rolls this back along with the transition.
-                conn.execute(
-                    "UPDATE reflection_advances SET error = '' WHERE id = ?",
-                    (advance_id,),
-                )
+                self.advances.note(conn=conn, advance_id=advance_id, error="")
                 reflection = self.get_state(reflection_id=reflection_id, project_id=project_id,
                                             conn=conn, include_content=True)
                 if str(reflection.get("status")) == REFLECTION_WORKFLOW.success_status:
@@ -1615,13 +1389,8 @@ class ReflectionService(RecordHooks):
                     ):
                         # An ambiguous COMMIT ack can raise after publication
                         # landed; never let the diagnostic outlive a success.
-                        conn.execute(
-                            "UPDATE reflection_advances SET error = ? WHERE id = ?",
-                            (
-                                f"publish blocked after bind: {str(exc)[:900]}",
-                                advance_id,
-                            ),
-                        )
+                        self.advances.note(conn=conn, advance_id=advance_id,
+                                           error=f"publish blocked after bind: {str(exc)[:900]}")
             raise
 
     def transition(
@@ -1701,20 +1470,15 @@ class ReflectionService(RecordHooks):
                 or next_status not in REFLECTION_WORKFLOW.terminal_statuses
                 or next_status == REFLECTION_WORKFLOW.success_status):
             return
-        bound = conn.execute(
-            "SELECT id FROM reflection_advances WHERE reflection_id = ? AND status = 'bound' LIMIT 1",
-            (before.id,),
-        ).fetchone()
-        if bound is not None:
+        unsettled = self.advances.unsettled(conn=conn, instance_id=before.id)
+        if unsettled.get("status") == "bound":
             raise WorkflowError(
                 "central has already advanced for this wave (bound receipt "
-                f"{bound['id']}); publication completes via the runner's "
+                f"{unsettled['id']}); publication completes via the runner's "
                 "settle retry — the wave cannot be abandoned once bound")
         # Cancel open intents so a settle that raced this exit records an
         # orphaned CAS instead of binding into a terminal wave.
-        conn.execute("UPDATE reflection_advances SET status = 'stale', error = ? "
-                     "WHERE reflection_id = ? AND status = 'intended'",
-                     ("wave abandoned before settle", before.id))
+        self.advances.cancel(conn=conn, instance_id=before.id, reason="wave abandoned before settle")
 
     def _commit_lens_change(self, conn, before, after, action, payload) -> None:
         if action in {"submit", "adopt_lens"}:

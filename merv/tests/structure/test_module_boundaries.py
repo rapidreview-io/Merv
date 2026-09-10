@@ -212,7 +212,6 @@ TABLE_OWNERS = {
     "reflection_claim_changes": RESEARCH,
     "reflection_experiments": RESEARCH,
     "reflection_reserved_names": RESEARCH,
-    "reflection_advances": RESEARCH,
     "consolidation_proposals": RESEARCH,
     "consolidation_decisions": RESEARCH,
     "project_candidates": RESEARCH,
@@ -233,9 +232,11 @@ TABLE_OWNERS = {
     "artifacts": ARTIFACTS,
     "artifact_figures": ARTIFACTS,
     "submissions": ARTIFACTS,
-    # Agent sessions: leases, runners, their pairing, traces, workspaces.
+    # Agent sessions: leases, runners, their pairing, traces, workspaces and
+    # the compare-and-swap receipts an accepted workspace produces.
     "agent_sessions": AGENT_SESSIONS,
     "agent_workspaces": AGENT_SESSIONS,
+    "workspace_advances": AGENT_SESSIONS,
     "agent_runners": AGENT_SESSIONS,
     "agent_runner_pairings": AGENT_SESSIONS,
     "agent_runner_pairing_attempts": AGENT_SESSIONS,

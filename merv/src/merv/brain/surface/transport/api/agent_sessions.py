@@ -166,7 +166,7 @@ def build_router(
             ),
         ))}
 
-    @router.post("/api/projects/{project_id}/agent-advances/prepare")
+    @router.post("/api/projects/{project_id}/workspace-advances/prepare")
     def prepare_agent_advance(
         project_id: str, request: Request, body: JsonBody = Body(default=None)
     ) -> dict[str, Any]:
@@ -180,12 +180,12 @@ def build_router(
             )
         }
 
-    @router.get("/api/projects/{project_id}/agent-advances/pending")
+    @router.get("/api/projects/{project_id}/workspace-advances/pending")
     def pending_agent_advance(project_id: str, request: Request) -> dict[str, Any]:
         gateway.authorize_project(request, project_id)
         return {"advance": advances.pending_agent_advance(project_id=project_id)}
 
-    @router.post("/api/projects/{project_id}/agent-advances/settle")
+    @router.post("/api/projects/{project_id}/workspace-advances/settle")
     def settle_agent_advance(
         project_id: str, request: Request, body: JsonBody = Body(default=None)
     ) -> dict[str, Any]:

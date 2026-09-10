@@ -222,7 +222,7 @@ class ReflectionWorkflowTest(ResearchCase):
     def _advance_row(self, advance_id: str) -> dict:
         with self.app.store.connect() as conn:
             row = conn.execute(
-                "SELECT status, error, bound_at FROM reflection_advances "
+                "SELECT status, error, bound_at FROM workspace_advances "
                 "WHERE id = ?",
                 (advance_id,),
             ).fetchone()
@@ -341,7 +341,7 @@ class ReflectionWorkflowTest(ResearchCase):
                 self._settle(advance, runner_id="replacement")
             with self.app.store.transaction() as conn:
                 conn.execute(
-                    "UPDATE reflection_advances SET bound_at = ? WHERE id = ?",
+                    "UPDATE workspace_advances SET bound_at = ? WHERE id = ?",
                     ("2026-08-08T00:00:00Z", advance["id"]),
                 )
             published = self._settle(advance, runner_id="replacement")
@@ -871,7 +871,7 @@ class ReflectionWorkflowTest(ResearchCase):
         with self.app.store.transaction() as tx:
             tx.execute(
                 """
-                UPDATE reflection_advances
+                UPDATE workspace_advances
                 SET intended_at = '2000-01-01T00:00:00Z'
                 WHERE id = ?
                 """,
