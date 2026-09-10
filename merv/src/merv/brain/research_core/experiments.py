@@ -8,8 +8,7 @@ import json
 from typing import Any
 
 from ..workflows import EXHIBIT_ROLE, KINDS, Snapshot
-from .experiment_workflow import EXPERIMENT_WORKFLOW
-from .reflection_workflow import REFLECTION_WORKFLOW
+
 from .policy import (
     ACTIVE_EXPERIMENT_CAP,
     GateEvaluation,
@@ -24,7 +23,7 @@ from ..kernel.state.store import BaseStateStore, row_to_dict, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
 from .models import CommittedExperimentUpdate
 
-EXPERIMENT = KINDS["experiment"]
+EXPERIMENT, REFLECTION = KINDS["experiment"], KINDS["reflection"]
 
 
 class ExperimentService(RecordHooks):
@@ -126,7 +125,7 @@ class ExperimentService(RecordHooks):
         # Reserved wave names hold their cap slots: the wave passed the cap
         # check when its spec was validated, so tool creates must not consume
         # the slots its publish will materialize into.
-        terminal = ", ".join(f"'{status}'" for status in sorted(EXPERIMENT_WORKFLOW.terminal_statuses))
+        terminal = ", ".join(f"'{status}'" for status in sorted(EXPERIMENT.terminal_statuses))
         active_count = int(conn.execute(
             f"SELECT COUNT(*) AS count FROM experiments WHERE project_id = ? AND status NOT IN ({terminal})",
             (project_id,)).fetchone()["count"])
@@ -155,7 +154,7 @@ class ExperimentService(RecordHooks):
 
     def _reject_reflection_blocked_experiment_create(self, *, conn, project_id: str) -> None:
         debt, published_id = self._terminal_experiments_since_last_reflection(conn=conn, project_id=project_id)
-        terminal = tuple(sorted(REFLECTION_WORKFLOW.terminal_statuses))
+        terminal = tuple(sorted(REFLECTION.terminal_statuses))
         open_wave = conn.execute(
             f"""SELECT id, status FROM reflections WHERE project_id = ?
                 AND status NOT IN ({", ".join("?" for _ in terminal)})
@@ -166,7 +165,7 @@ class ExperimentService(RecordHooks):
             raise WorkflowError(message)
 
     def _terminal_experiments_since_last_reflection(self, *, conn, project_id: str) -> tuple[int, str | None]:
-        terminal = ", ".join(f"'{status}'" for status in sorted(EXPERIMENT_WORKFLOW.terminal_statuses))
+        terminal = ", ".join(f"'{status}'" for status in sorted(EXPERIMENT.terminal_statuses))
         current_terminal = {
             str(row["id"]) for row in conn.execute(
                 f"SELECT id FROM experiments WHERE project_id = ? AND status IN ({terminal})",
@@ -174,7 +173,7 @@ class ExperimentService(RecordHooks):
         published = conn.execute(
             """SELECT id, corpus_json FROM reflections WHERE project_id = ? AND status = ?
                ORDER BY published_at DESC, created_seq DESC LIMIT 1""",
-            (project_id, REFLECTION_WORKFLOW.success_status)).fetchone()
+            (project_id, REFLECTION.success_status)).fetchone()
         if published is None:
             return len(current_terminal), None
         try:

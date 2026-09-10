@@ -4,14 +4,14 @@ import json
 
 from merv.brain.kernel.utils import NotFoundError, ValidationError, WorkflowError
 from merv.brain.research_core.dependencies import record_dependencies
-from merv.brain.research_core.evidence import (
+from merv.brain.workflows.definitions.documents import (
     brief_checks,
     delivery_entry_parts,
     delivery_results,
     delivery_section,
     render_task_brief,
 )
-from merv.brain.research_core.task_workflow import TASK_WORKFLOW
+from merv.brain.research_core import TASK
 
 from .scenarios import VALID_CHANGE_SPEC, VALID_PLAN, ResearchCase
 
@@ -101,7 +101,7 @@ class TaskWorkflowTest(ResearchCase):
     def test_full_lifecycle_is_gated_and_records_transitions(self) -> None:
         task_id = self.create_task()
         state = self.call("task.get_state", project_id=self.project_id, task_id=task_id)
-        self.assertEqual(state["status"], TASK_WORKFLOW.initial)
+        self.assertEqual(state["status"], TASK.workflow.initial)
         self.assertNotIn("tested_claims", state)
 
         status = self.task_status(task_id)
@@ -109,7 +109,6 @@ class TaskWorkflowTest(ResearchCase):
         # The brief is rendered and pinned at create — the first gate is the
         # delivery, and the goal is immutable: brief submissions are refused.
         self.assertEqual(status["workflow"]["current_gate"], "delivery_required")
-        self.assertEqual(len(status["task"]["checks"]), 3)
         self.assertEqual(status["task"]["deliverables"], DELIVERABLES)
         rendered = status["context"]["brief"]["content"]
         self.assertIn("## Goal", rendered)
@@ -420,7 +419,6 @@ class TaskWorkflowTest(ResearchCase):
         )
         # The goal's contract is structure from creation.
         self.assertEqual(rich["deliverables"], DELIVERABLES)
-        self.assertEqual(rich["checks"], DELIVERABLES)
         self.assertNotIn("deliverables_json", rich)
         self.assertEqual(rich["results"], [])
         self.assertEqual([d["id"] for d in rich["dependents"]], [downstream])
@@ -543,7 +541,7 @@ class TaskWorkflowTest(ResearchCase):
             task_id=materialized["prep-data"]["task_id"],
         )
         self.assertEqual(prep["status"], "in_progress")
-        self.assertEqual(len(prep["checks"]), 2)
+        self.assertEqual(len(prep["deliverables"]), 2)
         brief = next(a for a in prep["current_attempt_artifacts"] if a["role"] == "brief")
         self.assertEqual(brief["path"], "tasks/prep-data/brief.md")
         lit = self.call(

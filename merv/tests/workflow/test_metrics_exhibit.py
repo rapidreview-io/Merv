@@ -168,7 +168,7 @@ class ExhibitFlowTest(unittest.TestCase):
         self._pass_review(exp_id=exp_id, role="design_reviewer")
         current = self.app.workflows.runtime.get(project_id=self.project_id, instance_id=exp_id)
         self.assertEqual(current.state, "running")
-        self.assertIsNone(self.app.research.attempt_started_running_at(experiment_id=exp_id))
+        self.assertIsNone(self.app.research.experiments.attempt_started_running_at(experiment_id=exp_id))
         started = self.call(
             "workflow.begin",
             project_id=self.project_id,
@@ -179,7 +179,7 @@ class ExhibitFlowTest(unittest.TestCase):
         # the attempt window.
         self.assertIn("metrics_exhibit.json", started["brief"])
         self.assertIn("experiment.exhibit", started["brief"])
-        self.assertIsNotNone(self.app.research.attempt_started_running_at(experiment_id=exp_id))
+        self.assertIsNotNone(self.app.research.experiments.attempt_started_running_at(experiment_id=exp_id))
         self.app.application.workflow_deliveries.run_once(project_id=self.project_id)
         return exp_id
 

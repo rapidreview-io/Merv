@@ -8,7 +8,7 @@ import json
 from typing import Any
 
 from ..workflows import KINDS, TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE, Snapshot
-from .evidence import (
+from ..workflows import (
     ArtifactDocument,
     brief_checks,
     delivery_results,
@@ -16,6 +16,7 @@ from .evidence import (
     preferred_artifact,
     render_task_brief,
     require_artifact_document,
+    task_deliverables,
 )
 from .policy import validate_task_name
 from .artifact_models import ArtifactTarget
@@ -25,38 +26,6 @@ from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
 from .models import CommittedTaskUpdate
 
 TASK = KINDS["task"]
-_MAX_DELIVERABLES = 12
-_MAX_DELIVERABLE_CHARS = 500
-
-
-def _validate_deliverables(value: Any) -> list[str]:
-    """The goal's contract: 1..N deliverables, each verifiable as written."""
-    if isinstance(value, str):
-        value = [value]
-    if value is None or not isinstance(value, (list, tuple)):
-        raise ValidationError(
-            "deliverables is required: a list of the things that must exist "
-            "when the task is done — each one thing, verifiable as written"
-        )
-    items = [text for item in value if (text := str(item or "").strip())]
-    if not items:
-        raise ValidationError(
-            "deliverables needs at least one item — a thing that must exist "
-            "when the task is done, verifiable as written"
-        )
-    if len(items) > _MAX_DELIVERABLES:
-        raise ValidationError(
-            f"{len(items)} deliverables is too many (max {_MAX_DELIVERABLES}; "
-            "the rule of thumb is 1-7) — this is probably two tasks"
-        )
-    for index, item in enumerate(items, start=1):
-        if len(item) > _MAX_DELIVERABLE_CHARS:
-            raise ValidationError(
-                f"deliverable {index} is {len(item)} characters; keep each "
-                f"under {_MAX_DELIVERABLE_CHARS} — one thing, stated so it "
-                "can be checked"
-            )
-    return items
 
 
 class TaskService(RecordHooks):
@@ -107,7 +76,7 @@ class TaskService(RecordHooks):
                 "goal is required: short prose — what needs to be done and why "
                 "— readable standalone by someone who just opened the task"
             )
-        deliverables = _validate_deliverables(deliverables)
+        deliverables = task_deliverables(deliverables)
         return self.records.create_in_transaction(
             TASK, conn=conn, project_id=project_id, guard=guard, instance=instance,
             values={"name": name, "goal": goal.strip(), "deliverables_json": json.dumps(deliverables),
@@ -152,8 +121,6 @@ class TaskService(RecordHooks):
             if not task["deliverables"]:
                 brief = self._document(task=task, role=TASK_BRIEF_ROLE, what="task brief")
                 task["deliverables"] = [] if brief is None else brief_checks(brief.text)
-            # `checks` stays as the agent-facing alias for the same list.
-            task["checks"] = list(task["deliverables"])
             if str(task["id"]) not in detail_ids:
                 continue
             delivery = self._document(task=task, role=TASK_DELIVERY_ROLE, what="task delivery")

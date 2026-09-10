@@ -108,7 +108,12 @@ class RecordingResearch:
         self.exhibit_calls = []
         self.exhibit_error = None
 
-    def experiment_state(
+    @property
+    def experiments(self) -> "RecordingResearch":
+        """This fake is its own experiment service."""
+        return self
+
+    def get_state(
         self, *, experiment_id: str, project_id: str | None = None
     ) -> dict[str, Any]:
         self.order.append("research.state")
@@ -116,7 +121,7 @@ class RecordingResearch:
             raise self.state_error
         return self.before
 
-    def transition_experiment(
+    def transition_with_event(
         self,
         *,
         experiment_id: str,

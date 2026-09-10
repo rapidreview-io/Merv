@@ -79,6 +79,8 @@ DELIVERY_LIST_SECTIONS: tuple[str, ...] = ("confirmations", "checks")
 REQUIRED_DELIVERY_SECTIONS: tuple[tuple[str, str], ...] = (("Confirmations", "confirmations"),)
 MAX_BRIEF_BYTES = 16_000
 MAX_DELIVERY_BYTES = 16_000
+MAX_DELIVERABLES = 12
+MAX_DELIVERABLE_CHARS = 500
 _NUMBERED_ITEM_RE = re.compile(r"^[ \t]*(\d+)[.)][ \t]+(.*\S)?[ \t]*$")
 MAX_REPORT_BYTES = 16_000
 GRAPH_SCHEMA_VERSION = 1
@@ -176,33 +178,29 @@ def sealed_submission_artifacts(
     return [a for a in artifacts if str(a.get("submission_id") or "") == submission_id]
 
 
-def historical_latest_artifacts(
-    artifacts: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return latest_per_slot(artifacts)
+# The model is the shape: each attribute under the name a reader knows it by.
+_ARTIFACT_STATE_FIELDS = {
+    "id": "id", "project_id": "project_id", "path": "path", "title": "title",
+    "lens_id": "lens_id", "size_bytes": "size_bytes", "content_type": "content_type",
+    "created_by": "created_by", "created_at": "created_at", "updated_at": "updated_at",
+    "role": "role", "attempt_index": "attempt_index", "tldr": "tldr",
+    "submission_id": "submission_id", "order": "submitted_order",
+}
+_SUBMISSION_STATE_FIELDS = {
+    "id": "id", "attempt_index": "attempt_index", "transition": "transition",
+    "created_at": "created_at", "order": "created_seq",
+}
 
 
 def artifact_state_record(evidence: Any) -> dict[str, Any]:
-    record = {
-        field: getattr(evidence, field)
-        for field in (
-            "id", "project_id", "path", "title", "lens_id", "size_bytes",
-            "content_type", "created_by", "created_at", "updated_at", "role",
-            "attempt_index", "tldr", "submission_id",
-        )
-    }
-    return {**record, "submitted_order": evidence.order}
+    return {name: getattr(evidence, attribute)
+            for attribute, name in _ARTIFACT_STATE_FIELDS.items()}
 
 
 def submission_state_record(submission: Any) -> dict[str, Any]:
-    return {
-        "id": submission.id,
-        "attempt_index": submission.attempt_index,
-        "transition": submission.transition,
-        "created_at": submission.created_at,
-        "created_seq": submission.order,
-        "artifact_ids": list(submission.artifact_ids),
-    }
+    return {**{name: getattr(submission, attribute)
+               for attribute, name in _SUBMISSION_STATE_FIELDS.items()},
+            "artifact_ids": list(submission.artifact_ids)}
 
 
 def preferred_artifact(
@@ -267,18 +265,6 @@ def required_markdown_sections_missing(
     return missing
 
 
-def plan_sections_missing(plan_text: str) -> list[str]:
-    return required_markdown_sections_missing(plan_text, REQUIRED_PLAN_SECTIONS)
-
-
-def report_sections_missing(report_text: str) -> list[str]:
-    return required_markdown_sections_missing(report_text, REQUIRED_REPORT_SECTIONS)
-
-
-def report_figure_links(report_text: str) -> list[str]:
-    return markdown_image_links(report_text)
-
-
 def report_problems(
     report_text: str,
     *,
@@ -286,7 +272,7 @@ def report_problems(
     exhibit_path: str | None = None,
 ) -> list[str]:
     problems: list[str] = []
-    missing = report_sections_missing(report_text)
+    missing = required_markdown_sections_missing(report_text, REQUIRED_REPORT_SECTIONS)
     if missing:
         problems.append("missing required sections: " + ", ".join(missing))
     if exhibit_path:
@@ -305,7 +291,7 @@ def report_problems(
         advice="move raw numbers and logs into result artifacts and link them instead",
     )
     if figure_problem is not None:
-        for target in report_figure_links(report_text):
+        for target in markdown_image_links(report_text):
             problem = figure_problem(target)
             if problem:
                 problems.append(problem)
@@ -554,12 +540,42 @@ class ExperimentProposal(NodeProposal):
 
 
 def _one_thing_each(value: list[str]) -> list[str]:
+    """The goal's contract: 1..N deliverables, each verifiable as written."""
     if not value:
         raise ValueError(
             "needs at least one item — a thing that must exist when the task "
             "is done, verifiable as written"
         )
+    if len(value) > MAX_DELIVERABLES:
+        raise ValueError(
+            f"{len(value)} deliverables is too many (max {MAX_DELIVERABLES}; "
+            "the rule of thumb is 1-7) — this is probably two tasks"
+        )
+    for index, item in enumerate(value, start=1):
+        if len(item) > MAX_DELIVERABLE_CHARS:
+            raise ValueError(
+                f"deliverable {index} is {len(item)} characters; keep each "
+                f"under {MAX_DELIVERABLE_CHARS} — one thing, stated so it "
+                "can be checked"
+            )
     return value
+
+
+Deliverables = Annotated[Refs, AfterValidator(_one_thing_each)]
+_DELIVERABLES = TypeAdapter(Deliverables)
+
+
+def task_deliverables(value: Any) -> list[str]:
+    """The same contract for a direct create, checked by the model that owns it."""
+    if value is None:
+        raise ValidationError(
+            "deliverables is required: a list of the things that must exist "
+            "when the task is done — each one thing, verifiable as written"
+        )
+    try:
+        return _DELIVERABLES.validate_python(value)
+    except SchemaBreach as breach:
+        raise ValidationError(_problem(breach.errors()[0], "deliverables")) from None
 
 
 class TaskProposal(NodeProposal):
@@ -567,7 +583,7 @@ class TaskProposal(NodeProposal):
 
     name: TaskName
     goal: str = Field(min_length=1)
-    deliverables: Annotated[Refs, AfterValidator(_one_thing_each)] = Field(
+    deliverables: Deliverables = Field(
         validation_alias=AliasChoices("deliverables", "done_when")
     )
     scope: str = ""

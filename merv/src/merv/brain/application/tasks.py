@@ -14,24 +14,28 @@ from ..feed import FeedAdvisory
 from ..kernel.events import StoredEvent
 from ..research_core import (
     TASK_TERMINAL_STATUSES,
-    TASK_WORKFLOW,
+    TASK,
     Research,
     TaskState,
-    preferred_artifact,
-)
-from .experiments.presentation import (
     project_fields,
     project_rows,
-    review_body,
-    slim_review_rows,
+    public_record,
 )
+from ..workflows import KINDS, Public, preferred_artifact
+from .experiments.presentation import review_body, slim_review_rows
 from .experiments.transition import feed_transition_note
 
 Record = dict[str, Any]
 
+# What an agent reading a task does not need: the project it named to ask, the
+# artifact history, the sealed rounds, and the delivery prose it can open.
+AGENT = Public(hidden=("project_id", "artifacts", "submissions",
+                       "results", "report", "caveats"))
 _SLIM_ARTIFACT_FIELDS = ("id", "role", "path", "size_bytes", "title", "tldr")
 _SLIM_DEPENDENCY_FIELDS = ("id", "node_type", "name", "status", "settled", "failed")
 _CONTEXT_ARTIFACT_FIELDS = ("id", "role", "path", "size_bytes", "tldr")
+_CONTEXT_TASK_FIELDS = ("id", "name", "goal", "status", "attempt_index", "outcome",
+                        "failed_by", "revision_context")
 
 
 def task_folder(*, task_id: str, name: str = "") -> str:
@@ -60,42 +64,24 @@ class TaskTransitionReceipt(TypedDict, total=False):
 
 def rich_task_state(full: TaskState) -> TaskState:
     """The full Research state, unchanged: the UI reads everything."""
-    return cast(TaskState, dict(full))
+    return cast(TaskState, public_record(KINDS["task"].public, full))
 
 
 def slim_task_state(full: TaskState) -> SlimTaskState:
     """Project rich task facts to the exact agent-facing wire shape."""
-    rich = dict(full)
-    attempt = rich.get("attempt_index")
-    all_artifacts = rich.get("artifacts", [])
-    current = rich.get("current_attempt_artifacts")
+    attempt = full.get("attempt_index")
+    history = full.get("artifacts", [])
+    current = full.get("current_attempt_artifacts")
     if current is None:
-        current = [a for a in all_artifacts if a.get("attempt_index") == attempt]
-    slim: dict[str, Any] = {
-        "id": rich.get("id"),
-        "name": rich.get("name"),
-        "status": rich.get("status"),
-        "attempt_index": attempt,
-        "goal": rich.get("goal"),
-        "outcome": rich.get("outcome"),
-        "failed_by": rich.get("failed_by"),
-        "revision_context": rich.get("revision_context"),
-        "created_at": rich.get("created_at"),
-        "updated_at": rich.get("updated_at"),
-        "deliverables": list(rich.get("deliverables") or []),
-        "checks": list(rich.get("checks") or []),
-        "dependencies": project_rows(
-            rich.get("dependencies", []), _SLIM_DEPENDENCY_FIELDS
-        ),
-        "dependents": project_rows(
-            rich.get("dependents", []), _SLIM_DEPENDENCY_FIELDS
-        ),
-        "allowed_transitions": rich.get("allowed_transitions", []),
-        "gate_checklist": rich.get("gate_checklist", {}),
-        "current_attempt_artifacts": project_rows(current, _SLIM_ARTIFACT_FIELDS),
-        "reviews": slim_review_rows(rich.get("reviews", [])),
-    }
-    return cast(SlimTaskState, slim)
+        current = [item for item in history if item.get("attempt_index") == attempt]
+    return cast(SlimTaskState, public_record(
+        AGENT,
+        full,
+        dependencies=project_rows(full.get("dependencies", []), _SLIM_DEPENDENCY_FIELDS),
+        dependents=project_rows(full.get("dependents", []), _SLIM_DEPENDENCY_FIELDS),
+        current_attempt_artifacts=project_rows(current, _SLIM_ARTIFACT_FIELDS),
+        reviews=slim_review_rows(full.get("reviews", [])),
+    ))
 
 
 @dataclass(kw_only=True, eq=False, repr=False)
@@ -158,7 +144,7 @@ class TransitionTask:
         evidence: dict[str, Any] | None,
         project_id: str | None,
     ) -> tuple[TaskState, StoredEvent]:
-        committed = self.research.transition_task(
+        committed = self.research.tasks.transition_with_event(
             task_id=task_id,
             transition=transition,
             evidence=evidence,
@@ -168,7 +154,7 @@ class TransitionTask:
 
     def _feed_advisory(self, *, event: StoredEvent, state: TaskState) -> str | None:
         status = str(state.get("status") or "")
-        if event.type != TASK_WORKFLOW.event_type or status not in TASK_TERMINAL_STATUSES:
+        if event.type != TASK.workflow.event_type or status not in TASK_TERMINAL_STATUSES:
             return None
         return feed_transition_note(
             self.feed,
@@ -196,23 +182,11 @@ class TaskContextQuery:
         )
         terminal = str(state.get("status") or "") in TASK_TERMINAL_STATUSES
         return {
-            "task": project_fields(
-                state,
-                (
-                    "id",
-                    "name",
-                    "goal",
-                    "status",
-                    "attempt_index",
-                    "outcome",
-                    "failed_by",
-                    "revision_context",
-                ),
-            ),
+            "task": project_fields(state, _CONTEXT_TASK_FIELDS),
             "folder": task_folder(
                 task_id=str(state.get("id") or ""), name=str(state.get("name") or "")
             ),
-            "checks": list(state.get("checks") or []),
+            "deliverables": list(state.get("deliverables") or []),
             "dependencies": project_rows(
                 state.get("dependencies") or [], _SLIM_DEPENDENCY_FIELDS
             ),

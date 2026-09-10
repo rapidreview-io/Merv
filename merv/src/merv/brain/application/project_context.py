@@ -10,12 +10,13 @@ from ..workflows import PROJECT_GRAPH_ROLE
 from ..research_core import content_tldr
 
 from ..research_core import Artifact, ResearchArtifacts as Artifacts
-from ..research_core import EXPERIMENT_WORKFLOW, Research, preferred_artifact
+from ..workflows import preferred_artifact
+from ..research_core import EXPERIMENT, Research
 
 
 Record = dict[str, Any]
 
-_PLAN_SUMMARY_STATUSES = frozenset(state.name for state in EXPERIMENT_WORKFLOW.states) - EXPERIMENT_WORKFLOW.effect_destinations("result_submission")
+_PLAN_SUMMARY_STATUSES = frozenset(node.name for node in EXPERIMENT.workflow.nodes) - EXPERIMENT.effect_destinations("result_submission")
 _PROJECT_REFLECTION_ROLES = ("reflection_doc", PROJECT_GRAPH_ROLE)
 
 

@@ -10,8 +10,15 @@ from merv.brain.research_core import Artifact
 
 
 class GraphResearch:
+    """A Research root whose per-kind services answer for themselves."""
+
     def __init__(self) -> None:
         self.resolved = []
+        self.experiments = _Bound(self, {"get_state": "experiment_state"})
+        self.reflections = _Bound(self, {
+            "get_state": "reflection_state",
+            "project_logic_graph_selection": "project_logic_graph_selection",
+        })
 
     def experiment_state(self, **_kwargs):
         return {
@@ -51,6 +58,16 @@ class GraphResearch:
             for ref in kwargs["refs"]
             if ref == "claim_1"
         }
+
+
+class _Bound:
+    """Expose a fake's own methods under the names its service uses."""
+
+    def __init__(self, research, names: dict[str, str]) -> None:
+        self._research, self._names = research, names
+
+    def __getattr__(self, name: str):
+        return getattr(self._research, self._names[name])
 
 
 class GraphArtifacts:

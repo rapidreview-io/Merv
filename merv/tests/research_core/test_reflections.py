@@ -4,7 +4,7 @@ import json
 import unittest
 from unittest import mock
 
-from merv.brain.research_core.evidence import decision_problems
+from merv.brain.workflows.definitions.documents import decision_problems
 from merv.brain.kernel.utils import (
     PermissionDeniedError,
     ValidationError,
@@ -197,14 +197,14 @@ class ReflectionWorkflowTest(ResearchCase):
             verdict="pass",
             producer_session_id="consolidator",
         )
-        return self.app.research.prepare_reflection_advance(
+        return self.app.research.reflections.prepare_advance(
             project_id=self.project_id,
             reflection_id=reflection_id,
             runner_id="runner",
         )
 
     def _settle(self, advance: dict, runner_id: str = "runner") -> dict:
-        return self.app.research.settle_reflection_advance(
+        return self.app.research.reflections.settle_advance(
             project_id=self.project_id,
             advance_id=advance["id"],
             runner_id=runner_id,
@@ -719,7 +719,7 @@ class ReflectionWorkflowTest(ResearchCase):
         for index in range(REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD):
             experiment_id = self.create_experiment(f"finished-{index}")
             self.transition_experiment(experiment_id, "abandon")
-        signal = self.app.research_core.reflection_overview(project_id=self.project_id)[
+        signal = self.app.research_core.reflections.overview(project_id=self.project_id)[
             "signal"
         ]
         self.assertTrue(signal["experiment_create_blocked"])
@@ -733,7 +733,7 @@ class ReflectionWorkflowTest(ResearchCase):
             role="reflection_reviewer",
         )
         self.consolidate_and_publish(reflection_id)
-        signal = self.app.research_core.reflection_overview(project_id=self.project_id)[
+        signal = self.app.research_core.reflections.overview(project_id=self.project_id)[
             "signal"
         ]
         self.assertFalse(signal["experiment_create_blocked"])
@@ -795,7 +795,7 @@ class ReflectionWorkflowTest(ResearchCase):
             target_id=reflection_id,
             role="consolidation_reviewer",
         )
-        advance = self.app.research.prepare_reflection_advance(
+        advance = self.app.research.reflections.prepare_advance(
             project_id=self.project_id,
             reflection_id=reflection_id,
             runner_id="runner",
@@ -810,7 +810,7 @@ class ReflectionWorkflowTest(ResearchCase):
                 }
             ],
         )
-        published = self.app.research.settle_reflection_advance(
+        published = self.app.research.reflections.settle_advance(
             project_id=self.project_id,
             advance_id=advance["id"],
             runner_id="runner",
@@ -846,7 +846,7 @@ class ReflectionWorkflowTest(ResearchCase):
             target_id=reflection_id,
             role="consolidation_reviewer",
         )
-        first = self.app.research.prepare_reflection_advance(
+        first = self.app.research.reflections.prepare_advance(
             project_id=self.project_id,
             reflection_id=reflection_id,
             runner_id="runner-a",
@@ -863,7 +863,7 @@ class ReflectionWorkflowTest(ResearchCase):
                 producer_session_id="consolidator",
             )
         with self.assertRaisesRegex(WorkflowError, "owned by another runner"):
-            self.app.research.prepare_reflection_advance(
+            self.app.research.reflections.prepare_advance(
                 project_id=self.project_id,
                 reflection_id=reflection_id,
                 runner_id="runner-b",
@@ -878,7 +878,7 @@ class ReflectionWorkflowTest(ResearchCase):
                 (first["id"],),
             )
 
-        recovered = self.app.research.prepare_reflection_advance(
+        recovered = self.app.research.reflections.prepare_advance(
             project_id=self.project_id,
             reflection_id=reflection_id,
             runner_id="runner-b",
@@ -936,7 +936,7 @@ class ReflectionWorkflowTest(ResearchCase):
             target_id=reflection_id,
             role="consolidation_reviewer",
         )
-        advance = self.app.research.prepare_reflection_advance(
+        advance = self.app.research.reflections.prepare_advance(
             project_id=self.project_id,
             reflection_id=reflection_id,
             runner_id="runner",
@@ -950,17 +950,17 @@ class ReflectionWorkflowTest(ResearchCase):
             diffstat={"commit_count": 1},
         )
         with self.assertRaisesRegex(ValidationError, "must cover every experiment"):
-            self.app.research.settle_reflection_advance(
+            self.app.research.reflections.settle_advance(
                 **settle,
                 ancestry={},
             )
         with self.assertRaisesRegex(ValidationError, "must be true"):
-            self.app.research.settle_reflection_advance(
+            self.app.research.reflections.settle_advance(
                 **settle,
                 ancestry={experiment_id: False},
             )
 
-        published = self.app.research.settle_reflection_advance(
+        published = self.app.research.reflections.settle_advance(
             **settle,
             ancestry={experiment_id: True},
         )

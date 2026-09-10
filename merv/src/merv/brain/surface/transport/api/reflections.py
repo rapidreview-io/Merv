@@ -20,7 +20,7 @@ def build_router(
     def list_reflections(project_id: str) -> dict[str, Any]:
         # Reflection waves + staleness/coverage signal for the UI panel.
         return present_reflection_overview(
-            research.reflection_overview(project_id=project_id)
+            research.reflections.overview(project_id=project_id)
         )
 
     @api_router.get("/api/projects/{project_id}/reflections/current/graph")

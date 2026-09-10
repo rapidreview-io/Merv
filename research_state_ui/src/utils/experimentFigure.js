@@ -1,73 +1,15 @@
 /**
  * The experiment figure, derived from the state the experiment page already
- * fetched. Nothing here is agent-authored: every node is read off the attempt
- * chain, the sealed submissions, the artifacts, the review verdicts, the
- * sandbox, the conclusion and the tested claims, and is true by construction.
- * `layoutFigure` places what comes out.
+ * fetched: every node is read off the attempt chain, the sealed submissions,
+ * the artifacts, the review verdicts, the sandbox, the conclusion and the
+ * tested claims, so nothing here is agent-authored.
  *
- * THE DOCUMENT IS A TIMELINE whose spine is the sequence of *beats*:
+ * The spine is a timeline of beats — attempt k, its review, submission k.1,
+ * its review, … conclusion, claims — and everything else is a satellite
+ * naming the beat it belongs to and the side of the spine it sits on.
  *
- *   Attempt k → Design review → Submission k.1 → Experiment review → … →
- *   Conclusion → Claims
- *
- * A marker is followed by the review that judged it, and a rejecting review is
- * what leads to the next round, so round j+1 sits strictly after round j *and*
- * its verdict. Consecutive markers are also linked directly (`then`), so the
- * markers form one straight backbone and the verdicts hang off it as the loop
- * that explains each step. Everything else is a satellite naming the beat it
- * belongs to (`anchor`) and the side of the spine it lives on (`lane`):
- * `evidence` for what a beat put up for review, drawn just before its marker;
- * `execution` for the sandbox and for files not yet sealed into a submission.
- *
- * ONE NODE PER FACT. An `attempt` marker per attempt up to attempt_index (the
- * current one wears the experiment's status, earlier ones read `superseded`);
- * a `submission` marker per `submit_results` seal, numbered k.1, k.2 … in seal
- * order (other seals are not beats — the attempt marker already draws them); a
- * `review` per submitted verdict, chained after the marker it graded, so a
- * re-review is another beat and not a sibling; a `review` per open request
- * ("awaiting verdict") after the newest verdict on the round under review; an
- * `artifact` per (artifact, attempt), the overflow past six per beat per lane
- * rolled into one `artifact_group`; one `sandbox` under the beat where this
- * attempt's execution began; a `conclusion` after the final beat; and a
- * `claim` per tested claim, after the conclusion or after the final beat.
- *
- * WHERE AN ARTIFACT SITS is decided by what sealed it: a result seal makes it
- * evidence on that submission, the proposal seal makes it the proposal on the
- * attempt, anything else (an approval or retry seal, an older execution-start
- * seal, or nothing yet) is execution output trailing the latest beat before
- * it. Unsealed rows on an attempt that has sealed nothing go by role instead:
- * inputs are the proposal, outputs are execution.
- *
- * EDGES
- *   reviewed_by  marker → the review that graded it
- *   then         plain succession on the spine: marker → next marker (the
- *                backbone), approval → next round, re-review, → open gate
- *   revised_to   a rejecting verdict → the round it caused
- *   feeds        evidence artifact → the marker it was submitted with
- *   produced     attempt → execution-lane artifact   (attachment; placement)
- *   ran_on       attempt → sandbox                   (attachment; placement)
- *   concludes    final beat → conclusion
- *   tests        conclusion (or final beat) → tested claim
- * `produced` and `ran_on` are attachments the canvas shows as placement — the
- * satellite sits below its anchor's column — rather than as lines.
- *
- * THE OTHER FIELDS. `status` is normalized for coloring (pending | active |
- * done | failed | superseded | abandoned), except on a `review`, whose status
- * IS the verdict (pass | needs_changes | fail | open), a `submission`, which
- * adds `returned` for a round sent back, and a `claim`, which carries the
- * claim's own status. `qualifier` is the round a node is about ("attempt 2",
- * "round 3.1") so a label like `report.md` never has to be traced back through
- * edges; markers ARE their round and carry none. `group` is the attempt.
- * `meta.superseded` marks an artifact the experiment no longer treats as
- * current — superseded rows survive their round, which is the history.
- * `meta.submission_index` is which result round of its attempt a submission
- * is. `meta.sandbox_status` is the sandbox's own status word, which this
- * module does not own and passes through untouched. `current` is the reader's
- * reference point: the conclusion once there is one, else the latest verdict
- * or marker. The route also stamped a `schema_version`, a `source` and the
- * experiment's own identity on the payload; nothing ever read them, and a
- * projection that ships with its reader needs no wire version, so this returns
- * only {nodes, edges}.
+ * `experimentFigure.test.js` is the specification: it pins the exact nodes and
+ * edges for each fixture state, so read a rule off the fixtures, not off prose.
  */
 
 // Artifact roles that read as a proposal when nothing has sealed them yet

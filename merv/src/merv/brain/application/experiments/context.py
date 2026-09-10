@@ -11,25 +11,19 @@ from ...research_core import content_tldr
 from ...research_core import ResearchArtifacts as Artifacts
 from ...research_core import (
     EXPERIMENT_TERMINAL_STATUSES,
-    EXPERIMENT_WORKFLOW,
+    EXPERIMENT,
     ExperimentState,
-    preferred_artifact,
 )
+from ...workflows import preferred_artifact
 
 
 Record = dict[str, Any]
 
-_DESIGN_REVIEW_STATE = EXPERIMENT_WORKFLOW.review_state("design_reviewer")
-_RESULTS_REVIEW_STATE = EXPERIMENT_WORKFLOW.review_state("experiment_reviewer")
-if (
-    _DESIGN_REVIEW_STATE is None
-    or _DESIGN_REVIEW_STATE.review is None
-    or _RESULTS_REVIEW_STATE is None
-    or _RESULTS_REVIEW_STATE.review is None
-):
+_DESIGN_REVIEW_ROLE, _RESULTS_REVIEW_ROLE = "design_reviewer", "experiment_reviewer"
+_DESIGN_REVIEW_STATUS = EXPERIMENT.review_state(_DESIGN_REVIEW_ROLE)
+_RESULTS_REVIEW_STATUS = EXPERIMENT.review_state(_RESULTS_REVIEW_ROLE)
+if not _DESIGN_REVIEW_STATUS or not _RESULTS_REVIEW_STATUS:
     raise RuntimeError("experiment workflow is missing its review states")
-_DESIGN_REVIEW_ROLE = _DESIGN_REVIEW_STATE.review.role
-_RESULTS_REVIEW_ROLE = _RESULTS_REVIEW_STATE.review.role
 
 
 class ExperimentContextQuery:
@@ -73,7 +67,7 @@ class ExperimentContextQuery:
                 if isinstance(claim, dict)
             ],
         }
-        if status == EXPERIMENT_WORKFLOW.success_status:
+        if status == EXPERIMENT.success_status:
             experiment["conclusion"] = state.get("conclusion") or ""
 
         return {
@@ -257,7 +251,7 @@ class ExperimentContextQuery:
     @staticmethod
     def _plan_status(*, state: ExperimentState | Record, artifact_id: str) -> str:
         status = str(state.get("status") or "")
-        if status == _DESIGN_REVIEW_STATE.name:
+        if status == _DESIGN_REVIEW_STATUS:
             return "in_review"
         review = _latest_review(
             state=state, role=_DESIGN_REVIEW_ROLE, artifact_id=artifact_id
@@ -275,7 +269,7 @@ class ExperimentContextQuery:
         artifact_id: str,
         status: str,
     ) -> str:
-        if status == _RESULTS_REVIEW_STATE.name:
+        if status == _RESULTS_REVIEW_STATUS:
             return "in_review"
         review = _latest_review(
             state=state, role=_RESULTS_REVIEW_ROLE, artifact_id=artifact_id
@@ -284,7 +278,7 @@ class ExperimentContextQuery:
             return "changes_requested"
         if review and str(review.get("verdict") or "") == "pass":
             return "approved"
-        if status == EXPERIMENT_WORKFLOW.success_status and not _reviews_for_role(
+        if status == EXPERIMENT.success_status and not _reviews_for_role(
             state=state, role=_RESULTS_REVIEW_ROLE
         ):
             return "approved"

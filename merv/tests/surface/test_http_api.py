@@ -13,7 +13,7 @@ from tests.support.brain import TestBrain, upload_token
 from tests.research_core.scenarios import (
     REVIEW_SYNOPSIS, VALID_GRAPH, VALID_PLAN, VALID_REPORT, complete_no_code_consolidation,
 )
-from merv.brain.research_core.experiment_workflow import RETURN_TO_PLANNED
+from merv.brain.workflows.definitions.experiment import RETURN_TO_PLANNED
 from merv.brain.surface.transport.api import create_fastapi_app
 from tests.support.infrastructure import FakeInfrastructureClient, seed_sandbox
 from merv.brain.kernel.utils import now_iso
@@ -402,7 +402,7 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.assertTrue(self.request("GET", "/api/sandboxes/health")["ok"])
 
     def test_application_components_share_the_composed_service_instances(self) -> None:
-        self.assertIs(self.app.research._experiments, self.app.experiments)
+        self.assertIs(self.app.research.experiments, self.app.experiments)
         self.assertIs(self.app.research.artifacts, self.app.artifacts)
         self.assertFalse(hasattr(self.app._app, "_record_core"))
         self.assertIs(self.app.artifact_tools.artifacts, self.app.artifacts)

@@ -250,7 +250,7 @@ function rowState(result, status) {
 }
 
 function TaskCore({ task }) {
-  const deliverables = ((task.deliverables && task.deliverables.length ? task.deliverables : task.checks) || [])
+  const deliverables = (task.deliverables || [])
     .map((text, i) => ({ number: i + 1, text: String(text) }));
   const results = new Map((task.results || []).map(r => [r.number, r]));
   const total = deliverables.length;

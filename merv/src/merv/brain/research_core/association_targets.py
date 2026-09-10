@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from .artifact_models import ArtifactTarget
 from ..kernel.utils import NotFoundError, ValidationError
-from .experiment_workflow import EXPERIMENT_TERMINAL_STATUSES
-from .reflection_workflow import REFLECTION_TERMINAL_STATUSES
-from .task_workflow import TASK_TERMINAL_STATUSES
+from .policy import (
+    EXPERIMENT_TERMINAL_STATUSES,
+    REFLECTION_TERMINAL_STATUSES,
+    TASK_TERMINAL_STATUSES,
+)
 
 _TABLE_BY_TYPE = {
     "experiment": "experiments",

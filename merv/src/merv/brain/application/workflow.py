@@ -3,29 +3,23 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any
-
-from ..workflows import PROJECT_GRAPH_ROLE
 
 from ..research_core import Artifact
 from ..kernel.utils import NotFoundError
 from ..research_core import (
     EXPERIMENT_ACTIVE_PROCESS_STATUSES,
     EXPERIMENT_TERMINAL_STATUSES,
-    EXPERIMENT_WORKFLOW,
+    EXPERIMENT,
     Research,
     ResearchSnapshot,
     TASK_TERMINAL_STATUSES,
-)
-from ..infrastructure import RemoteSandboxes as SandboxEngine
-from .experiments.presentation import (
-    ProducedObjectCatalog,
     project_fields,
     project_rows,
-    rich_experiment_state,
 )
+from ..infrastructure import RemoteSandboxes as SandboxEngine
+from .experiments.presentation import ProducedObjectCatalog, rich_experiment_state
 from .experiments.context import ExperimentContextQuery
 from .project_context import ProjectContextQuery
 from .reflection_guidance import literature_hint
@@ -34,21 +28,27 @@ from .tasks import TaskContextQuery, rich_task_state, slim_task_state
 
 Record = dict[str, Any]
 
-_RESULT_WORK = EXPERIMENT_WORKFLOW.effect_sources("result_submission")
-_RESULT_REVIEW = EXPERIMENT_WORKFLOW.effect_destinations("result_submission")
+_RESULT_WORK = EXPERIMENT.effect_sources("result_submission")
+_RESULT_REVIEW = EXPERIMENT.effect_destinations("result_submission")
 _DESIGN_REVIEW = {
-    state.name
-    for state in EXPERIMENT_WORKFLOW.states
-    if state.review is not None and state.name not in _RESULT_REVIEW
+    node.name
+    for node in EXPERIMENT.workflow.nodes
+    if node.execution.read_only and node.name not in _RESULT_REVIEW
 }
 _EXPERIMENT_PRIORITY = {
     **{status: 0 for status in _RESULT_WORK},
     **{status: 1 for status in _RESULT_REVIEW},
     **{status: 2 for status in _DESIGN_REVIEW},
-    EXPERIMENT_WORKFLOW.initial: 3,
+    EXPERIMENT.workflow.initial: 3,
 }
 _PROCESS_PRIORITY = {"running": 0, "provisioning": 1}
 _STATUS_EXPERIMENT_FIELDS = ("id", "name", "intent", "status", "attempt_index")
+_PROCESS_EXPERIMENT_FIELDS = ("id", "intent", "status", "attempt_index")
+_ARTIFACT_LIST_FIELDS = (
+    "id", "target_type", "target_id", "role", "attempt_index", "lens_id", "path",
+    "title", "size_bytes", "content_type", "status", "created_by", "created_at",
+    "updated_at",
+)
 _STATUS_TASK_FIELDS = ("id", "name", "goal", "status", "attempt_index")
 _TASK_PRIORITY = {"in_review": 0, "in_progress": 1}
 _SANDBOX_SUMMARY_FIELDS = (
@@ -358,119 +358,9 @@ class StatusAndNextQuery:
         ]
 
 
-def project_at_a_glance(snapshot: ResearchSnapshot) -> Record:
-    """Compact project orientation derived from one Research snapshot."""
-    latest = snapshot.latest_published_reflection
-    terminal = [
-        item
-        for item in snapshot.experiments
-        if str(item.get("status")) in EXPERIMENT_TERMINAL_STATUSES
-    ]
-    active = [
-        item
-        for item in snapshot.experiments
-        if str(item.get("status")) not in EXPERIMENT_TERMINAL_STATUSES
-    ]
-    covered = {
-        str(item.get("id"))
-        for item in ((latest or {}).get("corpus") or {}).get("terminal_experiments", [])
-        if isinstance(item, dict)
-    }
-    since = [item for item in terminal if str(item.get("id")) not in covered]
-    changed: list[str] = []
-    for event in snapshot.claim_events_since_reflection:
-        claim_id = str(event.get("target_id") or "")
-        if (
-            claim_id
-            and claim_id not in changed
-            and _event_payload(event).get("source_reflection_id")
-            != (latest or {}).get("id")
-        ):
-            changed.append(claim_id)
-    reflection = None
-    if latest is not None:
-        graph = _artifact_link(latest, (PROJECT_GRAPH_ROLE,), "project_graph")
-        document = _artifact_link(latest, ("reflection_doc",), "reflection_doc")
-        reflection = {
-            "reflection_id": latest.get("id"),
-            "time": latest.get("published_at"),
-            "reflection_doc_artifact_id": (
-                document.get("artifact_id") if document else None
-            ),
-            "project_graph_artifact_id": (graph.get("artifact_id") if graph else None),
-        }
-    covered_count = len(covered & {str(item.get("id")) for item in terminal})
-    active_tasks = [
-        item
-        for item in snapshot.tasks
-        if str(item.get("status")) not in TASK_TERMINAL_STATUSES
-    ]
-    return {
-        "summary": _glance_summary(
-            latest=latest,
-            terminal_count=len(terminal),
-            covered_count=covered_count,
-            experiments_since=len(since),
-            claims_changed=len(changed),
-        ),
-        "recent": {
-            "experiments": project_rows(
-                sorted(
-                    snapshot.experiments,
-                    key=lambda row: str(
-                        row.get("updated_at") or row.get("created_at") or ""
-                    ),
-                    reverse=True,
-                )[:5],
-                ("id", "name", "status"),
-            ),
-            "tasks": project_rows(
-                sorted(
-                    snapshot.tasks,
-                    key=lambda row: str(
-                        row.get("updated_at") or row.get("created_at") or ""
-                    ),
-                    reverse=True,
-                )[:5],
-                ("id", "name", "status"),
-            ),
-            "claims": project_rows(
-                snapshot.recent_claims,
-                ("id", "status", "confidence", "statement"),
-            ),
-        },
-        "project_reflection": reflection,
-        "since_reflection": {
-            "finished_experiment_ids": [str(item.get("id")) for item in since],
-            "changed_claim_ids": changed,
-            "active_experiment_ids": [str(item.get("id")) for item in active],
-            "active_task_ids": [str(item.get("id")) for item in active_tasks],
-        },
-        "open_reflection_id": (
-            snapshot.open_reflection.get("id") if snapshot.open_reflection else None
-        ),
-    }
-
-
 def artifact_list_record(artifact: Artifact) -> Record:
-    """Preserve the dashboard's existing compact artifact wire shape."""
-
-    return {
-        "id": artifact.id,
-        "target_type": artifact.target_type,
-        "target_id": artifact.target_id,
-        "role": artifact.role,
-        "attempt_index": artifact.attempt_index,
-        "lens_id": artifact.lens_id,
-        "path": artifact.path,
-        "title": artifact.title,
-        "size_bytes": artifact.size_bytes,
-        "content_type": artifact.content_type,
-        "status": artifact.status,
-        "created_by": artifact.created_by,
-        "created_at": artifact.created_at,
-        "updated_at": artifact.updated_at,
-    }
+    """The dashboard's artifact row: the model's own columns, minus the bytes."""
+    return {name: getattr(artifact, name) for name in _ARTIFACT_LIST_FIELDS}
 
 
 def _sort_active(items: list[Record], priority: dict[str, int]) -> list[Record]:
@@ -485,17 +375,14 @@ def _sort_active(items: list[Record], priority: dict[str, int]) -> list[Record]:
 def _process_view(
     *, sandbox: Record, experiment: Record | None, experiments: list[Record]
 ) -> Record:
-    result = {**sandbox, "process_type": "sandbox"}
-    if experiment is not None:
-        result["experiment"] = {
-            key: experiment[key] for key in ("id", "intent", "status", "attempt_index")
-        }
-    if experiments:
-        result["active_experiments"] = [
-            {key: item[key] for key in ("id", "intent", "status", "attempt_index")}
-            for item in experiments
-        ]
-    return result
+    return {
+        **sandbox,
+        "process_type": "sandbox",
+        **({} if experiment is None
+           else {"experiment": project_fields(experiment, _PROCESS_EXPERIMENT_FIELDS)}),
+        **({} if not experiments
+           else {"active_experiments": project_rows(experiments, _PROCESS_EXPERIMENT_FIELDS)}),
+    }
 
 
 def _slim_status(
@@ -567,71 +454,4 @@ def _sandbox_summary(sandboxes: list[Record]) -> Record:
     }
 
 
-def _event_payload(event: Record) -> Record:
-    try:
-        payload = json.loads(str(event.get("payload_json") or "{}"))
-    except json.JSONDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _artifact_link(
-    reflection: Record, roles: tuple[str, ...], canonical_role: str
-) -> Record | None:
-    attempt = reflection.get("attempt_index")
-    candidates = [
-        artifact
-        for artifact in reflection.get("artifacts", [])
-        if artifact.get("role") in roles and artifact.get("attempt_index") == attempt
-    ]
-    if not candidates:
-        return None
-    rank = {role: index for index, role in enumerate(roles)}
-    artifact = min(
-        candidates,
-        key=lambda item: (
-            rank.get(str(item.get("role")), len(roles)),
-            -(item.get("submitted_order") or 0),
-        ),
-    )
-    return {
-        "label": (
-            "Current project graph"
-            if canonical_role == "project_graph"
-            else "Latest reflection doc"
-        ),
-        "kind": "artifact",
-        "role": canonical_role,
-        "legacy_role": (
-            artifact.get("role") if artifact.get("role") != canonical_role else None
-        ),
-        "artifact_id": artifact.get("id"),
-        "path": artifact.get("path"),
-    }
-
-
-def _glance_summary(
-    *,
-    latest: Record | None,
-    terminal_count: int,
-    covered_count: int,
-    experiments_since: int,
-    claims_changed: int,
-) -> str:
-    if latest is None:
-        summary = f"No published reflection; 0/{terminal_count} finished experiments covered; {terminal_count} finished experiments since."
-        return summary + (" New reflection recommended." if terminal_count >= 3 else "")
-    pieces = [
-        f"Latest reflection covers {covered_count}/{terminal_count} finished experiments"
-    ]
-    if experiments_since:
-        pieces.append(f"{experiments_since} finished experiments since")
-    if claims_changed:
-        pieces.append(f"{claims_changed} claims changed since")
-    if len(pieces) == 1:
-        pieces.append("no newer experiment or claim changes detected")
-    summary = "; ".join(pieces) + "."
-    return summary + (" New reflection recommended." if experiments_since >= 3 else "")
-
-
-__all__ = ["StatusAndNextQuery", "artifact_list_record", "project_at_a_glance"]
+__all__ = ["StatusAndNextQuery", "artifact_list_record"]

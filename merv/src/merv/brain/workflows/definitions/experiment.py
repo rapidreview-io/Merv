@@ -7,11 +7,12 @@ from .artifact_roles import EXHIBIT_ROLE
 from merv.shared.markdown_images import markdown_image_links
 
 from ..graph import (
-    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Issue, Node, RecordKind,
+    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Issue, Node, Public, RecordKind,
     Metadata, Reference, Metadata, ReviewGate, ReviewReturn, Workflow,
 )
 from .execution import EXPERIMENT_EXECUTION, REVIEW_EXECUTION
-from .documents import graph_problems, markdown_section_body, plan_sections_missing, preferred_artifact, report_problems
+from .documents import (REQUIRED_PLAN_SECTIONS, graph_problems, markdown_section_body, preferred_artifact,
+                        report_problems, required_markdown_sections_missing)
 
 
 def _figure_problem(role, path, figures):
@@ -24,7 +25,7 @@ def _figure_problem(role, path, figures):
 
 def _plan_problems(document, snapshot, knowledge):
     text = str(document.get("text") or "")
-    missing_sections = plan_sections_missing(text)
+    missing_sections = required_markdown_sections_missing(text, REQUIRED_PLAN_SECTIONS)
     if missing_sections:
         return ("experiment plan is missing required sections before design review: " + ", ".join(missing_sections)
                 + ". Fill in the plan template's required spine — Summary; Objective & hypothesis; Evaluation — "
@@ -296,4 +297,6 @@ KIND = RecordKind(
     commit_columns={"revise_plan": ("attempt_index", "revision_context"),
                     "revise_execution": ("revision_context",), "retry_running": ("revision_context",),
                     "complete": ("conclusion",)},
+    # An agent reads the claim follow-ups as the answer to the gate it just saw.
+    public=Public(after={"claim_update_suggestions": "gate_checklist"}),
 )

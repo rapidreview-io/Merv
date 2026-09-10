@@ -89,10 +89,10 @@ class CommittedEventTest(unittest.TestCase):
 
     def test_research_transition_returns_its_exact_committed_event(self) -> None:
         research = Research(store=self.store, artifacts=self.artifacts, workflows=Workflows(store=self.store))
-        created = research.create_experiment(
+        created = research.experiments.create(
             project_id=self.project_id, name="committed-event", intent="test"
         )
-        committed = research.transition_experiment(
+        committed = research.experiments.transition_with_event(
             project_id=self.project_id,
             experiment_id=created["id"],
             transition="mark_failed",
@@ -133,7 +133,7 @@ class CommittedEventTest(unittest.TestCase):
         )
 
     def test_event_insert_failure_rolls_back_state_and_event_together(self) -> None:
-        experiments = Research(store=self.store, artifacts=self.artifacts, workflows=Workflows(store=self.store))._experiments
+        experiments = Research(store=self.store, artifacts=self.artifacts, workflows=Workflows(store=self.store)).experiments
         created = experiments.create(
             project_id=self.project_id, name="rollback-event", intent="test"
         )

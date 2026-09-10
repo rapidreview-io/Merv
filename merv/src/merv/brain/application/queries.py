@@ -7,16 +7,15 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from ..workflows import PROJECT_GRAPH_ROLE
-
-from ..research_core import Artifact, ResearchArtifacts as Artifacts
-from ..research_core import (
+from ..workflows import (
     MAX_GRAPH_NODES,
-    Research,
+    PROJECT_GRAPH_ROLE,
     graph_problems,
-    historical_latest_artifacts,
+    latest_per_slot,
     preferred_artifact,
 )
+
+from ..research_core import Artifact, Research, ResearchArtifacts as Artifacts
 from .reflection_guidance import present_reflection_signal
 from .reflections import present_reflection_state
 
@@ -31,7 +30,7 @@ class LogicGraphQuery:
     artifacts: Artifacts
 
     def experiment(self, *, project_id: str, experiment_id: str) -> Record:
-        experiment = self.research.experiment_state(
+        experiment = self.research.experiments.get_state(
             experiment_id=experiment_id, project_id=project_id
         )
         attempt = experiment.get("attempt_index")
@@ -39,7 +38,7 @@ class LogicGraphQuery:
         # that produced it, so the newest graph the experiment ever submitted
         # is an honest answer even after a rejection bumped the attempt.
         chosen = preferred_artifact(
-            artifacts=historical_latest_artifacts(experiment.get("artifacts", [])),
+            artifacts=latest_per_slot(experiment.get("artifacts", [])),
             roles=("graph",),
         )
         base = {
@@ -65,7 +64,7 @@ class LogicGraphQuery:
         return self._payload(base=base, chosen=chosen, text=text, project_id=project_id)
 
     def project(self, *, project_id: str) -> Record:
-        selection = self.research.project_logic_graph_selection(project_id=project_id)
+        selection = self.research.reflections.project_logic_graph_selection(project_id=project_id)
         return self._for_reflection(
             project_id=project_id,
             reflection=selection.get("reflection"),
@@ -77,7 +76,7 @@ class LogicGraphQuery:
         return self._for_reflection(
             project_id=project_id,
             reflection=present_reflection_state(
-                self.research.reflection_state(
+                self.research.reflections.get_state(
                     reflection_id=reflection_id, project_id=project_id
                 )
             ),

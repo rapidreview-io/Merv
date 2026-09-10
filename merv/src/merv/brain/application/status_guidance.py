@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
-from ..research_core import GateEvaluation
+from ..research_core import GateEvaluation, project_fields, project_rows
 from ..workflows import WORKFLOWS
-from .experiments.presentation import project_rows
 from .reflection_guidance import idle_reflection_hint, present_reflection_signal, reflection_create_block_reason
+
+
+_SLIM_REFLECTION_FIELDS = ("id", "title", "status", "attempt_index", "revision_context",
+                           "reflection_coverage")
 
 
 class StatusGuidancePolicy:
@@ -120,7 +123,7 @@ class StatusGuidancePolicy:
 
     def _slim_reflection(self, reflection):
         return {
-            **{key: reflection.get(key) for key in ("id", "title", "status", "attempt_index", "revision_context", "reflection_coverage")},
+            **project_fields(reflection, _SLIM_REFLECTION_FIELDS),
             "roster": project_rows(reflection.get("roster", []), ("id", "title", "core")),
             "current_attempt_artifacts": project_rows(reflection.get("current_attempt_artifacts", []),
                                                       ("id", "role", "lens_id", "path", "size_bytes", "tldr")),

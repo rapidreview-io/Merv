@@ -109,10 +109,10 @@ class TestBrain:
                 update=research.update_claim,
                 list_claims=research.list_claims,
             ),
-            "experiments": research._experiments,
+            "experiments": research.experiments,
             "graph_refs": SimpleNamespace(resolve_index=research.resolve_graph_refs),
-            "reflection_waves": research._reflections,
-            "reviews": research._reviews,
+            "reflection_waves": research.reflections,
+            "reviews": research.reviews,
             "artifacts": self._app.artifacts,
             "feed": self._app.feed,
             "literature": self._app.literature,
@@ -133,7 +133,7 @@ class TestBrain:
         return getattr(self._app, self._PRIVATE_ALIASES.get(name, name))
 
     def current_project(self, *, tenant_id: str | None = None) -> dict[str, Any]:
-        return self._app.application.current_project(tenant_id=tenant_id)
+        return self._app.research.current_project(tenant_id=tenant_id)
 
     def list_tools(self) -> list[dict[str, Any]]:
         return self._app.tools.list_tools()

@@ -29,7 +29,7 @@ class ExperimentRuntimeTest(ResearchCase):
         created = self.call("workflow.start", project_id=self.project_id, workflow="experiment", request_id="create",
                             data={"name": "registered-experiment", "intent": "Test an explicit research claim."})
         experiment_id = created["id"]
-        self.assertEqual(self.app.research.experiment_state(project_id=self.project_id, experiment_id=experiment_id)["intent"], "Test an explicit research claim.")
+        self.assertEqual(self.app.research.experiments.get_state(project_id=self.project_id, experiment_id=experiment_id)["intent"], "Test an explicit research claim.")
         with self.assertRaisesRegex(WorkflowError, "plan artifact"):
             self.advance(experiment_id, "submit_design", {"plan_present": True})
         plan = self.submit(target_type="experiment", target_id=experiment_id, role="plan", path="plan.md", body=VALID_PLAN)
@@ -91,7 +91,7 @@ class ExperimentRuntimeTest(ResearchCase):
         self.results(experiment_id)
         self.advance(experiment_id, "submit_results")
         self.review(target_type="experiment", target_id=experiment_id, role="experiment_reviewer", verdict="needs_changes", return_to="planned")
-        state = self.app.research.experiment_state(project_id=self.project_id, experiment_id=experiment_id)
+        state = self.app.research.experiments.get_state(project_id=self.project_id, experiment_id=experiment_id)
         current = runtime.get(project_id=self.project_id, instance_id=experiment_id)
         self.assertEqual((state["status"], state["attempt_index"]), ("planned", 2))
         self.assertEqual(tuple(current.data["approved_plan_artifacts"]), ())
@@ -99,17 +99,17 @@ class ExperimentRuntimeTest(ResearchCase):
 
     def test_exhibit_pin_rejects_stale_revision_and_changed_source_evidence(self):
         experiment_id, _ = self.approved()
-        state = self.app.research.experiment_state(project_id=self.project_id, experiment_id=experiment_id)
+        state = self.app.research.experiments.get_state(project_id=self.project_id, experiment_id=experiment_id)
         ids = tuple(item["id"] for item in state["current_attempt_artifacts"])
         parameters = {"project_id": self.project_id, "experiment_id": experiment_id, "verdict": {"pinned": True},
                       "expected_revision": 2, "expected_attempt_index": 1, "expected_artifact_ids": ids,
                       "artifact_path": "metrics-exhibit.md", "artifact_data": b"Metrics from old evidence"}
         self.submit(target_type="experiment", target_id=experiment_id, role="result", path="new.json", body='{"accuracy":0.7}')
         with self.assertRaisesRegex(WorkflowError, "evidence changed"):
-            self.app.research.record_exhibit_verdict(**parameters)
+            self.app.research.experiments.record_exhibit_verdict(**parameters)
         self.advance(experiment_id, "retry_running")
         with self.assertRaisesRegex(WorkflowError, "changed"):
-            self.app.research.record_exhibit_verdict(**parameters)
+            self.app.research.experiments.record_exhibit_verdict(**parameters)
         with self.app.store.connect() as conn:
             pinned = conn.execute("SELECT COUNT(*) AS n FROM research_artifacts WHERE target_id = ? AND role = 'exhibit'", (experiment_id,)).fetchone()["n"]
             verdicts = conn.execute("SELECT COUNT(*) AS n FROM events WHERE target_id = ? AND type = 'experiment.exhibit_generated'", (experiment_id,)).fetchone()["n"]
