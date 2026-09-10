@@ -1,4 +1,5 @@
 import { pdfByline, pdfFallbackLabel } from './pdfModel';
+import { cx } from '../utils/format';
 
 export function PdfOverlay({
   info,
@@ -10,11 +11,11 @@ export function PdfOverlay({
   persistent,
   visible,
 }) {
-  const classes = [
+  const classes = cx(
     'postcard-pdf-overlay',
     persistent ? 'postcard-pdf-overlay--persistent' : '',
     visible ? 'postcard-pdf-overlay--visible' : '',
-  ].filter(Boolean).join(' ');
+  );
   const zoomLabel = zoom === 'fit' ? 'fit' : `${Math.round(zoom * 100)}%`;
   return (
     <div className={classes}>
@@ -66,11 +67,11 @@ export function PdfOverlay({
 }
 
 export function PdfFallbackOverlay({ info, persistent, visible }) {
-  const classes = [
+  const classes = cx(
     'postcard-pdf-overlay',
     persistent ? 'postcard-pdf-overlay--persistent' : '',
     visible ? 'postcard-pdf-overlay--visible' : '',
-  ].filter(Boolean).join(' ');
+  );
   return (
     <div className={classes}>
       <div className="postcard-pdf-overlay-meta">

@@ -105,6 +105,12 @@ export function isMarkdown(path) {
   return ext === 'md' || ext === 'markdown' || ext === 'mdx';
 }
 
+// A class list from parts, dropping the falsy ones:
+//   cx('row', open && 'is-open', className)
+export function cx(...parts) {
+  return parts.filter(Boolean).join(' ');
+}
+
 // The last non-empty path segment ("runs/2/loss.svg" -> "loss.svg").
 export function basename(p) {
   return (p || '').split('/').filter(Boolean).pop() || p || '';

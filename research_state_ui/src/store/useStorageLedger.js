@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { api } from '../api';
+import { useIntervalPoll } from './usePolling';
 
 const POLL_MS = 60000;
 
@@ -34,13 +35,7 @@ export function useStorageLedger(projectId) {
     }
   }, [projectId]);
 
-  useEffect(() => {
-    reload();
-    const t = setInterval(() => {
-      if (document.visibilityState === 'visible') reload();
-    }, POLL_MS);
-    return () => clearInterval(t);
-  }, [reload]);
+  useIntervalPoll(reload, POLL_MS);
 
   return { objects, loading, error, unsupported, reload };
 }

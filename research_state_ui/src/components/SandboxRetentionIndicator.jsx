@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   useProjectStore,
   selectSandboxes,
   selectExperiments,
 } from '../store/useProjectStore';
+import { useNow } from '../store/useNow';
 import { expName } from '../utils/experiment';
 import { until } from '../utils/time';
 import SandboxRetentionDetailsModal from './SandboxRetentionDetailsModal';
@@ -22,14 +23,8 @@ export default function SandboxRetentionIndicator() {
   const sandboxes = useProjectStore(selectSandboxes);
   const experiments = useProjectStore(selectExperiments);
 
-  const [now, setNow] = useState(Date.now());
   const [detailKey, setDetailKey] = useState(null);
-
-  // 1Hz tick for expiry labels.
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, []);
+  const now = useNow(1000); // expiry labels
 
   const titleFor = useMemo(() => {
     const map = {};

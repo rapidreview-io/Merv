@@ -395,11 +395,11 @@ function ExpNode({ data }) {
   const figSt = FIG_ST[data.tone];
   return (
     <div
-      className={[
+      className={cx(
         'fig-node', 'wflow-fig', isTask ? 'fig-node--task' : 'fig-node--experiment',
         figSt ? `fig-st--${figSt}` : '',
         selected ? 'fig-node--selected' : '',
-      ].filter(Boolean).join(' ')}
+      )}
       title={`${data.name} · ${data.sub}`}
       role="button"
       tabIndex={0}
@@ -428,11 +428,11 @@ function ExpGroupNode({ id, data }) {
     || ((sel?.kind === 'exp' || sel?.kind === 'task') && data.ids.includes(sel.id));
   return (
     <div
-      className={[
+      className={cx(
         'fig-node', 'wflow-fig', 'fig-node--experiment', 'wflow-fig--group',
         'fig-st--failed',
         selected ? 'fig-node--selected' : '',
-      ].filter(Boolean).join(' ')}
+      )}
       title={data.sub}
       role="button"
       tabIndex={0}

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import ArtifactContentView from '../ArtifactContentView';
 import ReviewCard from '../ReviewCard';
+import { cx } from '../../utils/format';
 
 /**
  * ReflectionSpotlight — the wave's documents in the exact report/plan
@@ -62,11 +63,11 @@ export default function ReflectionSpotlight({
                     type="button"
                     role="tab"
                     aria-selected={tab === l.id}
-                    className={[
+                    className={cx(
                       'fig-title-tab',
                       tab === l.id ? 'fig-title-tab--on' : '',
                       covered ? '' : 'rfls-tab--pending',
-                    ].filter(Boolean).join(' ')}
+                    )}
                     onClick={() => setTab(l.id)}
                     title={covered ? l.charter : `${l.title || l.id} — reflection not submitted yet`}
                   >

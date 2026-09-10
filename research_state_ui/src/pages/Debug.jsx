@@ -6,6 +6,7 @@ import ObjId from '../components/ObjId';
 import { tsToTime } from '../utils/format';
 import { tsMs } from '../utils/time';
 import { entityRoute } from '../utils/entityResolve';
+import { useIntervalPoll } from '../store/usePolling';
 import { expName } from '../utils/experiment';
 import { useProjectStore, selectExperiments, useProjectHref } from '../store/useProjectStore';
 
@@ -128,13 +129,7 @@ export default function Debug() {
   useEffect(() => { fetchNow(); }, [fetchNow]);
 
   // Live auto-refresh, but hold still while a call is expanded for reading.
-  useEffect(() => {
-    if (paused || expandedKey != null) return undefined;
-    const t = setInterval(() => {
-      if (document.visibilityState === 'visible') fetchNow();
-    }, POLL_MS);
-    return () => clearInterval(t);
-  }, [fetchNow, paused, expandedKey]);
+  useIntervalPoll(fetchNow, POLL_MS, { enabled: !paused && expandedKey == null, immediate: false });
 
   // Ring events (oldest-first) -> tool-call rows, newest-first.
   const allCalls = useMemo(() => {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
+import { keepIfUnchanged, useIntervalPoll } from '../store/usePolling';
 import { useProjectStore, useProjectHref, selectExperiments, selectTasks } from '../store/useProjectStore';
 import StatusPill from '../components/StatusPill';
 import { buildBraid } from '../components/reflection/braidModel';
@@ -73,14 +74,10 @@ export default function Reflection() {
   const fetchReflections = useCallback(async () => {
     try {
       const payload = await api.getReflections(projectId);
-      setData(prev => (JSON.stringify(prev) === JSON.stringify(payload) ? prev : payload));
+      setData(keepIfUnchanged(payload));
     } catch { /* keep the last good list */ }
   }, [projectId]);
-  useEffect(() => {
-    fetchReflections();
-    const t = setInterval(fetchReflections, 8000);
-    return () => clearInterval(t);
-  }, [fetchReflections]);
+  useIntervalPoll(fetchReflections, 8000);
 
   const waves = data?.reflections || [];
 

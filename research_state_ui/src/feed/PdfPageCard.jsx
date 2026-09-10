@@ -10,6 +10,7 @@ import {
 } from './pdfRuntime';
 import { PdfFallbackOverlay, PdfOverlay } from './PdfOverlay';
 import './pdf-card.css';
+import { cx } from '../utils/format';
 
 export { pdfPageInfo } from './pdfModel';
 
@@ -167,12 +168,12 @@ export default function PdfPageCard({ post, projectId, info }) {
   useMountedMedia({ isMobile, state, rootRef: boxRef, open, close });
 
   if (state === 'open' && render) {
-    const classes = [
+    const classes = cx(
       'postcard-media',
       'postcard-pdf',
       'postcard-pdf--open',
       zoomedIn ? 'postcard-pdf--zoomed' : '',
-    ].filter(Boolean).join(' ');
+    );
     return (
       <div className={classes} ref={boxRef} tabIndex={-1}>
         <div

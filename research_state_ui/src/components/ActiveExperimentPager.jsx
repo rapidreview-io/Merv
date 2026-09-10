@@ -1,4 +1,5 @@
 import { expName } from '../utils/experiment';
+import { cx } from '../utils/format';
 
 /**
  * Pager for the "What's going on now" spotlight when there are multiple
@@ -36,11 +37,11 @@ export default function ActiveExperimentPager({ items, index, onChange }) {
         {items.map((exp, i) => {
           const status = String(exp?.status || '').toLowerCase();
           const title = expName(exp);
-          const cls = [
+          const cls = cx(
             'exp-pager-dot',
             `exp-pager-dot--${status || 'unknown'}`,
             i === safeIdx ? 'exp-pager-dot--selected' : '',
-          ].filter(Boolean).join(' ');
+          );
           return (
             <button
               key={exp.id || i}

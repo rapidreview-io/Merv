@@ -1,6 +1,7 @@
 import StatusPill from './StatusPill';
 import ObjId from './ObjId';
 import { shortDateTime } from '../utils/time';
+import { cx } from '../utils/format';
 
 export default function ReviewCard({ review, bare = false }) {
   if (!review) return null;
@@ -8,11 +9,10 @@ export default function ReviewCard({ review, bare = false }) {
   // `bare` drops the card chrome (border, fill, padding) so the review reads as
   // plain content inside a disclosure — the standalone Reviews pages keep the
   // boxed card.
-  const cls = ['review-card', `review-card--${verdict}`];
-  if (bare) cls.push('review-card--bare');
+  const cls = cx('review-card', `review-card--${verdict}`, bare && 'review-card--bare');
   const findings = Array.isArray(review.findings) ? review.findings : [];
   return (
-    <div className={cls.join(' ')}>
+    <div className={cls}>
       <div className="review-card-head">
         <div className="cluster">
           {/* In bare (disclosure) mode the verdict already lives in the

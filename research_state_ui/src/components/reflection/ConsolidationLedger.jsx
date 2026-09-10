@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../api';
 import { shortDateTime } from '../../utils/time';
+import { cx } from '../../utils/format';
 import {
   PRE_CONSOLIDATION, DECISIONS, LANDINGS, INTEGRATION_KIND_LABEL,
   consolidationPhase, provenanceSteps, ledgerRows, consolidationReview,
@@ -54,11 +55,11 @@ function phaseNote(phase, packet) {
 function AdvanceReceipt({ advance }) {
   if (!advance || advance.status !== 'bound') return null;
   const diff = advance.diffstat || {};
-  const stats = [
+  const stats = cx(
     diff.files_changed != null && `${diff.files_changed} files`,
     diff.insertions != null && `+${diff.insertions}`,
     diff.deletions != null && `−${diff.deletions}`,
-  ].filter(Boolean).join(' ');
+  );
   return (
     <div className="cons-receipt">
       Runner advanced central to{' '}

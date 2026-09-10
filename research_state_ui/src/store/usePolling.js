@@ -61,3 +61,30 @@ export function usePolling(intervalMs = 3000, { enabled = true } = {}) {
     };
   }, [projectId, intervalMs, enabled, refreshHome, setPolling]);
 }
+
+/**
+ * Call `fn` now, then every `intervalMs` while the tab is visible — the plain
+ * poll a page runs for its own endpoint, next to usePolling's /home loop and
+ * useStreamAwarePoll's stream-aware one. `fn` must be memoized by the caller.
+ *
+ * `enabled: false` stops the timer (the poll is off, not the page); pass
+ * `immediate: false` when the caller already fetches on its own.
+ */
+export function useIntervalPoll(fn, intervalMs, { enabled = true, immediate = true } = {}) {
+  useEffect(() => {
+    if (immediate) fn();
+    if (!enabled) return undefined;
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible') fn();
+    }, intervalMs);
+    return () => clearInterval(t);
+  }, [fn, intervalMs, enabled, immediate]);
+}
+
+/**
+ * setState updater that keeps the previous value when the poll returned the
+ * same thing, so an unchanged payload re-renders nothing downstream.
+ */
+export const keepIfUnchanged = (next) => (prev) => (
+  JSON.stringify(prev) === JSON.stringify(next) ? prev : next
+);

@@ -14,6 +14,7 @@ import { motionMs } from '../../utils/motion';
 import { usePanelWidth } from '../../store/usePanelWidth';
 import { FIGURE_GLYPH, figureStatusClass } from '../../utils/graphStatus';
 import { buildWaveFigure } from './waveModel.js';
+import { cx } from '../../utils/format';
 
 /**
  * WaveFigure — the wave's PROCESS graph, the reflection sibling of
@@ -37,12 +38,12 @@ function WaveFigNode({ data }) {
   const { selectedId, select } = useContext(WaveFigCtx);
   return (
     <div
-      className={[
+      className={cx(
         'fig-node',
         `fig-node--${data.type}`,
         `fig-st--${data.statusClass}`,
         selectedId === data.id ? 'fig-node--selected' : '',
-      ].filter(Boolean).join(' ')}
+      )}
       style={{ width: FIG_NODE_W }}
       role="button"
       tabIndex={0}

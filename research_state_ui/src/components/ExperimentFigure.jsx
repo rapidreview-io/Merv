@@ -15,6 +15,7 @@ import { usePanelWidth } from '../store/usePanelWidth';
 import { useProjectHref } from '../store/useProjectStore';
 import { useStreamAwarePoll } from '../store/useEventStream';
 import { FIGURE_GLYPH, figureStatusClass } from '../utils/graphStatus';
+import { cx } from '../utils/format';
 
 // Attachment edges that are shown as placement, not lines: an execution-lane
 // file or the sandbox simply sits next to the beat it trails. Evidence edges
@@ -68,14 +69,14 @@ function FigureNode({ data }) {
   const { selectedId, select } = useContext(SelectedContext);
   return (
     <div
-      className={[
+      className={cx(
         'fig-node',
         `fig-node--${data.type}`,
         `fig-st--${data.statusClass}`,
         data.anchor ? 'fig-node--satellite' : '',
         data.current ? 'fig-node--current' : '',
         selectedId === data.id ? 'fig-node--selected' : '',
-      ].filter(Boolean).join(' ')}
+      )}
       style={{ width: FIG_NODE_W }}
       // react-flow's own Enter/Space handler drives its internal store and
       // never reaches our onNodeClick, so keyboard activation is the card's

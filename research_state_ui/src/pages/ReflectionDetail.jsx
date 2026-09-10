@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
+import { keepIfUnchanged, useIntervalPoll } from '../store/usePolling';
 import { useProjectStore, useProjectHref, selectExperiments, selectTasks } from '../store/useProjectStore';
 import ArtifactContentView from '../components/ArtifactContentView';
 import FSMStrip, { REFLECTION_STAGES, REFLECTION_GATES, REFLECTION_TERMINAL } from '../components/FSMStrip';
@@ -64,14 +65,10 @@ export default function ReflectionDetail() {
   const fetchReflections = useCallback(async () => {
     try {
       const payload = await api.getReflections(projectId);
-      setData(prev => (JSON.stringify(prev) === JSON.stringify(payload) ? prev : payload));
+      setData(keepIfUnchanged(payload));
     } catch { /* keep the last good payload */ }
   }, [projectId]);
-  useEffect(() => {
-    fetchReflections();
-    const t = setInterval(fetchReflections, 8000);
-    return () => clearInterval(t);
-  }, [fetchReflections]);
+  useIntervalPoll(fetchReflections, 8000);
 
   const waves = data?.reflections || [];
   const idx = waves.findIndex(w => w.id === reflectionId);

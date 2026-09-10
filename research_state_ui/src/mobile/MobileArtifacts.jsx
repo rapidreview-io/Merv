@@ -5,6 +5,7 @@ import { api } from '../api';
 import ArtifactContentView from '../components/ArtifactContentView';
 import ObjId from '../components/ObjId';
 import { basename, formatBytes } from '../utils/format';
+import { keepIfUnchanged } from '../store/usePolling';
 import { expName } from '../utils/experiment';
 
 /**
@@ -23,7 +24,7 @@ export default function MobileArtifacts() {
   const fetchArtifacts = useCallback(async () => {
     try {
       const d = await api.listArtifacts(projectId);
-      setData(prev => (JSON.stringify(prev) === JSON.stringify(d) ? prev : d));
+      setData(keepIfUnchanged(d));
       setError(null);
     } catch (err) {
       setError(err.message);

@@ -12,6 +12,7 @@ import { tallyOutcomes, claimStatusColor } from '../utils/evidence';
 import { ConfidenceSignal } from '../components/ClaimEvidence';
 import { computeClaimShifts } from '../utils/claimShifts';
 import { relDays } from '../utils/time';
+import { cx } from '../utils/format';
 
 /**
  * The state-of-knowledge page: a claims board. Claims are shelved by what
@@ -146,11 +147,11 @@ function ClaimCard({ claim, experiments, shelf }) {
   const px = useProjectHref();
   const tally = tallyOutcomes(experiments);
   const evidenceAt = lastEvidenceAt(experiments);
-  const cls = [
+  const cls = cx(
     'clb-card',
     shelf === 'held' ? 'clb-card--held' : '',
     shelf === 'frontier' || shelf === 'untested' ? 'clb-card--tentative' : '',
-  ].filter(Boolean).join(' ');
+  );
   return (
     <Link to={px(`/claims/${claim.id}`)} className={cls}>
       <div className="clb-statement">{claim.statement}</div>

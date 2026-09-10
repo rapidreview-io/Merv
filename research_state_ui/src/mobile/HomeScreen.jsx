@@ -11,6 +11,7 @@ import {
   selectSandboxes,
   selectExperiments,
 } from '../store/useProjectStore';
+import { useNow } from '../store/useNow';
 import { expName } from '../utils/experiment';
 import { fmtDuration, fmtUsd, fmtHrs } from '../utils/format';
 import { DAY_MS } from '../utils/time';
@@ -136,12 +137,8 @@ export default function HomeScreen() {
     setSummaryClamped(el.scrollHeight > el.clientHeight + 1);
   }, [project?.summary]);
 
-  // Minute tick keeps the standing line and elapsed times honest.
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 30000);
-    return () => clearInterval(t);
-  }, []);
+  // Half-minute tick keeps the standing line and elapsed times honest.
+  const now = useNow();
 
   const running = sandboxes.filter(s => s.status === 'running');
   const liveSandbox = running[0] || null;

@@ -12,6 +12,9 @@
  */
 import { useCallback, useSyncExternalStore } from 'react';
 
+// The toggle's cycle, shared by the desktop sidebar and the mobile shell.
+export const NEXT_THEME_MODE = { light: 'dark', dark: 'system', system: 'light' };
+
 const KEY = 'rsui:theme';
 const media = window.matchMedia('(prefers-color-scheme: dark)');
 

@@ -3,6 +3,7 @@ import { NavLink, Link, useLocation } from 'react-router-dom';
 import { useProjectStore, useProjectHref, selectStats, selectSandboxes } from '../store/useProjectStore';
 import { useAutorunStatus } from '../store/useAutorunStatus';
 import { NEXT_THEME_MODE, useTheme } from '../store/useTheme';
+import { useNow } from '../store/useNow';
 import ProjectSwitcher from '../components/ProjectSwitcher';
 import { setSurfaceOverride } from '../store/useViewport';
 import BottomSheet from './BottomSheet';
@@ -39,11 +40,7 @@ export default function MobileShell({ children, onRefresh }) {
   const px = useProjectHref();
   // 10s tick so the "synced Xs" label and staleness stay honest even when
   // polling has stopped delivering new store state (unreachable daemon).
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 10000);
-    return () => clearInterval(t);
-  }, []);
+  const now = useNow(10000);
 
   useEffect(() => {
     document.documentElement.dataset.surface = 'mobile';

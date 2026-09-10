@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useProjectHref } from '../store/useProjectStore';
+import { useNow } from '../store/useNow';
 import ProviderIcon from './ProviderIcon';
 import SandboxTerminal from './SandboxTerminal';
 import StatusPill from './StatusPill';
@@ -57,7 +58,6 @@ const primaryExperimentId = (s) => (
  */
 export default function SandboxTable({ sandboxes, experiments, events, projectId, empty = null }) {
   const [expanded, setExpanded] = useState(null);
-  const [now, setNow] = useState(Date.now());
 
   const rows = useMemo(() => (
     (sandboxes || []).slice().sort((a, b) => {
@@ -68,12 +68,9 @@ export default function SandboxTable({ sandboxes, experiments, events, projectId
     })
   ), [sandboxes]);
 
+  // Live uptime / "expires in" labels tick at 1Hz only while something runs.
   const anyLive = rows.some(s => s.status === 'running' || s.status === 'provisioning');
-  useEffect(() => {
-    if (!anyLive) return undefined;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [anyLive]);
+  const now = useNow(anyLive ? 1000 : 0);
 
   const expById = useMemo(
     () => Object.fromEntries((experiments || []).map(e => [e.id, e])),

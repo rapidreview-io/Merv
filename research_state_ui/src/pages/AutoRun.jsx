@@ -7,6 +7,7 @@ import AutorunMachines from '../components/AutorunMachines';
 import AutorunPairing from '../components/AutorunPairing';
 import { autorunHeadline } from '../components/autorunHeadline';
 import { isLiveSession } from '../components/agentSessionPresentation';
+import { useNow } from '../store/useNow';
 
 const TABS = [
   ['active', 'Active'],
@@ -37,7 +38,6 @@ export default function AutoRun() {
   const [dispatchBusy, setDispatchBusy] = useState(false);
   const [dispatchError, setDispatchError] = useState('');
   const [tab, setTab] = useState('active');
-  const [now, setNow] = useState(Date.now());
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
@@ -101,10 +101,7 @@ export default function AutoRun() {
   // Elapsed times tick at 1 Hz only while a job runs; presence ages must keep
   // moving regardless, or a machine that stops heartbeating would stay "Live"
   // against a frozen clock.
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), running > 0 ? 1000 : 5000);
-    return () => clearInterval(timer);
-  }, [running]);
+  const now = useNow(running > 0 ? 1000 : 5000);
 
   async function toggleDispatch(next) {
     setDispatchBusy(true);

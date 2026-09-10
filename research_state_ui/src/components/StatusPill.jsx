@@ -7,17 +7,17 @@
  * values the head drives the colour and the tail renders as a faint suffix
  * inside the same pill — same shape as before, no extra chip.
  */
+import { cx } from '../utils/format';
+
 export default function StatusPill({ value, pill = true }) {
   if (!value) return null;
   const raw = String(value);
   const dot = raw.indexOf('.');
   const head = dot === -1 ? raw : raw.slice(0, dot);
   const tail = dot === -1 ? '' : raw.slice(dot + 1);
-  const cls = ['status'];
-  if (pill) cls.push('status--pill');
-  cls.push(head.toLowerCase());
+  const cls = cx('status', pill && 'status--pill', head.toLowerCase());
   return (
-    <span className={cls.join(' ')}>
+    <span className={cls}>
       {head.replace(/_/g, ' ')}
       {tail && <span className="status-phase">{tail.replace(/_/g, ' ')}</span>}
     </span>

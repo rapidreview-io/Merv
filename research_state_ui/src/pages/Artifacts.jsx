@@ -6,6 +6,7 @@ import { RawLink } from '../components/AuthedMedia';
 import ObjId from '../components/ObjId';
 import ArtifactContentView from '../components/ArtifactContentView';
 import { basename, formatBytes, fmtStamp } from '../utils/format';
+import { keepIfUnchanged, useIntervalPoll } from '../store/usePolling';
 import { expName } from '../utils/experiment';
 
 /**
@@ -66,21 +67,15 @@ export default function Artifacts() {
   const fetchArtifacts = useCallback(async () => {
     try {
       const d = await api.listArtifacts(projectId);
-      setData(prev => (JSON.stringify(prev) === JSON.stringify(d) ? prev : d));
+      setData(keepIfUnchanged(d));
       setError(null);
     } catch (err) {
       setError(err.message);
     }
   }, [projectId]);
 
-  useEffect(() => {
-    setData(null);
-    fetchArtifacts();
-    const t = setInterval(() => {
-      if (document.visibilityState === 'visible') fetchArtifacts();
-    }, 10000);
-    return () => clearInterval(t);
-  }, [fetchArtifacts]);
+  useEffect(() => { setData(null); }, [projectId]);
+  useIntervalPoll(fetchArtifacts, 10000);
 
   // Pending rows are half-born (upload token outstanding); show complete only.
   const artifacts = useMemo(

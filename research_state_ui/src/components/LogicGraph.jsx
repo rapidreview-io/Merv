@@ -16,6 +16,7 @@ import { motionMs } from '../utils/motion';
 import { usePanelWidth } from '../store/usePanelWidth';
 import { useStreamAwarePoll } from '../store/useEventStream';
 import { KIND_NEUTRAL, kindColorMap } from '../utils/graphStatus';
+import { cx } from '../utils/format';
 
 /**
  * Selection reaches the nodes through context rather than node data, so
@@ -32,11 +33,11 @@ function LogicNode({ data }) {
   const selected = selectedId === data.id;
   return (
     <div
-      className={[
+      className={cx(
         'fig-node',
         data.dead ? 'lgr-node--dead' : '',
         selected ? 'fig-node--selected' : '',
-      ].filter(Boolean).join(' ')}
+      )}
       style={{ width: FIG_NODE_W, borderLeftColor: data.color }}
       role="button"
       tabIndex={0}
