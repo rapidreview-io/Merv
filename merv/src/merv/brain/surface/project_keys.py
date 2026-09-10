@@ -246,12 +246,14 @@ class ProjectKeys:
         )
         if record is None:
             raise NotFoundError(f"project key not found: {key_id}")
-        self._revoke_lineage_rows(
-            project_id,
-            key_id,
-            owner_user_id,
-            revoked_at=now_iso(),
-        )
+        with self._store.transaction() as conn:
+            revoke_key_lineage(
+                conn,
+                project_id=project_id,
+                key_id=key_id,
+                owner_user_id=owner_user_id,
+                revoked_at=now_iso(),
+            )
         return {"key": _public_record(record)}
 
     def revoke_lineage(
@@ -261,12 +263,15 @@ class ProjectKeys:
         project_id = _required(project_id, field="project_id")
         key_id = _required(key_id, field="key_id")
         owner_user_id = _required(owner_user_id, field="owner_user_id")
-        if not self._revoke_lineage_rows(
-            project_id,
-            key_id,
-            owner_user_id,
-            revoked_at=now_iso(),
-        ):
+        with self._store.transaction() as conn:
+            revoked = revoke_key_lineage(
+                conn,
+                project_id=project_id,
+                key_id=key_id,
+                owner_user_id=owner_user_id,
+                revoked_at=now_iso(),
+            )
+        if not revoked:
             raise NotFoundError(f"project key not found: {key_id}")
         return {"revoked": True, "root_key_id": key_id}
 
@@ -390,39 +395,45 @@ class ProjectKeys:
             ).fetchone()
         return _record(updated)
 
-    def _revoke_lineage_rows(
-        self,
-        project_id: str,
-        key_id: str,
-        owner_user_id: str,
-        *,
-        revoked_at: str,
-    ) -> bool:
-        with self._store.transaction() as conn:
-            root = conn.execute(
-                """
-                SELECT id FROM project_api_keys
-                WHERE id = ? AND project_id = ? AND owner_user_id = ?
-                """,
-                (key_id, project_id, owner_user_id),
-            ).fetchone()
-            if root is None:
-                return False
-            conn.execute(
-                """
-                WITH RECURSIVE lineage(id) AS (
-                  SELECT id FROM project_api_keys WHERE id = ?
-                  UNION ALL
-                  SELECT child.id FROM project_api_keys child
-                  JOIN lineage parent ON child.parent_key_id = parent.id
-                )
-                UPDATE project_api_keys SET revoked_at = COALESCE(revoked_at, ?)
-                WHERE id IN (SELECT id FROM lineage)
-                  AND project_id = ? AND owner_user_id = ?
-                """,
-                (key_id, revoked_at, project_id, owner_user_id),
-            )
-        return True
+
+def revoke_key_lineage(
+    conn: Connection,
+    *,
+    project_id: str,
+    key_id: str,
+    owner_user_id: str,
+    revoked_at: str,
+) -> bool:
+    """Revoke a key and every rotation descendant, in the caller's transaction.
+
+    ``False`` when this owner holds no such key in this project. The OAuth
+    store calls it inside its own transaction so a replayed refresh token
+    revokes the family and every bearer derived from it in one commit.
+    """
+    root = conn.execute(
+        """
+        SELECT id FROM project_api_keys
+        WHERE id = ? AND project_id = ? AND owner_user_id = ?
+        """,
+        (key_id, project_id, owner_user_id),
+    ).fetchone()
+    if root is None:
+        return False
+    conn.execute(
+        """
+        WITH RECURSIVE lineage(id) AS (
+          SELECT id FROM project_api_keys WHERE id = ?
+          UNION ALL
+          SELECT child.id FROM project_api_keys child
+          JOIN lineage parent ON child.parent_key_id = parent.id
+        )
+        UPDATE project_api_keys SET revoked_at = COALESCE(revoked_at, ?)
+        WHERE id IN (SELECT id FROM lineage)
+          AND project_id = ? AND owner_user_id = ?
+        """,
+        (key_id, revoked_at, project_id, owner_user_id),
+    )
+    return True
 
 
 _INSERT_SQL = """
@@ -543,6 +554,7 @@ __all__ = [
     "ProjectKeyLookup",
     "ProjectKeyRecord",
     "ProjectKeys",
+    "revoke_key_lineage",
 ]
 
 

@@ -26,7 +26,7 @@ from .oauth import (
     OAuthError,
     RefreshToken,
 )
-from .project_keys import PROJECT_GRANT
+from .project_keys import PROJECT_GRANT, revoke_key_lineage
 
 LOGGER = logging.getLogger(__name__)
 
@@ -79,16 +79,10 @@ def _fingerprint(client: OAuthClient) -> str:
 
 
 # A registration nobody ever authorized: it holds no credential, so deleting it
-# revokes nothing. Shared by the scheduled sweep, the bounded prune the
-# registration path runs itself, and the at-cap eviction, so the three can never
-# drift into disagreeing about which rows are expendable.
+# revokes nothing.
 _NEVER_USED_PREDICATE = """
   client_id NOT IN (SELECT client_id FROM oauth_authorization_codes)
   AND client_id NOT IN (SELECT client_id FROM oauth_refresh_tokens)
-"""
-_UNUSED_CLIENT_PREDICATE = f"""
-  created_at < ?
-  AND {_NEVER_USED_PREDICATE}
 """
 _BY_FINGERPRINT = """
 SELECT * FROM oauth_clients WHERE metadata_fingerprint = ?
@@ -151,7 +145,7 @@ class SqlOAuthRepository:
             # Cleanup that does not depend on anyone scheduling it: every
             # registration pays for a bounded slice of the sweep, then makes
             # room at the cap if it must.
-            self._prune_unused(
+            self._delete_never_used(
                 conn=conn, cutoff=self._cutoff(None), limit=OPPORTUNISTIC_PRUNE_LIMIT
             )
             occupied = self._make_room(conn=conn)
@@ -218,41 +212,25 @@ class SqlOAuthRepository:
         make unauthenticated DCR a cheap onboarding denial of service: anyone
         could fill the table with valid metadata and lock every real client out
         until the TTL horizon. Eviction inverts that — the attacker's own
-        never-used rows are what gets dropped. Only a table whose every row is
-        USED (holds a code or a refresh token, so deleting it would revoke
-        someone's live grant) still refuses, and the per-call bound keeps the
-        work under the writer lock predictable: an over-cap table converges
-        across attempts rather than in one long one.
+        never-used rows are what gets dropped. It is the scheduled sweep with
+        the age horizon dropped, so the two can never disagree about which rows
+        are expendable. Only a table whose every row is USED (holds a code or a
+        refresh token, so deleting it would revoke someone's live grant) still
+        refuses, and the per-call bound keeps the work under the writer lock
+        predictable: an over-cap table converges across attempts rather than in
+        one long one.
         """
-        total = self._client_count(conn=conn)
-        if total < self.max_clients:
-            return total
-        evicted = self._evict_never_used(
-            conn=conn, limit=min(total - self.max_clients + 1, CAP_EVICTION_LIMIT)
-        )
-        return total - evicted
-
-    def _client_count(self, *, conn: Any) -> int:
         row = row_to_dict(
             row=conn.execute("SELECT COUNT(*) AS total FROM oauth_clients").fetchone()
         )
-        return int((row or {}).get("total") or 0)
-
-    def _evict_never_used(self, *, conn: Any, limit: int) -> int:
-        """Delete the oldest never-used registrations, ignoring their age."""
-        if limit <= 0:
-            return 0
-        cursor = conn.execute(
-            f"""
-            DELETE FROM oauth_clients WHERE client_id IN (
-              SELECT client_id FROM oauth_clients
-              WHERE {_NEVER_USED_PREDICATE}
-              ORDER BY created_at, client_id LIMIT ?
-            )
-            """,
-            (limit,),
+        total = int((row or {}).get("total") or 0)
+        if total < self.max_clients:
+            return total
+        return total - self._delete_never_used(
+            conn=conn,
+            cutoff=None,
+            limit=min(total - self.max_clients + 1, CAP_EVICTION_LIMIT),
         )
-        return max(0, int(getattr(cursor, "rowcount", 0) or 0))
 
     def client_by_id(self, *, client_id: str) -> OAuthClient | None:
         with closing(self._store.connect()) as conn:
@@ -271,7 +249,9 @@ class SqlOAuthRepository:
         cutoff = self._cutoff(now)
         try:
             with self._store.transaction() as conn:
-                deleted = self._prune_unused(conn=conn, cutoff=cutoff, limit=None)
+                deleted = self._delete_never_used(
+                    conn=conn, cutoff=cutoff, limit=None
+                )
         except Exception as exc:  # noqa: BLE001 -- one sweep must not abort the pass
             return {"deleted": 0, "ok": False, "cutoff": cutoff, "error": str(exc)[:200]}
         return {"deleted": deleted, "ok": True, "cutoff": cutoff}
@@ -282,29 +262,34 @@ class SqlOAuthRepository:
             - timedelta(days=self.unused_client_ttl_days)
         )
 
-    def _prune_unused(self, *, conn: Any, cutoff: str, limit: int | None) -> int:
-        """Delete unused registrations older than ``cutoff``, at most ``limit``.
+    @staticmethod
+    def _delete_never_used(
+        *, conn: Any, cutoff: str | None, limit: int | None
+    ) -> int:
+        """Delete never-used registrations; the one sweep all three callers run.
 
-        ``limit`` None is the full scheduled sweep; a number keeps the work a
-        registration does on its own behalf bounded and predictable. The
-        subquery form (rather than ``DELETE ... LIMIT``) is the one both
-        dialects accept.
+        ``cutoff`` None drops the age horizon, which is what the at-cap
+        eviction wants and the scheduled sweep must never do. ``limit`` None is
+        the full sweep; a number keeps the work a registration does on its own
+        behalf bounded and predictable. The subquery form (rather than
+        ``DELETE ... LIMIT``) is the one both dialects accept.
         """
+        if limit is not None and limit <= 0:
+            return 0
+        aged = "" if cutoff is None else "created_at < ? AND"
+        params = () if cutoff is None else (cutoff,)
         if limit is None:
-            cursor = conn.execute(
-                f"DELETE FROM oauth_clients WHERE {_UNUSED_CLIENT_PREDICATE}", (cutoff,)
-            )
+            statement = f"DELETE FROM oauth_clients WHERE {aged} {_NEVER_USED_PREDICATE}"
         else:
-            cursor = conn.execute(
-                f"""
+            statement = f"""
                 DELETE FROM oauth_clients WHERE client_id IN (
                   SELECT client_id FROM oauth_clients
-                  WHERE {_UNUSED_CLIENT_PREDICATE}
-                  ORDER BY created_at LIMIT ?
+                  WHERE {aged} {_NEVER_USED_PREDICATE}
+                  ORDER BY created_at, client_id LIMIT ?
                 )
-                """,
-                (cutoff, limit),
-            )
+                """
+            params = (*params, limit)
+        cursor = conn.execute(statement, params)
         return max(0, int(getattr(cursor, "rowcount", 0) or 0))
 
     def insert_code(self, *, code: AuthorizationCode) -> None:
@@ -452,19 +437,12 @@ class SqlOAuthRepository:
                 """,
                 (revoked_at, family_id),
             )
-            conn.execute(
-                """
-                WITH RECURSIVE lineage(id) AS (
-                  SELECT id FROM project_api_keys WHERE id = ?
-                  UNION ALL
-                  SELECT child.id FROM project_api_keys child
-                  JOIN lineage parent ON child.parent_key_id = parent.id
-                )
-                UPDATE project_api_keys SET revoked_at = COALESCE(revoked_at, ?)
-                WHERE id IN (SELECT id FROM lineage)
-                  AND project_id = ? AND owner_user_id = ?
-                """,
-                (key_id, revoked_at, project_id, owner_user_id),
+            revoke_key_lineage(
+                conn,
+                project_id=project_id,
+                key_id=key_id,
+                owner_user_id=owner_user_id,
+                revoked_at=revoked_at,
             )
 
 
