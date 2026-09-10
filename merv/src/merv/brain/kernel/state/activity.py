@@ -133,15 +133,21 @@ def scrub_credentials(text: str) -> str:
     return _TOKEN_SHAPE_RE.sub("<redacted>", text)
 
 
-def ledger_label(value: Any) -> str:
-    """Bound and de-fang a value on its way into an indexed label column.
+def _scrubbed(text: str, *, cap: int) -> str:
+    """Both scrubbers, then the cap, for one durable column.
 
-    Pre-trimmed before scrubbing so a multi-megabyte method name costs a slice
+    Pre-trimmed before scrubbing so a multi-megabyte value costs a slice
     rather than a regex sweep, while a token straddling the final cap is still
     seen whole by the scrubber.
     """
-    text = _CONTROL_CHARS_RE.sub(" ", str(value or "")[: LEDGER_LABEL_MAX_CHARS * 4])
-    return scrub_credentials(scrub_secret_text(text))[:LEDGER_LABEL_MAX_CHARS]
+    return scrub_credentials(scrub_secret_text(text[: cap * 4]))[:cap]
+
+
+def ledger_label(value: Any) -> str:
+    """Bound and de-fang a value on its way into an indexed label column."""
+    return _scrubbed(
+        _CONTROL_CHARS_RE.sub(" ", str(value or "")), cap=LEDGER_LABEL_MAX_CHARS
+    )
 
 
 @dataclass(slots=True)
@@ -263,10 +269,7 @@ def args_digest(*, arguments: Any) -> str:
 def error_head(*, error: str) -> str:
     """First line of an error, secret-scrubbed and capped for the ledger."""
     lines = str(error or "").strip().splitlines()
-    if not lines:
-        return ""
-    head = lines[0][: LEDGER_ERROR_MAX_CHARS * 4]
-    return scrub_credentials(scrub_secret_text(head))[:LEDGER_ERROR_MAX_CHARS]
+    return _scrubbed(lines[0], cap=LEDGER_ERROR_MAX_CHARS) if lines else ""
 
 
 def payload_chars(*, value: Any) -> int:

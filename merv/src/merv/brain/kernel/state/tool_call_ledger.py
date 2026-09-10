@@ -100,37 +100,28 @@ def _reason(exc: BaseException) -> str:
     return error_head(error=str(exc)) or type(exc).__name__
 
 
-def _set_statement_deadline(*, conn: Connection, timeout_ms: int) -> bool:
-    """Bound how long one statement may run; False where the dialect has none.
-
-    Postgres counts milliseconds; SQLite has no statement deadline at all, only
-    a lock wait, so there the answer is honestly "no such knob".
-    """
-    try:
-        conn.execute(f"SET SESSION statement_timeout = {int(timeout_ms)}")
-    except Exception:  # noqa: BLE001 -- SQLite simply has no such setting
-        return False
-    return True
-
-
 def _bound_connection(
     *, conn: Connection, lock_timeout_ms: int, statement_timeout_ms: int
 ) -> None:
     """Give ONE connection its own deadlines, whichever dialect backs it.
 
-    Applied at open, on the ledger's own connection, so the bound covers the
-    database work and not merely the queue in front of it. The record store's
-    connections keep their patient defaults: a real write is allowed to queue,
-    a telemetry row is not.
+    Postgres counts milliseconds; SQLite has no statement deadline at all,
+    only a lock wait, so the failing SET is how the dialect answers "no such
+    knob". Applied at open, on the ledger's own connection, so the bound
+    covers the database work and not merely the queue in front of it: the
+    record store's connections keep their patient defaults, because a real
+    write is allowed to queue and a telemetry row is not.
 
     Raises when neither dialect's knob took — an undeadlined ledger connection
     breaks the one promise this module makes, so the caller counts a drop
     instead of writing through it.
     """
-    if _set_statement_deadline(conn=conn, timeout_ms=statement_timeout_ms):
-        conn.execute(f"SET SESSION lock_timeout = {int(lock_timeout_ms)}")
+    try:
+        conn.execute(f"SET SESSION statement_timeout = {int(statement_timeout_ms)}")
+    except Exception:  # noqa: BLE001 -- SQLite simply has no such setting
+        conn.execute(f"PRAGMA busy_timeout = {int(lock_timeout_ms)}")
         return
-    conn.execute(f"PRAGMA busy_timeout = {int(lock_timeout_ms)}")
+    conn.execute(f"SET SESSION lock_timeout = {int(lock_timeout_ms)}")
 
 
 class ToolCallLedger:
@@ -364,27 +355,28 @@ class ToolCallLedger:
         self, *, conn: Connection, call: ToolCallRecord, context: RequestContext
     ) -> None:
         ts = now_iso()
-        agent_id = ledger_label(context.agent_id)
-        mcp_session_id = ledger_label(context.mcp_session_id)
+        # Every label is capped and scrubbed HERE, at the one writer, so no
+        # transport can put a multi-kilobyte or token-bearing value into an
+        # indexed column by forgetting to sanitize its own call site — and the
+        # payload record beside the row is given the same scrubbed values,
+        # rather than each of them scrubbing the same field again.
+        label = {name: ledger_label(value) for name, value in (
+            ("request_id", context.request_id),
+            ("principal_id", context.principal_id),
+            ("agent_id", context.agent_id),
+            ("mcp_session_id", context.mcp_session_id),
+            ("tool", call.tool), ("source", call.source),
+            ("project_id", call.project_id), ("error_code", call.error_code),
+        )}
         payload_ref = self._write_payload(
             ts=ts,
-            agent_id=agent_id,
-            request_id=ledger_label(context.request_id),
-            principal_id=ledger_label(context.principal_id),
-            mcp_session_id=mcp_session_id,
-            tool=ledger_label(call.tool),
-            source=ledger_label(call.source),
-            project_id=ledger_label(call.project_id),
             status=call.status,
             duration_ms=call.duration_ms,
             arguments=call.arguments,
             result=call.result,
             error=call.error,
-            error_code=ledger_label(call.error_code),
+            **label,
         )
-        # Every label is capped and scrubbed HERE, at the one writer, so no
-        # transport can put a multi-kilobyte or token-bearing value into an
-        # indexed column by forgetting to sanitize its own call site.
         conn.execute(
             """
             INSERT INTO tool_calls
@@ -396,22 +388,22 @@ class ToolCallLedger:
             """,
             (
                 ts,
-                ledger_label(context.request_id),
-                ledger_label(context.principal_id),
-                ledger_label(call.tool),
-                ledger_label(call.source),
-                ledger_label(call.project_id),
+                label["request_id"],
+                label["principal_id"],
+                label["tool"],
+                label["source"],
+                label["project_id"],
                 ledger_label(call.target_type),
                 ledger_label(call.target_id),
                 call.status,
-                ledger_label(call.error_code),
+                label["error_code"],
                 error_head(error=call.error),
                 call.duration_ms,
                 call.sent_chars,
                 call.received_chars,
                 args_digest(arguments=call.arguments),
-                agent_id,
-                mcp_session_id,
+                label["agent_id"],
+                label["mcp_session_id"],
                 payload_ref,
             ),
         )

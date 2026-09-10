@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError as PydanticValidationError
 
-from .contracts import TOOL_CONTRACTS, TOOL_MANIFEST
+from .contracts import TOOL_CONTRACTS
 from ..identity import ToolVisibilityError
 from ...kernel.state.activity import ToolCallRecord, monotonic_ms
 from ...kernel.utils import PermissionDeniedError, ResearchPluginError

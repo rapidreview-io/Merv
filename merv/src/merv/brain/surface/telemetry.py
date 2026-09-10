@@ -21,8 +21,6 @@ from ..kernel.utils import now_iso, parse_iso
 class ControlActivitySink(ToolActivityEmitter):
     """Bounded in-memory activity sink for the unified brain composition."""
 
-    log_path = "<control-activity-disabled>"
-
     def __init__(self, *, max_events: int = 5000) -> None:
         self.max_events = max_events
         self._events: list[dict[str, Any]] = []
@@ -63,8 +61,6 @@ class ControlActivitySink(ToolActivityEmitter):
 class ControlToolCallSink:
     """Bounded in-memory tool-call sink for the unified brain composition."""
 
-    db_path = "<control-tool-calls-disabled>"
-
     def __init__(self, *, max_rows: int = 1500) -> None:
         self.max_rows = max_rows
         self._next_id = 1
@@ -89,8 +85,6 @@ class ControlToolCallSink:
             "result": call.error
             if call.status != "ok"
             else redact_sensitive(value=call.result),
-            "args_truncated": False,
-            "result_truncated": False,
         }
         with self._lock:
             self._next_id += 1
