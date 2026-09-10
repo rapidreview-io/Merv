@@ -11,16 +11,12 @@ from __future__ import annotations
 import base64
 from typing import Any
 
+from merv.shared.shell_commands import api_base, shell_quote
+
 from ..kernel.utils import ValidationError
 from .ports import InfrastructureTransport
 
-_LOCAL_API_BASE = "http://127.0.0.1:8787"
 _PART_PAGE = 100
-
-
-def _shell_quote(value: str) -> str:
-    """Quote one POSIX shell argument."""
-    return "'" + value.replace("'", "'\\''") + "'"
 
 
 def checksum_sha256_b64(sha256: str) -> str:
@@ -39,21 +35,21 @@ def storage_submit_command(
     headers: dict[str, str] | None = None,
 ) -> str:
     """Build the direct single-PUT upload and completion command."""
-    base = (base_url or _LOCAL_API_BASE).rstrip("/")
+    base = api_base(base_url)
     # Provider-specific signed headers are opaque service output. The fallback
     # preserves existing callers of this command builder.
     signed_headers = headers if headers is not None else {
         "x-amz-checksum-sha256": checksum_b64, "Content-Type": content_type,
     }
     header_flags = " ".join(
-        f"-H {_shell_quote(f'{key}: {value}')}" for key, value in signed_headers.items()
+        f"-H {shell_quote(f'{key}: {value}')}" for key, value in signed_headers.items()
     )
     put = (
         f"curl -sf -X PUT {header_flags} "
-        f"-T {_shell_quote(path)} {_shell_quote(presigned_url)}"
+        f"-T {shell_quote(path)} {shell_quote(presigned_url)}"
     )
     complete = (
-        f"curl -sf -X POST {_shell_quote(f'{base}/api/storage/u/{token}/complete')}"
+        f"curl -sf -X POST {shell_quote(f'{base}/api/storage/u/{token}/complete')}"
     )
     return f"{put} && {complete}"
 
@@ -65,18 +61,18 @@ def storage_multipart_submit_command(*, base_url: str, path: str, token: str) ->
     fetches fresh part URLs from it, streams the parts concurrently, and posts
     back to its ``/complete`` child route.
     """
-    base = (base_url or _LOCAL_API_BASE).rstrip("/")
+    base = api_base(base_url)
     target_url = f"{base}/api/storage/u/{token}"
     return (
-        f"merv-client storage-upload --path {_shell_quote(path)} "
-        f"--target-url {_shell_quote(target_url)}"
+        f"merv-client storage-upload --path {shell_quote(path)} "
+        f"--target-url {shell_quote(target_url)}"
     )
 
 
 def storage_fetch_command(*, path: str, presigned_url: str, sha256: str) -> str:
     """Build a direct download with checksum verification."""
-    fetch = f"curl -sf -o {_shell_quote(path)} {_shell_quote(presigned_url)}"
-    verify = f"printf '%s  %s\\n' {sha256} {_shell_quote(path)} | shasum -a 256 -c"
+    fetch = f"curl -sf -o {shell_quote(path)} {shell_quote(presigned_url)}"
+    verify = f"printf '%s  %s\\n' {sha256} {shell_quote(path)} | shasum -a 256 -c"
     return f"{fetch} && {verify}"
 
 

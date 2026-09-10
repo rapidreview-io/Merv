@@ -6,14 +6,14 @@ import re
 
 MAX_FEED_EMBED_BYTES = 524_288
 
-# Defense-in-depth CSP baked into the stored document itself. The UI also
-# serves it under an iframe `sandbox` attribute and a response-header CSP
-# (see transport/feed_http.py); this meta tag covers any other consumer.
-_EMBED_CSP_CONTENT = (
+# The one embed CSP. It is baked into the stored document as a meta tag for any
+# other consumer, and transport/feed_http.py serves it as a response header with
+# a sandbox token in front, so a browser reaching an embed directly gets it too.
+EMBED_CSP_CONTENT = (
     "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
     "img-src data: blob:; font-src data:; media-src data:"
 )
-_EMBED_CSP_META = f'<meta http-equiv="Content-Security-Policy" content="{_EMBED_CSP_CONTENT}">'
+_EMBED_CSP_META = f'<meta http-equiv="Content-Security-Policy" content="{EMBED_CSP_CONTENT}">'
 
 _HEAD_SNIFF_PREFIX = 4096
 

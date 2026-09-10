@@ -22,6 +22,7 @@ from ...artifacts import (
     completed_figure_v1,
     content_envelope_v1,
 )
+from ..request_body import read_capped_body
 
 _RAW_CONTENT_HEADERS = {
     "Content-Security-Policy": "sandbox",
@@ -44,21 +45,6 @@ def _too_large(cap: int) -> JSONResponse:
     )
 
 
-async def _read_capped(request: Request, *, cap: int) -> bytes | None:
-    """Body bytes, or None once the cap is exceeded (never buffers past it)."""
-    declared = request.headers.get("content-length", "")
-    if declared.isdigit() and int(declared) > cap:
-        return None
-    data = bytearray()
-    async for chunk in request.stream():
-        # INV-6: reject on the PROJECTED size before extending, so one huge ASGI
-        # chunk is never allocated past the cap (mirrors request_body.py).
-        if len(data) + len(chunk) > cap:
-            return None
-        data.extend(chunk)
-    return bytes(data)
-
-
 def build_router(*, artifacts: Artifacts) -> APIRouter:
     api_router = APIRouter()
 
@@ -78,7 +64,7 @@ def build_router(*, artifacts: Artifacts) -> APIRouter:
     async def upload_artifact(token: str, request: Request) -> Any:
         # Token first: an unknown token 404s before any body byte is buffered.
         cap = artifacts.upload_cap(token=token, kind="artifact")
-        data = await _read_capped(request, cap=cap)
+        data = await read_capped_body(request, cap=cap)
         if data is None:
             return _too_large(cap)
         try:
@@ -104,7 +90,7 @@ def build_router(*, artifacts: Artifacts) -> APIRouter:
     @api_router.put("/api/artifacts/f/{token}")
     async def upload_figure(token: str, request: Request) -> Any:
         cap = artifacts.upload_cap(token=token, kind="figure")
-        data = await _read_capped(request, cap=cap)
+        data = await read_capped_body(request, cap=cap)
         if data is None:
             return _too_large(cap)
         try:

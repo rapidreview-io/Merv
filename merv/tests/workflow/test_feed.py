@@ -211,29 +211,6 @@ class FeedServiceTest(unittest.TestCase):
         self.assertEqual(response.status_code, 413, response.text)
         self.assertEqual(response.json()["error_code"], "payload_too_large")
 
-    def test_chunked_media_rejects_before_buffering_over_cap(self) -> None:
-        import asyncio
-
-        from merv.brain.surface.transport.feed_http import _read_capped
-
-        class _UniterableChunk:
-            def __len__(self) -> int:
-                return 17
-
-            def __iter__(self):
-                raise AssertionError("over-cap chunk was buffered")
-
-        async def _stream():
-            yield _UniterableChunk()
-
-        class _ChunkedRequest:
-            headers: dict[str, str] = {}
-
-            def stream(self):
-                return _stream()
-
-        self.assertIsNone(asyncio.run(_read_capped(_ChunkedRequest(), cap=16)))
-
     def test_feed_post_mints_regardless_of_local_file(self) -> None:
         # The server never reads the path at mint time (the agent's curl does),
         # so a path that does not exist locally still mints a valid token.

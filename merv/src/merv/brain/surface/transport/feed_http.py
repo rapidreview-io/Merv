@@ -16,7 +16,11 @@ from typing import Any, Protocol
 from fastapi import Body, Query, Request
 from fastapi.responses import JSONResponse, Response
 
+from merv.shared.feed_embeds import EMBED_CSP_CONTENT
+from merv.shared.feed_images import SVG_IMAGE_TYPE
+
 from ...feed import FeedService
+from .request_body import read_capped_body
 from ...kernel.utils import ValidationError
 
 
@@ -44,21 +48,18 @@ _BASE_IMAGE_HEADERS = {"X-Content-Type-Options": "nosniff"}
 # `script-src 'none'` makes the document inert in every modern browser, so a
 # first-party SVG chart is safe to accept. (External/unfurl SVGs never reach here
 # — they are dropped raster-only upstream.)
-_SVG_CONTENT_TYPE = "image/svg+xml"
 _SVG_CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; sandbox"
 
-# Feed embeds are interactive (scripted) HTML documents, so unlike SVG they
-# need a permissive-but-isolated sandbox: scripts/styles run, but the sandbox
-# token strips the document of same-origin, top navigation, popups, etc.
-_EMBED_CSP = (
-    "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; "
-    "style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data:"
-)
+# Feed embeds are interactive (scripted) HTML documents, so unlike SVG they need
+# a permissive-but-isolated sandbox in front of the same policy the document
+# carries: scripts and styles run, but the sandbox token strips the document of
+# same-origin, top navigation, popups, etc.
+_EMBED_CSP = f"sandbox allow-scripts; {EMBED_CSP_CONTENT}"
 
 
 def _image_headers(content_type: str) -> dict[str, str]:
     """Base hardening for every image, plus a CSP sandbox for SVG documents."""
-    if (content_type or "").split(";", 1)[0].strip().lower() == _SVG_CONTENT_TYPE:
+    if (content_type or "").split(";", 1)[0].strip().lower() == SVG_IMAGE_TYPE:
         return {**_BASE_IMAGE_HEADERS, "Content-Security-Policy": _SVG_CSP}
     return _BASE_IMAGE_HEADERS
 
@@ -76,21 +77,6 @@ def _too_large(cap: int) -> JSONResponse:
         },
         status_code=413,
     )
-
-
-async def _read_capped(request: Request, *, cap: int) -> bytes | None:
-    """Body bytes, or None once the cap is exceeded (never buffers past it)."""
-    declared = request.headers.get("content-length", "")
-    if declared.isdigit() and int(declared) > cap:
-        return None
-    data = bytearray()
-    async for chunk in request.stream():
-        # INV-6: reject on projected size before extending so one oversized
-        # ASGI chunk is never temporarily buffered past the token's cap.
-        if len(data) + len(chunk) > cap:
-            return None
-        data.extend(chunk)
-    return bytes(data)
 
 
 def _enrich_post_urls(post: dict[str, Any], project_id: str) -> None:
@@ -129,7 +115,7 @@ def register_feed_routes(
         # against both local and hosted brains. Token first (INV-12): an
         # unknown/used/expired token 404s before any body byte is buffered.
         cap = feed_api.get_upload_limit(token=token)
-        data = await _read_capped(request, cap=cap)
+        data = await read_capped_body(request, cap=cap)
         if data is None:
             return _too_large(cap)
         try:

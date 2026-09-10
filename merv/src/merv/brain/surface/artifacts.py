@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import quote
 
+from merv.shared.shell_commands import api_base, curl_upload_command
+
 from ..artifacts import Artifact as Content, CompletedFigure, PendingUpload
 from ..research_core import (
     Artifact,
@@ -20,7 +22,6 @@ from ..research_core import (
 from ..kernel.utils import NotFoundError
 
 
-_LOCAL_API_BASE = "http://127.0.0.1:8787"
 _ARTIFACT_LIST_FIELDS = (
     "id",
     "target_type",
@@ -39,10 +40,6 @@ _ARTIFACT_LIST_FIELDS = (
 )
 
 
-def _shell_quote(value: str) -> str:
-    return "'" + value.replace("'", "'\\''") + "'"
-
-
 def upload_command(
     *,
     base_url: str,
@@ -53,9 +50,9 @@ def upload_command(
     """Return the V1 ready-to-run POSIX upload command."""
     if route_code not in ("u", "f"):
         raise ValueError(f"unknown artifact upload route: {route_code}")
-    base = (base_url or _LOCAL_API_BASE).rstrip("/")
-    url = f"{base}/api/artifacts/{route_code}/{token}"
-    return f"curl -sf -T {_shell_quote(path)} {_shell_quote(url)}"
+    return curl_upload_command(
+        base_url=base_url, path=path, route=f"/api/artifacts/{route_code}/{token}"
+    )
 
 
 def pending_upload_v1(pending: PendingUpload, *, base_url: str = "") -> dict[str, Any]:
@@ -290,7 +287,7 @@ class ArtifactTools:
                 artifact = found[item]
                 row = artifact_meta_v1(artifact)
                 row["download_url"] = (
-                    f"{(base_url or _LOCAL_API_BASE).rstrip('/')}"
+                    f"{api_base(base_url)}"
                     f"/api/projects/{quote(project_id, safe='')}/artifacts/{quote(item, safe='')}/file"
                 )
                 if include_content:

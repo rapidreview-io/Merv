@@ -27,6 +27,7 @@ from merv.shared.feed_images import (
     SERVEABLE_IMAGE_TYPES,
     sniff_image_type,
 )
+from merv.shared.shell_commands import curl_upload_command
 
 from ..kernel.ports.blob_store import EvidenceBlobStore
 from ..kernel.ports.web_preview import WebPreview, WebPreviewError
@@ -79,8 +80,6 @@ NUDGE_AFTER_HOURS = 6.0
 
 # Matches artifact.upload: enough time to run curl, short-lived if leaked.
 FEED_UPLOAD_TOKEN_TTL_SECONDS = 15 * 60
-# Direct in-process calls lack the caller-reachable base injected by HTTP.
-_LOCAL_API_BASE = "http://127.0.0.1:8787"
 
 
 # -- Public application boundary and post values ---------------------------
@@ -137,14 +136,10 @@ class MediaInput:
 
 # -- Feed operations --------------------------------------------------------
 
-def _shell_quote(value: str) -> str:
-    """POSIX single-quote — the agent runs the returned command verbatim."""
-    return "'" + value.replace("'", "'\\''") + "'"
-
-
 def feed_upload_command(*, base_url: str, path: str, token: str) -> str:
-    base = (base_url or _LOCAL_API_BASE).rstrip("/")
-    return f"curl -sf -T {_shell_quote(path)} '{base}/api/feed/u/{token}'"
+    return curl_upload_command(
+        base_url=base_url, path=path, route=f"/api/feed/u/{token}"
+    )
 
 
 def _validate_handle(handle: str) -> str:
