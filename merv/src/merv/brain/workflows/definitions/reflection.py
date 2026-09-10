@@ -7,7 +7,7 @@ from ..graph import (
     Action, ArtifactNeed, Brief, Change, Edge, Issue, Metadata, Node, RecordKind, RecordNeed,
     Reference, ReviewGate, ReviewReturn, Workflow, all_of,
 )
-from ...kernel.utils import NotFoundError, ValidationError, WorkflowError
+from ...kernel.utils import NotFoundError, ValidationError, WorkflowError, now_iso
 from .checks import review_summary
 from .execution import CONSOLIDATION_EXECUTION, LENS_EXECUTION, REFLECTION_EXECUTION, REVIEW_EXECUTION
 from .documents import graph_problems, reflection_doc_review_problems, reflection_lens_doc_problems, parse_change_spec, preferred_artifact
@@ -282,28 +282,33 @@ def build_consolidation_review_context(snapshot, knowledge):
 
 
 def proposal_ready(snapshot, knowledge):
+    """A proposal this wave has not already sent to review must exist."""
     missing = consolidation_proposal(snapshot, knowledge)
     if missing:
         return missing
-    proposal = (_wave(snapshot, knowledge).get("consolidation") or {}).get("proposal") or {}
-    if proposal.get("id") == snapshot.data.get("proposal_id"):
+    if ((_wave(snapshot, knowledge).get("consolidation") or {}).get("proposal") or {}).get("id") == snapshot.data.get("proposal_id"):
         return Issue("new_consolidation_proposal_required", "Submit a revised proposal before requesting another consolidation review.",
                      "submit_consolidation_proposal", ("consolidation.submit",))
 
 
 def pin_proposal(snapshot, payload, knowledge):
+    """Freeze the exact proposal an independent consolidation review grades."""
     proposal = (_wave(snapshot, knowledge).get("consolidation") or {})["proposal"]
     return Change(data={"proposal_id": proposal["id"], "proposal_sha": proposal["proposal_sha"], "revision_context": ""},
-                  actions=(Action("review.request", {"target_type": snapshot.workflow, "target_id": snapshot.id, "role": "consolidation_reviewer"}),))
+                  actions=(Action("review.request", {"target_type": snapshot.workflow, "target_id": snapshot.id,
+                                                     "role": "consolidation_reviewer"}),))
+
+
+def publish_wave(snapshot, payload, knowledge):
+    """Pin the graph this wave published and start its experiment/task wave."""
+    return Change(data={"published_at": now_iso(),
+                        "published_graph_version_id": (_artifact(_wave(snapshot, knowledge), "project_graph") or {}).get("id")},
+                  actions=(Action("workflow.start", {"workflow": "research_wave", "request_id": f"reflection-wave:{snapshot.id}",
+                                                     "data": {"reflection_id": snapshot.id}}),))
 
 
 def request_reflection_review(snapshot, payload, knowledge):
     return Change(actions=(Action("review.request", {"target_type": snapshot.workflow, "target_id": snapshot.id, "role": "reflection_reviewer"}),))
-
-
-def start_published_wave(snapshot, payload, knowledge):
-    return Change(actions=(Action("workflow.start", {"workflow": "research_wave", "request_id": f"reflection-wave:{snapshot.id}",
-                                                      "data": {"reflection_id": snapshot.id}}),))
 
 
 REFLECTION_REVIEW = ReviewGate("reflection_reviewer", "reflection review must pass before code consolidation", "reflection_review_required",
@@ -350,7 +355,7 @@ REFLECTION = Workflow(
         Edge("consolidation_review", "revise_consolidation", RETURN_TO_CONSOLIDATING.to_status, check=_rejected("consolidation_reviewer", RETURN_TO_CONSOLIDATING.to_status), change=_revision,
              label=RETURN_TO_CONSOLIDATING.choose_when, event_type=RETURN_TO_CONSOLIDATING.event_type),
         Edge("consolidation_review", "publish", "published",
-             change=start_published_wave, label="Publish the reviewed wave after the runner advances central"),
+             change=publish_wave, label="Publish the reviewed wave after the runner advances central"),
         *(Edge(state, "abandon", "abandoned", check=can_abandon, label="Abandon this reflection wave", suggest=False, tools=("reflection.transition",))
           for state in ("reflecting", "synthesizing", "reflection_review", "consolidating", "consolidation_review")),
     ),
@@ -369,8 +374,10 @@ KIND = RecordKind(
     # still `consolidating` to every reader of the record.
     status_projection={"consolidation_review": "consolidating"},
     seal_exempt_actions=frozenset({"revise_lenses", "revise_synthesis", "revise_consolidation", "migrate"}),
-    commit_columns={action: ("attempt_index", "revision_context")
-                    for action in ("revise_lenses", "revise_synthesis", "revise_consolidation")},
+    commit_columns={**{action: ("attempt_index", "revision_context")
+                       for action in ("revise_lenses", "revise_synthesis", "revise_consolidation")},
+                    "submit_consolidation": ("revision_context",),
+                    "publish": ("published_at", "published_graph_version_id")},
 )
 
 

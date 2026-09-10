@@ -71,6 +71,12 @@ from ..kernel.utils import (
 )
 
 REFLECTION = KINDS["reflection"]
+# Which child action a parent action closes, and the states that hold this
+# wave's reserved names: entering one from a pinning edge reserves the
+# validated spec's names, and leaving them releases the rows.
+CLOSES_CHILDREN = {"submit_reflections": "submit"}
+PINS_WAVE_NAMES = ("submit_reflection_artifacts", "begin_consolidation")
+HOLDS_WAVE_NAMES = ("reflection_review", "consolidating")
 
 
 def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
@@ -1048,134 +1054,47 @@ class ReflectionService(RecordHooks):
         project_id: str | None = None,
     ) -> dict[str, Any]:
         """Record one immutable code proposal covering the whole reflection corpus."""
-        base_sha = documents.git_sha(base_sha)
-        proposal_sha = documents.git_sha(proposal_sha)
-        producer_session_id = str(producer_session_id or "").strip()
-        summary = str(summary or "").strip()
-        if not producer_session_id:
-            raise ValidationError("producer_session_id is required")
-        if not summary:
-            raise ValidationError("consolidation summary is required")
-        if not isinstance(validation, dict):
-            raise ValidationError("validation must be an object")
-        try:
-            validation_json = json.dumps(validation, sort_keys=True)
-        except (TypeError, ValueError) as exc:
-            raise ValidationError("validation must contain JSON values") from exc
-
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            reflection = self.get_state(
-                reflection_id=reflection_id,
-                project_id=project_id,
-                conn=conn,
-            )
+            reflection = self.get_state(reflection_id=reflection_id, project_id=project_id, conn=conn)
             if reflection["status"] != "consolidating":
-                raise WorkflowError(
-                    "consolidation proposals are accepted only after the "
-                    "authoritative reflection review has passed"
-                )
+                raise WorkflowError("consolidation proposals are accepted only after the "
+                                    "authoritative reflection review has passed")
             if self.advances.unsettled(conn=conn, instance_id=reflection_id):
-                raise WorkflowError(
-                    "cannot replace a consolidation proposal while its central "
-                    "advance is in progress or already bound"
-                )
-            expected = {
-                str(item["id"])
-                for item in (reflection.get("corpus") or {}).get(
-                    "terminal_experiments", []
-                )
-                if isinstance(item, dict) and item.get("id")
-            }
-            normalized = documents.validate_consolidation_decisions(
-                decisions=decisions,
-                expected_experiments=expected,
-            )
-            revision_row = conn.execute(
-                """
-                SELECT COALESCE(MAX(revision), 0) AS revision
-                FROM consolidation_proposals
-                WHERE reflection_id = ?
-                """,
-                (reflection_id,),
-            ).fetchone()
-            revision = int(revision_row["revision"] or 0) + 1
-            proposal_id = new_id(prefix="cpr")
-            created_at = now_iso()
+                raise WorkflowError("cannot replace a consolidation proposal while its central "
+                                    "advance is in progress or already bound")
+            self._record_proposal(conn=conn, reflection=reflection, proposal=documents.sealed_consolidation_proposal(
+                summary=summary, validation=validation, producer_session_id=producer_session_id,
+                base_sha=base_sha, proposal_sha=proposal_sha, decisions=decisions,
+                expected_experiments={str(item["id"]) for item
+                                      in (reflection.get("corpus") or {}).get("terminal_experiments") or ()
+                                      if isinstance(item, dict) and item.get("id")}))
+            # The graph pins exactly this proposal and requests its review; the
+            # kind's declared commit columns clear the revision request.
+            return self._transition_in_tx(conn=conn, reflection=reflection, transition="submit_consolidation")
+
+    def _record_proposal(self, *, conn, reflection: dict[str, Any], proposal: dict[str, Any]) -> None:
+        """Write the sealed proposal, its per-experiment decisions and its event."""
+        reflection_id, project_id, now = str(reflection["id"]), str(reflection["project_id"]), now_iso()
+        proposal_id = new_id(prefix="cpr")
+        revision = int(((reflection.get("consolidation") or {}).get("proposal") or {}).get("revision") or 0) + 1
+        conn.execute(
+            "INSERT INTO consolidation_proposals (id, reflection_id, project_id, revision, base_sha, proposal_sha, "
+            "summary, validation_json, created_by_session_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (proposal_id, reflection_id, project_id, revision, proposal["base_sha"], proposal["proposal_sha"],
+             proposal["summary"], proposal["validation_json"], proposal["created_by_session_id"], now))
+        for decision in proposal["decisions"]:
             conn.execute(
-                """
-                INSERT INTO consolidation_proposals (
-                  id, reflection_id, project_id, revision, base_sha,
-                  proposal_sha, summary, validation_json,
-                  created_by_session_id, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    proposal_id,
-                    reflection_id,
-                    project_id,
-                    revision,
-                    base_sha,
-                    proposal_sha,
-                    summary,
-                    validation_json,
-                    producer_session_id,
-                    created_at,
-                ),
-            )
-            for decision in normalized:
-                conn.execute(
-                    """
-                    INSERT INTO consolidation_decisions (
-                      proposal_id, experiment_id, disposition, rationale,
-                      source_sha, integration_kind, superseded_by, decided_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        proposal_id,
-                        decision["experiment_id"],
-                        decision["disposition"],
-                        decision["rationale"],
-                        decision["source_sha"],
-                        decision["integration_kind"],
-                        decision["superseded_by"],
-                        created_at,
-                    ),
-                )
-            conn.execute(
-                """
-                UPDATE reflections
-                SET revision_context = '', updated_at = ?
-                WHERE id = ?
-                """,
-                (created_at, reflection_id),
-            )
-            self.store.record_event(
-                conn=conn,
-                project_id=project_id,
-                event_type="reflection.consolidation_proposed",
-                target_type="reflection",
-                target_id=reflection_id,
-                payload={
-                    "proposal_id": proposal_id,
-                    "proposal_sha": proposal_sha,
-                    "base_sha": base_sha,
-                    "revision": revision,
-                    "experiments_considered": len(normalized),
-                },
-            )
-            current = self.runtime.adopt(conn=conn, project_id=project_id, instance_id=reflection_id,
-                                         workflow="reflection", state="consolidating")
-            self.runtime.apply_in_transaction(conn=conn, project_id=project_id, instance_id=reflection_id,
-                                              action="submit_consolidation", expected_revision=current.revision,
-                                              request_id=f"proposal:{proposal_id}")
-            return self.get_state(
-                reflection_id=reflection_id,
-                conn=conn,
-                include_content=True,
-            )
+                "INSERT INTO consolidation_decisions (proposal_id, experiment_id, disposition, rationale, "
+                "source_sha, integration_kind, superseded_by, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (proposal_id, decision["experiment_id"], decision["disposition"], decision["rationale"],
+                 decision["source_sha"], decision["integration_kind"], decision["superseded_by"], now))
+        self.store.record_event(
+            conn=conn, project_id=project_id, event_type="reflection.consolidation_proposed",
+            target_type="reflection", target_id=reflection_id,
+            payload={"proposal_id": proposal_id, "proposal_sha": proposal["proposal_sha"],
+                     "base_sha": proposal["base_sha"], "revision": revision,
+                     "experiments_considered": len(proposal["decisions"])})
 
     def require_consolidation_proposal(self, *, conn, reflection: dict[str, Any]) -> None:
         if reflection["status"] != "consolidating":
@@ -1407,68 +1326,63 @@ class ReflectionService(RecordHooks):
                 reflection=self.get_state(reflection_id=reflection_id, project_id=project_id, conn=conn),
             )
 
-    def _transition_in_tx(self, *, conn, reflection: dict[str, Any], transition: str) -> dict[str, Any]:
+    def _transition_in_tx(self, *, conn, reflection: dict[str, Any], transition: str,
+                          payload: dict[str, Any] | None = None) -> dict[str, Any]:
         reflection_id = str(reflection["id"])
         current = self.runtime.adopt(conn=conn, project_id=reflection["project_id"], instance_id=reflection_id,
                                      workflow="reflection", state=reflection["status"],
                                      data={"attempt_index": reflection["attempt_index"]})
-        if transition == "submit_reflections" and current.state == "reflecting":
-            # Compatibility for the released bulk-submit tool: each existing
-            # contribution still passes its own graph action. The last child
-            # triggers the same guarded parent join used by independent agents.
-            for child in current.children:
-                if child.outcome:
-                    continue
-                child_state = self.runtime.get(project_id=current.project_id, instance_id=child.id, conn=conn)
-                if child_state.outcome:
-                    continue
-                self.runtime.apply_in_transaction(conn=conn, project_id=current.project_id, instance_id=child.id,
-                                                  action="submit", expected_revision=child_state.revision,
-                                                  request_id=new_id(prefix="lens_submission"))
+        # Compatibility for the released bulk-submit tool: the child action the
+        # parent's edge declares still runs on each open child, so the last one
+        # fires the same guarded join an independent lens agent would.
+        for child in self._open_children(conn=conn, parent=current, transition=transition):
+            self.runtime.apply_in_transaction(conn=conn, project_id=current.project_id, instance_id=child.id,
+                                              action=CLOSES_CHILDREN[transition], expected_revision=child.revision,
+                                              request_id=new_id(prefix="lens_submission"))
+        if transition in CLOSES_CHILDREN:
+            # The final child's guarded join already applied the parent action.
             current = self.runtime.get(project_id=current.project_id, instance_id=reflection_id, conn=conn)
-            if current.state == "synthesizing":
+            if current.state != reflection["status"]:
                 return self.get_state(reflection_id=reflection_id, conn=conn, include_content=True)
         self.runtime.apply_in_transaction(conn=conn, project_id=current.project_id, instance_id=reflection_id,
                                           action=transition, expected_revision=current.revision,
-                                          request_id=new_id(prefix="reflection_action"))
+                                          request_id=new_id(prefix="reflection_action"), payload=payload or {})
         return self.get_state(reflection_id=reflection_id, conn=conn, include_content=True)
 
+    def _open_children(self, *, conn, parent: Snapshot, transition: str):
+        """Every child of this wait node that has not committed its own exit."""
+        if transition not in CLOSES_CHILDREN or parent.workflow != "reflection":
+            return ()
+        return [state for child in parent.children if not child.outcome
+                and not (state := self.runtime.get(project_id=parent.project_id, instance_id=child.id,
+                                                   conn=conn)).outcome]
+
     def after_commit(self, *, conn, before, after, action: str, payload) -> None:
-        """What a wave transition means beyond its declared status write."""
-        reflection_id = before.id
-        next_status = REFLECTION.status_of(after.state)
-        if action.startswith("revise_") or action == "migrate":
-            if action.startswith("revise_") and next_status not in ("reflection_review", "consolidating"):
-                conn.execute("DELETE FROM reflection_reserved_names WHERE reflection_id = ?", (reflection_id,))
-            return
-        if action in ("submit_reflection_artifacts", "begin_consolidation"):
-            # submit_reflection_artifacts shares the transaction that
-            # world-validated the spec; begin_consolidation re-pins so a spec
-            # revised and re-reviewed during reflection_review (review
-            # freshness guarantees the newest spec IS the reviewed one) is
-            # the one publication materializes.
+        """What a wave transition means beyond its declared column writes.
+
+        Reserved names follow the states that hold them: a pinning edge
+        reserves the validated spec's names, and leaving those states releases
+        the rows. ``submit_reflection_artifacts`` shares the transaction that
+        world-validated the spec; ``begin_consolidation`` re-pins, so a spec
+        revised and re-reviewed during reflection_review (review freshness
+        guarantees the newest spec IS the reviewed one) is the one publication
+        materializes.
+        """
+        if action in PINS_WAVE_NAMES:
             self._reserve_wave_names(conn=conn, reflection=self.get_state(
-                reflection_id=reflection_id, project_id=before.project_id, conn=conn))
-        elif next_status not in ("reflection_review", "consolidating"):
-            # Publish materializes the names; abandon and early exits release.
-            conn.execute("DELETE FROM reflection_reserved_names WHERE reflection_id = ?", (reflection_id,))
-        if after.state == "published":
-            reflection = self.get_state(reflection_id=reflection_id, project_id=before.project_id, conn=conn)
-            self._materialize_change_spec(conn=conn, reflection=reflection)
-            now = now_iso()
-            conn.execute(
-                "UPDATE reflections SET published_at = ?, published_graph_version_id = ?, updated_at = ? WHERE id = ?",
-                (now, self._current_graph_version_id(reflection=reflection), now, reflection_id),
-            )
+                reflection_id=before.id, project_id=before.project_id, conn=conn))
+        elif action != "migrate" and REFLECTION.status_of(after.state) not in HOLDS_WAVE_NAMES:
+            conn.execute("DELETE FROM reflection_reserved_names WHERE reflection_id = ?", (before.id,))
+        if action == "publish":
+            self._materialize_change_spec(conn=conn, reflection=self.get_state(
+                reflection_id=before.id, project_id=before.project_id, conn=conn))
 
     def before_commit(self, *, conn, before, after, action: str) -> None:
         """A bound receipt means central already advanced: the only legal exit
         is publish (the runner retries settle), so a terminal exit here would
         strand the reviewed belief-state update forever."""
-        next_status = REFLECTION.status_of(after.state)
-        if (action in {"start_work", "adopt_children", "migrate"}
-                or next_status not in REFLECTION_WORKFLOW.terminal_statuses
-                or next_status == REFLECTION_WORKFLOW.success_status):
+        status = REFLECTION.status_of(after.state)
+        if status not in REFLECTION.terminal_statuses or status == REFLECTION_WORKFLOW.success_status:
             return
         unsettled = self.advances.unsettled(conn=conn, instance_id=before.id)
         if unsettled.get("status") == "bound":
@@ -1970,15 +1884,6 @@ class ReflectionService(RecordHooks):
                 "rationale": rationale.strip(),
             },
         )
-
-    def _current_graph_version_id(self, *, reflection: dict[str, Any]) -> str | None:
-        """The current project-graph ARTIFACT id, pinned at publish."""
-        artifact = preferred_artifact(
-            artifacts=reflection.get("current_attempt_artifacts") or [],
-            roles=(PROJECT_GRAPH_ROLE,),
-        )
-        artifact_id = (artifact or {}).get("id")
-        return str(artifact_id) if artifact_id else None
 
     def _submitted_role_document(
         self,
