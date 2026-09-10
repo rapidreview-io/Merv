@@ -511,7 +511,7 @@ export default function WaveFlow({
     ...(tasks || []).map(t => [t.id, {
       updatedAt: t.updated_at || null,
       nArt: (t.artifacts || []).length,
-      nChecks: (t.checks || []).length,
+      nChecks: (t.deliverables || []).length,
     }]),
   ])), [experiments, tasks]);
   const expMeta = useMemo(() => JSON.parse(expMetaJson), [expMetaJson]);

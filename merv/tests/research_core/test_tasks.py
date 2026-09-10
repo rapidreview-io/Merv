@@ -109,7 +109,6 @@ class TaskWorkflowTest(ResearchCase):
         # The brief is rendered and pinned at create — the first gate is the
         # delivery, and the goal is immutable: brief submissions are refused.
         self.assertEqual(status["workflow"]["current_gate"], "delivery_required")
-        self.assertEqual(len(status["task"]["checks"]), 3)
         self.assertEqual(status["task"]["deliverables"], DELIVERABLES)
         rendered = status["context"]["brief"]["content"]
         self.assertIn("## Goal", rendered)
@@ -420,7 +419,6 @@ class TaskWorkflowTest(ResearchCase):
         )
         # The goal's contract is structure from creation.
         self.assertEqual(rich["deliverables"], DELIVERABLES)
-        self.assertEqual(rich["checks"], DELIVERABLES)
         self.assertNotIn("deliverables_json", rich)
         self.assertEqual(rich["results"], [])
         self.assertEqual([d["id"] for d in rich["dependents"]], [downstream])
@@ -543,7 +541,7 @@ class TaskWorkflowTest(ResearchCase):
             task_id=materialized["prep-data"]["task_id"],
         )
         self.assertEqual(prep["status"], "in_progress")
-        self.assertEqual(len(prep["checks"]), 2)
+        self.assertEqual(len(prep["deliverables"]), 2)
         brief = next(a for a in prep["current_attempt_artifacts"] if a["role"] == "brief")
         self.assertEqual(brief["path"], "tasks/prep-data/brief.md")
         lit = self.call(

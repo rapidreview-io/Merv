@@ -108,7 +108,7 @@ function TaskTable({ rows, sort }) {
       columns={COLUMNS}
       sort={sort}
       rows={rows.map(({ task: t, title, facts }) => {
-        const checkCount = Array.isArray(t.checks) ? t.checks.length : 0;
+        const checkCount = Array.isArray(t.deliverables) ? t.deliverables.length : 0;
         const depCount = Array.isArray(t.dependencies) ? t.dependencies.length : 0;
         const unblockCount = Array.isArray(t.dependents) ? t.dependents.length : 0;
         const reviewCount = Array.isArray(t.reviews) ? t.reviews.length : 0;

@@ -152,8 +152,6 @@ class TaskService(RecordHooks):
             if not task["deliverables"]:
                 brief = self._document(task=task, role=TASK_BRIEF_ROLE, what="task brief")
                 task["deliverables"] = [] if brief is None else brief_checks(brief.text)
-            # `checks` stays as the agent-facing alias for the same list.
-            task["checks"] = list(task["deliverables"])
             if str(task["id"]) not in detail_ids:
                 continue
             delivery = self._document(task=task, role=TASK_DELIVERY_ROLE, what="task delivery")

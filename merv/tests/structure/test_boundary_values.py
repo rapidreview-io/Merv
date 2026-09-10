@@ -226,7 +226,6 @@ SAMPLES: dict[type, object] = {
         "outcome": "",
         "failed_by": "",
         "deliverables": ["clean, deduplicated splits exist under out/"],
-        "checks": ["clean, deduplicated splits exist under out/"],
         "results": [
             {
                 "number": 1,
@@ -260,7 +259,6 @@ SAMPLES: dict[type, object] = {
         "outcome": "",
         "failed_by": "",
         "deliverables": [],
-        "checks": [],
         "results": [],
         "report": None,
         "caveats": None,

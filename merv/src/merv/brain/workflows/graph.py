@@ -555,6 +555,28 @@ class Metadata:
 
 
 @dataclass(frozen=True, slots=True)
+class Public:
+    """What a stored record shows a reader — declared, not assembled by hand.
+
+    A record's public shape is its row, decoded, minus what is private:
+    ``hidden`` names columns that reader never sees, and ``renames`` maps a
+    stored column onto the field it is known by (a record kind's JSON columns
+    already declare their own rename, so this carries only the rest).
+    ``after`` seats a computed field beside the field it explains, which is
+    the only reason key order matters anywhere. A narrower reader — an agent
+    reading a state rather than a UI rendering it — declares its own.
+    """
+
+    hidden: tuple[str, ...] = ()
+    renames: Mapping[str, str] = field(default_factory=dict)
+    after: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for name in ("renames", "after"):
+            object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
+
+
+@dataclass(frozen=True, slots=True)
 class RecordKind:
     """One native record bound to a workflow: what differs between kinds is data.
 
@@ -582,6 +604,7 @@ class RecordKind:
     seal_exempt_actions: frozenset[str] = frozenset()
     commit_columns: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     status_projection: Mapping[str, str] = field(default_factory=dict)
+    public: Public = Public()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "json_columns", MappingProxyType(dict(self.json_columns)))

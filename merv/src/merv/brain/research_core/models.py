@@ -3,10 +3,47 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
 from ..kernel.events import StoredEvent
+from ..workflows import Public
+
+
+def public_record(public: Public, record: Mapping[str, Any], **computed: Any) -> dict[str, Any]:
+    """One record's public shape, and the only place a public shape is built.
+
+    The row is the shape: a reader sees every field it carries, under the name
+    the declaration gives it, minus what that declaration hides. Fields a
+    presenter computes are passed here — one already in the row keeps its
+    place, and a new one takes the seat the declaration gave it.
+    """
+    result: dict[str, Any] = {
+        public.renames.get(name, name): value
+        for name, value in record.items()
+        if name not in public.hidden
+    }
+    for name, value in computed.items():
+        anchor = public.after.get(name, "")
+        if anchor not in result or name in result:
+            result[name] = value
+            continue
+        keys = list(result)
+        seat = keys.index(anchor) + 1
+        result = {**{key: result[key] for key in keys[:seat]}, name: value,
+                  **{key: result[key] for key in keys[seat:]}}
+    return result
+
+
+def project_fields(record: Mapping[str, Any], fields: Iterable[str]) -> dict[str, Any]:
+    """Narrow one record to the columns a reader needs."""
+    return {name: record.get(name) for name in fields}
+
+
+def project_rows(rows: Iterable[Mapping[str, Any]], fields: Iterable[str]) -> list[dict[str, Any]]:
+    fields = tuple(fields)
+    return [project_fields(row, fields) for row in rows]
 
 
 class ExperimentState(TypedDict, total=False):
@@ -75,7 +112,6 @@ class TaskState(TypedDict, total=False):
     # The goal's contract and the delivery parsed to structure;
     # `dependents` mirrors `dependencies` on the other side of the edge.
     deliverables: list[str]
-    checks: list[str]  # agent-facing alias of deliverables
     results: list[TaskResult]
     report: str | None
     caveats: str | None
@@ -171,4 +207,7 @@ __all__ = [
     "ResearchSnapshot",
     "TaskState",
     "TaskSummary",
+    "project_fields",
+    "project_rows",
+    "public_record",
 ]

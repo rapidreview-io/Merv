@@ -1368,9 +1368,6 @@
         "reviews": [],
         "dependencies": [],
         "dependents": [],
-        "checks": [
-          "notes.md exists and states the finding"
-        ],
         "allowed_transitions": [
           {
             "transition": "submit_delivery",
@@ -1568,9 +1565,6 @@
         ],
         "dependencies": [],
         "dependents": [],
-        "checks": [
-          "notes.md exists and states the finding"
-        ],
         "allowed_transitions": [],
         "gate_checklist": {
           "status": "done",
@@ -2996,9 +2990,6 @@
         "reviews": [],
         "dependencies": [],
         "dependents": [],
-        "checks": [
-          "notes.md exists and states the finding"
-        ],
         "allowed_transitions": [
           {
             "transition": "submit_delivery",
@@ -7394,9 +7385,6 @@
         "reviews": [],
         "dependencies": [],
         "dependents": [],
-        "checks": [
-          "notes.md exists and states the finding"
-        ],
         "allowed_transitions": [
           {
             "transition": "submit_delivery",
@@ -7594,9 +7582,6 @@
         ],
         "dependencies": [],
         "dependents": [],
-        "checks": [
-          "notes.md exists and states the finding"
-        ],
         "allowed_transitions": [],
         "gate_checklist": {
           "status": "done",
@@ -7667,9 +7652,6 @@
     "reviews": [],
     "dependencies": [],
     "dependents": [],
-    "checks": [
-      "notes.md exists and states the finding"
-    ],
     "results": [],
     "report": null,
     "caveats": null,
@@ -11868,9 +11850,6 @@
       "reviews": [],
       "dependencies": [],
       "dependents": [],
-      "checks": [
-        "notes.md exists and states the finding"
-      ],
       "results": [],
       "report": null,
       "caveats": null,
@@ -12007,68 +11986,14 @@
   "tool:experiment.get_state": {
     "id": "<exp>",
     "name": "review-work",
+    "intent": "Test what review-work is for.",
     "status": "experiment_review",
     "attempt_index": 1,
-    "intent": "Test what review-work is for.",
-    "details": "The immutable detail the ask pinned.",
-    "conclusion": "",
     "revision_context": "",
+    "conclusion": "",
     "created_at": "<time>",
     "updated_at": "<time>",
-    "allowed_transitions": [
-      {
-        "transition": "complete",
-        "leads_to": "complete"
-      },
-      {
-        "transition": "revise_plan",
-        "leads_to": "planned"
-      },
-      {
-        "transition": "revise_execution",
-        "leads_to": "running"
-      },
-      {
-        "transition": "abandon",
-        "leads_to": "abandoned"
-      },
-      {
-        "transition": "mark_failed",
-        "leads_to": "failed"
-      }
-    ],
-    "gate_checklist": {
-      "status": "experiment_review",
-      "transition": "complete",
-      "leads_to": "complete",
-      "ready": false,
-      "items": [
-        {
-          "id": "review:experiment_reviewer",
-          "kind": "review",
-          "role": "experiment_reviewer",
-          "label": "Experiment review passed",
-          "satisfied": false,
-          "status": "requested",
-          "gate": "experiment_review",
-          "action": "launch_experiment_reviewer",
-          "skill": "experiment-attempt-review",
-          "request_id": "<rr>",
-          "expires_at": "<time>"
-        }
-      ]
-    },
-    "claim_update_suggestions": [],
-    "tested_claims": [
-      {
-        "id": "<claim>",
-        "statement": "The schedule improves accuracy.",
-        "confidence": "medium",
-        "status": "active",
-        "scope": "This project."
-      }
-    ],
-    "dependencies": [],
+    "details": "The immutable detail the ask pinned.",
     "current_attempt_artifacts": [
       {
         "id": "<art>",
@@ -12116,7 +12041,6 @@
         "tldr": "72"
       }
     ],
-    "storage_objects": [],
     "reviews": [
       {
         "id": "<rev>",
@@ -12126,6 +12050,61 @@
         "synopsis": "The submitted evidence supports the stated decision, and the attempt can advance without hiding a material qualification."
       }
     ],
+    "dependencies": [],
+    "tested_claims": [
+      {
+        "id": "<claim>",
+        "statement": "The schedule improves accuracy.",
+        "confidence": "medium",
+        "status": "active",
+        "scope": "This project."
+      }
+    ],
+    "allowed_transitions": [
+      {
+        "transition": "complete",
+        "leads_to": "complete"
+      },
+      {
+        "transition": "revise_plan",
+        "leads_to": "planned"
+      },
+      {
+        "transition": "revise_execution",
+        "leads_to": "running"
+      },
+      {
+        "transition": "abandon",
+        "leads_to": "abandoned"
+      },
+      {
+        "transition": "mark_failed",
+        "leads_to": "failed"
+      }
+    ],
+    "gate_checklist": {
+      "status": "experiment_review",
+      "transition": "complete",
+      "leads_to": "complete",
+      "ready": false,
+      "items": [
+        {
+          "id": "review:experiment_reviewer",
+          "kind": "review",
+          "role": "experiment_reviewer",
+          "label": "Experiment review passed",
+          "satisfied": false,
+          "status": "requested",
+          "gate": "experiment_review",
+          "action": "launch_experiment_reviewer",
+          "skill": "experiment-attempt-review",
+          "request_id": "<rr>",
+          "expires_at": "<time>"
+        }
+      ]
+    },
+    "claim_update_suggestions": [],
+    "storage_objects": [],
     "code_workspace": null,
     "consolidation_history": []
   },
@@ -12134,14 +12113,26 @@
       {
         "id": "<exp>",
         "name": "planned-work",
+        "intent": "Test what planned-work is for.",
         "status": "planned",
         "attempt_index": 1,
-        "intent": "Test what planned-work is for.",
-        "details": "The immutable detail the ask pinned.",
-        "conclusion": "",
         "revision_context": "",
+        "conclusion": "",
         "created_at": "<time>",
         "updated_at": "<time>",
+        "details": "The immutable detail the ask pinned.",
+        "current_attempt_artifacts": [],
+        "reviews": [],
+        "dependencies": [],
+        "tested_claims": [
+          {
+            "id": "<claim>",
+            "statement": "The schedule improves accuracy.",
+            "confidence": "medium",
+            "status": "active",
+            "scope": "This project."
+          }
+        ],
         "allowed_transitions": [
           {
             "transition": "submit_design",
@@ -12180,6 +12171,42 @@
           ]
         },
         "claim_update_suggestions": [],
+        "storage_objects": [],
+        "code_workspace": null,
+        "consolidation_history": []
+      },
+      {
+        "id": "<exp>",
+        "name": "running-work",
+        "intent": "Test what running-work is for.",
+        "status": "running",
+        "attempt_index": 1,
+        "revision_context": "",
+        "conclusion": "",
+        "created_at": "<time>",
+        "updated_at": "<time>",
+        "details": "The immutable detail the ask pinned.",
+        "current_attempt_artifacts": [
+          {
+            "id": "<art>",
+            "role": "plan",
+            "path": "plan.md",
+            "lens_id": "",
+            "size_bytes": 174,
+            "title": "",
+            "tldr": "Compare a candidate with the baseline."
+          }
+        ],
+        "reviews": [
+          {
+            "id": "<rev>",
+            "role": "design_reviewer",
+            "verdict": "pass",
+            "created_at": "<time>",
+            "synopsis": "The submitted evidence supports the stated decision, and the attempt can advance without hiding a material qualification."
+          }
+        ],
+        "dependencies": [],
         "tested_claims": [
           {
             "id": "<claim>",
@@ -12189,24 +12216,6 @@
             "scope": "This project."
           }
         ],
-        "dependencies": [],
-        "current_attempt_artifacts": [],
-        "storage_objects": [],
-        "reviews": [],
-        "code_workspace": null,
-        "consolidation_history": []
-      },
-      {
-        "id": "<exp>",
-        "name": "running-work",
-        "status": "running",
-        "attempt_index": 1,
-        "intent": "Test what running-work is for.",
-        "details": "The immutable detail the ask pinned.",
-        "conclusion": "",
-        "revision_context": "",
-        "created_at": "<time>",
-        "updated_at": "<time>",
         "allowed_transitions": [
           {
             "transition": "submit_results",
@@ -12290,105 +12299,21 @@
           ]
         },
         "claim_update_suggestions": [],
-        "tested_claims": [
-          {
-            "id": "<claim>",
-            "statement": "The schedule improves accuracy.",
-            "confidence": "medium",
-            "status": "active",
-            "scope": "This project."
-          }
-        ],
-        "dependencies": [],
-        "current_attempt_artifacts": [
-          {
-            "id": "<art>",
-            "role": "plan",
-            "path": "plan.md",
-            "lens_id": "",
-            "size_bytes": 174,
-            "title": "",
-            "tldr": "Compare a candidate with the baseline."
-          }
-        ],
         "storage_objects": [],
-        "reviews": [
-          {
-            "id": "<rev>",
-            "role": "design_reviewer",
-            "verdict": "pass",
-            "created_at": "<time>",
-            "synopsis": "The submitted evidence supports the stated decision, and the attempt can advance without hiding a material qualification."
-          }
-        ],
         "code_workspace": null,
         "consolidation_history": []
       },
       {
         "id": "<exp>",
         "name": "review-work",
+        "intent": "Test what review-work is for.",
         "status": "experiment_review",
         "attempt_index": 1,
-        "intent": "Test what review-work is for.",
-        "details": "The immutable detail the ask pinned.",
-        "conclusion": "",
         "revision_context": "",
+        "conclusion": "",
         "created_at": "<time>",
         "updated_at": "<time>",
-        "allowed_transitions": [
-          {
-            "transition": "complete",
-            "leads_to": "complete"
-          },
-          {
-            "transition": "revise_plan",
-            "leads_to": "planned"
-          },
-          {
-            "transition": "revise_execution",
-            "leads_to": "running"
-          },
-          {
-            "transition": "abandon",
-            "leads_to": "abandoned"
-          },
-          {
-            "transition": "mark_failed",
-            "leads_to": "failed"
-          }
-        ],
-        "gate_checklist": {
-          "status": "experiment_review",
-          "transition": "complete",
-          "leads_to": "complete",
-          "ready": false,
-          "items": [
-            {
-              "id": "review:experiment_reviewer",
-              "kind": "review",
-              "role": "experiment_reviewer",
-              "label": "Experiment review passed",
-              "satisfied": false,
-              "status": "requested",
-              "gate": "experiment_review",
-              "action": "launch_experiment_reviewer",
-              "skill": "experiment-attempt-review",
-              "request_id": "<rr>",
-              "expires_at": "<time>"
-            }
-          ]
-        },
-        "claim_update_suggestions": [],
-        "tested_claims": [
-          {
-            "id": "<claim>",
-            "statement": "The schedule improves accuracy.",
-            "confidence": "medium",
-            "status": "active",
-            "scope": "This project."
-          }
-        ],
-        "dependencies": [],
+        "details": "The immutable detail the ask pinned.",
         "current_attempt_artifacts": [
           {
             "id": "<art>",
@@ -12436,7 +12361,6 @@
             "tldr": "72"
           }
         ],
-        "storage_objects": [],
         "reviews": [
           {
             "id": "<rev>",
@@ -12446,29 +12370,7 @@
             "synopsis": "The submitted evidence supports the stated decision, and the attempt can advance without hiding a material qualification."
           }
         ],
-        "code_workspace": null,
-        "consolidation_history": []
-      },
-      {
-        "id": "<exp>",
-        "name": "complete-work",
-        "status": "complete",
-        "attempt_index": 1,
-        "intent": "Test what complete-work is for.",
-        "details": "The immutable detail the ask pinned.",
-        "conclusion": "The registered threshold was met.",
-        "revision_context": "",
-        "created_at": "<time>",
-        "updated_at": "<time>",
-        "allowed_transitions": [],
-        "gate_checklist": {
-          "status": "complete",
-          "transition": null,
-          "leads_to": null,
-          "ready": true,
-          "items": []
-        },
-        "claim_update_suggestions": [],
+        "dependencies": [],
         "tested_claims": [
           {
             "id": "<claim>",
@@ -12478,7 +12380,65 @@
             "scope": "This project."
           }
         ],
-        "dependencies": [],
+        "allowed_transitions": [
+          {
+            "transition": "complete",
+            "leads_to": "complete"
+          },
+          {
+            "transition": "revise_plan",
+            "leads_to": "planned"
+          },
+          {
+            "transition": "revise_execution",
+            "leads_to": "running"
+          },
+          {
+            "transition": "abandon",
+            "leads_to": "abandoned"
+          },
+          {
+            "transition": "mark_failed",
+            "leads_to": "failed"
+          }
+        ],
+        "gate_checklist": {
+          "status": "experiment_review",
+          "transition": "complete",
+          "leads_to": "complete",
+          "ready": false,
+          "items": [
+            {
+              "id": "review:experiment_reviewer",
+              "kind": "review",
+              "role": "experiment_reviewer",
+              "label": "Experiment review passed",
+              "satisfied": false,
+              "status": "requested",
+              "gate": "experiment_review",
+              "action": "launch_experiment_reviewer",
+              "skill": "experiment-attempt-review",
+              "request_id": "<rr>",
+              "expires_at": "<time>"
+            }
+          ]
+        },
+        "claim_update_suggestions": [],
+        "storage_objects": [],
+        "code_workspace": null,
+        "consolidation_history": []
+      },
+      {
+        "id": "<exp>",
+        "name": "complete-work",
+        "intent": "Test what complete-work is for.",
+        "status": "complete",
+        "attempt_index": 1,
+        "revision_context": "",
+        "conclusion": "The registered threshold was met.",
+        "created_at": "<time>",
+        "updated_at": "<time>",
+        "details": "The immutable detail the ask pinned.",
         "current_attempt_artifacts": [
           {
             "id": "<art>",
@@ -12526,7 +12486,6 @@
             "tldr": "72"
           }
         ],
-        "storage_objects": [],
         "reviews": [
           {
             "id": "<rev>",
@@ -12543,6 +12502,26 @@
             "synopsis": "The submitted evidence supports the stated decision, and the attempt can advance without hiding a material qualification."
           }
         ],
+        "dependencies": [],
+        "tested_claims": [
+          {
+            "id": "<claim>",
+            "statement": "The schedule improves accuracy.",
+            "confidence": "medium",
+            "status": "active",
+            "scope": "This project."
+          }
+        ],
+        "allowed_transitions": [],
+        "gate_checklist": {
+          "status": "complete",
+          "transition": null,
+          "leads_to": null,
+          "ready": true,
+          "items": []
+        },
+        "claim_update_suggestions": [],
+        "storage_objects": [],
         "code_workspace": null,
         "consolidation_history": [
           {
@@ -12571,14 +12550,33 @@
       {
         "id": "<exp>",
         "name": "rejected-work",
+        "intent": "Test what rejected-work is for.",
         "status": "planned",
         "attempt_index": 2,
-        "intent": "Test what rejected-work is for.",
-        "details": "The immutable detail the ask pinned.",
-        "conclusion": "",
         "revision_context": "experiment_reviewer returned needs_changes\nThe submitted evidence supports the stated decision, and the attempt can advance without hiding a material qualification.",
+        "conclusion": "",
         "created_at": "<time>",
         "updated_at": "<time>",
+        "details": "The immutable detail the ask pinned.",
+        "current_attempt_artifacts": [],
+        "reviews": [
+          {
+            "id": "<rev>",
+            "role": "experiment_reviewer",
+            "verdict": "needs_changes",
+            "created_at": "<time>",
+            "synopsis": "The submitted evidence supports the stated decision, and the attempt can advance without hiding a material qualification."
+          },
+          {
+            "id": "<rev>",
+            "role": "design_reviewer",
+            "verdict": "pass",
+            "created_at": "<time>",
+            "synopsis": "The submitted evidence supports the stated decision, and the attempt can advance without hiding a material qualification."
+          }
+        ],
+        "dependencies": [],
+        "tested_claims": [],
         "allowed_transitions": [
           {
             "transition": "submit_design",
@@ -12617,26 +12615,7 @@
           ]
         },
         "claim_update_suggestions": [],
-        "tested_claims": [],
-        "dependencies": [],
-        "current_attempt_artifacts": [],
         "storage_objects": [],
-        "reviews": [
-          {
-            "id": "<rev>",
-            "role": "experiment_reviewer",
-            "verdict": "needs_changes",
-            "created_at": "<time>",
-            "synopsis": "The submitted evidence supports the stated decision, and the attempt can advance without hiding a material qualification."
-          },
-          {
-            "id": "<rev>",
-            "role": "design_reviewer",
-            "verdict": "pass",
-            "created_at": "<time>",
-            "synopsis": "The submitted evidence supports the stated decision, and the attempt can advance without hiding a material qualification."
-          }
-        ],
         "prior_attempt_artifacts": [
           {
             "id": "<art>",
@@ -12680,14 +12659,26 @@
       {
         "id": "<exp>",
         "name": "transfer-test",
+        "intent": "Test transfer on a held-out setting.",
         "status": "planned",
         "attempt_index": 1,
-        "intent": "Test transfer on a held-out setting.",
-        "details": "",
-        "conclusion": "",
         "revision_context": "",
+        "conclusion": "",
         "created_at": "<time>",
         "updated_at": "<time>",
+        "details": "",
+        "current_attempt_artifacts": [],
+        "reviews": [],
+        "dependencies": [],
+        "tested_claims": [
+          {
+            "id": "<claim>",
+            "statement": "The schedule effect transfers.",
+            "confidence": "medium",
+            "status": "active",
+            "scope": "This project."
+          }
+        ],
         "allowed_transitions": [
           {
             "transition": "submit_design",
@@ -12726,19 +12717,7 @@
           ]
         },
         "claim_update_suggestions": [],
-        "tested_claims": [
-          {
-            "id": "<claim>",
-            "statement": "The schedule effect transfers.",
-            "confidence": "medium",
-            "status": "active",
-            "scope": "This project."
-          }
-        ],
-        "dependencies": [],
-        "current_attempt_artifacts": [],
         "storage_objects": [],
-        "reviews": [],
         "code_workspace": null,
         "consolidation_history": []
       }
@@ -12747,20 +12726,28 @@
   "tool:task.get_state": {
     "id": "<task>",
     "name": "open-task",
+    "goal": "Write the note the wave needs.",
     "status": "in_progress",
     "attempt_index": 1,
-    "goal": "Write the note the wave needs.",
+    "revision_context": "",
     "outcome": "",
     "failed_by": "",
-    "revision_context": "",
     "created_at": "<time>",
     "updated_at": "<time>",
     "deliverables": [
       "notes.md exists and states the finding"
     ],
-    "checks": [
-      "notes.md exists and states the finding"
+    "current_attempt_artifacts": [
+      {
+        "id": "<art>",
+        "role": "brief",
+        "path": "tasks/open-task/brief.md",
+        "size_bytes": 118,
+        "title": "Brief: open-task",
+        "tldr": "Write the note the wave needs."
+      }
     ],
+    "reviews": [],
     "dependencies": [],
     "dependents": [],
     "allowed_transitions": [
@@ -12820,38 +12807,35 @@
           ]
         }
       ]
-    },
-    "current_attempt_artifacts": [
-      {
-        "id": "<art>",
-        "role": "brief",
-        "path": "tasks/open-task/brief.md",
-        "size_bytes": 118,
-        "title": "Brief: open-task",
-        "tldr": "Write the note the wave needs."
-      }
-    ],
-    "reviews": []
+    }
   },
   "tool:task.list": {
     "tasks": [
       {
         "id": "<task>",
         "name": "open-task",
+        "goal": "Write the note the wave needs.",
         "status": "in_progress",
         "attempt_index": 1,
-        "goal": "Write the note the wave needs.",
+        "revision_context": "",
         "outcome": "",
         "failed_by": "",
-        "revision_context": "",
         "created_at": "<time>",
         "updated_at": "<time>",
         "deliverables": [
           "notes.md exists and states the finding"
         ],
-        "checks": [
-          "notes.md exists and states the finding"
+        "current_attempt_artifacts": [
+          {
+            "id": "<art>",
+            "role": "brief",
+            "path": "tasks/open-task/brief.md",
+            "size_bytes": 118,
+            "title": "Brief: open-task",
+            "tldr": "Write the note the wave needs."
+          }
         ],
+        "reviews": [],
         "dependencies": [],
         "dependents": [],
         "allowed_transitions": [
@@ -12911,46 +12895,22 @@
               ]
             }
           ]
-        },
-        "current_attempt_artifacts": [
-          {
-            "id": "<art>",
-            "role": "brief",
-            "path": "tasks/open-task/brief.md",
-            "size_bytes": 118,
-            "title": "Brief: open-task",
-            "tldr": "Write the note the wave needs."
-          }
-        ],
-        "reviews": []
+        }
       },
       {
         "id": "<task>",
         "name": "done-task",
+        "goal": "Record the finished note.",
         "status": "done",
         "attempt_index": 1,
-        "goal": "Record the finished note.",
+        "revision_context": "",
         "outcome": "The submitted evidence supports the stated decision, and the attempt can advance without hiding a material qualification.",
         "failed_by": "",
-        "revision_context": "",
         "created_at": "<time>",
         "updated_at": "<time>",
         "deliverables": [
           "notes.md exists and states the finding"
         ],
-        "checks": [
-          "notes.md exists and states the finding"
-        ],
-        "dependencies": [],
-        "dependents": [],
-        "allowed_transitions": [],
-        "gate_checklist": {
-          "status": "done",
-          "transition": null,
-          "leads_to": null,
-          "ready": true,
-          "items": []
-        },
         "current_attempt_artifacts": [
           {
             "id": "<art>",
@@ -12977,7 +12937,17 @@
             "created_at": "<time>",
             "synopsis": "The submitted evidence supports the stated decision, and the attempt can advance without hiding a material qualification."
           }
-        ]
+        ],
+        "dependencies": [],
+        "dependents": [],
+        "allowed_transitions": [],
+        "gate_checklist": {
+          "status": "done",
+          "transition": null,
+          "leads_to": null,
+          "ready": true,
+          "items": []
+        }
       }
     ]
   },
@@ -15369,20 +15339,28 @@
     "task": {
       "id": "<task>",
       "name": "open-task",
+      "goal": "Write the note the wave needs.",
       "status": "in_progress",
       "attempt_index": 1,
-      "goal": "Write the note the wave needs.",
+      "revision_context": "",
       "outcome": "",
       "failed_by": "",
-      "revision_context": "",
       "created_at": "<time>",
       "updated_at": "<time>",
       "deliverables": [
         "notes.md exists and states the finding"
       ],
-      "checks": [
-        "notes.md exists and states the finding"
+      "current_attempt_artifacts": [
+        {
+          "id": "<art>",
+          "role": "brief",
+          "path": "tasks/open-task/brief.md",
+          "size_bytes": 118,
+          "title": "Brief: open-task",
+          "tldr": "Write the note the wave needs."
+        }
       ],
+      "reviews": [],
       "dependencies": [],
       "dependents": [],
       "allowed_transitions": [
@@ -15442,18 +15420,7 @@
             ]
           }
         ]
-      },
-      "current_attempt_artifacts": [
-        {
-          "id": "<art>",
-          "role": "brief",
-          "path": "tasks/open-task/brief.md",
-          "size_bytes": 118,
-          "title": "Brief: open-task",
-          "tldr": "Write the note the wave needs."
-        }
-      ],
-      "reviews": []
+      }
     },
     "workflow": {
       "instance_id": "<task>",
@@ -15536,7 +15503,7 @@
         "revision_context": ""
       },
       "folder": "tasks/open-task/",
-      "checks": [
+      "deliverables": [
         "notes.md exists and states the finding"
       ],
       "dependencies": [],

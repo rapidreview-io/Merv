@@ -317,7 +317,7 @@ function TaskPanel({ strand, row, braid, intents, onClose, onOpenTask, onSelectN
   const gate = finished ? null : gateSummary(task.gate_checklist);
   const tl = expTimeline(strand, task);
   const goal = String(task.goal || intents.get(strand.id) || '').trim();
-  const checks = Array.isArray(task.checks) ? task.checks : [];
+  const checks = Array.isArray(task.deliverables) ? task.deliverables : [];
   const deps = Array.isArray(task.dependencies) ? task.dependencies : [];
   return (
     <DetailPanelShell

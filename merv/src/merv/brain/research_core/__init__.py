@@ -20,6 +20,9 @@ from .models import (
     ResearchSnapshot,
     TaskState,
     TaskSummary,
+    project_fields,
+    project_rows,
+    public_record,
 )
 from .experiment_workflow import (
     EXPERIMENT_TERMINAL_STATUSES,
@@ -95,6 +98,9 @@ __all__ = [
     "TaskSummary",
     "agent_dispatch_enabled",
     "content_tldr",
+    "project_fields",
+    "project_rows",
+    "public_record",
     "graph_problems",
     "historical_latest_artifacts",
     "preferred_artifact",

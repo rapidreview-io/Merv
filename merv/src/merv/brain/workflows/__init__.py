@@ -13,7 +13,7 @@ from .composition import Child, ChildResult, join_guard, wait_for_all
 from .delivery import Deliveries, Delivery
 from .graph import (
     Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Evaluation, Execution, Issue,
-    Knowledge, Metadata, Node, RecordKind, RecordNeed, Reference, Registry, Requirement, ReviewGate,
+    Knowledge, Metadata, Node, Public, RecordKind, RecordNeed, Reference, Registry, Requirement, ReviewGate,
     ReviewReturn, Scope, Snapshot, Workflow, WorkspacePolicy, all_of,
 )
 from .runtime import InstanceFact, Runtime, snapshot_view
@@ -28,7 +28,7 @@ __all__ = [
     "SUBMITTABLE_ROLES", "TASK_BRIEF_ROLE", "TASK_DELIVERY_ROLE",
     "artifact_references", "retain_artifacts", "join_guard",
     "Action", "ArtifactNeed", "Brief", "Change", "Child", "ChildResult", "DependenciesDone",
-    "Edge", "Evaluation", "Execution", "InstanceFact", "Issue", "Knowledge", "Metadata", "Node", "RecordKind",
+    "Edge", "Evaluation", "Execution", "InstanceFact", "Issue", "Knowledge", "Metadata", "Node", "Public", "RecordKind",
     "RecordNeed", "Reference", "Registry", "Requirement", "ReviewGate", "ReviewReturn", "Scope",
     "Snapshot", "Workflow", "WorkspacePolicy",
     "Binding", "Deliveries", "Delivery", "KINDS", "Runtime", "TOOLS", "WORKFLOWS", "Workflows", "snapshot_view", "all_of", "wait_for_all",
