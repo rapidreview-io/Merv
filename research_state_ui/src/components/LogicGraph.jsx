@@ -257,10 +257,9 @@ export default function LogicGraph({
     return () => clearTimeout(t);
   }, [expanded, applyView]);
 
-  useEscapeToDeselect(selectedId, deselect);
-
   const select = useCallback((id) => setSelectedId(id), []);
   const deselect = useCallback(() => setSelectedId(null), []);
+  useEscapeToDeselect(selectedId, deselect);
   const logicCtx = useMemo(() => ({ selectedId, select }), [selectedId, select]);
 
   if (!available || !active) return null;

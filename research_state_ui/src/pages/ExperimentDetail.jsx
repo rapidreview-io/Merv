@@ -47,6 +47,11 @@ export default function ExperimentDetail() {
   const [pendingTerminalTransition, setPendingTerminalTransition] = useState(null);
   const { detailsOpen, setDetailsOpen, toggleDetails, closeDetails, detailsBtnRef } = useDetailsDrawer();
 
+  const [statusData, error, fetchStatus] = useRecordStatus(
+    () => api.getExperimentStatus(projectId, experimentId),
+    [projectId, experimentId],
+  );
+
   useEffect(() => {
     setPendingTerminalTransition(null);
   }, [experimentId]);
@@ -55,11 +60,6 @@ export default function ExperimentDetail() {
   // experiment has loaded and its sections rendered, scroll the matching id
   // into view.
   useScrollToHash([statusData]);
-
-  const [statusData, error, fetchStatus] = useRecordStatus(
-    () => api.getExperimentStatus(projectId, experimentId),
-    [projectId, experimentId],
-  );
 
   // 3s poll only while the event stream is down; otherwise refetch when an
   // event touches this experiment (safety poll catches event-less changes).

@@ -31,16 +31,14 @@ export default function MobileExperimentDetail() {
   const [graphOpen, setGraphOpen] = useState(false);
   const [askOpen, setAskOpen] = useState(false);
 
-  // Run only exists while a sandbox is attached — a terminal with nothing
-  // to attach to is dead chrome.
-  const hasSandbox = (statusData?.sandboxes || []).length > 0;
-
-  // Unchanged payloads keep their state identity so idle poll ticks don't
-  // re-render the page (same guard ExperimentFigure uses on its document).
   const [statusData, error, fetchStatus, resetStatus] = useRecordStatus(
     () => api.getExperimentStatus(projectId, experimentId),
     [projectId, experimentId],
   );
+
+  // Run only exists while a sandbox is attached — a terminal with nothing
+  // to attach to is dead chrome.
+  const hasSandbox = (statusData?.sandboxes || []).length > 0;
 
   // Navigating experiment→experiment keeps this component mounted; reset so
   // the old experiment never flashes and heavy panes fold back shut.

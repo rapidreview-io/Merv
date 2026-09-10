@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import DetailPanelShell from '../DetailPanelShell';
 import StatusPill from '../StatusPill';
 import { useProjectHref } from '../../store/useProjectStore';
-import { fmtSpan } from '../../utils/format';
+import { fmtSpan, statusWord } from '../../utils/format';
 import { dayAgo, fmtDay } from '../../utils/time';
 import {
   buildIntentIndex, consolidationSummary, debtMeter, expTimeline, gateSummary,

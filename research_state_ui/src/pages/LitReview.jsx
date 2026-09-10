@@ -6,7 +6,7 @@ import { api } from '../api';
 import MarkdownView from '../components/MarkdownView';
 import EntityChip from '../components/EntityChip';
 import { EntityRefScope } from '../components/EntityRefScope';
-import { citedSections, paperSeed, sectionSeed, sourceLabel } from '../utils/litreview';
+import { FLAG_LABEL, citedSections, paperSeed, sectionSeed, sourceLabel } from '../utils/litreview';
 import { prefersReducedMotion } from '../utils/motion';
 
 /**

@@ -7,6 +7,7 @@
  * The client persists + refreshes the session itself; this module just mirrors
  * the current access token into a synchronous read for api.js.
  */
+import { createStore } from './store/createStore';
 
 let client = null;
 let token = '';

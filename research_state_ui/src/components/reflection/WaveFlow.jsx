@@ -10,7 +10,7 @@ import GraphExpandButton from '../GraphExpandButton';
 import GraphDrawer from '../GraphDrawer';
 import { usePanelWidth } from '../../store/usePanelWidth';
 import { useProjectHref } from '../../store/useProjectStore';
-import { fmtSpan } from '../../utils/format';
+import { cx, fmtSpan, statusWord } from '../../utils/format';
 import { buildBraid } from './braidModel.js';
 import WaveFlowPanel from './WaveFlowPanel';
 
