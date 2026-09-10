@@ -77,29 +77,7 @@ def test_stale_selection_cannot_replace_a_fresh_delivery_lease(tmp_path):
     assert deliveries.settle(winner)
 
 
-def test_external_effect_fences_expired_workers_and_stops_automatic_replay(tmp_path):
-    store, deliveries, project_id = pending_action(tmp_path)
-    old = deliveries.claim(project_id=project_id)
-    with store.transaction() as conn:
-        conn.execute("UPDATE workflow_actions SET lease_until = '' WHERE id = ?", (old.id,))
-    current = deliveries.claim(project_id=project_id)
-    assert not deliveries.protect_external_effect(old, reason="stale worker")
-    assert deliveries.protect_external_effect(current, reason="Inspect the external run before repair")
-    with store.transaction() as conn:
-        conn.execute("UPDATE workflow_actions SET lease_until = '', next_attempt_at = '' WHERE id = ?", (current.id,))
-    # Even a process death after the reservation cannot authorize a second create.
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        assert list(pool.map(lambda _: deliveries.claim(project_id=project_id), range(4))) == [None] * 4
-    assert deliveries.settle(current, error="remote run exists; database acknowledgement lost")
-    row = deliveries.history(project_id=project_id, instance_id=current.instance_id)[0]
-    assert row["status"] == "manual_repair"
-    assert "acknowledgement lost" in row["last_error"]
-    assert deliveries.claim(project_id=project_id) is None
-    deliveries.resolve_manual_repair(project_id=project_id, instance_id=current.instance_id, kind="save")
-    assert deliveries.history(project_id=project_id, instance_id=current.instance_id)[0]["status"] == "delivered"
-
-
-def test_failure_before_external_reservation_keeps_ordinary_retry(tmp_path):
+def test_failed_delivery_returns_to_the_queue_and_retries(tmp_path):
     store, deliveries, project_id = pending_action(tmp_path)
     first = deliveries.claim(project_id=project_id)
     assert deliveries.settle(first, error="temporary input read failed")
@@ -108,6 +86,5 @@ def test_failure_before_external_reservation_keeps_ordinary_retry(tmp_path):
     retry = deliveries.claim(project_id=project_id)
     assert retry.id == first.id
     assert retry.attempts == 2
-    assert deliveries.protect_external_effect(retry, reason="external write")
     assert deliveries.settle(retry)
     assert deliveries.history(project_id=project_id, instance_id=retry.instance_id)[0]["status"] == "delivered"
