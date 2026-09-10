@@ -22,7 +22,7 @@ from fastapi import FastAPI
 from ..application import Application, LogicGraphQuery
 from ..application.maintenance import CleanupService
 from .workflow_knowledge import WorkflowKnowledge
-from ..agent_sessions import AgentSessions
+from ..agent_sessions import WorkspaceAdvances, AgentSessions
 from ..artifacts import Artifacts
 from ..feed import FeedService
 from ..literature import Literature
@@ -127,7 +127,7 @@ class Surface:
         self.workflows = Workflows(store=store, knowledge=lambda snapshot, conn: WorkflowKnowledge(
             snapshot=snapshot, conn=conn, artifacts=self.artifact_store, project=self.research.get_project,
             review=self.research.reviews.read_fact))
-        self.research = Research(store=store, artifacts=self.artifacts, workflows=self.workflows)
+        self.research = Research(store=store, advances=WorkspaceAdvances(store=store), artifacts=self.artifacts, workflows=self.workflows)
         self.research.initialize_workflows()
         self.feed = FeedService(
             store=store,

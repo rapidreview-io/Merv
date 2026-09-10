@@ -34,6 +34,7 @@ from .reflections import ReflectionService
 from .records import Records
 from .reviews import ReviewService
 from .tasks import TaskService
+from ..agent_sessions import WorkspaceAdvances
 from ..workflows import Binding, KINDS, Public, Workflows
 from .artifacts import ResearchArtifacts as Artifacts
 from ..kernel.state.store import (
@@ -105,7 +106,7 @@ class Research:
         "workflows",
     )
 
-    def __init__(self, *, store: BaseStateStore, artifacts: Artifacts, workflows: Workflows) -> None:
+    def __init__(self, *, store: BaseStateStore, artifacts: Artifacts, workflows: Workflows, advances: WorkspaceAdvances) -> None:
         self.store = store
         self.artifacts = artifacts
         self.workflows = workflows
@@ -114,6 +115,7 @@ class Research:
         self.experiments = ExperimentService(store=store, records=self.records)
         self.tasks = TaskService(store=store, records=self.records)
         self.reflections = ReflectionService(
+            advances=advances,
             store=store,
             artifacts=artifacts,
             experiments=self.experiments,

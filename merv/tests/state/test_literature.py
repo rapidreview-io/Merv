@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from merv.brain.workflows import Workflows
+from merv.brain.agent_sessions import WorkspaceAdvances
 
 import tempfile
 import unittest
@@ -126,7 +127,7 @@ class LiteratureTest(unittest.TestCase):
         self.store = StateStore(db_path=Path(self.tmp.name) / "state.sqlite")
         self.unfurl = FakeUnfurl()
         self.svc = Literature(store=self.store, unfurl=self.unfurl)
-        self.research = Research(store=self.store, artifacts=Mock(), workflows=Workflows(store=self.store))
+        self.research = Research(store=self.store, advances=WorkspaceAdvances(store=self.store), artifacts=Mock(), workflows=Workflows(store=self.store))
         with closing(self.store.connect()) as conn:
             row = conn.execute("SELECT id FROM projects").fetchone()
             self.project_id = str(row["id"])

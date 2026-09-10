@@ -35,7 +35,6 @@ from .policy import (
     ACTIVE_EXPERIMENT_CAP,
     EXPERIMENT_TERMINAL_STATUSES,
     TASK_TERMINAL_STATUSES,
-    REFLECTION as REFLECTION_WORKFLOW,
     GateEvaluation,
     active_experiment_cap_would_exceed_message,
     covered_terminal_ids,
@@ -92,6 +91,7 @@ class ReflectionService(RecordHooks):
         experiments: ExperimentService,
         tasks: TaskService,
         records: Records,
+        advances: WorkspaceAdvances,
     ) -> None:
         self.store = store
         self.artifacts = artifacts
@@ -99,11 +99,7 @@ class ReflectionService(RecordHooks):
         self.tasks = tasks
         self.records = records
         self.runtime = records.runtime
-        # The runner's compare-and-swap receipt is a workspace fact Agent
-        # Sessions keeps; this wave decides what may advance and what a bound
-        # receipt means. Research constructs it because the composition root
-        # builds Research from the store alone.
-        self.advances = WorkspaceAdvances(store=store)
+        self.advances = advances
         records.register(REFLECTION, self)
 
     # ---- create ----
@@ -138,7 +134,7 @@ class ReflectionService(RecordHooks):
 
     def before_create(self, *, conn, project_id: str, values: dict[str, Any]) -> None:
         """The project graph is one living artifact: one wave may edit it."""
-        terminal = tuple(sorted(REFLECTION_WORKFLOW.terminal_statuses))
+        terminal = tuple(sorted(REFLECTION.terminal_statuses))
         open_row = conn.execute(
             f"""SELECT id, status FROM reflections WHERE project_id = ?
                 AND status NOT IN ({", ".join("?" for _ in terminal)})
@@ -401,7 +397,7 @@ class ReflectionService(RecordHooks):
 
     def open_reflection(self, *, conn, project_id: str) -> dict[str, Any] | None:
         """The one non-terminal wave for the project, fully hydrated, or None."""
-        terminal = tuple(sorted(REFLECTION_WORKFLOW.terminal_statuses))
+        terminal = tuple(sorted(REFLECTION.terminal_statuses))
         placeholders = ", ".join("?" for _ in terminal)
         row = conn.execute(
             f"""
@@ -422,7 +418,7 @@ class ReflectionService(RecordHooks):
             WHERE project_id = ? AND status = ?
             ORDER BY published_at DESC, created_seq DESC LIMIT 1
             """,
-            (project_id, REFLECTION_WORKFLOW.success_status),
+            (project_id, REFLECTION.success_status),
         ).fetchone()
         if row is None:
             return None
@@ -446,7 +442,7 @@ class ReflectionService(RecordHooks):
 
     def _project_graph_diff(self, *, conn, reflection: dict[str, Any]) -> dict[str, Any]:
         """Compare this wave's graph with the last published one, or say why not."""
-        published = reflection.get("status") == REFLECTION_WORKFLOW.success_status
+        published = reflection.get("status") == REFLECTION.success_status
         # published_graph_version_id holds the artifact id pinned at publish.
         current = str((reflection.get("published_graph_version_id") if published else None)
                       or (self._project_graph_artifact(reflection=reflection) or {}).get("id") or "")
@@ -472,7 +468,7 @@ class ReflectionService(RecordHooks):
         status = str(reflection.get("status") or "")
         current_id = str(reflection.get("id") or "")
         params: tuple[Any, ...]
-        if status == REFLECTION_WORKFLOW.success_status:
+        if status == REFLECTION.success_status:
             query = """
                 SELECT id, published_graph_version_id
                 FROM reflections
@@ -483,7 +479,7 @@ class ReflectionService(RecordHooks):
                 """
             params = (
                 project_id,
-                REFLECTION_WORKFLOW.success_status,
+                REFLECTION.success_status,
                 current_id,
                 int(reflection.get("created_seq") or 0),
             )
@@ -495,7 +491,7 @@ class ReflectionService(RecordHooks):
                 ORDER BY published_at DESC, created_seq DESC
                 LIMIT 1
                 """
-            params = (project_id, REFLECTION_WORKFLOW.success_status)
+            params = (project_id, REFLECTION.success_status)
         row = conn.execute(query, params).fetchone()
         if row is None:
             return None
@@ -753,8 +749,8 @@ class ReflectionService(RecordHooks):
             wave_status = str(conn.execute(
                 "SELECT status FROM reflections WHERE id = ?", (reflection_id,)).fetchone()["status"])
             orphaned = (
-                wave_status in REFLECTION_WORKFLOW.terminal_statuses
-                and wave_status != REFLECTION_WORKFLOW.success_status
+                wave_status in REFLECTION.terminal_statuses
+                and wave_status != REFLECTION.success_status
             )
             if not orphaned and receipt["status"] != "bound" and observed_sha == str(receipt["target_sha"]):
                 self._require_carried_ancestry(conn=conn, proposal_id=str(receipt["proposal_id"]),
@@ -835,7 +831,7 @@ class ReflectionService(RecordHooks):
                 self.advances.note(conn=conn, advance_id=advance_id, error="")
                 reflection = self.get_state(reflection_id=reflection_id, project_id=project_id,
                                             conn=conn, include_content=True)
-                if str(reflection.get("status")) == REFLECTION_WORKFLOW.success_status:
+                if str(reflection.get("status")) == REFLECTION.success_status:
                     return reflection  # A retried settle after a publish is idempotent.
                 return self._transition_in_tx(conn=conn, reflection=reflection, transition="publish")
         except Exception as exc:
@@ -847,7 +843,7 @@ class ReflectionService(RecordHooks):
                     ).fetchone()
                     if (
                         row is None
-                        or str(row["status"]) != REFLECTION_WORKFLOW.success_status
+                        or str(row["status"]) != REFLECTION.success_status
                     ):
                         # An ambiguous COMMIT ack can raise after publication
                         # landed; never let the diagnostic outlive a success.
@@ -925,7 +921,7 @@ class ReflectionService(RecordHooks):
         is publish (the runner retries settle), so a terminal exit here would
         strand the reviewed belief-state update forever."""
         status = REFLECTION.status_of(after.state)
-        if status not in REFLECTION.terminal_statuses or status == REFLECTION_WORKFLOW.success_status:
+        if status not in REFLECTION.terminal_statuses or status == REFLECTION.success_status:
             return
         unsettled = self.advances.unsettled(conn=conn, instance_id=before.id)
         if unsettled.get("status") == "bound":

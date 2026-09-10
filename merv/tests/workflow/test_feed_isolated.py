@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from merv.brain.workflows import Workflows
+from merv.brain.agent_sessions import WorkspaceAdvances
 
 from contextlib import contextmanager
 from email.message import Message
@@ -89,8 +90,9 @@ class _AlterFailingStore:
 def feed(tmp_path: Path) -> tuple[FeedService, str, _CountingStore]:
     store = _CountingStore(db_path=tmp_path / "state.sqlite3")
     project = Research(
-        store=store, artifacts=unittest.mock.Mock()
-    , workflows=Workflows(store=store)).create_project(name="Feed tests")
+        store=store, advances=WorkspaceAdvances(store=store),
+        artifacts=unittest.mock.Mock(), workflows=Workflows(store=store),
+    ).create_project(name="Feed tests")
     service = FeedService(
         store=store,
         blobs=LocalDirBlobStore(root=tmp_path / "blobs"),
@@ -420,8 +422,9 @@ def test_http_contract_and_media_headers_are_preserved(feed) -> None:
 def test_schema_installer_converges_legacy_posts_idempotently(tmp_path: Path) -> None:
     store = StateStore(db_path=tmp_path / "legacy.sqlite3")
     project_id = Research(
-        store=store, artifacts=unittest.mock.Mock()
-    , workflows=Workflows(store=store)).create_project(name="Legacy Feed")["id"]
+        store=store, advances=WorkspaceAdvances(store=store),
+        artifacts=unittest.mock.Mock(), workflows=Workflows(store=store),
+    ).create_project(name="Legacy Feed")["id"]
     with store.transaction() as connection:
         connection.execute(
             """

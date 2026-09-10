@@ -309,7 +309,8 @@ def capture() -> dict[str, Any]:
 
 if __name__ == "__main__":  # pragma: no cover
     FIXTURE.parent.mkdir(parents=True, exist_ok=True)
-    FIXTURE.write_text(json.dumps(capture(), indent=2, sort_keys=False) + "\n")
+    shapes = capture()
+    FIXTURE.write_text("{\n" + ",\n".join(f"  {json.dumps(k)}: {json.dumps(v)}" for k, v in shapes.items()) + "\n}\n")
     print(f"wrote {FIXTURE}")
 
 
