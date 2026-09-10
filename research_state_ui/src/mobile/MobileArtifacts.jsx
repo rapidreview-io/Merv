@@ -4,10 +4,8 @@ import { useProjectStore, useProjectHref, selectExperiments } from '../store/use
 import { api } from '../api';
 import ArtifactContentView from '../components/ArtifactContentView';
 import ObjId from '../components/ObjId';
-import { formatBytes } from '../utils/format';
+import { basename, formatBytes } from '../utils/format';
 import { expName } from '../utils/experiment';
-
-const basename = (p) => (p || '').split('/').filter(Boolean).pop() || p || '';
 
 /**
  * Mobile Artifacts: the same flat per-target ledger as desktop, restacked as

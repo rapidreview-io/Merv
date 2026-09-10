@@ -3,7 +3,7 @@ import { api } from '../api';
 import { AuthedImg, RawLink } from './AuthedMedia';
 import FileRenderer from './FileRenderer';
 import PdfView from './PdfView';
-import { formatBytes, isMarkdown } from '../utils/format';
+import { extOf, formatBytes, isMarkdown } from '../utils/format';
 
 // Drop a leading "# <title>" from markdown when it just repeats a name already
 // shown elsewhere (the panel header). Only the very first heading, and only on
@@ -26,13 +26,6 @@ function stripLeadingH1(md) {
   if (!md) return md;
   const m = md.match(/^\s*#\s+.+?\s*#*\s*(?:\r?\n|$)/);
   return m ? md.slice(m[0].length).replace(/^\s+/, '') : md;
-}
-
-function extOf(path) {
-  if (!path) return '';
-  const name = path.split('/').pop() || '';
-  const i = name.lastIndexOf('.');
-  return i < 0 ? '' : name.slice(i + 1).toLowerCase();
 }
 
 function isPdfPath(path) {

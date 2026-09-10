@@ -11,6 +11,7 @@
  * called on hover-intent only and memoised per project.
  */
 import { api } from '../api';
+import { basename, clip } from './format';
 import { expName } from './experiment';
 import { citedSections, paperRoute, paperSeed, sectionRoute, sectionSeed } from './litreview';
 
@@ -79,15 +80,6 @@ export function entityType(id) {
 
 function shortId(id) {
   return typeof id === 'string' && id.length > 14 ? `${id.slice(0, 4)}…${id.slice(-6)}` : id;
-}
-
-function basename(p) {
-  return (p || '').split('/').filter(Boolean).pop() || p || '';
-}
-
-function clamp(s, n) {
-  const t = (s || '').trim();
-  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 }
 
 // --- home-snapshot field extractors (tolerant: a missing field just drops its
@@ -173,7 +165,7 @@ export function resolveEntity(id, home) {
     const c = (H.claims || []).find((x) => x.id === id);
     if (!c) return { ...DEAD(id, type), needsFetch: true };
     return {
-      id, type, label: clamp(c.statement, 44) || 'claim', route: ROUTE.claim(id), navigable: true,
+      id, type, label: clip(c.statement, 44) || 'claim', route: ROUTE.claim(id), navigable: true,
       detail: {
         type, statement: c.statement || '', status: c.status,
         confidence: c.confidence, linked: countClaimTests(id, H),
@@ -235,14 +227,14 @@ export function seedFromRefIndex(refString, entry) {
   }
   if (t === 'claim') {
     return {
-      id: refString, type: 'claim', label: clamp(entry.statement, 44) || 'claim',
+      id: refString, type: 'claim', label: clip(entry.statement, 44) || 'claim',
       route: entry.claim_id ? ROUTE.claim(entry.claim_id) : null, navigable: !!entry.claim_id,
       detail: { type: 'claim', statement: entry.statement || '', status: entry.status, confidence: entry.confidence },
     };
   }
   if (t === 'experiment') {
     return {
-      id: refString, type: 'experiment', label: entry.name || clamp(entry.intent, 40) || 'experiment',
+      id: refString, type: 'experiment', label: entry.name || clip(entry.intent, 40) || 'experiment',
       route: entry.experiment_id ? ROUTE.experiment(entry.experiment_id) : null, navigable: !!entry.experiment_id,
       detail: { type: 'experiment', name: entry.name, intent: entry.intent || '', status: entry.status },
     };
@@ -268,7 +260,7 @@ export function seedFromRefIndex(refString, entry) {
   }
   if (t === 'paper') {
     return {
-      id: refString, type: 'paper', label: clamp(entry.title, 44) || 'paper',
+      id: refString, type: 'paper', label: clip(entry.title, 44) || 'paper',
       route: ROUTE.paper(refString), navigable: true,
       detail: { type: 'paper', title: entry.title || '', url: entry.url || '', year: entry.year || '' },
     };
@@ -308,7 +300,7 @@ export async function fetchEntity(id, pid) {
       const s = await api.getClaim(pid, id);
       const c = s?.claim || s || {};
       out = {
-        id, type, label: clamp(c.statement, 44) || shortId(id), route: ROUTE.claim(id), navigable: true,
+        id, type, label: clip(c.statement, 44) || shortId(id), route: ROUTE.claim(id), navigable: true,
         detail: { type, statement: c.statement || '', status: c.status, confidence: c.confidence, linked: null },
       };
     } else if (type === 'artifact') {

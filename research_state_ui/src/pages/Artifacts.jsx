@@ -5,7 +5,7 @@ import { api } from '../api';
 import { RawLink } from '../components/AuthedMedia';
 import ObjId from '../components/ObjId';
 import ArtifactContentView from '../components/ArtifactContentView';
-import { formatBytes, fmtStamp } from '../utils/format';
+import { basename, formatBytes, fmtStamp } from '../utils/format';
 import { expName } from '../utils/experiment';
 
 /**
@@ -15,8 +15,6 @@ import { expName } from '../utils/experiment';
  * is role + title + size + time. No tree, no folders: submission is agent-only
  * (backend-mandated typed artifacts), so this page only shows and opens them.
  */
-
-const basename = (p) => (p || '').split('/').filter(Boolean).pop() || p || '';
 
 // Group order mirrors the workflow's gravity: experiments first (home order),
 // then reflections, then anything else, each keyed `${target_type}:${target_id}`.

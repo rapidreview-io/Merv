@@ -5,7 +5,7 @@ import { classifyExperiment } from '../utils/evidence';
 import { ENTITY_ID_RE, resolveEntity } from '../utils/entityResolve';
 import { expName, TERMINAL_STATUSES } from '../utils/experiment';
 import { sizeLabel } from '../utils/fleet';
-import { fmtStamp } from '../utils/format';
+import { clip, fmtStamp } from '../utils/format';
 import { extractPaperCitations } from '../utils/paperCitations';
 import { computeLayout, nowX as clampNowX } from './mapLayout';
 
@@ -82,11 +82,6 @@ function roleArtifact(e, role) {
   }
   return best;
 }
-
-const clip = (s, n) => {
-  const t = (s || '').trim();
-  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
-};
 
 // Satellite label: ≤ 19 kept chars — sized so two max-width chips always
 // share one row under the card (2×(20×6.2+34)+6 ≤ SAT_ROW_W). The word-

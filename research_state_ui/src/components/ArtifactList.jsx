@@ -1,9 +1,7 @@
 import { useState } from 'react';
 import ObjId from './ObjId';
 import ArtifactContentView from './ArtifactContentView';
-import { formatBytes } from '../utils/format';
-
-const basename = (p) => (p || '').split('/').filter(Boolean).pop() || p || '';
+import { basename, formatBytes } from '../utils/format';
 
 /**
  * ArtifactList — flat per-target artifact rows with one-at-a-time

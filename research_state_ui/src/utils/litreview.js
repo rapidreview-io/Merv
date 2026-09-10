@@ -13,11 +13,9 @@
 export const paperRoute = (id) => `/litreview#paper-${id}`;
 export const sectionRoute = (id) => `/litreview#lit-${id}`;
 
-const SOURCE_WORD = { arxiv: 'arXiv', doi: 'DOI' };
+import { hostOf } from './format.js';
 
-export function hostOf(url) {
-  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
-}
+const SOURCE_WORD = { arxiv: 'arXiv', doi: 'DOI' };
 
 /** The source word alone — a ledger line's title already carries the link. */
 export function sourceLabel(paper) {

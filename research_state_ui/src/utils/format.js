@@ -104,3 +104,28 @@ export function isMarkdown(path) {
   const ext = (path || '').split('.').pop().toLowerCase();
   return ext === 'md' || ext === 'markdown' || ext === 'mdx';
 }
+
+// The last non-empty path segment ("runs/2/loss.svg" -> "loss.svg").
+export function basename(p) {
+  return (p || '').split('/').filter(Boolean).pop() || p || '';
+}
+
+// A file's lowercase extension, from the last dot of the last segment; '' when
+// the name has no dot (a dotted directory never leaks into the answer).
+export function extOf(path) {
+  if (!path) return '';
+  const name = path.split('/').pop() || '';
+  const i = name.lastIndexOf('.');
+  return i < 0 ? '' : name.slice(i + 1).toLowerCase();
+}
+
+// Trim to n characters with an ellipsis in the nth slot.
+export function clip(s, n) {
+  const t = (s || '').trim();
+  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+}
+
+// A link's display host, www- stripped; '' when the string isn't a URL.
+export function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
+}
