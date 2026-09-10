@@ -43,96 +43,88 @@ HOSTED_CONTROL_TOOL_POLICIES = {
     "review.submit": HostedToolPolicy(telemetry_from_review_session=True),
 }
 
-# Session credentials fail closed: these are the only public tools a worker
-# assigned to one experiment may reach. Per-target checks in the gateway bind
-# every mutation and sandbox operation to that exact experiment.
-AGENT_EXPERIMENT_SESSION_TOOLS = frozenset(
+# Session credentials fail closed. Every leased session may reach these support
+# tools; the node it works declares everything else in its execution policy,
+# and the gateway binds each scoped call to the leased instance.
+SESSION_READ_BASELINE = frozenset(
     {
         "agent.hello",
-        "artifact.upload",
+        "project",
+        "project.get",
+        "project.list",
+        "workflow.status_and_next",
+        "workflow.catalog",
+        "workflow.assignment",
+        "workflow.history",
         "artifact.read",
-        "artifact.attach",
-        "claim.list",
-        "experiment.exhibit",
-        "experiment.get_state",
-        "experiment.list",
-        "experiment.transition",
         "feed.list",
+        "storage.find",
+        "storage.fetch",
+    }
+)
+SESSION_WRITE_BASELINE = frozenset(
+    {
+        "artifact.upload",
+        "artifact.attach",
         "feed.post",
         "feed.register",
-        "litreview.cite",
-        "litreview.view",
-        "mlflow.context",
-        "mlflow.finalize_run",
-        "project",
-        "project.get",
-        "project.list",
-        "review.request",
-        "review.status",
-        "sandbox.attach",
-        "sandbox.extend",
-        "sandbox.get",
-        "sandbox.health",
-        "sandbox.options",
-        "sandbox.pull_outputs",
-        "sandbox.release",
-        "sandbox.request",
-        "sandbox.run",
-        "sandbox.job",
-        "sandbox.runs",
-        "sandbox.terminal",
-        "storage.fetch",
-        "storage.find",
         "storage.submit",
-        "workflow.status_and_next",
-    }
-)
-
-AGENT_REVIEW_SESSION_TOOLS = frozenset(
-    {
-        "agent.hello",
-        "artifact.read",
-        "claim.list",
-        "consolidation.get",
-        "experiment.get_state",
-        "experiment.list",
-        "litreview.view",
-        "project",
-        "project.get",
-        "project.list",
-        "review.start",
-        "review.status",
-        "review.submit",
-        "workflow.status_and_next",
-    }
-)
-
-AGENT_CONSOLIDATION_SESSION_TOOLS = frozenset(
-    {
-        "agent.hello",
-        "consolidation.get",
-        "consolidation.submit",
-        "experiment.get_state",
-        "experiment.list",
-        "project",
-        "project.get",
-        "project.list",
-        "reflection.get",
-        "review.request",
-        "review.status",
+        "workflow.transition",
     }
 )
 
 
-# Workflow plugins share these support capabilities; registering a new graph
-# changes neither this policy nor the gateway. Native adapters remain scoped to
-# the assigned record; generic content reads retain project filtering.
-AGENT_WORKFLOW_READ_TOOLS = AGENT_REVIEW_SESSION_TOOLS | frozenset({
-    "workflow.catalog", "workflow.assignment", "workflow.history", "workflow.transition",
-    "task.get_state", "task.list", "reflection.get", "reflection.list", "feed.list",
-})
-AGENT_WORKFLOW_WRITE_TOOLS = (
-    AGENT_WORKFLOW_READ_TOOLS | AGENT_EXPERIMENT_SESSION_TOOLS
-    | AGENT_CONSOLIDATION_SESSION_TOOLS
-    | frozenset({"task.transition", "reflection.transition"})
-) - {"review.start", "review.submit"}
+@dataclass(frozen=True)
+class ScopeRule:
+    """One argument a session may only fill with the value research resolved."""
+
+    field: str
+    source: str
+    tools: frozenset[str] = frozenset()
+
+    def covers(self, tool: str, *, mutating: frozenset[str]) -> bool:
+        return tool in self.tools if self.tools else tool in mutating
+
+
+@dataclass(frozen=True)
+class SessionExecution:
+    """The node-declared policy a leased session carries, parsed once and fail-closed.
+
+    A packet without a policy (or with an unreadable one) is read-only with no
+    node-specific tools: the credential can look but never write.
+    """
+
+    read_only: bool = True
+    tools: frozenset[str] = frozenset()
+    mutating: frozenset[str] = frozenset()
+    scope: tuple[ScopeRule, ...] = ()
+    sandbox: bool = False
+    workspace_mode: str = ""
+
+    @classmethod
+    def from_packet(cls, value: object) -> "SessionExecution":
+        if not isinstance(value, dict) or "read_only" not in value:
+            return cls()
+        rules = []
+        for item in value.get("scope") or ():
+            if not isinstance(item, dict) or not str(item.get("field") or "") or not str(item.get("source") or ""):
+                continue
+            rules.append(ScopeRule(
+                field=str(item["field"]), source=str(item["source"]),
+                tools=frozenset(str(tool) for tool in item.get("tools") or () if str(tool)),
+            ))
+        workspace = value.get("workspace")
+        return cls(
+            read_only=bool(value.get("read_only")),
+            tools=frozenset(str(tool) for tool in value.get("tools") or () if str(tool)),
+            mutating=frozenset(str(tool) for tool in value.get("mutating") or () if str(tool)),
+            scope=tuple(rules),
+            sandbox=bool(value.get("sandbox")),
+            workspace_mode=str(workspace.get("mode") or "") if isinstance(workspace, dict) else "",
+        )
+
+    @property
+    def allowed_tools(self) -> frozenset[str]:
+        """Effective allowlist: the baseline for the policy's read/write mode plus node tools."""
+        baseline = SESSION_READ_BASELINE if self.read_only else SESSION_READ_BASELINE | SESSION_WRITE_BASELINE
+        return baseline | self.tools

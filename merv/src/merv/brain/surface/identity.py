@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from ..kernel.identity import LOCAL_CLIENT_ID, LOCAL_TENANT_ID
 from ..kernel.utils import PermissionDeniedError
+from .transport.http_policy import SessionExecution
 
 
 class ProjectKeyScopeError(PermissionDeniedError):
@@ -33,7 +34,7 @@ class HumanSessionRequiredError(PermissionDeniedError):
     error_code = "human_session_required"
 
 class AgentSessionScopeError(PermissionDeniedError):
-    """A coding-agent session attempted work outside its experiment."""
+    """A coding-agent session attempted work outside its lease."""
 
     error_code = "agent_session_scope_forbidden"
 
@@ -61,16 +62,18 @@ class Principal:
     key_project_id: str | None = None
     audience: str | None = None
     oauth_family_id: str | None = None
+    # A leased agent session (``mas_``) carries its lease verbatim: the
+    # workflow name and instance/revision it may act on, the node-declared
+    # execution policy (a parsed ``SessionExecution``), and the packet's
+    # references as opaque ``(kind, id)`` pairs. The gateway enforces these
+    # without knowing what any workflow or reference means.
     agent_session_id: str | None = None
-    agent_experiment_id: str | None = None
-    agent_target_type: str | None = None
-    agent_target_id: str | None = None
-    agent_session_kind: str | None = None
-    agent_review_request_id: str | None = None
+    agent_workflow: str | None = None
     agent_workflow_instance_id: str | None = None
     agent_workflow_revision: int | None = None
     agent_workflow_node: str | None = None
-    agent_read_only: bool = False
+    agent_execution: SessionExecution | None = None
+    agent_references: tuple[tuple[str, str], ...] = ()
     source_key_id: str | None = None
 
 
