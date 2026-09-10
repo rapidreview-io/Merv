@@ -6,7 +6,7 @@ import { api } from '../api';
 import StatusPill from './StatusPill';
 import DetailPanelShell, { PanelResizer } from './DetailPanelShell';
 import GraphExpandButton from './GraphExpandButton';
-import GraphDrawer from './GraphDrawer';
+import GraphDrawer, { flowCanvasProps, useEscapeToDeselect } from './GraphDrawer';
 import ArtifactContentView from './ArtifactContentView';
 import { visibleWidth } from '../utils/graphCamera';
 import { layoutFigure, figureBounds, FIG_NODE_W } from '../utils/figureLayout';
@@ -328,6 +328,7 @@ export default function ExperimentFigure({
   const canvasRef = useRef(null);
   const { width: panelWidth } = usePanelWidth();
   const select = useCallback((id) => setSelectedId(id), []);
+  const deselect = useCallback(() => setSelectedId(null), []);
   const selCtx = useMemo(() => ({ selectedId, select }), [selectedId, select]);
 
   const fetchFigure = useCallback(async () => {
@@ -381,18 +382,7 @@ export default function ExperimentFigure({
     return () => clearTimeout(t);
   }, [expanded, frame]);
 
-  // Escape closes the sidebar first; the graph slot's handler then gets the
-  // next Escape to leave fullscreen. Capture phase so this runs before it.
-  useEffect(() => {
-    if (!selectedId) return undefined;
-    const onKey = (e) => {
-      if (e.key !== 'Escape') return;
-      e.stopPropagation();
-      setSelectedId(null);
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [selectedId]);
+  useEscapeToDeselect(selectedId, deselect);
 
   // …and whenever the canvas itself changes size (page layout settling after
   // data arrives, sidebar toggles, window resizes): the framing depends on the
@@ -457,20 +447,7 @@ export default function ExperimentFigure({
               select(node.id);
             }}
             onPaneClick={() => setSelectedId(null)}
-            proOptions={{ hideAttribution: true }}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            // The card paints its own ring from selectedId; react-flow's own
-            // selection would be a second state that drifts from it.
-            nodesFocusable={false}
-            elementsSelectable={false}
-            edgesFocusable={false}
-            zoomOnDoubleClick={false}
-            zoomOnScroll={expanded}
-            zoomOnPinch
-            preventScrolling={expanded}
-            minZoom={0.3}
-            maxZoom={1.6}
+            {...flowCanvasProps(expanded)}
           >
             <MeasureSync topologyKey={topologyKey} />
             <Background gap={22} size={1.1} />

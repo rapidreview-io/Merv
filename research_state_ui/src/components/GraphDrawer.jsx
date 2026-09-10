@@ -6,6 +6,47 @@ import { motionMs } from '../utils/motion';
 export const DRAWER_MS = 200;
 
 /**
+ * Escape closes the sidebar first; the graph slot's own handler then gets the
+ * next Escape to leave fullscreen. Capture phase, and registered only while
+ * something is selected, so the two peel one layer at a time.
+ */
+export function useEscapeToDeselect(selectedId, deselect) {
+  useEffect(() => {
+    if (!selectedId) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      deselect();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [selectedId, deselect]);
+}
+
+/**
+ * The read-only canvas contract all three graphs render under: the node paints
+ * its own ring from our selectedId, so react-flow's selection stays off (two
+ * selection states drift apart — a ringed node with nothing open), and the
+ * wheel only zooms in fullscreen so an inline graph never eats a page scroll.
+ */
+export function flowCanvasProps(expanded) {
+  return {
+    proOptions: { hideAttribution: true },
+    nodesDraggable: false,
+    nodesConnectable: false,
+    nodesFocusable: false,
+    elementsSelectable: false,
+    edgesFocusable: false,
+    zoomOnDoubleClick: false,
+    zoomOnScroll: expanded,
+    zoomOnPinch: true,
+    preventScrolling: expanded,
+    minZoom: 0.3,
+    maxZoom: 1.6,
+  };
+}
+
+/**
  * The sliding drawer every graph sidebar rides in — the experiment figure,
  * the logic graph, the wave process figure, the project graph, and the map.
  *

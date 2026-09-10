@@ -6,7 +6,7 @@ import '@xyflow/react/dist/style.css';
 import { MeasureSync } from '../ExperimentFigure';
 import DetailPanelShell, { PanelResizer } from '../DetailPanelShell';
 import GraphExpandButton from '../GraphExpandButton';
-import GraphDrawer from '../GraphDrawer';
+import GraphDrawer, { flowCanvasProps, useEscapeToDeselect } from '../GraphDrawer';
 import StatusPill from '../StatusPill';
 import { layoutFigure, FIG_NODE_W } from '../../utils/figureLayout';
 import { readableViewport, visibleWidth } from '../../utils/graphCamera';
@@ -105,6 +105,7 @@ export default function WaveFigure({
   const { nodes, edges } = useMemo(() => toFlow(figure), [figure]);
   const topologyKey = useMemo(() => nodes.map(n => n.id).sort().join('|'), [nodes]);
   const select = useCallback((id) => setSelectedId(id), []);
+  const deselect = useCallback(() => setSelectedId(null), []);
   const waveFigCtx = useMemo(() => ({ selectedId, select }), [selectedId, select]);
 
   // The process spine is a wide flat ribbon; fitting it to WIDTH crushes the
@@ -137,18 +138,7 @@ export default function WaveFigure({
     return () => clearTimeout(t);
   }, [expanded, applyView]);
 
-  // Escape closes the sidebar first; the graph slot's handler then gets the
-  // next Escape to leave fullscreen.
-  useEffect(() => {
-    if (!selectedId) return undefined;
-    const onKey = (e) => {
-      if (e.key !== 'Escape') return;
-      e.stopPropagation();
-      setSelectedId(null);
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [selectedId]);
+  useEscapeToDeselect(selectedId, deselect);
 
   const selected = useMemo(
     () => figure.nodes.find(n => n.id === selectedId) || null,
@@ -193,18 +183,7 @@ export default function WaveFigure({
             }}
             onPaneClick={() => setSelectedId(null)}
             fitView
-            proOptions={{ hideAttribution: true }}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            nodesFocusable={false}
-            elementsSelectable={false}
-            edgesFocusable={false}
-            zoomOnDoubleClick={false}
-            zoomOnScroll={expanded}
-            zoomOnPinch
-            preventScrolling={expanded}
-            minZoom={0.3}
-            maxZoom={1.6}
+            {...flowCanvasProps(expanded)}
           >
             <MeasureSync topologyKey={topologyKey} />
             <Background gap={22} size={1.1} />

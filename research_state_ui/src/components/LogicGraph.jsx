@@ -5,7 +5,7 @@ import { api } from '../api';
 import { MeasureSync } from './ExperimentFigure';
 import DetailPanelShell, { PanelResizer } from './DetailPanelShell';
 import GraphExpandButton from './GraphExpandButton';
-import GraphDrawer from './GraphDrawer';
+import GraphDrawer, { flowCanvasProps, useEscapeToDeselect } from './GraphDrawer';
 import StatusPill from './StatusPill';
 import EntityChip from './EntityChip';
 import { seedFromRefIndex } from '../utils/entityResolve';
@@ -257,21 +257,10 @@ export default function LogicGraph({
     return () => clearTimeout(t);
   }, [expanded, applyView]);
 
-  // Escape closes the sidebar. Registered only while something is selected, so
-  // the graph slot's own Escape handler still gets the keystroke when the
-  // sidebar is shut and only fullscreen is left to peel.
-  useEffect(() => {
-    if (!selectedId) return undefined;
-    const onKey = (e) => {
-      if (e.key !== 'Escape') return;
-      e.stopPropagation();
-      setSelectedId(null);
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [selectedId]);
+  useEscapeToDeselect(selectedId, deselect);
 
   const select = useCallback((id) => setSelectedId(id), []);
+  const deselect = useCallback(() => setSelectedId(null), []);
   const logicCtx = useMemo(() => ({ selectedId, select }), [selectedId, select]);
 
   if (!available || !active) return null;
@@ -318,22 +307,7 @@ export default function LogicGraph({
             }}
             onPaneClick={() => setSelectedId(null)}
             fitView={!useReadable}
-            proOptions={{ hideAttribution: true }}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            // The node paints its own ring from our selectedId; leaving
-            // react-flow's selection on as well gave the graph two selection
-            // states that drifted apart — closing the panel left a ringed node
-            // with nothing open, and Enter ringed a node without opening it.
-            nodesFocusable={false}
-            elementsSelectable={false}
-            edgesFocusable={false}
-            zoomOnDoubleClick={false}
-            zoomOnScroll={expanded}
-            zoomOnPinch
-            preventScrolling={expanded}
-            minZoom={0.3}
-            maxZoom={1.6}
+            {...flowCanvasProps(expanded)}
           >
             <MeasureSync topologyKey={topologyKey} />
             <Background gap={22} size={1.1} />
