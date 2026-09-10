@@ -84,14 +84,24 @@ class _Mcp:
         return self.request("tools/call", {"name": name, "arguments": arguments})
 
 
+def _body(response: httpx.Response) -> dict[str, Any]:
+    """The JSON-RPC envelope, whether the call answered at once or, past the
+    transport's fast-call window, as an event stream ending in one message."""
+    if "text/event-stream" not in response.headers.get("content-type", ""):
+        return response.json()
+    data = [line[5:] for line in response.text.splitlines() if line.startswith("data:")]
+    assert data, response.text
+    return json.loads(data[-1])
+
+
 def _result(response: httpx.Response) -> dict[str, Any]:
-    body = response.json()
+    body = _body(response)
     assert "result" in body, body
     return body["result"]["structuredContent"]
 
 
 def _error(response: httpx.Response) -> dict[str, Any]:
-    body = response.json()
+    body = _body(response)
     assert "error" in body, body
     return body["error"]
 
