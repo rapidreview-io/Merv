@@ -1,8 +1,9 @@
 # Infrastructure integration contract
 
-Implementation contract for [the ownership migration](INFRASTRUCTURE_BUDGET_OWNERSHIP_PLAN.md).
-This describes the working-tree service/client boundary. Deployment completion
-requires the migration and release evidence recorded in the progress document.
+The service/client boundary between Merv and merv-sandboxes. The ownership
+cutover this contract was written for is live; see
+[the production release record](INFRASTRUCTURE_PRODUCTION_RELEASE.md) for what
+was deployed and what history was retained.
 
 ## Identity and authorization
 
