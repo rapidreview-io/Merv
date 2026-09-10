@@ -179,12 +179,12 @@ def complete_no_code_consolidation(
         verdict="pass",
         synopsis=REVIEW_SYNOPSIS,
     )
-    advance = app.research.prepare_reflection_advance(
+    advance = app.research.reflections.prepare_advance(
         project_id=project_id,
         reflection_id=reflection_id,
         runner_id="runner",
     )
-    return app.research.settle_reflection_advance(
+    return app.research.reflections.settle_advance(
         project_id=project_id,
         advance_id=advance["id"],
         runner_id="runner",
@@ -321,7 +321,7 @@ class ResearchCase(unittest.TestCase):
             target_id=experiment_id,
             role="design_reviewer",
         )
-        self.assertEqual(self.app.research.experiment_state(project_id=self.project_id, experiment_id=experiment_id)["status"], "running")
+        self.assertEqual(self.app.research.experiments.get_state(project_id=self.project_id, experiment_id=experiment_id)["status"], "running")
         return experiment_id
 
     def drive_experiment_to_review(self, name: str = "experiment") -> str:

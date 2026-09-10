@@ -31,7 +31,7 @@ class LogicGraphQuery:
     artifacts: Artifacts
 
     def experiment(self, *, project_id: str, experiment_id: str) -> Record:
-        experiment = self.research.experiment_state(
+        experiment = self.research.experiments.get_state(
             experiment_id=experiment_id, project_id=project_id
         )
         attempt = experiment.get("attempt_index")
@@ -65,7 +65,7 @@ class LogicGraphQuery:
         return self._payload(base=base, chosen=chosen, text=text, project_id=project_id)
 
     def project(self, *, project_id: str) -> Record:
-        selection = self.research.project_logic_graph_selection(project_id=project_id)
+        selection = self.research.reflections.project_logic_graph_selection(project_id=project_id)
         return self._for_reflection(
             project_id=project_id,
             reflection=selection.get("reflection"),
@@ -77,7 +77,7 @@ class LogicGraphQuery:
         return self._for_reflection(
             project_id=project_id,
             reflection=present_reflection_state(
-                self.research.reflection_state(
+                self.research.reflections.get_state(
                     reflection_id=reflection_id, project_id=project_id
                 )
             ),

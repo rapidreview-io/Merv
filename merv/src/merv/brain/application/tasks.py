@@ -145,7 +145,7 @@ class TransitionTask:
         evidence: dict[str, Any] | None,
         project_id: str | None,
     ) -> tuple[TaskState, StoredEvent]:
-        committed = self.research.transition_task(
+        committed = self.research.tasks.transition_with_event(
             task_id=task_id,
             transition=transition,
             evidence=evidence,

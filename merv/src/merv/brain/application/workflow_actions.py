@@ -25,7 +25,7 @@ class WorkflowDeliveries:
         self.workflows.start(project_id=delivery.project_id, request_id=str(data.pop("request_id", delivery.id)), **data)
 
     def _review(self, delivery: Delivery) -> None:
-        self.research.request_review(project_id=delivery.project_id, expected_revision=delivery.revision,
+        self.research.reviews.request(project_id=delivery.project_id, expected_revision=delivery.revision,
                                      producer_session_id=self.sessions.workflow_producer(
                                          project_id=delivery.project_id, instance_id=delivery.instance_id,
                                          revision=delivery.revision - 1) or "main",

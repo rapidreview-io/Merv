@@ -52,17 +52,26 @@ class RecordingReviews:
         return self.event
 
 
-class RecordingResearch:
+class RecordingExperiments:
     def __init__(self, order: list[str], *, error: Exception | None = None) -> None:
         self.order = order
         self.error = error
         self.state = {"id": "exp_1", "project_id": "proj_1", "status": "planned"}
 
-    def experiment_state(self, **_kwargs: Any) -> dict[str, Any]:
+    def get_state(self, **_kwargs: Any) -> dict[str, Any]:
         self.order.append("research.state")
         if self.error is not None:
             raise self.error
         return self.state
+
+
+class RecordingResearch:
+    def __init__(self, order: list[str], *, error: Exception | None = None) -> None:
+        self.experiments = RecordingExperiments(order, error=error)
+
+    @property
+    def state(self) -> dict[str, Any]:
+        return self.experiments.state
 
 
 class RecordingFeed:
@@ -86,8 +95,7 @@ def _read_status(
     feed: RecordingFeed,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    research.review_status = reviews.status
-    research.latest_submitted_review_event = reviews.latest_submitted_event
+    research.reviews = reviews
     return read_review_status(research=research, feed=feed, **kwargs)
 
 

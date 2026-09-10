@@ -326,7 +326,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
             store=self.store, artifacts=Artifacts(store=self.store, blobs=FakeBlobStore())
         )
         research = Research(store=self.store, artifacts=artifacts, workflows=Workflows(store=self.store))
-        experiments = research._experiments
+        experiments = research.experiments
         created = experiments.create(
             project_id=project_id, name="rollback-event", intent="postgres"
         )

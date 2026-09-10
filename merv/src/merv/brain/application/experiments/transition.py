@@ -138,7 +138,7 @@ class TransitionExperiment:
         step = EXPERIMENT_WORKFLOW.transition(transition)
         effects = () if step is None else step.effects
         before = (
-            self.research.experiment_state(
+            self.research.experiments.get_state(
                 experiment_id=experiment_id, project_id=project_id
             )
             if "prepare_metrics_exhibit" in effects or not project_id
@@ -159,7 +159,7 @@ class TransitionExperiment:
             prepared_snapshot = self.research.workflows.runtime.get(project_id=resolved_project_id, instance_id=experiment_id)
             exhibit = self._finalize_exhibit(state=before, snapshot=prepared_snapshot)
 
-        committed = self.research.transition_experiment(
+        committed = self.research.experiments.transition_with_event(
             experiment_id=experiment_id,
             transition=transition,
             evidence=evidence,
@@ -207,7 +207,7 @@ class TransitionExperiment:
         """Prepare external metrics before the runtime's final transactional gate."""
         if action != "submit_results" or snapshot.state != "running":
             return None
-        state = self.research.experiment_state(experiment_id=snapshot.id, project_id=snapshot.project_id)
+        state = self.research.experiments.get_state(experiment_id=snapshot.id, project_id=snapshot.project_id)
         return self._finalize_exhibit(state=state, snapshot=snapshot)
 
     def _finalize_exhibit(self, *, state: ExperimentState, snapshot: Snapshot | None = None) -> dict[str, object] | None:
@@ -220,7 +220,7 @@ class TransitionExperiment:
         exhibit = self.exhibits.generate(state=state)
         pinned = should_pin_exhibit(exhibit=exhibit)
         verdict = {**dict(exhibit["verdict"]), "attempt_index": exhibit["attempt_index"], "pinned": pinned}
-        self.research.record_exhibit_verdict(
+        self.research.experiments.record_exhibit_verdict(
             experiment_id=experiment_id, project_id=project_id, verdict=verdict,
             expected_revision=snapshot.revision, expected_attempt_index=int(state["attempt_index"]),
             expected_artifact_ids=source_ids,

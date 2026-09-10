@@ -133,7 +133,7 @@ class ReviewPolicyTest(unittest.TestCase):
         current = self.app.research.workflows.runtime.get(project_id=self.project_id, instance_id=exp_id)
         self.call("workflow.transition", project_id=self.project_id, instance_id=exp_id, action="approve_design",
                   expected_revision=current.revision, request_id="approve")
-        return self.app.research.experiment_state(project_id=self.project_id, experiment_id=exp_id)
+        return self.app.research.experiments.get_state(project_id=self.project_id, experiment_id=exp_id)
 
     # ---- default (knob off) ----
 
@@ -175,7 +175,7 @@ class ReviewPolicyTest(unittest.TestCase):
         exp_id = self._drive_to_design_review()
         self._insert_attested_pass(exp_id=exp_id, role="design_reviewer")
         self._pass_verified_review(exp_id=exp_id, role="design_reviewer")
-        out = self.app.research.experiment_state(project_id=self.project_id, experiment_id=exp_id)
+        out = self.app.research.experiments.get_state(project_id=self.project_id, experiment_id=exp_id)
         self.assertEqual(out["status"], "running")
 
     def test_policy_can_be_switched_back_off(self) -> None:

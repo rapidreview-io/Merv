@@ -471,7 +471,7 @@ class Application:
             else {}
         )
         consolidations = (
-            self.research.experiment_consolidations(
+            self.research.reflections.experiment_consolidations(
                 project_id=resolved,
                 experiment_ids=ids,
             )
@@ -502,7 +502,7 @@ class Application:
         rich: bool = False,
     ) -> dict[str, Any]:
         if rich:
-            state = self.research.experiment_state(
+            state = self.research.experiments.get_state(
                 experiment_id=experiment_id,
                 project_id=project_id,
             )
@@ -518,12 +518,12 @@ class Application:
                 project_id=resolved_project_id,
                 instance_ids=(experiment_id,),
             ).get(experiment_id)
-            response["consolidation_history"] = self.research.experiment_consolidations(
+            response["consolidation_history"] = self.research.reflections.experiment_consolidations(
                 project_id=resolved_project_id,
                 experiment_ids=(experiment_id,),
             ).get(experiment_id, [])
             return response
-        state = self.research.experiment_state(
+        state = self.research.experiments.get_state(
             experiment_id=experiment_id,
             project_id=project_id,
         )
@@ -539,7 +539,7 @@ class Application:
             project_id=resolved_project_id,
             instance_ids=(experiment_id,),
         ).get(experiment_id)
-        response["consolidation_history"] = self.research.experiment_consolidations(
+        response["consolidation_history"] = self.research.reflections.experiment_consolidations(
             project_id=resolved_project_id,
             experiment_ids=(experiment_id,),
         ).get(experiment_id, [])
@@ -591,7 +591,7 @@ class Application:
         depends_on: list[str] | str | None = None,
         project_id: str | None = None,
     ) -> dict[str, Any]:
-        state = self.research.create_task(
+        state = self.research.tasks.create(
             name=name,
             goal=goal,
             deliverables=deliverables,
@@ -618,7 +618,7 @@ class Application:
         review_id: str = "",
         rich: bool = False,
     ) -> dict[str, Any]:
-        state = self.research.task_state(task_id=task_id, project_id=project_id)
+        state = self.research.tasks.get_state(task_id=task_id, project_id=project_id)
         if rich:
             return dict(rich_task_state(state))
         response = dict(slim_task_state(state))
@@ -722,7 +722,7 @@ class Application:
         lenses: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         return present_agent_reflection_state(
-            self.research.create_reflection(
+            self.research.reflections.create(
                 project_id=project_id,
                 title=title,
                 lenses=lenses or [],
@@ -738,7 +738,7 @@ class Application:
         include_content: bool = False,
     ) -> dict[str, Any]:
         return present_agent_reflection_state(
-            self.research.reflection_state(
+            self.research.reflections.get_state(
                 project_id=project_id,
                 reflection_id=reflection_id,
                 include_content=True,
@@ -747,7 +747,7 @@ class Application:
         )
 
     def reflections(self, *, project_id: str) -> dict[str, Any]:
-        result = self.research.list_reflections(project_id=project_id)
+        result = self.research.reflections.list_reflections(project_id=project_id)
         return present_reflection_overview(
             {
                 "count": result.get(
@@ -766,7 +766,7 @@ class Application:
         transition: str,
     ) -> dict[str, Any]:
         return present_agent_reflection_state(
-            self.research.transition_reflection(
+            self.research.reflections.transition(
                 project_id=project_id,
                 reflection_id=reflection_id,
                 transition=transition,
@@ -775,7 +775,7 @@ class Application:
         )
 
     def consolidation(self, *, project_id: str, reflection_id: str) -> dict[str, Any]:
-        state = self.research.reflection_state(
+        state = self.research.reflections.get_state(
             project_id=project_id,
             reflection_id=reflection_id,
             include_content=True,
@@ -821,7 +821,7 @@ class Application:
         decisions: list[dict[str, Any]],
         producer_session_id: str = "",
     ) -> dict[str, Any]:
-        state = self.research.reflection_state(
+        state = self.research.reflections.get_state(
             project_id=project_id,
             reflection_id=reflection_id,
         )
@@ -850,7 +850,7 @@ class Application:
             for decision in decisions
         ]
         return present_agent_reflection_state(
-            self.research.submit_consolidation(
+            self.research.reflections.submit_consolidation(
                 project_id=project_id,
                 reflection_id=reflection_id,
                 base_sha=base_sha,
@@ -877,7 +877,7 @@ class Application:
             raise WorkflowError("no reviewed proposal awaits a central advance for this instance")
         if status == "bound" and pending["advance_id"]:
             return pending
-        advance = self.research.prepare_reflection_advance(
+        advance = self.research.reflections.prepare_advance(
             project_id=project_id,
             reflection_id=instance_id,
             runner_id=runner_id,
@@ -892,7 +892,7 @@ class Application:
         reflection = self.research.snapshot(project_id=project_id).open_reflection
         if not reflection or reflection.get("status") != "consolidating":
             return None, ""
-        state = self.research.reflection_state(
+        state = self.research.reflections.get_state(
             project_id=project_id,
             reflection_id=str(reflection["id"]),
         )
@@ -939,7 +939,7 @@ class Application:
         ancestry: dict[str, bool] | None = None,
         error: str = "",
     ) -> dict[str, Any]:
-        state = self.research.settle_reflection_advance(
+        state = self.research.reflections.settle_advance(
             project_id=project_id,
             advance_id=advance_id,
             runner_id=runner_id,
@@ -1011,7 +1011,7 @@ class Application:
         spend = self.sandboxes.project_spend(project_id=project_id)
         names = {
             str(experiment.get("id") or ""): str(experiment.get("name") or "")
-            for experiment in self.research.project_experiment_summaries(
+            for experiment in self.research.experiments.list_experiment_summaries(
                 project_id=project_id
             )
         }

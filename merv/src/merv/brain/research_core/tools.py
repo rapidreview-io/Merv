@@ -844,7 +844,7 @@ TOOLS: dict[str, ToolContract] = {
         ),
     ),
     "review.submit": ToolContract(
-        handler_identity="research.submit_review",
+        handler_identity="reviews.submit",
         scope_strategy="capability",
         telemetry_scope_field="review_session_id",
         input_model=ReviewSubmitInput,

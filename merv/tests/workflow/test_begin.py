@@ -222,7 +222,7 @@ class WorkflowBeginTest(ResearchCase):
         )
         self.assertEqual(current.state, "running")
         self.assertIsNone(
-            self.app.research.attempt_started_running_at(experiment_id=experiment_id)
+            self.app.research.experiments.attempt_started_running_at(experiment_id=experiment_id)
         )
         self.call(
             "workflow.begin",
@@ -237,6 +237,6 @@ class WorkflowBeginTest(ResearchCase):
             expected_revision=current.revision,
         )
         self.assertIsNotNone(
-            self.app.research.attempt_started_running_at(experiment_id=experiment_id)
+            self.app.research.experiments.attempt_started_running_at(experiment_id=experiment_id)
         )
         self.assertEqual(len(self.starts(experiment_id)), 1)

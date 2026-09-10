@@ -30,7 +30,7 @@ class ExperimentSummaryTest(unittest.TestCase):
             db_path=Path(self.tmp.name) / "state.sqlite"
         )
         self.research = Research(store=self.store, artifacts=Mock(), workflows=Workflows(store=self.store))
-        self.experiments = self.research._experiments
+        self.experiments = self.research.experiments
         self.one_ids = self._seed("proj_one", 1)
         self.many_ids = self._seed("proj_many", 25)
 
@@ -78,7 +78,7 @@ class ExperimentSummaryTest(unittest.TestCase):
             "get_state",
             side_effect=AssertionError("summary read hydrated rich experiment state"),
         ):
-            rows = self.research.project_experiment_summaries(project_id=project_id)
+            rows = self.research.experiments.list_experiment_summaries(project_id=project_id)
         selects = [
             statement
             for statement in self.store.statements
@@ -129,9 +129,9 @@ class ExperimentSummaryTest(unittest.TestCase):
         self.store.statements.clear()
 
         with self.assertRaisesRegex(ValidationError, "project_id is required"):
-            self.research.project_experiment_summaries(project_id=None)
+            self.research.experiments.list_experiment_summaries(project_id=None)
         with self.assertRaisesRegex(NotFoundError, "project not found: proj_missing"):
-            self.research.project_experiment_summaries(project_id="proj_missing")
+            self.research.experiments.list_experiment_summaries(project_id="proj_missing")
 
         self.assertFalse(
             any("FROM experiments" in statement for statement in self.store.statements)

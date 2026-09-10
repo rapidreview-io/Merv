@@ -92,20 +92,22 @@ CANDIDATE_PUBLIC = Public(hidden=("project_id", "validation_json", "idempotency_
 class Research:
     """Own research records, lifecycle workflows, gates, and invariants.
 
-    Application and delivery code use this object only. Experiment, reflection,
-    and review implementations remain separate because their transactions and
-    state machines are independently meaningful; they are not public service
-    objects.
+    What crosses the kinds is a method here: the project, its claims, its
+    candidates, the canonical snapshot, the bounded project context, and the
+    event ledger. What belongs to one kind belongs to that kind's service —
+    ``experiments``, ``tasks``, ``reflections``, ``reviews`` — which a caller
+    reaches and calls itself, because a method that only forwards to one of
+    them says nothing a reader did not already know.
     """
 
     __slots__ = (
         "store",
         "artifacts",
         "records",
-        "_experiments",
-        "_tasks",
-        "_reflections",
-        "_reviews",
+        "experiments",
+        "tasks",
+        "reflections",
+        "reviews",
         "workflows",
     )
 
@@ -115,42 +117,42 @@ class Research:
         self.workflows = workflows
         store.install(RESEARCH_SCHEMA)
         self.records = Records(store=store, artifacts=artifacts, runtime=workflows.runtime)
-        self._experiments = ExperimentService(store=store, records=self.records)
-        self._tasks = TaskService(store=store, records=self.records)
-        self._reflections = ReflectionService(
+        self.experiments = ExperimentService(store=store, records=self.records)
+        self.tasks = TaskService(store=store, records=self.records)
+        self.reflections = ReflectionService(
             store=store,
             artifacts=artifacts,
-            experiments=self._experiments,
-            tasks=self._tasks,
+            experiments=self.experiments,
+            tasks=self.tasks,
             records=self.records,
         )
-        self._reviews = ReviewService(
+        self.reviews = ReviewService(
             store=store,
             records=self.records,
-            reflections=self._reflections,
+            reflections=self.reflections,
             artifacts=artifacts,
         )
         # Every native record binds through the one engine; the lens and the
         # published wave have no row of their own and stay hand-written.
-        for name, service in (("experiment", self._experiments), ("task", self._tasks),
-                              ("reflection", self._reflections)):
+        for name, service in (("experiment", self.experiments), ("task", self.tasks),
+                              ("reflection", self.reflections)):
             kind = KINDS[name]
             self.workflows.bind(name, Binding(
                 partial(self.records.knowledge, kind),
                 partial(self.records.commit_change, kind),
                 service.initialize_workflow,
             ))
-        self.workflows.bind("reflection_lens", Binding(self._reflections._lens_knowledge,
-                                                      self._reflections._commit_lens_change,
-                                                      self._reflections.initialize_lens))
-        self.workflows.bind("research_wave", Binding(self._reflections._wave_knowledge,
-                                                    self._reflections._commit_wave_change,
-                                                    self._reflections.initialize_wave))
+        self.workflows.bind("reflection_lens", Binding(self.reflections._lens_knowledge,
+                                                      self.reflections._commit_lens_change,
+                                                      self.reflections.initialize_lens))
+        self.workflows.bind("research_wave", Binding(self.reflections._wave_knowledge,
+                                                    self.reflections._commit_wave_change,
+                                                    self.reflections.initialize_wave))
 
     def initialize_workflows(self) -> None:
         """Explicit bootstrap of version-pinned legacy compositions after binding."""
         with self.store.transaction() as conn:
-            self._reflections.migrate_workflow_instances(conn=conn)
+            self.reflections.migrate_workflow_instances(conn=conn)
             # Schema 60 adopts released research records, including gates whose
             # review already passed. Resume only that pinned migration revision;
             # an arbitrary plugin's read-only node still needs its assigned work.
@@ -925,44 +927,12 @@ class Research:
             ).fetchall()
             return {"claims": rows_to_dicts(rows=rows)}
 
-    # Experiments ----------------------------------------------------------
-
-    def create_experiment(
-        self,
-        *,
-        name: str,
-        intent: str,
-        details: str = "",
-        tested_claim_ids: list[str] | str | None = None,
-        depends_on: list[str] | str | None = None,
-        project_id: str | None = None,
-    ) -> ExperimentState:
-        return cast(
-            ExperimentState,
-            self._experiments.create(
-                name=name,
-                intent=intent,
-                details=details,
-                tested_claim_ids=tested_claim_ids,
-                depends_on=depends_on,
-                project_id=project_id,
-            ),
-        )
-
-    def experiment_state(
-        self, *, experiment_id: str, project_id: str | None = None
-    ) -> ExperimentState:
-        return cast(
-            ExperimentState,
-            self._experiments.get_state(
-                experiment_id=experiment_id, project_id=project_id
-            ),
-        )
+    # Node reads -----------------------------------------------------------
 
     def project_experiments(self, *, project_id: str | None) -> list[ExperimentState]:
         with closing(self.store.connect()) as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            evaluated = self._experiments.list_states_with_gates(
+            evaluated = self.experiments.list_states_with_gates(
                 conn=conn, project_id=project_id
             )
             return cast(
@@ -970,332 +940,15 @@ class Research:
                 [state for state, _gate in evaluated],
             )
 
-    def project_experiment_summaries(
-        self, *, project_id: str | None
-    ) -> list[ExperimentSummary]:
-        return cast(
-            list[ExperimentSummary],
-            self._experiments.list_experiment_summaries(project_id=project_id),
-        )
-
-    def transition_experiment(
-        self,
-        *,
-        experiment_id: str,
-        transition: str,
-        evidence: dict[str, object] | None = None,
-        project_id: str | None = None,
-        expected_revision: int | None = None,
-    ) -> CommittedExperimentUpdate:
-        return cast(
-            CommittedExperimentUpdate,
-            self._experiments.transition_with_event(
-                experiment_id=experiment_id,
-                transition=transition,
-                evidence=evidence,
-                expected_revision=expected_revision,
-                project_id=project_id,
-            ),
-        )
-
-    def record_exhibit_verdict(
-        self, *, experiment_id: str, project_id: str, verdict: ExhibitVerdict,
-        expected_revision: int | None = None, expected_attempt_index: int | None = None,
-        expected_artifact_ids: tuple[str, ...] | None = None, artifact_path: str = "",
-        artifact_data: bytes | None = None,
-    ) -> None:
-        self._experiments.record_exhibit_verdict(
-            experiment_id=experiment_id, project_id=project_id, verdict=verdict,
-            expected_revision=expected_revision, expected_attempt_index=expected_attempt_index,
-            expected_artifact_ids=expected_artifact_ids, artifact_path=artifact_path, artifact_data=artifact_data,
-        )
-
-    def attempt_started_running_at(self, *, experiment_id: str) -> str | None:
-        return self._experiments.attempt_started_running_at(experiment_id=experiment_id)
-
-    def assert_experiment_in_project(
-        self, *, attachment_id: str, project_id: str
-    ) -> None:
-        self._experiments.assert_in_project(
-            experiment_id=attachment_id, project_id=project_id
-        )
-
-    # Reflections ----------------------------------------------------------
-
-    # Tasks ----------------------------------------------------------------
-
-    def create_task(
-        self,
-        *,
-        name: str,
-        goal: str,
-        deliverables: list[str] | str | None = None,
-        depends_on: list[str] | str | None = None,
-        project_id: str | None = None,
-    ) -> TaskState:
-        return cast(
-            TaskState,
-            self._tasks.create(
-                name=name,
-                goal=goal,
-                deliverables=deliverables,
-                depends_on=depends_on,
-                project_id=project_id,
-            ),
-        )
-
-    def task_state(
-        self, *, task_id: str, project_id: str | None = None
-    ) -> TaskState:
-        return cast(
-            TaskState,
-            self._tasks.get_state(task_id=task_id, project_id=project_id),
-        )
-
     def project_tasks(self, *, project_id: str | None) -> list[TaskState]:
         with closing(self.store.connect()) as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            evaluated = self._tasks.list_states_with_gates(
+            evaluated = self.tasks.list_states_with_gates(
                 conn=conn, project_id=project_id
             )
             return cast(list[TaskState], [state for state, _gate in evaluated])
 
-    def project_task_summaries(self, *, project_id: str | None) -> list[TaskSummary]:
-        return cast(
-            list[TaskSummary],
-            self._tasks.list_task_summaries(project_id=project_id),
-        )
-
-    def transition_task(
-        self,
-        *,
-        task_id: str,
-        transition: str,
-        evidence: dict[str, object] | None = None,
-        project_id: str | None = None,
-    ) -> CommittedTaskUpdate:
-        return cast(
-            CommittedTaskUpdate,
-            self._tasks.transition_with_event(
-                task_id=task_id,
-                transition=transition,
-                evidence=evidence,
-                project_id=project_id,
-            ),
-        )
-
-    def assert_task_in_project(self, *, task_id: str, project_id: str) -> None:
-        self._tasks.assert_in_project(task_id=task_id, project_id=project_id)
-
-    def create_reflection(
-        self,
-        *,
-        project_id: str,
-        title: str = "",
-        lenses: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
-        return self._reflections.create(
-            project_id=project_id,
-            title=title,
-            lenses=lenses or [],
-        )
-
-    def reflection_state(
-        self,
-        *,
-        project_id: str,
-        reflection_id: str,
-        include_content: bool = False,
-    ) -> dict[str, Any]:
-        return self._reflections.get_state(
-            project_id=project_id,
-            reflection_id=reflection_id,
-            include_content=include_content,
-        )
-
-    def list_reflections(self, *, project_id: str) -> dict[str, Any]:
-        return self._reflections.list_reflections(project_id=project_id)
-
-    def experiment_consolidations(
-        self, *, project_id: str, experiment_ids: tuple[str, ...]
-    ) -> dict[str, list[dict[str, Any]]]:
-        return self._reflections.experiment_consolidations(
-            project_id=project_id,
-            experiment_ids=experiment_ids,
-        )
-
-    def transition_reflection(
-        self,
-        *,
-        project_id: str,
-        reflection_id: str,
-        transition: str,
-    ) -> dict[str, Any]:
-        return self._reflections.transition(
-            project_id=project_id,
-            reflection_id=reflection_id,
-            transition=transition,
-        )
-
-    def submit_consolidation(
-        self,
-        *,
-        project_id: str,
-        reflection_id: str,
-        base_sha: str,
-        proposal_sha: str,
-        summary: str,
-        validation: dict[str, Any] | None,
-        decisions: list[dict[str, Any]],
-        producer_session_id: str,
-    ) -> dict[str, Any]:
-        return self._reflections.submit_consolidation(
-            project_id=project_id,
-            reflection_id=reflection_id,
-            base_sha=base_sha,
-            proposal_sha=proposal_sha,
-            summary=summary,
-            validation=validation,
-            decisions=decisions,
-            producer_session_id=producer_session_id,
-        )
-
-    def prepare_reflection_advance(
-        self, *, project_id: str, reflection_id: str, runner_id: str
-    ) -> dict[str, Any]:
-        return self._reflections.prepare_advance(
-            project_id=project_id,
-            reflection_id=reflection_id,
-            runner_id=runner_id,
-        )
-
-    def settle_reflection_advance(
-        self,
-        *,
-        project_id: str,
-        advance_id: str,
-        runner_id: str,
-        observed_sha: str,
-        proposal_parents: list[str] | None = None,
-        diffstat: dict[str, Any] | None = None,
-        ancestry: dict[str, bool] | None = None,
-        error: str = "",
-    ) -> dict[str, Any]:
-        return self._reflections.settle_advance(
-            project_id=project_id,
-            advance_id=advance_id,
-            runner_id=runner_id,
-            observed_sha=observed_sha,
-            proposal_parents=proposal_parents,
-            diffstat=diffstat,
-            ancestry=ancestry,
-            error=error,
-        )
-
-    def reflection_overview(self, *, project_id: str) -> dict[str, Any]:
-        return self._reflections.overview(project_id=project_id)
-
-    def project_logic_graph_selection(self, *, project_id: str) -> dict[str, Any]:
-        return self._reflections.project_logic_graph_selection(project_id=project_id)
-
     # Reviews --------------------------------------------------------------
-
-    def workflow_review_fact(self, *, snapshot, reference, conn) -> dict[str, Any]:
-        return self._reviews.read_fact(snapshot=snapshot, reference=reference, conn=conn)
-
-    def request_review(
-        self,
-        *,
-        target_type: str,
-        target_id: str,
-        role: str,
-        reason: str = "",
-        producer_session_id: str = "main",
-        project_id: str | None = None,
-        expected_revision: int | None = None,
-        if_current: bool = False,
-    ) -> dict[str, Any]:
-        return self._reviews.request(
-            target_type=target_type,
-            target_id=target_id,
-            role=role,
-            reason=reason,
-            producer_session_id=producer_session_id,
-            project_id=project_id,
-            expected_revision=expected_revision,
-            if_current=if_current,
-        )
-
-    def start_review(
-        self,
-        *,
-        review_request_id: str,
-        reviewer_capability: str,
-        declared_agent: str = "",
-        caller_session_id: str = "",
-        tenant_id: str | None = None,
-        assigned_agent_session_id: str = "",
-        assigned_review_request_id: str = "",
-    ) -> dict[str, Any]:
-        return self._reviews.start(
-            review_request_id=review_request_id,
-            reviewer_capability=reviewer_capability,
-            declared_agent=declared_agent,
-            caller_session_id=caller_session_id,
-            tenant_id=tenant_id,
-            assigned_agent_session_id=assigned_agent_session_id,
-            assigned_review_request_id=assigned_review_request_id,
-        )
-
-    def submit_review(
-        self,
-        *,
-        review_session_id: str,
-        verdict: str,
-        synopsis: str,
-        notes: str = "",
-        findings: list[dict[str, Any]] | None = None,
-        evidence: dict[str, Any] | None = None,
-        return_to: str = "",
-    ) -> dict[str, Any]:
-        return self._reviews.submit(
-            review_session_id=review_session_id,
-            verdict=verdict,
-            synopsis=synopsis,
-            notes=notes,
-            findings=findings,
-            evidence=evidence,
-            return_to=return_to,
-        )
-
-    def review_status(
-        self,
-        *,
-        target_type: str,
-        target_id: str,
-        project_id: str | None = None,
-    ) -> dict[str, Any]:
-        return self._reviews.status(
-            target_type=target_type,
-            target_id=target_id,
-            project_id=project_id,
-        )
-
-    def latest_submitted_review_event(
-        self,
-        *,
-        target_type: str,
-        target_id: str,
-        project_id: str | None = None,
-    ) -> StoredEvent | None:
-        return self._reviews.latest_submitted_event(
-            target_type=target_type,
-            target_id=target_id,
-            project_id=project_id,
-        )
-
-    def review_queue(self, *, project_id: str | None = None) -> dict[str, Any]:
-        return self._reviews.queue(project_id=project_id)
 
     def review_project_id(
         self,
@@ -1308,22 +961,8 @@ class Research:
                 "provide exactly one of review_request_id or review_session_id"
             )
         if review_request_id:
-            return self._reviews.request_project_id(review_request_id=review_request_id)
-        return self._reviews.session_project_id(review_session_id=review_session_id)
-
-    def review_target(
-        self,
-        *,
-        review_request_id: Any = None,
-        review_session_id: Any = None,
-    ) -> tuple[str, str, str] | None:
-        return self._reviews.target_for(
-            review_request_id=review_request_id,
-            review_session_id=review_session_id,
-        )
-
-    def review_request_for_session(self, *, review_session_id: Any) -> str | None:
-        return self._reviews.request_id_for_session(review_session_id=review_session_id)
+            return self.reviews.request_project_id(review_request_id=review_request_id)
+        return self.reviews.session_project_id(review_session_id=review_session_id)
 
     def assert_review_in_project(
         self,
@@ -1337,12 +976,12 @@ class Research:
                 "provide exactly one of review_request_id or review_session_id"
             )
         if review_request_id:
-            self._reviews.assert_request_in_project(
+            self.reviews.assert_request_in_project(
                 project_id=project_id,
                 review_request_id=review_request_id,
             )
         else:
-            self._reviews.assert_session_in_project(
+            self.reviews.assert_session_in_project(
                 project_id=project_id,
                 review_session_id=review_session_id,
             )
@@ -1378,12 +1017,12 @@ class Research:
                     (project_id,),
                 ).fetchall()
             )
-            evaluated = self._experiments.list_states_with_gates(
+            evaluated = self.experiments.list_states_with_gates(
                 conn=conn, project_id=project_id
             )
             experiments = cast(list[ExperimentState], [state for state, _ in evaluated])
             gates = {str(state["id"]): evaluation for state, evaluation in evaluated}
-            evaluated_tasks = self._tasks.list_states_with_gates(
+            evaluated_tasks = self.tasks.list_states_with_gates(
                 conn=conn,
                 project_id=project_id,
                 detail_ids=(task_id,) if task_id else (),
@@ -1654,7 +1293,7 @@ class Research:
         ).fetchone()
         if row is None:
             return None, None
-        return self._reflections.get_state_with_gate(reflection_id=row["id"], conn=conn)
+        return self.reflections.get_state_with_gate(reflection_id=row["id"], conn=conn)
 
     def _literature_signal(self, *, conn: Any, project_id: str) -> LiteratureSignal:
         total = conn.execute(

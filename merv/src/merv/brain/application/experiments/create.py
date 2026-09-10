@@ -74,7 +74,7 @@ def create_experiment(
             raise ValidationError("claim ids must be non-empty strings")
         if claim_id not in claim_ids:
             claim_ids.append(claim_id)
-    state = research.create_experiment(
+    state = research.experiments.create(
         name=str(kwargs.pop("name", "") or ""),
         intent=intent,
         details=str(kwargs.pop("details", "") or "").strip(),

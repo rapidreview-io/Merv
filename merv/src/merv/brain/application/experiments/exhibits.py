@@ -32,7 +32,7 @@ class ExperimentExhibits:
             project_id=project_id,
             experiment_id=experiment_id,
             attempt_index=attempt_index,
-            window_started_at=self.research.attempt_started_running_at(
+            window_started_at=self.research.experiments.attempt_started_running_at(
                 experiment_id=experiment_id
             ),
             file_sources=self._metric_file_sources(
@@ -45,7 +45,7 @@ class ExperimentExhibits:
     def preview(
         self, *, experiment_id: str, project_id: str | None = None
     ) -> dict[str, object]:
-        state = self.research.experiment_state(
+        state = self.research.experiments.get_state(
             experiment_id=experiment_id, project_id=project_id
         )
         if str(state.get("status")) not in EXPERIMENT_WORKFLOW.effect_sources(

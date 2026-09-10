@@ -30,7 +30,7 @@ _SUBMITTED_FIELDS = {"role": "role", "lens_id": "lens_id", "path": "path",
 
 def request_review(research: Research, **kwargs: Any) -> dict[str, Any]:
     """Add delivery instructions to a Research-owned review capability."""
-    result = research.request_review(**kwargs)
+    result = research.reviews.request(**kwargs)
     return {
         **result,
         "reviewer_handoff": reviewer_handoff_payload(
@@ -97,7 +97,7 @@ def start_review(
 ) -> dict[str, Any]:
     """Start a pinned review, then attach bounded orientation for its target."""
     result = dict(
-        research.start_review(
+        research.reviews.start(
             review_request_id=review_request_id,
             reviewer_capability=reviewer_capability,
             declared_agent=declared_agent,
@@ -124,7 +124,7 @@ def start_review(
     ]
     result["project_context"] = project_context.build(project_id=project_id)
     if target_type == "experiment":
-        live_state = research.experiment_state(
+        live_state = research.experiments.get_state(
             experiment_id=target_id,
             project_id=project_id,
         )
@@ -141,7 +141,7 @@ def start_review(
         )
     elif target_type == "task":
         result["submitted_artifacts"] = submitted_artifacts
-        live_task = research.task_state(task_id=target_id, project_id=project_id)
+        live_task = research.tasks.get_state(task_id=target_id, project_id=project_id)
         if task_context is not None:
             result["context"] = task_context.build(
                 state=dict(live_task), project_id=project_id
@@ -149,7 +149,7 @@ def start_review(
     elif target_type == "reflection":
         result["submitted_artifacts"] = submitted_artifacts
         result["reflection_context"] = present_agent_reflection_state(
-            research.reflection_state(
+            research.reflections.get_state(
                 project_id=project_id,
                 reflection_id=target_id,
                 include_content=True,
@@ -173,7 +173,7 @@ def read_review_status(
 ) -> dict[str, Any]:
     """Read canonical review state, then add best-effort producer guidance."""
     result = present_review_recovery(
-        research.review_status(
+        research.reviews.status(
             target_type=target_type,
             target_id=target_id,
             project_id=project_id,
@@ -182,11 +182,11 @@ def read_review_status(
     if target_type != "experiment" or not result.get("reviews"):
         return result
     try:
-        state = research.experiment_state(
+        state = research.experiments.get_state(
             experiment_id=target_id,
             project_id=project_id,
         )
-        event = research.latest_submitted_review_event(
+        event = research.reviews.latest_submitted_event(
             target_type=target_type,
             target_id=target_id,
             project_id=str(state.get("project_id") or project_id or ""),
@@ -209,7 +209,7 @@ def read_review_status(
 def review_queue(
     research: Research, *, project_id: str | None = None
 ) -> dict[str, Any]:
-    return present_review_recovery(research.review_queue(project_id=project_id))
+    return present_review_recovery(research.reviews.queue(project_id=project_id))
 
 
 def present_review_recovery(result: dict[str, Any]) -> dict[str, Any]:

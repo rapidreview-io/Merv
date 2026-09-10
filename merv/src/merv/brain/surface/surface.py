@@ -126,7 +126,7 @@ class Surface:
         self.artifacts = ResearchArtifacts(store=store, artifacts=self.artifact_store)
         self.workflows = Workflows(store=store, knowledge=lambda snapshot, conn: WorkflowKnowledge(
             snapshot=snapshot, conn=conn, artifacts=self.artifact_store, project=self.research.get_project,
-            review=self.research.workflow_review_fact))
+            review=self.research.reviews.read_fact))
         self.research = Research(store=store, artifacts=self.artifacts, workflows=self.workflows)
         self.research.initialize_workflows()
         self.feed = FeedService(
@@ -153,7 +153,11 @@ class Surface:
         self.sandbox_providers = RemoteProviders(store=store, client=infrastructure_client)
         self.sandboxes = RemoteSandboxes(
             store=store, client=infrastructure_client if sandbox_enabled else None,
-            attachment_check=self.research.assert_experiment_in_project,
+            # Sandboxes names the thing it is attached to neutrally; only this
+            # root knows the attachment is an experiment.
+            attachment_check=lambda *, attachment_id, project_id: (
+                self.research.experiments.assert_in_project(
+                    experiment_id=attachment_id, project_id=project_id)),
         )
         # Heavy objects live in merv-sandboxes; Research records which
         # experiment produced each one through the facade's lifecycle hook.
@@ -187,6 +191,7 @@ class Surface:
             "agents": self.agent_identities,
             "application": self.application,
             "research": self.research,
+            "reviews": self.research.reviews,
             "workflows": self.research.workflows,
             "artifact_submissions": self.artifact_tools,
             "sandboxes": self.sandboxes,

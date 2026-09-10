@@ -21,8 +21,8 @@ native record runs on one engine; its service keeps only that kind's own rules.
 - `artifacts.py`: research-owned associations, role/target policy, accepted evidence,
   replacement visibility, explicit immutable submission members. `artifact_models.py`:
   association projections and snapshot references.
-- `research.py`: public root; project, claim, candidate writes, workflow delegation,
-  snapshots, project context, membership, events, graph refs.
+- `research.py`: public root; only what crosses the kinds — project, claim and candidate
+  writes, snapshots, project context, membership, events, graph refs. One kind is reached at `experiments`/`tasks`/`reflections`/`reviews`, never forwarded through here.
 - `experiments.py`: what is true of experiments alone — the create blocks (active cap,
   reserved wave name, reflection debt), claim links, the attempt clock, the metrics
   exhibit. `tasks.py`: the immutable goal, its pinned brief, and delivery parsing.
