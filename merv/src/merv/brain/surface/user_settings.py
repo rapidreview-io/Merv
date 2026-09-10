@@ -1,14 +1,15 @@
 """Write-only per-user secret settings (no-dataplane Phase C).
 
 Currently just the per-user Hugging Face token: a member brings their own so no
-deployment-wide HF secret exists. The value is WRITE-ONLY — set or cleared here,
-never returned by any read — and is consumed only internally at sandbox
-provisioning (see ``SandboxEngine._resolve_hf_token``). This module owns the
-``user_hf_tokens`` table; the store carries the write path the REST route and
-composition depend on.
+deployment-wide HF secret exists. The value is WRITE-ONLY — set or cleared
+here, never returned by any read, and ``resolve`` is the internal-only reader a
+provisioning path would use. This module owns the ``user_hf_tokens`` table, its
+DDL, and the statements that touch it.
 """
 
 from __future__ import annotations
+
+from contextlib import closing
 
 from ..kernel.state.schema import (
     Connection,
@@ -18,7 +19,7 @@ from ..kernel.state.schema import (
     table_ddl,
 )
 from ..kernel.state.store import BaseStateStore
-from ..kernel.utils import ValidationError
+from ..kernel.utils import ValidationError, now_iso
 
 # A generous cap so a fat-fingered paste (or hostile body) cannot store an
 # unbounded blob; real HF tokens are well under this.
@@ -40,12 +41,36 @@ class UserHfTokenSettings:
             raise ValidationError(
                 f"token is too long (max {_MAX_HF_TOKEN_CHARS} characters)"
             )
-        self._store.set_user_hf_token(user_id=user_id, token=token)
+        # Dialect-neutral upsert; `excluded` works on SQLite >= 3.24 and
+        # Postgres alike, and one row per user is the whole model.
+        with self._store.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_hf_tokens (user_id, token, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT (user_id) DO UPDATE
+                  SET token = excluded.token, updated_at = excluded.updated_at
+                """,
+                (user_id, token, now_iso()),
+            )
         return {"status": "set"}
 
     def clear_token(self, *, user_id: str) -> dict[str, object]:
-        self._store.clear_user_hf_token(user_id=user_id)
+        with self._store.transaction() as conn:
+            conn.execute("DELETE FROM user_hf_tokens WHERE user_id = ?", (user_id,))
         return {"status": "cleared"}
+
+    def resolve(self, *, user_id: str) -> str:
+        """The token, for provisioning only. INTERNAL — never return it from an
+        API. Empty when unset or unauthenticated, which a provisioning path
+        treats as public-models-only graceful degrade."""
+        if not user_id:
+            return ""
+        with closing(self._store.connect()) as conn:
+            row = conn.execute(
+                "SELECT token FROM user_hf_tokens WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        return str(row["token"]) if row and row["token"] else ""
 
 
 USER_SETTINGS_DDL = """\

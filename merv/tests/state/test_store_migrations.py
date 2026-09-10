@@ -9,6 +9,7 @@ from tests.support.brain import TestBrain
 from merv.brain.infrastructure.persistence import LAST_COMMAND_COLUMNS
 from merv.brain.kernel.state.schema import has_table
 from merv.brain.kernel.state.store import StateStore
+from merv.brain.surface.user_settings import UserHfTokenSettings
 from tests.support.schema import LADDER, booted_store
 
 
@@ -260,9 +261,15 @@ class StoreMigrationTest(unittest.TestCase):
             )
         finally:
             conn.close()
-        # The query that exposed the drift must run against the migrated shape.
-        signal = store.project_sandbox_signal(project_id="proj_old")
-        self.assertIsInstance(signal, str)
+        # The read that exposed the drift must run against the migrated shape.
+        conn = store.connect()
+        try:
+            conn.execute(
+                "SELECT last_command_snapshot_at FROM sandboxes WHERE project_id = ?",
+                ("proj_old",),
+            ).fetchall()
+        finally:
+            conn.close()
 
     def test_legacy_sandboxes_gain_provider_columns(self) -> None:
         # Migration 18: multi-provider rows record their owning backend.
@@ -1307,12 +1314,13 @@ class UserHfTokenStoreTest(unittest.TestCase):
             conn.close()
 
     def test_set_resolve_upsert_and_clear(self) -> None:
-        self.assertEqual(self.store.user_hf_token(user_id="u1"), "")
-        self.store.set_user_hf_token(user_id="u1", token="hf_first")
-        self.assertEqual(self.store.user_hf_token(user_id="u1"), "hf_first")
+        settings = UserHfTokenSettings(store=self.store)
+        self.assertEqual(settings.resolve(user_id="u1"), "")
+        settings.set_token(user_id="u1", token="hf_first")
+        self.assertEqual(settings.resolve(user_id="u1"), "hf_first")
         # Upsert (one row per user) — the second set replaces, not appends.
-        self.store.set_user_hf_token(user_id="u1", token="hf_second")
-        self.assertEqual(self.store.user_hf_token(user_id="u1"), "hf_second")
+        settings.set_token(user_id="u1", token="hf_second")
+        self.assertEqual(settings.resolve(user_id="u1"), "hf_second")
         conn = self.store.connect()
         try:
             count = conn.execute(
@@ -1321,13 +1329,14 @@ class UserHfTokenStoreTest(unittest.TestCase):
             self.assertEqual(int(count["n"]), 1)
         finally:
             conn.close()
-        self.store.clear_user_hf_token(user_id="u1")
-        self.assertEqual(self.store.user_hf_token(user_id="u1"), "")
+        settings.clear_token(user_id="u1")
+        self.assertEqual(settings.resolve(user_id="u1"), "")
 
     def test_resolve_is_scoped_per_user_and_empty_for_unknown(self) -> None:
-        self.store.set_user_hf_token(user_id="a", token="hf_a")
-        self.assertEqual(self.store.user_hf_token(user_id="b"), "")
-        self.assertEqual(self.store.user_hf_token(user_id=""), "")
+        settings = UserHfTokenSettings(store=self.store)
+        settings.set_token(user_id="a", token="hf_a")
+        self.assertEqual(settings.resolve(user_id="b"), "")
+        self.assertEqual(settings.resolve(user_id=""), "")
 
 
 class Migration39Test(unittest.TestCase):

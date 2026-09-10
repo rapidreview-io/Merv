@@ -25,6 +25,7 @@ a control plane actually serves them.
 
 from __future__ import annotations
 
+from merv.brain.surface.user_settings import UserHfTokenSettings
 from merv.brain.workflows import Workflows
 
 import os
@@ -1009,12 +1010,13 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
             conn.close()
 
         # Write-only round trip: set, resolve (internal), clear, resolve empty.
-        store.set_user_hf_token(user_id="user_pg", token="hf_pg_secret")
-        self.assertEqual(store.user_hf_token(user_id="user_pg"), "hf_pg_secret")
-        store.set_user_hf_token(user_id="user_pg", token="hf_pg_rotated")  # upsert
-        self.assertEqual(store.user_hf_token(user_id="user_pg"), "hf_pg_rotated")
-        store.clear_user_hf_token(user_id="user_pg")
-        self.assertEqual(store.user_hf_token(user_id="user_pg"), "")
+        settings = UserHfTokenSettings(store=store)
+        settings.set_token(user_id="user_pg", token="hf_pg_secret")
+        self.assertEqual(settings.resolve(user_id="user_pg"), "hf_pg_secret")
+        settings.set_token(user_id="user_pg", token="hf_pg_rotated")  # upsert
+        self.assertEqual(settings.resolve(user_id="user_pg"), "hf_pg_rotated")
+        settings.clear_token(user_id="user_pg")
+        self.assertEqual(settings.resolve(user_id="user_pg"), "")
 
     def test_legacy_postgres_store_gains_storage_completion_tokens(self) -> None:
         """Old-DB upgrade through no-dataplane Phase D: replay ledger rows < 33

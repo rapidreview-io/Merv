@@ -742,13 +742,15 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         self.assertEqual(set_response.status_code, 200, set_response.text)
         self.assertEqual(set_response.json()["status"], "set")
         # Stored and resolvable ONLY internally (there is no read route).
-        self.assertEqual(self.app.store.user_hf_token(user_id=USER_A), "hf_browser_secret")
+        self.assertEqual(
+            self.app.user_settings.resolve(user_id=USER_A), "hf_browser_secret"
+        )
         clear_response = self.client.delete(
             "/api/user/hf-token", headers=_bearer(self.jwt_a)
         )
         self.assertEqual(clear_response.status_code, 200, clear_response.text)
         self.assertEqual(clear_response.json()["status"], "cleared")
-        self.assertEqual(self.app.store.user_hf_token(user_id=USER_A), "")
+        self.assertEqual(self.app.user_settings.resolve(user_id=USER_A), "")
 
     def test_hf_token_write_requires_a_browser_session(self) -> None:
         # A project (mk_) key and an rr_sk_ key cannot set a personal token.
@@ -759,7 +761,7 @@ class ProjectKeySurfaceTest(unittest.TestCase):
             self.assertEqual(denied.status_code, 403, denied.text)
             self.assertEqual(denied.json()["error_code"], "human_session_required")
         # The rejected writes stored nothing.
-        self.assertEqual(self.app.store.user_hf_token(user_id=USER_B), "")
+        self.assertEqual(self.app.user_settings.resolve(user_id=USER_B), "")
 
     def test_hf_token_empty_body_is_rejected(self) -> None:
         response = self.client.put(
