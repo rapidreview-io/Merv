@@ -28,7 +28,6 @@ from ..feed import FeedService
 from ..literature import Literature
 from ..research_core import (
     ENTITY_REF_VOCABULARY,
-    EXPERIMENT_TERMINAL_STATUSES,
     FEED_ADOPTABLE_ROLES,
     FEED_AUTHOR_ROLES,
     Research,
@@ -136,10 +135,9 @@ class Surface:
             ) is not None,
         )
         self.literature = Literature(store=store, unfurl=AllowlistedPaperPreview())
-        self.agent_sessions = AgentSessions(
-            store=store,
-            terminal_experiment_statuses=EXPERIMENT_TERMINAL_STATUSES,
-        )
+        # Leases learn whether their instance still stands from the workflow
+        # runtime's facts; Agent Sessions never reads a research record.
+        self.agent_sessions = AgentSessions(store=store, facts=self.workflows.runtime)
         self.artifact_tools = ArtifactTools(artifacts=self.artifacts)
         self.infrastructure_client = infrastructure_client
         self.sandbox_providers = RemoteProviders(store=store, client=infrastructure_client)
@@ -156,6 +154,9 @@ class Surface:
             agent_sessions=self.agent_sessions,
             tracking=mlflow_tracking,
         )
+        # The runner's central-advance routes call this Protocol; Application
+        # keeps the research meaning of an advance behind these method names.
+        self.agent_advances = self.application
         self.user_settings = UserHfTokenSettings(store=store)
 
         tool_names = available_tool_names(

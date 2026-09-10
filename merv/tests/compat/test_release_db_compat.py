@@ -197,7 +197,7 @@ class ReleaseDatabaseCompatibilityTest(unittest.TestCase):
                 self.assertEqual(projected, snap["rows"])
             self.assertEqual(migrated_data["agent_sessions"]["rows"], [])
             for table in (
-                "experiment_workspaces",
+                "agent_workspaces",
                 "consolidation_proposals",
                 "consolidation_decisions",
                 "reflection_advances",

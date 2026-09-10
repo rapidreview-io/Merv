@@ -18,51 +18,62 @@ Automatic dispatch is per project and off by default. The project must set
 halting a project/session closes leases so runners stop their children.
 
 `Application._dispatch_plan` enumerates dispatchable nodes from the workflow
-registry, prioritizing independent reviews. The queue subtracts current live
+registry, prioritizing read-only nodes. The queue subtracts current live
 instance/revision leases. New workflow names require no scheduler branch.
 Dependencies and review prerequisites use the same evaluation as status/tools.
 
 1. A runner persists its claim key before network I/O and derives its `mas_`
    secret from an owner-only machine key without writing the secret to disk.
 2. Application supplies current workflow instance/revision candidates.
-3. `claim` locks and rechecks the revision and prerequisites, rebuilds the node
-   brief, and freezes exact references in the same transaction as its lease.
+3. `lease` locks and rechecks the revision and prerequisites, rebuilds the node
+   brief, and freezes the packet in the same transaction as its lease.
 4. Only the secret digest is stored. The child receives the secret through
    `MERV_AGENT_SESSION_KEY`, then attaches its process and branch references.
 5. The first authorized MCP authentication activates the lease. Workflows
    records actual work start once per node revision, including resumed workers.
 6. Authenticated calls and confirmed child heartbeats renew the bounded lease.
-7. Release, expiry, hard deadline, changed workflow revision/prerequisites, or a
-   superseded review closes the lease and causes the runner to stop its child.
+7. Release, expiry, hard deadline, a changed instance revision, or a finished
+   instance closes the lease and causes the runner to stop its child.
+
+A lease stores, verbatim from the packet: the workflow name and instance id
+(opaque `target_type`/`target_id` for UI links), revision and node, `role`,
+`label`, the node's `execution` policy and its `references` as JSON. This
+module names no workflow, record type, or id field. It learns whether an
+instance still stands through the `InstanceFacts` port (instance id, revision,
+terminal, label), which the Workflows runtime implements and Surface injects.
+Application derives the job kind the UI shows from `execution`.
 
 The database enforces one live lease per workflow instance/revision and one
 result per runner/idempotency key. Reviewers use independent credentials and
 workspaces; graph completion fences the previous node. Ordinary exits can
 resume. Repeated fast exits without a commit use a launch-failure backoff.
-Schema 60 binds existing leases to workflow instances while retaining their
-secret, deadline, and frozen legacy packet. Legacy claim support remains for
-existing callers; newly scheduled work always uses workflow authority.
+Schema 60 bound existing leases to workflow instances; schema 61 added the
+policy columns and keyed branch facts (`agent_workspaces`) by instance. A lease
+without a stored policy is read-only with no node tools.
 
 ## Security and workspaces
 
-Session credentials are MCP-only, default-deny, and scoped to their project,
-workflow instance/revision, read-only policy, and review request. Project
-knowledge/content reads stay project-scoped; mutations target the assigned
-record. Capability-backed reviewers can start/submit their assigned verdict
-but cannot change evidence or take other workflow exits. Parent key revocation
-and project membership remain authoritative. Secrets never appear in argv,
+Session credentials are MCP-only and default-deny. The gateway allows the
+support baseline for the policy's read/write mode plus the node's declared
+tools, binds `workflow.transition` to the leased instance and revision, permits
+`sandbox.*` only with declared sandbox authority, and applies every `Scope`
+rule: a present argument must equal the value resolved from the lease (instance
+id, workflow name, or a reference by kind), and mutating or contract-declared
+fields are supplied to the handler from the lease. Parent key revocation and
+project membership remain authoritative. Secrets never appear in argv,
 prompts, logs, or responses.
 
 The runner records launch intent before spawning, verifies process identity on
 restart, and holds uncertain pre-PID claims until expiry to avoid duplicates.
-It retains a branch/worktree per workflow, temporary detached review worktrees,
-and proposal branches for consolidation. A node can request a scratch directory
-without Git. Source heads from completed sessions support continuation.
-
-The runner alone compare-and-swaps reviewed proposals into `refs/merv/central`.
-Its bare repository has no remotes. Existing experiment branch paths are kept;
-other plugins share the generic workflow namespace keyed by instance ID.
-Worktrees prevent Git collisions; same-user processes share filesystem access.
+`execution.workspace` alone drives its layout: `none` is a scratch directory,
+`ephemeral` a detached worktree at the referenced base, `persistent` a branch
+per instance (per base sha when `per_base`) under the declared namespace, so
+experiment and consolidation branch names are unchanged. Only persistent
+workspaces record branch facts, keyed by instance, for later sessions and the
+UI. The runner alone compare-and-swaps accepted work into `refs/merv/central`
+through the generic `agent-advances` prepare/pending/settle routes, whose
+`sources[].id` are opaque lineage ids; the `consolidation/*` paths are
+deprecated aliases of the same Protocol. Its bare repository has no remotes.
 
 ## Pairing and observability
 

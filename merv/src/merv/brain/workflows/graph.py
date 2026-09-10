@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from types import MappingProxyType
 from typing import Any, Protocol, TYPE_CHECKING
 
@@ -112,6 +112,89 @@ def all_of(*checks: Check) -> Check:
 
 
 @dataclass(frozen=True, slots=True)
+class Scope:
+    """One argument an agent session may only fill with the value research resolved.
+
+    ``field`` is the argument name, dotted for a nested object
+    (``attach_to.target_id``). ``source`` is ``"instance"`` (the instance id),
+    ``"workflow"`` (the workflow name) or ``"reference:<kind>"`` (the id of the
+    brief Reference of that kind). ``tools`` limits the rule to those tools; empty
+    means every ``mutating`` tool that carries the field. Support verifies a
+    present argument and binds the resolved value into the handler call for
+    ``mutating`` tools and for tools whose contract declares the field, so every
+    ``mutating`` tool must accept each top-level scoped field as a keyword.
+    """
+
+    field: str
+    source: str
+    tools: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Workspace:
+    """How the runner lays out code for a session; opaque to the brain beyond ``mode``."""
+
+    mode: str = "persistent"        # "none" | "ephemeral" | "persistent"
+    namespace: str = "workflows"    # path/branch segment ("experiments", "consolidations", "reviews")
+    base: str = "central"           # "central" | "reference:<kind>" (base sha from that Reference)
+    per_base: bool = False          # persistent branch keyed by instance AND base sha
+    retain: bool = True             # keep branch/worktree when the session ends
+    advances_central: bool = False  # accepted work may advance the central ref
+
+
+@dataclass(frozen=True, slots=True)
+class Execution:
+    """What a session leased on this node may do. Research declares; support enforces.
+
+    ``tools`` are the node-specific tools beyond the support baseline the gateway
+    adds; ``mutating`` is the subset whose calls must satisfy ``scope``.
+    """
+
+    read_only: bool = False
+    tools: frozenset[str] = frozenset()
+    mutating: frozenset[str] = frozenset()
+    scope: tuple[Scope, ...] = ()
+    sandbox: bool = False
+    workspace: Workspace = Workspace()
+
+    def public(self) -> dict[str, Any]:
+        """The JSON form carried by the assignment packet and stored with the lease."""
+        return {
+            "read_only": self.read_only,
+            "tools": sorted(self.tools),
+            "mutating": sorted(self.mutating),
+            "scope": [{"field": rule.field, "source": rule.source, "tools": list(rule.tools)} for rule in self.scope],
+            "sandbox": self.sandbox,
+            "workspace": asdict(self.workspace),
+        }
+
+    def problems(self) -> list[str]:
+        issues = []
+        if self.workspace.mode not in {"none", "ephemeral", "persistent"}:
+            issues.append(f"unknown workspace mode {self.workspace.mode!r}")
+        if not self.workspace.namespace:
+            issues.append("workspace namespace is required")
+        if not _valid_source(self.workspace.base, allow_workflow=False):
+            issues.append(f"unknown workspace base {self.workspace.base!r}")
+        if not self.mutating <= self.tools:
+            issues.append("mutating tools must be declared in tools")
+        if self.read_only and (self.mutating or self.sandbox):
+            issues.append("a read-only node has no mutating tools or sandbox")
+        for rule in self.scope:
+            if not rule.field or not _valid_source(rule.source, allow_workflow=True):
+                issues.append(f"invalid scope {rule.field!r} from {rule.source!r}")
+        return issues
+
+
+def _valid_source(source: str, *, allow_workflow: bool) -> bool:
+    if source == "central" and not allow_workflow:
+        return True
+    if source in {"instance", "workflow"} and allow_workflow:
+        return True
+    return source.startswith("reference:") and len(source) > len("reference:")
+
+
+@dataclass(frozen=True, slots=True)
 class Node:
     name: str
     label: str = ""
@@ -120,8 +203,7 @@ class Node:
     dispatch_check: Check = ready
     children: ChildrenBuilder | None = None
     join: Join | None = None
-    read_only: bool = False
-    workspace: str = "work"
+    execution: Execution = Execution()
     on_start: Reducer = unchanged
 
 
@@ -245,8 +327,11 @@ class Workflow:
             if edge.source not in names or edge.target not in known or not edge.name:
                 raise ValueError(f"invalid edge {edge.source}/{edge.name}/{edge.target}")
         for node in self.nodes:
-            if node.workspace not in {"work", "review", "consolidation", "none"}:
-                raise ValueError(f"unknown workspace mode for {node.name!r}")
+            problems = node.execution.problems()
+            if not node.role and node.execution != Execution():
+                problems.append("only an agent node declares an execution policy")
+            if problems:
+                raise ValueError(f"invalid execution policy for {node.name!r}: " + "; ".join(problems))
             if bool(node.role) != bool(node.build_context):
                 raise ValueError(f"agent node {node.name!r} needs both a role and context builder")
             if bool(node.children) != bool(node.join) or (node.children and node.role):

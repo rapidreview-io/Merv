@@ -82,7 +82,7 @@ class Workflow:
         node = self.graph.node(status)
         if node is not None:
             review = None
-            if node.read_only:
+            if node.execution.read_only:
                 review = self.review(node.role) or ReviewGate(
                     node.role, f"An independent {node.role} review is required.",
                     f"{node.role}_required", node.label or node.name, "", "", ())

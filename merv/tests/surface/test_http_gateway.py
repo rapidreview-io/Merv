@@ -13,7 +13,12 @@ from merv.brain.surface.transport.api.gateway import (
     ProjectAuthorizer,
     ToolInvocationGateway,
 )
-from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
+from merv.brain.surface.transport.http_policy import (
+    SESSION_READ_BASELINE,
+    SESSION_WRITE_BASELINE,
+    HttpSurfacePolicy,
+    SessionExecution,
+)
 
 
 USER = Principal(tenant_id="local", client_id="test", user_id="user-a")
@@ -86,13 +91,88 @@ class HttpGatewayTest(unittest.TestCase):
             projects=self.projects,
         )
 
-    def test_non_experiment_workers_cannot_address_unbound_native_jobs(self) -> None:
-        for target, kind in (("task", "experiment"), ("reflection", "consolidation")):
-            principal = SimpleNamespace(agent_session_id="session", agent_target_type=target,
-                                        agent_target_id="assigned", agent_session_kind=kind)
-            with self.subTest(target=target), self.assertRaises(AgentSessionScopeError):
-                self.gateway().authorize_agent_session(name="sandbox.job", principal=principal,
-                    arguments={"project_id": "proj-a", "job_id": "job_other", "cancel": True})
+    @staticmethod
+    def session(execution: dict, *, references=(), workflow="replication") -> Principal:
+        return Principal(
+            tenant_id="local", client_id="agent-session:ags_1", key_project_id="proj-a",
+            agent_session_id="ags_1", agent_workflow=workflow, agent_workflow_instance_id="wf_assigned",
+            agent_workflow_revision=3, agent_execution=SessionExecution.from_packet(execution),
+            agent_references=tuple(references),
+        )
+
+    def test_session_policy_is_the_packet_not_a_kind(self) -> None:
+        # No sandbox authority and no node tools: only the baseline is reachable.
+        principal = self.session({"read_only": False, "tools": [], "mutating": [], "scope": [], "sandbox": False})
+        gateway = self.gateway()
+        for name in sorted(SESSION_READ_BASELINE | SESSION_WRITE_BASELINE):
+            if name != "workflow.transition":
+                self.assertEqual(gateway.authorize_agent_session(name=name, arguments={}, principal=principal), {})
+        for name in ("sandbox.job", "experiment.transition", "workflow.start", "workflow.begin"):
+            with self.subTest(tool=name), self.assertRaises(AgentSessionScopeError):
+                gateway.authorize_agent_session(name=name, arguments={"project_id": "proj-a", "job_id": "job_other"},
+                                                principal=principal)
+        # A read-only policy loses the write baseline; a missing policy fails closed the same way.
+        for execution in ({"read_only": True}, {}, None):
+            principal = self.session(execution)
+            with self.subTest(execution=execution):
+                self.assertEqual(gateway.authorize_agent_session(name="artifact.read", arguments={}, principal=principal), {})
+                with self.assertRaises(AgentSessionScopeError):
+                    gateway.authorize_agent_session(name="artifact.upload", arguments={"path": "x"}, principal=principal)
+
+    def test_scope_rules_verify_and_bind_the_declared_fields(self) -> None:
+        principal = self.session({
+            "read_only": False, "sandbox": True,
+            "tools": ["sandbox.job", "sandbox.options", "widget.transition", "review.start"],
+            "mutating": ["sandbox.job", "widget.transition"],
+            "scope": [
+                {"field": "widget_id", "source": "instance", "tools": []},
+                {"field": "attach_to.target_id", "source": "instance", "tools": ["artifact.upload"]},
+                {"field": "attach_to.target_type", "source": "workflow", "tools": ["artifact.upload"]},
+                {"field": "review_request_id", "source": "reference:review_request", "tools": ["review.start"]},
+            ],
+        }, references=(("code", "a" * 40), ("review_request", "rr_9")))
+        gateway = self.gateway()
+        # A mutating tool without the field is bound to the instance for its handler.
+        self.assertEqual(gateway.authorize_agent_session(
+            name="sandbox.job", arguments={"project_id": "proj-a", "job_id": "job_1"}, principal=principal,
+        ), {"widget_id": "wf_assigned"})
+        self.assertEqual(gateway.authorize_agent_session(
+            name="widget.transition", arguments={"widget_id": "wf_assigned"}, principal=principal,
+        ), {"widget_id": "wf_assigned"})
+        with self.assertRaises(AgentSessionScopeError):
+            gateway.authorize_agent_session(name="widget.transition", arguments={"widget_id": "wf_other"}, principal=principal)
+        # Non-mutating tools are neither checked nor bound by an unnamed scope.
+        self.assertEqual(gateway.authorize_agent_session(name="sandbox.options", arguments={}, principal=principal), {})
+        # Dotted fields verify nested targets; the workflow name is a source too.
+        self.assertEqual(gateway.authorize_agent_session(
+            name="artifact.upload", arguments={"path": "p", "attach_to": {"target_type": "replication", "target_id": "wf_assigned"}},
+            principal=principal,
+        ), {})
+        for attach_to in ({"target_type": "replication", "target_id": "wf_other"},
+                          {"target_type": "other", "target_id": "wf_assigned"}):
+            with self.subTest(attach_to=attach_to), self.assertRaises(AgentSessionScopeError):
+                gateway.authorize_agent_session(name="artifact.upload", arguments={"path": "p", "attach_to": attach_to},
+                                                principal=principal)
+        # A reference-sourced scope resolves the packet's reference of that kind.
+        self.assertEqual(gateway.authorize_agent_session(
+            name="review.start", arguments={"review_request_id": "rr_9"}, principal=principal,
+        ), {"review_request_id": "rr_9"})
+        with self.assertRaises(AgentSessionScopeError):
+            gateway.authorize_agent_session(name="review.start", arguments={"review_request_id": "rr_other"}, principal=principal)
+        # Without the referenced kind the scoped tool fails closed.
+        without = self.session({"read_only": True, "tools": ["review.start"],
+                                "scope": [{"field": "review_request_id", "source": "reference:review_request", "tools": ["review.start"]}]})
+        with self.assertRaises(AgentSessionScopeError):
+            gateway.authorize_agent_session(name="review.start", arguments={"review_request_id": "rr_9"}, principal=without)
+
+    def test_workflow_transition_is_bound_to_the_leased_instance_and_revision(self) -> None:
+        principal = self.session({"read_only": False})
+        gateway = self.gateway()
+        good = {"instance_id": "wf_assigned", "expected_revision": 3, "action": "submit"}
+        self.assertEqual(gateway.authorize_agent_session(name="workflow.transition", arguments=good, principal=principal), {})
+        for bad in ({**good, "instance_id": "wf_other"}, {**good, "expected_revision": 2}):
+            with self.subTest(arguments=bad), self.assertRaises(AgentSessionScopeError):
+                gateway.authorize_agent_session(name="workflow.transition", arguments=bad, principal=principal)
 
     def test_one_authorizer_covers_path_query_and_tool_scopes(self) -> None:
         self.assertIsNone(

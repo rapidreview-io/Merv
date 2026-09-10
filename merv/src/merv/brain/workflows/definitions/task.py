@@ -2,6 +2,7 @@
 
 from ..graph import Action, Brief, Change, Edge, Issue, Node, Reference, Workflow, all_of
 from .checks import review_requested, reviewed, review_summary
+from .execution import REVIEW_EXECUTION, TASK_EXECUTION
 from .documents import brief_problems, delivery_problems, preferred_artifact
 from .metadata import ArtifactNeed, DEPENDENCIES_NEED, Metadata, ReviewGate, ReviewReturn
 
@@ -121,9 +122,9 @@ def build_review_context(snapshot, knowledge):
 TASK = Workflow(
     name="task", version=1, initial="in_progress", event_type="task.transitioned", id_prefix="task",
     nodes=(
-        Node("in_progress", "Complete task", "task_owner", build_work_context, dependencies_ready),
+        Node("in_progress", "Complete task", "task_owner", build_work_context, dependencies_ready, execution=TASK_EXECUTION),
         Node("in_review", "Review task delivery", "task_reviewer", build_review_context, review_requested,
-             read_only=True, workspace="review"),
+             execution=REVIEW_EXECUTION),
     ),
     edges=(
         Edge("in_progress", "submit_delivery", "in_review",

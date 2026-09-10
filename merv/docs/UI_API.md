@@ -414,8 +414,8 @@ holds), `POST /api/agent-sessions/claim`, `/{session_id}/attach`,
 the caller's own row and desired settings), `POST
 /api/agent-sessions/{session_id}/trace` (the bounded excerpt, owning runner
 only, accepted while live and for 15 min after close), and the
-`/api/projects/{project_id}/agent-advances/prepare|pending|settle` trio (the
-older `/consolidation/*` names are deprecated aliases) — is not a browser API. Runner
+`/api/projects/{project_id}/agent-advances/prepare|pending|settle` trio (its
+`/consolidation/*` spellings are deprecated aliases) — is not a browser API. Runner
 executable commands and custom agents are never stored in the brain; they live
 in `~/.merv/client.json` on the machine (`merv-client agent`).
 

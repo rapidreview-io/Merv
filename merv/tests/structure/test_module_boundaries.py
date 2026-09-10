@@ -80,10 +80,7 @@ ALLOWED_COMPONENT_EDGES = (
     | {(ARTIFACTS, dependency) for dependency in (ARTIFACTS, KERNEL)}
     | {(SANDBOX, dependency) for dependency in (SANDBOX, OBJECT_STORAGE, KERNEL)}
     | {(FEED, dependency) for dependency in (FEED, KERNEL)}
-    | {
-        (AGENT_SESSIONS, dependency)
-        for dependency in (AGENT_SESSIONS, RESEARCH_CORE, KERNEL)
-    }
+    | {(AGENT_SESSIONS, dependency) for dependency in (AGENT_SESSIONS, KERNEL)}
     | {
         (APPLICATION_COMPONENT, dependency)
         for dependency in (
@@ -290,7 +287,8 @@ TABLE_OWNERS = {
     "post_reactions": FEED,
     "feed_upload_tokens": FEED,
     "agent_sessions": AGENT_SESSIONS,
-    "experiment_workspaces": AGENT_SESSIONS,
+    # Branch facts per leased workflow instance, keyed by opaque instance id.
+    "agent_workspaces": AGENT_SESSIONS,
     # Idle-runner presence plus brain-held desired tuning and runner inventory.
     "agent_runners": AGENT_SESSIONS,
     # Bounded, redacted per-session trace excerpt mirrored by the runner.

@@ -8,6 +8,7 @@ from merv.shared.markdown_images import markdown_image_links
 
 from ..graph import Action, Brief, Change, Edge, Issue, Node, Reference, Workflow, all_of
 from .checks import review_requested, reviewed
+from .execution import EXPERIMENT_EXECUTION, REVIEW_EXECUTION
 from .documents import graph_problems, markdown_section_body, plan_sections_missing, preferred_artifact, report_problems
 from .metadata import ArtifactNeed, Metadata, ReviewGate, ReviewReturn
 
@@ -272,10 +273,11 @@ def start_execution(snapshot, payload, knowledge):
 EXPERIMENT = Workflow(
     name="experiment", version=1, initial="planned", event_type="experiment.transitioned", id_prefix="exp",
     nodes=(
-        Node("planned", "Design experiment", "experiment_owner", build_plan_context),
-        Node("design_review", "Review experiment design", "design_reviewer", build_design_review_context, review_requested, read_only=True, workspace="review"),
-        Node("running", "Execute approved plan", "experiment_owner", build_execution_context, dependencies_ready, on_start=start_execution),
-        Node("experiment_review", "Review completed attempt", "experiment_reviewer", build_attempt_review_context, review_requested, read_only=True, workspace="review"),
+        Node("planned", "Design experiment", "experiment_owner", build_plan_context, execution=EXPERIMENT_EXECUTION),
+        Node("design_review", "Review experiment design", "design_reviewer", build_design_review_context, review_requested, execution=REVIEW_EXECUTION),
+        Node("running", "Execute approved plan", "experiment_owner", build_execution_context, dependencies_ready,
+             execution=EXPERIMENT_EXECUTION, on_start=start_execution),
+        Node("experiment_review", "Review completed attempt", "experiment_reviewer", build_attempt_review_context, review_requested, execution=REVIEW_EXECUTION),
     ),
     edges=(
         Edge("planned", "submit_design", "design_review", check=artifact_check("plan"), change=submit_design, label="Submit the plan for independent review", tools=("experiment.transition",)),

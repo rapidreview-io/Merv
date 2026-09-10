@@ -153,7 +153,7 @@ class Research:
             for row in rows:
                 decision = self.workflows.runtime.evaluate(conn=conn, project_id=row["project_id"], instance_id=row["id"])
                 selected = decision.suggested
-                if decision.node is not None and decision.node.read_only and selected is not None and selected.available:
+                if decision.node is not None and decision.node.execution.read_only and selected is not None and selected.available:
                     self.workflows.runtime.apply_in_transaction(
                         conn=conn, project_id=row["project_id"], instance_id=row["id"],
                         action=selected.edge.name, expected_revision=decision.snapshot.revision,

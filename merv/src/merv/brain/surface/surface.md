@@ -32,8 +32,11 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
 - `auth.py`, `identity.py`, `project_keys.py`: caller identity plus project and
   account credential lifecycle. Project-key policy and SQL are intentionally
   together because there is one implementation and rotations must be atomic.
-- `transport/api/agent_sessions.py` and gateway policy: runner control plus
-  MCP-only, experiment-scoped, default-deny authority for local agent workers.
+- `transport/api/agent_sessions.py` and gateway policy: runner control, the
+  generic central-advance routes, and MCP-only, default-deny authority for
+  local agent workers enforced from the node-declared execution policy each
+  lease carries (`http_policy.SessionExecution`); no tool, id field, or
+  workflow name is hardcoded beyond `workflow.transition` and the baselines.
 - `runner_pairing.py` plus `transport/api/runner_pairing.py`: device-code
   pairing of an auto-run machine — the runner presents only its key digest, an
   owner approves the printed code, and the digest is registered as a labelled

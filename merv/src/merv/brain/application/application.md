@@ -34,10 +34,13 @@ spans them. Research remains the public owner of its event ledger reads.
   records a pathless experiment-workspace nomination for evaluator staging;
   Research owns the immutable candidate and champion lineage.
 - Agent-session claims enumerate dispatchable workflow nodes. Each node declares
-  its role, concise brief, exact references, read-only policy and workspace mode.
-  Agent Sessions rechecks the pinned revision and prerequisites inside the lease
-  transaction and freezes the packet. Authentication records actual work start;
-  a node change fences its old credential. New plugins need no dispatch cases.
+  its role, concise brief, exact references and execution policy (tools, scopes,
+  sandbox, workspace). Agent Sessions rechecks the pinned revision inside the
+  lease transaction and freezes the packet. Authentication records actual work
+  start; a revision change fences its old credential. Application decorates
+  listed leases with native ids and the job kind, and maps the runner's generic
+  central-advance routes onto the reflection receipt. New plugins need no
+  dispatch cases.
 
 ## Files
 
@@ -67,8 +70,9 @@ spans them. Research remains the public owner of its event ledger reads.
 - Sandbox, Feed, and Object Storage are called through their concrete package
   roots; Application defines no mirror facades or forwarding ports.
 - Agent Sessions owns worker identity and leases; Application binds narrow
-  workflow assignment, validation, and activation callbacks. The workflow
-  runtime owns both candidate evaluation and the final transactional check.
+  workflow assignment and activation callbacks. The workflow runtime owns
+  candidate evaluation, the final transactional check, and the instance facts
+  leases are validated against.
 - MLflow is optional. All adapter calls, tracking DTOs, degraded warnings,
   idempotent post-commit run handling, and overview reads live in `mlflow.py`.
 - Graph changes queue durable actions with their committed event. The delivery

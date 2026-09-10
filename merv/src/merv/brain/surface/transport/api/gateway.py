@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from ....infrastructure import infrastructure_actor
 
 import re
@@ -38,13 +37,9 @@ from ...tools.dispatcher import ToolDispatcher
 from ....research_core import Research
 from ....infrastructure import RemoteSandboxes as SandboxEngine
 from ..http_policy import (
-    AGENT_CONSOLIDATION_SESSION_TOOLS,
-    AGENT_EXPERIMENT_SESSION_TOOLS,
-    AGENT_REVIEW_SESSION_TOOLS,
-    AGENT_WORKFLOW_READ_TOOLS,
-    AGENT_WORKFLOW_WRITE_TOOLS,
     HOSTED_CONTROL_TOOL_POLICIES,
     HttpSurfacePolicy,
+    SessionExecution,
 )
 from .shared import (
     CallLedger,
@@ -174,20 +169,15 @@ class RequestAuthenticator:
                 user_id=str(record.get("source_user_id") or ""),
                 key_project_id=str(record["project_id"]),
                 agent_session_id=str(record["id"]),
-                agent_experiment_id=(
-                    str(record["target_id"])
-                    if str(record["target_type"]) == "experiment"
-                    else ""
-                ),
-                agent_target_type=str(record["target_type"]),
-                agent_target_id=str(record["target_id"]),
-                agent_session_kind=str(record["kind"]),
-                agent_review_request_id=str(record["review_request_id"] or ""),
+                agent_workflow=str(record.get("target_type") or ""),
                 agent_workflow_instance_id=str(record.get("workflow_instance_id") or ""),
                 agent_workflow_revision=int(record.get("workflow_revision") or 0),
                 agent_workflow_node=str(record.get("workflow_node") or ""),
-                agent_read_only=bool(
-                    (_session_assignment(record).get("execution") or {}).get("read_only", record["kind"] == "review")
+                agent_execution=SessionExecution.from_packet(record.get("execution")),
+                agent_references=tuple(
+                    (str(item.get("kind") or ""), str(item.get("id") or ""))
+                    for item in (record.get("references") or ())
+                    if isinstance(item, dict)
                 ),
                 source_key_id=source_key_id or None,
             )
@@ -519,7 +509,7 @@ class ToolInvocationGateway:
             )
         user_id = self.projects.user_id(principal)
         key_project_id = self.projects.key_project_id(principal)
-        self.authorize_agent_session(
+        bound = self.authorize_agent_session(
             name=name, arguments=arguments, principal=principal
         )
         self.projects.require_member(
@@ -560,28 +550,12 @@ class ToolInvocationGateway:
                 internal_kwargs["wait_secret"] = self.wait_secret
         if name == "sandbox.request":
             internal_kwargs = {}
-            agent_experiment_id = str(
-                getattr(principal, "agent_experiment_id", "") or ""
-            )
-            if agent_experiment_id:
-                internal_kwargs["experiment_id"] = agent_experiment_id
-        elif getattr(principal, "agent_experiment_id", None) and name in {
-            "sandbox.attach",
-            "sandbox.extend",
-            "sandbox.get",
-            "sandbox.pull_outputs",
-            "sandbox.release",
-            "sandbox.runs",
-            "sandbox.terminal",
-            "sandbox.run",
-            "sandbox.job",
-        }:
-            internal_kwargs = {
-                **(internal_kwargs or {}),
-                "experiment_id": str(principal.agent_experiment_id),
-            }
+        if bound:
+            # The node's scope rules bind these arguments to the leased
+            # instance; the handler receives the resolved values, never the
+            # model's.
+            internal_kwargs = {**(internal_kwargs or {}), **bound}
         agent_session_id = str(getattr(principal, "agent_session_id", "") or "")
-        agent_experiment_id = str(getattr(principal, "agent_experiment_id", "") or "")
         if agent_session_id and name == "review.request":
             internal_kwargs = {
                 **(internal_kwargs or {}),
@@ -593,18 +567,14 @@ class ToolInvocationGateway:
                 "producer_session_id": agent_session_id,
             }
         if agent_session_id and name == "review.start":
+            # The assigned request is whatever scope rule the node declared
+            # for this argument resolved to; without one the capability
+            # handoff has nothing to bind and the tool refuses "assigned".
             internal_kwargs = {
                 **(internal_kwargs or {}),
                 "caller_session_id": agent_session_id,
                 "assigned_agent_session_id": agent_session_id,
-                "assigned_review_request_id": str(
-                    getattr(principal, "agent_review_request_id", "") or ""
-                ),
-            }
-        if agent_experiment_id and name in ("storage.submit", "storage.put_object"):
-            internal_kwargs = {
-                **(internal_kwargs or {}),
-                "producing_experiment_id": agent_experiment_id,
+                "assigned_review_request_id": str(bound.get("review_request_id") or ""),
             }
         policy = (
             HOSTED_CONTROL_TOOL_POLICIES.get(name)
@@ -646,182 +616,49 @@ class ToolInvocationGateway:
 
     def authorize_agent_session(
         self, *, name: str, arguments: dict[str, Any], principal: Any | None
-    ) -> None:
+    ) -> dict[str, Any]:
+        """Enforce the leased node's declared policy; return the bound scope values.
+
+        Nothing here knows a workflow, a record type, or an id field: the
+        allowlist, the mutating set, and every scope rule come from the packet
+        the session was leased with. ``workflow.transition`` is the one
+        generic exit and must name the leased instance and revision.
+        """
         session_id = str(getattr(principal, "agent_session_id", "") or "")
         if not session_id:
-            return
-        if getattr(principal, "agent_workflow_instance_id", None):
-            self._authorize_workflow_session(name=name, arguments=arguments, principal=principal)
-            return
-        target_type = str(getattr(principal, "agent_target_type", "") or "")
-        target_id = str(getattr(principal, "agent_target_id", "") or "")
-        experiment_id = target_id if target_type == "experiment" else ""
-        kind = str(getattr(principal, "agent_session_kind", "") or "experiment")
-        allowed = (
-            AGENT_REVIEW_SESSION_TOOLS
-            if kind == "review"
-            else (
-                AGENT_CONSOLIDATION_SESSION_TOOLS
-                if kind == "consolidation"
-                else AGENT_EXPERIMENT_SESSION_TOOLS
-            )
-        )
-        if name not in allowed:
-            raise AgentSessionScopeError(
-                f"agent session cannot call {name}",
-                details={
-                    "tool": name,
-                    "target_type": target_type,
-                    "target_id": target_id,
-                },
-            )
-        requested = str(arguments.get("experiment_id") or "")
-        if requested and requested != experiment_id:
-            raise AgentSessionScopeError(
-                "agent session cannot act on another experiment",
-                details={
-                    "session_experiment_id": experiment_id,
-                    "requested_experiment_id": requested,
-                },
-            )
-        requested_reflection = str(arguments.get("reflection_id") or "")
-        if requested_reflection and (
-            target_type != "reflection" or requested_reflection != target_id
-        ):
-            raise AgentSessionScopeError(
-                "agent session cannot act on another reflection",
-                details={
-                    "session_reflection_id": (
-                        target_id if target_type == "reflection" else ""
-                    ),
-                    "requested_reflection_id": requested_reflection,
-                },
-            )
-        if (
-            name.startswith("sandbox.")
-            and name
-            not in {
-                "sandbox.health",
-                "sandbox.options",
-                "sandbox.request",
-                "sandbox.attach",
-            }
-            and not requested
-            and not (name == "sandbox.job" and experiment_id)
-        ):
-            raise AgentSessionScopeError(
-                "agent session sandbox calls must identify their experiment",
-                details={"experiment_id": experiment_id, "tool": name},
-            )
-        target_arguments = (
-            arguments.get("attach_to") if name == "artifact.upload" else arguments
-        )
-        target_arguments = (
-            target_arguments if isinstance(target_arguments, dict) else {}
-        )
-        requested_target_type = str(target_arguments.get("target_type") or "")
-        requested_target_id = str(target_arguments.get("target_id") or "")
-        if (
-            name in {"artifact.attach", "review.request", "review.status"}
-            or (name == "artifact.upload" and arguments.get("attach_to") is not None)
-        ) and (
-            requested_target_type != target_type or requested_target_id != target_id
-        ):
-            raise AgentSessionScopeError(
-                f"{name} must target the assigned {target_type}",
-                details={"target_type": target_type, "target_id": target_id},
-            )
-        assigned_request_id = str(
-            getattr(principal, "agent_review_request_id", "") or ""
-        )
-        if name == "review.start" and (
-            kind != "review"
-            or str(arguments.get("review_request_id") or "") != assigned_request_id
-        ):
-            raise AgentSessionScopeError(
-                "review worker is bound to a different review request",
-                details={"review_request_id": assigned_request_id},
-            )
-        if name == "review.submit" and (
-            kind != "review"
-            or self.research.review_request_for_session(
-                review_session_id=arguments.get("review_session_id")
-            )
-            != assigned_request_id
-        ):
-            raise AgentSessionScopeError(
-                "review worker is bound to a different review request",
-                details={"review_request_id": assigned_request_id},
-            )
-        if name in {"review.start", "review.submit"}:
-            target = self.research.review_target(
-                review_request_id=(
-                    arguments.get("review_request_id")
-                    if name == "review.start"
-                    else None
-                ),
-                review_session_id=(
-                    arguments.get("review_session_id")
-                    if name == "review.submit"
-                    else None
-                ),
-            )
-            if target is not None and target[1:] != (target_type, target_id):
-                raise AgentSessionScopeError(
-                    f"{name} review target is outside the assigned {target_type}",
-                    details={"target_type": target_type, "target_id": target_id},
-                )
-
-    def _authorize_workflow_session(
-        self, *, name: str, arguments: dict[str, Any], principal: Any,
-    ) -> None:
-        instance_id = str(principal.agent_workflow_instance_id)
-        target_type = str(principal.agent_target_type or "")
-        read_only = bool(principal.agent_read_only)
-        request_id = str(principal.agent_review_request_id or "")
-        allowed = AGENT_WORKFLOW_READ_TOOLS if read_only else AGENT_WORKFLOW_WRITE_TOOLS
-        if name not in allowed or (name == "workflow.transition" and request_id):
+            return {}
+        policy = getattr(principal, "agent_execution", None)
+        if not isinstance(policy, SessionExecution):
+            policy = SessionExecution()
+        instance_id = str(getattr(principal, "agent_workflow_instance_id", "") or "")
+        if name not in policy.allowed_tools:
             raise AgentSessionScopeError(f"agent session cannot call {name}", details={"tool": name})
+        if name.startswith("sandbox.") and not policy.sandbox:
+            raise AgentSessionScopeError("this session has no sandbox authority", details={"tool": name})
         if name == "workflow.transition":
             if str(arguments.get("instance_id") or "") != instance_id:
                 raise AgentSessionScopeError("workflow tool must target the assigned instance")
-        if name == "workflow.transition" and arguments.get("expected_revision") != principal.agent_workflow_revision:
-            raise AgentSessionScopeError("workflow transition must use the leased revision")
-        requested_instance = str(arguments.get("instance_id") or "")
-        if name == "workflow.transition" and requested_instance and requested_instance != instance_id:
-            raise AgentSessionScopeError("agent session cannot act on another workflow")
-        mutates_record = name in {
-            "experiment.transition", "task.transition", "reflection.transition", "consolidation.submit",
-            "experiment.exhibit", "mlflow.finalize_run",
-        } or name.startswith("sandbox.")
-        for field, native_type in (("experiment_id", "experiment"), ("task_id", "task"), ("reflection_id", "reflection")):
-            value = str(arguments.get(field) or "")
-            if mutates_record and value and (target_type != native_type or value != instance_id):
-                # Knowledge reads remain project-scoped; mutations stay bound
-                # to the one leased workflow record.
-                raise AgentSessionScopeError(f"agent session cannot act on another {native_type}")
-        target_arguments = arguments.get("attach_to") if name == "artifact.upload" else arguments
-        if name in {"artifact.attach", "review.request"} or (
-            name == "artifact.upload" and target_arguments is not None
-        ):
-            target_arguments = target_arguments if isinstance(target_arguments, dict) else {}
-            if (str(target_arguments.get("target_type") or "") != target_type
-                    or str(target_arguments.get("target_id") or "") != instance_id):
-                raise AgentSessionScopeError(f"{name} must target the assigned workflow record")
-        if name.startswith("sandbox."):
-            if target_type != "experiment":
-                raise AgentSessionScopeError("this workflow has no experiment sandbox authority")
-            if (name not in {"sandbox.health", "sandbox.options", "sandbox.request", "sandbox.attach", "sandbox.job"}
-                    and str(arguments.get("experiment_id") or "") != instance_id):
-                raise AgentSessionScopeError("sandbox calls must identify the assigned experiment")
-        if name == "review.start":
-            if not request_id or str(arguments.get("review_request_id") or "") != request_id:
-                raise AgentSessionScopeError("review worker is bound to a different review request")
-        if name == "review.submit":
-            if not request_id or self.research.review_request_for_session(
-                review_session_id=arguments.get("review_session_id")
-            ) != request_id:
-                raise AgentSessionScopeError("review worker is bound to a different review request")
+            if arguments.get("expected_revision") != getattr(principal, "agent_workflow_revision", None):
+                raise AgentSessionScopeError("workflow transition must use the leased revision")
+        bound: dict[str, Any] = {}
+        for rule in policy.scope:
+            if not rule.covers(name, mutating=policy.mutating):
+                continue
+            expected = _resolve_scope_source(rule.source, principal=principal, instance_id=instance_id)
+            if expected is None:
+                raise AgentSessionScopeError(
+                    f"agent session lease resolves no {rule.source} for {rule.field}",
+                    details={"tool": name, "field": rule.field},
+                )
+            present, value = _dotted_argument(arguments, rule.field)
+            if present and str(value) != expected:
+                raise AgentSessionScopeError(
+                    f"{name} must target the assigned {rule.field}",
+                    details={"tool": name, "field": rule.field},
+                )
+            if "." not in rule.field and (name in policy.mutating or _declares_field(name, rule.field)):
+                bound[rule.field] = expected
+        return bound
 
     def _dispatch(
         self,
@@ -988,12 +825,34 @@ def install_auth_routes(
             return Response(status_code=204)
 
 
-def _session_assignment(record: dict[str, Any]) -> dict[str, Any]:
-    try:
-        value = json.loads(str(record.get("assignment_json") or "{}"))
-    except (ValueError, TypeError):
-        return {}
-    return value if isinstance(value, dict) else {}
+def _resolve_scope_source(source: str, *, principal: Any, instance_id: str) -> str | None:
+    """The one value a scoped argument may carry, from the lease alone."""
+    if source == "instance":
+        return instance_id or None
+    if source == "workflow":
+        return str(getattr(principal, "agent_workflow", "") or "") or None
+    if source.startswith("reference:"):
+        kind = source[len("reference:"):]
+        for reference_kind, reference_id in getattr(principal, "agent_references", ()) or ():
+            if reference_kind == kind and reference_id:
+                return str(reference_id)
+    return None
+
+
+def _dotted_argument(arguments: dict[str, Any], field: str) -> tuple[bool, Any]:
+    """Whether a (possibly nested) argument was supplied, and its value."""
+    current: Any = arguments
+    for part in field.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return False, None
+        current = current[part]
+    return current is not None, current
+
+
+def _declares_field(tool: str, field: str) -> bool:
+    contract = TOOL_MANIFEST.get(tool)
+    model = getattr(contract, "input_model", None)
+    return bool(model is not None and field in getattr(model, "model_fields", {}))
 
 
 def _agent_session_http_denial(path: str) -> JSONResponse | None:

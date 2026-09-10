@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import APIRouter, Body, Request
 
@@ -13,8 +13,28 @@ from .gateway import ToolInvocationGateway
 from .shared import JsonBody
 
 
+class AgentAdvances(Protocol):
+    """The runner's judgment-free central compare-and-swap, prepared and settled here.
+
+    Research decides which instance may advance and what the receipt means;
+    this delivery only carries ``{advance_id, instance_id, revision,
+    expected_sha, target_sha, sources: [{id, sha}]}`` to the runner and its
+    receipt back. ``sources[].id`` is an opaque lineage id the runner keys its
+    ancestry receipt by.
+    """
+
+    def prepare_agent_advance(self, *, project_id: str, instance_id: str, runner_id: str) -> dict[str, Any] | None: ...
+
+    def pending_agent_advance(self, *, project_id: str) -> dict[str, Any] | None: ...
+
+    def settle_agent_advance(
+        self, *, project_id: str, advance_id: str, runner_id: str, observed_sha: str,
+        proposal_parents: list[str], diffstat: dict[str, Any], ancestry: dict[str, bool], error: str,
+    ) -> dict[str, Any]: ...
+
+
 def build_router(
-    gateway: ToolInvocationGateway, *, application: Application
+    gateway: ToolInvocationGateway, *, application: Application, advances: AgentAdvances,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -144,35 +164,20 @@ def build_router(
             ),
         )
 
-    @router.post("/api/projects/{project_id}/consolidation/prepare")
-    def prepare_advance(
-        project_id: str, request: Request, body: JsonBody = Body(default=None)
-    ) -> dict[str, Any]:
-        payload = dict(body or {})
+    def prepare_advance(project_id: str, request: Request, payload: dict[str, Any]) -> dict[str, Any]:
         gateway.authorize_project(request, project_id)
         return {
-            "advance": application.prepare_consolidation_advance(
+            "advance": advances.prepare_agent_advance(
                 project_id=project_id,
-                reflection_id=str(payload.get("reflection_id") or ""),
+                instance_id=str(payload.get("instance_id") or ""),
                 runner_id=owner(request, payload),
             )
         }
 
-    @router.get("/api/projects/{project_id}/consolidation/pending")
-    def pending_advance(project_id: str, request: Request) -> dict[str, Any]:
+    def settle_advance(project_id: str, request: Request, payload: dict[str, Any]) -> dict[str, Any]:
         gateway.authorize_project(request, project_id)
         return {
-            "pending": application.pending_consolidation_advance(project_id=project_id)
-        }
-
-    @router.post("/api/projects/{project_id}/consolidation/settle")
-    def settle_advance(
-        project_id: str, request: Request, body: JsonBody = Body(default=None)
-    ) -> dict[str, Any]:
-        payload = dict(body or {})
-        gateway.authorize_project(request, project_id)
-        return {
-            "reflection": application.settle_consolidation_advance(
+            "advance": advances.settle_agent_advance(
                 project_id=project_id,
                 advance_id=str(payload.get("advance_id") or ""),
                 runner_id=owner(request, payload),
@@ -198,6 +203,42 @@ def build_router(
                 error=str(payload.get("error") or ""),
             )
         }
+
+    @router.post("/api/projects/{project_id}/agent-advances/prepare")
+    def prepare_agent_advance(
+        project_id: str, request: Request, body: JsonBody = Body(default=None)
+    ) -> dict[str, Any]:
+        return prepare_advance(project_id, request, dict(body or {}))
+
+    @router.get("/api/projects/{project_id}/agent-advances/pending")
+    def pending_agent_advance(project_id: str, request: Request) -> dict[str, Any]:
+        gateway.authorize_project(request, project_id)
+        return {"advance": advances.pending_agent_advance(project_id=project_id)}
+
+    @router.post("/api/projects/{project_id}/agent-advances/settle")
+    def settle_agent_advance(
+        project_id: str, request: Request, body: JsonBody = Body(default=None)
+    ) -> dict[str, Any]:
+        return settle_advance(project_id, request, dict(body or {}))
+
+    # Deprecated aliases for runners in the field: the same Protocol and body
+    # behind the paths they still call.
+    @router.post("/api/projects/{project_id}/consolidation/prepare")
+    def prepare_advance_alias(
+        project_id: str, request: Request, body: JsonBody = Body(default=None)
+    ) -> dict[str, Any]:
+        return prepare_advance(project_id, request, dict(body or {}))
+
+    @router.get("/api/projects/{project_id}/consolidation/pending")
+    def pending_advance_alias(project_id: str, request: Request) -> dict[str, Any]:
+        gateway.authorize_project(request, project_id)
+        return {"pending": advances.pending_agent_advance(project_id=project_id)}
+
+    @router.post("/api/projects/{project_id}/consolidation/settle")
+    def settle_advance_alias(
+        project_id: str, request: Request, body: JsonBody = Body(default=None)
+    ) -> dict[str, Any]:
+        return settle_advance(project_id, request, dict(body or {}))
 
     @router.get("/api/projects/{project_id}/agent-sessions")
     def list_sessions(project_id: str, request: Request) -> dict[str, Any]:

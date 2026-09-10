@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from contextlib import closing
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 from typing import Any, Protocol
@@ -53,6 +53,16 @@ def _snapshot(value: Data) -> Snapshot:
         data=freeze_json_object(value["data"]), outcome=value.get("outcome", ""),
         children=tuple(ChildResult(**{**child, "data": freeze_json_object(child["data"])}) for child in value.get("children", ())),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class InstanceFact:
+    """The lease-relevant truth about one instance, readable by support."""
+
+    instance_id: str
+    revision: int
+    terminal: bool
+    label: str
 
 
 class EmptyKnowledge:
@@ -110,6 +120,24 @@ class Runtime:
                 for child in children
             ],
         })
+
+    def instance(self, *, project_id: str, instance_id: str) -> InstanceFact | None:
+        """Support's view of a leased instance: its revision and whether work ended."""
+        with closing(self.store.connect()) as conn:
+            row = conn.execute(
+                "SELECT workflow, version, state, revision, outcome FROM workflow_instances WHERE id = ? AND project_id = ?",
+                (instance_id, project_id),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            node = self.registry.get(row["workflow"], int(row["version"])).node(row["state"])
+        except WorkflowError:
+            node = None
+        return InstanceFact(
+            instance_id=instance_id, revision=int(row["revision"]), terminal=bool(row["outcome"]),
+            label=node.label or node.name if node is not None else str(row["state"]),
+        )
 
     def snapshots(self, *, project_id: str, conn: Connection) -> dict[str, Snapshot]:
         """Hydrate a project's pinned versions and child sets in one read."""
@@ -428,7 +456,7 @@ class Runtime:
         return {
             **evaluation.public(), "project_id": snapshot.project_id, "role": node.role,
             "label": node.label or node.name, "brief": brief.summary,
-            "execution": {"read_only": node.read_only, "workspace": node.workspace},
+            "execution": node.execution.public(),
             "references": [asdict(reference) for reference in brief.references],
             "handoff": "Complete only this node's assignment, commit its allowed action, then hand off and exit.",
         }

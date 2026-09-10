@@ -4,6 +4,7 @@ from ..composition import Child, join_guard
 from ..graph import Action, Brief, Change, Edge, Issue, Node, Reference, Workflow, all_of
 from ...kernel.utils import NotFoundError, ValidationError, WorkflowError
 from .checks import review_requested, reviewed, review_summary
+from .execution import CONSOLIDATION_EXECUTION, LENS_EXECUTION, REFLECTION_EXECUTION, REVIEW_EXECUTION
 from .documents import graph_problems, reflection_doc_review_problems, reflection_lens_doc_problems, parse_change_spec, preferred_artifact
 from .metadata import ArtifactNeed, Metadata, RecordNeed, ReviewGate, ReviewReturn
 
@@ -249,6 +250,8 @@ def build_consolidation_context(snapshot, knowledge):
         "reflection or rerun its lenses. The runner performs the central advance and publication after "
         "approval. Finish with precise references that let the reviewer reproduce the checks.",
         (Reference("reflection", snapshot.id, "Approved reflection and consolidation progress"),
+         *((Reference("code", str(proposal["base_sha"]), "Declared base of the retained proposal"),)
+           if (proposal := consolidation.get("proposal") or {}).get("base_sha") else ()),
          *_refs(wave.get("current_attempt_artifacts") or ())),
     )
 
@@ -306,13 +309,13 @@ REFLECTION = Workflow(
     name="reflection", version=1, initial="reflecting", event_type="reflection.transitioned", id_prefix="syn",
     nodes=(
         Node("reflecting", "Independent reflection lenses", children=_lens_children, join=_join_lenses),
-        Node("synthesizing", "Reconcile reflection", "reflection_owner", build_synthesis_context),
+        Node("synthesizing", "Reconcile reflection", "reflection_owner", build_synthesis_context, execution=REFLECTION_EXECUTION),
         Node("reflection_review", "Review reflection", "reflection_reviewer", build_review_context, review_requested,
-             read_only=True, workspace="review"),
+             execution=REVIEW_EXECUTION),
         Node("consolidating", "Consolidate reviewed code", "consolidation", build_consolidation_context,
-             workspace="consolidation"),
+             execution=CONSOLIDATION_EXECUTION),
         Node("consolidation_review", "Review consolidated code", "consolidation_reviewer", build_consolidation_review_context, review_requested,
-             read_only=True, workspace="review"),
+             execution=REVIEW_EXECUTION),
     ),
     edges=(
         Edge("reflecting", "submit_reflections", "synthesizing", check=all_of(lenses_complete, join_guard(_join_lenses, "submit_reflections")), change=pin_lenses,
@@ -401,7 +404,8 @@ def build_lens_context(snapshot, knowledge):
 
 LENS = Workflow(
     name="reflection_lens", version=1, initial="reflecting", id_prefix="lens",
-    nodes=(Node("reflecting", "Investigate one reflection lens", "reflection_lens", build_lens_context, lens_active),),
+    nodes=(Node("reflecting", "Investigate one reflection lens", "reflection_lens", build_lens_context, lens_active,
+                execution=LENS_EXECUTION),),
     edges=(Edge("reflecting", "submit", "submitted", check=lens_active, change=submit_lens,
                 label="Submit this lens's completed contribution", tools=("workflow.transition",)),),
     outcomes={"submitted": "submitted"}, entries={"submitted": "submitted"},

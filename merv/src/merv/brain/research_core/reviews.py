@@ -109,7 +109,7 @@ class ReviewService:
             node = self.runtime.registry.get(current.workflow, current.version).node(current.state)
             self._validate_role_matches_gate(
                 target_type=target_type,
-                expected=node.role if node is not None and node.read_only else None,
+                expected=node.role if node is not None and node.execution.read_only else None,
                 role=role,
             )
             snapshot_id = review_snapshot_id(target_type=target_type, target=target, snapshot=current)
@@ -306,7 +306,7 @@ class ReviewService:
             current = self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
             node = self.runtime.registry.get(current.workflow, current.version).node(current.state)
             context = (self.runtime.assignment(conn=conn, project_id=current.project_id, instance_id=current.id)
-                       if node is not None and node.read_only and node.role == req["role"] else None)
+                       if node is not None and node.execution.read_only and node.role == req["role"] else None)
             return {
                 "review_session_id": session_id,
                 "project_id": req["project_id"],
@@ -463,7 +463,7 @@ class ReviewService:
             )
             decision = self.runtime.evaluate(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
             selected = decision.suggested
-            if (decision.node is not None and decision.node.read_only and decision.node.role == req["role"]
+            if (decision.node is not None and decision.node.execution.read_only and decision.node.role == req["role"]
                     and selected is not None and selected.available):
                 self.runtime.apply_in_transaction(
                     conn=conn, project_id=req["project_id"], instance_id=req["target_id"],

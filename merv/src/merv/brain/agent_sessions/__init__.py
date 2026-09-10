@@ -4,7 +4,9 @@
 from .agent_sessions import (
     AGENT_SESSION_SECRET_PREFIX,
     AgentSessions,
+    InstanceFact,
+    InstanceFacts,
     runner_ref,
 )
 
-__all__ = ["AGENT_SESSION_SECRET_PREFIX", "AgentSessions", "runner_ref"]
+__all__ = ["AGENT_SESSION_SECRET_PREFIX", "AgentSessions", "InstanceFact", "InstanceFacts", "runner_ref"]

@@ -5,13 +5,13 @@ import unittest
 
 from merv.brain.application.status_guidance import StatusGuidancePolicy
 from merv.brain.research_core.policy import RequirementEvaluation
-from merv.brain.workflows import Brief, Edge, Issue, Node, Snapshot, Workflow
+from merv.brain.workflows import Brief, Edge, Execution, Issue, Node, Snapshot, Workflow
 
 
 def evaluation(*, state="work", blockers=(), dispatch_blockers=(), review=None, workflow="custom_plugin", action="submit", read_only=False):
     graph = Workflow(name=workflow, version=1, initial=state,
                      nodes=(Node(state, role="independent_reviewer" if read_only else "owner", build_context=lambda snapshot, knowledge: Brief("Only this node."),
-                                 dispatch_check=lambda snapshot, knowledge: dispatch_blockers, read_only=read_only),),
+                                 dispatch_check=lambda snapshot, knowledge: dispatch_blockers, execution=Execution(read_only=read_only)),),
                      edges=(Edge(state, action, "done", check=lambda snapshot, knowledge: blockers, tools=("workflow.transition",)),),
                      outcomes={"done": "completed"})
     current = Snapshot(id="instance_1", project_id="project_1", workflow=workflow, version=1, state=state, revision=3)

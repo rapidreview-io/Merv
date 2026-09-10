@@ -176,12 +176,12 @@ def complete_no_code_consolidation(
         verdict="pass",
         synopsis=REVIEW_SYNOPSIS,
     )
-    advance = app.application.prepare_consolidation_advance(
+    advance = app.research.prepare_reflection_advance(
         project_id=project_id,
         reflection_id=reflection_id,
         runner_id="runner",
     )
-    return app.application.settle_consolidation_advance(
+    return app.research.settle_reflection_advance(
         project_id=project_id,
         advance_id=advance["id"],
         runner_id="runner",

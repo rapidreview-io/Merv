@@ -17,10 +17,9 @@ from merv.shared.storage_guidance import storage_guidance
 from ..agent_sessions import AgentSessions
 from ..research_core import ResearchArtifacts as Artifacts
 from ..feed import FeedService
-from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
+from ..kernel.utils import ValidationError, WorkflowError
 from ..object_storage import ObjectStorage
 from ..research_core import (
-    EXPERIMENT_TERMINAL_STATUSES,
     Research,
     AGENT_DISPATCH_SETTING,
 )
@@ -85,7 +84,6 @@ class Application:
         self.agent_sessions = agent_sessions
         self.agent_sessions.bind_workflows(
             assignment=self._workflow_assignment,
-            validate=self._validate_workflow_session,
             activate=self._activate_workflow_session,
         )
         self._mlflow = MlflowIntegration(
@@ -148,17 +146,17 @@ class Application:
 
     def dispatch_queue(self, *, project_id: str) -> list[dict[str, Any]]:
         plan = self._dispatch_plan(project_id=project_id)
-        live = self.agent_sessions.live_targets(project_id=project_id)
+        live = self.agent_sessions.live_leases(project_id=project_id)
         return [
             {
                 "target_type": candidate["workflow"], "target_id": candidate["instance_id"],
                 "instance_id": candidate["instance_id"], "revision": candidate["revision"],
-                "kind": (candidate["execution"]["workspace"]
-                         if candidate["execution"]["workspace"] in {"review", "consolidation"} else "workflow"),
+                "kind": session_kind(candidate["execution"]),
+                "review_request_id": _reference_id(candidate["references"], "review_request"),
                 "role": candidate["role"], "title": candidate["label"], "status": candidate["state"],
             }
             for candidate in plan["candidates"]
-            if ("workflow", str(candidate["instance_id"]), str(candidate["revision"])) not in live
+            if (str(candidate["instance_id"]), int(candidate["revision"])) not in live
         ]
 
     def list_agent_sessions(
@@ -171,15 +169,14 @@ class Application:
         """
         queue = self.dispatch_queue(project_id=project_id)
         listing = self.agent_sessions.list(project_id=project_id)
+        sessions = [present_session(session) for session in listing["sessions"]]
         # The current state of each worktree the listed jobs worked in
-        # (branch, base, head, commit and diff counts), keyed by experiment:
-        # what "continuing each other's work" looks like in numbers.
+        # (branch, base, head, commit and diff counts), keyed by the instance
+        # (a native id today): what "continuing each other's work" looks like.
         workspaces = self.agent_sessions.workspaces(
             project_id=project_id,
-            experiment_ids=(
-                str(session.get("experiment_id") or "")
-                for session in listing["sessions"]
-                if session.get("experiment_id")
+            instance_ids=(
+                str(session.get("workflow_instance_id") or "") for session in sessions
             ),
         )
         public_keys = {
@@ -188,9 +185,10 @@ class Application:
         }
         return {
             **listing,
+            "sessions": sessions,
             "workspaces": {
-                experiment_id: {key: value for key, value in row.items() if key in public_keys}
-                for experiment_id, row in workspaces.items()
+                instance_id: {key: value for key, value in row.items() if key in public_keys}
+                for instance_id, row in workspaces.items()
             },
             "queue": queue[:queue_limit],
             "queue_total": len(queue),
@@ -205,7 +203,7 @@ class Application:
         plan = self._dispatch_plan(project_id=project_id)
         if not plan["project"]["settings"].get(AGENT_DISPATCH_SETTING, False):
             return {"session": None, "reason": "agent_dispatch_disabled"}
-        session = self.agent_sessions.claim(
+        session = self.agent_sessions.lease(
             project_id=project_id, candidates=plan["candidates"], runner_id=runner_id,
             platform=platform, idempotency_key=idempotency_key, session_secret=session_secret,
             source_key_id=source_key_id, source_user_id=source_user_id,
@@ -214,8 +212,8 @@ class Application:
         if session is None:
             return {"session": None, "reason": "no_dispatchable_agent_task"}
         if session["status"] not in {"offered", "active"}:
-            return {"session": session, "reason": "idempotent_session_closed"}
-        return {"session": session}
+            return {"session": present_session(session), "reason": "idempotent_session_closed"}
+        return {"session": present_session(session)}
 
     def _workflow_assignment(
         self, tx: Any, project_id: str, instance_id: str, revision: int,
@@ -247,26 +245,6 @@ class Application:
             "navigation": {"type": packet["workflow"], "target_id": instance_id},
         }
 
-    def _validate_workflow_session(self, tx: Any, row: Mapping[str, Any]) -> str:
-        try:
-            packet = self.research.workflows.runtime.assignment(
-                conn=tx, project_id=str(row["project_id"]), instance_id=str(row["workflow_instance_id"]),
-            )
-            if int(packet["revision"]) != int(row["workflow_revision"]):
-                return "workflow_assignment_changed"
-        except (WorkflowError, NotFoundError):
-            return "workflow_assignment_changed"
-        if str(packet["state"]) != str(row["workflow_node"]):
-            return "workflow_node_changed"
-        workspace = str(packet["execution"]["workspace"])
-        expected_kind = workspace if workspace in {"review", "consolidation"} else "workflow"
-        if str(row["kind"]) != expected_kind and not (str(row["kind"]) == "experiment" and expected_kind == "workflow"):
-            return "workflow_role_changed"
-        request_id = next((ref["id"] for ref in packet["references"] if ref["kind"] == "review_request"), "")
-        if str(request_id) != str(row["review_request_id"] or ""):
-            return "review_request_changed"
-        return ""
-
     def _activate_workflow_session(self, tx: Any, row: Mapping[str, Any]) -> None:
         self.research.workflows.activate(
             conn=tx, project_id=str(row["project_id"]), instance_id=str(row["workflow_instance_id"]),
@@ -287,7 +265,7 @@ class Application:
         telemetry: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return {
-            "session": self.agent_sessions.attach(
+            "session": present_session(self.agent_sessions.attach(
                 session_id=session_id,
                 runner_id=runner_id,
                 host_session_ref=host_session_ref,
@@ -297,7 +275,7 @@ class Application:
                 workspace_stats=workspace_stats,
                 agent_setup=agent_setup,
                 telemetry=telemetry,
-            )
+            ))
         }
 
     def agent_session_authority(self, *, session_id: str) -> dict[str, str]:
@@ -307,7 +285,8 @@ class Application:
     def halt_agent_sessions(self, *, project_id: str) -> dict[str, Any]:
         """Stop every live session now; runners kill their children on reconcile."""
         halted = self.agent_sessions.halt(project_id=project_id)
-        return {"halted": halted, **self.agent_sessions.list(project_id=project_id)}
+        listing = self.agent_sessions.list(project_id=project_id)
+        return {"halted": halted, **listing, "sessions": [present_session(row) for row in listing["sessions"]]}
 
     def release_agent_session(
         self,
@@ -320,14 +299,14 @@ class Application:
         telemetry: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return {
-            "session": self.agent_sessions.release(
+            "session": present_session(self.agent_sessions.release(
                 session_id=session_id,
                 runner_id=runner_id,
                 reason=reason,
                 head_sha=head_sha,
                 workspace_stats=workspace_stats,
                 telemetry=telemetry,
-            )
+            ))
         }
 
     def heartbeat_agent_session(
@@ -340,13 +319,13 @@ class Application:
         telemetry: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return {
-            "session": self.agent_sessions.heartbeat(
+            "session": present_session(self.agent_sessions.heartbeat(
                 session_id=session_id,
                 runner_id=runner_id,
                 head_sha=head_sha,
                 workspace_stats=workspace_stats,
                 telemetry=telemetry,
-            )
+            ))
         }
 
     def heartbeat_agent_runner(
@@ -409,9 +388,9 @@ class Application:
     def halt_agent_session(self, *, project_id: str, session_id: str) -> dict[str, Any]:
         """Stop one live session now; its runner kills the child on reconcile."""
         return {
-            "session": self.agent_sessions.halt_session(
+            "session": present_session(self.agent_sessions.halt_session(
                 project_id=project_id, session_id=session_id
-            )
+            ))
         }
 
     # Workflow and context -------------------------------------------------
@@ -654,7 +633,7 @@ class Application:
         workspaces = (
             self.agent_sessions.workspaces(
                 project_id=resolved,
-                experiment_ids=ids,
+                instance_ids=ids,
             )
             if ids and resolved
             else {}
@@ -709,7 +688,7 @@ class Application:
             )
             response["code_workspace"] = self.agent_sessions.workspaces(
                 project_id=resolved_project_id,
-                experiment_ids=(experiment_id,),
+                instance_ids=(experiment_id,),
             ).get(experiment_id)
             response["consolidation_history"] = self.research.experiment_consolidations(
                 project_id=resolved_project_id,
@@ -741,7 +720,7 @@ class Application:
         )
         response["code_workspace"] = self.agent_sessions.workspaces(
             project_id=resolved_project_id,
-            experiment_ids=(experiment_id,),
+            instance_ids=(experiment_id,),
         ).get(experiment_id)
         response["consolidation_history"] = self.research.experiment_consolidations(
             project_id=resolved_project_id,
@@ -1009,7 +988,7 @@ class Application:
             state,
             workspaces=self.agent_sessions.workspaces(
                 project_id=project_id,
-                experiment_ids=experiment_ids,
+                instance_ids=experiment_ids,
             ),
         )
         if not packet.get("base_sha"):
@@ -1021,7 +1000,7 @@ class Application:
                     ]
                     if item.get("target_type") == "reflection"
                     and item.get("target_id") == reflection_id
-                    and item.get("kind") == "consolidation"
+                    and session_kind(item.get("execution") or {}) == "consolidation"
                     and item.get("status") in {"offered", "active"}
                 ),
                 {},
@@ -1052,7 +1031,7 @@ class Application:
         )
         workspaces = self.agent_sessions.workspaces(
             project_id=project_id,
-            experiment_ids=experiment_ids,
+            instance_ids=experiment_ids,
         )
         decisions = [
             {
@@ -1083,22 +1062,35 @@ class Application:
             include_content=False,
         )
 
-    def prepare_consolidation_advance(
-        self, *, project_id: str, reflection_id: str, runner_id: str
-    ) -> dict[str, Any]:
-        return self.research.prepare_reflection_advance(
+    def prepare_agent_advance(
+        self, *, project_id: str, instance_id: str, runner_id: str
+    ) -> dict[str, Any] | None:
+        """Record the exact central compare-and-swap a runner may perform.
+
+        ``instance_id`` is the consolidating reflection; a receipt whose Git
+        work already bound hands the same shape back so the runner's no-op
+        advance can retry the settle that publishes it.
+        """
+        pending, status = self._pending_advance(project_id=project_id)
+        if pending is None or pending["instance_id"] != instance_id:
+            raise WorkflowError("no reviewed proposal awaits a central advance for this instance")
+        if status == "bound" and pending["advance_id"]:
+            return pending
+        advance = self.research.prepare_reflection_advance(
             project_id=project_id,
-            reflection_id=reflection_id,
+            reflection_id=instance_id,
             runner_id=runner_id,
         )
+        return {**_advance_view(advance), "revision": pending["revision"]}
 
-    def pending_consolidation_advance(
-        self, *, project_id: str
-    ) -> dict[str, Any] | None:
-        """Return the one reviewed proposal the runner may try to advance."""
+    def pending_agent_advance(self, *, project_id: str) -> dict[str, Any] | None:
+        """The one reviewed proposal the runner may try to advance, or None."""
+        return self._pending_advance(project_id=project_id)[0]
+
+    def _pending_advance(self, *, project_id: str) -> tuple[dict[str, Any] | None, str]:
         reflection = self.research.snapshot(project_id=project_id).open_reflection
         if not reflection or reflection.get("status") != "consolidating":
-            return None
+            return None, ""
         state = self.research.reflection_state(
             project_id=project_id,
             reflection_id=str(reflection["id"]),
@@ -1113,30 +1105,28 @@ class Application:
             for item in (state.get("gate_checklist") or {}).get("items", [])
         )
         if not proposal or not review_passed:
-            return None
-        if advance.get("status") == "bound":
-            # A durable receipt whose publish was blocked: the Git CAS is
-            # done, so the only remaining work is a settle retry — hand the
-            # recorded receipt back so the runner (or, after the owner
-            # lease, a replacement) can complete the publish.
-            return {
-                "reflection_id": state["id"],
-                "proposal_id": proposal["id"],
-                "revision": proposal["revision"],
-                "advance_status": "bound",
-                "advance_id": advance.get("id"),
-                "observed_sha": advance.get("observed_sha") or "",
-            }
-        if advance.get("status") in {"stale", "failed"}:
-            return None
+            return None, ""
+        status = str(advance.get("status") or "")
+        if status in {"stale", "failed"}:
+            return None, status
+        sources = [
+            {"id": str(decision.get("experiment_id") or ""), "sha": str(decision.get("source_sha") or "")}
+            for decision in consolidation.get("decisions") or ()
+            if decision.get("integration_kind") not in {None, "", "none"}
+        ]
+        # A ``bound`` receipt is one whose publish was blocked: the Git CAS is
+        # done, so only the settle remains and the runner's no-op advance
+        # retries it through the same prepare/settle pair.
         return {
-            "reflection_id": state["id"],
-            "proposal_id": proposal["id"],
+            "advance_id": str(advance.get("id") or ""),
+            "instance_id": str(state["id"]),
             "revision": proposal["revision"],
-            "advance_status": advance.get("status") or "ready",
-        }
+            "expected_sha": str(proposal["base_sha"]),
+            "target_sha": str(proposal["proposal_sha"]),
+            "sources": sources,
+        }, status
 
-    def settle_consolidation_advance(
+    def settle_agent_advance(
         self,
         *,
         project_id: str,
@@ -1148,19 +1138,25 @@ class Application:
         ancestry: dict[str, bool] | None = None,
         error: str = "",
     ) -> dict[str, Any]:
-        return present_agent_reflection_state(
-            self.research.settle_reflection_advance(
-                project_id=project_id,
-                advance_id=advance_id,
-                runner_id=runner_id,
-                observed_sha=observed_sha,
-                proposal_parents=proposal_parents,
-                diffstat=diffstat,
-                ancestry=ancestry,
-                error=error,
-            ),
-            include_content=False,
+        state = self.research.settle_reflection_advance(
+            project_id=project_id,
+            advance_id=advance_id,
+            runner_id=runner_id,
+            observed_sha=observed_sha,
+            proposal_parents=proposal_parents,
+            diffstat=diffstat,
+            ancestry=ancestry,
+            error=error,
         )
+        consolidation = state.get("consolidation") or {}
+        advance = consolidation.get("advance") or {}
+        return {
+            "advance_id": advance_id,
+            "instance_id": str(state["id"]),
+            "status": str(advance.get("status") or ""),
+            "observed_sha": str(advance.get("observed_sha") or ""),
+            "outcome": str(state.get("status") or ""),
+        }
 
     # Read models ----------------------------------------------------------
 
@@ -1361,6 +1357,54 @@ class Application:
 
 
 __all__ = ["Application"]
+
+
+def session_kind(execution: Mapping[str, Any]) -> str:
+    """The job kind the Auto-run page shows, read off the node's declared policy."""
+    if execution.get("read_only"):
+        return "review"
+    if (execution.get("workspace") or {}).get("advances_central"):
+        return "consolidation"
+    return "workflow"
+
+
+def _reference_id(references: Any, kind: str) -> str:
+    for item in references or ():
+        if isinstance(item, Mapping) and item.get("kind") == kind:
+            return str(item.get("id") or "")
+    return ""
+
+
+def present_session(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Decorate a lease with the native ids and job kind the UI links by.
+
+    Agent Sessions stores the packet's workflow name and instance id opaquely;
+    only research knows that an ``experiment`` instance is an experiment.
+    """
+    target_type = str(row.get("target_type") or "")
+    target_id = str(row.get("target_id") or "")
+    return {
+        **row,
+        "kind": session_kind(row.get("execution") or {}),
+        "experiment_id": target_id if target_type == "experiment" else "",
+        "reflection_id": target_id if target_type == "reflection" else "",
+        "review_request_id": _reference_id(row.get("references"), "review_request"),
+    }
+
+
+def _advance_view(advance: Mapping[str, Any]) -> dict[str, Any]:
+    """The runner's judgment-free CAS instruction, with opaque lineage ids."""
+    return {
+        "advance_id": str(advance.get("id") or ""),
+        "instance_id": str(advance.get("reflection_id") or ""),
+        "revision": advance.get("revision"),
+        "expected_sha": str(advance.get("expected_sha") or ""),
+        "target_sha": str(advance.get("target_sha") or ""),
+        "sources": [
+            {"id": str(item.get("experiment_id") or ""), "sha": str(item.get("source_sha") or "")}
+            for item in advance.get("sources") or ()
+        ],
+    }
 
 
 def _visible_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
