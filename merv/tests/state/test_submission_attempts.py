@@ -163,9 +163,10 @@ class SubmissionAttemptFlowTest(unittest.TestCase):
             verdict="needs_changes",
             return_to="running",
         )
-        state = self.call(
-            "experiment.get_state", project_id=self.project_id, experiment_id=exp_id
-        )
+        # The rich state the UI reads: the slim agent shape carries no seals.
+        state = self.app._client.get(
+            f"/api/projects/{self.project_id}/experiments/{exp_id}"
+        ).json()
         self.assertEqual(state["attempt_index"], 1, "a report rejection must not bump the attempt")
 
         second_id = self._submit(
@@ -190,9 +191,10 @@ class SubmissionAttemptFlowTest(unittest.TestCase):
 
         # Only the newest counts as current, so gates and the review snapshot
         # see exactly one report.
-        state = self.call(
-            "experiment.get_state", project_id=self.project_id, experiment_id=exp_id
-        )
+        # The rich state the UI reads: the slim agent shape carries no seals.
+        state = self.app._client.get(
+            f"/api/projects/{self.project_id}/experiments/{exp_id}"
+        ).json()
         current = [
             a for a in state["current_attempt_artifacts"] if a["role"] == "report"
         ]
@@ -315,12 +317,12 @@ class SubmissionAttemptFlowTest(unittest.TestCase):
         )
         self.assertEqual([r["id"] for r in rows], [first_id, third_id])
 
-    def test_figure_chains_submissions_instead_of_stacking_them(self) -> None:
+    def test_each_result_round_seals_its_own_report(self) -> None:
         exp_id = self.call(
             "experiment.create",
             project_id=self.project_id,
             name="figure-rounds",
-            intent="Prove the canvas draws rounds as a spine.",
+            intent="Prove a round is addressable.",
         )["id"]
         self._reach_experiment_review(exp_id)
         self._review(
@@ -341,49 +343,29 @@ class SubmissionAttemptFlowTest(unittest.TestCase):
             experiment_id=exp_id,
             transition="submit_results",
         )
-        figure = self.app._client.get(
-            f"/api/projects/{self.project_id}/experiments/{exp_id}/figure"
+        # The rich state the UI reads: the slim agent shape carries no seals.
+        state = self.app._client.get(
+            f"/api/projects/{self.project_id}/experiments/{exp_id}"
         ).json()
-        nodes = {n["id"]: n for n in figure["nodes"]}
-        edges = {(e["from"], e["to"]): e["type"] for e in figure["edges"]}
-        self.assertIn("submission:1.1", nodes)
-        self.assertIn("submission:1.2", nodes)
-        # The spine is temporal: design approval → round 1 → its verdict →
-        # round 2. Round 2 hangs off the rejecting review, not the attempt and
-        # not round 1 directly.
-        design = [
-            n for n in figure["nodes"]
-            if n["type"] == "review" and n["qualifier"] == "attempt 1"
+        # A return to running keeps the attempt, so the rounds are told apart
+        # by their seals — which is what the figure's spine reads.
+        self.assertEqual(state["attempt_index"], 1)
+        rounds = [
+            seal["id"] for seal in sorted(
+                state["submissions"], key=lambda row: row["created_seq"]
+            )
+            if seal["transition"] == "submit_results"
         ]
-        self.assertEqual(len(design), 1)
-        self.assertEqual(edges[("attempt:1", design[0]["id"])], "reviewed_by")
-        self.assertEqual(edges[(design[0]["id"], "submission:1.1")], "then")
-        verdicts = [
-            n for n in figure["nodes"]
-            if n["type"] == "review" and n["qualifier"] == "round 1.1"
-        ]
-        self.assertEqual(len(verdicts), 1, "expected one verdict on round 1.1")
-        self.assertEqual(edges[("submission:1.1", verdicts[0]["id"])], "reviewed_by")
-        self.assertEqual(
-            edges[(verdicts[0]["id"], "submission:1.2")],
-            "revised_to",
-            "round 2 must follow round 1's verdict, not hang off the attempt",
+        self.assertEqual(len(rounds), 2, "each submission must seal its own round")
+        reports = sorted(
+            (
+                artifact
+                for artifact in state["artifacts"]
+                if artifact["role"] == "report"
+            ),
+            key=lambda row: row["submitted_order"],
         )
-        # …and the straight backbone links the markers directly as well.
-        self.assertEqual(edges[("submission:1.1", "submission:1.2")], "then")
-        self.assertEqual(edges[("attempt:1", "submission:1.1")], "then")
-        # Each round's report is evidence anchored on that round.
-        reports = [
-            n for n in figure["nodes"]
-            if n["type"] == "artifact" and n["meta"]["role"] == "report"
-        ]
-        self.assertEqual(
-            sorted((r["anchor"], r["lane"], r["qualifier"]) for r in reports),
-            [
-                ("submission:1.1", "evidence", "round 1.1"),
-                ("submission:1.2", "evidence", "round 1.2"),
-            ],
-        )
+        self.assertEqual([artifact["submission_id"] for artifact in reports], rounds)
 
 
 if __name__ == "__main__":

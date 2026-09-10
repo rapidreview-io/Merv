@@ -51,9 +51,8 @@ support module**, research or application implements it, and
 
 Research lives inside `surface/` wherever the science reaches HTTP: the
 `experiments`, `reflections`, `claims`, `reviews`, `tasks`, `views` and
-`sandboxes` routers, `surface/experiment_figure.py`, and
-`surface/workflow_knowledge.py`. `FILE_COMPONENTS` in the boundary test names
-them.
+`sandboxes` routers, and `surface/workflow_knowledge.py`. `FILE_COMPONENTS` in
+the boundary test names them.
 
 ## Component import law
 

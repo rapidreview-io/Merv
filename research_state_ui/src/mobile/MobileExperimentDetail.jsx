@@ -104,8 +104,8 @@ export default function MobileExperimentDetail() {
           <MobileGraphSection
             projectId={projectId}
             experimentId={experimentId}
-            experimentStatus={experiment.status}
-            attemptIndex={currentAttempt}
+            experiment={experiment}
+            sandboxes={statusData.sandboxes}
           />
         </LazyRow>
       </section>

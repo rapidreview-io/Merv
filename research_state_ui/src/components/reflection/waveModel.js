@@ -69,10 +69,10 @@ const STAGE_RANK = {
 };
 
 /**
- * buildWaveFigure — the wave's PROCESS graph, derived client-side from the
- * wave payload the same way the experiment figure is derived server-side:
- * the attempt spine with its revision loops, the lens fan-in, the
- * consolidated synthesis, the review verdict, consolidation, publication.
+ * buildWaveFigure — the wave's PROCESS graph, derived from the wave payload
+ * the same way utils/experimentFigure derives the experiment's: the attempt
+ * spine with its revision loops, the lens fan-in, the consolidated synthesis,
+ * the review verdict, consolidation, publication.
  * Pure data in the figure vocabulary ({nodes, edges} for layoutFigure);
  * same JSON in → same graph out, so polling never reshuffles the canvas.
  */

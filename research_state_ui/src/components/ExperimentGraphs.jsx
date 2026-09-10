@@ -15,7 +15,7 @@ import LogicGraph from './LogicGraph';
  * switch. If the chosen graph has nothing to show, the other one is
  * displayed instead (the tab for an empty graph disables).
  */
-export default function ExperimentGraphs({ projectId, experimentId, experimentStatus, attemptIndex }) {
+export default function ExperimentGraphs({ projectId, experimentId, experiment, sandboxes }) {
   const [chosen, setChosen] = useState('figure');
   const [avail, report] = useGraphAvailability({ figure: false, logic: false });
   // Expanded (near-fullscreen) mode lives here so it survives switching
@@ -38,10 +38,7 @@ export default function ExperimentGraphs({ projectId, experimentId, experimentSt
     />
   );
 
-  const shared = {
-    projectId, experimentId, experimentStatus, attemptIndex,
-    titleTabs, expanded, onToggleExpand: toggleExpand,
-  };
+  const shared = { projectId, experimentId, titleTabs, expanded, onToggleExpand: toggleExpand };
   return (
     <>
       {expanded && (
@@ -49,11 +46,15 @@ export default function ExperimentGraphs({ projectId, experimentId, experimentSt
       )}
       <ExperimentFigure
         {...shared}
+        experiment={experiment}
+        sandboxes={sandboxes}
         active={view === 'figure'}
         onAvailability={reportFigure}
       />
       <LogicGraph
         {...shared}
+        experimentStatus={experiment.status}
+        attemptIndex={experiment.attempt_index}
         active={view === 'logic'}
         onAvailability={reportLogic}
       />

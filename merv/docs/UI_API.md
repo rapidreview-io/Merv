@@ -138,7 +138,6 @@ GET  /api/projects/{project_id}/experiments?status={status}
 POST /api/projects/{project_id}/experiments
 GET  /api/projects/{project_id}/experiments/{experiment_id}
 GET  /api/projects/{project_id}/experiments/{experiment_id}/status
-GET  /api/projects/{project_id}/experiments/{experiment_id}/figure
 GET  /api/projects/{project_id}/experiments/{experiment_id}/graph
 POST /api/projects/{project_id}/experiments/{experiment_id}/transition
 ```
@@ -148,9 +147,10 @@ Create an experiment with `name`, `intent`, and `claim_ids`. Transitions accept
 `allowed_transitions` and `workflow.next_action` instead of maintaining a second
 workflow table in the UI.
 
-`/figure` is the system-derived experiment view. `/graph` is the submitted,
-agent-authored logic graph plus lint problems and resolved references. Each
-experiment carries `dependencies` (the wave DAG nodes it waits on).
+`/graph` is the submitted, agent-authored logic graph plus lint problems and
+resolved references. Each experiment carries `dependencies` (the wave DAG nodes
+it waits on). The figure canvas has no route: the UI derives it from the state
+these endpoints already return (see `utils/experimentFigure.js`).
 
 ## Tasks
 

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
+import { experimentFigure } from '../utils/experimentFigure';
 import { TERMINAL_STATUSES } from '../utils/experiment';
 import GraphOutline from './GraphOutline';
 import { normalizeFigure, normalizeLogic, makeFigureDetail, makeLogicDetail } from './graphModel';
@@ -8,34 +9,41 @@ const GraphCanvasOverlay = lazy(() => import('./GraphCanvasOverlay'));
 
 /**
  * MobileGraphSection — the experiment's figure ⇄ logic graph on mobile.
- * Fetches both (single fetch on terminal experiments, slow poll while live),
- * renders the available one as a GraphOutline with a Figure/Story toggle, and
- * offers "view as graph" → a lazy fullscreen ReactFlow overlay.
+ * The figure is derived from the experiment state the screen already polls
+ * (see utils/experimentFigure); the agent-authored logic graph and the open
+ * review requests the figure's gate card needs are fetched here (single fetch
+ * on terminal experiments, slow poll while live). Renders the available one as
+ * a GraphOutline with a Figure/Story toggle, and offers "view as graph" → a
+ * lazy fullscreen ReactFlow overlay.
  */
-export default function MobileGraphSection({ projectId, experimentId, experimentStatus, attemptIndex }) {
-  const [figure, setFigure] = useState(null);
+export default function MobileGraphSection({ projectId, experimentId, experiment, sandboxes }) {
+  const [reviews, setReviews] = useState(null);
   const [logic, setLogic] = useState(null);
   const [chosen, setChosen] = useState('figure');
   const [showCanvas, setShowCanvas] = useState(false);
 
   const fetchBoth = useCallback(async () => {
-    const [fig, lg] = await Promise.allSettled([
-      api.getExperimentFigure(projectId, experimentId),
+    const [rv, lg] = await Promise.allSettled([
+      api.listReviews(projectId, { target_type: 'experiment', target_id: experimentId }),
       api.getExperimentLogicGraph(projectId, experimentId),
     ]);
-    if (fig.status === 'fulfilled') setFigure(fig.value);
+    if (rv.status === 'fulfilled') setReviews(rv.value);
     if (lg.status === 'fulfilled') setLogic(lg.value);
   }, [projectId, experimentId]);
 
   useEffect(() => {
     fetchBoth();
-    if (TERMINAL_STATUSES.includes(experimentStatus)) return undefined;
+    if (TERMINAL_STATUSES.includes(experiment?.status)) return undefined;
     const t = setInterval(() => {
       if (document.visibilityState === 'visible') fetchBoth();
     }, 5000);
     return () => clearInterval(t);
-  }, [fetchBoth, experimentStatus, attemptIndex]);
+  }, [fetchBoth, experiment?.status, experiment?.attempt_index]);
 
+  const figure = useMemo(
+    () => experimentFigure({ experiment, reviews, sandboxes }),
+    [experiment, reviews, sandboxes],
+  );
   const figModel = useMemo(() => normalizeFigure(figure), [figure]);
   const logicGraph = logic?.available ? logic.graph : null;
   const logicModel = useMemo(() => normalizeLogic(logicGraph), [logicGraph]);

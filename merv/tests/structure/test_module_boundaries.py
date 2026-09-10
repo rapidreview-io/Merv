@@ -70,7 +70,6 @@ RESEARCH_ROUTERS = (
 FILE_COMPONENTS = {
     # kernel: package root docstring/version shell.
     "__init__.py": KERNEL,
-    "surface/experiment_figure.py": RESEARCH,
     "surface/workflow_knowledge.py": RESEARCH,
     **{f"surface/transport/api/{name}.py": RESEARCH for name in RESEARCH_ROUTERS},
 }
@@ -1200,9 +1199,6 @@ def register_routes(*, feed: FeedService):
         application = (BACKEND_ROOT / "application/application.py").read_text(
             encoding="utf-8"
         )
-        figure = (BACKEND_ROOT / "surface/experiment_figure.py").read_text(
-            encoding="utf-8"
-        )
         workflow = (BACKEND_ROOT / "application/workflow.py").read_text(
             encoding="utf-8"
         )
@@ -1219,23 +1215,12 @@ def register_routes(*, feed: FeedService):
             for name in ("experiments", "projects")
         )
         self.assertIn("class LogicGraphQuery:", queries)
-        self.assertIn("def figure_facts(", application)
         self.assertEqual(control.count("Application("), 1)
-        self.assertIn("def build_experiment_figure(", figure)
-        self.assertFalse((BACKEND_ROOT / "artifacts/figure_view.py").exists())
-        self.assertNotIn(
-            "build_experiment_figure",
-            (BACKEND_ROOT / "artifacts/artifacts.py").read_text(encoding="utf-8"),
-        )
         self.assertIn("class StatusAndNextQuery:", workflow)
         self.assertNotIn("class ProjectDashboardQuery:", workflow)
-        for escaped_policy in (
-            "build_experiment_figure",
-            "tracking_experiment_name",
-            "ACTIVE_SANDBOX_STATUSES",
-        ):
+        for escaped_policy in ("tracking_experiment_name", "ACTIVE_SANDBOX_STATUSES"):
             self.assertNotIn(escaped_policy, views)
-        for delegate in ("dashboard(", "tracking_overview(", "figure_facts("):
+        for delegate in ("dashboard(", "tracking_overview("):
             self.assertIn(delegate, routes)
 
 

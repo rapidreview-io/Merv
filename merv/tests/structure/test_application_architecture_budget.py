@@ -47,11 +47,7 @@ class ApplicationArchitectureBudgetTest(unittest.TestCase):
             self.assertNotIn("adapter.finalize_run(", source, path)
             self.assertNotIn("adapter.project_results_snapshot(", source, path)
 
-    def test_surface_owns_ui_projection_but_not_cross_module_workflow(self) -> None:
-        figure = (SURFACE / "experiment_figure.py").read_text()
-        routes = (SURFACE / "transport/api/experiments.py").read_text()
-        self.assertIn("def build_experiment_figure(", figure)
-        self.assertIn("application.figure_facts(", routes)
+    def test_application_owns_workflow_without_dispatching_events(self) -> None:
         self.assertNotIn(
             "EventDispatcher",
             "\n".join(path.read_text() for path in APPLICATION.rglob("*.py")),

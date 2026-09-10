@@ -273,9 +273,6 @@ export const api = {
     }),
   getExperimentStatus: (pid, eid) =>
     request(`/api/projects/${encodeURIComponent(pid)}/experiments/${encodeURIComponent(eid)}/status`),
-  // Derived figure graph (nodes + edges) for the experiment canvas.
-  getExperimentFigure: (pid, eid) =>
-    request(`/api/projects/${encodeURIComponent(pid)}/experiments/${encodeURIComponent(eid)}/figure`),
   // Agent-authored logic graph (role 'graph') + envelope lint problems.
   getExperimentLogicGraph: (pid, eid) =>
     request(`/api/projects/${encodeURIComponent(pid)}/experiments/${encodeURIComponent(eid)}/graph`),

@@ -7,7 +7,6 @@ from typing import Any
 from fastapi import APIRouter, Body, Request
 
 from ....application import Application
-from ...experiment_figure import build_experiment_figure
 from .shared import JsonBody, path_scoped_body
 
 from .gateway import ToolInvocationGateway
@@ -61,16 +60,6 @@ def build_router(
     def experiment_status(project_id: str, experiment_id: str) -> dict[str, Any]:
         # Full shape for the UI (see home()); the tool stays slim for the agent.
         return application.status(project_id=project_id, experiment_id=experiment_id)
-
-    @api_router.get("/api/projects/{project_id}/experiments/{experiment_id}/figure")
-    def experiment_figure(project_id: str, experiment_id: str) -> dict[str, Any]:
-        # Derived graph for the figure canvas; UI-only read, no agent tool.
-        return build_experiment_figure(
-            **application.figure_facts(
-                project_id=project_id,
-                experiment_id=experiment_id,
-            )
-        )
 
     @api_router.get("/api/projects/{project_id}/experiments/{experiment_id}/graph")
     def experiment_logic_graph(project_id: str, experiment_id: str) -> dict[str, Any]:
