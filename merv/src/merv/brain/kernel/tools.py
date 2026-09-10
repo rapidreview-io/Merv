@@ -42,10 +42,8 @@ class ToolContract:
     # A reviewer handoff: the caller's session id and the id its lease scoped
     # this argument to arrive as caller_session_id and assigned_*.
     binds_capability: str = ""
-    # The reply renders absolute URLs against the caller-reachable base, and
-    # signs the wait capabilities it mints into them.
+    # The reply renders absolute URLs against the caller-reachable base.
     needs_base_url: bool = False
-    needs_wait_secret: bool = False
     # The caller's verified user id, and their key's bound project under this
     # argument name, replace whatever the model sent.
     binds_caller_project: str = ""

@@ -157,7 +157,6 @@ class DeployArtifactsTest(unittest.TestCase):
             "MERV_SANDBOXES_CONNECTIONS_FILE",
             "MERV_ALLOWED_ORIGINS",
             "MERV_REQUIRE_SANDBOX_BACKEND",
-            "MERV_WAIT_SECRET",
         ):
             self.assertIn(var, text)
         self.assertNotIn("mlflow", text.lower())

@@ -173,7 +173,6 @@ def test_packaged_services_restore_research_auth_and_native_authority(tmp_path):
             "MERV_REQUIRE_AUTH": "1",
             "SUPABASE_URL": "https://fixture.invalid",
             "SUPABASE_JWT_SECRET": "fixture-only-research-signing-key-32-bytes",
-            "MERV_WAIT_SECRET": "fixture-only-stable-wait-signing-key-32-bytes",
             "MERV_BLOB_BUCKET": "fixture-research",
             "MERV_BLOB_ENDPOINT_URL": "https://unused-fixture-storage.invalid",
             "MERV_BLOB_ACCESS_KEY_ID": "fixture-access-key",

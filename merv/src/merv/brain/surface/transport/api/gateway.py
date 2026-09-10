@@ -72,7 +72,7 @@ class RequestAuthenticator:
         request.state.principal = LOCAL_PRINCIPAL
         request.state.authenticated = False
         path = request.url.path
-        # Token-bearer routes carry their own credential (INV-12), /wait/ too.
+        # Token-bearer routes carry their own credential (INV-12).
         # Runner pairing is unauthenticated by construction: the runner has no
         # credential yet, and it polls with the device code it alone holds.
         exempt = (
@@ -80,7 +80,6 @@ class RequestAuthenticator:
             "/api/artifacts/f/",
             "/api/feed/u/",
             "/api/storage/u/",
-            "/wait/",
             runner_pairing.PAIRING_PUBLIC_PREFIX,
         )
         if (
@@ -350,9 +349,6 @@ class ToolInvocationGateway:
     # None only in narrow test compositions: then agent_id is neither
     # demanded nor recorded.
     agent_identities: AgentIdentities | None = None
-    # Per-composition: the SAME key this app's /wait route verifies with, so
-    # two apps over one backend each sign only what their own route accepts.
-    wait_secret: bytes | None = None
     auth_meta: dict[str, Any] | None = None
 
     def call(
@@ -364,7 +360,7 @@ class ToolInvocationGateway:
         project_scope: str | None = None,
         activity_source: str = "http",
         principal: Any | None = None,
-        base_url: str = "",  # renders upload one-liners and run wait URLs
+        base_url: str = "",  # renders upload one-liners
         mcp_session_id: str = "",  # the transport session header, if any
     ) -> dict[str, Any]:
         arguments = dict(arguments or {})
@@ -529,10 +525,8 @@ class ToolInvocationGateway:
                 internal_kwargs[caller_project_field] = key_project_id
         if base_url and getattr(contract, "needs_base_url", False):
             # The reply renders an absolute URL against the caller-reachable
-            # base: an upload token-curl one-liner, or a signed wait capability.
+            # base: an upload token-curl one-liner.
             internal_kwargs = {"base_url": base_url}
-            if contract.needs_wait_secret:
-                internal_kwargs["wait_secret"] = self.wait_secret
         if bound:
             # The node's scope rules bind these arguments to the leased
             # instance; the handler receives the resolved values, never the

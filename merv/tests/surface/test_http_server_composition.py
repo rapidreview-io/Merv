@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from merv.brain.kernel.secret_tokens import WAIT_SECRET_ENV_VAR
 from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.surface.config import Mode
 from merv.brain.surface.transport import http_server
@@ -39,9 +38,6 @@ from tests.support.brain import TestBrain
 HOSTED = HttpSurfacePolicy.for_surface(restrict_cors=True, hosted_control=True)
 # The same unauthenticated surface the omitted argument composes, spelled out.
 LOCAL = HttpSurfacePolicy.for_surface(restrict_cors=False, hosted_control=False)
-# A hosted composition must name a run-wait key or fail to build, so the tests
-# below carry one: what they pin is the AUTH decision, not that refusal.
-WAIT_ENV = {WAIT_SECRET_ENV_VAR: "w" * 40}
 
 # Every spelling that must NOT reach a bind under the local policy: the two
 # wildcards, an IPv6 wildcard in brackets, a routable LAN address, IPv4-mapped
@@ -165,7 +161,6 @@ class HttpServerCompositionTest(unittest.TestCase):
         with self.assertRaises(ValidationError) as ctx:
             make_http_server(
                 self.app, host="0.0.0.0", port=0, surface_policy=HOSTED,
-                env=WAIT_ENV,
             )
         self.assertIn(
             "refuses to serve an unauthenticated surface", str(ctx.exception)
@@ -178,7 +173,7 @@ class HttpServerCompositionTest(unittest.TestCase):
             server = self._serve(
                 host="0.0.0.0",
                 surface_policy=HOSTED,
-                env={**WAIT_ENV, "MERV_ALLOW_OPEN_CONTROL": "1"},
+                env={"MERV_ALLOW_OPEN_CONTROL": "1"},
             )
         self.assertEqual(server.server_address[0], "0.0.0.0")
         self.assertIn("OPEN CONTROL PLANE", "\n".join(logs.output))

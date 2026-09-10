@@ -16,7 +16,6 @@ Copy `.env.example` to a private operator env file. Set:
 - `MERV_SANDBOXES_CONNECTIONS_FILE`: private JSON file containing project-to-namespace
   mappings and sandbox-issued consumer credentials. With Compose this is the host
   path; the container reads `/run/secrets/merv_sandbox_connections`.
-- `MERV_WAIT_SECRET`: stable signing key for bounded run-wait links.
 - `MERV_BLOB_BUCKET`, `MERV_BLOB_ENDPOINT_URL`, `MERV_BLOB_ACCESS_KEY_ID`, and
   `MERV_BLOB_SECRET_ACCESS_KEY`: Merv's own R2 artifact storage. Region defaults
   to `auto`; `MERV_BLOB_PREFIX` optionally prefixes project/digest keys.

@@ -52,7 +52,6 @@ from .config import (
 from .brain_dirs import resolve_brain_state_root, resolve_local_brain_staging
 from ..kernel.env import env_bool, env_value
 from ..kernel.ports.blob_store import BlobStore, EvidenceBlobStore
-from ..kernel.secret_tokens import load_wait_secret
 from ..kernel.state import BaseStateStore
 from ..kernel.state.activity import register_activity_vocabulary
 from ..kernel.state.tool_call_ledger import (
@@ -367,11 +366,6 @@ def build_control_server(
         oauth_service=oauth_service,
         ui_base_url=resolve_ui_base_url(env),
         oauth_resource_uri=oauth_resource_uri,
-        # Hosted state lives outside this container and its state root is the
-        # /var/empty sentinel, so the run-wait key must arrive as configuration:
-        # a generated one would die with the process and every URL already
-        # handed to an agent would stop verifying.
-        wait_secret=load_wait_secret(env=env, require_env=True),
         env=env,
         runner_pairings=runner_pairings,
     )
@@ -415,11 +409,6 @@ def build_local_server(
         cleanup=cleanup,
         tenant_counters=app.application.tenant_counters,
         surface_policy=_local_http_surface(),
-        # Generated once into the writable state root this deployment already
-        # owns, so wait URLs minted before a restart still verify after one.
-        wait_secret=load_wait_secret(
-            env=env, state_root=resolve_brain_state_root(root)
-        ),
     )
     return ControlPlaneServer(
         app=app,

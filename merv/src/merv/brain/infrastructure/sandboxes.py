@@ -23,8 +23,7 @@ from urllib.parse import quote
 from ...shared.tool_validation import validate_openssh_public_key
 from ..kernel.utils import NotFoundError, ValidationError, now_iso, parse_iso
 from ..kernel.state import BaseStateStore
-from ..kernel.secret_tokens import MIN_WAIT_SECRET_BYTES, wait_url
-from .ports import InfrastructureTransport, _subject, project_namespace
+from .ports import InfrastructureTransport, project_namespace
 from .persistence import INFRASTRUCTURE_SCHEMA
 
 
@@ -35,6 +34,9 @@ _STATUS = {"requested": "provisioning", "provisioning": "provisioning",
            "delete_requested": "cleanup_pending", "deleting": "cleanup_pending",
            "delete_failed": "cleanup_pending", "stopped": "terminated"}
 _DEFAULT_OUTPUTS = ("results", "figures", "report.md", "graph.json", "metrics.json", "results.json")
+# What merv-sandboxes actually honours on GET /jobs/{id}?wait=: its job service
+# clamps to this, so a larger ask here would only promise a hold nobody keeps.
+MAX_WAIT_SECONDS = 30
 
 
 def _path(value: str) -> str:
@@ -394,7 +396,7 @@ class RemoteSandboxes:
                        for link in self._links(pid, initial["sandbox_id"])):
                 raise NotFoundError("job is not attached to this experiment")
         result = self._call("POST" if cancel else "GET", path + ("/cancel" if cancel else ""),
-                            project_id=pid, params=None if cancel else {"wait": min(45, max(0, wait_seconds)), "after": after or ""})
+                            project_id=pid, params=None if cancel else {"wait": min(MAX_WAIT_SECONDS, max(0, wait_seconds)), "after": after or ""})
         if stream is not None:
             if stream not in {"stdout", "stderr"} or offset < 0 or not 1 <= limit <= 1048576:
                 raise ValidationError("output requires stdout/stderr, a nonnegative offset and a limit of 1–1048576 bytes")
@@ -411,8 +413,7 @@ class RemoteSandboxes:
         return result
 
     def runs(self, *, project_id: str | None = None, experiment_id: str | None = None,
-             sandbox_uid: str | None = None, wait_seconds: int = 0,
-             base_url: str = "", wait_secret: bytes | None = None, **_: Any) -> dict[str, Any]:
+             sandbox_uid: str | None = None, wait_seconds: int = 0, **_: Any) -> dict[str, Any]:
         pid = self._project(project_id)
         self._check_experiment(pid, experiment_id)
         if not experiment_id and not sandbox_uid:
@@ -440,11 +441,6 @@ class RemoteSandboxes:
         rows = [{**job, "label": job["id"], "sandbox_uid": job["sandbox_id"],
                  "status": "finished" if job["state"] in _TERMINAL_JOBS else "running",
                  "log_path": None} for job in jobs]
-        if base_url and wait_secret is not None and len(wait_secret) >= MIN_WAIT_SECRET_BYTES:
-            for row in rows:
-                row["wait_url"] = wait_url(base_url=base_url, key=wait_secret,
-                                           sandbox_uid=row["sandbox_uid"], label=row["label"],
-                                           subject=_subject.get())
         return {"project_id": pid, "experiment_id": experiment_id or "", "sandbox_uid": sandbox_uid or "",
                 "runs": rows, "jobs": jobs, "hint": "These are durable merv-sandboxes jobs started with sandbox.run. SSH commands are not automatically recorded as jobs."}
 
@@ -576,37 +572,6 @@ class RemoteSandboxes:
                     "Historical charges and measured hours are included; hours_coverage identifies incomplete history. "
                     "Saved resource and import references group experiments.",
         }
-
-    def run_wait_facts(self, *, sandbox_uid: str, label: str) -> dict[str, Any] | None:
-        """Resolve an already-verified wait capability against its linked namespace.
-
-        Native job IDs are the wait labels; display names are not unique. A
-        successful response is a fresh observation even for an old terminal job.
-        Transient service failures propagate so the waiter can retry safely.
-        """
-        with closing(self._store.connect()) as conn:
-            projects = conn.execute(
-                "SELECT DISTINCT project_id FROM remote_sandbox_links WHERE sandbox_uid = ?",
-                (sandbox_uid,),
-            ).fetchall()
-        if len(projects) != 1:
-            return None
-        pid = projects[0]["project_id"]
-        try:
-            record = self._call("GET", "/sandboxes/" + _path(sandbox_uid), project_id=pid)
-        except NotFoundError:
-            return None
-        facts = {"present": False, "sandbox_active": record.get("state") in _ACTIVE,
-                 "expires_at": record.get("lease_expires_at"), "observed_at": now_iso()}
-        try:
-            job = self._call("GET", "/jobs/" + _path(label), project_id=pid)
-        except NotFoundError:
-            return facts
-        if job.get("sandbox_id") != sandbox_uid:
-            return None
-        facts.update(present=True, status="finished" if job["state"] in _TERMINAL_JOBS else "running",
-                     exit_code=job.get("exit_code"), observed_at=now_iso())
-        return facts
 
 
 __all__ = ["RemoteSandboxes"]

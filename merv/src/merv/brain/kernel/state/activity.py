@@ -66,18 +66,12 @@ def register_activity_vocabulary(
 _S3_SIGV4_PARAM_RE = re.compile(
     r"(?i)X-Amz-(?:Signature|Credential|Security-Token|Algorithm|Date|Expires|SignedHeaders)=[^&'\"\s]+"
 )
-# The two path patterns are public because the HTTP access-log scrubber
+# The path pattern is public because the HTTP access-log scrubber
 # (transport/api/shared.redact_upload_tokens) masks the very same credential in
-# a request path and imports these rather than restating them: two copies that
+# a request path and imports it rather than restating it: two copies that
 # drift is how a bearer token reaches a persisted log.
 UPLOAD_TOKEN_PATH_RE = re.compile(
     r"(/api/(?:artifacts/[uf]|feed/u|storage/u)/)[^/?'\"\s]+"
-)
-# Run-wait URLs are auth-exempt capabilities too, and they are handed to agents
-# to paste into commands — so they reach logs inside string values, not just as
-# request paths. Keep the sandbox and label, mask the tag.
-WAIT_SIGNATURE_PATH_RE = re.compile(
-    r"(/wait/[^/?'\"\s]+/[^/?'\"\s]+/)[^/?'\"\s]+"
 )
 
 
@@ -88,8 +82,6 @@ def scrub_secret_text(text: str) -> str:
         text = _S3_SIGV4_PARAM_RE.sub("<redacted>", text)
     if "/api/" in text:
         text = UPLOAD_TOKEN_PATH_RE.sub(r"\1<redacted>", text)
-    if "/wait/" in text:
-        text = WAIT_SIGNATURE_PATH_RE.sub(r"\1<redacted>", text)
     return text
 
 

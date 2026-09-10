@@ -9,7 +9,6 @@ from typing import Any
 from fastapi import FastAPI, Request, Response
 
 from .... import __version__
-from ....kernel.secret_tokens import MIN_WAIT_SECRET_BYTES
 from ...auth import require_hosted_auth_decision
 from ...runner_pairing import RunnerPairings
 from ..feed_http import register_feed_routes
@@ -28,7 +27,6 @@ from . import (
     projects,
     reflections,
     reviews,
-    runs_wait,
     sandbox_providers,
     sandboxes,
     storage,
@@ -62,7 +60,6 @@ def create_fastapi_app(
     oauth_service: Any | None = None,
     ui_base_url: str = "",
     oauth_resource_uri: str = "",
-    wait_secret: bytes | None = None,
     env: Mapping[str, str] | None = None,
     runner_pairings: RunnerPairings | None = None,
 ) -> FastAPI:
@@ -76,13 +73,7 @@ def create_fastapi_app(
     )
     require_hosted_auth_decision(auth=auth, hosted=surface.hosted_control, env=env)
     api = app
-    # Validated before any wiring: a bad key must refuse this composition
-    # without touching state a sibling app over the same backend relies on.
-    if wait_secret and len(wait_secret) < MIN_WAIT_SECRET_BYTES:
-        raise ValueError(f"wait secret must be at least {MIN_WAIT_SECRET_BYTES} bytes")
     authorizer = ProjectAuthorizer(research=api.research)
-    # One key, both directions: the gateway signs sandbox.runs wait URLs with
-    # exactly what the route below verifies, per composition — never shared.
     # Agent context-window identity: present on the full Surface, absent in
     # narrow test compositions that build the app around a lighter object.
     agent_identities = getattr(api, "agent_identities", None)
@@ -95,7 +86,6 @@ def create_fastapi_app(
         ledger=api.tool_ledger,
         agent_sessions=api.agent_sessions,
         agent_identities=agent_identities,
-        wait_secret=wait_secret,
         auth_meta=auth.meta() if auth is not None else None,
     )
     authenticator = RequestAuthenticator(
@@ -150,7 +140,6 @@ def create_fastapi_app(
                 application=api.application,
                 sandboxes=api.sandboxes,
             ),
-            runs_wait.build_router(sandboxes=api.sandboxes, secret=wait_secret),
             sandbox_providers.build_router(
                 providers=api.sandbox_providers,
             ),

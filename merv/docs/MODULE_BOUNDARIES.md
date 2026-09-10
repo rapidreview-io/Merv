@@ -172,7 +172,7 @@ reads.
 The gateway names no tool. What it must inject is declared on the contract by
 the tool's owner: `binds_producer_session`, `binds_capability`,
 `binds_caller_project`, `telemetry_scope_field`, `needs_base_url`,
-`needs_wait_secret`, `external_key_denied_action`. What a leased session may
+`external_key_denied_action`. What a leased session may
 call is the support baseline in `transport/http_policy.py`
 (`SESSION_READ_BASELINE`, plus `SESSION_WRITE_BASELINE` when the node is not
 read-only) united with the tools that node's `Execution` declared. Scope checks
