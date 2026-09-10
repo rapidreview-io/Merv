@@ -13,7 +13,7 @@ from urllib.request import url2pathname
 
 from fastapi.testclient import TestClient
 
-from merv.brain.infrastructure import RemoteObjects, RetentionConflictError
+from merv.brain.infrastructure import RemoteObjects
 from merv.brain.kernel.state.store import StateStore
 from merv.brain.kernel.utils import ValidationError
 from merv.brain.surface.surface import build_local_server
@@ -57,7 +57,7 @@ class StorageHttpApiTest(unittest.TestCase):
         self.assertTrue(self.client.get("/api/meta").json()["capabilities"]["storage"])
         self.assertIsInstance(self.app.storage, RemoteObjects)
 
-    def test_storage_routes_list_get_download_pin_unpin_renew_delete(self) -> None:
+    def test_storage_routes_list_get_download_pin_renew_delete(self) -> None:
         obj = self._submit_and_complete(path="datasets/train.tar", kind="dataset", data=b"data")[0]
 
         listed = self._request("GET", f"/api/projects/{self.project_id}/storage")
@@ -94,11 +94,6 @@ class StorageHttpApiTest(unittest.TestCase):
         pinned = self._request("POST", f"/api/projects/{self.project_id}/storage/{obj['id']}/pin")
         self.assertIsNone(pinned["object"]["expires_at"])
 
-        # The service cannot shorten retention: the route answers 409, not 400.
-        released = self.client.post(f"/api/projects/{self.project_id}/storage/{obj['id']}/unpin")
-        self.assertEqual(released.status_code, 409, released.text)
-        self.assertEqual(released.json()["error_code"], "retention_conflict")
-        self.assertIn("pinned", released.json()["detail"])
         self.assertIsNone(
             self._request("GET", f"/api/projects/{self.project_id}/storage/{obj['id']}")["object"]["expires_at"]
         )
@@ -345,10 +340,6 @@ class StorageHttpApiTest(unittest.TestCase):
             "storage.object", {"project_id": self.project_id, "object_id": oid, "action": "pin"},
         )
         self.assertIsNone(pinned["expires_at"])
-        with self.assertRaises(RetentionConflictError):
-            self.app.call_tool(
-                "storage.object", {"project_id": self.project_id, "object_id": oid, "action": "unpin"},
-            )
         deleted = self.app.call_tool(
             "storage.object", {"project_id": self.project_id, "object_id": oid, "action": "delete"},
         )

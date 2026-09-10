@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
-from merv.brain.infrastructure import RemoteObjects, RetentionConflictError
+from merv.brain.infrastructure import RemoteObjects
 from merv.brain.infrastructure.objects import STORAGE_DEFAULT_TTL_SECONDS
 from merv.brain.kernel.state.store import StateStore
 from merv.brain.kernel.utils import NotFoundError, ValidationError, parse_iso
@@ -197,7 +197,7 @@ class RemoteObjectsTest(unittest.TestCase):
         self.assertRegex(fetched["run"], r"^curl -sf -o 'local/copy\.bin' 'file://[^']+' && ")
         self.assertIn(f"printf '%s  %s\\n' {hashlib.sha256(data).hexdigest()} 'local/copy.bin' | shasum -a 256 -c", fetched["run"])
 
-    def test_pin_renew_unpin_and_delete(self) -> None:
+    def test_pin_renew_and_delete(self) -> None:
         obj = self._submit_and_complete(b"lifecycle", kind="other")
         renewed = self.objects.manage(project_id=self.project_id, object_id=obj["id"], action="renew")
         self.assertGreaterEqual(parse_iso(renewed["expires_at"]), parse_iso(obj["expires_at"]))
@@ -206,10 +206,6 @@ class RemoteObjectsTest(unittest.TestCase):
         # Pinned stays pinned: the service only extends retention.
         still = self.objects.manage(project_id=self.project_id, object_id=obj["id"], action="renew")
         self.assertIsNone(still["expires_at"])
-        with self.assertRaises(RetentionConflictError) as ctx:
-            self.objects.manage(project_id=self.project_id, object_id=obj["id"], action="unpin")
-        self.assertEqual(ctx.exception.error_code, "retention_conflict")
-        self.assertEqual(ctx.exception.details["object_id"], obj["id"])
         deleted = self.objects.manage(project_id=self.project_id, object_id=obj["id"], action="delete")
         self.assertTrue(deleted["deleted"])
         self.assertEqual(deleted["object"]["status"], "delete_pending")

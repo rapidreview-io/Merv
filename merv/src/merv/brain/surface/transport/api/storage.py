@@ -5,9 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Body
-from fastapi.responses import JSONResponse
 
-from ....infrastructure import RemoteObjects, RetentionConflictError
+from ....infrastructure import RemoteObjects
 from ....kernel.utils import NotFoundError
 
 
@@ -70,20 +69,6 @@ def build_router(*, storage: RemoteObjects | None) -> APIRouter:
         return {"object": storage_for_project(project_id).manage(
             project_id=project_id, object_id=object_id, action="pin"
         )}
-
-    @api_router.post("/api/projects/{project_id}/storage/{object_id}/unpin")
-    def unpin_storage_object(project_id: str, object_id: str) -> Any:
-        try:
-            return {"object": storage_for_project(project_id).manage(
-                project_id=project_id, object_id=object_id, action="unpin"
-            )}
-        except RetentionConflictError as exc:
-            # merv-sandboxes retention only extends: the route stays for the
-            # UI's "release" verb but answers with a conflict, not a change.
-            return JSONResponse(
-                {"detail": exc.message, "error_code": exc.error_code, **exc.details},
-                status_code=409,
-            )
 
     @api_router.post("/api/projects/{project_id}/storage/{object_id}/renew")
     def renew_storage_object(project_id: str, object_id: str) -> dict[str, Any]:

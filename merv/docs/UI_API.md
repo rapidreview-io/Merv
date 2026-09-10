@@ -306,7 +306,6 @@ GET    /api/projects/{project_id}/storage
 GET    /api/projects/{project_id}/storage/{object_id}
 POST   /api/projects/{project_id}/storage/{object_id}/download
 POST   /api/projects/{project_id}/storage/{object_id}/pin
-POST   /api/projects/{project_id}/storage/{object_id}/unpin
 POST   /api/projects/{project_id}/storage/{object_id}/renew
 DELETE /api/projects/{project_id}/storage/{object_id}
 ```

@@ -136,7 +136,7 @@ class StorageFetchInput(ProjectScopedInput):
 
 class StorageObjectInput(ProjectScopedInput):
     object_id: str
-    action: Literal["pin", "unpin", "renew", "delete"]
+    action: Literal["pin", "renew", "delete"]
 
 
 class SandboxRequestInput(ProjectScopedInput):
@@ -397,8 +397,8 @@ TOOLS: dict[str, ToolContract] = {
             "Apply a lifecycle action to one storage object by object_id: pin "
             "(retention removed; kept permanently), renew (extend retention by "
             "the default window), or delete (merv-sandboxes reclaims the bytes). "
-            "unpin is refused: service retention only extends, so a pinned "
-            "object stays pinned until deleted."
+            "Service retention only extends, so a pinned object stays pinned "
+            "until it is deleted."
         ),
     ),
     "sandbox.request": ToolContract(
