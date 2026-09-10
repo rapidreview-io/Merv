@@ -6,7 +6,6 @@ import HuggingFaceToken from '../components/HuggingFaceToken';
 import McpKeys from '../components/McpKeys';
 import ProjectPeople from '../components/ProjectPeople';
 import ProviderConfig from '../components/ProviderConfig';
-import StorageSettings from '../components/StorageSettings';
 
 // Each tab owns one setup surface. `scope` is the honest reach of the panel.
 // Connect-an-agent leads: it is the top of the funnel and the tab a first
@@ -16,7 +15,6 @@ const TABS = [
   { id: 'people', label: 'People', scope: 'This project', needsDirectory: true },
   { id: 'keys', label: 'MCP keys', scope: 'This project' },
   { id: 'compute', label: 'Compute', scope: 'This project' },
-  { id: 'storage', label: 'Storage', scope: 'This project', needsStorage: true },
   { id: 'huggingface', label: 'Hugging Face', scope: 'Your account' },
 ];
 
@@ -30,13 +28,9 @@ const TABS = [
 export default function Settings() {
   const projectId = useProjectStore((s) => s.projectId);
   const directory = useProjectStore((s) => s.serverMeta?.capabilities?.project_member_directory === true);
-  const storage = useProjectStore((s) => s.serverMeta?.capabilities?.storage === true);
-  const storageMaxBytes = useProjectStore((s) => s.serverMeta?.capabilities?.storage_max_upload_bytes);
   const hosted = isAuthEnabled();
   const [params, setParams] = useSearchParams();
-  const tabs = TABS.filter((tab) => (
-    (!tab.needsDirectory || directory) && (!tab.needsStorage || storage)
-  ));
+  const tabs = TABS.filter((tab) => !tab.needsDirectory || directory);
 
   const requested = params.get('tab');
   // Auto-run grew into its own page; honor the old deep link.
@@ -90,9 +84,6 @@ export default function Settings() {
         {active === 'people' && <ProjectPeople projectId={projectId} />}
         {active === 'keys' && <McpKeys projectId={projectId} hosted={hosted} />}
         {active === 'compute' && <ProviderConfig projectId={projectId} />}
-        {active === 'storage' && (
-          <StorageSettings projectId={projectId} serverMaxBytes={storageMaxBytes} />
-        )}
         {active === 'huggingface' && <HuggingFaceToken hosted={hosted} />}
       </div>
     </div>
