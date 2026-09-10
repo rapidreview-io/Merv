@@ -41,10 +41,12 @@ from ..kernel.utils import (
 from ..agent_sessions import runner_ref
 from .project_keys import PROJECT_GRANT, ProjectKeys, public_key_record
 from ..agent_sessions import AGENT_SESSION_SCHEMA
+from merv.shared.user_codes import (
+    USER_CODE_ALPHABET,
+    USER_CODE_LENGTH,
+    normalize_user_code,
+)
 
-# Crockford base32 minus I, L, O, U: unambiguous when read aloud or typed.
-USER_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-USER_CODE_LENGTH = 8  # 32^8 = 2^40
 DEVICE_CODE_BYTES = 32
 PAIRING_TTL_SECONDS = 10 * 60
 APPROVED_READ_WINDOW_SECONDS = 10 * 60
@@ -352,19 +354,13 @@ def _digest(value: object, *, field: str) -> str:
 
 
 def _normalize_user_code(value: object) -> str:
-    text = "".join(
-        character
-        for character in str(value or "").upper()
-        if character not in " -_\t\r\n"
-    )
-    # Common transcription slips map onto their Crockford equivalents.
-    text = text.replace("I", "1").replace("L", "1").replace("O", "0")
-    if len(text) != USER_CODE_LENGTH or any(c not in USER_CODE_ALPHABET for c in text):
+    code = normalize_user_code(value)
+    if not code:
         raise ValidationError(
             "user_code must be the 8-character code shown by the runner",
             details={"field": "user_code"},
         )
-    return text
+    return code
 
 
 def _machine_json(machine: Mapping[str, Any] | None) -> str:
@@ -387,9 +383,4 @@ def _json_object(value: object) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def format_user_code(code: str) -> str:
-    """``7Q2KM4B9`` → ``7Q2K-M4B9`` for display."""
-    return f"{code[:4]}-{code[4:]}" if len(code) == USER_CODE_LENGTH else code
-
-
-__all__ = ["RunnerPairings", "format_user_code"]
+__all__ = ["RunnerPairings"]

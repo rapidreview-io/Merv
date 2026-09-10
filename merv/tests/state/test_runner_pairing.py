@@ -22,8 +22,8 @@ from merv.brain.surface.runner_pairing import (
     APPROVED_READ_WINDOW_SECONDS,
     CREATE_PER_IP_PER_MINUTE,
     RunnerPairings,
-    format_user_code,
 )
+from merv.shared.user_codes import format_user_code
 
 
 def _key_and_digest() -> tuple[str, str]:
