@@ -6,7 +6,7 @@ Artifacts owns project-scoped immutable content records and their upload
 credentials. Consumers own associations, roles, acceptance, and evidence
 snapshots. Artifacts never resolves a research target or interprets a workflow.
 Physical bytes live behind the `EvidenceBlobStore` port in Merv's own R2 bucket.
-Large datasets and models use the separate Object Storage component.
+Large datasets and models live in merv-sandboxes behind the Infrastructure facade.
 
 ## Files and responsibilities
 

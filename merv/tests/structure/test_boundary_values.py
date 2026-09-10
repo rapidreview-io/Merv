@@ -21,7 +21,7 @@ from merv.brain.application.experiments.transition import (
     TransitionReceipt,
     TransitionResponse,
 )
-from merv.brain.object_storage import ProducedObject
+from merv.brain.research_core import ProducedObject
 from merv.brain.application.mlflow import (
     CreateRunResult,
     FinalizeRunResult,
@@ -72,8 +72,8 @@ def _boundary_types() -> dict[str, type]:
         "application/events.py",
         "application/experiments/presentation.py",
         "kernel/events.py",
-        "object_storage/storage.py",
         "research_core/models.py",
+        "research_core/objects.py",
     }
     for path in sorted(BACKEND_ROOT.rglob("*.py")):
         relative = path.relative_to(BACKEND_ROOT).as_posix()
@@ -169,21 +169,17 @@ SAMPLES: dict[type, object] = {
         "experiments": [{"name": "proj_1.exp_1", "runs": []}],
     },
     ProducedObject: {
-        "id": "so_1",
+        "id": "obj_1",
         "name": "models/checkpoint.bin",
         "version": 1,
         "kind": "model",
         "content_sha256": "c" * 64,
         "size_bytes": 12,
         "content_type": "application/octet-stream",
-        "status": "available",
-        "expires_at": None,
         "producing_run": "run_1",
         "source_uri": "",
         "notes": "retained",
         "created_at": "2026-07-21T12:00:00Z",
-        "updated_at": "2026-07-21T12:00:00Z",
-        "last_accessed_at": None,
     },
     TransitionResponse: {
         "id": "exp_1",

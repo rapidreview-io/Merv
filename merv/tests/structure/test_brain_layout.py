@@ -241,8 +241,8 @@ class BrainToolManifestTest(unittest.TestCase):
 class PlaneImportLintTest(unittest.TestCase):
     def test_infrastructure_is_remote_and_compute_providers_are_absent(self) -> None:
         self.assertFalse((BACKEND_ROOT / "sandbox").exists())
-        for retired in ("s3_blobs.py", "s3_object_store.py", "blobs.py"):
-            self.assertFalse((BACKEND_ROOT / "object_storage" / retired).exists())
+        # Heavy objects live in merv-sandboxes; Merv keeps no ledger component.
+        self.assertFalse((BACKEND_ROOT / "object_storage").exists())
         forbidden = {"boto3", "botocore", "modal", "paramiko", "subprocess"}
         for path in (BACKEND_ROOT / "infrastructure").glob("*.py"):
             with self.subTest(module=path.name):

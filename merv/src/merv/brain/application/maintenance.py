@@ -7,15 +7,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Callable, Protocol
 
-from ..kernel.utils import format_iso
-
-
-class ExpiringStorage(Protocol):
-    """Heavy-storage capability needed by the maintenance use case."""
-
-    def sweep_expired(self, *, now: str) -> int: ...
-
-
 class PrunableLedger(Protocol):
     """Bounded retention sweep that reports its own outcome, not just a count."""
 
@@ -38,9 +29,6 @@ def _sweep_failure(exc: Exception) -> dict[str, Any]:
 class CleanupReport:
     """Counts returned by one idempotent maintenance pass."""
 
-    storage_objects_swept: dict[str, Any] = field(
-        default_factory=lambda: dict(SKIPPED_PRUNE)
-    )
     tool_calls_pruned: dict[str, Any] = field(
         default_factory=lambda: dict(SKIPPED_PRUNE)
     )
@@ -59,7 +47,6 @@ class CleanupReport:
         return not self.sweep_errors and all(
             bool(outcome.get("ok"))
             for outcome in (
-                self.storage_objects_swept,
                 self.tool_calls_pruned,
                 self.oauth_clients_pruned,
             )
@@ -70,7 +57,6 @@ class CleanupReport:
             # Leading, so an operator reading the cleanup response sees whether
             # anything failed before reading any count.
             "ok": self.ok,
-            "storage_objects_swept": dict(self.storage_objects_swept),
             "tool_calls_pruned": dict(self.tool_calls_pruned),
             "oauth_clients_pruned": dict(self.oauth_clients_pruned),
             "agent_sessions_expired": self.agent_sessions_expired,
@@ -84,12 +70,10 @@ class CleanupService:
     def __init__(
         self,
         *,
-        storage: ExpiringStorage | None = None,
         tool_call_ledger: PrunableLedger | None = None,
         oauth_clients: PrunableLedger | None = None,
         agent_sessions: SessionMaintenance | None = None,
     ) -> None:
-        self.storage = storage
         self.tool_call_ledger = tool_call_ledger
         self.oauth_clients = oauth_clients
         self.agent_sessions = agent_sessions
@@ -108,7 +92,6 @@ class CleanupService:
                 return 0
 
         return CleanupReport(
-            storage_objects_swept=self.sweep_expired_storage(now=now_dt),
             tool_calls_pruned=self.prune_tool_calls(now=now_dt),
             oauth_clients_pruned=self.prune_oauth_clients(now=now_dt),
             agent_sessions_expired=counted(
@@ -116,18 +99,6 @@ class CleanupService:
             ),
             sweep_errors=errors,
         )
-
-    def sweep_expired_storage(self, *, now: datetime | None = None) -> dict[str, Any]:
-        """Ledger-aware expiry for heavy storage, reporting its outcome."""
-        if self.storage is None:
-            return dict(SKIPPED_PRUNE)
-        try:
-            now_iso = format_iso(now or datetime.now(tz=UTC))
-            return {"deleted": int(self.storage.sweep_expired(now=now_iso)), "ok": True}
-        except (
-            Exception
-        ) as exc:  # noqa: BLE001 -- one GC adapter must not abort the pass
-            return _sweep_failure(exc)
 
     def prune_tool_calls(self, *, now: datetime | None = None) -> dict[str, Any]:
         """Bounded retention sweep over the durable tool-call ledger.

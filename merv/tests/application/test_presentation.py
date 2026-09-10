@@ -154,8 +154,6 @@ class ExperimentPresentationTest(unittest.TestCase):
                 "content_sha256": "a" * 64,
                 "size_bytes": 4,
                 "content_type": "application/octet-stream",
-                "status": "available",
-                "expires_at": None,
                 "producing_run": "run_1",
                 "source_uri": "",
                 "notes": "kept",
@@ -187,8 +185,7 @@ class ExperimentPresentationTest(unittest.TestCase):
         ])
         self.assertEqual(set(result["storage_objects"][0]), {
             "id", "name", "version", "kind", "content_sha256", "size_bytes",
-            "content_type", "status", "expires_at", "producing_run", "source_uri",
-            "notes",
+            "content_type", "producing_run", "source_uri", "notes",
         })
         self.assertNotIn("target_snapshot_id", result["reviews"][0])
 

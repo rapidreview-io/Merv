@@ -174,7 +174,7 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "sandbox.terminal": "4140817916c31f3a3694a4197281f8196c6e718971529ae790eadaf639addbf1",
     "storage.complete_upload": "25c9c4e741c2c3c0e284b60213dc18e67eb8751c2fcd0498d4fa60d47d60a879",
     "storage.fetch": "8c6547f9b6845f29addb6c7388fe39eee144a7ff5ce8f17ebd83fa300317bec4",
-    "storage.find": "fc53432ef386a65e6392c6d7b20e10028a9bedf9938dd1c7dd2e086063a727bf",
+    "storage.find": "47228bc70ae51084bbbaad6ad31b86f839db7d26fd483e0791d74ec30ce3e672",
     "storage.object": "3fba20bb5e16ab17aa3e96c203332716c9eb3688332c2e11e573d220046451db",
     "storage.put_object": "550c3f55aa135821f658eba9800d062f4e37b4ad3956af523b105be96d7da15a",
     "storage.submit": "074879ce62d47c893a33b707fb7e307d7bb58c9d3aaccf3da66812f52c7e5fe9",
@@ -423,8 +423,8 @@ class ToolContractRegistryTest(unittest.TestCase):
         )
 
     def test_storage_find_enforces_resolve_vs_list_mode(self) -> None:
-        # List mode: neither selector.
-        StorageFindInput.model_validate({"project_id": "p", "kind": "model"})
+        # List mode: neither selector; the service state filter is the only one.
+        StorageFindInput.model_validate({"project_id": "p", "status": "available"})
         # Resolve mode: exactly one selector.
         StorageFindInput.model_validate({"project_id": "p", "object_id": "so_1"})
         StorageFindInput.model_validate({"project_id": "p", "name": "datasets/x"})

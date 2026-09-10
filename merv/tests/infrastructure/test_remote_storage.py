@@ -1,24 +1,32 @@
+"""Byte-transfer helpers over merv-sandboxes: targets, commands, and the token loop."""
+
 from __future__ import annotations
 
 import base64
 import hashlib
-import json
+import shlex
 
 import pytest
 
-from merv.brain.infrastructure.storage import RemoteObjectProvider, _decode_upload, _encode_upload
+from merv.brain.infrastructure import RemoteObjects
+from merv.brain.infrastructure.storage import (
+    storage_fetch_command,
+    storage_multipart_submit_command,
+    storage_submit_command,
+    upload_target,
+)
 from merv.brain.kernel.state import StateStore
-from merv.brain.object_storage import ObjectStorage
-from merv.shared.errors import ValidationError
+from merv.shared.errors import NotFoundError, ValidationError
 
 
 SHA = hashlib.sha256(b"abc").hexdigest()
 
 
 def record(**overrides):
-    return {"id": "obj_test", "namespace": "proj_a", "name": SHA,
-            "sha256": SHA, "size_bytes": 3, "content_type": "application/octet-stream",
-            "state": "available", **overrides}
+    return {"id": "obj_test", "namespace": "proj_a", "name": "datasets/abc.bin", "version": 1,
+            "kind": "file", "sha256": SHA, "size_bytes": 3, "content_type": "application/octet-stream",
+            "state": "available", "created_at": "2026-09-01T00:00:00+00:00",
+            "updated_at": "2026-09-01T00:00:00+00:00", "expires_at": None, **overrides}
 
 
 class Client:
@@ -31,7 +39,7 @@ class Client:
         return self.handler(method, path, **kwargs)
 
 
-def test_resume_keeps_noncontiguous_missing_parts_and_follows_all_pages():
+def test_upload_target_keeps_noncontiguous_missing_parts_and_follows_all_pages():
     def handler(method, path, **kwargs):
         part = kwargs.get("params", {}).get("start_part", 1)
         return {"object": record(state="uploading", size_bytes=101), "part_size": 1,
@@ -41,108 +49,115 @@ def test_resume_keeps_noncontiguous_missing_parts_and_follows_all_pages():
                 "next_part": 101 if part == 1 else None}
 
     client = Client(handler)
-    provider = RemoteObjectProvider(client=client)
-    target = provider.resume_upload(upload_id=_encode_upload("proj_a", "obj_test"), expires_in=60)
+    first = handler("GET", "/storage/objects/obj_test/upload", params={"start_part": 1})
+    target = upload_target(client, namespace="proj_a", status=first)
+    assert target["upload_id"] == "obj_test"
     assert len(target["parts"]) == 100
     assert target["parts"][-1]["part_number"] == 101
     assert target["completed_parts"] == [2]
-    assert all(call[2]["namespace"] == "proj_a" for call in client.calls)
+    assert "url" not in target
+    assert client.calls == [("GET", "/storage/objects/obj_test/upload",
+                             {"namespace": "proj_a", "params": {"start_part": 101, "limit": 100}})]
 
 
-def test_completion_uses_service_verified_object_identity():
-    client = Client(lambda *args, **kwargs: record())
-    result = RemoteObjectProvider(client=client).complete_upload(
-        upload_id=_encode_upload("proj_a", "obj_test"), parts=[{"part_number": 1, "etag": "untrusted"}])
-    assert (result.namespace, result.sha256, result.size_bytes) == ("proj_a", SHA, 3)
-    assert client.calls == [("POST", "/storage/objects/obj_test/complete", {"namespace": "proj_a"})]
-
-
-def test_stat_and_download_resolve_existing_names_without_cross_project_lookup():
-    client = Client(lambda method, path, **kwargs: {"objects": [record(state="deleted"), record()]}
-                    if path == "/storage/objects" else {"url": "https://store.test/signed"})
-    provider = RemoteObjectProvider(client=client)
-    assert provider.stat(namespace="proj_a", sha256=SHA).size_bytes == 3
-    assert provider.presign_download(namespace="proj_a", sha256=SHA, expires_in=60)["url"].startswith("https://")
-    assert all(call[2]["namespace"] == "proj_a" for call in client.calls)
-    assert client.calls[0][2]["params"]["name"] == SHA
-
-
-def test_upload_identity_cannot_escape_api_path():
-    client = Client(lambda *args, **kwargs: pytest.fail("must not call service"))
-    for bad in ["old-upload", _encode_upload("proj_a", "obj_../../victim"), "msbx_!"]:
-        with pytest.raises(ValidationError):
-            RemoteObjectProvider(client=client).complete_upload(upload_id=bad)
-
-
-def test_empty_file_has_no_byte_parts_but_completes():
-    empty_sha = hashlib.sha256(b"").hexdigest()
-    client = Client(lambda method, path, **kwargs: {
-        "object": record(sha256=empty_sha, size_bytes=0, state="uploading"),
-        "parts": [], "completed_parts": [], "part_count": 0, "part_size": 8388608, "next_part": None})
-    result = RemoteObjectProvider(client=client).presign_upload(
-        namespace="proj_a", sha256=empty_sha, size_bytes=0, expires_in=60)
-    assert result["parts"] == []
-    assert base64.b64decode(result["checksum_sha256"]).hex() == empty_sha
-
-
-@pytest.mark.parametrize("identity", [
-    ["proj_a", "obj_test", "sto_one"],
-    ["proj_a", "obj_test"],
-])
-def test_upload_decoder_accepts_original_and_row_specific_handles(identity):
-    handle = "msbx_" + base64.urlsafe_b64encode(json.dumps(identity).encode()).decode().rstrip("=")
-    assert _decode_upload(handle) == ("proj_a", "obj_test")
-
-
-@pytest.mark.parametrize("identity", [
-    ["proj_a", "obj_test", ""], ["proj_a", "obj_test", "sto_"],
-    ["proj_a", "obj_test", "other_one"], ["proj_a", "obj_test", "sto_../escape"],
-    ["proj_a", "obj_test", "sto_one\n"], ["proj_a", "obj_test", 7],
-    ["proj_a", "obj_test", "sto_one", "extra"], {"proj_a": "obj_test"},
-])
-def test_upload_decoder_rejects_invalid_row_discriminators(identity):
-    handle = "msbx_" + base64.urlsafe_b64encode(json.dumps(identity).encode()).decode().rstrip("=")
+def test_upload_target_rejects_looping_pagination():
+    client = Client(lambda *args, **kwargs: {"parts": [], "completed_parts": [], "next_part": 2})
+    status = {"object": record(state="uploading"), "part_size": 1, "part_count": 3,
+              "parts": [], "completed_parts": [], "next_part": 2}
     with pytest.raises(ValidationError):
-        _decode_upload(handle)
+        upload_target(client, namespace="proj_a", status=status)
 
 
-def test_duplicate_migrated_rows_resume_and_complete_independently(tmp_path):
+def test_single_part_target_exposes_signed_url_and_headers():
+    status = {"object": record(state="uploading"), "part_size": 8388608, "part_count": 1,
+              "parts": [{"part_number": 1, "url": "https://store.test/put",
+                         "headers": {"Content-Type": "application/octet-stream"}}],
+              "completed_parts": [], "next_part": None}
+    target = upload_target(Client(lambda *a, **k: pytest.fail("no pages")), namespace="proj_a", status=status)
+    assert target["url"] == "https://store.test/put"
+    assert target["headers"] == {"Content-Type": "application/octet-stream"}
+    assert base64.b64decode(target["checksum_sha256"]).hex() == SHA
+
+
+def test_empty_file_has_no_byte_parts_but_a_target():
+    empty_sha = hashlib.sha256(b"").hexdigest()
+    status = {"object": record(sha256=empty_sha, size_bytes=0, state="uploading"),
+              "parts": [], "completed_parts": [], "part_count": 0, "part_size": 8388608, "next_part": None}
+    target = upload_target(Client(lambda *a, **k: pytest.fail("no pages")), namespace="proj_a", status=status)
+    assert target["parts"] == []
+    assert "url" not in target
+    assert base64.b64decode(target["checksum_sha256"]).hex() == empty_sha
+
+
+def test_submit_command_keeps_untrusted_values_as_single_shell_words():
+    payload = "application/x' ; touch /tmp/pwned ; echo '"
+    run = storage_submit_command(
+        base_url="https://x", path="f.bin", presigned_url="https://s3/put",
+        checksum_b64="YWJj", content_type=payload, token="tok",
+    )
+    put_cmd, complete_cmd = run.split(" && ", 1)
+    tokens = shlex.split(put_cmd)
+    assert "touch" not in tokens and ";" not in tokens
+    assert f"Content-Type: {payload}" in tokens
+    assert complete_cmd == "curl -sf -X POST 'https://x/api/storage/u/tok/complete'"
+    # Signed headers from the service replace the default checksum headers.
+    signed = storage_submit_command(
+        base_url="", path="f.bin", presigned_url="https://s3/put", checksum_b64="YWJj",
+        content_type="text/plain", token="tok", headers={"x-signed": "1"},
+    )
+    assert "-H 'x-signed: 1'" in signed and "x-amz-checksum" not in signed
+    assert "http://127.0.0.1:8787/api/storage/u/tok/complete" in signed
+
+
+def test_multipart_and_fetch_commands():
+    multipart = storage_multipart_submit_command(base_url="https://x/", path="big bin", token="tok")
+    assert multipart == "merv-client storage-upload --path 'big bin' --target-url 'https://x/api/storage/u/tok'"
+    fetch = storage_fetch_command(path="out.bin", presigned_url="https://s3/get", sha256=SHA)
+    assert fetch == f"curl -sf -o 'out.bin' 'https://s3/get' && printf '%s  %s\\n' {SHA} 'out.bin' | shasum -a 256 -c"
+
+
+def test_token_loop_names_the_service_object_and_consumes_the_token(tmp_path):
     store = StateStore(db_path=tmp_path / "state.db")
     with store.connect() as conn:
         project_id = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()["id"]
 
     def handler(method, path, **kwargs):
         assert kwargs["namespace"] == project_id
-        if method == "GET" and path == "/storage/objects":
-            return {"objects": []}
+        if method == "POST" and path == "/storage/objects":
+            return {"object": record(state="uploading"), "parts": [{"part_number": 1, "url": "https://s3/put"}],
+                    "completed_parts": [], "part_count": 1, "part_size": 8388608, "next_part": None}
+        if path.endswith("/upload"):
+            return {"object": record(state="uploading"), "parts": [], "completed_parts": [1],
+                    "part_count": 1, "part_size": 8388608, "next_part": None}
         if path.endswith("/complete"):
             return record()
-        return {"object": record(state="uploading"), "parts": [], "completed_parts": [],
-                "part_count": 0, "part_size": 8388608, "next_part": None}
+        raise AssertionError(path)
 
     client = Client(handler)
-    storage = ObjectStorage(store=store, provider=RemoteObjectProvider(client=client))
-    entries = [storage.put_object(project_id=project_id, name="datasets/" + name,
-                                  kind="dataset", sha256=SHA, size_bytes=3)
-               for name in ("first", "second")]
-    tokens = []
-    for entry in entries:
-        row_id = entry["object"]["id"]
-        handle = _encode_upload(project_id, "obj_test", row_id=row_id)
-        with store.transaction() as conn:
-            conn.execute("UPDATE storage_objects SET upload_id=? WHERE id=?", (handle, row_id))
-        token = storage._mint_completion_token(project_id=project_id, object_id=row_id, upload_id=handle)
-        tokens.append(token)
-        assert storage.upload_target_via_token(token=token)["upload"]["upload_id"] == handle
-
-    first = storage.complete_via_token(token=tokens[0])["object"]
-    assert first["id"] == entries[0]["object"]["id"] and first["status"] == "available"
+    objects = RemoteObjects(client=client, store=store)
+    submitted = objects.submit(project_id=project_id, path="datasets/abc.bin", sha256=SHA, size_bytes=3)
+    token = submitted["run"].rsplit("/api/storage/u/", 1)[1].split("/", 1)[0]
+    resumed = objects.upload_target_via_token(token=token)["upload"]
+    assert resumed["upload_id"] == "obj_test" and resumed["completed_parts"] == [1]
+    completed = objects.complete_via_token(token=token)["object"]
+    assert (completed["id"], completed["status"], completed["content_sha256"]) == ("obj_test", "available", SHA)
+    assert completed["created_at"] == "2026-09-01T00:00:00Z"
     with store.connect() as conn:
-        assert conn.execute("SELECT status FROM storage_objects WHERE id=?", (entries[1]["object"]["id"],)).fetchone()[0] == "uploading"
-        assert conn.execute("SELECT count(*) FROM storage_completion_tokens").fetchone()[0] == 1
-    second = storage.complete_via_token(token=tokens[1])["object"]
-    assert second["id"] == entries[1]["object"]["id"] and second["status"] == "available"
-    with store.connect() as conn:
-        assert conn.execute("SELECT count(*) FROM storage_objects WHERE status='available'").fetchone()[0] == 2
         assert conn.execute("SELECT count(*) FROM storage_completion_tokens").fetchone()[0] == 0
-    assert sum(path == "/storage/objects/obj_test/complete" for _, path, _ in client.calls) == 2
+    with pytest.raises(NotFoundError):
+        objects.complete_via_token(token=token)
+    assert [call[1] for call in client.calls] == [
+        "/storage/objects", "/storage/objects/obj_test/upload", "/storage/objects/obj_test/complete",
+    ]
+
+
+def test_completion_refuses_objects_the_service_did_not_publish(tmp_path):
+    store = StateStore(db_path=tmp_path / "state.db")
+    with store.connect() as conn:
+        project_id = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()["id"]
+    client = Client(lambda *args, **kwargs: record(state="completing"))
+    with pytest.raises(ValidationError):
+        RemoteObjects(client=client, store=store).complete_upload(project_id=project_id, upload_id="obj_test")
+    for bad in ["obj_../victim", "obj?x", "", "a/b"]:
+        with pytest.raises(ValidationError):
+            RemoteObjects(client=client, store=store).get_object(project_id=project_id, object_id=bad)

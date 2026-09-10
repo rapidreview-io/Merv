@@ -30,13 +30,13 @@ from ..research_core import (
     EXPERIMENT_TERMINAL_STATUSES,
     Research,
     ResearchArtifacts,
+    ResearchObjects,
 )
 from .config import (
     ALLOWED_ORIGINS_ENV_VAR,
     CONTROL_RESTRICT_CORS_ENV_VAR,
     DB_URL_ENV_VAR,
     build_blob_store,
-    build_object_store,
     build_state_store,
     REQUIRE_SANDBOX_BACKEND_ENV_VAR,
     resolve_db_url,
@@ -57,10 +57,9 @@ from ..kernel.state.tool_call_ledger import (
 )
 from ..kernel.state.tool_call_payloads import ToolCallPayloadStore
 from ..kernel.utils import ValidationError
-from ..object_storage import ObjectStorage
 from ..infrastructure.client import build_infrastructure_client
-from ..infrastructure import RemoteSandboxes
-from ..infrastructure import RemoteProviders
+from ..infrastructure import RemoteObjects, RemoteProviders, RemoteSandboxes
+from ..infrastructure.objects import DEFAULT_MAX_UPLOAD_BYTES
 from .agent_identity import AgentIdentities, resolve_agent_identity_mode
 from .artifacts import ArtifactTools
 from .auth import SupabaseVerifier
@@ -85,10 +84,11 @@ class Surface:
         *,
         store: BaseStateStore,
         blobs: EvidenceBlobStore,
-        storage: ObjectStorage,
         infrastructure_client: Any | None = None,
         mlflow_tracking: Any | None = None,
         sandbox_enabled: bool = True,
+        storage_enabled: bool = False,
+        storage_max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
         structured_logging: bool = False,
         agent_identity_mode: str = "required",
     ) -> None:
@@ -96,7 +96,6 @@ class Surface:
         self._blobs = blobs
         self._tracking = mlflow_tracking
         self.sandbox_enabled = sandbox_enabled
-        self.storage = storage if storage.enabled else None
         self.activity = ControlActivitySink()
         self.tool_calls = ControlToolCallSink()
         # Agent-attributed request/response records ride the same blob store
@@ -141,10 +140,21 @@ class Surface:
             store=store, client=infrastructure_client if sandbox_enabled else None,
             attachment_check=self.research.assert_experiment_in_project,
         )
+        # Heavy objects live in merv-sandboxes; Research records which
+        # experiment produced each one through the facade's lifecycle hook.
+        self.research_objects = ResearchObjects(store=store)
+        objects = RemoteObjects(
+            client=infrastructure_client if storage_enabled else None,
+            store=store,
+            lifecycle=self.research_objects,
+            max_upload_bytes=storage_max_upload_bytes,
+        )
+        self.storage = objects if objects.enabled else None
         self.application = Application(
             research=self.research,
             sandboxes=self.sandboxes,
-            objects=storage,
+            objects=objects,
+            produced_objects=self.research_objects,
             artifacts=self.artifacts,
             feed=self.feed,
             agent_sessions=self.agent_sessions,
@@ -153,7 +163,7 @@ class Surface:
         self.user_settings = UserHfTokenSettings(store=store)
 
         tool_names = available_tool_names(
-            storage_enabled=storage.enabled,
+            storage_enabled=objects.enabled,
             tracking_enabled=mlflow_tracking is not None,
             sandbox_enabled=sandbox_enabled,
         )
@@ -201,7 +211,6 @@ class Surface:
 CONTROL_COMPAT_REPO_ROOT = Path("/var/empty/merv-control")
 LOCAL_BRAIN_STATE_DIR_ENV_VAR = "MERV_LOCAL_STATE_DIR"
 LOGGER = logging.getLogger(__name__)
-_UNSET = object()
 
 
 class ControlPlaneServer:
@@ -236,8 +245,8 @@ def build_control_app(
     infrastructure_client: Any | None = None,
     store: Any | None = None,
     blobs: BlobStore | None = None,
-    storage: Any = _UNSET,
     mlflow_tracking: Any | None = None,
+    storage_enabled: bool | None = None,
     local_deployment: bool = False,
 ) -> Surface:
     """Build the unified brain app.
@@ -246,7 +255,8 @@ def build_control_app(
     production omits it and must provide DB_URL and the infrastructure service
     URL plus delegated-auth signing key. The compatibility ``repo_root`` on that production path is
     a stable sentinel, not a created checkout or temp dir. ``infrastructure_client``
-    lets tests inject a deterministic implementation of the remote API.
+    lets tests inject a deterministic implementation of the remote API;
+    ``storage_enabled`` defaults to whether that service connection exists.
     """
     staging = _control_repo_root(
         repo_root=repo_root, env=env, local_deployment=local_deployment
@@ -262,19 +272,17 @@ def build_control_app(
         if blobs is not None
         else build_blob_store(default_root=state_root / "blobs", env=env)
     )
-    if storage is _UNSET:
-        storage = ObjectStorage(
-            store=store,
-            provider=build_object_store(default_root=state_root, env=env, client=infrastructure_client),
-            max_upload_bytes=resolve_storage_max_upload_bytes(env),
-        )
-    elif storage is None:
-        storage = ObjectStorage(store=store, provider=None)
     sandbox_enabled = sandbox_feature_enabled(env) and infrastructure_client is not None
+    # Heavy objects need the same service connection the sandboxes use.
+    if storage_enabled is None:
+        storage_enabled = infrastructure_client is not None
+    storage_enabled = bool(storage_enabled) and infrastructure_client is not None
     app = Surface(
-        store=store, blobs=blobs, storage=storage,
+        store=store, blobs=blobs,
         infrastructure_client=infrastructure_client,
         mlflow_tracking=mlflow_tracking, sandbox_enabled=sandbox_enabled,
+        storage_enabled=storage_enabled,
+        storage_max_upload_bytes=resolve_storage_max_upload_bytes(env),
         structured_logging=not local_deployment,
         agent_identity_mode=resolve_agent_identity_mode(env),
     )
@@ -305,7 +313,6 @@ def build_control_server(
         )
     oauth_repository = SqlOAuthRepository(store=app._store, env=env)
     cleanup = CleanupService(
-        storage=app.storage,
         tool_call_ledger=app.tool_ledger,
         oauth_clients=oauth_repository,
         agent_sessions=app.agent_sessions,
@@ -367,8 +374,8 @@ def build_local_server(
     infrastructure_client: Any | None = None,
     store: Any | None = None,
     blobs: BlobStore | None = None,
-    storage: Any = _UNSET,
     mlflow_tracking: Any | None = None,
+    storage_enabled: bool | None = None,
 ) -> ControlPlaneServer:
     """Build the localhost brain using the same Surface composition."""
     root = _local_brain_root(state_dir=state_dir, env=env)
@@ -378,12 +385,11 @@ def build_local_server(
         infrastructure_client=infrastructure_client,
         store=store,
         blobs=blobs,
-        storage=storage,
         mlflow_tracking=mlflow_tracking,
+        storage_enabled=storage_enabled,
         local_deployment=True,
     )
     cleanup = CleanupService(
-        storage=app.storage,
         tool_call_ledger=app.tool_ledger,
         agent_sessions=app.agent_sessions,
     )

@@ -126,11 +126,11 @@ def storage_feature_enabled(env: Mapping[str, str] | None = None) -> bool:
 def resolve_storage_max_upload_bytes(env: Mapping[str, str] | None = None) -> int:
     """Absolute server-side ceiling for a storage.submit upload (default 50 GiB).
     A non-integer value falls back to the default rather than failing startup."""
-    from ..object_storage.storage import DEFAULT_MAX_UPLOAD_BYTES
+    from merv.shared.storage_guidance import DEFAULT_STORAGE_MAX_UPLOAD_BYTES
 
     return env_int(
         STORAGE_MAX_UPLOAD_BYTES_ENV_VAR,
-        DEFAULT_MAX_UPLOAD_BYTES,
+        DEFAULT_STORAGE_MAX_UPLOAD_BYTES,
         env=env,
         strict=False,
     )
@@ -201,15 +201,6 @@ def build_blob_store(*, default_root: Path, env=None) -> BlobStore:
         access_key_id=values["ACCESS_KEY_ID"], secret_access_key=values["SECRET_ACCESS_KEY"],
         region=values["REGION"] or "auto", prefix=values["PREFIX"] or "",
     )
-
-
-def build_object_store(*, default_root: Path, env=None, client=None):
-    """Heavy transfers use the same native service and project namespaces."""
-    from ..infrastructure.client import build_infrastructure_client
-    from ..infrastructure.storage import RemoteObjectProvider
-
-    client = client or build_infrastructure_client(env)
-    return RemoteObjectProvider(client=client) if client else None
 
 
 def build_state_store(

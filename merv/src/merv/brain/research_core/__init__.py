@@ -44,6 +44,7 @@ from .policy import (
     SYNOPSIS_MAX_LEN,
     agent_dispatch_enabled,
 )
+from .objects import STORAGE_KINDS, ProducedObject, ResearchObjects
 from .research import Research
 
 __all__ = [
@@ -60,10 +61,12 @@ __all__ = [
     "GateEvaluation",
     "MAX_GRAPH_NODES",
     "PersistedRunState",
+    "ProducedObject",
     "REVIEW_VERDICT_VALUES",
     "Research",
     "ResearchSnapshot",
     "ResearchArtifacts",
+    "ResearchObjects",
     "Artifact",
     "ArtifactTarget",
     "CompletedArtifact",
@@ -73,6 +76,7 @@ __all__ = [
     "REFLECTION_TRANSITION_VALUES",
     "RequirementEvaluation",
     "REVIEW_ROLE_VALUES",
+    "STORAGE_KINDS",
     "SYNOPSIS_MAX_LEN",
     "TASK_TERMINAL_STATUSES",
     "TASK_TRANSITION_VALUES",

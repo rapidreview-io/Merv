@@ -18,17 +18,17 @@ from ..agent_sessions import AgentSessions
 from ..research_core import ResearchArtifacts as Artifacts
 from ..feed import FeedService
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
-from ..object_storage import ObjectStorage
 from ..research_core import (
     EXPERIMENT_TERMINAL_STATUSES,
     Research,
     AGENT_DISPATCH_SETTING,
 )
-from ..infrastructure import RemoteSandboxes as SandboxEngine
+from ..infrastructure import RemoteObjects, RemoteSandboxes as SandboxEngine
 from .experiments.context import ExperimentContextQuery
 from .experiments.create import create_experiment
 from .experiments.exhibits import ExperimentExhibits
 from .experiments.presentation import (
+    ProducedObjectCatalog,
     review_body,
     rich_experiment_state,
     slim_experiment_state,
@@ -73,7 +73,8 @@ class Application:
         artifacts: Artifacts,
         feed: FeedService,
         sandboxes: SandboxEngine,
-        objects: ObjectStorage,
+        objects: RemoteObjects,
+        produced_objects: ProducedObjectCatalog,
         agent_sessions: AgentSessions,
         tracking: ExperimentTracking | None = None,
     ) -> None:
@@ -81,7 +82,10 @@ class Application:
         self.artifacts = artifacts
         self.feed = feed
         self.sandboxes = sandboxes
+        # The service-backed object API (pointers, pins) and Research's own
+        # per-experiment snapshot of the objects it produced.
         self.objects = objects
+        self.produced_objects = produced_objects
         self.agent_sessions = agent_sessions
         self.agent_sessions.bind_workflows(
             assignment=self._workflow_assignment,
@@ -91,7 +95,7 @@ class Application:
         self._mlflow = MlflowIntegration(
             research=research,
             feed=feed,
-            objects=objects,
+            objects=produced_objects,
             adapter=tracking,
         )
         self.workflow_deliveries = WorkflowDeliveries(workflows=research.workflows, research=research,
@@ -115,7 +119,7 @@ class Application:
             feed=feed,
             mlflow=self._mlflow,
             exhibits=self._exhibits,
-            objects=objects,
+            objects=produced_objects,
         )
         self.research.workflows.register_preparation("experiment", self._transition.prepare_workflow_transition)
         self._policy = StatusGuidancePolicy(
@@ -128,7 +132,7 @@ class Application:
             research=research,
             sandboxes=sandboxes,
             policy=self._policy,
-            objects=objects,
+            objects=produced_objects,
             context=self._experiment_context,
             project_context=self._project_context,
             task_context=self._task_context,
@@ -532,7 +536,13 @@ class Application:
         if item.get("status") != "available":
             raise ValidationError(f"storage object is not available: {ref}")
         self.objects.pin(project_id=project_id, object_id=ref)
-        return str(item["content_sha256"]), str(item.get("producing_experiment_id") or "")
+        link = self.produced_objects.association(project_id=project_id, object_id=ref)
+        source = (
+            str(link["target_id"])
+            if link is not None and link.get("target_type") == "experiment"
+            else ""
+        )
+        return str(item["content_sha256"]), source
 
     def project_list(
         self, *, user_id: str = "", project_id: str = ""
@@ -647,7 +657,7 @@ class Application:
             str(states[0].get("project_id") or project_id or "") if states else ""
         )
         objects = (
-            self.objects.by_experiment(project_id=resolved, experiment_ids=ids)
+            self.produced_objects.by_experiment(project_id=resolved, experiment_ids=ids)
             if ids
             else {}
         )
@@ -701,7 +711,7 @@ class Application:
             resolved_project_id = str(state.get("project_id") or project_id or "")
             response = rich_experiment_state(
                 state,
-                storage_objects=self.objects.by_experiment(
+                storage_objects=self.produced_objects.by_experiment(
                     project_id=resolved_project_id,
                     experiment_ids=(experiment_id,),
                 )[experiment_id],
@@ -733,7 +743,7 @@ class Application:
         resolved_project_id = str(state.get("project_id") or project_id or "")
         response = slim_experiment_state(
             state,
-            storage_objects=self.objects.by_experiment(
+            storage_objects=self.produced_objects.by_experiment(
                 project_id=resolved_project_id,
                 experiment_ids=(experiment_id,),
             )[experiment_id],

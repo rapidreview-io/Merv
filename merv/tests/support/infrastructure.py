@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
+import math
+import tempfile
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from merv.brain.infrastructure.client import InfrastructureUnavailableError, project_namespace
-from merv.brain.kernel.utils import NotFoundError
+from merv.brain.kernel.utils import NotFoundError, ValidationError
+
+# The service's default multipart part size; tests lower it to force parts.
+DEFAULT_PART_BYTES = 8 * 1024 * 1024
 
 
 class FakeInfrastructureClient:
@@ -20,6 +27,16 @@ class FakeInfrastructureClient:
         self.counter = 0
         self.spend_reports = {}
         self.url = "https://sandboxes.test"
+        # Object storage: namespace -> object id -> service record. Part
+        # URLs are file:// paths under a staging dir so tests can "upload"
+        # by writing bytes; completion verifies size and sha256 like the
+        # service and keeps the verified bytes for downloads.
+        self.storage_objects: dict[str, dict[str, dict[str, Any]]] = {}
+        self.storage_requests: dict[str, dict[str, Any]] = {}
+        self.storage_bytes: dict[str, bytes] = {}
+        self.storage_part_bytes = DEFAULT_PART_BYTES
+        self.object_counter = 0
+        self._staging: Path | None = None
         self.offer = {
             "provider": "fake", "plugin": "fake", "offer_id": "tiny:east",
             "instance_type": "tiny", "region": "east", "available": True,
@@ -129,11 +146,136 @@ class FakeInfrastructureClient:
             providers[name] = {"name": name, "plugin": json["plugin"], "source": "user",
                                "health": {"status": "ok", "message": "verified"}}
             return deepcopy(providers[name])
-        if path == "/storage/objects":
-            return {"objects": []}
+        if path == "/storage/objects" or path.startswith("/storage/objects/"):
+            return self._storage(method, path, namespace=namespace, json=json, params=params)
         if path == "/spend":
             return {"spend": [], "sandboxes": []}
         raise AssertionError(f"Unhandled native service request: {method} {path}")
+
+    # Storage ---------------------------------------------------------------
+
+    def staging_dir(self) -> Path:
+        if self._staging is None:
+            self._staging = Path(tempfile.mkdtemp(prefix="fake-sandboxes-storage-"))
+        return self._staging
+
+    def _storage(self, method: str, path: str, *, namespace: str,
+                 json: Any, params: Any) -> dict[str, Any]:
+        catalog = self.storage_objects.setdefault(namespace, {})
+        now = datetime.now(UTC).isoformat()
+        if path == "/storage/objects":
+            if method == "POST":
+                self.object_counter += 1
+                object_id = f"obj_{self.object_counter}"
+                name = str(json["name"])
+                version = max(
+                    (int(row["version"]) for row in catalog.values() if row["name"] == name),
+                    default=0,
+                ) + 1
+                record = {
+                    "id": object_id, "namespace": namespace, "name": name, "version": version,
+                    "kind": "file", "state": "uploading", "sha256": str(json["sha256"]),
+                    "size_bytes": int(json["size_bytes"]),
+                    "content_type": str(json.get("content_type") or "application/octet-stream"),
+                    "entries": [], "producer_pipeline_id": None,
+                    "producer_job_id": json.get("producer_job_id"), "error": None,
+                    "created_at": now, "updated_at": now, "expires_at": None,
+                }
+                catalog[object_id] = record
+                self.storage_requests[object_id] = deepcopy(json)
+                return self._upload_status(record)
+            wanted = (params or {}).get("name")
+            rows = [row for row in catalog.values()
+                    if row["state"] != "deleted" and (not wanted or row["name"] == wanted)]
+            rows.sort(key=lambda row: (row["created_at"], row["id"]), reverse=True)
+            offset = int((params or {}).get("offset", 0))
+            limit = int((params or {}).get("limit", 100))
+            return {"objects": deepcopy(rows[offset:offset + limit])}
+        object_id, _, action = path[len("/storage/objects/"):].partition("/")
+        record = catalog.get(object_id)
+        if record is None:
+            raise NotFoundError("storage object not found")
+        if action == "upload":
+            if record["state"] != "uploading":
+                raise ValidationError("object cannot be resumed", details={"state": record["state"]})
+            return self._upload_status(record)
+        if action == "complete":
+            return self._complete_object(record)
+        if action == "download":
+            if record["state"] != "available":
+                raise ValidationError("only available files have download URLs")
+            target = self.staging_dir() / f"{object_id}.download"
+            target.write_bytes(self.storage_bytes[object_id])
+            return {"object": deepcopy(record), "url": target.resolve().as_uri()}
+        if action == "retention":
+            if record["state"] != "available":
+                raise ValidationError("only available objects can extend retention")
+            requested = json["expires_at"]
+            current = record["expires_at"]
+            if current is None or (
+                requested is not None
+                and datetime.fromisoformat(requested.replace("Z", "+00:00"))
+                <= datetime.fromisoformat(current.replace("Z", "+00:00"))
+            ):
+                return deepcopy(record)
+            record["expires_at"], record["updated_at"] = requested, now
+            return deepcopy(record)
+        if method == "DELETE" and not action:
+            if record["state"] != "deleted":
+                record["state"], record["updated_at"] = "delete_pending", now
+                self.storage_bytes.pop(object_id, None)
+            return deepcopy(record)
+        if method == "GET" and not action:
+            return deepcopy(record)
+        raise AssertionError(f"Unhandled native storage request: {method} {path}")
+
+    def _part_path(self, object_id: str, part_number: int) -> Path:
+        return self.staging_dir() / f"{object_id}.part{part_number}"
+
+    def _upload_status(self, record: dict[str, Any]) -> dict[str, Any]:
+        size, part_size = int(record["size_bytes"]), int(self.storage_part_bytes)
+        count = math.ceil(size / part_size) if size else 0
+        completed = [n for n in range(1, count + 1) if self._part_path(record["id"], n).exists()]
+        parts = [
+            {"part_number": n, "url": self._part_path(record["id"], n).resolve().as_uri(),
+             "size_bytes": min(part_size, size - (n - 1) * part_size),
+             "headers": {"Content-Type": record["content_type"]} if count == 1 else {}}
+            for n in range(1, count + 1) if n not in completed
+        ]
+        return {"object": deepcopy(record), "part_size": part_size, "part_count": count,
+                "parts": parts, "completed_parts": completed, "next_part": None}
+
+    def _complete_object(self, record: dict[str, Any]) -> dict[str, Any]:
+        if record["state"] == "available":
+            return deepcopy(record)
+        if record["state"] not in {"uploading", "completing"}:
+            raise ValidationError("object cannot be completed", details={"state": record["state"]})
+        size = int(record["size_bytes"])
+        count = math.ceil(size / self.storage_part_bytes) if size else 0
+        data = b""
+        for number in range(1, count + 1):
+            part = self._part_path(record["id"], number)
+            if not part.exists():
+                raise ValidationError("upload is missing parts", details={"retryable": True})
+            data += part.read_bytes()
+        now = datetime.now(UTC)
+        if len(data) != size or hashlib.sha256(data).hexdigest() != record["sha256"]:
+            record["state"], record["error"] = "delete_pending", "uploaded bytes do not match"
+            record["updated_at"] = now.isoformat()
+            raise ValidationError("uploaded bytes do not match the declared sha256/size")
+        ttl = self.storage_requests.get(record["id"], {}).get("expires_in_seconds")
+        record["state"], record["error"], record["updated_at"] = "available", None, now.isoformat()
+        record["expires_at"] = (now + timedelta(seconds=int(ttl))).isoformat() if ttl else None
+        self.storage_bytes[record["id"]] = data
+        return deepcopy(record)
+
+    def upload_bytes(self, object_id: str, data: bytes) -> None:
+        """Test helper: stage every part of ``data`` as if a client PUT them."""
+        part_size = int(self.storage_part_bytes)
+        count = math.ceil(len(data) / part_size) if data else 0
+        for number in range(1, count + 1):
+            start = (number - 1) * part_size
+            self._part_path(object_id, number).write_bytes(data[start:start + part_size])
 
     def request_bytes(self, method: str, path: str, *, namespace: str,
                       params: Any = None) -> tuple[bytes, dict[str, str]]:

@@ -21,7 +21,6 @@ KERNEL = "kernel"
 RESEARCH_CORE = "research_core"
 WORKFLOWS = "workflows"
 ARTIFACTS = "artifacts"
-OBJECT_STORAGE = "object_storage"
 SANDBOX = "infrastructure"
 FEED = "feed"
 MLFLOW = "mlflow"
@@ -34,7 +33,6 @@ MODULES = (
     RESEARCH_CORE,
     WORKFLOWS,
     ARTIFACTS,
-    OBJECT_STORAGE,
     SANDBOX,
     FEED,
     MLFLOW,
@@ -51,7 +49,6 @@ PACKAGE_COMPONENTS = {
     "workflows": WORKFLOWS,
     "literature": RESEARCH_CORE,
     "artifacts": ARTIFACTS,
-    "object_storage": OBJECT_STORAGE,
     "infrastructure": SANDBOX,
     "feed": FEED,
     "mlflow": MLFLOW,
@@ -70,15 +67,16 @@ FILE_COMPONENTS = {
     "__init__.py": KERNEL,
 }
 
-# Component answers "which capability owns this file?"  MLflow and concrete
-# object storage are integrations, while cross-component coordination belongs
-# to Application.  Surface is the outer delivery/composition component.
+# Component answers "which capability owns this file?"  MLflow is an
+# integration, Infrastructure adapts the external merv-sandboxes service (which
+# owns heavy objects), and cross-component coordination belongs to
+# Application.  Surface is the outer delivery/composition component.
 ALLOWED_COMPONENT_EDGES = (
     {(KERNEL, KERNEL)}
     | {(RESEARCH_CORE, dependency) for dependency in (RESEARCH_CORE, WORKFLOWS, KERNEL)}
     | {(WORKFLOWS, dependency) for dependency in (WORKFLOWS, KERNEL)}
     | {(ARTIFACTS, dependency) for dependency in (ARTIFACTS, KERNEL)}
-    | {(SANDBOX, dependency) for dependency in (SANDBOX, OBJECT_STORAGE, KERNEL)}
+    | {(SANDBOX, dependency) for dependency in (SANDBOX, KERNEL)}
     | {(FEED, dependency) for dependency in (FEED, KERNEL)}
     | {
         (AGENT_SESSIONS, dependency)
@@ -93,22 +91,17 @@ ALLOWED_COMPONENT_EDGES = (
             ARTIFACTS,
             SANDBOX,
             FEED,
-            OBJECT_STORAGE,
             AGENT_SESSIONS,
             KERNEL,
         )
     }
     | {(MLFLOW, dependency) for dependency in (MLFLOW, APPLICATION_COMPONENT, KERNEL)}
-    | {
-        (OBJECT_STORAGE, dependency)
-        for dependency in (OBJECT_STORAGE, APPLICATION_COMPONENT, KERNEL)
-    }
     | {(SURFACE, dependency) for dependency in MODULES}
 )
 
 # Layer is independent of component ownership. A provider driver can therefore
-# be an adapter in the Sandbox component, while ObjectStorage is application
-# policy in the Storage component.
+# be an adapter in the Infrastructure component while its facades stay
+# application-layer roots.
 FOUNDATION = "foundation"
 PORT = "port"
 DOMAIN = "domain"
@@ -138,7 +131,6 @@ PACKAGE_LAYERS = {
     "feed": APPLICATION_LAYER,
     "infrastructure": APPLICATION_LAYER,
     "mlflow": ADAPTER,
-    "object_storage": ADAPTER,
     "agent_sessions": APPLICATION_LAYER,
     "application": APPLICATION_LAYER,
     "surface": DELIVERY,
@@ -153,11 +145,9 @@ FILE_LAYERS = {
     "artifacts/r2.py": ADAPTER,
     "surface/web_preview.py": ADAPTER,
     "infrastructure/client.py": ADAPTER,
-    "infrastructure/storage.py": ADAPTER,
+    # Transfer-target assembly and run-command rendering over the transport
+    # port; the RemoteObjects root (application layer) composes them.
     "infrastructure/ports.py": PORT,
-    "object_storage/__init__.py": APPLICATION_LAYER,
-    "object_storage/provider.py": PORT,
-    "object_storage/storage.py": APPLICATION_LAYER,
     "surface/config.py": BOOTSTRAP,
     "surface/transport/http_server.py": BOOTSTRAP,
     "surface/surface.py": BOOTSTRAP,
@@ -276,8 +266,15 @@ TABLE_OWNERS = {
     "research_artifact_links": RESEARCH_CORE,
     "submissions": RESEARCH_CORE,
     "research_submission_artifacts": RESEARCH_CORE,
-    "storage_objects": OBJECT_STORAGE,
-    "storage_completion_tokens": OBJECT_STORAGE,
+    # Research's own facts about merv-sandboxes objects: producing target,
+    # classification, provenance, and the completion metadata snapshot.
+    "research_objects": RESEARCH_CORE,
+    # Retired heavy-object ledger. Only the kernel schema and the historical
+    # migrations name it; deploy/migrate_storage_ledger.py reads it once.
+    "storage_objects": KERNEL,
+    # One-time completion tokens for service uploads: the infrastructure
+    # facade mints and consumes them; the storage router only relays.
+    "storage_completion_tokens": SANDBOX,
     "sandboxes": SANDBOX,
     "sandbox_attachments": SANDBOX,
     "sandbox_generations": SANDBOX,
