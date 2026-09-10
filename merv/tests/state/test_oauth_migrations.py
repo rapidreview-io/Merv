@@ -22,9 +22,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from merv.brain.kernel.state.fingerprints import oauth_client_fingerprint
 from merv.brain.kernel.state.schema import MIGRATION_ORDER
-from merv.brain.surface.oauth_store import _add_oauth_client_fingerprint
+from merv.brain.surface.oauth_store import (
+    _add_oauth_client_fingerprint,
+    oauth_client_fingerprint,
+)
 from merv.brain.kernel.state.store import StateStore
 from tests.support.schema import LADDER, booted_store
 

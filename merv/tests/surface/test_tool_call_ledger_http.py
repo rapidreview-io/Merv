@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from tests.support.brain import TestBrain
 from merv.brain.kernel.utils import NotFoundError
-from merv.brain.kernel.version import CLIENT_VERSION_HEADER
+from merv.brain.surface.transport.api.shared import CLIENT_VERSION_HEADER
 from merv.brain.surface.auth import ALLOW_OPEN_CONTROL_ENV_VAR, SupabaseVerifier
 from merv.brain.surface.transport.api.gateway import (
     ProjectAuthorizer,

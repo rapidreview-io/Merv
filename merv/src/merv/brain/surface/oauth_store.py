@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from collections.abc import Callable, Mapping
@@ -11,7 +12,6 @@ from typing import Any
 
 from ..kernel.env import env_int
 from ..kernel.secret_tokens import secret_digest_matches
-from ..kernel.state.fingerprints import oauth_client_fingerprint
 from ..kernel.state.schema import (
     Connection,
     Migration,
@@ -46,6 +46,44 @@ LOGGER = logging.getLogger(__name__)
 
 def _json_list(values: tuple[str, ...] | list[str]) -> str:
     return json.dumps(list(values), separators=(",", ":"))
+
+
+def oauth_client_fingerprint(
+    *, client_name: str, redirect_uris_json: str, grant_types_json: str
+) -> str:
+    """The identity of one OAuth DCR registration's metadata (migration 38).
+
+    A row whose identity IS its content needs one definition of that content,
+    used by both the migration that backfills the column and the writes above —
+    otherwise the UNIQUE index enforces two subtly different notions of "the
+    same thing". Both arrays are sorted: their order carries no meaning to
+    either side, so a client that merely shuffles its own list is the same
+    client and must not fork a second row on every launch. Unparseable stored
+    JSON fingerprints as its own literal text rather than raising — a legacy row
+    is still entitled to a stable, distinct identity. Not secret material: these
+    digests are computed over public metadata, so they deliberately do not go
+    through ``kernel/secret_tokens.py``.
+    """
+    payload = json.dumps(
+        {
+            "client_name": client_name,
+            "grant_types": _canonical_json_list(grant_types_json),
+            "redirect_uris": _canonical_json_list(redirect_uris_json),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _canonical_json_list(raw: str) -> list[str]:
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return [raw]
+    if not isinstance(parsed, list):
+        return [raw]
+    return sorted(str(item) for item in parsed)
 
 
 def _fingerprint(client: OAuthClient) -> str:

@@ -20,7 +20,6 @@ from ....kernel.utils import (
     ResearchPluginError,
     ValidationError,
 )
-from ....kernel.version import CLIENT_VERSION_HEADER, MIN_PROXY_VERSION, is_below_floor
 from ...agent_identity import HELLO_TOOL, AgentIdentities, CallerFacts
 from ...auth import UnauthorizedError
 from ...identity import (
@@ -38,10 +37,13 @@ from ....research_core import Research
 from ....infrastructure import RemoteSandboxes as SandboxEngine
 from ..http_policy import HttpSurfacePolicy, SessionExecution
 from .shared import (
+    CLIENT_VERSION_HEADER,
     CallLedger,
     GLOBAL_MUTATOR_PREFIXES,
+    MIN_PROXY_VERSION,
     RefusalLedger,
     bind_request_principal,
+    is_below_floor,
     is_local_origin,
     ledger_refusal,
     ledger_tool_refusal,

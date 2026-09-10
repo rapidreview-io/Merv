@@ -26,12 +26,26 @@ from ...identity import (
 ADMIN_TOKEN_ENV_VAR = "MERV_ADMIN_TOKEN"
 ADMIN_TOKEN_HEADER = "X-Admin-Token"
 
+# Version handshake. Clients stamp their version on this header; a MISSING
+# header is tolerated (a client may predate the handshake, and refusing it would
+# strand in-flight upgrades), so only an explicitly-too-old version is refused.
+# The floors are plain constants bumped by hand when a wire change makes an
+# older client unsafe to serve — the point is that a breaking change has a
+# refusal mechanism instead of a confusing partial failure.
+CLIENT_VERSION_HEADER = "X-RP-Client-Version"
+# 0.0014 fences clients that predate reflection consolidation: an older client
+# would try to publish directly from reflection_review and strand the wave.
+MIN_PROXY_VERSION = "0.0014"
+# Bump only when the agent-facing MCP catalog changes incompatibly. Unlike the
+# retired proxy catalogs, this is a deployment-drift signal, not a file digest.
+MCP_CATALOG_VERSION = "2026-09-10"
+
 JsonBody = dict[str, Any] | None
 UI_CORS_HEADERS = [
     "Content-Type",
     "Accept",
     "Authorization",
-    "X-RP-Client-Version",
+    CLIENT_VERSION_HEADER,
     "If-None-Match",
 ]
 # ETag is not CORS-safelisted; expose it so a cross-origin dev UI can echo it back.
@@ -305,3 +319,23 @@ def open_hosted_operator_denial(request: Request) -> JSONResponse | None:
         {"detail": "operator token required", "error_code": "operator_forbidden"},
         status_code=403,
     )
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    """Parse a dotted numeric version to a comparable tuple.
+
+    Lenient: non-numeric segments contribute 0 so a malformed version sorts low
+    (and is therefore refused against any real floor) rather than raising.
+    """
+    parts: list[int] = []
+    for segment in str(version).strip().split("."):
+        try:
+            parts.append(int(segment))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts) or (0,)
+
+
+def is_below_floor(*, client_version: str, floor: str) -> bool:
+    """True when ``client_version`` is strictly older than ``floor``."""
+    return _version_tuple(client_version) < _version_tuple(floor)
