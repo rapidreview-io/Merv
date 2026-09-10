@@ -346,12 +346,12 @@ class StorageHttpApiTest(unittest.TestCase):
         self.assertTrue(deleted["deleted"])
         self.assertNotIn("reclaimed", deleted)
 
-    def test_internal_put_object_and_complete_upload_keep_the_doctor_flow(self) -> None:
-        data = b"doctor smoke"
+    def test_put_object_registers_an_upload_that_complete_upload_finalizes(self) -> None:
+        data = b"registered object bytes"
         registered = self.app.storage.put_object(
-            project_id=self.project_id, name="deploy-doctor-smoke", kind="other",
+            project_id=self.project_id, name="registered-object", kind="other",
             sha256=hashlib.sha256(data).hexdigest(), size_bytes=len(data),
-            content_type="text/plain", notes="post-startup deploy doctor smoke object",
+            content_type="text/plain", notes="registered directly, without a submit token",
         )
         target = urlsplit(registered["upload"]["url"])
         self.assertEqual(target.scheme, "file")
