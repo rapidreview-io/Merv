@@ -3,6 +3,7 @@ import { api } from '../api';
 import StatusPill from './StatusPill';
 import TerminalLog from './TerminalLog';
 import { hardwareLabel, providerLabel } from '../utils/fleet';
+import { formatBytes } from '../utils/format';
 
 /**
  * SandboxTerminal — a window into a cloud sandbox.
@@ -379,7 +380,7 @@ function SandboxUsage({ metrics, sandbox }) {
             value={memUsed}
             max={memLimit}
             pct={memLimit ? (memUsed / memLimit) * 100 : null}
-            text={`${fmtBytes(memUsed)}${memLimit ? ` / ${fmtBytes(memLimit)}` : ''}`}
+            text={`${formatBytes(memUsed)}${memLimit ? ` / ${formatBytes(memLimit)}` : ''}`}
             title="Resident memory in use (anonymous + unreclaimable). Excludes reclaimable page cache / mmapped files, so it reflects real pressure toward the reserved limit, not what `free` reports."
           />
         )}
@@ -397,7 +398,7 @@ function SandboxUsage({ metrics, sandbox }) {
               key={`gpu-vram-${g.index}`}
               label={gpus.length > 1 ? `GPU${g.index} VRAM` : 'VRAM'}
               pct={g.mem_used_mib != null ? (g.mem_used_mib / g.mem_total_mib) * 100 : null}
-              text={`${fmtMib(g.mem_used_mib)} / ${fmtMib(g.mem_total_mib)}`}
+              text={`${g.mem_used_mib != null ? formatBytes(g.mem_used_mib * 1024 ** 2) : '—'} / ${formatBytes(g.mem_total_mib * 1024 ** 2)}`}
             />
           ) : null
         ))}
@@ -427,17 +428,4 @@ function UsageBar({ label, pct, text, title }) {
 
 function fmtCores(n) {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
-}
-
-function fmtBytes(bytes) {
-  if (bytes == null) return '—';
-  const gib = bytes / (1024 ** 3);
-  if (gib >= 1) return `${gib.toFixed(gib >= 10 ? 0 : 1)} GiB`;
-  const mib = bytes / (1024 ** 2);
-  return `${Math.round(mib)} MiB`;
-}
-
-function fmtMib(mib) {
-  if (mib == null) return '—';
-  return fmtBytes(mib * 1024 * 1024);
 }

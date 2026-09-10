@@ -14,6 +14,7 @@ import {
   gpuLabel,
   hardwareLabel,
   providerLabel,
+  sizeLabel,
   usageBars,
 } from '../utils/fleet';
 
@@ -187,10 +188,7 @@ function SandboxRow({ sandbox, experiment, experimentId, projectId, now, parachu
 function SandboxMachine({ sandbox: s }) {
   const provider = providerLabel(s.provider);
   const gpu = gpuLabel(s);
-  const size = [
-    s.cpu && `${s.cpu} cpu`,
-    s.memory && `${Math.round(s.memory / 1024)} GiB RAM`,
-  ].filter(Boolean).join(' · ');
+  const size = sizeLabel(s);
   const sku = [s.instance_type, s.region].filter(Boolean).join(' · ');
   const title = [provider, hardwareLabel(s), s.heartbeat?.gpus?.name, sku].filter(Boolean).join(' · ');
   return (

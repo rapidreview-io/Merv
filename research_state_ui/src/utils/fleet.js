@@ -190,9 +190,13 @@ export function gpuLabel(sandbox) {
  * reports back).
  */
 export function hardwareLabel(sandbox) {
+  return [gpuLabel(sandbox), sizeLabel(sandbox)].filter(Boolean).join(' · ');
+}
+
+/** The size half alone — "6 cpu · 64 GiB RAM" (the row reports RAM in MiB). */
+export function sizeLabel(sandbox) {
   const s = sandbox || {};
   return [
-    gpuLabel(s),
     s.cpu && `${s.cpu} cpu`,
     s.memory && `${Math.round(s.memory / 1024)} GiB RAM`,
   ].filter(Boolean).join(' · ');

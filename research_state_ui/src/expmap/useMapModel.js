@@ -4,6 +4,7 @@ import { useProjectStore, selectClaims, selectExperiments, selectSandboxes } fro
 import { classifyExperiment } from '../utils/evidence';
 import { ENTITY_ID_RE, resolveEntity } from '../utils/entityResolve';
 import { expName, TERMINAL_STATUSES } from '../utils/experiment';
+import { sizeLabel } from '../utils/fleet';
 import { fmtStamp } from '../utils/format';
 import { extractPaperCitations } from '../utils/paperCitations';
 import { computeLayout, nowX as clampNowX } from './mapLayout';
@@ -434,11 +435,7 @@ export function useMapModel(viewW) {
         title: hw ? `${shortId} · ${hw}` : shortId,
         sub: [s.status, s.region].filter(Boolean).join(' · '),
         // Hardware line the fleet table renders — the fields we actually have.
-        detail: [
-          s.gpu,
-          s.cpu != null ? `${s.cpu} cpu` : null,
-          s.memory ? `${Math.round(s.memory / 1024)} GiB` : null,
-        ].filter(Boolean).join(' · ') || null,
+        detail: [s.gpu, sizeLabel(s)].filter(Boolean).join(' · ') || null,
       };
     }
     return { claims: claimObjs, papers: model.papers, sandboxes: sbxObjs };
