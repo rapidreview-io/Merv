@@ -25,6 +25,7 @@ from .experiments.presentation import (
     review_body,
     slim_review_rows,
 )
+from .experiments.transition import feed_transition_note
 
 Record = dict[str, Any]
 
@@ -169,14 +170,12 @@ class TransitionTask:
         status = str(state.get("status") or "")
         if event.type != TASK_WORKFLOW.event_type or status not in TASK_TERMINAL_STATUSES:
             return None
-        try:
-            return self.feed.transition_advisory(
-                project_id=str(state.get("project_id") or ""),
-                experiment_id=str(state.get("id") or ""),
-                event=f"task_{status}",
-            )
-        except Exception:
-            return None
+        return feed_transition_note(
+            self.feed,
+            project_id=str(state.get("project_id") or ""),
+            ref=str(state.get("id") or ""),
+            event=f"task_{status}",
+        )
 
 
 @dataclass(kw_only=True, eq=False, repr=False)

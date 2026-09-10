@@ -8,6 +8,7 @@ focused persistence or infrastructure boundaries.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from contextlib import closing, suppress
 from dataclasses import dataclass, replace
 import json
@@ -45,18 +46,13 @@ from ..kernel.utils import (
 )
 from .attachments import normalize_attachments
 from .persistence import install_feed_schema
-from .refs import parse_refs
+from .refs import RefParser, RefVocabulary
 
 # The product contract is a short post, measured after stripping. Longer
 # thoughts are threads (chained posts), never longer posts.
 POST_TEXT_MAX = 280
 THREAD_MAX = 8
 BIO_MAX = 80
-
-AUTHOR_ROLES = frozenset({"main", "reviewer", "lens", "researcher"})
-# Roles that share one persistent voice per project: every reviewer session
-# posts as the project's reviewer, so the reader can follow one voice.
-ADOPTABLE_ROLES = frozenset({"reviewer", "lens"})
 
 # Kinds are self-declared, never inferred. `status` is a live checkpoint;
 # `finding` is a landed result.
@@ -70,11 +66,11 @@ POST_KINDS = frozenset(
 # Reactions are binary because a project has one researcher.
 REACTION_KINDS = frozenset({"fire", "eyes", "question"})
 
+# The one human voice per project is the feed's own: it is created by
+# `researcher_reply`, never registered, and is the only role the feed reads.
+# Agent roles are declared by the composition (`author_roles`).
 RESEARCHER_HANDLE = "Researcher"
-
-_KNOWN_REF_PREFIXES = (
-    "exp_", "task_", "claim_", "res_", "rver_", "syn_", "rev_", "lit_", "paper_"
-)
+RESEARCHER_ROLE = "researcher"
 
 # Backup cadence policy. The agent skill remains the primary editorial policy;
 # these values only decide whether page one carries a soft reminder.
@@ -101,11 +97,12 @@ class FigureLookup(Protocol):
 
 @runtime_checkable
 class FeedAdvisory(Protocol):
-    """The narrow post-commit, best-effort capability Application consumes."""
+    """The narrow post-commit, best-effort capability Application consumes.
 
-    def transition_advisory(
-        self, *, project_id: str, experiment_id: str, event: str
-    ) -> str | None: ...
+    The caller says what just happened to ``ref`` in its own words; the feed
+    only decides whether the feed already covers it."""
+
+    def advisory(self, *, project_id: str, ref: str, message: str) -> str | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,11 +166,26 @@ class FeedService:
         store: BaseStateStore,
         blobs: EvidenceBlobStore,
         web_preview: WebPreview,
+        ref_vocabulary: RefVocabulary,
+        author_roles: Iterable[str],
+        adoptable_roles: Iterable[str],
         figure_lookup: FigureLookup | None = None,
     ) -> None:
         self.store = store
         self.blobs = blobs
         self.web_preview = web_preview
+        # The ids a post may point at are declared by the composition; the
+        # feed matches their prefixes and otherwise treats refs as opaque.
+        self.refs = RefParser(ref_vocabulary)
+        # Roles an agent may register under, and the subset that share one
+        # persistent voice per project so the reader follows one name per
+        # role instead of a new one per session. Both are opaque labels here.
+        self.author_roles = frozenset(str(role) for role in author_roles)
+        self.adoptable_roles = frozenset(str(role) for role in adoptable_roles)
+        if RESEARCHER_ROLE in self.author_roles:
+            raise ValueError(f"{RESEARCHER_ROLE!r} is the feed's own voice, not an author role")
+        if not self.adoptable_roles <= self.author_roles:
+            raise ValueError("adoptable roles must be a subset of the author roles")
         self.figure_lookup = figure_lookup
         install_feed_schema(store)
 
@@ -183,27 +195,27 @@ class FeedService:
         self,
         *,
         handle: str,
-        role: str = "main",
+        role: str,
         session_id: str = "",
         project_id: str | None = None,
         bio: str = "",
         new_voice: bool = False,
     ) -> dict[str, Any]:
-        """Claim a voice for this project (idempotent per session).
+        """Take a voice for this project (idempotent per session).
 
         A handle is unique per project so parallel agents post under distinct
         voices. Re-registering the same handle from the same session is a no-op;
-        a different session claiming a live handle is rejected so two agents do
-        not collide on one name. Reviewer and lens sessions adopt the project's
-        existing voice for that role (``adopted``) unless ``new_voice`` is set,
-        so the reader follows one reviewer instead of a new name per review.
-        The response carries the project's roster so an agent can pick up an
-        earlier voice deliberately.
+        a different session taking a live handle is rejected so two agents do
+        not collide on one name. A session in an adoptable role adopts the
+        project's existing voice for that role (``adopted``) unless
+        ``new_voice`` is set, so the reader follows one name per such role
+        instead of a new one per session. The response carries the project's
+        roster so an agent can pick up an earlier voice deliberately.
         """
         handle = _validate_handle(handle)
-        if role not in AUTHOR_ROLES:
+        if role not in self.author_roles:
             raise ValidationError(
-                f"unknown author role: {role}. Allowed: {', '.join(sorted(AUTHOR_ROLES))}"
+                f"unknown author role: {role}. Allowed: {', '.join(sorted(self.author_roles))}"
             )
         bio = (bio or "").strip()
         if len(bio) > BIO_MAX:
@@ -211,7 +223,7 @@ class FeedService:
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             adopted = False
-            if role in ADOPTABLE_ROLES and not new_voice:
+            if role in self.adoptable_roles and not new_voice:
                 voice = conn.execute(
                     "SELECT handle FROM feed_authors WHERE project_id = ? AND role = ? "
                     "ORDER BY COALESCE(last_posted_at, registered_at) DESC LIMIT 1",
@@ -304,7 +316,7 @@ class FeedService:
         return [
             {
                 "handle": str(row["handle"]),
-                "role": str(row["role"] or "main"),
+                "role": str(row["role"] or ""),
                 "bio": str(row["bio"] or ""),
                 "posts": int(row["posts"] or 0),
                 "last_posted_at": row["last_posted_at"],
@@ -419,7 +431,7 @@ class FeedService:
                     "thread posts cannot carry an image or embed upload; put the visual "
                     "on the root post, or reply to your own post afterwards"
                 )
-            refs = parse_refs(text)
+            refs = self.refs.parse(text)
             items.append(
                 {
                     "text": text,
@@ -437,7 +449,7 @@ class FeedService:
             ref=intent.ref,
             kind=intent.kind,
         )
-        refs = parse_refs(text)
+        refs = self.refs.parse(text)
         if not ref and refs.entities:
             ref = refs.entities[0]
         url = intent.url or (refs.links[0] if refs.links else "")
@@ -453,7 +465,7 @@ class FeedService:
                 raise ValidationError(
                     f"handle '{handle}' is not registered; call feed.register first"
                 )
-            author_role = str(author["role"] or "main")
+            author_role = str(author["role"] or "")
             # A post follows at most one previous post; `quote_of` and
             # `in_reply_to` name the same relation and render as one thread.
             reply_ref = (intent.in_reply_to or "").strip()
@@ -643,7 +655,7 @@ class FeedService:
             else:
                 thread_links.append(("", {}))
         with self.store.transaction() as conn:
-            # Claim the token in the post/event transaction so concurrent or
+            # Consume the token in the post/event transaction so concurrent or
             # replayed PUTs cannot insert the pre-minted post twice.
             if consume_token is not None:
                 claimed = conn.execute(
@@ -919,10 +931,9 @@ class FeedService:
         handle = _validate_handle(handle)
         text = self._validate_text(text)
         ref = (ref or "").strip()
-        if ref and not ref.startswith(_KNOWN_REF_PREFIXES):
+        if ref and not self.refs.accepts(ref):
             raise ValidationError(
-                "ref must point at a project entity "
-                f"({', '.join(p.rstrip('_') for p in _KNOWN_REF_PREFIXES)})"
+                f"ref must point at a project entity ({self.refs.describe()})"
             )
         kind = (kind or "").strip().lower()
         if kind and kind not in POST_KINDS:
@@ -939,8 +950,8 @@ class FeedService:
                 f"image is {len(data)} bytes; keep feed images under "
                 f"{MAX_FEED_IMAGE_BYTES}"
             )
-        candidate = Path(image_path or "feed-image")
-        content_type = sniff_image_type(candidate, data)
+        named = Path(image_path or "feed-image")
+        content_type = sniff_image_type(named, data)
         if content_type is None:
             raise ValidationError(
                 f"{image_path} does not look like an image (png/jpeg/gif/webp/svg)"
@@ -1344,52 +1355,35 @@ class FeedService:
             **signal,
         }
 
-    # -- event-carried advisory ---------------------------------------------
+    # -- advisory -----------------------------------------------------------
 
-    def transition_advisory(
-        self, *, project_id: str, experiment_id: str, event: str
-    ) -> str | None:
-        """Return an optional Feed nudge for a committed experiment transition.
+    def advisory(self, *, project_id: str, ref: str, message: str) -> str | None:
+        """Return ``message`` as a posting nudge, or None when the feed already
+        covers ``ref``.
 
-        Application attaches this only after committing its transition and
-        treats failures as advisory. A matching ``ref`` or text mention is the
-        deduplication state; no separate "already nudged" record is written.
-        Missing identifiers return None.
+        The caller phrases what just happened (``"exp_1 just completed"``) and
+        attaches the result only after committing its own work, treating any
+        failure as advisory. A post whose ``ref`` is ``ref`` or whose text
+        mentions it is the deduplication state; no "already nudged" record is
+        written. Missing identifiers or an empty message return None.
         """
         project_id = (project_id or "").strip()
-        experiment_id = (experiment_id or "").strip()
-        if not project_id or not experiment_id:
+        ref = (ref or "").strip()
+        message = (message or "").strip()
+        if not project_id or not ref or not message:
             return None
         with closing(self.store.connect()) as conn:
             mentioned = conn.execute(
                 "SELECT 1 FROM posts WHERE project_id = ? "
                 "AND (ref = ? OR text LIKE ? ESCAPE '\\') LIMIT 1",
-                (
-                    project_id,
-                    experiment_id,
-                    f"%{_escape_like(experiment_id)}%",
-                ),
+                (project_id, ref, f"%{_escape_like(ref)}%"),
             ).fetchone()
         if mentioned is not None:
             return None
-        phrase = _FEED_NOTE_PHRASES.get(
-            event, "{entity} just had a workflow update"
-        ).format(entity=experiment_id)
         return (
-            f"{phrase} and the feed has never mentioned it — if there's a "
+            f"{message} and the feed has never mentioned it — if there's a "
             "takeaway worth sharing, consider a post (see the feed-posting skill)."
         )
-
-
-_FEED_NOTE_PHRASES: dict[str, str] = {
-    "experiment_complete": "{entity} just completed",
-    "experiment_failed": "{entity} just failed",
-    "experiment_abandoned": "{entity} was just abandoned",
-    "task_done": "task {entity} was just accepted",
-    "task_failed": "task {entity} just failed",
-    "experiment_review_verdict": "a review verdict just landed on {entity}",
-    "mlflow_run_finalized": "an MLflow run for {entity} just finished",
-}
 
 
 def _load_attachments(item: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1404,9 +1398,9 @@ def _load_attachments(item: dict[str, Any]) -> list[dict[str, Any]]:
 def _escape_like(value: str) -> str:
     """Escape SQL LIKE metacharacters so ``value`` is matched literally.
 
-    Entity ids commonly contain ``_`` (``exp_``, `claim_``, ...), itself a
-    LIKE single-char wildcard — left unescaped it would make the substring
-    search too permissive. ``LIKE ... ESCAPE '\\'`` is portable across both
+    Entity ids commonly contain ``_`` (every declared prefix ends in one),
+    itself a LIKE single-char wildcard — left unescaped it would make the
+    substring search too permissive. ``LIKE ... ESCAPE '\\'`` is portable across both
     the SQLite and Postgres dialects (unlike SQLite-only ``instr``).
     """
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

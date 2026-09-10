@@ -5,10 +5,10 @@
 `FeedService` owns the project-scoped social stream: voices (author
 registration with bios), short posts and threads, typed attachments, quotes,
 replies, reactions, media/link presentation, pagination, and non-blocking
-posting advisories. Posts are observations for humans, not research artifacts
-or workflow state. `FeedAdvisory` is the deliberately narrow capability
-consumed by Application after committed experiment transitions. `__init__.py`
-exports only `FeedService` and that protocol.
+posting advisories. Posts are observations for humans, not research state; the
+feed never names research entities. Which id prefixes and author roles exist
+is declared at composition. `FeedAdvisory` is the narrow post-commit capability
+Application consumes. `__init__.py` exports only `FeedService` and that protocol.
 
 The service depends inward on `BaseStateStore` for project resolution,
 transactions, sequence allocation, and event recording. It delegates bytes to
@@ -27,9 +27,11 @@ Mermaid text, `vega` as an inline-data Vega-Lite spec with no `url`/`href`)
 are validated JSON documents the UI draws; `figure` references a figure
 already submitted with an artifact, checked through the injected
 `FigureLookup` port; `image`/`embed` name one local file uploaded through a
-one-time token; `link` names one URL to unfurl. `refs.parse_refs` pulls structure out of the
-prose: the first entity id becomes `ref` and the first arXiv id, DOI, or URL
-becomes the unfurled link when those were not passed explicitly. A `thread`
+one-time token; `link` names one URL to unfurl. `refs.RefParser` pulls
+structure out of the prose: the first entity id becomes `ref` and the first
+arXiv id, DOI, or URL becomes the unfurled link when those were not passed
+explicitly. Which id prefixes count is the composition's `RefVocabulary` of
+`(prefix, kind)` pairs; the feed matches prefixes and stores refs opaquely. A `thread`
 is up to eight continuation posts created atomically under the root, and a
 reply to one's own post continues the author's chain (`thread_root`,
 `thread_index`); a reply by another voice stays a reply. Kinds are
@@ -39,11 +41,11 @@ status`.
 ## Write flow
 
 1. `register` validates a handle, role, and bio, resolves the project, and
-   upserts the `(project_id, handle)` voice. Reviewer and lens sessions adopt
-   the project's existing voice for that role unless `new_voice` is set, so a
-   reader follows one reviewer; a live main handle cannot be claimed by a
-   different session. The response carries the roster, `adopted`, and the
-   researcher's latest replies. New voices emit `feed.author_registered`.
+   upserts the `(project_id, handle)` voice. Author roles and their adoptable
+   subset are constructor arguments: an adoptable role takes the project's
+   existing voice unless `new_voice` is set; a live handle in any other role
+   cannot be taken by another session. The response carries the roster,
+   `adopted`, and the researcher's latest replies; new voices emit `feed.author_registered`.
 2. `post` normalizes attachments (legacy `image_path`/`html_path`/`url` are
    shorthands), validates thread items, and resolves a `PostIntent`: the
    author must be registered in that project, `kind` and entity-reference
@@ -82,9 +84,9 @@ CSP-wrapped, while images retain their sniffed media type.
 
 Cadence counts non-feed events since the latest non-researcher post. A nudge
 appears only after at least eight such events and, when a prior agent post
-exists, six hours; it never gates work. `transition_advisory` is read-only and
-best-effort: after a committed transition it suggests posting only when no
-post in that project references or literally mentions the experiment.
+exists, six hours; it never gates work. `advisory(project_id, ref, message)` is
+read-only and best-effort: it returns the caller's own words as a posting hint
+only when no post in that project references or literally mentions the ref.
 
 ## Persistence and invariants
 

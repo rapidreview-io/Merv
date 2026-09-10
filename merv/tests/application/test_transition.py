@@ -522,17 +522,9 @@ class RecordingFeed:
         self.error = error
         self.calls: list[dict[str, Any]] = []
 
-    def transition_advisory(
-        self, *, project_id: str, experiment_id: str, event: str
-    ) -> str | None:
+    def advisory(self, *, project_id: str, ref: str, message: str) -> str | None:
         self.order.append("feed.advisory")
-        self.calls.append(
-            {
-                "project_id": project_id,
-                "experiment_id": experiment_id,
-                "event": event,
-            }
-        )
+        self.calls.append({"project_id": project_id, "ref": ref, "message": message})
         if self.error is not None:
             raise self.error
         return self.note
@@ -972,17 +964,18 @@ class FeedTransitionReactionTest(unittest.TestCase):
         self,
     ) -> None:
         cases = (
-            ("complete", "mark_failed", "experiment_complete"),
-            ("failed", "complete", "experiment_failed"),
-            ("abandoned", "complete", "experiment_abandoned"),
+            ("complete", "mark_failed", f"{EXPERIMENT_ID} just completed"),
+            ("failed", "complete", f"{EXPERIMENT_ID} just failed"),
+            ("abandoned", "complete", f"{EXPERIMENT_ID} was just abandoned"),
         )
-        for status, transition, expected_event in cases:
+        for status, transition, expected_message in cases:
             with self.subTest(status=status, transition=transition):
                 event = _event(transition, payload_status="running")
                 result, feed, _research, _order = self._execute(
                     status=status, transition=transition, event=event
                 )
-                self.assertEqual(feed.calls[0]["event"], expected_event)
+                self.assertEqual(feed.calls[0]["ref"], EXPERIMENT_ID)
+                self.assertEqual(feed.calls[0]["message"], expected_message)
                 self.assertEqual(result["feed_note"], "feed note")
 
     def test_nonterminal_state_does_not_query_feed(self) -> None:
@@ -1002,6 +995,25 @@ class FeedTransitionReactionTest(unittest.TestCase):
         self.assertEqual(len(feed.calls), 1)
         self.assertEqual(result["status"], "complete")
         self.assertNotIn("feed_note", result)
+
+    def test_feed_note_phrases_are_research_words_with_a_generic_default(self) -> None:
+        from merv.brain.application.experiments.transition import feed_transition_note
+
+        feed = RecordingFeed([])
+        feed_transition_note(feed, project_id=PROJECT_ID, ref="task_7", event="task_done")
+        feed_transition_note(feed, project_id=PROJECT_ID, ref="exp_9", event="some_future_event")
+        self.assertEqual(
+            [call["message"] for call in feed.calls],
+            ["task task_7 was just accepted", "exp_9 just had a workflow update"],
+        )
+        self.assertIsNone(
+            feed_transition_note(
+                RecordingFeed([], error=RuntimeError("feed unavailable")),
+                project_id=PROJECT_ID,
+                ref="exp_9",
+                event="experiment_complete",
+            )
+        )
 
     def test_feed_query_is_after_response_context_assembly_and_none_stays_absent(
         self,

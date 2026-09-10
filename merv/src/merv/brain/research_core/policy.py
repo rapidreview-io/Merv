@@ -70,6 +70,28 @@ _ENTITY_ID_RE = re.compile(
     r"\b(exp|claim|res|rev|rver|syn|lit|paper|task)_[A-Za-z0-9]"
 )
 
+# Entity id prefixes agents may cite from prose, each with the kind it names.
+# Support surfaces (the feed) receive this at composition and match prefixes
+# only; the kinds label validation messages. `res_` and `rver_` predate the
+# current reviews module and stay so older mentions keep parsing.
+ENTITY_REF_VOCABULARY: tuple[tuple[str, str], ...] = (
+    ("exp_", "experiment"),
+    ("task_", "task"),
+    ("claim_", "claim"),
+    ("res_", "result"),
+    ("rver_", "review verdict"),
+    ("syn_", "reflection"),
+    ("rev_", "review"),
+    ("lit_", "literature"),
+    ("paper_", "paper"),
+)
+
+# Agent voices on the project feed. Adoptable roles share one persistent voice
+# per project so the reader follows one reviewer or lens instead of a new name
+# per session; the feed applies that rule without knowing what the roles are.
+FEED_AUTHOR_ROLES = frozenset({"main", "reviewer", "lens"})
+FEED_ADOPTABLE_ROLES = frozenset({"reviewer", "lens"})
+
 # Task names follow the same folder-safe rules and become tasks/<name>/.
 
 

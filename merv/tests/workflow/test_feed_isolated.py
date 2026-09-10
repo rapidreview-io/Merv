@@ -25,6 +25,12 @@ from merv.brain.surface import web_preview
 from merv.brain.surface.transport.feed_http import register_feed_routes
 
 
+# The feed learns which ids exist from its composition; these tests declare a
+# vocabulary of their own so nothing below depends on research's prefixes.
+_VOCABULARY = (("exp_", "experiment"), ("gizmo_", "gizmo"))
+_ROLES = frozenset({"main", "auditor"})
+_ADOPTABLE = frozenset({"auditor"})
+
 _PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
     "1f15c4890000000d49444154789c6360000002000100ffff030000060005"
@@ -89,9 +95,12 @@ def feed(tmp_path: Path) -> tuple[FeedService, str, _CountingStore]:
         store=store,
         blobs=LocalDirBlobStore(root=tmp_path / "blobs"),
         web_preview=_UnavailablePreview(),
+        ref_vocabulary=_VOCABULARY,
+        author_roles=_ROLES,
+        adoptable_roles=_ADOPTABLE,
     )
     project_id = str(project["id"])
-    service.register(project_id=project_id, handle="Nova-7")
+    service.register(project_id=project_id, handle="Nova-7", role="main")
     store.statements.clear()
     return service, project_id, store
 
@@ -153,26 +162,97 @@ def test_core_owns_posts_replies_reactions_and_batched_history(feed) -> None:
     )["post"]["reactions"]["eyes"] is False
 
 
-def test_transition_advisory_disappears_after_referenced_post(feed) -> None:
+def test_refs_follow_the_injected_vocabulary(feed) -> None:
     service, project_id, _store = feed
 
-    note = service.transition_advisory(
+    parsed = service.post(
         project_id=project_id,
-        experiment_id="exp_123",
-        event="experiment_complete",
+        handle="Nova-7",
+        text="gizmo_0badf00d beat exp_c0ffee12 by a hair",
+    )["post"]
+    assert parsed["ref"] == "gizmo_0badf00d"
+
+    explicit = service.post(
+        project_id=project_id,
+        handle="Nova-7",
+        text="on the record",
+        ref="gizmo_000000",
+    )["post"]
+    assert explicit["ref"] == "gizmo_000000"
+
+    with pytest.raises(ValidationError, match="gizmo gizmo_"):
+        service.post(
+            project_id=project_id,
+            handle="Nova-7",
+            text="not a project entity",
+            ref="claim_54962efed0a3",
+        )
+
+
+def test_ref_vocabulary_must_be_declared(tmp_path: Path) -> None:
+    from merv.brain.feed.refs import RefParser
+
+    with pytest.raises(ValueError, match="at least one"):
+        RefParser(())
+    with pytest.raises(ValueError, match="prefix and a kind"):
+        RefParser((("", "nameless"),))
+
+
+def test_roles_follow_the_injected_sets(feed) -> None:
+    service, project_id, _store = feed
+
+    with pytest.raises(ValidationError, match="unknown author role: reviewer"):
+        service.register(project_id=project_id, handle="Cold Equations", role="reviewer")
+    with pytest.raises(ValidationError, match="unknown author role: researcher"):
+        service.register(project_id=project_id, handle="Impostor", role="researcher")
+
+    first = service.register(
+        project_id=project_id, handle="Cold Equations", role="auditor", session_id="s1"
+    )
+    assert first["created"] and not first["adopted"]
+    second = service.register(
+        project_id=project_id, handle="Second Opinion", role="auditor", session_id="s2"
+    )
+    assert second["adopted"] and second["author"]["handle"] == "Cold Equations"
+    assert "auditor voice is 'Cold Equations'" in second["note"]
+    # A non-adoptable role never shares a live handle across sessions.
+    service.register(project_id=project_id, handle="Kestrel-9", role="main", session_id="m1")
+    with pytest.raises(ValidationError, match="already in use"):
+        service.register(project_id=project_id, handle="Kestrel-9", role="main", session_id="m2")
+
+
+def test_role_sets_are_validated_at_construction(tmp_path: Path) -> None:
+    def build(**roles):
+        return FeedService(
+            store=StateStore(db_path=tmp_path / "roles.sqlite3"),
+            blobs=LocalDirBlobStore(root=tmp_path / "blobs"),
+            web_preview=_UnavailablePreview(),
+            ref_vocabulary=_VOCABULARY,
+            **roles,
+        )
+
+    with pytest.raises(ValueError, match="subset of the author roles"):
+        build(author_roles={"main"}, adoptable_roles={"auditor"})
+    with pytest.raises(ValueError, match="feed's own voice"):
+        build(author_roles={"main", "researcher"}, adoptable_roles=())
+
+
+def test_advisory_disappears_after_referenced_post(feed) -> None:
+    service, project_id, _store = feed
+
+    note = service.advisory(
+        project_id=project_id, ref="exp_123", message="exp_123 just completed"
     )
     assert note and "exp_123 just completed" in note
 
     service.post(
         project_id=project_id,
         handle="Nova-7",
-        text="The experiment landed.",
+        text="The run landed.",
         ref="exp_123",
     )
-    assert service.transition_advisory(
-        project_id=project_id,
-        experiment_id="exp_123",
-        event="experiment_complete",
+    assert service.advisory(
+        project_id=project_id, ref="exp_123", message="exp_123 just completed"
     ) is None
 
 

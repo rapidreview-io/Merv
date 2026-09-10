@@ -27,7 +27,10 @@ from ..artifacts import Artifacts
 from ..feed import FeedService
 from ..literature import Literature
 from ..research_core import (
+    ENTITY_REF_VOCABULARY,
     EXPERIMENT_TERMINAL_STATUSES,
+    FEED_ADOPTABLE_ROLES,
+    FEED_AUTHOR_ROLES,
     Research,
     ResearchArtifacts,
 )
@@ -125,6 +128,9 @@ class Surface:
             store=store,
             blobs=blobs,
             web_preview=NetworkWebPreview(),
+            ref_vocabulary=ENTITY_REF_VOCABULARY,
+            author_roles=FEED_AUTHOR_ROLES,
+            adoptable_roles=FEED_ADOPTABLE_ROLES,
             figure_lookup=lambda project_id, artifact_id, path: self.artifacts.figure(
                 project_id=project_id, artifact_id=artifact_id, link_path=path
             ) is not None,

@@ -54,6 +54,30 @@ class TransitionReceipt(TypedDict, total=False):
     mlflow_warning: dict[str, str]
 
 
+# What a committed research event is called on the feed. Research owns the
+# words; the Feed only decides whether the feed already mentions the ref.
+FEED_NOTE_PHRASES: dict[str, str] = {
+    "experiment_complete": "{entity} just completed",
+    "experiment_failed": "{entity} just failed",
+    "experiment_abandoned": "{entity} was just abandoned",
+    "task_done": "task {entity} was just accepted",
+    "task_failed": "task {entity} just failed",
+    "experiment_review_verdict": "a review verdict just landed on {entity}",
+}
+_FEED_NOTE_DEFAULT = "{entity} just had a workflow update"
+
+
+def feed_transition_note(
+    feed: FeedAdvisory, *, project_id: str, ref: str, event: str
+) -> str | None:
+    """Best-effort feed nudge for one committed event; any failure reads as no note."""
+    message = FEED_NOTE_PHRASES.get(event, _FEED_NOTE_DEFAULT).format(entity=ref)
+    try:
+        return feed.advisory(project_id=project_id, ref=ref, message=message)
+    except Exception:
+        return None
+
+
 @dataclass(kw_only=True, eq=False, repr=False)
 class TransitionExperiment:
     """Coordinate one transition without exposing component internals."""
@@ -213,14 +237,12 @@ class TransitionExperiment:
             or status not in EXPERIMENT_TERMINAL_STATUSES
         ):
             return None
-        try:
-            return self.feed.transition_advisory(
-                project_id=str(state.get("project_id") or ""),
-                experiment_id=str(state.get("id") or ""),
-                event=f"experiment_{status}",
-            )
-        except Exception:
-            return None
+        return feed_transition_note(
+            self.feed,
+            project_id=str(state.get("project_id") or ""),
+            ref=str(state.get("id") or ""),
+            event=f"experiment_{status}",
+        )
 
     def prepare_workflow_transition(self, snapshot: Snapshot, action: str, payload) -> dict[str, object] | None:
         """Prepare external metrics before the runtime's final transactional gate."""

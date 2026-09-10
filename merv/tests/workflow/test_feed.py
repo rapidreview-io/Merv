@@ -535,8 +535,10 @@ class FeedPostModelTest(FeedServiceTest):
     # -- references parsed from text ------------------------------------------
 
     def test_parse_refs_finds_entities_and_links_in_order(self) -> None:
-        from merv.brain.feed.refs import parse_refs
+        from merv.brain.feed.refs import RefParser
+        from merv.brain.research_core import ENTITY_REF_VOCABULARY
 
+        parse_refs = RefParser(ENTITY_REF_VOCABULARY).parse
         parsed = parse_refs(
             "See exp_c3b5c69c8039 and claim_54962efed0a3 (arXiv:2401.10774), "
             "https://github.com/vllm-project/vllm/issues/48503. Also doi:10.1000/xyz123."
@@ -1211,61 +1213,58 @@ class FeedNoteForTest(unittest.TestCase):
         self.app.shutdown()
         self.tmp.cleanup()
 
+    def _advisory(self, ref: str, project_id: str | None = None) -> str | None:
+        return self.app.feed.advisory(
+            project_id=self.pid if project_id is None else project_id,
+            ref=ref,
+            message=f"{ref} just completed",
+        )
+
     def test_none_when_a_posts_text_mentions_the_entity_inline(self) -> None:
-        self.app.feed.register(handle="Nova-7", project_id=self.pid)
+        self.app.feed.register(handle="Nova-7", role="main", project_id=self.pid)
         self.app.feed.post(
             handle="Nova-7",
             project_id=self.pid,
             text="wrapping up exp_inline_1 today, results look solid",
         )
-        note = self.app.feed.transition_advisory(
-            project_id=self.pid, experiment_id="exp_inline_1", event="experiment_complete"
-        )
-        self.assertIsNone(note)
+        self.assertIsNone(self._advisory("exp_inline_1"))
 
     def test_an_unrelated_post_does_not_suppress_the_note(self) -> None:
-        self.app.feed.register(handle="Nova-7", project_id=self.pid)
+        self.app.feed.register(handle="Nova-7", role="main", project_id=self.pid)
         self.app.feed.post(
             handle="Nova-7", project_id=self.pid, text="something else entirely"
         )
-        note = self.app.feed.transition_advisory(
-            project_id=self.pid, experiment_id="exp_untouched", event="experiment_complete"
-        )
+        note = self._advisory("exp_untouched")
         self.assertIsNotNone(note)
+        self.assertTrue(
+            note.startswith("exp_untouched just completed and the feed has never mentioned it")
+        )
 
     def test_entity_id_underscore_is_escaped_not_treated_as_a_wildcard(self) -> None:
         # LIKE's "_" matches any single char; left unescaped, a post about an
         # unrelated id that merely has the same shape would falsely look like
         # a mention of exp_12 (the "_" wildcarding one arbitrary character).
-        self.app.feed.register(handle="Nova-7", project_id=self.pid)
+        self.app.feed.register(handle="Nova-7", role="main", project_id=self.pid)
         self.app.feed.post(
             handle="Nova-7",
             project_id=self.pid,
             text="expX12 is a different experiment",
         )
-        note = self.app.feed.transition_advisory(
-            project_id=self.pid, experiment_id="exp_12", event="experiment_complete"
-        )
-        self.assertIsNotNone(note)
+        self.assertIsNotNone(self._advisory("exp_12"))
 
-    def test_missing_project_id_or_entity_id_returns_none(self) -> None:
+    def test_missing_project_id_ref_or_message_returns_none(self) -> None:
+        self.assertIsNone(self._advisory("exp_1", project_id=""))
+        self.assertIsNone(self._advisory(""))
         self.assertIsNone(
-            self.app.feed.transition_advisory(
-                project_id="", experiment_id="exp_1", event="experiment_complete"
-            )
-        )
-        self.assertIsNone(
-            self.app.feed.transition_advisory(
-                project_id=self.pid, experiment_id="", event="experiment_complete"
-            )
+            self.app.feed.advisory(project_id=self.pid, ref="exp_1", message="  ")
         )
 
-    def test_unknown_event_still_produces_a_generic_note(self) -> None:
-        note = self.app.feed.transition_advisory(
-            project_id=self.pid, experiment_id="exp_x", event="some_future_event"
+    def test_the_words_are_the_callers_and_the_ref_is_opaque(self) -> None:
+        note = self.app.feed.advisory(
+            project_id=self.pid, ref="wid_9", message="widget wid_9 just spun"
         )
         self.assertIsNotNone(note)
-        self.assertIn("exp_x", note)
+        self.assertTrue(note.startswith("widget wid_9 just spun and the feed"))
 
 
 class FeedNoteTransitionIntegrationTest(unittest.TestCase):
