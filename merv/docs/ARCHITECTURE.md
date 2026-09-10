@@ -54,7 +54,8 @@ The brain is the single authority for research records and policy. It owns:
 - projects, claims, experiments, artifacts, reviews, reflections, and events;
 - workflow gates, artifact lints, permissions, and reviewer capabilities;
 - research associations for native sandboxes, archived cost history, and spending policy;
-- artifact identities, blob metadata, and the heavy-object ledger;
+- artifact identities, blob metadata, and the research association of each
+  heavy object to the experiment that produced it;
 - the `/mcp/*`, `/api/*`, and server-sent-event surfaces.
 
 The brain never receives a checkout root and never opens files from a user's
@@ -147,7 +148,8 @@ root selects adapters and wires the modular monolith:
 - sandbox/provider facades: native connections, offers, lifecycle, and jobs.
 
 The independent service owns compute-provider credentials, cloud SDKs, SSH
-certificates, job workers, sandbox leases, and heavy-object cleanup. Merv owns its
+certificates, job workers, sandbox leases, and the heavy-object catalog
+(names, versions, state, retention, expiry and bytes). Merv owns its
 artifact byte adapters and credentials. Sandbox and heavy-object operations need
 `MERV_SANDBOXES_URL` and `MERV_SANDBOXES_JWT_SECRET`; artifact storage is separate.
 
@@ -237,7 +239,9 @@ Three storage layers have distinct purposes:
    metric JSON so lints and reviewers see immutable submissions rather than a
    later working-tree edit.
 3. **Heavy-object storage** keeps large datasets, checkpoints, archives, and
-   other valuable files that should not live in git.
+   other valuable files that should not live in git. merv-sandboxes is the
+   catalog; Merv keeps one-time completion tokens and records which
+   experiment produced each object.
 
 Artifacts owns content identities, upload tokens, figure membership, and byte
 retrieval. Research owns target/role associations and freezes exact evidence
@@ -277,7 +281,7 @@ calls. Session separation does not prove independent model reasoning.
 ## Code boundaries
 
 The brain is a modular monolith. Workflows, Research, Artifacts, Infrastructure,
-Feed, Object Storage, and Agent Sessions expose package-root capabilities. Application coordinates
+Feed, and Agent Sessions expose package-root capabilities. Application coordinates
 only genuinely cross-component work. Surface delivers HTTP/MCP, and Kernel is
 the shared dependency floor. Every file is classified independently by
 component ownership and architectural layer. The exact mappings and import laws

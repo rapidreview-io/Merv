@@ -260,7 +260,6 @@ Tests inject a fake infrastructure HTTP client and never provision cloud resourc
 - [docs/REVIEW_IDENTITY.md](docs/REVIEW_IDENTITY.md) - reviewer session and capability boundary
 - [docs/AGENT_IDENTITY.md](docs/AGENT_IDENTITY.md) - per-context-window `agent_id`, attributed tool-call ledger, and payload traces
 - [src/merv/brain/artifacts/artifacts.md](src/merv/brain/artifacts/artifacts.md) - submitted-artifact lifecycle
-- [src/merv/brain/object_storage/object_storage.md](src/merv/brain/object_storage/object_storage.md) - durable heavy-object storage
 - [docs/UI_API.md](docs/UI_API.md) - frontend HTTP API
 - [docs/CONTROL_PLANE_OPERATIONS.md](docs/CONTROL_PLANE_OPERATIONS.md) - hosted operations and security boundary
 - [deploy/README.md](deploy/README.md) - ordinary PostgreSQL or Supabase

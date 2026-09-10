@@ -12,7 +12,7 @@ visible around the page.
 | Artifacts | Evidence upload, live slots, figures, immutable sealing | [artifacts.png](artifacts.png) |
 | Sandbox | Durable compute lifecycle, observation, quotas, providers | [sandbox.png](sandbox.png) |
 | Feed | Editorial posts, media, previews, pagination, advisories | [feed.png](feed.png) |
-| Object Storage | Heavy-object ledger, transfer, lifecycle, reclamation | [object-storage.png](object-storage.png) |
+| Object Storage (historical) | Retired ledger; heavy objects now live in merv-sandboxes behind Infrastructure | [object-storage.png](object-storage.png) |
 | Literature | Living review, paper ledger, citations, projections | [literature.png](literature.png) |
 | Kernel + Infrastructure | Neutral persistence, events, security, ports, adapters | [kernel-infrastructure.png](kernel-infrastructure.png) |
 
