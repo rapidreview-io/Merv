@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
 import { api } from '../api';
 import { AuthedImg, RawLink } from './AuthedMedia';
 import FileRenderer from './FileRenderer';
 import PdfView from './PdfView';
 import { extOf, formatBytes, isMarkdown } from '../utils/format';
+import { useAsyncData } from '../store/usePolling';
 
 // Drop a leading "# <title>" from markdown when it just repeats a name already
 // shown elsewhere (the panel header). Only the very first heading, and only on
@@ -80,9 +81,14 @@ export default function ArtifactContentView({
   const renderImage = !renderPdf && isImagePath(path);
   const renderBinary = !renderPdf && !renderImage && isBinaryPath(path);
 
-  const [content, setContent] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  // PDFs, images and known-binaries skip /content entirely — the iframe, the
+  // <img> and the raw link handle them.
+  const skipFetch = renderPdf || renderImage || renderBinary;
+  const [content, error] = useAsyncData(
+    skipFetch ? null : () => api.getArtifactContent(projectId, artifactId),
+    [projectId, artifactId, skipFetch],
+  );
+  const loading = !skipFetch && !content && !error;
 
   // Stable identity: MarkdownView keys its `img` component (and its memo) on
   // this — an inline arrow here would remount every figure per re-render.
@@ -90,34 +96,6 @@ export default function ArtifactContentView({
     (src) => api.artifactFigureUrl(projectId, artifactId, src),
     [projectId, artifactId],
   );
-
-  useEffect(() => {
-    // Skip the /content fetch entirely for PDFs, images, and known-binary
-    // files — the iframe / <img> / raw link handle them. Important: this
-    // effect still runs (hooks must keep the same order across renders), it
-    // just no-ops.
-    if (renderPdf || renderImage || renderBinary) {
-      setContent(null);
-      setLoading(false);
-      setError(null);
-      return undefined;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setContent(null);
-    api.getArtifactContent(projectId, artifactId)
-      .then(data => {
-        if (cancelled) return;
-        setContent(data);
-      })
-      .catch(err => {
-        if (cancelled) return;
-        setError(err.message);
-      })
-      .finally(() => !cancelled && setLoading(false));
-    return () => { cancelled = true; };
-  }, [projectId, artifactId, renderPdf, renderImage, renderBinary]);
 
   if (renderPdf) {
     return (

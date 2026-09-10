@@ -12,6 +12,7 @@ import {
   selectExperiments,
 } from '../store/useProjectStore';
 import { useNow } from '../store/useNow';
+import { useAsyncData } from '../store/usePolling';
 import { expName } from '../utils/experiment';
 import { fmtDuration, fmtUsd, fmtHrs } from '../utils/format';
 import { DAY_MS } from '../utils/time';
@@ -92,22 +93,6 @@ function useLiveGpu(projectId, sandbox) {
   return gpu;
 }
 
-// Project compute spend from the generations ledger — refetched when the
-// fleet changes shape (the endpoint has no push signal; billing moves with
-// the clock, so the minute tick would over-fetch).
-function useComputeSpend(projectId, fleetSignal) {
-  const [spend, setSpend] = useState(null);
-  useEffect(() => {
-    if (!projectId) { setSpend(null); return undefined; }
-    let cancelled = false;
-    api.getComputeCost(projectId)
-      .then(d => { if (!cancelled) setSpend(d); })
-      .catch(() => { if (!cancelled) setSpend(null); });
-    return () => { cancelled = true; };
-  }, [projectId, fleetSignal]);
-  return spend;
-}
-
 /**
  * Home — the supervisor's instrument snapshot: what this project
  * IS (a clamped project.summary — the name's already in the app bar), a
@@ -146,7 +131,13 @@ export default function HomeScreen() {
     || (liveSandbox ? experiments.find(e => e.id === liveSandbox.experiment_id) : null)
     || null;
   const gpu = useLiveGpu(projectId, liveSandbox);
-  const spend = useComputeSpend(projectId, `${sandboxes.length}:${running.length}`);
+  // Compute spend from the generations ledger — refetched when the fleet
+  // changes shape (the endpoint has no push signal; billing moves with the
+  // clock, so the minute tick would over-fetch).
+  const [spend] = useAsyncData(
+    projectId ? () => api.getComputeCost(projectId) : null,
+    [projectId, sandboxes.length, running.length],
+  );
 
   // ── 24h snapshot band (derived client-side; approximate by design) ──
   const tiles = useMemo(() => {
