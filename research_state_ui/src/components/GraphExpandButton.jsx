@@ -1,3 +1,36 @@
+import { useCallback, useEffect, useState } from 'react';
+
+/**
+ * Expanded (near-fullscreen) mode for a graph slot: it survives switching
+ * between the two graphs, Escape leaves it, and page scroll locks while it is
+ * open. Lives next to the button that toggles it.
+ */
+export function useGraphExpand() {
+  const [expanded, setExpanded] = useState(false);
+  const toggleExpand = useCallback(() => setExpanded(v => !v), []);
+  useEffect(() => {
+    if (!expanded) return undefined;
+    const onKey = e => { if (e.key === 'Escape') setExpanded(false); };
+    window.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [expanded]);
+  return { expanded, toggleExpand, collapse: () => setExpanded(false) };
+}
+
+/** Which of a slot's graphs have anything to show; each child reports itself. */
+export function useGraphAvailability(initial) {
+  const [avail, setAvail] = useState(initial);
+  const report = useCallback((key, value) => {
+    setAvail(prev => (prev[key] === value ? prev : { ...prev, [key]: value }));
+  }, []);
+  return [avail, report];
+}
+
 /**
  * The one expand/collapse control every graph header carries.
  *

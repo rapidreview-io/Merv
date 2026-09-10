@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useGraphAvailability, useGraphExpand } from '../GraphExpandButton';
 import LogicGraph from '../LogicGraph';
 import WaveFigure from './WaveFigure';
 
@@ -12,25 +13,8 @@ import WaveFigure from './WaveFigure';
  */
 export default function ReflectionGraphs({ projectId, reflectionId, wave, isOpen, fetcher }) {
   const [chosen, setChosen] = useState('process');
-  const [avail, setAvail] = useState({ process: false, logic: false });
-  const [expanded, setExpanded] = useState(false);
-  const toggleExpand = useCallback(() => setExpanded(v => !v), []);
-
-  useEffect(() => {
-    if (!expanded) return undefined;
-    const onKey = e => { if (e.key === 'Escape') setExpanded(false); };
-    window.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [expanded]);
-
-  const report = useCallback((key, value) => {
-    setAvail(prev => (prev[key] === value ? prev : { ...prev, [key]: value }));
-  }, []);
+  const [avail, report] = useGraphAvailability({ process: false, logic: false });
+  const { expanded, toggleExpand } = useGraphExpand();
   const reportProcess = useCallback(v => report('process', v), [report]);
   const reportLogic = useCallback(v => report('logic', v), [report]);
 

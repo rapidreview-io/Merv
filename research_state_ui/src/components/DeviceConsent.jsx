@@ -1,10 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, request } from '../api';
 import { normalizeCode } from '../utils/format';
-import { ConsentFrame, ScopeChoice } from './OAuthConsent';
-
-const ACCOUNT = 'account';
-const PROJECT = 'project';
+import { ACCOUNT, ConsentFrame, ScopeFields } from './OAuthConsent';
 
 function formatCode(code) {
   return code.length > 4 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
@@ -149,48 +146,15 @@ export default function DeviceConsent() {
         Code {grant.user_code}. Choose how much of Merv this client may reach.
         You can revoke it at any time.
       </p>
-      <div className="oauth-scope-choices">
-        <ScopeChoice
-          checked={grantScope === ACCOUNT}
-          disabled={busy}
-          onSelect={() => setGrantScope(ACCOUNT)}
-          title="All my projects"
-          detail="The client picks a project per request and follows your membership as it changes. Connect once and never again."
-        />
-        <ScopeChoice
-          checked={grantScope === PROJECT}
-          disabled={busy}
-          onSelect={() => setGrantScope(PROJECT)}
-          title="One project only"
-          detail="The client is locked to a single project and cannot see the others."
-        />
-      </div>
-      {grantScope === PROJECT && (
-        <label className="auth-field">
-          <span>Project</span>
-          <select
-            className="auth-input oauth-project-select"
-            value={projectId}
-            onChange={event => setProjectId(event.target.value)}
-            disabled={busy}
-          >
-            <option value="">Select one project…</option>
-            {projects.map(project => (
-              <option key={project.id} value={project.id}>{project.name}</option>
-            ))}
-          </select>
-        </label>
-      )}
-      {grantScope === ACCOUNT && homeProject && (
-        <p className="oauth-consent-resource">
-          Listed under {homeProject.name} in your MCP keys.
-        </p>
-      )}
-      {!homeProject && (
-        <p className="oauth-consent-error">
-          Create a project before connecting a client.
-        </p>
-      )}
+      <ScopeFields
+        grantScope={grantScope}
+        setGrantScope={setGrantScope}
+        projects={projects}
+        projectId={projectId}
+        setProjectId={setProjectId}
+        homeProject={homeProject}
+        busy={busy}
+      />
       <p className="oauth-consent-resource">Resource: {grant.resource}</p>
       {error && <p className="oauth-consent-error">{error}</p>}
       <div className="oauth-consent-actions">

@@ -7,7 +7,7 @@ import ObjId from '../components/ObjId';
 import ArtifactContentView from '../components/ArtifactContentView';
 import { basename, formatBytes, fmtStamp } from '../utils/format';
 import { keepIfUnchanged, useIntervalPoll } from '../store/usePolling';
-import { expName } from '../utils/experiment';
+import { expName, groupArtifactsByTarget } from '../utils/experiment';
 
 /**
  * Artifacts — the flat ledger of what the agents submitted.
@@ -16,31 +16,6 @@ import { expName } from '../utils/experiment';
  * is role + title + size + time. No tree, no folders: submission is agent-only
  * (backend-mandated typed artifacts), so this page only shows and opens them.
  */
-
-// Group order mirrors the workflow's gravity: experiments first (home order),
-// then reflections, then anything else, each keyed `${target_type}:${target_id}`.
-function groupByTarget(artifacts, experiments) {
-  const expOrder = new Map(experiments.map((e, i) => [e.id, i]));
-  const groups = new Map();
-  for (const a of artifacts) {
-    const key = `${a.target_type}:${a.target_id}`;
-    if (!groups.has(key)) groups.set(key, { target_type: a.target_type, target_id: a.target_id, rows: [] });
-    groups.get(key).rows.push(a);
-  }
-  const rank = (g) => {
-    if (g.target_type === 'experiment') return expOrder.get(g.target_id) ?? 1e6;
-    if (g.target_type === 'reflection') return 2e6;
-    return 3e6;
-  };
-  const out = Array.from(groups.values()).sort((a, b) => rank(a) - rank(b));
-  for (const g of out) {
-    g.rows.sort((a, b) =>
-      (b.attempt_index ?? 0) - (a.attempt_index ?? 0)
-      || (a.role || '').localeCompare(b.role || '')
-      || (a.created_at || '').localeCompare(b.created_at || ''));
-  }
-  return out;
-}
 
 function targetHeading(group, experiments, px) {
   if (group.target_type === 'experiment') {
@@ -82,7 +57,7 @@ export default function Artifacts() {
     () => (data?.artifacts || []).filter(a => a.status === 'complete'),
     [data],
   );
-  const groups = useMemo(() => groupByTarget(artifacts, experiments), [artifacts, experiments]);
+  const groups = useMemo(() => groupArtifactsByTarget(artifacts, experiments), [artifacts, experiments]);
   const selected = artifactId ? artifacts.find(a => a.id === artifactId) : null;
 
   if (selected) {

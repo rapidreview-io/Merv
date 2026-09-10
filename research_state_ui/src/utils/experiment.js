@@ -12,6 +12,35 @@ export function expName(exp) {
 // starts with a letter/digit, <= 48 chars.
 export const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/;
 
+/**
+ * Artifacts grouped by the workflow target that owns them, keyed
+ * `${target_type}:${target_id}`. Group order mirrors the workflow's gravity:
+ * experiments first in the home snapshot's order, then reflections, then the
+ * rest; inside a group, newest attempt first.
+ */
+export function groupArtifactsByTarget(artifacts, experiments) {
+  const expOrder = new Map(experiments.map((e, i) => [e.id, i]));
+  const groups = new Map();
+  for (const a of artifacts) {
+    const key = `${a.target_type}:${a.target_id}`;
+    if (!groups.has(key)) groups.set(key, { target_type: a.target_type, target_id: a.target_id, rows: [] });
+    groups.get(key).rows.push(a);
+  }
+  const rank = (g) => {
+    if (g.target_type === 'experiment') return expOrder.get(g.target_id) ?? 1e6;
+    if (g.target_type === 'reflection') return 2e6;
+    return 3e6;
+  };
+  const out = Array.from(groups.values()).sort((a, b) => rank(a) - rank(b));
+  for (const g of out) {
+    g.rows.sort((a, b) =>
+      (b.attempt_index ?? 0) - (a.attempt_index ?? 0)
+      || (a.role || '').localeCompare(b.role || '')
+      || (a.created_at || '').localeCompare(b.created_at || ''));
+  }
+  return out;
+}
+
 // Statuses where an experiment is done evolving — the figure/logic-graph
 // canvases stop polling once an experiment reaches one of these.
 export const TERMINAL_STATUSES = ['complete', 'failed', 'abandoned'];
