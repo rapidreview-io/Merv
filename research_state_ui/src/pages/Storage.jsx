@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import { useProjectStore, useProjectHref, selectExperiments } from '../store/useProjectStore';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useProjectStore, useProjectHref } from '../store/useProjectStore';
 import { useStorageLedger } from '../store/useStorageLedger';
 import { api } from '../api';
 import ObjId from '../components/ObjId';
-import { expName } from '../utils/experiment';
 import { formatBytes, fmtDuration, fmtStamp, fmtDayTime } from '../utils/format';
 import './storage.css';
 
@@ -48,7 +47,6 @@ export default function Storage() {
   const navigate = useNavigate();
   const px = useProjectHref();
   const projectId = useProjectStore(s => s.projectId);
-  const experiments = useProjectStore(selectExperiments);
   const { objects, loading, error, unsupported, reload } = useStorageLedger(projectId);
   const [sort, setSort] = useState({ col: 'mass', asc: null }); // asc null → column default
 
@@ -96,7 +94,6 @@ export default function Storage() {
   const soonest = ring.filter(r => r.state.key === 'soon').sort((a, b) => a.state.sort - b.state.sort)[0] || null;
 
   const toggle = (id) => navigate(px(!id || id === objectId ? '/storage' : `/storage/${id}`));
-  const expOf = (id) => (id ? experiments.find(e => e.id === id || e.experiment_id === id) || null : null);
 
   return (
     <div className="page-stage">
@@ -152,8 +149,6 @@ export default function Storage() {
                 open={r.o.id === objectId}
                 onToggle={() => toggle(r.o.id)}
                 projectId={projectId}
-                exp={expOf(r.o.producing_experiment_id)}
-                px={px}
                 onChanged={reload}
                 onDiscarded={() => { toggle(null); reload(); }}
               />
@@ -212,7 +207,7 @@ function MassRing({ ring, total, focusId, onPick }) {
   );
 }
 
-function ManifestRow({ r, open, onToggle, projectId, exp, px, onChanged, onDiscarded }) {
+function ManifestRow({ r, open, onToggle, projectId, onChanged, onDiscarded }) {
   const { o, no, state } = r;
   return (
     <div className={`vlt-obj${open ? ' is-open' : ''}${state.key === 'cold' ? ' is-cold' : ''}`}>
@@ -234,16 +229,18 @@ function ManifestRow({ r, open, onToggle, projectId, exp, px, onChanged, onDisca
         <span className={`vlt-c-state vlt-c-state--${state.key}`}>{state.label}</span>
       </div>
       {open && (
-        <RetrievalRecord o={o} projectId={projectId} exp={exp} px={px} onChanged={onChanged} onDiscarded={onDiscarded} />
+        <RetrievalRecord o={o} projectId={projectId} onChanged={onChanged} onDiscarded={onDiscarded} />
       )}
     </div>
   );
 }
 
-// The specimen drawer: one field per line in an aligned label column, notes
-// apart, custodial verbs apart. retrieve = presigned download (also renews
-// the expiry clock), keep/release = pin/unpin, extend = reset the 60 days.
-function RetrievalRecord({ o, projectId, exp, px, onChanged, onDiscarded }) {
+// The specimen drawer: one field per line in an aligned label column,
+// custodial verbs apart. retrieve = presigned download (also renews the expiry
+// clock), keep = pin, extend = reset the 60 days. Retention only ever
+// lengthens in the storage service, so there is no release verb: an object is
+// either let go by its own clock or discarded outright.
+function RetrievalRecord({ o, projectId, onChanged, onDiscarded }) {
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState(null);
   const [link, setLink] = useState(null);
@@ -267,25 +264,7 @@ function RetrievalRecord({ o, projectId, exp, px, onChanged, onDiscarded }) {
           {sha && <Field k="seal"><span title={sha}>{sha.slice(0, 8)}…{sha.slice(-8)}</span></Field>}
           {o.content_type && <Field k="type">{o.content_type}</Field>}
           <Field k="kept since">{stamp(o.created_at)}</Field>
-          <Field k="last touched">{stamp(o.last_accessed_at)}</Field>
-          {exp ? (
-            <Field k="from">
-              <Link className="vlt-from" to={px(`/experiments/${exp.id || exp.experiment_id}`)}>{expName(exp)} →</Link>
-            </Field>
-          ) : o.producing_experiment_id && (
-            <Field k="from"><ObjId id={o.producing_experiment_id} /></Field>
-          )}
-          {o.producing_run && (
-            <Field k="run">
-              {/^[0-9a-f]{32}$/i.test(o.producing_run)
-                ? <span title={o.producing_run}>{o.producing_run.slice(0, 8)}…</span>
-                : o.producing_run}
-            </Field>
-          )}
-          {o.source_uri && <Field k="source">{o.source_uri}</Field>}
         </div>
-
-        {o.notes && <p className="vlt-notes">{o.notes}</p>}
 
         {link && (
           <div className="vlt-linkline">
@@ -307,28 +286,21 @@ function RetrievalRecord({ o, projectId, exp, px, onChanged, onDiscarded }) {
               {busy === 'retrieve' ? 'retrieving…' : 'retrieve'}
             </button>
           )}
-          {pinned ? (
-            <button
-              type="button" className="vlt-verb" disabled={!!busy}
-              onClick={() => run('release', async () => { await api.unpinStorage(projectId, o.id); onChanged(); })}
-            >
-              {busy === 'release' ? '…' : 'release'}
-            </button>
-          ) : (
-            <button
-              type="button" className="vlt-verb" disabled={!!busy}
-              onClick={() => run('keep', async () => { await api.pinStorage(projectId, o.id); onChanged(); })}
-            >
-              {busy === 'keep' ? '…' : 'keep'}
-            </button>
-          )}
           {!pinned && (
-            <button
-              type="button" className="vlt-verb" disabled={!!busy}
-              onClick={() => run('extend', async () => { await api.renewStorage(projectId, o.id); onChanged(); })}
-            >
-              {busy === 'extend' ? '…' : 'extend 60d'}
-            </button>
+            <>
+              <button
+                type="button" className="vlt-verb" disabled={!!busy}
+                onClick={() => run('keep', async () => { await api.pinStorage(projectId, o.id); onChanged(); })}
+              >
+                {busy === 'keep' ? '…' : 'keep'}
+              </button>
+              <button
+                type="button" className="vlt-verb" disabled={!!busy}
+                onClick={() => run('extend', async () => { await api.renewStorage(projectId, o.id); onChanged(); })}
+              >
+                {busy === 'extend' ? '…' : 'extend 60d'}
+              </button>
+            </>
           )}
           {confirming ? (
             <span className="vlt-confirm">

@@ -73,10 +73,6 @@
 .vlt-field { display: grid; grid-template-columns: var(--kv-label) minmax(0, 1fr); gap: 12px; }
 .vlt-k { color: var(--faint); }
 .vlt-v { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vlt-from { color: var(--text); text-decoration: none; }
-.vlt-from:hover { color: var(--active); }
-
-.vlt-notes { margin: 14px 0 0; font-size: var(--text-sm); color: var(--muted); max-width: 62ch; white-space: pre-wrap; }
 
 .vlt-linkline { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
 .vlt-linkline a { word-break: break-all; }
