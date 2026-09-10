@@ -430,8 +430,6 @@ export const api = {
     request(`/api/projects/${encodeURIComponent(pid)}/storage/${encodeURIComponent(id)}/download`, { method: 'POST' }),
   pinStorage: (pid, id) =>
     request(`/api/projects/${encodeURIComponent(pid)}/storage/${encodeURIComponent(id)}/pin`, { method: 'POST' }),
-  unpinStorage: (pid, id) =>
-    request(`/api/projects/${encodeURIComponent(pid)}/storage/${encodeURIComponent(id)}/unpin`, { method: 'POST' }),
   renewStorage: (pid, id) =>
     request(`/api/projects/${encodeURIComponent(pid)}/storage/${encodeURIComponent(id)}/renew`, { method: 'POST' }),
   deleteStorage: (pid, id) =>
