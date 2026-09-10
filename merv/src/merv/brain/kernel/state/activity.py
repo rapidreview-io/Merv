@@ -55,6 +55,7 @@ def register_activity_vocabulary(
     ID_KEYS.update(id_keys)
     TARGET_KEYS.extend(target for target in targets if target not in TARGET_KEYS)
 
+
 # Value-level secret scrubbing (INV-12). storage.submit/fetch AND feed.post
 # results carry a one-time upload-token URL inside their `run` command string
 # (storage also carries a presigned S3 URL — a ~1-hour replayable credential
@@ -138,6 +139,7 @@ def ledger_label(value: Any) -> str:
     """
     text = _CONTROL_CHARS_RE.sub(" ", str(value or "")[: LEDGER_LABEL_MAX_CHARS * 4])
     return scrub_credentials(scrub_secret_text(text))[:LEDGER_LABEL_MAX_CHARS]
+
 
 class ToolActivityEmitter:
     """Shared tool-call event shaping for activity sinks."""

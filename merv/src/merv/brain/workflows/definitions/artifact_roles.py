@@ -32,11 +32,6 @@ LEGACY_ROLE_REPLACEMENTS = {
 EXHIBIT_ROLE = "exhibit"
 SYSTEM_CREATED_BY = "system"
 
-# Everything the generic Artifacts tool schema needs to describe one
-# association: the target kinds, the roles an agent may submit, and the single
-# role that also carries a lens id. Passed as a bundle so the tool registry
-# never spells a research role itself.
-
 # Role-'result' artifacts are small metrics JSON files the exhibit ingests.
 METRIC_RESULT_MAX_BYTES = 16_000
 
