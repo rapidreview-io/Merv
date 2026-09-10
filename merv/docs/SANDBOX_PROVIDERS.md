@@ -49,6 +49,4 @@ credentials are configured in merv-sandboxes. The retired
 no runtime effect in Merv.
 
 Historical closed sandbox rows remain available for research context and
-cost accounting. They expose no reusable SSH connection. See the
-[cutover runbook](../deploy/SANDBOXES_CUTOVER.md) for native object adoption,
-credential migration, backups, and production verification.
+cost accounting. They expose no reusable SSH connection.

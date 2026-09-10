@@ -26,7 +26,7 @@ class DeployArtifactsTest(unittest.TestCase):
             "docker-compose.postgres.yml",
             "docker-compose.supabase.yml",
             "db_preflight.py",
-            "doctor.py",
+            "migrate_storage_ledger.py",
             "README.md",
             ".dockerignore",
             ".env.example",
@@ -38,6 +38,17 @@ class DeployArtifactsTest(unittest.TestCase):
             (DEPLOY / "Dockerfile.mlflow").exists(),
             "temporarily removed tracking must not ship a deploy image",
         )
+
+    def test_deploy_dir_keeps_no_completed_one_time_tooling(self) -> None:
+        # The sandbox, budget and R2 cutovers finished in production; their
+        # staging/migration/verification scripts and runbooks were single-use
+        # and are gone. Only scripts something still runs may live here:
+        # db_preflight.py (copied by the Dockerfile) and migrate_storage_ledger.py
+        # (a pending production migration).
+        scripts = {path.name for path in DEPLOY.glob("*.py")}
+        self.assertEqual(scripts, {"db_preflight.py", "migrate_storage_ledger.py"})
+        runbooks = {path.name for path in DEPLOY.glob("*.md")}
+        self.assertEqual(runbooks, {"README.md"})
 
     def test_dockerfile_installs_control_extra_and_runs_control_entrypoint(self) -> None:
         text = (DEPLOY / "Dockerfile").read_text(encoding="utf-8")
@@ -151,20 +162,12 @@ class DeployArtifactsTest(unittest.TestCase):
             self.assertIn(var, text)
         self.assertNotIn("mlflow", text.lower())
 
-    def test_doctor_script_covers_startup_readiness_sweep(self) -> None:
-        text = (DEPLOY / "doctor.py").read_text(encoding="utf-8")
-        for token in (
-            "/api/meta",
-            "/api/sandboxes/health",
-            "sandbox.options",
-            "storage.put_object",
-            "storage.complete_upload",
-            "RP_DOCTOR_URL_REWRITE",
-            "RP_DOCTOR_BEARER_TOKEN",
-            "Authorization",
-        ):
+    def test_storage_ledger_migration_stays_runnable_until_it_is_applied(self) -> None:
+        # research_core still carries the pre-migration columns for this script;
+        # it may only go once production has run it.
+        text = (DEPLOY / "migrate_storage_ledger.py").read_text(encoding="utf-8")
+        for token in ("research_objects", "--dry-run", "--project", "--sqlite"):
             self.assertIn(token, text)
-        self.assertNotIn("mlflow", text.lower())
 
     def test_database_preflight_checks_merv_postgres_requirements(self) -> None:
         text = (DEPLOY / "db_preflight.py").read_text(encoding="utf-8")

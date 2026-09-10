@@ -2,15 +2,23 @@
 
 import json
 import os
+import subprocess
 
 import pytest
-
-from tests.infrastructure.test_cutover_docker_rehearsal import docker
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("MERV_CUTOVER_IMAGE_REHEARSAL") != "1",
     reason="requires locally built current release images",
 )
+
+
+def docker(*args):
+    result = subprocess.run(
+        ["docker", *args], capture_output=True, check=False, timeout=60
+    )
+    if result.returncode:
+        raise RuntimeError("disposable image check Docker operation failed")
+    return result.stdout
 
 
 def test_packaged_merv_reads_private_consumer_file_without_native_sdk(tmp_path):

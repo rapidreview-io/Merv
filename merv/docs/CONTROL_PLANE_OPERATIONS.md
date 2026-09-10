@@ -60,8 +60,6 @@ connections because migrations and other operations use advisory locks.
 
 ## Deployment and recovery
 
-See [deploy/README.md](../deploy/README.md) for ordinary deployment and
-[SANDBOXES_CUTOVER.md](../deploy/SANDBOXES_CUTOVER.md) for the migration and its
-rollback constraints. Preserve source buckets and offline legacy volumes
-through the rollback window. A rollback after new native writes requires
-reconciling those writes; restoring an old database would lose them.
+See [deploy/README.md](../deploy/README.md) for ordinary deployment. A rollback
+after new native writes requires reconciling those writes; restoring an old
+database would lose them.
