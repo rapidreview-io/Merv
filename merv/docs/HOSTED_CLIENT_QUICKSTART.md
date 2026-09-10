@@ -51,10 +51,9 @@ The bundled MCP entry contains only
 Merv's OAuth endpoints, opens the browser, stores the token, and refreshes it.
 The user never sees or mints the underlying credential.
 
-On a remote machine over SSH, sign in as usual and use the consent page's
-*on another machine* link — it hands you one short command to type on that
-machine, and nothing else is installed.
-Details in [AUTH.md](AUTH.md#remote-machines).
+On a machine with no browser (a VM over SSH, a container, CI), mint a project
+key and give it to the client as a bearer header instead of signing in.
+Details in [AUTH.md](AUTH.md#machines-with-no-browser).
 
 Enable RapidReview marketplace auto-update once in Claude's `/plugin` screen.
 Gemini's `--auto-update` flag is sufficient. Qwen prompts when the tracked

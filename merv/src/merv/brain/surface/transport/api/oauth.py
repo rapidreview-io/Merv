@@ -4,31 +4,18 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl
 
 from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
-from ....kernel.secret_tokens import hash_secret
-from ...identity import principal_label
-from ...oauth import DEVICE_GRANT, OAuthControl, OAuthError, oauth_error_redirect
+from ...oauth import OAuthControl, OAuthError, oauth_error_redirect
 from ...project_keys import PROJECT_GRANT
 from ..request_body import RequestBodyTooLarge, read_limited_body
 
 _NO_STORE = dict((("Cache-Control", "no-store"), ("Pra" + "gma", "no-cache")))
 _MAX_DCR_BODY_BYTES = 32 * 1024
 _MAX_TOKEN_BODY_BYTES = 8 * 1024
-# Shown when a handoff link is opened in a browser instead of curl.
-_HANDOFF_EXPLAINER = (
-    "<!doctype html><meta charset='utf-8'>"
-    "<title>Merv</title>"
-    "<body style='font-family:system-ui;max-width:34rem;margin:15vh auto;"
-    "padding:0 1rem;color:#1a1a1a'>"
-    "<h1 style='font-size:1.3rem'>This link belongs in a terminal</h1>"
-    "<p>Run it with <code>curl -L</code> on the machine where your coding "
-    "agent is waiting to finish signing in. Opening it here does nothing "
-    "&mdash; the approval has to reach the agent's own machine.</p></body>"
-)
 
 
 def install_routes(
@@ -59,10 +46,7 @@ def public_request(request: Request, *, enabled: bool) -> bool:
         "/.well-known/oauth-protected-resource/mcp",
         "/oauth/register",
         "/oauth/token",
-        "/oauth/device_authorization",
-    ) or path == "/oauth/authorize" and request.method == "GET" or (
-        path.startswith("/oauth/handoff/") and request.method == "GET"
-    )
+    ) or (path == "/oauth/authorize" and request.method == "GET")
 
 
 def challenge_denial(
@@ -86,7 +70,7 @@ def bearer_denial(
     response = session_denial or JSONResponse(
         {
             "detail": f"{message}; sign in on the web UI or authenticate with "
-            "a bearer key (an mk_ project key or rr_sk_ API key)",
+            "an mk_ project key",
             "error_code": "unauthorized",
         },
         status_code=401,
@@ -135,14 +119,9 @@ def build_router(
             "authorization_endpoint": f"{origin}/oauth/authorize",
             "token_endpoint": f"{origin}/oauth/token",
             "registration_endpoint": f"{origin}/oauth/register",
-            "device_authorization_endpoint": f"{origin}/oauth/device_authorization",
             "response_types_supported": ["code"],
             "response_modes_supported": ["query"],
-            "grant_types_supported": [
-                "authorization_code",
-                "refresh_token",
-                DEVICE_GRANT,
-            ],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
             "token_endpoint_auth_methods_supported": ["none"],
             "code_challenge_methods_supported": ["S256"],
             "authorization_response_iss_parameter_supported": True,
@@ -247,9 +226,6 @@ def build_router(
         # Absent means the old one-project consent, so an older UI build keeps
         # minting exactly what it minted before.
         grant_scope = str(body.pop("grant_scope", "") or PROJECT_GRANT)
-        # The consent page's "agent on another machine" card: the code is
-        # hand-carried instead of redirected, and the page polls for pickup.
-        handoff = body.pop("handoff", False) is True
         if decision not in ("approve", "deny") or any(
             not isinstance(key, str) or not isinstance(value, str)
             for key, value in body.items()
@@ -267,89 +243,10 @@ def build_router(
                 project_id=project_id,
                 approved=decision == "approve",
                 grant_scope=grant_scope,
-                handoff=handoff,
             )
         except OAuthError as exc:
             return _oauth_error(exc)
-        payload: dict[str, Any] = {"redirect_to": redirect_to}
-        if handoff:
-            code = dict(parse_qsl(urlsplit(redirect_to).query)).get("code")
-            if code:
-                payload["code_status"] = hash_secret(code)
-                try:
-                    payload["go_token"] = service.mint_handoff_link(
-                        kind="deliver",
-                        payload=redirect_to,
-                        client_ip=_client_ip(request),
-                    )
-                except OAuthError:
-                    # At the mint cap the approval still succeeds; the page
-                    # falls back to the full command.
-                    pass
-        return JSONResponse(payload, headers=_NO_STORE)
-
-    @router.get("/oauth/handoff/visit/{code}")
-    def handoff_visit_pickup(code: str):
-        query = service.consume_handoff_link(kind="visit", token=code)
-        if query is None:
-            return JSONResponse(
-                {"error": "not_found"}, status_code=404, headers=_NO_STORE
-            )
-        return JSONResponse({"query": query}, headers=_NO_STORE)
-
-    @router.post("/oauth/handoff/visit")
-    async def handoff_visit_mint(request: Request):
-        denial, body = await _consent_body(request)
-        if denial is not None:
-            return denial
-        query = body.get("query")
-        if (
-            not isinstance(query, str)
-            or not 0 < len(query) <= 4096
-            or any(c in query for c in "\r\n\0")
-        ):
-            return _oauth_error(
-                OAuthError("invalid_request", "query must be a short string")
-            )
-        try:
-            code = service.mint_handoff_link(
-                kind="visit", payload=query, client_ip=_client_ip(request)
-            )
-        except OAuthError as exc:
-            return _oauth_error(exc)
-        return JSONResponse({"code": code}, headers=_NO_STORE)
-
-    @router.get("/oauth/handoff/{token}")
-    def handoff_deliver(token: str, request: Request):
-        # A human opening the link in a browser must not burn it: the token
-        # is meant for curl on the agent's machine. Browsers say text/html;
-        # curl says */*.
-        accept = request.headers.get("Accept") or ""
-        if "text/html" in accept:
-            return HTMLResponse(_HANDOFF_EXPLAINER, headers=_NO_STORE)
-        redirect_to = service.consume_handoff_link(kind="deliver", token=token)
-        if redirect_to is None:
-            return JSONResponse(
-                {
-                    "error": "not_found",
-                    "error_description": "unknown, used, or expired link; "
-                    "restart the sign-in from your agent",
-                },
-                status_code=404,
-                headers=_NO_STORE,
-            )
-        return RedirectResponse(redirect_to, status_code=302, headers=_NO_STORE)
-
-    @router.get("/oauth/authorize/status")
-    def authorization_status(request: Request):
-        denial = _require_supabase_session(request)
-        if denial is not None:
-            return denial
-        digest = request.query_params.get("digest") or ""
-        return JSONResponse(
-            {"status": service.authorization_status(digest=digest)},
-            headers=_NO_STORE,
-        )
+        return JSONResponse({"redirect_to": redirect_to}, headers=_NO_STORE)
 
     @router.post("/oauth/token")
     async def token(request: Request):
@@ -370,85 +267,10 @@ def build_router(
                 result = service.refresh(
                     form=form, canonical_resource=canonical_mcp_resource
                 )
-            elif grant_type == DEVICE_GRANT:
-                result = service.exchange_device_code(
-                    form=form, canonical_resource=canonical_mcp_resource
-                )
             else:
                 raise OAuthError(
                     "unsupported_grant_type", "grant_type is not supported"
                 )
-        except OAuthError as exc:
-            return _oauth_error(exc)
-        return JSONResponse(result, headers=_NO_STORE)
-
-    @router.post("/oauth/device_authorization")
-    async def device_authorization(request: Request):
-        denial = _public_client_denial(request)
-        if denial is not None:
-            return denial
-        issuer = _origin(request)
-        ui = _ui_origin(
-            request, allowed_origins=allowed_origins, ui_base_url=ui_base_url
-        )
-        if ui == issuer:
-            # The verification page lives on the UI origin; without one there
-            # is no page to send the user to, so refuse up front.
-            return _oauth_error(
-                OAuthError(
-                    "server_error", "OAuth consent UI base URL is not configured"
-                ),
-                status_code=503,
-            )
-        try:
-            form = await _read_form(request, what="device authorization")
-            result = service.device_authorization(
-                form=form,
-                canonical_resource=canonical_mcp_resource,
-                client_ip=_client_ip(request),
-            )
-        except OAuthError as exc:
-            return _oauth_error(exc)
-        verification_uri = f"{ui}/oauth/device"
-        result["verification_uri"] = verification_uri
-        result["verification_uri_complete"] = (
-            f"{verification_uri}?user_code={result['user_code']}"
-        )
-        return JSONResponse(result, headers=_NO_STORE)
-
-    @router.get("/oauth/device/details")
-    def device_details(request: Request):
-        denial = _require_supabase_session(request)
-        if denial is not None:
-            return denial
-        try:
-            result = service.device_details(
-                user_code=str(request.query_params.get("user_code") or ""),
-                principal=principal_label(request.state.principal),
-            )
-        except OAuthError as exc:
-            return _oauth_error(exc)
-        return JSONResponse(result, headers=_NO_STORE)
-
-    @router.post("/oauth/device")
-    async def device_decide(request: Request):
-        denial, body = await _consent_body(request)
-        if denial is not None:
-            return denial
-        decision = str(body.get("decision", ""))
-        if decision not in ("approve", "deny"):
-            return _oauth_error(
-                OAuthError("invalid_request", "invalid consent decision")
-            )
-        try:
-            result = service.device_decide(
-                user_code=str(body.get("user_code", "")),
-                principal=principal_label(request.state.principal),
-                owner_user_id=_session_owner(request),
-                project_id=str(body.get("project_id", "")),
-                approved=decision == "approve",
-                grant_scope=str(body.get("grant_scope", "") or PROJECT_GRANT),
-            )
         except OAuthError as exc:
             return _oauth_error(exc)
         return JSONResponse(result, headers=_NO_STORE)
@@ -481,10 +303,6 @@ async def _read_form(request: Request, *, what: str) -> dict[str, str]:
         )
     return dict(pairs)
 
-
-def _client_ip(request: Request) -> str:
-    client = getattr(request, "client", None)
-    return str(getattr(client, "host", "") or "")
 
 
 def protected_resource_metadata_url(request: Request) -> str:

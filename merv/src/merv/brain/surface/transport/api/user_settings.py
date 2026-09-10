@@ -2,8 +2,8 @@
 
 The only setting today is the caller's own Hugging Face token. Every route
 requires a Supabase browser session (``client_id`` starts with ``jwt:``): a
-project (``mk_``) key or an ``rr_sk_`` key cannot set another user's secret, and
-there is deliberately NO read route — the value is write-only and surfaces only
+project (``mk_``) key cannot set another user's secret, and there is
+deliberately NO read route — the value is write-only and surfaces only
 internally at sandbox provisioning.
 """
 

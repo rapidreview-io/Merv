@@ -253,9 +253,9 @@ class ToolCallLedgerTest(unittest.TestCase):
         self.assertIn("<redacted>", str(row["error_head"]))
 
     def test_a_short_prefixed_key_is_scrubbed_like_a_long_one(self) -> None:
-        """The verifier accepts an ``rr_sk_`` value by PREFIX alone, so the
-        scrubber may not be stricter than the thing it protects: the repo's own
-        ``rr_sk_known`` fixture is a live credential with a 5-character tail."""
+        """A prefixed value is a credential however short its tail. The
+        verifier accepts an ``mk_`` key by PREFIX alone, and the scrubber still
+        covers RapidReview ``rr_sk_`` keys that reach a payload as text."""
         self.ledger.reject(
             tool="rr_sk_known",
             source="http",

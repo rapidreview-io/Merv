@@ -30,8 +30,6 @@ from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.surface.auth import SupabaseVerifier
 from merv.brain.surface.oauth import (
     AUTHORIZATION_CODE_TTL_SECONDS,
-    DEVICE_GRANT,
-    HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS,
     MAX_CLIENTS_ENV_VAR,
     OAuthError,
     OAuthService,
@@ -240,16 +238,9 @@ class OAuthSurfaceTest(unittest.TestCase):
                 "authorization_endpoint": f"{ISSUER}/oauth/authorize",
                 "token_endpoint": f"{ISSUER}/oauth/token",
                 "registration_endpoint": f"{ISSUER}/oauth/register",
-                "device_authorization_endpoint": (
-                    f"{ISSUER}/oauth/device_authorization"
-                ),
                 "response_types_supported": ["code"],
                 "response_modes_supported": ["query"],
-                "grant_types_supported": [
-                    "authorization_code",
-                    "refresh_token",
-                    DEVICE_GRANT,
-                ],
+                "grant_types_supported": ["authorization_code", "refresh_token"],
                 "token_endpoint_auth_methods_supported": ["none"],
                 "code_challenge_methods_supported": ["S256"],
                 "authorization_response_iss_parameter_supported": True,
@@ -318,6 +309,47 @@ class OAuthSurfaceTest(unittest.TestCase):
                     {"invalid_redirect_uri", "invalid_client_metadata"},
                 )
                 self.assertEqual(response.headers["cache-control"], "no-store")
+
+    def test_a_loopback_client_keeps_one_row_across_ephemeral_ports(self) -> None:
+        """RFC 8252 §7.3: the port a native client got is not its identity."""
+        first = self._register(redirect_uris=["http://127.0.0.1:1455/callback"])
+        again = self._register(redirect_uris=["http://127.0.0.1:52341/callback"])
+        self.assertEqual(again["client_id"], first["client_id"])
+        self.assertEqual(first["redirect_uris"], ["http://127.0.0.1/callback"])
+        with self.app.store.connect() as conn:
+            count = conn.execute("SELECT COUNT(*) AS n FROM oauth_clients").fetchone()
+        self.assertEqual(int(count["n"]), 1)
+
+        # Any port on that host and path authorizes; a different path or host
+        # does not, and an HTTPS callback stays exact-match.
+        live = "http://127.0.0.1:60999/callback"
+        _redirect, query = self._authorize(
+            first["client_id"],
+            params=self._authorization_params(first["client_id"], redirect_uri=live),
+        )
+        exchanged = self._exchange(
+            client_id=first["client_id"], code=query["code"][0], redirect_uri=live
+        )
+        self.assertEqual(exchanged.status_code, 200, exchanged.text)
+        for rejected in (
+            "http://127.0.0.1:60999/other",
+            "http://10.0.0.5:60999/callback",
+            "https://127.0.0.1/callback",
+        ):
+            with self.subTest(redirect_uri=rejected):
+                denied = self.client.post(
+                    "/oauth/authorize",
+                    json={
+                        **self._authorization_params(
+                            first["client_id"], redirect_uri=rejected
+                        ),
+                        "decision": "approve",
+                        "project_id": self.project_a,
+                    },
+                    headers=_bearer(self.jwt_a),
+                )
+                self.assertEqual(denied.status_code, 400, denied.text)
+                self.assertEqual(denied.json()["error"], "invalid_request")
 
     def test_identical_re_registration_returns_the_same_client(self) -> None:
         """AUTH-03: public DCR must not grow a row per client restart."""
@@ -816,188 +848,20 @@ class OAuthSurfaceTest(unittest.TestCase):
         expired = self._exchange(client_id=registration["client_id"], code=expiring)
         self.assertEqual(expired.json()["error"], "invalid_grant")
 
-    def _code_window_seconds(self, digest: str) -> float:
-        with self.app.store.transaction() as conn:
+    def test_authorization_codes_carry_the_short_redirect_budget(self) -> None:
+        registration = self._register(grants=["authorization_code"])
+        _redirect, query = self._authorize(registration["client_id"])
+        digest = hashlib.sha256(query["code"][0].encode()).hexdigest()
+        with self.app.store.connect() as conn:
             row = conn.execute(
                 "SELECT created_at, expires_at FROM oauth_authorization_codes"
                 " WHERE code_digest = ?",
                 (digest,),
             ).fetchone()
-        self.assertIsNotNone(row)
-        return (parse_iso(row[1]) - parse_iso(row[0])).total_seconds()
-
-    def test_handoff_consent_mints_a_hand_carry_code_and_reports_pickup(
-        self,
-    ) -> None:
-        registration = self._register(grants=["authorization_code"])
-        response = self.client.post(
-            "/oauth/authorize",
-            json={
-                **self._authorization_params(registration["client_id"]),
-                "decision": "approve",
-                "project_id": self.project_a,
-                "handoff": True,
-            },
-            headers=_bearer(self.jwt_a),
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        body = response.json()
-        code = parse_qs(urlsplit(body["redirect_to"]).query)["code"][0]
-        digest = hashlib.sha256(code.encode()).hexdigest()
-        self.assertEqual(body["code_status"], digest)
-        # Hand-carried codes get the RFC 6749 §4.1.2 maximum, not the
-        # redirect budget.
         self.assertEqual(
-            self._code_window_seconds(digest), HANDOFF_AUTHORIZATION_CODE_TTL_SECONDS
+            (parse_iso(row[1]) - parse_iso(row[0])).total_seconds(),
+            AUTHORIZATION_CODE_TTL_SECONDS,
         )
-
-        pending = self.client.get(
-            f"/oauth/authorize/status?digest={digest}", headers=_bearer(self.jwt_a)
-        )
-        self.assertEqual(pending.status_code, 200, pending.text)
-        self.assertEqual(pending.json(), {"status": "pending"})
-        exchanged = self._exchange(client_id=registration["client_id"], code=code)
-        self.assertEqual(exchanged.status_code, 200, exchanged.text)
-        redeemed = self.client.get(
-            f"/oauth/authorize/status?digest={digest}", headers=_bearer(self.jwt_a)
-        )
-        self.assertEqual(redeemed.json(), {"status": "redeemed"})
-
-    def test_plain_consent_keeps_the_redirect_budget_and_no_status_key(
-        self,
-    ) -> None:
-        registration = self._register(grants=["authorization_code"])
-        response = self.client.post(
-            "/oauth/authorize",
-            json={
-                **self._authorization_params(registration["client_id"]),
-                "decision": "approve",
-                "project_id": self.project_a,
-            },
-            headers=_bearer(self.jwt_a),
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        body = response.json()
-        self.assertNotIn("code_status", body)
-        code = parse_qs(urlsplit(body["redirect_to"]).query)["code"][0]
-        digest = hashlib.sha256(code.encode()).hexdigest()
-        self.assertEqual(
-            self._code_window_seconds(digest), AUTHORIZATION_CODE_TTL_SECONDS
-        )
-
-    def test_authorization_status_needs_a_session_and_answers_edge_states(
-        self,
-    ) -> None:
-        anonymous = self.client.get("/oauth/authorize/status?digest=" + "0" * 64)
-        self.assertEqual(anonymous.status_code, 401, anonymous.text)
-        for junk in ("", "zz", "0" * 63, "0" * 64):
-            answer = self.client.get(
-                f"/oauth/authorize/status?digest={junk}", headers=_bearer(self.jwt_a)
-            )
-            self.assertEqual(answer.status_code, 200, answer.text)
-            self.assertEqual(answer.json(), {"status": "unknown"})
-
-        registration = self._register(grants=["authorization_code"])
-        response = self.client.post(
-            "/oauth/authorize",
-            json={
-                **self._authorization_params(registration["client_id"]),
-                "decision": "approve",
-                "project_id": self.project_a,
-                "handoff": True,
-            },
-            headers=_bearer(self.jwt_a),
-        )
-        digest = response.json()["code_status"]
-        with self.app.store.transaction() as conn:
-            conn.execute(
-                "UPDATE oauth_authorization_codes SET expires_at = ? WHERE code_digest = ?",
-                ("2000-01-01T00:00:00Z", digest),
-            )
-        expired = self.client.get(
-            f"/oauth/authorize/status?digest={digest}", headers=_bearer(self.jwt_a)
-        )
-        self.assertEqual(expired.json(), {"status": "expired"})
-
-    def _handoff_approve(self, registration: dict) -> dict:
-        response = self.client.post(
-            "/oauth/authorize",
-            json={
-                **self._authorization_params(registration["client_id"]),
-                "decision": "approve",
-                "project_id": self.project_a,
-                "handoff": True,
-            },
-            headers=_bearer(self.jwt_a),
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        return response.json()
-
-    def test_handoff_approve_mints_typeable_link_that_delivers_once(self) -> None:
-        registration = self._register(grants=["authorization_code"])
-        body = self._handoff_approve(registration)
-        token = body["go_token"]
-        self.assertRegex(token, r"^[0-9A-Z]{4}-[0-9A-Z]{4}$")
-
-        # A browser opening the link must not burn it.
-        browser = self.client.get(
-            f"/oauth/handoff/{token}", headers={"Accept": "text/html"}
-        )
-        self.assertEqual(browser.status_code, 200, browser.text)
-        self.assertIn("terminal", browser.text)
-
-        # curl -L: one 302 to the exact callback, then the code exchanges.
-        hop = self.client.get(f"/oauth/handoff/{token}", follow_redirects=False)
-        self.assertEqual(hop.status_code, 302, hop.text)
-        self.assertEqual(hop.headers["Location"], body["redirect_to"])
-        replay = self.client.get(f"/oauth/handoff/{token}", follow_redirects=False)
-        self.assertEqual(replay.status_code, 404, replay.text)
-        code = parse_qs(urlsplit(body["redirect_to"]).query)["code"][0]
-        exchanged = self._exchange(client_id=registration["client_id"], code=code)
-        self.assertEqual(exchanged.status_code, 200, exchanged.text)
-
-        # Transcription slips (lowercase, dashes dropped, O for 0) still land.
-        body2 = self._handoff_approve(registration)
-        sloppy = body2["go_token"].replace("-", "").lower().replace("0", "o")
-        hop2 = self.client.get(f"/oauth/handoff/{sloppy}", follow_redirects=False)
-        self.assertEqual(hop2.status_code, 302, hop2.text)
-
-    def test_handoff_visit_code_round_trips_a_pending_consent(self) -> None:
-        query = "response_type=code&client_id=oauthc_x&state=abc"
-        anonymous = self.client.post("/oauth/handoff/visit", json={"query": query})
-        self.assertEqual(anonymous.status_code, 401, anonymous.text)
-        minted = self.client.post(
-            "/oauth/handoff/visit", json={"query": query}, headers=_bearer(self.jwt_a)
-        )
-        self.assertEqual(minted.status_code, 200, minted.text)
-        code = minted.json()["code"]
-        picked = self.client.get(f"/oauth/handoff/visit/{code}")
-        self.assertEqual(picked.status_code, 200, picked.text)
-        self.assertEqual(picked.json(), {"query": query})
-        replay = self.client.get(f"/oauth/handoff/visit/{code}")
-        self.assertEqual(replay.status_code, 404, replay.text)
-
-    def test_handoff_link_mint_cap_degrades_gracefully(self) -> None:
-        for _ in range(10):
-            minted = self.client.post(
-                "/oauth/handoff/visit",
-                json={"query": "state=x"},
-                headers=_bearer(self.jwt_a),
-            )
-            self.assertEqual(minted.status_code, 200, minted.text)
-        over = self.client.post(
-            "/oauth/handoff/visit",
-            json={"query": "state=x"},
-            headers=_bearer(self.jwt_a),
-        )
-        self.assertEqual(over.status_code, 400, over.text)
-        self.assertEqual(over.json()["error"], "slow_down")
-        # The consent approve still succeeds at the cap — just without the
-        # short link.
-        registration = self._register(grants=["authorization_code"])
-        body = self._handoff_approve(registration)
-        self.assertNotIn("go_token", body)
-        self.assertIn("code_status", body)
 
     def test_refresh_rotation_revokes_predecessor_and_replay_fails(self) -> None:
         registration, first = self._mint_oauth_tokens()
@@ -1371,236 +1235,6 @@ class OAuthSurfaceTest(unittest.TestCase):
         self.assertIsNone(refresh_revoked)
         self.assertIsNone(key_revoked)
         self.assertIsNotNone(self.keys.verify_secret(secret=tokens["access_token"]))
-
-    # -- device authorization (RFC 8628) ------------------------------------
-
-    def _register_device_client(self, client_name: str = "Merv MCP pairing") -> dict:
-        response = self.client.post(
-            "/oauth/register",
-            json={
-                "client_name": client_name,
-                "token_endpoint_auth_method": "none",
-                "grant_types": [DEVICE_GRANT, "refresh_token"],
-            },
-        )
-        self.assertEqual(response.status_code, 201, response.text)
-        return response.json()
-
-    def _device_start(self, client_id: str) -> dict:
-        response = self.client.post(
-            "/oauth/device_authorization",
-            data={"client_id": client_id, "resource": RESOURCE},
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        return response.json()
-
-    def _device_poll(self, client_id: str, device_code: str, *, resource: str = RESOURCE):
-        return self.client.post(
-            "/oauth/token",
-            data={
-                "grant_type": DEVICE_GRANT,
-                "client_id": client_id,
-                "device_code": device_code,
-                "resource": resource,
-            },
-        )
-
-    def _device_decide(
-        self,
-        user_code: str,
-        *,
-        decision: str = "approve",
-        token: str | None = None,
-        project_id: str | None = None,
-        grant_scope: str | None = None,
-    ):
-        return self.client.post(
-            "/oauth/device",
-            json={
-                "user_code": user_code,
-                "decision": decision,
-                "project_id": (
-                    "" if decision == "deny" else project_id or self.project_a
-                ),
-                **({"grant_scope": grant_scope} if grant_scope else {}),
-            },
-            headers=_bearer(token or self.jwt_a),
-        )
-
-    def test_device_client_registers_without_redirect_uris(self) -> None:
-        registration = self._register_device_client()
-        self.assertEqual(registration["redirect_uris"], [])
-        self.assertEqual(
-            sorted(registration["grant_types"]),
-            sorted([DEVICE_GRANT, "refresh_token"]),
-        )
-        # A redirect-flow client still must register its redirect URIs.
-        refused = self.client.post(
-            "/oauth/register",
-            json={
-                "client_name": "Redirect Agent",
-                "token_endpoint_auth_method": "none",
-                "grant_types": ["authorization_code"],
-            },
-        )
-        self.assertEqual(refused.status_code, 400, refused.text)
-
-    def test_device_flow_mints_working_tokens_that_rotate(self) -> None:
-        registration = self._register_device_client()
-        start = self._device_start(registration["client_id"])
-        self.assertRegex(start["user_code"], r"^[0-9A-Z]{4}-[0-9A-Z]{4}$")
-        self.assertTrue(start["device_code"].startswith("mdc_"))
-        self.assertEqual(start["interval"], 5)
-        self.assertEqual(start["verification_uri"], "https://ui.example/merv/oauth/device")
-        self.assertEqual(
-            start["verification_uri_complete"],
-            f"https://ui.example/merv/oauth/device?user_code={start['user_code']}",
-        )
-
-        pending = self._device_poll(registration["client_id"], start["device_code"])
-        self.assertEqual(pending.status_code, 400, pending.text)
-        self.assertEqual(pending.json()["error"], "authorization_pending")
-
-        details = self.client.get(
-            f"/oauth/device/details?user_code={start['user_code']}",
-            headers=_bearer(self.jwt_a),
-        )
-        self.assertEqual(details.status_code, 200, details.text)
-        self.assertEqual(details.json()["client_name"], "Merv MCP pairing")
-        self.assertEqual(details.json()["resource"], RESOURCE)
-
-        approved = self._device_decide(start["user_code"], grant_scope="account")
-        self.assertEqual(approved.status_code, 200, approved.text)
-        self.assertEqual(approved.json()["status"], "approved")
-
-        # The pending poll above stamped last_polled_at; rewind it so this
-        # poll is the success rather than a slow_down, without sleeping.
-        with self.app.store.transaction() as conn:
-            conn.execute("UPDATE oauth_device_grants SET last_polled_at = NULL")
-        exchanged = self._device_poll(registration["client_id"], start["device_code"])
-        self.assertEqual(exchanged.status_code, 200, exchanged.text)
-        tokens = exchanged.json()
-        self.assertTrue(tokens["access_token"].startswith("mk_"))
-        self.assertTrue(tokens["refresh_token"].startswith("mrt_"))
-        self.assertEqual(self._mcp_overview(tokens["access_token"], self.project_a), 200)
-
-        # One-shot: a replayed device code never mints a second bearer.
-        replay = self._device_poll(registration["client_id"], start["device_code"])
-        self.assertEqual(replay.status_code, 400)
-        self.assertEqual(replay.json()["error"], "invalid_grant")
-
-        # The refresh family rotates exactly like the redirect flow's.
-        refreshed = self.client.post(
-            "/oauth/token",
-            data={
-                "grant_type": "refresh_token",
-                "client_id": registration["client_id"],
-                "refresh_token": tokens["refresh_token"],
-                "resource": RESOURCE,
-            },
-        )
-        self.assertEqual(refreshed.status_code, 200, refreshed.text)
-        self.assertEqual(
-            self._mcp_overview(refreshed.json()["access_token"], self.project_a), 200
-        )
-
-    def test_device_poll_enforces_the_interval(self) -> None:
-        registration = self._register_device_client()
-        start = self._device_start(registration["client_id"])
-        first = self._device_poll(registration["client_id"], start["device_code"])
-        self.assertEqual(first.json()["error"], "authorization_pending")
-        second = self._device_poll(registration["client_id"], start["device_code"])
-        self.assertEqual(second.json()["error"], "slow_down")
-
-    def test_device_denial_reaches_the_client_as_access_denied(self) -> None:
-        registration = self._register_device_client()
-        start = self._device_start(registration["client_id"])
-        denied = self._device_decide(start["user_code"], decision="deny")
-        self.assertEqual(denied.status_code, 200, denied.text)
-        self.assertEqual(denied.json()["status"], "denied")
-        poll = self._device_poll(registration["client_id"], start["device_code"])
-        self.assertEqual(poll.status_code, 400)
-        self.assertEqual(poll.json()["error"], "access_denied")
-
-    def test_an_expired_device_code_is_expired_token(self) -> None:
-        registration = self._register_device_client()
-        start = self._device_start(registration["client_id"])
-        with self.app.store.transaction() as conn:
-            conn.execute(
-                "UPDATE oauth_device_grants SET expires_at = ?",
-                (format_iso(datetime.now(UTC) - timedelta(seconds=1)),),
-            )
-        poll = self._device_poll(registration["client_id"], start["device_code"])
-        self.assertEqual(poll.status_code, 400)
-        self.assertEqual(poll.json()["error"], "expired_token")
-        # The code no longer names a pending grant on the consent side either.
-        approve = self._device_decide(start["user_code"])
-        self.assertEqual(approve.status_code, 400)
-        self.assertEqual(approve.json()["error"], "invalid_grant")
-
-    def test_device_consent_requires_session_and_membership(self) -> None:
-        registration = self._register_device_client()
-        start = self._device_start(registration["client_id"])
-        # No Supabase session: the gateway refuses before the handler runs.
-        anonymous = self.client.get(
-            f"/oauth/device/details?user_code={start['user_code']}"
-        )
-        self.assertNotEqual(anonymous.status_code, 200)
-        # A signed-in non-member cannot bind the grant to someone else's project.
-        outsider = self._device_decide(
-            start["user_code"], token=self.jwt_b, project_id=self.project_a
-        )
-        self.assertEqual(outsider.status_code, 400)
-        self.assertEqual(outsider.json()["error"], "access_denied")
-        # An unknown grant scope is refused before any row is touched.
-        bad_scope = self._device_decide(start["user_code"], grant_scope="galaxy")
-        self.assertEqual(bad_scope.status_code, 400)
-        self.assertEqual(bad_scope.json()["error"], "invalid_request")
-        # The grant is still pending and approvable by the actual member.
-        approved = self._device_decide(start["user_code"])
-        self.assertEqual(approved.status_code, 200, approved.text)
-
-    def test_device_code_misses_throttle_per_principal(self) -> None:
-        for _ in range(10):
-            miss = self._device_decide("QQQQ-QQQ2")
-            self.assertEqual(miss.status_code, 400)
-            self.assertEqual(miss.json()["error"], "invalid_grant")
-        throttled = self._device_decide("QQQQ-QQQ2")
-        self.assertEqual(throttled.status_code, 429, throttled.text)
-
-    def test_device_grant_is_bound_to_client_and_resource(self) -> None:
-        registration = self._register_device_client()
-        other = self._register_device_client(client_name="Other pairing tool")
-        self.assertNotEqual(registration["client_id"], other["client_id"])
-        start = self._device_start(registration["client_id"])
-        stolen = self._device_poll(other["client_id"], start["device_code"])
-        self.assertEqual(stolen.status_code, 400)
-        self.assertEqual(stolen.json()["error"], "invalid_grant")
-        wrong_resource = self._device_poll(
-            registration["client_id"], start["device_code"], resource="https://evil.example/mcp"
-        )
-        self.assertEqual(wrong_resource.status_code, 400)
-        self.assertEqual(wrong_resource.json()["error"], "invalid_target")
-        # A redirect-only client cannot enter the device lane at all.
-        redirect_client = self._register()
-        refused = self.client.post(
-            "/oauth/device_authorization",
-            data={"client_id": redirect_client["client_id"], "resource": RESOURCE},
-        )
-        self.assertEqual(refused.status_code, 400)
-        self.assertEqual(refused.json()["error"], "unauthorized_client")
-
-    def test_a_client_with_only_a_device_grant_survives_the_prune(self) -> None:
-        registration = self._register_device_client()
-        self._device_start(registration["client_id"])
-        repository = SqlOAuthRepository(
-            store=self.app.store, unused_client_ttl_days=30
-        )
-        outcome = repository.prune(now=datetime.now(tz=UTC) + timedelta(days=31))
-        self.assertTrue(outcome["ok"])
-        self.assertIsNotNone(
-            repository.client_by_id(client_id=registration["client_id"])
-        )
 
 
 if __name__ == "__main__":

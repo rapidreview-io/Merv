@@ -3,13 +3,12 @@
 Local-mode neutrality is proven by test_http_api.py (no auth argument, no
 Authorization headers, all green). This file exercises the hosted shape:
 create_fastapi_app(auth=SupabaseVerifier(...)) with minted HS256 JWTs and a
-MockTransport-backed PostgREST for the rr_sk_ API-key path.
+MockTransport-backed PostgREST for the member-directory RPCs.
 """
 
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import os
 import tempfile
@@ -32,8 +31,6 @@ from merv.brain.surface.transport.api.shared import CLIENT_VERSION_HEADER
 SECRET = "test-jwt-secret"
 USER_A = "11111111-1111-1111-1111-111111111111"
 USER_B = "22222222-2222-2222-2222-222222222222"
-KNOWN_KEY = "rr_sk_known"
-KNOWN_KEY_HASH = hashlib.sha256(KNOWN_KEY.encode()).hexdigest()
 
 
 def _token(sub: str = USER_A, **overrides) -> str:
@@ -79,9 +76,6 @@ def _postgrest_mock(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200, json=[profile for uid, profile in profiles.items() if uid in requested]
         )
-    # Fake Supabase: api_keys lookups — only the known hash resolves.
-    if f"eq.{KNOWN_KEY_HASH}" in str(request.url):
-        return httpx.Response(200, json=[{"user_id": USER_B}])
     return httpx.Response(200, json=[])
 
 
@@ -120,26 +114,7 @@ class SupabaseVerifierTest(unittest.TestCase):
         with self.assertRaises(UnauthorizedError):
             self.verifier.verify_bearer(f"Bearer {_token(is_anonymous=True)}")
 
-    def test_api_key_resolves_owner_and_unknown_key_fails(self) -> None:
-        principal = self.verifier.verify_bearer(f"Bearer {KNOWN_KEY}")
-        self.assertEqual(principal.user_id, USER_B)
-        self.assertTrue(principal.client_id.startswith("key:"))
-        with self.assertRaises(UnauthorizedError):
-            self.verifier.verify_bearer("Bearer rr_sk_unknown")
-
-    def test_api_key_lookup_is_cached(self) -> None:
-        self.verifier.verify_bearer(f"Bearer {KNOWN_KEY}")
-        # Swap the transport for a failing one: the cache must answer.
-        self.verifier._http = httpx.Client(
-            transport=httpx.MockTransport(lambda _req: httpx.Response(500))
-        )
-        principal = self.verifier.verify_bearer(f"Bearer {KNOWN_KEY}")
-        self.assertEqual(principal.user_id, USER_B)
-
-    def test_basic_credential_carries_key_or_jwt_in_password_slot(self) -> None:
-        encoded = base64.b64encode(f"rp:{KNOWN_KEY}".encode()).decode()
-        principal = self.verifier.verify_basic_or_bearer(f"Basic {encoded}")
-        self.assertEqual(principal.user_id, USER_B)
+    def test_basic_credential_carries_the_bearer_in_the_password_slot(self) -> None:
         encoded_jwt = base64.b64encode(f"rp:{_token()}".encode()).decode()
         principal = self.verifier.verify_basic_or_bearer(f"Basic {encoded_jwt}")
         self.assertEqual(principal.user_id, USER_A)
@@ -411,34 +386,6 @@ class AuthedSurfaceTest(unittest.TestCase):
         )
         self.assertEqual(raw.status_code, 201, raw.text)
 
-    def test_a_machine_key_cannot_change_membership(self) -> None:
-        """AUTH-01: only a human decides who belongs to a project."""
-        project_id = self._create_project("Keyed", _bearer(USER_A))
-        self.app.projects.add_member(project_id=project_id, user_id=USER_B)
-        key = {"Authorization": f"Bearer {KNOWN_KEY}"}  # rr_sk_, resolves to USER_B
-
-        added = self.client.post(
-            f"/api/projects/{project_id}/members",
-            json={"user_id": "cccccccc-cccc-cccc-cccc-cccccccccccc"},
-            headers=key,
-        )
-        self.assertEqual(added.status_code, 403, added.text)
-        self.assertEqual(added.json()["error_code"], "human_session_required")
-
-        removed = self.client.delete(
-            f"/api/projects/{project_id}/members/{USER_A}", headers=key
-        )
-        self.assertEqual(removed.status_code, 403, removed.text)
-        self.assertEqual(removed.json()["error_code"], "human_session_required")
-
-        # The member list the key tried to rewrite is untouched.
-        members = self.client.get(
-            f"/api/projects/{project_id}/members", headers=_bearer(USER_A)
-        )
-        self.assertEqual(
-            sorted(m["user_id"] for m in members.json()["members"]), [USER_A, USER_B]
-        )
-
     def test_the_last_member_of_a_project_cannot_be_removed(self) -> None:
         project_id = self._create_project("Solo", _bearer(USER_A))
         refused = self.client.delete(
@@ -579,15 +526,8 @@ class AuthedSurfaceTest(unittest.TestCase):
         self.assertEqual(legacy.status_code, 403, legacy.text)
         self.assertEqual(legacy.json()["error_code"], "tool_visibility_forbidden")
 
-    def test_api_key_authenticates_as_its_owner(self) -> None:
-        project_id = self._create_project("Keyed", _bearer(USER_B))
-        listed = self.client.get(
-            "/api/projects", headers={"Authorization": f"Bearer {KNOWN_KEY}"}
-        ).json()
-        self.assertEqual([p["id"] for p in listed["projects"]], [project_id])
-
     def test_mlflow_auth_route_is_absent_from_default_product(self) -> None:
-        encoded = base64.b64encode(f"rp:{KNOWN_KEY}".encode()).decode()
+        encoded = base64.b64encode(f"rp:{_token()}".encode()).decode()
         for headers in (
             None,
             _bearer(USER_A),
@@ -597,7 +537,7 @@ class AuthedSurfaceTest(unittest.TestCase):
             self.assertEqual(response.status_code, 404, response.text)
 
     def test_legacy_suspension_env_does_not_reintroduce_mlflow_auth_route(self) -> None:
-        encoded = base64.b64encode(f"rp:{KNOWN_KEY}".encode()).decode()
+        encoded = base64.b64encode(f"rp:{_token()}".encode()).decode()
         with patch.dict(os.environ, {"MERV_MLFLOW_SUSPENDED": "1"}, clear=False):
             for headers in (
                 None,

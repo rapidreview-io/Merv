@@ -2,21 +2,19 @@
 
 The research suite shares RapidReview's Supabase project: the same accounts
 sign in to both products. One ``Authorization: Bearer`` header carries either
-a Supabase session JWT (verified locally, HS256) or a long-lived RapidReview
-``rr_sk_`` API key (sha256 hash looked up in the shared ``api_keys`` table
-over PostgREST). Local mode never constructs a verifier, so none of this —
-including the PyJWT import — executes on the localhost path.
+a Supabase session JWT (verified locally, HS256) or a project ``mk_`` key.
+The service role is still needed for the member directory RPCs. Local mode
+never constructs a verifier, so none of this — including the PyJWT import —
+executes on the localhost path.
 """
 
 from __future__ import annotations
 
 import base64
-import hashlib
 import logging
 import os
-import time
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 
@@ -38,12 +36,9 @@ REQUIRE_AUTH_ENV_VAR = "MERV_REQUIRE_AUTH"
 # surface has to name it exactly, and the boot log says so every time.
 ALLOW_OPEN_CONTROL_ENV_VAR = "MERV_ALLOW_OPEN_CONTROL"
 # Same value RapidReview calls SUPABASE_KEY (service role — bypasses RLS so
-# the api_keys hash lookup works). Server-side only; never reaches clients.
+# the member-directory RPCs resolve). Server-side only; never reaches clients.
 SUPABASE_SERVICE_KEY_ENV_VAR = "SUPABASE_SERVICE_KEY"
 SUPABASE_ANON_KEY_ENV_VAR = "SUPABASE_ANON_KEY"
-
-API_KEY_PREFIX = "rr_sk_"
-_KEY_CACHE_TTL_SECONDS = 60.0
 
 
 class UnauthorizedError(Exception):
@@ -56,14 +51,13 @@ class UnauthorizedError(Exception):
 
 @dataclass
 class SupabaseVerifier:
-    """Verifies Supabase JWTs and RapidReview API keys into Principals."""
+    """Verifies Supabase JWTs and project keys into Principals."""
 
     supabase_url: str
     jwt_secret: str
     service_key: str = ""
     anon_key: str = ""
     project_keys: ProjectKeyControl | None = None
-    _key_cache: dict[str, tuple[str, float]] = field(default_factory=dict)
     _http: httpx.Client | None = None
 
     @classmethod
@@ -102,8 +96,6 @@ class SupabaseVerifier:
             raise UnauthorizedError("empty bearer credential")
         if token.startswith(PROJECT_KEY_PREFIX):
             return self._verify_project_key(token)
-        if token.startswith(API_KEY_PREFIX):
-            return self._verify_api_key(token)
         return self._verify_jwt(token)
 
     def verify_basic_or_bearer(self, authorization: str | None) -> Principal:
@@ -148,18 +140,6 @@ class SupabaseVerifier:
             tenant_id=LOCAL_TENANT_ID, client_id=f"jwt:{session}", user_id=sub
         )
 
-    def _verify_api_key(self, key: str) -> Principal:
-        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
-        cached = self._key_cache.get(digest)
-        if cached and cached[1] > time.monotonic():
-            user_id = cached[0]
-        else:
-            user_id = self._lookup_key_user(digest)
-            self._key_cache[digest] = (user_id, time.monotonic() + _KEY_CACHE_TTL_SECONDS)
-        return Principal(
-            tenant_id=LOCAL_TENANT_ID, client_id=f"key:{digest[:8]}", user_id=user_id
-        )
-
     def _verify_project_key(self, key: str) -> Principal:
         if self.project_keys is None:
             raise UnauthorizedError("project API keys are not enabled on this deployment")
@@ -181,28 +161,6 @@ class SupabaseVerifier:
             audience=record.audience,
             oauth_family_id=record.oauth_family_id,
         )
-
-    def _lookup_key_user(self, digest: str) -> str:
-        if not self.service_key:
-            raise UnauthorizedError("API keys are not enabled on this deployment")
-        try:
-            response = self._client().get(
-                f"{self.supabase_url}/rest/v1/api_keys",
-                params={"key_hash": f"eq.{digest}", "select": "user_id", "limit": "1"},
-                headers={
-                    "apikey": self.service_key,
-                    "Authorization": f"Bearer {self.service_key}",
-                },
-            )
-            response.raise_for_status()
-            rows = response.json()
-        except UnauthorizedError:
-            raise
-        except Exception as exc:
-            raise UnauthorizedError("credential service unavailable") from exc
-        if not rows:
-            raise UnauthorizedError("unknown API key")
-        return str(rows[0]["user_id"])
 
     def find_user_by_email(self, email: str) -> dict[str, object] | None:
         """Resolve one account through the service-role-only auth RPC."""

@@ -23,6 +23,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
+from merv.shared.user_codes import format_user_code
 from .private_files import (
     PrivateFileError,
     read_json_document,
@@ -72,10 +73,6 @@ def generate_key() -> str:
 
 def key_digest(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
-
-
-def format_user_code(code: str) -> str:
-    return f"{code[:4]}-{code[4:]}" if len(code) == 8 else code
 
 
 def load_pairing(path: Path) -> PairingState | None:
@@ -316,7 +313,6 @@ __all__ = [
     "PairingError",
     "PairingState",
     "credential_path",
-    "format_user_code",
     "generate_key",
     "key_digest",
     "load_pairing",

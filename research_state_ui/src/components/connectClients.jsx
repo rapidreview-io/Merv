@@ -14,12 +14,12 @@ export const MERV_REPO_URL = 'https://github.com/rapidreview-io/Merv';
 export const CLIENT_DOCS_URL = `${MERV_REPO_URL}/blob/main/merv/docs/CLIENTS.md`;
 
 const CONSENT_NOTE = 'Approve All my projects in the browser.';
-// A VM over SSH can never receive the sign-in's loopback callback; the
-// consent page covers that itself — its "On another machine" card swaps the
-// redirect for one command to copy over (see AUTH.md#remote-machines).
-const REMOTE_NOTE = 'On a remote machine, choose "On another machine" when '
-  + 'the consent page asks where the agent is running, and follow the one '
-  + 'command it shows.';
+// A VM over SSH can never receive the sign-in's loopback callback, and a
+// refresh token is single-use, so several agent processes there race on the
+// one stored token. Such a machine holds a project key instead.
+const REMOTE_NOTE = 'On a machine with no browser (a VM, a container, CI), '
+  + 'mint an MCP key under Settings and pass it as the Authorization header '
+  + 'instead of signing in.';
 
 export const NATIVE_CLIENTS = [
   {

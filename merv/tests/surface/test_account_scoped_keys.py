@@ -36,8 +36,7 @@ BOUND_KEY = Principal(
 ACCOUNT_KEY = Principal(
     tenant_id="local", client_id="project-key:k2", user_id=USER_A, key_id="k2",
 )
-# rr_sk_ and JWT carry no key_id at all; their reach is deliberately unchanged.
-RR_KEY = Principal(tenant_id="local", client_id="key:abcd1234", user_id=USER_A)
+# A browser session carries no key_id at all; its reach is deliberately unchanged.
 JWT = Principal(tenant_id="local", client_id="jwt:session", user_id=USER_A)
 
 
@@ -82,15 +81,11 @@ class OperatorDiagnosticsShapeTest(unittest.TestCase):
                     self.assertEqual(denial.status_code, 403)
 
     def test_non_key_credentials_keep_their_existing_reach(self) -> None:
-        # rr_sk_ stays an owner-trust credential (ruled: leave as-is), so this
-        # change must not narrow it. /api/activity is membership-scoped, hence
-        # the explicit project_id.
-        for label, principal in (("rr_sk_", RR_KEY), ("jwt", JWT)):
-            with self.subTest(credential=label):
-                denial = self._denial(
-                    "/api/activity", principal, query=f"project_id={PROJECT_A}"
-                )
-                self.assertIsNone(denial)
+        # /api/activity is membership-scoped, hence the explicit project_id.
+        denial = self._denial(
+            "/api/activity", JWT, query=f"project_id={PROJECT_A}"
+        )
+        self.assertIsNone(denial)
 
 
 class ProjectCreateShapeTest(unittest.TestCase):
@@ -118,9 +113,7 @@ class ProjectCreateShapeTest(unittest.TestCase):
                     self._create(principal)
 
     def test_human_and_local_credentials_may_still_create(self) -> None:
-        for label, principal in (
-            ("jwt", JWT), ("rr_sk_", RR_KEY), ("local", LOCAL_PRINCIPAL),
-        ):
+        for label, principal in (("jwt", JWT), ("local", LOCAL_PRINCIPAL)):
             with self.subTest(credential=label):
                 self._create(principal)  # no raise
 

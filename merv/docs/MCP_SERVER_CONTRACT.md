@@ -13,9 +13,12 @@ agent client — local Claude Code, cloud Codex, Replit, browser-driven — conn
 the same way: directly to the brain's stateless `POST /mcp` HTTP endpoint,
 authenticated by a scoped bearer credential. The committed config files
 (`.mcp.json`, `.mcp.codex.json`, `mcp.json`) are URL-only so interactive clients
-can discover and complete Merv OAuth without a manually minted key. Headless
-clients that cannot run OAuth pass a static scoped key from `MERV_MCP_KEY`; the
-key is never inlined into a committed file.
+can discover and complete Merv OAuth without a manually minted key. A client on
+a machine with no browser — a VM, a platform sandbox, CI, the Messages API MCP
+connector — passes a static scoped key from `MERV_MCP_KEY` instead, because a
+refresh token is single-use and several agent processes on one machine race on
+the same stored one ([AUTH.md](AUTH.md#machines-with-no-browser)); the key is
+never inlined into a committed file.
 
 An OAuth session can reach the projects available to its user; a static key is
 scoped either to one project or to its owner's whole account. In either case the

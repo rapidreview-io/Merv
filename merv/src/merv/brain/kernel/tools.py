@@ -49,7 +49,7 @@ class ToolContract:
     # The caller's verified user id, and their key's bound project under this
     # argument name, replace whatever the model sent.
     binds_caller_project: str = ""
-    # An action a machine key (mk_/rr_sk_) may not take on this tool.
+    # An action a machine key (mk_) may not take on this tool.
     external_key_denied_action: str = ""
 
     def __post_init__(self) -> None:

@@ -40,6 +40,7 @@ INCLUDE = (
     "merv/shared/machine_dirs.py",
     "merv/shared/redaction.py",
     "merv/shared/runner_settings.py",
+    "merv/shared/user_codes.py",
 )
 
 

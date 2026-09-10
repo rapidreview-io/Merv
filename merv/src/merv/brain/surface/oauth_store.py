@@ -5,34 +5,28 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ..kernel.env import env_int
-from ..kernel.secret_tokens import secret_digest_matches
-from ..kernel.state.schema import SchemaModule
+from ..kernel.state.schema import Connection, Migration, SchemaModule
 from ..kernel.state.store import BaseStateStore, row_to_dict
-from ..kernel.utils import ThrottledError, format_iso, parse_iso
+from ..kernel.utils import format_iso
 from .oauth import (
     CAP_EVICTION_LIMIT,
     DEFAULT_MAX_CLIENTS,
     DEFAULT_UNUSED_CLIENT_TTL_DAYS,
-    DEVICE_MISS_LIMIT,
-    DEVICE_MISS_WINDOW_SECONDS,
     MAX_CLIENTS_ENV_VAR,
     OPPORTUNISTIC_PRUNE_LIMIT,
     UNUSED_CLIENT_TTL_DAYS_ENV_VAR,
     AuthorizationCode,
-    DeviceGrant,
-    HandoffLink,
     OAuthClient,
     OAuthError,
     RefreshToken,
 )
-from .project_keys import PROJECT_GRANT
-from .runner_pairing import IpCreationBudget
+from .project_keys import PROJECT_GRANT, revoke_key_lineage
 
 LOGGER = logging.getLogger(__name__)
 
@@ -85,44 +79,14 @@ def _fingerprint(client: OAuthClient) -> str:
 
 
 # A registration nobody ever authorized: it holds no credential, so deleting it
-# revokes nothing. Shared by the scheduled sweep, the bounded prune the
-# registration path runs itself, and the at-cap eviction, so the three can never
-# drift into disagreeing about which rows are expendable.
+# revokes nothing.
 _NEVER_USED_PREDICATE = """
   client_id NOT IN (SELECT client_id FROM oauth_authorization_codes)
   AND client_id NOT IN (SELECT client_id FROM oauth_refresh_tokens)
-  AND client_id NOT IN (SELECT client_id FROM oauth_device_grants)
-"""
-_UNUSED_CLIENT_PREDICATE = f"""
-  created_at < ?
-  AND {_NEVER_USED_PREDICATE}
 """
 _BY_FINGERPRINT = """
 SELECT * FROM oauth_clients WHERE metadata_fingerprint = ?
 """
-# The same per-IP budget runner pairing holds, over the two Surface tables an
-# unauthenticated or browser-session caller can grow. Handoff links keep no
-# pending state, and their mint is often made on the user's behalf mid-consent,
-# so that one refuses with ``slow_down`` for the caller to degrade to the full
-# command rather than fail the approval.
-_GRANT_COUNT = "SELECT COUNT(*) AS n FROM oauth_device_grants WHERE "
-_DEVICE_BUDGET = IpCreationBudget(
-    recent_by_ip=_GRANT_COUNT + "client_ip = ? AND created_at > ?",
-    pending_by_ip=_GRANT_COUNT + "client_ip = ? AND status = 'pending'",
-    pending_total=_GRANT_COUNT + "status = 'pending'",
-    refusal=lambda: ThrottledError(
-        "too many device authorization requests; wait a minute and try again",
-        details={"retry_after_seconds": 60},
-    ),
-)
-_HANDOFF_BUDGET = IpCreationBudget(
-    recent_by_ip=(
-        "SELECT COUNT(*) AS n FROM oauth_handoff_links "
-        "WHERE client_ip = ? AND created_at > ?"
-    ),
-    refusal=lambda: OAuthError("slow_down", "too many handoff links; retry shortly"),
-)
-
 
 class SqlOAuthRepository:
     def __init__(
@@ -181,7 +145,7 @@ class SqlOAuthRepository:
             # Cleanup that does not depend on anyone scheduling it: every
             # registration pays for a bounded slice of the sweep, then makes
             # room at the cap if it must.
-            self._prune_unused(
+            self._delete_never_used(
                 conn=conn, cutoff=self._cutoff(None), limit=OPPORTUNISTIC_PRUNE_LIMIT
             )
             occupied = self._make_room(conn=conn)
@@ -248,41 +212,25 @@ class SqlOAuthRepository:
         make unauthenticated DCR a cheap onboarding denial of service: anyone
         could fill the table with valid metadata and lock every real client out
         until the TTL horizon. Eviction inverts that — the attacker's own
-        never-used rows are what gets dropped. Only a table whose every row is
-        USED (holds a code or a refresh token, so deleting it would revoke
-        someone's live grant) still refuses, and the per-call bound keeps the
-        work under the writer lock predictable: an over-cap table converges
-        across attempts rather than in one long one.
+        never-used rows are what gets dropped. It is the scheduled sweep with
+        the age horizon dropped, so the two can never disagree about which rows
+        are expendable. Only a table whose every row is USED (holds a code or a
+        refresh token, so deleting it would revoke someone's live grant) still
+        refuses, and the per-call bound keeps the work under the writer lock
+        predictable: an over-cap table converges across attempts rather than in
+        one long one.
         """
-        total = self._client_count(conn=conn)
-        if total < self.max_clients:
-            return total
-        evicted = self._evict_never_used(
-            conn=conn, limit=min(total - self.max_clients + 1, CAP_EVICTION_LIMIT)
-        )
-        return total - evicted
-
-    def _client_count(self, *, conn: Any) -> int:
         row = row_to_dict(
             row=conn.execute("SELECT COUNT(*) AS total FROM oauth_clients").fetchone()
         )
-        return int((row or {}).get("total") or 0)
-
-    def _evict_never_used(self, *, conn: Any, limit: int) -> int:
-        """Delete the oldest never-used registrations, ignoring their age."""
-        if limit <= 0:
-            return 0
-        cursor = conn.execute(
-            f"""
-            DELETE FROM oauth_clients WHERE client_id IN (
-              SELECT client_id FROM oauth_clients
-              WHERE {_NEVER_USED_PREDICATE}
-              ORDER BY created_at, client_id LIMIT ?
-            )
-            """,
-            (limit,),
+        total = int((row or {}).get("total") or 0)
+        if total < self.max_clients:
+            return total
+        return total - self._delete_never_used(
+            conn=conn,
+            cutoff=None,
+            limit=min(total - self.max_clients + 1, CAP_EVICTION_LIMIT),
         )
-        return max(0, int(getattr(cursor, "rowcount", 0) or 0))
 
     def client_by_id(self, *, client_id: str) -> OAuthClient | None:
         with closing(self._store.connect()) as conn:
@@ -301,7 +249,9 @@ class SqlOAuthRepository:
         cutoff = self._cutoff(now)
         try:
             with self._store.transaction() as conn:
-                deleted = self._prune_unused(conn=conn, cutoff=cutoff, limit=None)
+                deleted = self._delete_never_used(
+                    conn=conn, cutoff=cutoff, limit=None
+                )
         except Exception as exc:  # noqa: BLE001 -- one sweep must not abort the pass
             return {"deleted": 0, "ok": False, "cutoff": cutoff, "error": str(exc)[:200]}
         return {"deleted": deleted, "ok": True, "cutoff": cutoff}
@@ -312,29 +262,34 @@ class SqlOAuthRepository:
             - timedelta(days=self.unused_client_ttl_days)
         )
 
-    def _prune_unused(self, *, conn: Any, cutoff: str, limit: int | None) -> int:
-        """Delete unused registrations older than ``cutoff``, at most ``limit``.
+    @staticmethod
+    def _delete_never_used(
+        *, conn: Any, cutoff: str | None, limit: int | None
+    ) -> int:
+        """Delete never-used registrations; the one sweep all three callers run.
 
-        ``limit`` None is the full scheduled sweep; a number keeps the work a
-        registration does on its own behalf bounded and predictable. The
-        subquery form (rather than ``DELETE ... LIMIT``) is the one both
-        dialects accept.
+        ``cutoff`` None drops the age horizon, which is what the at-cap
+        eviction wants and the scheduled sweep must never do. ``limit`` None is
+        the full sweep; a number keeps the work a registration does on its own
+        behalf bounded and predictable. The subquery form (rather than
+        ``DELETE ... LIMIT``) is the one both dialects accept.
         """
+        if limit is not None and limit <= 0:
+            return 0
+        aged = "" if cutoff is None else "created_at < ? AND"
+        params = () if cutoff is None else (cutoff,)
         if limit is None:
-            cursor = conn.execute(
-                f"DELETE FROM oauth_clients WHERE {_UNUSED_CLIENT_PREDICATE}", (cutoff,)
-            )
+            statement = f"DELETE FROM oauth_clients WHERE {aged} {_NEVER_USED_PREDICATE}"
         else:
-            cursor = conn.execute(
-                f"""
+            statement = f"""
                 DELETE FROM oauth_clients WHERE client_id IN (
                   SELECT client_id FROM oauth_clients
-                  WHERE {_UNUSED_CLIENT_PREDICATE}
-                  ORDER BY created_at LIMIT ?
+                  WHERE {aged} {_NEVER_USED_PREDICATE}
+                  ORDER BY created_at, client_id LIMIT ?
                 )
-                """,
-                (cutoff, limit),
-            )
+                """
+            params = (*params, limit)
+        cursor = conn.execute(statement, params)
         return max(0, int(getattr(cursor, "rowcount", 0) or 0))
 
     def insert_code(self, *, code: AuthorizationCode) -> None:
@@ -405,62 +360,6 @@ class SqlOAuthRepository:
             )
         return True
 
-    def insert_handoff_link(self, *, link: HandoffLink) -> None:
-        with self._store.transaction() as conn:
-            _HANDOFF_BUDGET.enforce(
-                conn=conn, client_ip=link.client_ip, now=datetime.now(UTC)
-            )
-            # Opportunistic sweep: expired links leave with each mint, so the
-            # table stays bounded without an external timer.
-            conn.execute(
-                """
-                DELETE FROM oauth_handoff_links WHERE token_digest IN (
-                    SELECT token_digest FROM oauth_handoff_links
-                    WHERE expires_at <= ? LIMIT 100
-                )
-                """,
-                (link.created_at,),
-            )
-            conn.execute(
-                """
-                INSERT INTO oauth_handoff_links
-                  (token_digest, kind, payload, client_ip,
-                   created_at, expires_at, consumed_at)
-                VALUES (?, ?, ?, ?, ?, ?, NULL)
-                """,
-                (
-                    link.token_digest,
-                    link.kind,
-                    link.payload,
-                    link.client_ip,
-                    link.created_at,
-                    link.expires_at,
-                ),
-            )
-
-    def consume_handoff_link(
-        self, *, digest: str, kind: str, consumed_at: str
-    ) -> str | None:
-        with self._store.transaction() as conn:
-            row = conn.execute(
-                """
-                SELECT payload FROM oauth_handoff_links
-                WHERE token_digest = ? AND kind = ?
-                  AND consumed_at IS NULL AND expires_at > ?
-                """,
-                (digest, kind, consumed_at),
-            ).fetchone()
-            if row is None:
-                return None
-            conn.execute(
-                """
-                UPDATE oauth_handoff_links SET consumed_at = ?
-                WHERE token_digest = ? AND consumed_at IS NULL
-                """,
-                (consumed_at, digest),
-            )
-        return str(row["payload"])
-
     def insert_refresh_token(self, *, token: RefreshToken) -> None:
         with self._store.transaction() as conn:
             conn.execute(
@@ -519,223 +418,6 @@ class SqlOAuthRepository:
             )
         return True
 
-    # -- device authorization grants (RFC 8628) -----------------------------
-
-    def create_device_grant(
-        self, *, grant: DeviceGrant, user_codes: Callable[[], str]
-    ) -> str:
-        """Insert a pending grant under the runner-pairing rate budgets.
-
-        ``user_codes`` yields candidate codes so the secret material stays in
-        policy; the unique index arbitrates collisions inside the transaction.
-        """
-        now = datetime.now(UTC)
-        with self._store.transaction() as conn:
-            self._sweep_device_grants(conn=conn, now=now)
-            _DEVICE_BUDGET.enforce(conn=conn, client_ip=grant.client_ip, now=now)
-            for _attempt in range(8):
-                user_code = user_codes()
-                inserted = conn.execute(
-                    """
-                    INSERT INTO oauth_device_grants (
-                      id, device_code_digest, user_code, client_id, resource,
-                      status, client_ip, created_at, expires_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
-                    ON CONFLICT (user_code) DO NOTHING
-                    RETURNING user_code
-                    """,
-                    (
-                        grant.id,
-                        grant.device_code_digest,
-                        user_code,
-                        grant.client_id,
-                        grant.resource,
-                        grant.client_ip,
-                        grant.created_at,
-                        grant.expires_at,
-                    ),
-                ).fetchone()
-                if inserted is not None:
-                    return str(inserted["user_code"])
-            # 8 consecutive 40-bit collisions.
-            raise ThrottledError(  # pragma: no cover
-                "could not allocate a device code; retry"
-            )
-
-    def device_grant_for_consent(
-        self, *, user_code: str, principal: str
-    ) -> DeviceGrant | None:
-        grant, throttled, missed = self._consent_lookup(
-            user_code=user_code, principal=principal
-        )
-        if throttled:
-            raise ThrottledError(
-                "too many failed device-code attempts; wait before trying again",
-                details={"retry_after_seconds": DEVICE_MISS_WINDOW_SECONDS},
-            )
-        return None if missed else grant
-
-    def decide_device_grant(
-        self,
-        *,
-        user_code: str,
-        principal: str,
-        approved: bool,
-        owner_user_id: str,
-        project_id: str,
-        grant_scope: str,
-    ) -> DeviceGrant | None:
-        now = datetime.now(UTC)
-        grant, throttled, missed = self._consent_lookup(
-            user_code=user_code, principal=principal
-        )
-        if throttled:
-            raise ThrottledError(
-                "too many failed device-code attempts; wait before trying again",
-                details={"retry_after_seconds": DEVICE_MISS_WINDOW_SECONDS},
-            )
-        if missed or grant is None:
-            return None
-        with self._store.transaction() as conn:
-            cursor = conn.execute(
-                """
-                UPDATE oauth_device_grants
-                SET status = ?, owner_user_id = ?, project_id = ?,
-                    grant_scope = ?, decided_at = ?
-                WHERE id = ? AND status = 'pending'
-                """,
-                (
-                    "approved" if approved else "denied",
-                    owner_user_id,
-                    project_id or None,
-                    grant_scope or None,
-                    format_iso(now),
-                    grant.id,
-                ),
-            )
-            if int(getattr(cursor, "rowcount", 0) or 0) != 1:
-                # A concurrent decision or the expiry sweep won; the caller's
-                # code no longer names a pending grant.
-                return None
-        return grant
-
-    def poll_device_grant(
-        self, *, digest: str, client_id: str, interval_seconds: int
-    ) -> tuple[str, DeviceGrant | None]:
-        now = datetime.now(UTC)
-        with self._store.transaction() as conn:
-            self._sweep_device_grants(conn=conn, now=now)
-            row = conn.execute(
-                "SELECT * FROM oauth_device_grants WHERE device_code_digest = ?",
-                (digest,),
-            ).fetchone()
-            grant = _device_grant(row)
-            if (
-                grant is None
-                or not secret_digest_matches(
-                    stored_digest=grant.device_code_digest, presented_digest=digest
-                )
-                or grant.client_id != client_id
-            ):
-                return ("unknown", None)
-            if grant.status == "pending":
-                last = (
-                    parse_iso(grant.last_polled_at) if grant.last_polled_at else None
-                )
-                conn.execute(
-                    "UPDATE oauth_device_grants SET last_polled_at = ? WHERE id = ?",
-                    (format_iso(now), grant.id),
-                )
-                if last is not None and now < last + timedelta(
-                    seconds=interval_seconds
-                ):
-                    return ("slow_down", None)
-                return ("pending", None)
-            if grant.status == "denied":
-                return ("denied", None)
-            if grant.status == "expired":
-                return ("expired", None)
-            if grant.status == "approved":
-                cursor = conn.execute(
-                    """
-                    UPDATE oauth_device_grants
-                    SET status = 'consumed', consumed_at = ?
-                    WHERE id = ? AND status = 'approved'
-                    """,
-                    (format_iso(now), grant.id),
-                )
-                # The compare-and-set is what makes the exchange one-shot: a
-                # concurrent poll that lost the race must not mint a second
-                # bearer from the same approval.
-                if int(getattr(cursor, "rowcount", 0) or 0) != 1:
-                    return ("unknown", None)
-                return ("approved", grant)
-            # 'consumed': a replayed device code after a successful exchange.
-            return ("unknown", None)
-
-    def _consent_lookup(
-        self, *, user_code: str, principal: str
-    ) -> tuple[DeviceGrant | None, bool, bool]:
-        """Resolve a typed code to its pending grant, counting misses.
-
-        Mirrors runner pairing exactly: the miss row is committed by this
-        transaction even though the caller then fails, so the counter survives
-        the raise; a throttled principal never learns whether a code exists.
-        """
-        now = datetime.now(UTC)
-        window_start = format_iso(
-            now - timedelta(seconds=DEVICE_MISS_WINDOW_SECONDS)
-        )
-        with self._store.transaction() as conn:
-            self._sweep_device_grants(conn=conn, now=now)
-            conn.execute(
-                "DELETE FROM oauth_device_grant_attempts WHERE attempted_at <= ?",
-                (window_start,),
-            )
-            misses = conn.execute(
-                """
-                SELECT COUNT(*) AS n FROM oauth_device_grant_attempts
-                WHERE principal = ? AND attempted_at > ?
-                """,
-                (principal, window_start),
-            ).fetchone()
-            throttled = int(misses["n"]) >= DEVICE_MISS_LIMIT
-            row = (
-                None
-                if throttled
-                else conn.execute(
-                    "SELECT * FROM oauth_device_grants WHERE user_code = ?",
-                    (user_code,),
-                ).fetchone()
-            )
-            grant = _device_grant(row)
-            missed = not throttled and (grant is None or grant.status != "pending")
-            if missed:
-                conn.execute(
-                    "INSERT INTO oauth_device_grant_attempts "
-                    "(principal, attempted_at) VALUES (?, ?)",
-                    (principal, format_iso(now)),
-                )
-        return (None if missed else grant, throttled, missed)
-
-    @staticmethod
-    def _sweep_device_grants(*, conn: Any, now: datetime) -> None:
-        conn.execute(
-            """
-            UPDATE oauth_device_grants SET status = 'expired'
-            WHERE status IN ('pending', 'approved') AND expires_at <= ?
-            """,
-            (format_iso(now),),
-        )
-        # A row a day past expiry holds nothing revocable — the device code is
-        # useless and any minted bearer lives in project_api_keys — so delete
-        # it and keep the table bounded without anyone scheduling a sweep.
-        conn.execute(
-            "DELETE FROM oauth_device_grants WHERE expires_at <= ?",
-            (format_iso(now - timedelta(days=1)),),
-        )
-
     def revoke_refresh_family_and_key_lineage(
         self,
         *,
@@ -755,19 +437,12 @@ class SqlOAuthRepository:
                 """,
                 (revoked_at, family_id),
             )
-            conn.execute(
-                """
-                WITH RECURSIVE lineage(id) AS (
-                  SELECT id FROM project_api_keys WHERE id = ?
-                  UNION ALL
-                  SELECT child.id FROM project_api_keys child
-                  JOIN lineage parent ON child.parent_key_id = parent.id
-                )
-                UPDATE project_api_keys SET revoked_at = COALESCE(revoked_at, ?)
-                WHERE id IN (SELECT id FROM lineage)
-                  AND project_id = ? AND owner_user_id = ?
-                """,
-                (key_id, revoked_at, project_id, owner_user_id),
+            revoke_key_lineage(
+                conn,
+                project_id=project_id,
+                key_id=key_id,
+                owner_user_id=owner_user_id,
+                revoked_at=revoked_at,
             )
 
 
@@ -783,32 +458,6 @@ def _client(row: Any) -> OAuthClient | None:
         created_at=str(data["created_at"]),
     )
 
-
-def _device_grant(row: Any) -> DeviceGrant | None:
-    data = row_to_dict(row=row)
-    if data is None:
-        return None
-    return DeviceGrant(
-        id=str(data["id"]),
-        device_code_digest=str(data["device_code_digest"]),
-        user_code=str(data["user_code"]),
-        client_id=str(data["client_id"]),
-        resource=str(data["resource"]),
-        status=str(data["status"]),
-        owner_user_id=(
-            str(data["owner_user_id"]) if data.get("owner_user_id") else None
-        ),
-        project_id=(str(data["project_id"]) if data.get("project_id") else None),
-        grant_scope=(str(data["grant_scope"]) if data.get("grant_scope") else None),
-        client_ip=str(data.get("client_ip") or ""),
-        created_at=str(data["created_at"]),
-        expires_at=str(data["expires_at"]),
-        last_polled_at=(
-            str(data["last_polled_at"]) if data.get("last_polled_at") else None
-        ),
-        decided_at=(str(data["decided_at"]) if data.get("decided_at") else None),
-        consumed_at=(str(data["consumed_at"]) if data.get("consumed_at") else None),
-    )
 
 
 def _refresh_token(row: Any) -> RefreshToken | None:
@@ -909,57 +558,6 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
   FOREIGN KEY(parent_token_id) REFERENCES oauth_refresh_tokens(id)
 );
 
--- OAuth device authorization grants (August 2026, RFC 8628). The lane for a
--- client on a machine whose loopback a browser can never reach (a VM over
--- SSH): the client polls /oauth/token with the device_code it alone holds
--- while a signed-in owner approves the short user_code on the UI. Approval
--- stamps the consent (owner, project, scope) onto the row; the next poll
--- consumes it and mints the same mk_/mrt_ pair the redirect flow mints.
--- Secrets are digests only, exactly like authorization codes.
-CREATE TABLE IF NOT EXISTS oauth_device_grants (
-  id TEXT PRIMARY KEY,
-  device_code_digest TEXT NOT NULL UNIQUE,
-  user_code TEXT NOT NULL UNIQUE,
-  client_id TEXT NOT NULL,
-  resource TEXT NOT NULL,
-  status TEXT NOT NULL
-    CHECK (status IN ('pending', 'approved', 'denied', 'consumed', 'expired')),
-  owner_user_id TEXT,
-  project_id TEXT,
-  grant_scope TEXT CHECK (grant_scope IN ('project', 'account')),
-  client_ip TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  last_polled_at TEXT,
-  decided_at TEXT,
-  consumed_at TEXT,
-  FOREIGN KEY(client_id) REFERENCES oauth_clients(client_id),
-  FOREIGN KEY(project_id) REFERENCES projects(id)
-);
-
--- Wrong-code misses per principal, so a signed-in user cannot spray the
--- device user-code space. Mirrors agent_runner_pairing_attempts.
-CREATE TABLE IF NOT EXISTS oauth_device_grant_attempts (
-  principal TEXT NOT NULL,
-  attempted_at TEXT NOT NULL
-);
-
--- Short single-use consent-handoff links. 'deliver' carries the client's
--- loopback callback URL so a curl -L on the agent's machine can finish the
--- native flow; 'visit' carries a pending authorize query so a phone can pick
--- the consent up by short code. Both are 32^8 tokens stored as digests,
--- ten-minute lifetime, consumed on first use; the authorization code inside
--- a deliver payload stays PKCE-bound to the waiting client either way.
-CREATE TABLE IF NOT EXISTS oauth_handoff_links (
-  token_digest TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('deliver', 'visit')),
-  payload TEXT NOT NULL,
-  client_ip TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  consumed_at TEXT
-);
-
 -- The get-or-create arbiter for a repeated registration. NULLs are distinct
 -- on both dialects, which is exactly the escape hatch legacy duplicates need.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_clients_fingerprint
@@ -971,19 +569,26 @@ CREATE INDEX IF NOT EXISTS idx_oauth_codes_client
   ON oauth_authorization_codes(client_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client
   ON oauth_refresh_tokens(client_id);
-CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_client
-  ON oauth_device_grants(client_id);
-CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_expiry
-  ON oauth_device_grants(status, expires_at);
-CREATE INDEX IF NOT EXISTS idx_oauth_device_grants_ip
-  ON oauth_device_grants(client_ip, created_at);
-CREATE INDEX IF NOT EXISTS idx_oauth_device_grant_attempts_principal
-  ON oauth_device_grant_attempts(principal, attempted_at);
-CREATE INDEX IF NOT EXISTS idx_oauth_handoff_links_expiry
-  ON oauth_handoff_links(expires_at);
-CREATE INDEX IF NOT EXISTS idx_oauth_handoff_links_ip
-  ON oauth_handoff_links(client_ip, created_at);
 """
 
 
-OAUTH_SCHEMA = SchemaModule(name="surface.oauth", ddl=OAUTH_DDL)
+# The device grant and the consent handoff link are gone: a machine with no
+# browser holds a project key, so neither exchange has anything left to carry.
+_RETIRED_OAUTH_TABLES = (
+    "oauth_device_grant_attempts",
+    "oauth_device_grants",
+    "oauth_handoff_links",
+)
+
+
+def _drop_retired_oauth_tables(conn: Connection) -> None:
+    """Migration 66: OAuth keeps only the redirect flow's own rows."""
+    for table in _RETIRED_OAUTH_TABLES:
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
+
+
+OAUTH_SCHEMA = SchemaModule(
+    name="surface.oauth",
+    ddl=OAUTH_DDL,
+    migrations=(Migration(66, "drop_retired_oauth_tables", _drop_retired_oauth_tables),),
+)

@@ -95,14 +95,12 @@ workflow.status_and_next(project_id).
 
 The committed platform manifests contain only the hosted URL. The client's MCP
 OAuth implementation discovers Merv's authorization endpoints, opens the
-browser, stores the resulting token, and refreshes it automatically. Static
-keys are documented separately for headless runners and CI in
-[docs/AUTH.md](docs/AUTH.md#when-a-static-key-is-still-required).
+browser, stores the resulting token, and refreshes it automatically.
 
-On an SSH VM where the client's loopback browser callback cannot be reached,
-keep OAuth: sign in as usual, use the consent page's *on another machine*
-link, and type the short command it shows on that machine. Nothing is installed and every client keeps its native flow.
-See [Remote machines](docs/AUTH.md#remote-machines).
+A machine with no browser — an SSH VM, a container, CI — uses a project key
+instead: a refresh token is single-use, and several agent processes on one
+machine race on the same stored one. See
+[Machines with no browser](docs/AUTH.md#machines-with-no-browser).
 
 ### Hermes Agent
 
