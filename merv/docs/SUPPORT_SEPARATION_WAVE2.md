@@ -110,6 +110,9 @@ component root. Today `kernel/state/store.py` creates roughly sixty tables and h
   outside comments and docstrings, and no SQL string names a research table. Keep an
   explicit, justified allowlist for opaque pass-through field names if any remain
   (the goal is an empty allowlist).
+- `artifacts` still carries the public field name `lens_id` and the injected value
+  `reflection_lens_doc`; the field name is a wire contract, so put it on the scan
+  allowlist with a justification rather than renaming it this wave.
 - `kernel/state/activity.py` names research id fields for redaction and target
   extraction; turn those into a registry that owners populate at composition.
 - Docs: rewrite `docs/MODULE_BOUNDARIES.md` around the three layers; update the
@@ -120,7 +123,14 @@ component root. Today `kernel/state/store.py` creates roughly sixty tables and h
 
 ## Contract H: delete what wave 1 left behind (LOC)
 
-Owner runs after E and F merge, together with G, and must end net negative.
+Runs on top of the merged Contract E; must end net negative.
+
+- `gateway.py` still names tools for base-URL and capability injection (`review.request`,
+  `review.start`, `artifact.upload`, `artifact.read`, `feed.post`, `storage.submit`,
+  `sandbox.runs`, `sandbox.request`, `project`, `project.list`). Replace each list with a
+  `ToolContract` field the owner declares (for example `needs_base_url`,
+  `binds_capability`), the same way `binds_producer_session` and
+  `telemetry_scope_field` already work after Contract E.
 
 - Delete the three `/api/projects/{pid}/consolidation/*` alias routes in
   `surface/transport/api/agent_sessions.py` and their tests. Runners that still call
