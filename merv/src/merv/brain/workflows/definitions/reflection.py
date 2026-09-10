@@ -1,22 +1,58 @@
 """Reflection decisions and independent lens, synthesis, and review assignments."""
 
+from dataclasses import replace
+
 from ..composition import Child, join_guard
-from ..graph import Action, Brief, Change, Edge, Issue, Node, Reference, Workflow, all_of
+from ..graph import (
+    Action, ArtifactNeed, Brief, Change, Edge, Issue, Metadata, Node, RecordKind, RecordNeed,
+    Reference, ReviewGate, ReviewReturn, Workflow, all_of,
+)
 from ...kernel.utils import NotFoundError, ValidationError, WorkflowError
-from .checks import review_requested, reviewed, review_summary
+from .checks import review_summary
 from .execution import CONSOLIDATION_EXECUTION, LENS_EXECUTION, REFLECTION_EXECUTION, REVIEW_EXECUTION
 from .documents import graph_problems, reflection_doc_review_problems, reflection_lens_doc_problems, parse_change_spec, preferred_artifact
-from .metadata import ArtifactNeed, Metadata, RecordNeed, ReviewGate, ReviewReturn
 
+
+def _guarded(validate):
+    """Turn a document validator into problems; a bad spec reads as one problem."""
+    def problems(document, snapshot, knowledge):
+        try:
+            return validate(document, snapshot, knowledge)
+        except (NotFoundError, ValidationError, WorkflowError) as exc:
+            return (str(exc),)
+    return problems
+
+
+def _parse_spec(document, snapshot, knowledge):
+    world = knowledge.read(Reference("reflection_world", snapshot.project_id))
+    parse_change_spec(text=document["text"], path=document["path"],
+                      claim_exists=lambda value: value in world["claim_ids"],
+                      experiment_name_taken=lambda value: value.lower() in world["experiment_names"],
+                      task_name_taken=lambda value: value.lower() in world["task_names"],
+                      node_exists=lambda value: value in world["node_ids"],
+                      non_terminal_experiments=lambda: list(world["non_terminal_experiments"]))
+    return ()
+
+
+_VALIDATORS = {
+    "project_graph": lambda document, *_: graph_problems(document["text"]),
+    "reflection_doc": lambda document, *_: reflection_doc_review_problems(
+        text=document["text"], submitted_images=set(document.get("figure_links") or ()), path=document["path"]),
+    "change_spec": _parse_spec,
+}
 
 ARTIFACTS = {
     "reflection_lens_doc": ArtifactNeed("reflection_lens_doc", "Every roster lens must submit its own reflection with a non-empty Summary.",
                                        "reflection_roster_incomplete", "fan_out_reflection_subagents", validator="roster",
                                        label="Per-lens reflections submitted", missing="one reflection document per roster lens", artifact_key="reflection"),
     **{role: ArtifactNeed(role, f"A {title} artifact must be submitted before reflection review.", f"{role}_required", f"submit_{role}",
-                         validator=validator, label=f"{title.capitalize()} present and valid", missing=f"{title} artifact", artifact_key=role)
+                         validator=validator, label=f"{title.capitalize()} present and valid", missing=f"{title} artifact", artifact_key=role,
+                         actions=("submit_reflection_artifacts",), validate=_guarded(_VALIDATORS[role]),
+                         invalid=f"{title.capitalize()} artifact is not ready for reflection review: {{problems}}",
+                         invalid_action=f"revise_{role}")
        for role, title, validator in (("project_graph", "project logic graph", "graph"),
-                                     ("reflection_doc", "reflection document", "reflection_doc"), ("change_spec", "change spec", "change_spec"))},
+                                     ("reflection_doc", "reflection document", "reflection_doc"),
+                                     ("change_spec", "change spec", "change_spec"))},
 }
 PROPOSAL_NEED = RecordNeed("consolidation_proposal", "The consolidation agent must submit one proposal that accounts for every experiment in the reflection corpus.",
                            "consolidation_proposal_required", "submit_consolidation_proposal", ("consolidation.submit",),
@@ -78,41 +114,6 @@ def lenses_complete(snapshot, knowledge):
     issues = tuple(issue for lens in wave.get("roster") or ()
                    if (issue := lens_issue(wave, knowledge, str(lens["id"]))) is not None)
     return issues
-
-
-def _artifact_check(role, validator):
-    def check(snapshot, knowledge):
-        wave = _wave(snapshot, knowledge)
-        artifact = _artifact(wave, role)
-        need = ARTIFACTS[role]
-        if artifact is None:
-            return need.issue()
-        try:
-            document = _document(knowledge, artifact)
-            problems = validator(document, snapshot, knowledge)
-        except (NotFoundError, ValidationError, WorkflowError) as exc:
-            problems = (str(exc),)
-        if problems:
-            return Issue(f"{role}_invalid", f"{need.missing.capitalize()} is not ready for reflection review: " + "; ".join(problems),
-                         f"revise_{role}", ("artifact.upload",))
-    return check
-
-
-def _parse_spec(document, snapshot, knowledge):
-    world = knowledge.read(Reference("reflection_world", snapshot.project_id))
-    parse_change_spec(text=document["text"], path=document["path"],
-                      claim_exists=lambda value: value in world["claim_ids"],
-                      experiment_name_taken=lambda value: value.lower() in world["experiment_names"],
-                      task_name_taken=lambda value: value.lower() in world["task_names"],
-                      node_exists=lambda value: value in world["node_ids"],
-                      non_terminal_experiments=lambda: list(world["non_terminal_experiments"]))
-    return ()
-
-
-project_graph = _artifact_check("project_graph", lambda document, *_: graph_problems(document["text"]))
-reflection_document = _artifact_check("reflection_doc", lambda document, *_: reflection_doc_review_problems(
-    text=document["text"], submitted_images=set(document.get("figure_links") or ()), path=document["path"]))
-change_spec = _artifact_check("change_spec", _parse_spec)
 
 
 def consolidation_proposal(snapshot, knowledge):
@@ -305,25 +306,39 @@ def start_published_wave(snapshot, payload, knowledge):
                                                       "data": {"reflection_id": snapshot.id}}),))
 
 
+REFLECTION_REVIEW = ReviewGate("reflection_reviewer", "reflection review must pass before code consolidation", "reflection_review_required",
+                               "Reflection review passed", "project-reflection-review", "begin_consolidation", (RETURN_TO_REFLECTING, RETURN_TO_SYNTHESIZING),
+                               return_choice_required=True,
+                               return_required_error="project-reflection-review rejections must set return_to: 'reflecting' for a fresh lens attempt, or 'synthesizing' to repair its synthesis",
+                               actions=("begin_consolidation",))
+CONSOLIDATION_REVIEW = ReviewGate("consolidation_reviewer", "consolidation review must pass before central can advance", "consolidation_review_required",
+                                  "Consolidation code review passed", "consolidation-review", "publish", (RETURN_TO_CONSOLIDATING,),
+                                  return_choice_required=True, return_required_error="consolidation-review rejections must set return_to: 'consolidating'",
+                                  forbidden_returns=tuple((state, "consolidation cannot reopen the authoritative reflection") for state in ("reflecting", "synthesizing")),
+                                  actions=("publish",))
+PUBLISH_PROPOSAL = replace(PROPOSAL_NEED, actions=("publish",), verify=consolidation_proposal)
+PUBLISH_ADVANCE = replace(CENTRAL_ADVANCE_NEED, actions=("publish",), verify=central_advance)
+
 REFLECTION = Workflow(
     name="reflection", version=1, initial="reflecting", event_type="reflection.transitioned", id_prefix="syn",
     nodes=(
-        Node("reflecting", "Independent reflection lenses", children=_lens_children, join=_join_lenses),
-        Node("synthesizing", "Reconcile reflection", "reflection_owner", build_synthesis_context, execution=REFLECTION_EXECUTION),
-        Node("reflection_review", "Review reflection", "reflection_reviewer", build_review_context, review_requested,
-             execution=REVIEW_EXECUTION),
+        Node("reflecting", "Independent reflection lenses", children=_lens_children, join=_join_lenses,
+             requires=(ARTIFACTS["reflection_lens_doc"],)),
+        Node("synthesizing", "Reconcile reflection", "reflection_owner", build_synthesis_context, execution=REFLECTION_EXECUTION,
+             requires=tuple(ARTIFACTS[role] for role in ("project_graph", "reflection_doc", "change_spec"))),
+        Node("reflection_review", "Review reflection", "reflection_reviewer", build_review_context,
+             execution=REVIEW_EXECUTION, requires=(REFLECTION_REVIEW,)),
         Node("consolidating", "Consolidate reviewed code", "consolidation", build_consolidation_context,
-             execution=CONSOLIDATION_EXECUTION),
-        Node("consolidation_review", "Review consolidated code", "consolidation_reviewer", build_consolidation_review_context, review_requested,
-             execution=REVIEW_EXECUTION),
+             execution=CONSOLIDATION_EXECUTION, requires=(PROPOSAL_NEED,)),
+        Node("consolidation_review", "Review consolidated code", "consolidation_reviewer", build_consolidation_review_context,
+             execution=REVIEW_EXECUTION, requires=(PUBLISH_PROPOSAL, CONSOLIDATION_REVIEW, PUBLISH_ADVANCE)),
     ),
     edges=(
         Edge("reflecting", "submit_reflections", "synthesizing", check=all_of(lenses_complete, join_guard(_join_lenses, "submit_reflections")), change=pin_lenses,
              label="Reconcile the completed lens contributions", tools=("reflection.transition",)),
-        Edge("synthesizing", "submit_reflection_artifacts", "reflection_review",
-             check=all_of(project_graph, reflection_document, change_spec), change=request_reflection_review,
+        Edge("synthesizing", "submit_reflection_artifacts", "reflection_review", change=request_reflection_review,
              label="Submit the reflection for independent review", tools=("reflection.transition",)),
-        Edge("reflection_review", "begin_consolidation", "consolidating", check=reviewed("reflection_reviewer"),
+        Edge("reflection_review", "begin_consolidation", "consolidating",
              label="Consolidate code from the approved reflection", tools=("reflection.transition",)),
         Edge("reflection_review", "revise_lenses", RETURN_TO_REFLECTING.to_status, check=_rejected("reflection_reviewer", RETURN_TO_REFLECTING.to_status), change=_new_attempt,
              label=RETURN_TO_REFLECTING.choose_when, event_type=RETURN_TO_REFLECTING.event_type),
@@ -334,7 +349,7 @@ REFLECTION = Workflow(
           for state in ("consolidating", "consolidation_review")),
         Edge("consolidation_review", "revise_consolidation", RETURN_TO_CONSOLIDATING.to_status, check=_rejected("consolidation_reviewer", RETURN_TO_CONSOLIDATING.to_status), change=_revision,
              label=RETURN_TO_CONSOLIDATING.choose_when, event_type=RETURN_TO_CONSOLIDATING.event_type),
-        Edge("consolidation_review", "publish", "published", check=all_of(consolidation_proposal, reviewed("consolidation_reviewer"), central_advance),
+        Edge("consolidation_review", "publish", "published",
              change=start_published_wave, label="Publish the reviewed wave after the runner advances central"),
         *(Edge(state, "abandon", "abandoned", check=can_abandon, label="Abandon this reflection wave", suggest=False, tools=("reflection.transition",))
           for state in ("reflecting", "synthesizing", "reflection_review", "consolidating", "consolidation_review")),
@@ -342,21 +357,20 @@ REFLECTION = Workflow(
     outcomes={"published": "published", "abandoned": "abandoned"},
 )
 
-METADATA = Metadata(
-    requirements={"reflecting": (ARTIFACTS["reflection_lens_doc"],),
-                  "synthesizing": tuple(ARTIFACTS[role] for role in ("project_graph", "reflection_doc", "change_spec")),
-                  "consolidating": (PROPOSAL_NEED,), "consolidation_review": (PROPOSAL_NEED, CENTRAL_ADVANCE_NEED)},
-    reviews={
-        "reflection_review": ReviewGate("reflection_reviewer", "reflection review must pass before code consolidation", "reflection_review_required",
-                                        "Reflection review passed", "project-reflection-review", "begin_consolidation", (RETURN_TO_REFLECTING, RETURN_TO_SYNTHESIZING),
-                                        return_choice_required=True, return_required_error="project-reflection-review rejections must set return_to: 'reflecting' for a fresh lens attempt, or 'synthesizing' to repair its synthesis"),
-        "consolidation_review": ReviewGate("consolidation_reviewer", "consolidation review must pass before central can advance", "consolidation_review_required",
-                                           "Consolidation code review passed", "consolidation-review", "publish", (RETURN_TO_CONSOLIDATING,),
-                                           return_choice_required=True, return_required_error="consolidation-review rejections must set return_to: 'consolidating'",
-                                           forbidden_returns=tuple((state, "consolidation cannot reopen the authoritative reflection") for state in ("reflecting", "synthesizing"))),
-    },
-    effects={"publish": ("materialize_change_spec", "pin_project_graph")},
-    subject="reflection wave", success_outcome="published",
+METADATA = Metadata(effects={"publish": ("materialize_change_spec", "pin_project_graph")},
+                    subject="reflection wave", success_outcome="published")
+
+KIND = RecordKind(
+    name="reflection", table="reflections", id_prefix="syn", workflow=REFLECTION,
+    metadata=METADATA, created_event="reflection.created",
+    label="title", unique_name=False, columns=("title", "roster_json", "corpus_json"),
+    json_columns={"roster_json": ("roster", "[]"), "corpus_json": ("corpus", "{}")}, created_seq=True,
+    # The row has no consolidation_review status: a wave under code review is
+    # still `consolidating` to every reader of the record.
+    status_projection={"consolidation_review": "consolidating"},
+    seal_exempt_actions=frozenset({"revise_lenses", "revise_synthesis", "revise_consolidation", "migrate"}),
+    commit_columns={action: ("attempt_index", "revision_context")
+                    for action in ("revise_lenses", "revise_synthesis", "revise_consolidation")},
 )
 
 

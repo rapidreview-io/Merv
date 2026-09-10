@@ -37,10 +37,9 @@ from .reflection_workflow import REFLECTION_WORKFLOW
 from .task_workflow import TASK_WORKFLOW
 from .workflow_schema import resolve_review_return
 from ..kernel.state.store import BaseStateStore, next_created_seq, row_to_dict
-from .experiments import ExperimentService
+from .records import Records
 from .reflections import ReflectionService
-from .tasks import TaskService
-from ..workflows import Reference, Runtime, Snapshot
+from ..workflows import KINDS, Reference, Snapshot
 
 
 _WORKFLOW_BY_TARGET = {
@@ -65,18 +64,15 @@ class ReviewService:
         self,
         *,
         store: BaseStateStore,
-        experiments: ExperimentService,
+        records: Records,
         reflections: ReflectionService,
         artifacts: Artifacts,
-        tasks: TaskService,
-        runtime: Runtime,
     ) -> None:
         self.store = store
-        self.experiments = experiments
+        self.records = records
         self.reflections = reflections
         self.artifacts = artifacts
-        self.tasks = tasks
-        self.runtime = runtime
+        self.runtime = records.runtime
 
     def request(
         self,
@@ -766,24 +762,9 @@ class ReviewService:
         target_id: str,
         project_id: str | None = None,
     ):
-        if target_type == "experiment":
-            return self.experiments.get_state_with_gate(
-                experiment_id=target_id,
-                project_id=project_id,
-                conn=conn,
-            )
-        if target_type == "reflection":
-            return self.reflections.get_state_with_gate(
-                reflection_id=target_id,
-                project_id=project_id,
-                conn=conn,
-            )
-        if target_type == "task":
-            return self.tasks.get_state_with_gate(
-                task_id=target_id,
-                project_id=project_id,
-                conn=conn,
-            )
+        kind = KINDS.get(target_type)
+        if kind is not None:
+            return self.records.get_state_with_gate(kind, record_id=target_id, project_id=project_id, conn=conn)
         snapshot = self.runtime.get(conn=conn, project_id=project_id, instance_id=target_id)
         if snapshot.workflow != target_type:
             raise NotFoundError(f"workflow {target_type!r} not found in this project: {target_id}")

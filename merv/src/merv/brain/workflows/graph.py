@@ -5,10 +5,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from types import MappingProxyType
-from typing import Any, Protocol, TYPE_CHECKING
+from typing import Any, Literal, Protocol, TYPE_CHECKING
 
 from merv.shared.workspace_policy import REFERENCE_BASE_PREFIX, WorkspacePolicy
 
+from .definitions.documents import preferred_artifact
 from ..kernel.utils import WorkflowError
 
 if TYPE_CHECKING:
@@ -177,6 +178,190 @@ def _valid_source(source: str) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewReturn:
+    to_status: str
+    attempt: Literal["new", "same"]
+    event_type: str
+    choose_when: str
+    default: bool = False
+    revision: str = ""
+
+
+class DocumentValidator(Protocol):
+    def __call__(self, document: Data, snapshot: Snapshot, knowledge: Knowledge) -> Iterable[str]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactNeed:
+    """A submitted document a node needs, how to validate it, and what it gates.
+
+    ``actions`` names the edges this need guards; the runtime raises its issue
+    on those edges instead of a hand-written edge check. ``dispatch`` also
+    blocks the node's agent handoff. A need with neither still appears in the
+    gate checklist, whose satisfaction reads the issues the evaluation produced.
+    """
+
+    role: str
+    error: str
+    gate: str
+    action: str
+    tools: tuple[str, ...] = ("artifact.upload",)
+    validator: str = ""
+    missing: str = ""
+    label: str = ""
+    artifact_key: str = ""
+    actions: tuple[str, ...] = ()
+    dispatch: bool = False
+    validate: DocumentValidator | None = None
+    invalid: str = "{problems}"
+    invalid_action: str = ""
+
+    @property
+    def key(self) -> str:
+        return self.role
+
+    @property
+    def codes(self) -> frozenset[str]:
+        return frozenset({self.gate, f"{self.role}_invalid"})
+
+    def issue(self) -> Issue:
+        return Issue(self.gate, self.error, self.action, self.tools)
+
+    def check(self, snapshot: Snapshot, knowledge: Knowledge) -> Issue | None:
+        record = knowledge.read(Reference(snapshot.workflow, snapshot.id))
+        artifact = preferred_artifact(artifacts=list(record.get("current_attempt_artifacts") or ()), roles=(self.role,))
+        if artifact is None:
+            return self.issue()
+        document = knowledge.read(Reference("artifact", str(artifact["id"])))
+        error = str(document.get("error") or "")
+        problems = (error,) if error else () if self.validate is None else tuple(self.validate(document, snapshot, knowledge))
+        if problems:
+            return Issue(f"{self.role}_invalid", self.invalid.format(problems="; ".join(problems)),
+                         self.invalid_action or self.action, self.tools)
+        return None
+
+    dispatch_check = check
+
+
+@dataclass(frozen=True, slots=True)
+class RecordNeed:
+    """A declared fact a node needs that its own graph function verifies."""
+
+    name: str
+    error: str
+    gate: str
+    action: str
+    tools: tuple[str, ...] = ()
+    label: str = ""
+    missing: str = ""
+    actions: tuple[str, ...] = ()
+    dispatch: bool = False
+    verify: Check | None = None
+
+    @property
+    def key(self) -> str:
+        return self.name
+
+    @property
+    def codes(self) -> frozenset[str]:
+        return frozenset({self.gate})
+
+    def issue(self) -> Issue:
+        return Issue(self.gate, self.error, self.action, self.tools)
+
+    def check(self, snapshot: Snapshot, knowledge: Knowledge):
+        return None if self.verify is None else self.verify(snapshot, knowledge)
+
+    dispatch_check = check
+
+
+@dataclass(frozen=True, slots=True)
+class DependenciesDone:
+    """Every node this one waits on in the wave DAG has succeeded."""
+
+    name: str = "dependencies"
+    error: str = "Every dependency must succeed before work proceeds."
+    gate: str = "dependencies_pending"
+    action: str = "wait_for_dependencies"
+    tools: tuple[str, ...] = ("workflow.status_and_next",)
+    label: str = "Dependencies done"
+    missing: str = "unfinished dependencies"
+    actions: tuple[str, ...] = ()
+    dispatch: bool = True
+
+    @property
+    def key(self) -> str:
+        return self.name
+
+    @property
+    def codes(self) -> frozenset[str]:
+        return frozenset({self.gate, "dependency_failed"})
+
+    def check(self, snapshot: Snapshot, knowledge: Knowledge) -> Issue | None:
+        record = knowledge.read(Reference(snapshot.workflow, snapshot.id))
+        pending = [item for item in record.get("dependencies") or () if not item.get("settled")]
+        if not pending:
+            return None
+        failed = [item for item in pending if item.get("failed")]
+        names = ", ".join(f"{item.get('node_type')} {item.get('name') or item.get('id')} ({item.get('status')})"
+                          for item in failed or pending)
+        return Issue("dependency_failed" if failed else self.gate,
+                     f"A dependency has ended without succeeding: {names}. End this node or replan the wave."
+                     if failed else f"Work is waiting on unfinished dependencies: {names}.",
+                     "mark_failed" if failed else "wait_for_dependencies", ("workflow.status_and_next",))
+
+    dispatch_check = check
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewGate:
+    """An independent passing review of this node's submitted evidence.
+
+    Dispatch needs an open request for the current snapshot; the guarded edges
+    need its passing verdict. The return routes describe the legacy review
+    input contract that ``review.submit`` still validates.
+    """
+
+    role: str
+    error: str
+    blocker_code: str
+    label: str
+    skill: str
+    pass_action: str
+    returns: tuple[ReviewReturn, ...]
+    return_choice_required: bool = False
+    return_required_error: str = ""
+    forbidden_returns: tuple[tuple[str, str], ...] = ()
+    fail_route: ReviewReturn | None = None
+    actions: tuple[str, ...] = ()
+    dispatch: bool = True
+
+    @property
+    def key(self) -> str:
+        return self.role
+
+    @property
+    def action_name(self) -> str:
+        return self.role.removesuffix("er")
+
+    def check(self, snapshot: Snapshot, knowledge: Knowledge) -> Issue | None:
+        fact = knowledge.read(Reference("review", self.role))
+        if not fact.get("passed"):
+            return Issue(f"{self.role}_required", str(fact.get("error") or self.error),
+                         "request_review", ("review.request",))
+        return None
+
+    def dispatch_check(self, snapshot: Snapshot, knowledge: Knowledge) -> Issue | None:
+        if not knowledge.read(Reference("review_snapshot", snapshot.id)):
+            return Issue("review_not_requested", "Create an independent review of the submitted evidence.",
+                         "request_review", ("review.request",))
+        return None
+
+
+Requirement = ArtifactNeed | RecordNeed | DependenciesDone | ReviewGate
+
+
+@dataclass(frozen=True, slots=True)
 class Node:
     name: str
     label: str = ""
@@ -187,6 +372,7 @@ class Node:
     join: Join | None = None
     execution: Execution = Execution()
     on_start: Reducer = unchanged
+    requires: tuple[Requirement, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,12 +522,82 @@ class Workflow:
         node = self.node(snapshot.state)
         if node is None and snapshot.state not in self.outcomes:
             raise WorkflowError(f"unknown state {snapshot.state!r} for {self.name} v{self.version}")
+        requires = () if node is None else node.requires
+        memo: dict[tuple[int, bool], tuple[Issue, ...]] = {}
+
+        def declared(need: Requirement, dispatch: bool) -> tuple[Issue, ...]:
+            key = (id(need), dispatch)
+            if key not in memo:
+                memo[key] = issues(need.dispatch_check if dispatch else need.check, snapshot, knowledge)
+            return memo[key]
+
         return Evaluation(
             snapshot,
             node,
-            tuple(EvaluatedEdge(edge, issues(edge.check, snapshot, knowledge)) for edge in self.edges if edge.source == snapshot.state),
-            () if node is None else issues(node.dispatch_check, snapshot, knowledge),
+            tuple(EvaluatedEdge(edge, (*issues(edge.check, snapshot, knowledge),
+                                       *(issue for need in requires if edge.name in need.actions
+                                         for issue in declared(need, False))))
+                  for edge in self.edges if edge.source == snapshot.state),
+            () if node is None else (*issues(node.dispatch_check, snapshot, knowledge),
+                                     *(issue for need in requires if need.dispatch
+                                       for issue in declared(need, True))),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class Metadata:
+    """What a graph says for the legacy research API beyond its own edges: the
+    effect labels of each action and how its subject is named."""
+
+    effects: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    subject: str = ""
+    success_outcome: str = "completed"
+
+
+@dataclass(frozen=True, slots=True)
+class RecordKind:
+    """One native record bound to a workflow: what differs between kinds is data.
+
+    ``columns`` are the kind's own INSERT columns beyond the shared spine
+    (id, project_id, status, attempt_index, revision_context, timestamps);
+    ``json_columns`` map a stored column to the field a read exposes and the
+    empty JSON a row without one decodes to.
+    ``commit_columns`` say which of the transition's ``after.data`` fields each
+    action writes back, and ``status_projection`` maps a workflow state onto the
+    row status when the record has no column for it.
+    """
+
+    name: str
+    table: str
+    id_prefix: str
+    workflow: Workflow
+    metadata: Metadata = Metadata()
+    created_event: str = ""
+    label: str = "name"
+    unique_name: bool = True
+    columns: tuple[str, ...] = ()
+    json_columns: Mapping[str, tuple[str, str]] = field(default_factory=dict)
+    dependencies: bool = False
+    created_seq: bool = False
+    seal_exempt_actions: frozenset[str] = frozenset()
+    commit_columns: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    status_projection: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "json_columns", MappingProxyType(dict(self.json_columns)))
+        object.__setattr__(self, "commit_columns", MappingProxyType(dict(self.commit_columns)))
+        object.__setattr__(self, "status_projection", MappingProxyType(dict(self.status_projection)))
+
+    def status_of(self, state: str) -> str:
+        return self.status_projection.get(state, state)
+
+    @property
+    def terminal_statuses(self) -> frozenset[str]:
+        return frozenset(self.status_of(state) for state in self.workflow.outcomes)
+
+    def requirements(self, state: str) -> tuple[Requirement, ...]:
+        node = self.workflow.node(state)
+        return () if node is None else node.requires
 
 
 class Registry:

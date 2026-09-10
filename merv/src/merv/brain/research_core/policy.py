@@ -22,10 +22,11 @@ import json
 import re
 from typing import Any, Literal, TypeAlias
 
-from ..workflows import PROJECT_GRAPH_ROLE, REFLECTION_LENS_DOC_ROLE
-
-from ..kernel.utils import ValidationError, WorkflowError, now_iso
-from ..workflows import Evaluation
+from ..kernel.state.store import Connection
+from ..kernel.utils import ValidationError, now_iso
+from ..workflows import (
+    ArtifactNeed, DependenciesDone, Evaluation, Issue, RecordNeed, Requirement, ReviewGate, Snapshot,
+)
 from .experiment_workflow import (
     EXPERIMENT_TERMINAL_STATUSES,
     EXPERIMENT_WORKFLOW,
@@ -37,13 +38,7 @@ from .reflection_workflow import (
     REFLECTION_WORKFLOW,
 )
 from .task_workflow import TASK_TERMINAL_STATUSES, TASK_WORKFLOW
-from .workflow_schema import (
-    ArtifactNeed,
-    RecordNeed,
-    ReviewGate,
-    ReviewReturn,
-    Workflow,
-)
+from .workflow_schema import ReviewReturn
 
 
 REVIEW_VERDICT_VALUES = ("pass", "needs_changes", "fail")
@@ -273,22 +268,13 @@ class RequirementEvaluation:
     def satisfied(self) -> bool:
         return not self.enforcement_error
 
-    @property
-    def explanation(self) -> str:
-        return self.enforcement_error if not self.satisfied else ""
-
 
 @dataclass(frozen=True, slots=True)
 class GateEvaluation:
-    workflow: Workflow
     status: str
     requirements: tuple[RequirementEvaluation, ...]
     review: RequirementEvaluation | None
     decision: Evaluation
-
-    @property
-    def state(self):
-        return self.workflow.state(self.decision.snapshot.state)
 
     @property
     def transition(self) -> str | None:
@@ -307,16 +293,6 @@ class GateEvaluation:
         return tuple({"transition": action.edge.name, "leads_to": action.edge.target} for action in self.decision.actions)
 
     @property
-    def blocker_code(self) -> str:
-        selected = self.decision.suggested
-        return "" if selected is None or not selected.issues else selected.issues[0].code
-
-    @property
-    def explanation(self) -> str:
-        selected = self.decision.suggested
-        return "" if selected is None else "; ".join(issue.message for issue in selected.issues)
-
-    @property
     def ready(self) -> bool:
         selected = self.decision.suggested
         return self.terminal if selected is None else selected.available
@@ -333,64 +309,73 @@ class GateEvaluation:
             "items": items,
         }
 
-    def require_transition(self, transition: str) -> str:
-        return self.decision.require(transition).target
+
+@dataclass(frozen=True, slots=True)
+class GateContext:
+    """Everything a requirement resolver may read: no resolver re-derives a fact."""
+
+    conn: Connection
+    project_id: str
+    record: dict[str, Any]
+    snapshot: Snapshot
+    issues: tuple[Issue, ...]
+
+    def issue_for(self, codes) -> Issue | None:
+        return next((issue for issue in self.issues if issue.code in codes), None)
+
+    def artifact(self, role: str) -> dict[str, Any] | None:
+        from ..workflows import documents
+
+        return documents.preferred_artifact(
+            artifacts=list(self.record.get("current_attempt_artifacts") or ()), roles=(role,)
+        )
 
 
-def evaluate_artifact_requirement(
-    requirement: ArtifactNeed,
-    *,
-    present: bool,
-    problems: tuple[str, ...] = (),
-    artifact_fields: GateItem | None = None,
-) -> RequirementEvaluation:
-    status: EvaluationStatus = (
-        "missing"
-        if not present
-        else "invalid" if problems else "valid" if requirement.validator else "present"
-    )
-    error = requirement.error if not present else problems[0] if problems else ""
+def resolve_requirement(need: Requirement, context: GateContext) -> RequirementEvaluation:
+    """One item per declared need, read off the evaluation the graph already ran.
+
+    An artifact need distinguishes missing from invalid by which code its own
+    issue carried; a record need is satisfied or not. ``DependenciesDone`` adds
+    the wave rows behind it (``node_dependencies``), including a dependency whose
+    row is gone, which reads as unsettled so no gate opens on a dangling edge.
+    """
+    if isinstance(need, ReviewGate):
+        return evaluate_review_gate(need, context)
+    issue = context.issue_for(need.codes)
+    extra: GateItem = {"missing": "" if issue is None else (need.missing or issue.message)}
+    if isinstance(need, ArtifactNeed):
+        status: EvaluationStatus = ("missing" if issue is not None and issue.code == need.gate
+                                    else "invalid" if issue is not None
+                                    else "valid" if need.validator else "present")
+        artifact = context.artifact(need.role) or {}
+        extra = {"validator": need.validator or None,
+                 "missing": (need.missing or f"{need.role} artifact") if status == "missing" else None,
+                 "artifact_id": artifact.get("id"), "path": artifact.get("path")}
+    else:
+        status = "valid" if issue is None else "missing"
+        if isinstance(need, DependenciesDone):
+            extra["dependencies"] = [
+                {"id": row.get("id"), "node_type": row.get("node_type"), "name": row.get("name"),
+                 "status": row.get("status"), "settled": bool(row.get("settled"))}
+                for row in context.record.get("dependencies") or ()]
     item: GateItem = {
-        "id": f"artifact:{requirement.role}",
-        "kind": "artifact",
-        "role": requirement.role,
-        "label": requirement.label,
-        "satisfied": present and not problems,
-        "status": status,
-        "gate": requirement.gate,
-        "action": requirement.action,
+        "id": f"{'artifact' if isinstance(need, ArtifactNeed) else 'record'}:{need.key}",
+        "kind": "artifact" if isinstance(need, ArtifactNeed) else "record", "role": need.key,
+        "label": need.label, "satisfied": issue is None, "status": status,
+        "gate": need.gate, "action": need.action,
+        **{name: value for name, value in extra.items() if value is not None},
+        **({} if issue is None else {"problems": [issue.message]}),
     }
-    if requirement.validator:
-        item["validator"] = requirement.validator
-    if artifact_fields is not None:
-        item.update(artifact_fields)
-    if not present:
-        item["missing"] = requirement.missing or f"{requirement.role} artifact"
-    if problems:
-        item["problems"] = list(problems)
     return RequirementEvaluation(
-        role=requirement.role,
-        status=status,
-        blocker_code=(
-            requirement.gate or f"{requirement.role}_missing"
-            if not present
-            else f"{requirement.role}_invalid" if problems else ""
-        ),
-        enforcement_error=error,
-        problems=problems,
-        items=(item,),
-    )
+        role=need.key, status=status, blocker_code="" if issue is None else issue.code,
+        enforcement_error="" if issue is None else issue.message,
+        problems=() if issue is None else (issue.message,), items=(item,))
 
 
-def evaluate_review_gate(
-    *,
-    conn: Any,
-    target_type: str,
-    target: dict[str, Any],
-    review: ReviewGate,
-    snapshot=None,
-) -> RequirementEvaluation:
-    snapshot_id = review_snapshot_id(target_type=target_type, target=target, snapshot=snapshot)
+def evaluate_review_gate(review: ReviewGate, context: GateContext) -> RequirementEvaluation:
+    """The one gate that reads its own rows: a verdict and its open request."""
+    conn, target, target_type = context.conn, context.record, context.snapshot.workflow
+    snapshot_id = review_snapshot_id(target_type=target_type, target=target, snapshot=context.snapshot)
     latest = conn.execute(
         """
         SELECT r.verdict, s.independence FROM reviews r
@@ -520,75 +505,6 @@ def validate_synopsis(value: str) -> str:
 
 
 
-
-
-def evaluate_dependency_requirement(
-    requirement: RecordNeed,
-    *,
-    dependencies: list[dict[str, Any]],
-) -> RequirementEvaluation:
-    """Gate a node on its wave dependencies (``node_dependencies`` rows).
-
-    ``dependencies`` rows carry ``id``, ``node_type``, ``name``, ``status`` and
-    ``settled`` (done/complete). Missing rows (a dependency that was deleted)
-    count as unsettled so the gate never silently opens on a dangling edge.
-    """
-    pending = [item for item in dependencies if not item.get("settled")]
-    dead = [item for item in pending if item.get("failed")]
-    satisfied = not pending
-    if satisfied:
-        error = ""
-    elif dead:
-        names = ", ".join(
-            f"{item.get('node_type')} {item.get('name') or item.get('id')} "
-            f"({item.get('status')})"
-            for item in dead
-        )
-        error = (
-            f"a dependency has ended without succeeding: {names}; this node "
-            "cannot proceed on it — mark it failed/abandoned, or wait for the "
-            "next reflection to replan the wave"
-        )
-    else:
-        names = ", ".join(
-            f"{item.get('node_type')} {item.get('name') or item.get('id')} "
-            f"({item.get('status')})"
-            for item in pending
-        )
-        error = f"waiting on unfinished dependencies: {names}"
-    item: GateItem = {
-        "id": f"record:{requirement.name}",
-        "kind": "record",
-        "role": requirement.name,
-        "label": requirement.label,
-        "satisfied": satisfied,
-        "status": "valid" if satisfied else "missing",
-        "gate": requirement.gate,
-        "action": requirement.action,
-        "missing": "" if satisfied else (requirement.missing or error),
-        "dependencies": [
-            {
-                "id": item.get("id"),
-                "node_type": item.get("node_type"),
-                "name": item.get("name"),
-                "status": item.get("status"),
-                "settled": bool(item.get("settled")),
-            }
-            for item in dependencies
-        ],
-    }
-    if pending:
-        item["problems"] = [error]
-    return RequirementEvaluation(
-        role=requirement.name,
-        status="valid" if satisfied else "missing",
-        blocker_code="" if satisfied else (
-            "dependency_failed" if dead else requirement.gate
-        ),
-        enforcement_error=error,
-        problems=() if satisfied else (error,),
-        items=(item,),
-    )
 
 
 def parse_project_settings(raw: Any) -> dict[str, Any]:
@@ -787,9 +703,9 @@ __all__ = [
     "agent_dispatch_enabled",
     "covered_terminal_ids",
     "is_review_gate_exempt",
-    "evaluate_artifact_requirement",
-    "evaluate_dependency_requirement",
+    "GateContext",
     "evaluate_review_gate",
+    "resolve_requirement",
     "parse_project_settings",
     "project_settings",
     "reflection_create_block_message",

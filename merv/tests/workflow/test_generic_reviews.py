@@ -4,8 +4,8 @@ from dataclasses import replace
 from unittest.mock import patch
 
 from merv.brain.kernel.utils import NotFoundError, PermissionDeniedError, ValidationError, WorkflowError
-from merv.brain.workflows import Brief, Change, Edge, Node, Reference, Workflow, retain_artifacts
-from merv.brain.workflows.definitions.checks import review_requested, reviewed
+from merv.brain.workflows import Brief, Change, Edge, Node, Reference, ReviewGate, Workflow, retain_artifacts
+from merv.brain.workflows.definitions.checks import reviewed
 from merv.brain.workflows.definitions.execution import REVIEW_EXECUTION
 from tests.research_core.scenarios import ResearchCase, REVIEW_SYNOPSIS
 
@@ -21,12 +21,15 @@ def review_context(snapshot, knowledge):
     ))
 
 
+AUDIT_GATE = ReviewGate(ROLE, f"An independent {ROLE} review is required.", f"{ROLE}_required",
+                        "Replication audited", "replication-audit", "accept", (), actions=("accept",))
+
 PLUGIN = Workflow(
     "replication_review", 1, "work",
     (Node("work", role="replicator", build_context=lambda snapshot, knowledge: Brief("Replicate the retained claim.")),
-     Node("audit", role=ROLE, execution=REVIEW_EXECUTION, build_context=review_context, dispatch_check=review_requested)),
+     Node("audit", role=ROLE, execution=REVIEW_EXECUTION, build_context=review_context, requires=(AUDIT_GATE,))),
     (Edge("work", "submit", "audit", change=retain_artifacts),
-     Edge("audit", "accept", "done", check=reviewed(ROLE)),
+     Edge("audit", "accept", "done"),
      Edge("audit", "repair", "work", check=reviewed(ROLE, verdict="needs_changes", return_to="work")),
      Edge("audit", "withdraw", "withdrawn", suggest=False)),
     {"done": "replicated", "withdrawn": "cancelled"},

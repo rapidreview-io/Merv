@@ -6,78 +6,72 @@ from __future__ import annotations
 from .artifact_roles import EXHIBIT_ROLE
 from merv.shared.markdown_images import markdown_image_links
 
-from ..graph import Action, Brief, Change, Edge, Issue, Node, Reference, Workflow, all_of
-from .checks import review_requested, reviewed
+from ..graph import (
+    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Issue, Node, RecordKind,
+    Metadata, Reference, Metadata, ReviewGate, ReviewReturn, Workflow,
+)
 from .execution import EXPERIMENT_EXECUTION, REVIEW_EXECUTION
 from .documents import graph_problems, markdown_section_body, plan_sections_missing, preferred_artifact, report_problems
-from .metadata import ArtifactNeed, Metadata, ReviewGate, ReviewReturn
+
+
+def _figure_problem(role, path, figures):
+    def problem(link):
+        if link not in figures:
+            return (f"figure {link!r} has no submitted content: make sure the file exists next to {path} "
+                    f"(copy it out first if it was produced on the sandbox), then resubmit the {role} to submit it")
+    return problem
+
+
+def _plan_problems(document, snapshot, knowledge):
+    text = str(document.get("text") or "")
+    missing_sections = plan_sections_missing(text)
+    if missing_sections:
+        return ("experiment plan is missing required sections before design review: " + ", ".join(missing_sections)
+                + ". Fill in the plan template's required spine — Summary; Objective & hypothesis; Evaluation — "
+                "then resubmit the plan.",)
+    figure = _figure_problem("plan", str(document.get("path") or ""), set(document.get("figure_links") or ()))
+    problems = [problem for link in markdown_image_links(text) if (problem := figure(link))]
+    return ("experiment plan is not ready for design review: " + "; ".join(problems),) if problems else ()
+
+
+def _report_problems(document, snapshot, knowledge):
+    experiment = knowledge.read(Reference("experiment", snapshot.id))
+    exhibit = preferred_artifact(artifacts=experiment.get("current_attempt_artifacts") or [], roles=(EXHIBIT_ROLE,))
+    figure = _figure_problem("report", str(document.get("path") or ""), set(document.get("figure_links") or ()))
+    problems = report_problems(str(document.get("text") or ""), figure_problem=figure,
+                               exhibit_path=exhibit["path"] if exhibit else None)
+    return ("results report is not ready for experiment review: " + "; ".join(problems),) if problems else ()
+
+
+def _graph_problems(document, snapshot, knowledge):
+    problems = graph_problems(str(document.get("text") or ""))
+    return ("logic graph is not ready for experiment review: " + "; ".join(problems),) if problems else ()
 
 
 ARTIFACTS = {
     "plan": ArtifactNeed("plan", "an experiment plan artifact must be submitted before design review", "plan_required",
-                         "write_and_submit_plan", validator="plan", label="Plan submitted and valid", missing="experiment plan artifact", artifact_key="plan"),
+                         "write_and_submit_plan", validator="plan", label="Plan submitted and valid", missing="experiment plan artifact",
+                         artifact_key="plan", actions=("submit_design",), validate=_plan_problems,
+                         invalid="experiment plan artifact: {problems}"),
     "result": ArtifactNeed("result", "result artifact must be submitted before experiment_review", "execution_ready",
-                           "run_experiment_and_retain_results", label="Result artifact present", missing="result artifact", artifact_key="result"),
+                           "run_experiment_and_retain_results", label="Result artifact present", missing="result artifact",
+                           artifact_key="result", actions=("submit_results",), invalid="result artifact: {problems}"),
     "report": ArtifactNeed("report", "a results report must be retained before experiment_review", "results_report_required",
-                           "write_and_submit_results_report", validator="report", label="Results report present and valid", missing="results report artifact", artifact_key="report"),
+                           "write_and_submit_results_report", validator="report", label="Results report present and valid",
+                           missing="results report artifact", artifact_key="report", actions=("submit_results",),
+                           validate=_report_problems, invalid="results report artifact: {problems}"),
     "graph": ArtifactNeed("graph", "a logic graph must be retained before experiment_review", "logic_graph_required",
-                          "write_and_submit_logic_graph", validator="graph", label="Logic graph present and valid", missing="logic graph artifact", artifact_key="graph"),
+                          "write_and_submit_logic_graph", validator="graph", label="Logic graph present and valid",
+                          missing="logic graph artifact", artifact_key="graph", actions=("submit_results",),
+                          validate=_graph_problems, invalid="logic graph artifact: {problems}"),
 }
+DEPENDENCIES = DependenciesDone()
 
 RETURN_TO_PLANNED = ReviewReturn("planned", "new", event_type="experiment.returned_to_planned",
                                choose_when="The plan itself is flawed and must be revised.", default=True)
 RETURN_TO_RUNNING = ReviewReturn("running", "same", event_type="experiment.returned_to_running",
                                choose_when="The plan stands, but execution or the conclusion needs work.",
                                revision="The approved plan stands; fix execution or conclusions, then resubmit results.")
-
-
-def artifact_check(role):
-    """Select and validate the submitted bytes; caller payload never supplies facts."""
-    def check(snapshot, knowledge):
-        experiment = knowledge.read(Reference("experiment", snapshot.id))
-        artifact = preferred_artifact(artifacts=experiment.get("current_attempt_artifacts") or [], roles=(role,))
-        need = ARTIFACTS[role]
-        if artifact is None:
-            return need.issue()
-        document = knowledge.read(Reference("artifact", str(artifact["id"])))
-        error = str(document.get("error") or "")
-        if not error and role != "result":
-            text = str(document.get("text") or "")
-            path, figures = str(document.get("path") or ""), set(document.get("figure_links") or ())
-            def figure_problem(link):
-                if link not in figures:
-                    return (f"figure {link!r} has no submitted content: make sure the file exists next to {path} "
-                            f"(copy it out first if it was produced on the sandbox), then resubmit the {role} to submit it")
-            if role == "plan":
-                missing_sections = plan_sections_missing(text)
-                if missing_sections:
-                    error = ("experiment plan is missing required sections before design review: " + ", ".join(missing_sections)
-                             + ". Fill in the plan template's required spine — Summary; Objective & hypothesis; Evaluation — then resubmit the plan.")
-                else:
-                    problems = [problem for link in markdown_image_links(text) if (problem := figure_problem(link))]
-                    error = "experiment plan is not ready for design review: " + "; ".join(problems) if problems else ""
-            elif role == "report":
-                exhibit = preferred_artifact(artifacts=experiment.get("current_attempt_artifacts") or [], roles=(EXHIBIT_ROLE,))
-                problems = report_problems(text, figure_problem=figure_problem, exhibit_path=exhibit["path"] if exhibit else None)
-                error = "results report is not ready for experiment review: " + "; ".join(problems) if problems else ""
-            elif role == "graph":
-                problems = graph_problems(text)
-                error = "logic graph is not ready for experiment review: " + "; ".join(problems) if problems else ""
-        if error:
-            return Issue(f"{role}_invalid", f"{need.missing}: {error}", need.action, need.tools)
-    return check
-
-
-def dependencies_ready(snapshot, knowledge):
-    experiment = knowledge.read(Reference("experiment", snapshot.id))
-    pending = [item for item in experiment.get("dependencies") or () if not item.get("settled")]
-    if pending:
-        failed = [item for item in pending if item.get("failed")]
-        names = ", ".join(f"{item.get('node_type')} {item.get('name') or item.get('id')} ({item.get('status')})" for item in failed or pending)
-        return Issue("dependency_failed" if failed else "dependencies_pending",
-                     f"A dependency ended without succeeding: {names}. Replan or end this experiment." if failed
-                     else f"Execution is waiting for dependencies to finish: {names}.",
-                     "wait_for_dependencies", ("workflow.status_and_next",))
 
 
 def _references(artifacts):
@@ -250,22 +244,35 @@ def rejected(role, return_to):
     return check
 
 
+DESIGN_REVIEW = ReviewGate("design_reviewer", "design review must pass before execution", "design_review_required",
+                           "Design review passed", "experiment-design-review", "approve_design", (RETURN_TO_PLANNED,),
+                           forbidden_returns=(("running", "experiment-design-review rejections cannot return_to 'running'; a flawed plan goes back to 'planned'"),),
+                           actions=("approve_design",))
+ATTEMPT_REVIEW = ReviewGate("experiment_reviewer", "experiment review must pass before complete", "experiment_review_required",
+                            "Experiment review passed", "experiment-attempt-review", "complete", (RETURN_TO_PLANNED, RETURN_TO_RUNNING),
+                            return_choice_required=True,
+                            return_required_error="experiment-attempt-review rejections must set return_to: 'planned' if the plan is flawed, or 'running' if execution or the conclusion needs repair",
+                            actions=("complete",))
+
 EXPERIMENT = Workflow(
     name="experiment", version=1, initial="planned", event_type="experiment.transitioned", id_prefix="exp",
     nodes=(
-        Node("planned", "Design experiment", "experiment_owner", build_plan_context, execution=EXPERIMENT_EXECUTION),
-        Node("design_review", "Review experiment design", "design_reviewer", build_design_review_context, review_requested, execution=REVIEW_EXECUTION),
-        Node("running", "Execute approved plan", "experiment_owner", build_execution_context, dependencies_ready,
-             execution=EXPERIMENT_EXECUTION),
-        Node("experiment_review", "Review completed attempt", "experiment_reviewer", build_attempt_review_context, review_requested, execution=REVIEW_EXECUTION),
+        Node("planned", "Design experiment", "experiment_owner", build_plan_context, execution=EXPERIMENT_EXECUTION,
+             requires=(ARTIFACTS["plan"],)),
+        Node("design_review", "Review experiment design", "design_reviewer", build_design_review_context,
+             execution=REVIEW_EXECUTION, requires=(DESIGN_REVIEW,)),
+        Node("running", "Execute approved plan", "experiment_owner", build_execution_context, execution=EXPERIMENT_EXECUTION,
+             requires=(ARTIFACTS["result"], ARTIFACTS["report"], ARTIFACTS["graph"], DEPENDENCIES)),
+        Node("experiment_review", "Review completed attempt", "experiment_reviewer", build_attempt_review_context,
+             execution=REVIEW_EXECUTION, requires=(ATTEMPT_REVIEW,)),
     ),
     edges=(
-        Edge("planned", "submit_design", "design_review", check=artifact_check("plan"), change=submit_design, label="Submit the plan for independent review", tools=("experiment.transition",)),
-        Edge("design_review", "approve_design", "running", check=reviewed("design_reviewer"), change=pin_approved_plan, label="Execute the approved plan", tools=("experiment.transition",)),
+        Edge("planned", "submit_design", "design_review", change=submit_design, label="Submit the plan for independent review", tools=("experiment.transition",)),
+        Edge("design_review", "approve_design", "running", change=pin_approved_plan, label="Execute the approved plan", tools=("experiment.transition",)),
         Edge("design_review", "revise_plan", RETURN_TO_PLANNED.to_status, check=rejected("design_reviewer", RETURN_TO_PLANNED.to_status), change=return_plan, label=RETURN_TO_PLANNED.choose_when, event_type=RETURN_TO_PLANNED.event_type),
-        Edge("running", "submit_results", "experiment_review", check=all_of(*(artifact_check(role) for role in ("result", "report", "graph"))), change=finish_execution, label="Submit the completed attempt for review", tools=("experiment.transition",)),
+        Edge("running", "submit_results", "experiment_review", change=finish_execution, label="Submit the completed attempt for review", tools=("experiment.transition",)),
         Edge("running", "retry_running", "running", change=retry_execution, label="Recover interrupted execution", tools=("experiment.transition",), suggest=False),
-        Edge("experiment_review", "complete", "complete", check=reviewed("experiment_reviewer"), change=conclude, label="Accept the reviewed conclusion", tools=("experiment.transition",)),
+        Edge("experiment_review", "complete", "complete", change=conclude, label="Accept the reviewed conclusion", tools=("experiment.transition",)),
         Edge("experiment_review", "revise_plan", RETURN_TO_PLANNED.to_status, check=rejected("experiment_reviewer", RETURN_TO_PLANNED.to_status), change=return_plan, label=RETURN_TO_PLANNED.choose_when, event_type=RETURN_TO_PLANNED.event_type),
         Edge("experiment_review", "revise_execution", RETURN_TO_RUNNING.to_status, check=rejected("experiment_reviewer", RETURN_TO_RUNNING.to_status), change=return_execution, label=RETURN_TO_RUNNING.choose_when, event_type=RETURN_TO_RUNNING.event_type),
         *(Edge(state, name, target, label=label, tools=("experiment.transition",), suggest=False)
@@ -276,16 +283,17 @@ EXPERIMENT = Workflow(
 )
 
 METADATA = Metadata(
-    requirements={"planned": (ARTIFACTS["plan"],), "running": tuple(ARTIFACTS[role] for role in ("result", "report", "graph"))},
-    reviews={
-        "design_review": ReviewGate("design_reviewer", "design review must pass before execution", "design_review_required",
-                                    "Design review passed", "experiment-design-review", "approve_design", (RETURN_TO_PLANNED,),
-                                    forbidden_returns=(("running", "experiment-design-review rejections cannot return_to 'running'; a flawed plan goes back to 'planned'"),)),
-        "experiment_review": ReviewGate("experiment_reviewer", "experiment review must pass before complete", "experiment_review_required",
-                                        "Experiment review passed", "experiment-attempt-review", "complete", (RETURN_TO_PLANNED, RETURN_TO_RUNNING),
-                                        return_choice_required=True, return_required_error="experiment-attempt-review rejections must set return_to: 'planned' if the plan is flawed, or 'running' if execution or the conclusion needs repair"),
-    },
     effects={"submit_results": ("result_submission", "prepare_metrics_exhibit"),
              "retry_running": ("record_retry_context", "show_metrics_exhibit"),
              "complete": ("record_conclusion",)},
+)
+
+KIND = RecordKind(
+    name="experiment", table="experiments", id_prefix="exp", workflow=EXPERIMENT,
+    metadata=METADATA, created_event="experiment.created",
+    columns=("name", "intent", "details"), dependencies=True,
+    seal_exempt_actions=frozenset({"revise_plan", "revise_execution", "migrate"}),
+    commit_columns={"revise_plan": ("attempt_index", "revision_context"),
+                    "revise_execution": ("revision_context",), "retry_running": ("revision_context",),
+                    "complete": ("conclusion",)},
 )

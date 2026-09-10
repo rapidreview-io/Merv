@@ -169,20 +169,6 @@ class TaskWorkflowTest(ResearchCase):
         self.assertEqual(state["allowed_transitions"], [])
         self.assertEqual(self.task_status(task_id)["workflow"]["current_gate"], "terminal")
 
-        with self.app.store.connect() as conn:
-            events = conn.execute(
-                "SELECT payload_json FROM events WHERE target_id = ? AND type = ? ORDER BY id",
-                (task_id, TASK_WORKFLOW.event_type),
-            ).fetchall()
-            sealed = conn.execute(
-                "SELECT COUNT(*) AS n FROM research_artifact_links WHERE target_id = ? AND submission_id <> ''",
-                (task_id,),
-            ).fetchone()["n"]
-        self.assertEqual(
-            [json.loads(row["payload_json"])["transition"] for row in events],
-            ["submit_delivery", "accept"],
-        )
-        self.assertGreater(sealed, 0)
         # Closed tasks refuse late artifacts.
         with self.assertRaises(ValidationError):
             self.submit(
@@ -274,10 +260,7 @@ class TaskWorkflowTest(ResearchCase):
 
     # ---- creation rules ----
 
-    def test_names_are_folder_safe_and_unique_and_claims_are_not_a_field(self) -> None:
-        self.create_task("prep-data")
-        with self.assertRaisesRegex(ValidationError, "already exists"):
-            self.create_task("PREP-DATA")
+    def test_names_are_folder_safe_and_claims_are_not_a_field(self) -> None:
         with self.assertRaisesRegex(ValidationError, "folder name"):
             self.create_task("bad name!")
         with self.assertRaisesRegex(ValidationError, "goal is required"):

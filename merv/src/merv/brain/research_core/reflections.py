@@ -14,6 +14,7 @@ import json
 from typing import Any
 
 from ..workflows import (
+    KINDS,
     PROJECT_GRAPH_ROLE,
     REFLECTION_LENS_DOC_ROLE,
     TASK_BRIEF_ROLE,
@@ -26,8 +27,6 @@ from .evidence import (
     artifact_submission_recency_key,
     claim_refs,
     depends_on_refs,
-    current_slot_artifacts,
-    current_reflection_requirement_artifact,
     graph_diff,
     graph_diff_summary,
     graph_problems,
@@ -49,20 +48,15 @@ from .artifact_models import ArtifactTarget
 from .policy import (
     ACTIVE_EXPERIMENT_CAP,
     GateEvaluation,
-    RequirementEvaluation,
     active_experiment_cap_would_exceed_message,
     covered_terminal_ids,
-    evaluate_review_gate,
     reflection_signal_state,
-    review_snapshot_id,
-    read_review_fact,
     snapshot_from_id,
 )
-from .workflow_schema import RecordNeed, Workflow
-from ..workflows import Reference, Runtime, Snapshot, documents
+from .records import RecordHooks, RecordKnowledge, Records
+from ..workflows import Reference, Snapshot, documents
 from ..kernel.state.store import (
     BaseStateStore,
-    next_created_seq,
     row_to_dict,
     rows_to_dicts,
 )
@@ -75,10 +69,17 @@ from ..kernel.utils import (
     parse_iso,
 )
 
+REFLECTION = KINDS["reflection"]
 ADVANCE_OWNER_LEASE_SECONDS = 10 * 60
 
 
-class ReflectionService:
+def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
+    return rows_to_dicts(rows=conn.execute(sql, parameters).fetchall())
+
+
+class ReflectionService(RecordHooks):
+    """The reflection wave's own rules; its record runs on ``Records``."""
+
     def __init__(
         self,
         *,
@@ -86,13 +87,15 @@ class ReflectionService:
         artifacts: Artifacts,
         experiments: ExperimentService,
         tasks: TaskService,
-        runtime: Runtime,
+        records: Records,
     ) -> None:
         self.store = store
         self.artifacts = artifacts
         self.experiments = experiments
         self.tasks = tasks
-        self.runtime = runtime
+        self.records = records
+        self.runtime = records.runtime
+        records.register(REFLECTION, self)
 
     # ---- create ----
 
@@ -105,23 +108,32 @@ class ReflectionService:
     ) -> dict[str, Any]:
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            return self._create_in_transaction(conn=conn, project_id=project_id, title=title, lenses=lenses)
+            return self._create(conn=conn, project_id=project_id, title=title, lenses=lenses)
 
     def initialize_workflow(self, conn, snapshot: Snapshot) -> None:
-        self._create_in_transaction(conn=conn, project_id=snapshot.project_id,
-                                    title=str(snapshot.data.get("title") or ""),
-                                    lenses=[dict(lens) for lens in snapshot.data.get("lenses") or ()], workflow_instance=snapshot)
+        self._create(conn=conn, project_id=snapshot.project_id, instance=snapshot,
+                     title=str(snapshot.data.get("title") or ""),
+                     lenses=[dict(lens) for lens in snapshot.data.get("lenses") or ()])
 
-    def _create_in_transaction(self, *, conn, project_id, title, lenses, workflow_instance=None):
+    def _create(self, *, conn, project_id, title, lenses, instance=None):
         roster = validate_reflection_roster(lenses=lenses or [])
+        corpus = self._corpus_snapshot(conn=conn, project_id=project_id)
+        return self.records.create_in_transaction(
+            REFLECTION, conn=conn, project_id=project_id, instance=instance,
+            values={"title": title.strip(), "roster_json": json.dumps(roster, sort_keys=True),
+                    "corpus_json": json.dumps(corpus, sort_keys=True)},
+            event={"title": title.strip(), "lenses": [lens["id"] for lens in roster],
+                   "corpus_terminal_experiments": len(corpus["terminal_experiments"])},
+            read={"include_content": True},
+        )
+
+    def before_create(self, *, conn, project_id: str, values: dict[str, Any]) -> None:
+        """The project graph is one living artifact: one wave may edit it."""
         terminal = tuple(sorted(REFLECTION_WORKFLOW.terminal_statuses))
-        placeholders = ", ".join("?" for _ in terminal)
         open_row = conn.execute(
-            f"""
-            SELECT id, status FROM reflections
-            WHERE project_id = ? AND status NOT IN ({placeholders})
-            ORDER BY created_seq DESC LIMIT 1
-            """,
+            f"""SELECT id, status FROM reflections WHERE project_id = ?
+                AND status NOT IN ({", ".join("?" for _ in terminal)})
+                ORDER BY created_seq DESC LIMIT 1""",
             (project_id, *terminal),
         ).fetchone()
         if open_row is not None:
@@ -131,48 +143,6 @@ class ReflectionService:
                 "starting a new one — the project graph is one living "
                 "artifact and only one wave may edit it at a time"
             )
-        reflection_id = new_id(prefix="syn") if workflow_instance is None else workflow_instance.id
-        now = now_iso()
-        corpus = self._corpus_snapshot(conn=conn, project_id=project_id)
-        conn.execute(
-            """
-            INSERT INTO reflections
-              (id, project_id, title, status, attempt_index, revision_context,
-               roster_json, corpus_json, created_at, updated_at, created_seq)
-            VALUES (?, ?, ?, ?, 1, '', ?, ?, ?, ?, ?)
-            """,
-            (
-                reflection_id,
-                project_id,
-                title.strip(),
-                REFLECTION_WORKFLOW.initial,
-                json.dumps(roster, sort_keys=True),
-                json.dumps(corpus, sort_keys=True),
-                now,
-                now,
-                next_created_seq(conn=conn, table="reflections"),
-            ),
-        )
-        self.store.record_event(
-            conn=conn,
-            project_id=project_id,
-            event_type="reflection.created",
-            target_type="reflection",
-            target_id=reflection_id,
-            payload={
-                "title": title.strip(),
-                "lenses": [lens["id"] for lens in roster],
-                "corpus_terminal_experiments": len(corpus["terminal_experiments"]),
-            },
-        )
-        if workflow_instance is None:
-            self.runtime.adopt(conn=conn, project_id=project_id, instance_id=reflection_id,
-                               workflow="reflection", state="reflecting", data={"attempt_index": 1})
-        return self.get_state(
-            reflection_id=reflection_id,
-            conn=conn,
-            include_content=True,
-        )
 
     def _corpus_snapshot(self, *, conn, project_id: str) -> dict[str, Any]:
         terminal = ", ".join(f"'{s}'" for s in sorted(EXPERIMENT_TERMINAL_STATUSES))
@@ -311,171 +281,90 @@ class ReflectionService:
 
     # ---- read ----
 
-    def get_state(
-        self,
-        *,
-        reflection_id: str,
-        project_id: str | None = None,
-        conn=None,
-        include_content: bool = False,
-    ) -> dict[str, Any]:
-        return self.get_state_with_gate(
-            reflection_id=reflection_id,
-            project_id=project_id,
-            conn=conn,
-            include_content=include_content,
-        )[0]
+    def get_state(self, *, reflection_id: str, project_id: str | None = None, conn=None,
+                  include_content: bool = False) -> dict[str, Any]:
+        return self.records.get_state(REFLECTION, record_id=reflection_id, project_id=project_id,
+                                      conn=conn, include_content=include_content)
 
-    def get_state_with_gate(
-        self,
-        *,
-        reflection_id: str,
-        project_id: str | None = None,
-        conn=None,
-        include_content: bool = False,
-    ) -> tuple[dict[str, Any], GateEvaluation]:
-        owns_conn = conn is None
-        if conn is None:
-            conn = self.store.connect()
-        try:
-            if owns_conn:
-                project_id = self.store.require_project_id(
-                    conn=conn, project_id=project_id
-                )
-            row = conn.execute(
-                "SELECT * FROM reflections WHERE id = ?", (reflection_id,)
-            ).fetchone()
-            if row is None:
-                raise NotFoundError(f"reflection not found: {reflection_id}")
-            data = row_to_dict(row=row) or {}
-            if project_id is not None and data["project_id"] != project_id:
-                raise NotFoundError(
-                    f"reflection not found in project {project_id}: {reflection_id}"
-                )
-            data["roster"] = json.loads(str(data.pop("roster_json", "[]")))
-            data["corpus"] = json.loads(str(data.pop("corpus_json", "{}")))
-            history = self.artifacts.history(
-                tx=conn,
-                target_type="reflection",
-                target_ids=(reflection_id,),
-                summarize=True,
-            )[reflection_id]
-            data["artifacts"] = [
-                {**artifact_state_record(evidence), "artifact_id": evidence.artifact_id} for evidence in history.artifacts
-            ]
-            # Newest row per slot — the reflection wave seals on its forward
-            # transitions too, so superseded lens docs stay alive as history.
-            data["current_attempt_artifacts"] = current_slot_artifacts(
-                data["artifacts"], attempt=data["attempt_index"]
-            )
-            workflow_row = conn.execute(
-                "SELECT data_json, revision FROM workflow_instances WHERE id = ? AND project_id = ?",
-                (reflection_id, data["project_id"]),
-            ).fetchone()
-            if workflow_row is not None:
-                workflow_data = json.loads(workflow_row["data_json"])
-                pinned_lenses = dict(workflow_data.get("lens_artifacts") or {})
-                child_rows = conn.execute(
-                    "SELECT child_key, data_json FROM workflow_instances WHERE parent_id = ? AND parent_revision = ? "
-                    "AND project_id = ? AND outcome = 'submitted'",
-                    (reflection_id, workflow_row["revision"], data["project_id"]),
-                ).fetchall()
-                pinned_lenses.update((child["child_key"], json.loads(child["data_json"])["artifact_id"]) for child in child_rows)
-                if pinned_lenses:
-                    by_id = {(item.get("lens_id"), item["id"]): item for item in data["artifacts"]}
-                    for item in data["artifacts"]:
-                        if item.get("artifact_id") and item.get("attempt_index") == data["attempt_index"]:
-                            by_id.setdefault((item.get("lens_id"), item["artifact_id"]), item)
-                    data["current_attempt_artifacts"] = [
-                        item for item in data["current_attempt_artifacts"]
-                        if item.get("role") != REFLECTION_LENS_DOC_ROLE or item.get("lens_id") not in pinned_lenses
-                    ] + [by_id[(lens_id, artifact_id)] for lens_id, artifact_id in pinned_lenses.items() if (lens_id, artifact_id) in by_id]
+    def get_state_with_gate(self, *, reflection_id: str, project_id: str | None = None, conn=None,
+                            include_content: bool = False) -> tuple[dict[str, Any], GateEvaluation]:
+        return self.records.get_state_with_gate(REFLECTION, record_id=reflection_id, project_id=project_id,
+                                                conn=conn, include_content=include_content)
+
+    def hydrate(self, *, conn, project_id: str, records: list[dict[str, Any]], detail_ids=(),
+                include_content: bool = False) -> None:
+        """Everything a wave is beyond its row: pinned lenses, the corpus it
+        reads, what its change spec has materialized, and its code proposal."""
+        for data in records:
+            reflection_id = str(data["id"])
+            self._pin_lens_artifacts(conn=conn, reflection=data)
             if include_content:
-                content = self._artifact_content(
-                    corpus=data["corpus"],
-                    current=data["current_attempt_artifacts"],
-                )
-                data["corpus"] = self._hydrate_corpus_content(
-                    conn=conn,
-                    corpus=data["corpus"],
-                    content=content,
-                )
-                data["current_attempt_artifacts"] = (
-                    self._hydrate_current_attempt_artifacts(
-                        artifacts=data["current_attempt_artifacts"],
-                        content=content,
-                    )
-                )
-            claim_rows = conn.execute(
-                """
-                SELECT sc.reflection_id, sc.claim_id, sc.op, sc.claim_key,
-                       sc.created_at, c.statement, c.status, c.confidence
-                FROM reflection_claim_changes sc
-                JOIN claims c ON c.id = sc.claim_id
-                WHERE sc.reflection_id = ?
-                ORDER BY sc.created_at, sc.claim_id
-                """,
-                (reflection_id,),
-            ).fetchall()
-            data["materialized_claims"] = rows_to_dicts(rows=claim_rows)
-            experiment_rows = conn.execute(
-                """
-                SELECT se.reflection_id, se.experiment_id, se.proposal_key,
-                       se.created_at, e.name, e.intent, e.status
-                FROM reflection_experiments se
-                JOIN experiments e ON e.id = se.experiment_id
-                WHERE se.reflection_id = ?
-                ORDER BY se.created_at, se.experiment_id
-                """,
-                (reflection_id,),
-            ).fetchall()
-            data["materialized_experiments"] = rows_to_dicts(rows=experiment_rows)
-            task_rows = conn.execute(
-                """
-                SELECT st.reflection_id, st.task_id, st.proposal_key,
-                       st.created_at, t.name, t.goal, t.status
-                FROM reflection_tasks st
-                JOIN tasks t ON t.id = st.task_id
-                WHERE st.reflection_id = ?
-                ORDER BY st.created_at, st.task_id
-                """,
-                (reflection_id,),
-            ).fetchall()
-            data["materialized_tasks"] = rows_to_dicts(rows=task_rows)
-            review_rows = conn.execute(
-                """
-                SELECT * FROM reviews
-                WHERE target_type = 'reflection' AND target_id = ?
-                ORDER BY created_seq DESC
-                """,
-                (reflection_id,),
-            ).fetchall()
-            reviews = rows_to_dicts(rows=review_rows)
-            for review in reviews:
-                review["findings"] = json.loads(review.pop("findings_json", "[]"))
-                review["evidence"] = json.loads(review.pop("evidence_json", "{}"))
-            data["reviews"] = reviews
-            data["consolidation"] = self._consolidation_state(
-                conn=conn,
-                reflection=data,
-            )
+                content = self._artifact_content(corpus=data["corpus"], current=data["current_attempt_artifacts"])
+                data["corpus"] = self._hydrate_corpus_content(conn=conn, corpus=data["corpus"], content=content)
+                data["current_attempt_artifacts"] = self._hydrate_current_attempt_artifacts(
+                    artifacts=data["current_attempt_artifacts"], content=content)
+            data["materialized_claims"] = _query(conn, """
+                SELECT sc.reflection_id, sc.claim_id, sc.op, sc.claim_key, sc.created_at,
+                       c.statement, c.status, c.confidence
+                FROM reflection_claim_changes sc JOIN claims c ON c.id = sc.claim_id
+                WHERE sc.reflection_id = ? ORDER BY sc.created_at, sc.claim_id""", (reflection_id,))
+            data["materialized_experiments"] = _query(conn, """
+                SELECT se.reflection_id, se.experiment_id, se.proposal_key, se.created_at,
+                       e.name, e.intent, e.status
+                FROM reflection_experiments se JOIN experiments e ON e.id = se.experiment_id
+                WHERE se.reflection_id = ? ORDER BY se.created_at, se.experiment_id""", (reflection_id,))
+            data["materialized_tasks"] = _query(conn, """
+                SELECT st.reflection_id, st.task_id, st.proposal_key, st.created_at, t.name, t.goal, t.status
+                FROM reflection_tasks st JOIN tasks t ON t.id = st.task_id
+                WHERE st.reflection_id = ? ORDER BY st.created_at, st.task_id""", (reflection_id,))
+            data["consolidation"] = self._consolidation_state(conn=conn, reflection=data)
             proposal = data["consolidation"].get("proposal") or {}
             if proposal:
                 data["snapshot_token"] = str(proposal.get("id") or "")
                 data["code_sha"] = str(proposal.get("proposal_sha") or "")
             data["reflection_coverage"] = reflection_coverage_for(reflection=data)
-            data["project_graph_diff"] = self._project_graph_diff(
-                conn=conn, reflection=data
-            )
-            evaluation = self._evaluate_gate(conn=conn, reflection=data)
-            data["gate_checklist"] = evaluation.checklist()
-            data["allowed_transitions"] = [
-                dict(item) for item in evaluation.legal_transitions
-            ]
-            return data, evaluation
-        finally:
-            if owns_conn:
-                conn.close()
+            data["project_graph_diff"] = self._project_graph_diff(conn=conn, reflection=data)
+
+    def _pin_lens_artifacts(self, *, conn, reflection: dict[str, Any]) -> None:
+        """A submitted lens child freezes its contribution: the pinned artifact
+        stays current even after a newer upload for the same lens."""
+        workflow_row = conn.execute(
+            "SELECT data_json, revision FROM workflow_instances WHERE id = ? AND project_id = ?",
+            (reflection["id"], reflection["project_id"]),
+        ).fetchone()
+        if workflow_row is None:
+            return
+        pinned = dict(json.loads(workflow_row["data_json"]).get("lens_artifacts") or {})
+        children = conn.execute(
+            "SELECT child_key, data_json FROM workflow_instances WHERE parent_id = ? AND parent_revision = ? "
+            "AND project_id = ? AND outcome = 'submitted'",
+            (reflection["id"], workflow_row["revision"], reflection["project_id"]),
+        ).fetchall()
+        pinned.update((child["child_key"], json.loads(child["data_json"])["artifact_id"]) for child in children)
+        if not pinned:
+            return
+        by_id = {(item.get("lens_id"), item["id"]): item for item in reflection["artifacts"]}
+        for item in reflection["artifacts"]:
+            if item.get("artifact_id") and item.get("attempt_index") == reflection["attempt_index"]:
+                by_id.setdefault((item.get("lens_id"), item["artifact_id"]), item)
+        reflection["current_attempt_artifacts"] = [
+            item for item in reflection["current_attempt_artifacts"]
+            if item.get("role") != REFLECTION_LENS_DOC_ROLE or item.get("lens_id") not in pinned
+        ] + [by_id[key] for key in ((lens, artifact) for lens, artifact in pinned.items()) if key in by_id]
+
+    def read_fact(self, *, conn, record: dict[str, Any], reference: Reference):
+        """The world a change spec is parsed against."""
+        if reference.kind != "reflection_world" or reference.id != record["project_id"]:
+            return None
+        claims = conn.execute("SELECT id FROM claims WHERE project_id = ?", (reference.id,)).fetchall()
+        experiments = conn.execute("SELECT id, name, status FROM experiments WHERE project_id = ? ORDER BY created_at, id", (reference.id,)).fetchall()
+        tasks = conn.execute("SELECT id, name FROM tasks WHERE project_id = ?", (reference.id,)).fetchall()
+        return {"claim_ids": tuple(row["id"] for row in claims),
+                "experiment_names": tuple(str(row["name"]).lower() for row in experiments),
+                "task_names": tuple(str(row["name"]).lower() for row in tasks),
+                "node_ids": tuple(row["id"] for row in (*experiments, *tasks)),
+                "non_terminal_experiments": tuple(str(row["name"] or row["id"]) for row in experiments
+                                                  if row["status"] not in EXPERIMENT_TERMINAL_STATUSES)}
 
     def _consolidation_state(
         self, *, conn, reflection: dict[str, Any]
@@ -1096,49 +985,11 @@ class ReflectionService:
             what=what,
         )
 
-    def _evaluate_gate(self, *, conn, reflection: dict[str, Any]) -> GateEvaluation:
-        """Evaluate the registered graph once; legacy checklist is a projection."""
-        status = str(reflection["status"])
-        row = conn.execute("SELECT id FROM workflow_instances WHERE id = ? AND project_id = ?",
-                           (reflection["id"], reflection["project_id"])).fetchone()
-        snapshot = (self.runtime.get(project_id=reflection["project_id"], instance_id=reflection["id"], conn=conn)
-                    if row is not None else Snapshot(id=reflection["id"], project_id=reflection["project_id"],
-                        workflow="reflection", version=1, state=status, revision=0))
-        decision = self.runtime.registry.get("reflection", snapshot.version).evaluate(snapshot, _ReflectionKnowledge(self, conn, reflection, snapshot))
-        workflow = Workflow(self.runtime.registry.get("reflection", snapshot.version), REFLECTION_WORKFLOW.metadata)
-        workflow_state = workflow.state(snapshot.state)
-        all_issues = tuple(issue for action in decision.actions for issue in action.issues)
-        requirements = []
-        for need in () if workflow_state is None else workflow_state.requirements:
-            role = need.name if isinstance(need, RecordNeed) else need.role
-            issue = next((item for item in all_issues if item.code in {need.gate, f"{role}_invalid"}), None)
-            artifact = current_reflection_requirement_artifact(reflection=reflection, role=role)
-            items = ({"id": f"requirement:{role}", "kind": "record" if isinstance(need, RecordNeed) else "artifact",
-                      "role": role, "label": need.label, "satisfied": issue is None,
-                      "status": "valid" if issue is None else "missing", "gate": need.gate,
-                      "action": need.action, "missing": "" if issue is None else need.missing,
-                      **({} if artifact is None else {"artifact_id": artifact.get("id"), "path": artifact.get("path")})},)
-            requirements.append(RequirementEvaluation(role=role, status="valid" if issue is None else "missing",
-                                blocker_code="" if issue is None else issue.code,
-                                enforcement_error="" if issue is None else issue.message,
-                                problems=() if issue is None else (issue.message,), items=items))
-        review = (None if workflow_state is None or workflow_state.review is None else evaluate_review_gate(
-                    conn=conn, target_type="reflection", target=reflection, review=workflow_state.review, snapshot=snapshot))
-        return GateEvaluation(workflow=workflow, status=status, requirements=tuple(requirements),
-                              review=review, decision=decision)
-
-    def _workflow_knowledge(self, snapshot: Snapshot, conn):
-        reflection = self.get_state(reflection_id=snapshot.id, project_id=snapshot.project_id, conn=conn)
-        projected = "consolidating" if snapshot.state == "consolidation_review" else snapshot.state
-        if reflection["status"] != projected:
-            raise WorkflowError("reflection state differs from its workflow instance; an explicit migration is required")
-        return _ReflectionKnowledge(self, conn, reflection, snapshot)
-
     def _lens_knowledge(self, snapshot: Snapshot, conn):
         reflection = self.get_state(reflection_id=str(snapshot.data["reflection_id"]), project_id=snapshot.project_id, conn=conn)
         if str(snapshot.data["lens_id"]) not in {str(item["id"]) for item in reflection["roster"]}:
             raise WorkflowError("lens does not belong to this reflection's fixed roster")
-        return _ReflectionKnowledge(self, conn, reflection, snapshot)
+        return RecordKnowledge(self.records, REFLECTION, conn, reflection, snapshot)
 
     def initialize_lens(self, conn, snapshot: Snapshot) -> None:
         parent = conn.execute(
@@ -1162,7 +1013,7 @@ class ReflectionService:
                                     project_id=snapshot.project_id, conn=conn)
         if reflection["status"] != "published":
             raise WorkflowError("A research wave can start only from a published reflection.")
-        return _ReflectionKnowledge(self, conn, reflection, snapshot)
+        return RecordKnowledge(self.records, REFLECTION, conn, reflection, snapshot)
 
     def initialize_wave(self, conn, snapshot: Snapshot) -> None:
         self._wave_knowledge(snapshot, conn)
@@ -1353,7 +1204,7 @@ class ReflectionService:
     def require_consolidation_proposal(self, *, conn, reflection: dict[str, Any]) -> None:
         if reflection["status"] != "consolidating":
             return
-        decision = self._evaluate_gate(conn=conn, reflection=reflection).decision
+        decision = self.records.evaluate_gate(REFLECTION, conn=conn, record=reflection).decision
         for action in decision.actions:
             for issue in action.issues:
                 if issue.code == "consolidation_proposal_required":
@@ -1746,24 +1597,11 @@ class ReflectionService:
                     "UPDATE reflection_advances SET error = '' WHERE id = ?",
                     (advance_id,),
                 )
-                reflection, gate = self.get_state_with_gate(
-                    reflection_id=reflection_id,
-                    project_id=project_id,
-                    conn=conn,
-                )
+                reflection = self.get_state(reflection_id=reflection_id, project_id=project_id,
+                                            conn=conn, include_content=True)
                 if str(reflection.get("status")) == REFLECTION_WORKFLOW.success_status:
-                    # A retried settle after a completed publish is idempotent.
-                    return self.get_state(
-                        reflection_id=reflection_id,
-                        conn=conn,
-                        include_content=True,
-                    )
-                return self._transition_in_tx(
-                    conn=conn,
-                    reflection=reflection,
-                    gate=gate,
-                    transition="publish",
-                )
+                    return reflection  # A retried settle after a publish is idempotent.
+                return self._transition_in_tx(conn=conn, reflection=reflection, transition="publish")
         except Exception as exc:
             with suppress(Exception):
                 with self.store.transaction() as conn:
@@ -1795,24 +1633,12 @@ class ReflectionService:
     ) -> dict[str, Any]:
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            reflection, gate = self.get_state_with_gate(
-                reflection_id=reflection_id, project_id=project_id, conn=conn
-            )
             return self._transition_in_tx(
-                conn=conn,
-                reflection=reflection,
-                gate=gate,
-                transition=transition,
+                conn=conn, transition=transition,
+                reflection=self.get_state(reflection_id=reflection_id, project_id=project_id, conn=conn),
             )
 
-    def _transition_in_tx(
-        self,
-        *,
-        conn,
-        reflection: dict[str, Any],
-        gate: GateEvaluation,
-        transition: str,
-    ) -> dict[str, Any]:
+    def _transition_in_tx(self, *, conn, reflection: dict[str, Any], transition: str) -> dict[str, Any]:
         reflection_id = str(reflection["id"])
         current = self.runtime.adopt(conn=conn, project_id=reflection["project_id"], instance_id=reflection_id,
                                      workflow="reflection", state=reflection["status"],
@@ -1838,96 +1664,57 @@ class ReflectionService:
                                           request_id=new_id(prefix="reflection_action"))
         return self.get_state(reflection_id=reflection_id, conn=conn, include_content=True)
 
-    def _commit_workflow_change(self, conn, before, after, action, payload) -> None:
-        if action in {"start_work", "adopt_children"}:
-            return
-        reflection = self.get_state(reflection_id=before.id, project_id=before.project_id, conn=conn)
+    def after_commit(self, *, conn, before, after, action: str, payload) -> None:
+        """What a wave transition means beyond its declared status write."""
         reflection_id = before.id
-        next_status = "consolidating" if after.state == "consolidation_review" else after.state
-        if action.startswith("revise_"):
-            conn.execute(
-                "UPDATE reflections SET status = ?, attempt_index = ?, revision_context = ?, updated_at = ? "
-                "WHERE id = ? AND project_id = ?",
-                (next_status, int(after.data.get("attempt_index") or reflection["attempt_index"]),
-                 str(after.data.get("revision_context") or ""), now_iso(), before.id, before.project_id),
-            )
-            if next_status not in ("reflection_review", "consolidating"):
-                conn.execute("DELETE FROM reflection_reserved_names WHERE reflection_id = ?", (before.id,))
+        next_status = REFLECTION.status_of(after.state)
+        if action.startswith("revise_") or action == "migrate":
+            if action.startswith("revise_") and next_status not in ("reflection_review", "consolidating"):
+                conn.execute("DELETE FROM reflection_reserved_names WHERE reflection_id = ?", (reflection_id,))
             return
-        if action == "migrate":
-            conn.execute("UPDATE reflections SET status = ? WHERE id = ? AND project_id = ?",
-                         (next_status, before.id, before.project_id))
-            return
-        if (
-            next_status in REFLECTION_WORKFLOW.terminal_statuses
-            and next_status != REFLECTION_WORKFLOW.success_status
-        ):
-            # A bound receipt means central already advanced: the only legal
-            # exit is publish (the runner retries settle), so a terminal exit
-            # here would strand the reviewed belief-state update forever.
-            bound = conn.execute(
-                "SELECT id FROM reflection_advances "
-                "WHERE reflection_id = ? AND status = 'bound' LIMIT 1",
-                (reflection_id,),
-            ).fetchone()
-            if bound is not None:
-                raise WorkflowError(
-                    "central has already advanced for this wave (bound receipt "
-                    f"{bound['id']}); publication completes via the runner's "
-                    "settle retry — the wave cannot be abandoned once bound"
-                )
-            # Cancel open intents so a settle that raced this exit records an
-            # orphaned CAS instead of binding into a terminal wave.
-            conn.execute(
-                "UPDATE reflection_advances SET status = 'stale', error = ? "
-                "WHERE reflection_id = ? AND status = 'intended'",
-                ("wave abandoned before settle", reflection_id),
-            )
-        now = now_iso()
-        # Same seal as the experiment FSM: freeze this round's lens docs
-        # so a re-run of the fan-out cannot delete what was reviewed.
-        self.artifacts.seal(
-            tx=conn,
-            target=ArtifactTarget(
-                "reflection", reflection_id, reflection["project_id"]
-            ),
-            transition=action,
-        )
-        if after.state == "published":
-            self._materialize_change_spec(conn=conn, reflection=reflection)
-            conn.execute(
-                """
-                UPDATE reflections
-                SET status = ?, published_at = ?, published_graph_version_id = ?,
-                    updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    next_status,
-                    now,
-                    self._current_graph_version_id(reflection=reflection),
-                    now,
-                    reflection_id,
-                ),
-            )
-        else:
-            conn.execute(
-                "UPDATE reflections SET status = ?, updated_at = ? WHERE id = ?",
-                (next_status, now, reflection_id),
-            )
         if action in ("submit_reflection_artifacts", "begin_consolidation"):
             # submit_reflection_artifacts shares the transaction that
             # world-validated the spec; begin_consolidation re-pins so a spec
             # revised and re-reviewed during reflection_review (review
             # freshness guarantees the newest spec IS the reviewed one) is
             # the one publication materializes.
-            self._reserve_wave_names(conn=conn, reflection=reflection)
+            self._reserve_wave_names(conn=conn, reflection=self.get_state(
+                reflection_id=reflection_id, project_id=before.project_id, conn=conn))
         elif next_status not in ("reflection_review", "consolidating"):
-            # Publish materialized the names; abandon and early exits release.
+            # Publish materializes the names; abandon and early exits release.
+            conn.execute("DELETE FROM reflection_reserved_names WHERE reflection_id = ?", (reflection_id,))
+        if after.state == "published":
+            reflection = self.get_state(reflection_id=reflection_id, project_id=before.project_id, conn=conn)
+            self._materialize_change_spec(conn=conn, reflection=reflection)
+            now = now_iso()
             conn.execute(
-                "DELETE FROM reflection_reserved_names WHERE reflection_id = ?",
-                (reflection_id,),
+                "UPDATE reflections SET published_at = ?, published_graph_version_id = ?, updated_at = ? WHERE id = ?",
+                (now, self._current_graph_version_id(reflection=reflection), now, reflection_id),
             )
+
+    def before_commit(self, *, conn, before, after, action: str) -> None:
+        """A bound receipt means central already advanced: the only legal exit
+        is publish (the runner retries settle), so a terminal exit here would
+        strand the reviewed belief-state update forever."""
+        next_status = REFLECTION.status_of(after.state)
+        if (action in {"start_work", "adopt_children", "migrate"}
+                or next_status not in REFLECTION_WORKFLOW.terminal_statuses
+                or next_status == REFLECTION_WORKFLOW.success_status):
+            return
+        bound = conn.execute(
+            "SELECT id FROM reflection_advances WHERE reflection_id = ? AND status = 'bound' LIMIT 1",
+            (before.id,),
+        ).fetchone()
+        if bound is not None:
+            raise WorkflowError(
+                "central has already advanced for this wave (bound receipt "
+                f"{bound['id']}); publication completes via the runner's "
+                "settle retry — the wave cannot be abandoned once bound")
+        # Cancel open intents so a settle that raced this exit records an
+        # orphaned CAS instead of binding into a terminal wave.
+        conn.execute("UPDATE reflection_advances SET status = 'stale', error = ? "
+                     "WHERE reflection_id = ? AND status = 'intended'",
+                     ("wave abandoned before settle", before.id))
 
     def _commit_lens_change(self, conn, before, after, action, payload) -> None:
         if action in {"submit", "adopt_lens"}:
@@ -2500,49 +2287,3 @@ class ReflectionService:
         finally:
             if owns_conn:
                 conn.close()
-
-
-class _ReflectionKnowledge:
-    """Project/transaction-bound records and bytes; graph definitions make decisions."""
-
-    def __init__(self, service, conn, reflection, snapshot):
-        self.service, self.conn, self.reflection, self.snapshot = service, conn, reflection, snapshot
-        self.documents = {}
-
-    def read(self, reference: Reference):
-        wave, conn = self.reflection, self.conn
-        if reference.kind == "reflection" and reference.id == wave["id"]:
-            return wave
-        if reference.kind == "project" and reference.id == wave["project_id"]:
-            row = conn.execute("SELECT id, name, summary FROM projects WHERE id = ?", (reference.id,)).fetchone()
-            return {} if row is None else dict(row)
-        if reference.kind == "artifact":
-            if reference.id not in self.documents:
-                association = conn.execute("SELECT artifact_id FROM research_artifacts WHERE id = ? AND project_id = ?",
-                                           (reference.id, wave["project_id"])).fetchone()
-                content_id = reference.id if association is None else association["artifact_id"]
-                self.service.artifacts.contents.assert_complete(artifact_ids=(content_id,), project_id=wave["project_id"], tx=conn)
-                content = self.service.artifacts.contents.get(artifact_ids=(content_id,), project_id=wave["project_id"], include="document", tx=conn)[0]
-                if content.data is None:
-                    raise WorkflowError("Artifact content is unavailable; upload a complete document.")
-                self.documents[reference.id] = {"text": content.data.decode("utf-8", errors="replace"), "path": content.path,
-                                                "artifact_id": content.id, "figure_links": content.figures}
-            return self.documents[reference.id]
-        if reference.kind == "reflection_world" and reference.id == wave["project_id"]:
-            claims = conn.execute("SELECT id FROM claims WHERE project_id = ?", (reference.id,)).fetchall()
-            experiments = conn.execute("SELECT id, name, status FROM experiments WHERE project_id = ? ORDER BY created_at, id", (reference.id,)).fetchall()
-            tasks = conn.execute("SELECT id, name FROM tasks WHERE project_id = ?", (reference.id,)).fetchall()
-            return {"claim_ids": tuple(row["id"] for row in claims),
-                    "experiment_names": tuple(str(row["name"]).lower() for row in experiments),
-                    "task_names": tuple(str(row["name"]).lower() for row in tasks),
-                    "node_ids": tuple(row["id"] for row in (*experiments, *tasks)),
-                    "non_terminal_experiments": tuple(str(row["name"] or row["id"]) for row in experiments if row["status"] not in EXPERIMENT_TERMINAL_STATUSES)}
-        if reference.kind in {"review", "review_snapshot"}:
-            if reference.kind == "review_snapshot" and reference.id != wave["id"]:
-                raise NotFoundError("review snapshot belongs to another workflow instance")
-            node = self.service.runtime.registry.get(self.snapshot.workflow, self.snapshot.version).node(self.snapshot.state)
-            role = reference.id if reference.kind == "review" else (node.role if node is not None else "")
-            return read_review_fact(conn=conn, project_id=wave["project_id"], target_type="reflection",
-                                    target_id=wave["id"], role=role, request=reference.kind == "review_snapshot",
-                                    snapshot_id=review_snapshot_id(target_type="reflection", target=wave, snapshot=self.snapshot))
-        raise NotFoundError(f"reflection fact not available: {reference.kind}/{reference.id}")

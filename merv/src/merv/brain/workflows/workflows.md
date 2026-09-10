@@ -10,6 +10,18 @@ Branches, loops and review rejection use the same transition model. Agent nodes
 provide `build_context(snapshot, knowledge) -> Brief`, with a concise assignment
 and exact evidence references. Wait and terminal nodes dispatch no agent.
 
+A node also declares what its state needs, as `requires`: a closed set of
+`ArtifactNeed` (a submitted document, selected and validated), `RecordNeed` (a
+fact its own graph function verifies), `DependenciesDone` and `ReviewGate`. Each
+names the edges it gates and whether it also blocks dispatch, so the runtime
+raises its issue there instead of a hand-written edge check, and Research reads
+the same declaration for the gate checklist. A check survives only where it says
+something a requirement cannot — a rejection verdict, a lens roster, an abandon
+guard. `RecordKind` declares the native row a graph is bound to: table, id
+prefix, insert and JSON columns, per-action commit columns, seal exemptions and
+any status projection. `registry.py` lists both; a plugin workflow declares no
+kind and keeps its whole record in instance data.
+
 Every agent node declares an `Execution`: whether it is read-only, its
 node-specific tools beyond the support baseline, the `mutating` subset, `Scope`
 rules binding arguments to the instance id, the workflow name, or a brief
@@ -40,8 +52,9 @@ and automatic joins. Old child generations cannot resume a new wait. Version
 migration explicitly preserves or replaces children and never replaces live work.
 
 `definitions/` contains experiment, task, reflection, independent reflection lens,
-and published research-wave graphs. It also owns pure evidence validators,
-context builders, research contracts and passive legacy presentation metadata.
+and published research-wave graphs, each beside its `RecordKind`. It also owns
+pure evidence validators, context builders, research contracts and the passive
+legacy `Metadata` (action effects and how a subject is named).
 `documents.py` declares one model per research document and validates from it;
 only what a schema cannot say stays code, each a named rule — cycles, uniqueness
 across entries, references resolved through a caller's callback. Research tool

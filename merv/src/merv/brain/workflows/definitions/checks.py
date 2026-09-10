@@ -1,4 +1,8 @@
-"""Small reusable checks over verified support-system facts."""
+"""Small reusable checks over verified support-system facts.
+
+A passing review and an open review request are declared as a node
+``ReviewGate`` requirement; what remains here reads a rejection verdict.
+"""
 
 from ..graph import Issue, Knowledge, Reference, Snapshot
 
@@ -15,11 +19,6 @@ def reviewed(role: str, *, verdict: str = "pass", return_to: str = ""):
                          "request_review", ("review.request",))
 
     return check
-
-
-def review_requested(snapshot: Snapshot, knowledge: Knowledge):
-    if not knowledge.read(Reference("review_snapshot", snapshot.id)):
-        return Issue("review_not_requested", "Create an independent review of the submitted evidence.", "request_review", ("review.request",))
 
 
 def review_summary(fact) -> str:
