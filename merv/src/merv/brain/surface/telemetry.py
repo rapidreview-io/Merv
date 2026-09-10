@@ -8,14 +8,12 @@ import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from ..kernel.state.tool_call_stats import by_tool, tool_call_totals
 from ..kernel.state.activity import (
     ToolActivityEmitter,
+    ToolCallRecord,
     effective_source,
     is_event_ok,
-    payload_chars,
     redact_sensitive,
-    target_of,
 )
 from ..kernel.utils import now_iso, parse_iso
 
@@ -58,7 +56,7 @@ class ControlActivitySink(ToolActivityEmitter):
             "scanned_filtered": scanned,
             # Summarize what the filters kept: totals that describe rows the
             # caller cannot see are not a summary of anything (audit TEL-01).
-            "summary": _activity_summary(scanned),
+            "summary": activity_summary(scanned),
         }
 
 
@@ -73,36 +71,24 @@ class ControlToolCallSink:
         self._calls: list[dict[str, Any]] = []
         self._lock = threading.Lock()
 
-    def record(
-        self,
-        *,
-        tool: str,
-        source: str,
-        status: str,
-        duration_ms: int,
-        arguments: dict[str, Any],
-        result: Any | None = None,
-        error: str = "",
-        error_code: str = "",
-    ) -> None:
-        target_type, target_id = target_of(arguments)
+    def record(self, call: ToolCallRecord) -> None:
         row = {
             "id": self._next_id,
             "ts": now_iso(),
-            "tool": tool,
-            "source": source,
-            "status": status,
-            "duration_ms": int(duration_ms or 0),
-            "sent_chars": payload_chars(value=arguments),
-            "received_chars": len(error or "")
-            if status == "error"
-            else payload_chars(value=result),
-            "error_code": error_code,
-            "project_id": str(arguments.get("project_id") or ""),
-            "target_type": target_type,
-            "target_id": target_id,
-            "args": redact_sensitive(value=dict(arguments)),
-            "result": error if status == "error" else redact_sensitive(value=result),
+            "tool": call.tool,
+            "source": call.source,
+            "status": call.status,
+            "duration_ms": call.duration_ms,
+            "sent_chars": call.sent_chars,
+            "received_chars": call.received_chars,
+            "error_code": call.error_code,
+            "project_id": call.project_id,
+            "target_type": call.target_type or None,
+            "target_id": call.target_id or None,
+            "args": redact_sensitive(value=dict(call.arguments)),
+            "result": call.error
+            if call.status != "ok"
+            else redact_sensitive(value=call.result),
             "args_truncated": False,
             "result_truncated": False,
         }
@@ -139,7 +125,6 @@ class ControlToolCallSink:
                 project_ids=project_ids,
             )
         ]
-        totals = tool_call_totals(calls)
         sortable = {"ts", "received_chars", "sent_chars", "duration_ms", "tool"}
         sort = sort if sort in sortable else "ts"
         calls.sort(
@@ -150,10 +135,16 @@ class ControlToolCallSink:
         visible = [_tool_call_summary(row) for row in calls[:limit]]
         return {
             "calls": visible,
-            "by_tool": by_tool(calls),
-            "totals": totals,
+            # No per-tool rollup: the Debug page derives its own from
+            # GET /api/activity and never read one from here.
+            "totals": {
+                "calls": len(calls),
+                "sent_chars": sum(int(row["sent_chars"]) for row in calls),
+                "received_chars": sum(int(row["received_chars"]) for row in calls),
+                "error_calls": sum(1 for row in calls if row["status"] == "error"),
+            },
             "coverage": {
-                "calls": totals["calls"],
+                "calls": len(calls),
                 "stored": len(calls),
                 "oldest_ts": min((row["ts"] for row in calls), default=None),
                 "newest_ts": max((row["ts"] for row in calls), default=None),
@@ -200,11 +191,14 @@ class ControlToolCallSink:
             return {"cleared": before - len(self._calls)}
 
 
-def _activity_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
-    # Same keys as the API-level summarizer (transport/api/views.py): the view
-    # recomputes the summary for every response, so a key present in one shape
-    # and absent from the other would silently change the local/unscoped
-    # response schema (audit TEL-01). `count` mirrors `total`.
+def activity_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Counts describing exactly the events handed in (audit TEL-01).
+
+    The API view recomputes the summary for every response over its own
+    filtered list, and calls this: one shape, so a key can never be present in
+    the scoped response and absent from the unscoped one. `count` mirrors
+    `total`.
+    """
     summary = {
         "total": len(events),
         "count": len(events),

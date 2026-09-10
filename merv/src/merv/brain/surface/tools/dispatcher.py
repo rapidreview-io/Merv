@@ -14,7 +14,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from .contracts import TOOL_CONTRACTS, TOOL_MANIFEST
 from ..identity import ToolVisibilityError
-from ...kernel.state.activity import monotonic_ms
+from ...kernel.state.activity import ToolCallRecord, monotonic_ms
 from ...kernel.utils import PermissionDeniedError, ResearchPluginError
 from ...kernel.utils import ValidationError as ToolValidationError
 
@@ -24,12 +24,11 @@ class ToolHandler(Protocol):
 
 
 class ToolActivity(Protocol):
-    def tool_ok(self, **kwargs: Any) -> None: ...
-    def tool_error(self, **kwargs: Any) -> None: ...
+    def tool_call(self, call: ToolCallRecord) -> None: ...
 
 
 class ToolCallRecorder(Protocol):
-    def record(self, **kwargs: Any) -> None: ...
+    def record(self, call: ToolCallRecord) -> None: ...
 
 
 def _contract_error_message(*, exc: PydanticValidationError) -> str:
@@ -173,31 +172,16 @@ class ToolDispatcher:
                         "errors": exc.errors(include_context=False),
                     },
                 ) from exc
-            duration_ms = monotonic_ms() - started
-            self.activity.tool_ok(
-                source=activity_source,
-                tool=name,
-                arguments=telemetry_arguments,
-                duration_ms=duration_ms,
-                result=result,
-            )
-            self.tool_calls.record(
-                tool=name,
-                source=activity_source,
-                status="ok",
-                duration_ms=duration_ms,
-                arguments=telemetry_arguments,
-                result=result,
-            )
-            if self.ledger is not None:
-                self.ledger.record(
+            self._log(
+                ToolCallRecord(
                     tool=name,
                     source=activity_source,
                     status="ok",
-                    duration_ms=duration_ms,
+                    duration_ms=monotonic_ms() - started,
                     arguments=telemetry_arguments,
                     result=result,
                 )
+            )
             return result
         except Exception as exc:
             if isinstance(exc, ResearchPluginError):
@@ -206,32 +190,26 @@ class ToolDispatcher:
             else:
                 error = str(exc)
                 error_code = "unexpected"
-            duration_ms = monotonic_ms() - started
-            self.activity.tool_error(
-                source=activity_source,
-                tool=name,
-                arguments=telemetry_arguments,
-                duration_ms=duration_ms,
-                error=error,
-                error_code=error_code,
-            )
-            self.tool_calls.record(
-                tool=name,
-                source=activity_source,
-                status="error",
-                duration_ms=duration_ms,
-                arguments=telemetry_arguments,
-                error=error,
-                error_code=error_code,
-            )
-            if self.ledger is not None:
-                self.ledger.record(
+            self._log(
+                ToolCallRecord(
                     tool=name,
                     source=activity_source,
                     status="error",
-                    duration_ms=duration_ms,
+                    duration_ms=monotonic_ms() - started,
                     arguments=telemetry_arguments,
                     error=error,
                     error_code=error_code,
                 )
+            )
             raise
+
+    def _log(self, call: ToolCallRecord) -> None:
+        """One shaped record, three sinks: the ring, the debug rows, the ledger.
+
+        Shaping it here rather than inside each sink is what keeps them
+        agreeing about the call's target, scope, and I/O sizes.
+        """
+        self.activity.tool_call(call)
+        self.tool_calls.record(call)
+        if self.ledger is not None:
+            self.ledger.record(call)

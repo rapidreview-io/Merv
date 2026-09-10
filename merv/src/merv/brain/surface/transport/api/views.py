@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from ....kernel.state.activity import effective_source, is_event_ok
 from ....kernel.utils import NotFoundError
 from ....research_core import EXPERIMENT_WORKFLOW
 from ....infrastructure import RemoteSandboxes as SandboxEngine
+from ...telemetry import activity_summary
 
 
 class ActivityTelemetry(Protocol):
@@ -42,26 +42,6 @@ def _event_project_id(event: dict[str, Any]) -> str | None:
     return str(args["project_id"]) if isinstance(args, dict) and args.get("project_id") else None
 
 
-def _activity_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
-    sources: dict[str, int] = {}
-    types: dict[str, int] = {}
-    statuses = {"ok": 0, "error": 0}
-    for event in events:
-        source = effective_source(event=event)
-        event_type = event.get("event") or "unknown"
-        sources[source] = sources.get(source, 0) + 1
-        types[event_type] = types.get(event_type, 0) + 1
-        statuses["ok" if is_event_ok(event=event) else "error"] += 1
-    return {
-        "total": len(events),
-        "count": len(events),
-        "source_counts": sources,
-        "event_counts": types,
-        "status_counts": statuses,
-        "window": len(events),
-    }
-
-
 def activity_view(
     activity: ActivityTelemetry,
     *,
@@ -92,7 +72,7 @@ def activity_view(
         events = [event for event in events if visible(event)]
         scanned = [event for event in scanned if visible(event)]
     # Summarize the same rows the caller is shown, never a wider window.
-    summary = _activity_summary(scanned)
+    summary = activity_summary(scanned)
     return present(
         {
             "filter": {

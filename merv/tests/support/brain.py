@@ -156,13 +156,19 @@ class TestBrain:
             args.setdefault("public_key", DEFAULT_PUBLIC_KEY)
             args.setdefault("provider", "fake")
             args.setdefault("instance_type", "tiny:east")
-        return self._app.tools.call_tool(
-            name=name,
-            arguments=args,
-            activity_source=activity_source,
-            internal_kwargs=effective_internal_kwargs or None,
-            telemetry_project_id=telemetry_project_id,
-        )
+        try:
+            return self._app.tools.call_tool(
+                name=name,
+                arguments=args,
+                activity_source=activity_source,
+                internal_kwargs=effective_internal_kwargs or None,
+                telemetry_project_id=telemetry_project_id,
+            )
+        finally:
+            # The ledger writes on its own thread. Tests read the table and
+            # delete the database directory the moment a call returns, so the
+            # row has to be in before this does.
+            self._app.tool_ledger.flush()
 
     def submit_artifact(
         self,

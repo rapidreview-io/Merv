@@ -37,8 +37,10 @@ class RecordingLedger:
     def reject(self, **kwargs: Any) -> None:
         self.rows.append({"status": "rejected", **kwargs})
 
-    def record(self, **kwargs: Any) -> None:
-        self.rows.append(kwargs)
+    def record(self, call: Any) -> None:
+        self.rows.append(
+            {key: getattr(call, key) for key in ("tool", "source", "status", "error_code")}
+        )
 
 
 class ToolCallLedgerOverHttpTest(unittest.TestCase):
@@ -59,6 +61,7 @@ class ToolCallLedgerOverHttpTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def _rows(self) -> list[dict[str, Any]]:
+        self.assertTrue(self.brain.tool_ledger.flush())
         with self.brain.store.transaction() as conn:
             return [
                 {key: row[key] for key in row.keys()}
@@ -159,6 +162,7 @@ class ToolCallLedgerOverHttpTest(unittest.TestCase):
         response = self._call("claim.list", {"project_id": self.project_id})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["result"]["structuredContent"], {"claims": []})
+        self.assertTrue(self.brain.tool_ledger.flush())
         self.assertEqual(self.brain.tool_ledger.failures, 1)
         # The drop is announced through the activity feed, not swallowed.
         events = self.brain.activity.recent(limit=50)["events"]
@@ -196,6 +200,7 @@ class AuthDenialLedgerTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def _rows(self) -> list[dict[str, Any]]:
+        self.assertTrue(self.brain.tool_ledger.flush())
         with self.brain.store.transaction() as conn:
             return [
                 {key: row[key] for key in row.keys()}
@@ -318,6 +323,7 @@ class OpenHostedLabelTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def _rows(self) -> list[dict[str, Any]]:
+        self.assertTrue(self.brain.tool_ledger.flush())
         with self.brain.store.transaction() as conn:
             return [
                 {key: row[key] for key in row.keys()}

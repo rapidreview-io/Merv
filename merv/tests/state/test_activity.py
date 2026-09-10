@@ -8,6 +8,7 @@ import unittest
 from merv.brain.kernel.state.activity import (
     RESULT_LOG_MAX_BYTES,
     ToolActivityEmitter,
+    ToolCallRecord,
     cap_result,
     redact_sensitive,
     register_activity_vocabulary,
@@ -130,26 +131,19 @@ class CapResultTest(unittest.TestCase):
 
 
 class InMemoryActivityTest(unittest.TestCase):
-    def test_control_sink_reuses_the_canonical_tool_event_methods(self) -> None:
-        self.assertIs(ControlActivitySink.tool_ok, ToolActivityEmitter.tool_ok)
-        self.assertIs(ControlActivitySink.tool_error, ToolActivityEmitter.tool_error)
+    def test_control_sink_reuses_the_canonical_tool_event_method(self) -> None:
+        self.assertIs(ControlActivitySink.tool_call, ToolActivityEmitter.tool_call)
 
     def test_event_filter_applies_before_limit(self) -> None:
         sink = ControlActivitySink()
-        sink.tool_ok(
-            source="mcp",
-            tool="claim.list",
-            arguments={"project_id": "p1"},
-            duration_ms=1,
-            result={"claims": []},
-        )
-        sink.tool_ok(
-            source="mcp",
-            tool="claim.list",
-            arguments={"project_id": "p2"},
-            duration_ms=1,
-            result={"claims": []},
-        )
+        for project in ("p1", "p2"):
+            sink.tool_call(ToolCallRecord(
+                source="mcp",
+                tool="claim.list",
+                arguments={"project_id": project},
+                duration_ms=1,
+                result={"claims": []},
+            ))
         recent = sink.recent(
             limit=1,
             source="mcp",
@@ -162,13 +156,13 @@ class InMemoryActivityTest(unittest.TestCase):
         """TEL-01: a filtered read must not carry unfiltered totals."""
         sink = ControlActivitySink()
         for source, project in (("mcp", "p1"), ("http", "p2"), ("http", "p3")):
-            sink.tool_ok(
+            sink.tool_call(ToolCallRecord(
                 source=source,
                 tool="claim.list",
                 arguments={"project_id": project},
                 duration_ms=1,
                 result={"claims": []},
-            )
+            ))
         unfiltered = sink.recent(limit=10)
         self.assertEqual(unfiltered["summary"]["total"], 3)
 
@@ -177,18 +171,6 @@ class InMemoryActivityTest(unittest.TestCase):
         self.assertEqual(by_source["summary"]["total"], 2)
         self.assertEqual(by_source["summary"]["source_counts"], {"http": 2})
         self.assertEqual(by_source["summary"]["window"], 2)
-
-        # The API view recomputes this summary for every response, so the two
-        # summarizers must agree on the shape — a key in one and not the other
-        # silently changes the local/unscoped response schema (audit TEL-01).
-        from merv.brain.surface.transport.api.views import (
-            _activity_summary as api_activity_summary,
-        )
-
-        self.assertEqual(
-            set(unfiltered["summary"]),
-            set(api_activity_summary(unfiltered["scanned_filtered"])),
-        )
 
         by_project = sink.recent(
             limit=10,
@@ -200,31 +182,32 @@ class InMemoryActivityTest(unittest.TestCase):
             len(by_project["events"]),
         )
 
-    def test_tool_ok_records_true_io_sizes_even_when_capped(self) -> None:
+    def test_an_ok_call_records_true_io_sizes_even_when_capped(self) -> None:
         sink = ControlActivitySink()
         big = "z" * (RESULT_LOG_MAX_BYTES + 5000)
-        sink.tool_ok(
+        sink.tool_call(ToolCallRecord(
             source="mcp",
             tool="experiment.get_state",
             arguments={"experiment_id": "exp_1"},
             duration_ms=12,
             result={"blob": big},
-        )
+        ))
         event = sink.recent(limit=1)["events"][0]
         self.assertTrue(event["result"]["_truncated"])
         self.assertGreater(event["received_chars"], RESULT_LOG_MAX_BYTES)
         self.assertGreater(event["sent_chars"], 0)
 
-    def test_tool_error_records_sent_and_error_size(self) -> None:
+    def test_a_failed_call_records_sent_and_error_size(self) -> None:
         sink = ControlActivitySink()
-        sink.tool_error(
+        sink.tool_call(ToolCallRecord(
             source="mcp",
             tool="sandbox.request",
             arguments={"experiment_id": "exp_1"},
             duration_ms=4,
+            status="error",
             error="boom",
             error_code="bad",
-        )
+        ))
         event = sink.recent(limit=1)["events"][0]
         self.assertEqual(event["received_chars"], len("boom"))
         self.assertGreater(event["sent_chars"], 0)

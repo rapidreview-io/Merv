@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from dataclasses import dataclass, field
 import hashlib
 import json
 import re
@@ -34,6 +35,9 @@ SENSITIVE_KEYS = {"capability", "session_secret", "MLFLOW_TRACKING_PASSWORD"}
 ID_KEYS = {"project_id", "artifact_id", "job_id", "target_type", "target_id",
            "role", "transition", "verdict"}
 TARGET_KEYS: list[tuple[str, str]] = [("artifact", "artifact_id")]
+
+# What the ledger will accept in its status column; anything else is an error.
+TOOL_CALL_STATUSES = frozenset({"ok", "error", "rejected"})
 
 
 def register_activity_vocabulary(
@@ -140,62 +144,73 @@ def ledger_label(value: Any) -> str:
     return scrub_credentials(scrub_secret_text(text))[:LEDGER_LABEL_MAX_CHARS]
 
 
+@dataclass(slots=True)
+class ToolCallRecord:
+    """One tool call, shaped ONCE for every sink that logs it.
+
+    The sinks disagree about what to KEEP — the ring keeps the raw text a human
+    drills into, the durable row keeps sizes and digests — but they may not
+    disagree about what the call WAS. Target, scope, and the two I/O sizes are
+    derived here, so an event and a row can never report different sizes for
+    the same call and no sink pays to work them out again.
+    """
+
+    tool: str = ""
+    source: str = ""
+    status: str = "ok"
+    duration_ms: int = 0
+    arguments: dict[str, Any] = field(default_factory=dict)
+    result: dict[str, Any] | None = None
+    error: str = ""
+    error_code: str = ""
+    project_id: str = ""
+    target_type: str = field(init=False, default="")
+    target_id: str = field(init=False, default="")
+    sent_chars: int = field(init=False, default=0)
+    received_chars: int = field(init=False, default=0)
+
+    def __post_init__(self) -> None:
+        self.arguments = self.arguments if isinstance(self.arguments, dict) else {}
+        self.status = self.status if self.status in TOOL_CALL_STATUSES else "error"
+        self.duration_ms = int(self.duration_ms or 0)
+        target_type, target_id = target_of(self.arguments)
+        self.target_type = target_type or ""
+        self.target_id = target_id or ""
+        self.project_id = self.project_id or str(self.arguments.get("project_id") or "")
+        # Full I/O sizes in characters — what the agent actually sent and
+        # received — independent of any capped or summarized copy a sink keeps.
+        # `received_chars` matches HTTP MCP serialization (json.dumps(result,
+        # sort_keys=True)), so it is the exact size of the payload that lands in
+        # the agent's context; it is what the debug view sorts on to find
+        # context-bloating tools. A failed call received the error text the
+        # caller got back, not a result it never saw.
+        self.sent_chars = payload_chars(value=self.arguments)
+        self.received_chars = (
+            len(self.error or "")
+            if self.status != "ok"
+            else payload_chars(value=self.result)
+        )
+
+
 class ToolActivityEmitter:
     """Shared tool-call event shaping for activity sinks."""
 
-    def tool_ok(
-        self,
-        *,
-        source: str,
-        tool: str,
-        arguments: dict[str, Any],
-        duration_ms: int,
-        result: dict[str, Any],
-    ) -> None:
-        self.emit(
-            event_type="tool.call",
-            payload={
-                "source": source,
-                "tool": tool,
-                "status": "ok",
-                "duration_ms": duration_ms,
-                "args": summarize_arguments(arguments=arguments),
-                "result": cap_result(value=result),
-                # Full I/O sizes in characters — what the agent actually sent and
-                # received — independent of the capped `result`/summarized `args`
-                # above. `received_chars` matches HTTP MCP serialization
-                # (json.dumps(result, sort_keys=True)) so it reflects the exact
-                # payload that lands in the agent's context. This is the signal
-                # the debug view sorts on to find context-bloating tools.
-                "sent_chars": payload_chars(value=arguments),
-                "received_chars": payload_chars(value=result),
-            },
-        )
-
-    def tool_error(
-        self,
-        *,
-        source: str,
-        tool: str,
-        arguments: dict[str, Any],
-        duration_ms: int,
-        error: str,
-        error_code: str = "",
-    ) -> None:
-        self.emit(
-            event_type="tool.call",
-            payload={
-                "source": source,
-                "tool": tool,
-                "status": "error",
-                "duration_ms": duration_ms,
-                "error": error,
-                "error_code": error_code,
-                "args": summarize_arguments(arguments=arguments),
-                "sent_chars": payload_chars(value=arguments),
-                "received_chars": len(error or ""),
-            },
-        )
+    def tool_call(self, call: ToolCallRecord) -> None:
+        payload: dict[str, Any] = {
+            "source": call.source,
+            "tool": call.tool,
+            "status": call.status,
+            "duration_ms": call.duration_ms,
+            "args": summarize_arguments(arguments=call.arguments),
+            "sent_chars": call.sent_chars,
+            "received_chars": call.received_chars,
+        }
+        if call.status == "ok":
+            payload["result"] = cap_result(value=call.result)
+        else:
+            payload["error"] = call.error
+            payload["error_code"] = call.error_code
+        self.emit(event_type="tool.call", payload=payload)
 
 
 def effective_source(*, event: dict[str, Any]) -> str:
