@@ -133,27 +133,6 @@ def mlflow_suspended(env: Mapping[str, str] | None = None) -> bool:
     return env_bool(MLFLOW_SUSPENDED_ENV_VAR, default=False, env=env)
 
 
-def env_float(
-    name: str,
-    override: float | None,
-    default: float,
-    *,
-    env: Mapping[str, str] | None = None,
-    strict: bool = False,
-) -> float:
-    if override is not None:
-        return float(override)
-    value = _env_value(name=name, env=env)
-    if value is None or value == "":
-        return float(default)
-    try:
-        return float(value)
-    except ValueError:
-        if strict:
-            raise
-        return float(default)
-
-
 def env_int(
     name: str,
     default: int,

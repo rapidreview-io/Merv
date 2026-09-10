@@ -34,6 +34,7 @@ from merv.brain.kernel.secret_tokens import (
 from merv.brain.kernel.state.activity import redact_sensitive, scrub_secret_text
 from merv.brain.kernel.utils import ValidationError
 from tests.support.infrastructure import FakeInfrastructureClient, project_namespace
+from merv.brain.kernel.state.activity import ToolCallRecord
 from merv.brain.surface.telemetry import ControlToolCallSink
 from merv.brain.surface.transport.api import runs_wait
 from merv.brain.surface.transport.api.shared import redact_upload_tokens
@@ -884,11 +885,11 @@ class RunsWaitUrlTest(unittest.TestCase):
         # And through a real sink, not just the helper: the stored row itself
         # must come back masked, or a sink that skips the scrubber hides here.
         sink = ControlToolCallSink()
-        sink.record(
+        sink.record(ToolCallRecord(
             tool="sandbox.runs", source="http", status="ok", duration_ms=1,
             arguments={"project_id": self.project_id},
             result={"runs": list(runs.values())},
-        )
+        ))
         stored = json.dumps(sink.get(call_id=1))
         self.assertIn("seed0", stored)
         self.assertNotIn(tag, stored)

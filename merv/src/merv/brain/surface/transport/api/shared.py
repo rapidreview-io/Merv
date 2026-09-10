@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, Response
 
 from ....kernel.env import env_value
 from ....kernel.request_context import bind_principal
+from ....kernel.state.activity import UPLOAD_TOKEN_PATH_RE, WAIT_SIGNATURE_PATH_RE
 from ....kernel.utils import ValidationError
 from ...identity import (
     HumanSessionRequiredError, is_human_session, is_local_principal,
@@ -51,19 +52,17 @@ UI_CORS_HEADERS = [
 # ETag is not CORS-safelisted; expose it so a cross-origin dev UI can echo it back.
 UI_CORS_EXPOSE_HEADERS = ["ETag"]
 
-# Upload tokens are bearer credentials living in the URL path; the activity log
-# must never persist them. Shared choke-point across every auth-exempt token
-# route (INV-12): artifact document/figure PUTs, feed-media PUTs, and the
-# storage completion POST.
-_UPLOAD_TOKEN_PATH_RE = re.compile(r"(/api/(?:artifacts/[uf]|feed/u|storage/u)/)[^/?]+")
-# The run-wait tag is the same kind of credential in the same place: keep the
-# sandbox and the label (they name the run a log line is about), mask the tag.
-_WAIT_SIGNATURE_PATH_RE = re.compile(r"(/wait/[^/?]+/[^/?]+/)[^/?]+")
-
 
 def redact_upload_tokens(path: str) -> str:
-    return _WAIT_SIGNATURE_PATH_RE.sub(
-        r"\1<redacted>", _UPLOAD_TOKEN_PATH_RE.sub(r"\1<redacted>", path)
+    """Mask the two bearer credentials that live in a request path (INV-12).
+
+    Upload tokens (artifact document/figure PUTs, feed-media PUTs, the storage
+    completion POST) and the run-wait tag are credentials the access log must
+    never persist. The patterns are the activity log's own, imported rather
+    than restated so the two scrubbers cannot drift apart.
+    """
+    return WAIT_SIGNATURE_PATH_RE.sub(
+        r"\1<redacted>", UPLOAD_TOKEN_PATH_RE.sub(r"\1<redacted>", path)
     )
 
 

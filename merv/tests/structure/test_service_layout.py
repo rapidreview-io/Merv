@@ -515,7 +515,7 @@ class ServiceLayoutTest(unittest.TestCase):
 
 
     def test_services_type_against_base_state_store(self) -> None:
-        concrete_store_names = {"StateStore", "SqliteStateStore"}
+        concrete_store_names = {"StateStore"}
         sandbox_record_modules = [
             path
             for path in (BACKEND_ROOT / "sandbox").glob("*.py")

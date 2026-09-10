@@ -32,6 +32,7 @@ from tests.support.infrastructure import FakeInfrastructureClient, seed_sandbox
 from merv.brain.surface.transport.api import create_fastapi_app
 from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
 from merv.brain.kernel.state import StateStore
+from merv.brain.kernel.state.activity import ToolCallRecord
 from tests.support.blobs import LocalDirBlobStore
 from merv.brain.kernel.utils import ValidationError
 from merv.brain.surface.transport.api.shared import CLIENT_VERSION_HEADER
@@ -126,7 +127,7 @@ class SurfaceTest(unittest.TestCase):
             stats = app.tool_calls.stats(project_id=project_id)
             self.assertGreaterEqual(stats["totals"]["calls"], 1)
             self.assertIn("filter", stats)
-            app.tool_calls.record(
+            app.tool_calls.record(ToolCallRecord(
                 tool="review.start",
                 source="http",
                 status="ok",
@@ -136,14 +137,13 @@ class SurfaceTest(unittest.TestCase):
                     "reviewer_capability": "rp_arg",
                 },
                 result={"capability": "rp_result"},
-            )
+            ))
             listed = client.get(
                 "/api/debug/tool-calls?source=all&status=all",
             )
             self.assertEqual(listed.status_code, 200, listed.text)
             calls = listed.json()["calls"]
             self.assertGreaterEqual(len(calls), 1)
-            self.assertTrue(listed.json()["by_tool"])
             review_call = next(call for call in calls if call["tool"] == "review.start")
             detail = client.get(
                 f"/api/debug/tool-calls/{review_call['id']}",

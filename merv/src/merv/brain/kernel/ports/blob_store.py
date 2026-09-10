@@ -2,7 +2,7 @@
 
 Business components need only :class:`EvidenceBlobStore`. Content owners
 may also delete exact objects. Merv stores research evidence directly in R2;
-owners such as the tool-call ledger manage their own retention horizon.
+owners that manage their own retention horizon delete by key.
 """
 
 from __future__ import annotations
@@ -38,9 +38,9 @@ class EvidenceBlobStore(Protocol):
 class DeletableBlobStore(Protocol):
     """Targeted removal of one blob, for owners that track their own horizon.
 
-    The tool-call payload ledger uses it: its rows know exactly which blobs
-    have aged out, so it deletes them by key instead of waiting for the
-    whole-namespace sweep to find them.
+    Split out from the whole store because a business component is handed
+    ``EvidenceBlobStore`` and must not be able to delete anything; only the
+    composition root's ``BlobStore`` carries both halves.
     """
 
     def delete(self, *, namespace: str, sha256: str) -> bool: ...

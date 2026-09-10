@@ -1,7 +1,7 @@
 """Record-store primitives shared by brain compositions."""
 
 from .activity import monotonic_ms
-from .store import BaseStateStore, SqliteStateStore, StateStore, row_to_dict, rows_to_dicts
+from .store import BaseStateStore, StateStore, row_to_dict, rows_to_dicts
 
 # The Postgres dialect (state.dialects.PostgresStateStore) is deliberately
 # not re-exported here: importing it is a control-profile/test concern and
@@ -9,7 +9,6 @@ from .store import BaseStateStore, SqliteStateStore, StateStore, row_to_dict, ro
 
 __all__ = [
     "BaseStateStore",
-    "SqliteStateStore",
     "StateStore",
     "monotonic_ms",
     "row_to_dict",

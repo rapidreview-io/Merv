@@ -19,6 +19,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from merv.brain.kernel.state import StateStore
+from merv.brain.kernel.state.activity import ToolCallRecord
 from merv.brain.kernel.state.tool_call_ledger import ToolCallLedger
 from merv.brain.kernel.state.tool_call_payloads import (
     PAYLOAD_NAMESPACE,
@@ -368,14 +369,15 @@ class PayloadRetentionTest(unittest.TestCase):
             token = begin_request(request_id="req-1")
             try:
                 bind_agent(agent_id="abc234", mcp_session_id="sess")
-                ledger.record(
+                ledger.record(ToolCallRecord(
                     tool="project", source="mcp", status="ok", duration_ms=3,
                     arguments={"action": "list", "reviewer_capability": "mas_secret"},
                     result={"projects": [], "note": "token mk_abcdef123 inside"},
-                )
+                ))
                 bind_agent(agent_id="")
             finally:
                 reset_request(token)
+            self.assertTrue(ledger.flush())
             conn = store.connect()
             try:
                 row = dict(conn.execute("SELECT * FROM tool_calls").fetchone())
@@ -422,9 +424,10 @@ class PayloadRetentionTest(unittest.TestCase):
             token = begin_request(request_id="req-2")
             try:
                 bind_agent(agent_id="abc234")
-                ledger.record(tool="project", source="mcp", status="ok", arguments={})
+                ledger.record(ToolCallRecord(tool="project", source="mcp"))
             finally:
                 reset_request(token)
+            self.assertTrue(ledger.flush())
             conn = store.connect()
             try:
                 row = dict(conn.execute("SELECT * FROM tool_calls").fetchone())

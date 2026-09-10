@@ -37,6 +37,7 @@ class RunnerBundleTest(unittest.TestCase):
         self.assertIn("merv/client/runner_pairing.py", manifest)
         self.assertIn("merv/client/harness.py", manifest)
         self.assertIn("merv/shared/client_config.py", manifest)
+        self.assertIn("merv/shared/redaction.py", manifest)
         self.assertIn("merv/shared/runner_settings.py", manifest)
         self.assertNotIn("merv/client/local_control.py", manifest)
         self.assertFalse(any("brain" in Path(path).parts for path in manifest))

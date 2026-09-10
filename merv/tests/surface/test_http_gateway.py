@@ -298,15 +298,12 @@ class _Sandboxes:
 
 
 class _NoopActivity:
-    def tool_ok(self, **_kwargs) -> None:
-        return None
-
-    def tool_error(self, **_kwargs) -> None:
+    def tool_call(self, _call) -> None:
         return None
 
 
 class _NoopToolCalls:
-    def record(self, **_kwargs) -> None:
+    def record(self, _call) -> None:
         return None
 
 

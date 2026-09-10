@@ -45,6 +45,7 @@ from merv.shared.client_config import (
     resolve_client_config_path,
     resolve_client_control_url,
 )
+from merv.shared.redaction import redact_excerpt, redact_secrets
 from merv.shared.runner_settings import (
     DEFAULT_PLATFORM_EXECUTABLES,
     RunnerSettingsError,
@@ -2025,7 +2026,7 @@ class AgentRunner:
             elif timed_out:
                 result["detail"] = f"no answer within {int(SMOKE_TIMEOUT_SECONDS)} s"
             elif exit_code not in (0, None):
-                last = harness_kit.redact_secrets(_last_line(stderr_text))
+                last = redact_secrets(_last_line(stderr_text))
                 result["detail"] = f"exited with code {exit_code}" + (f": {last}" if last else "")
             elif not answered:
                 result["detail"] = "the agent ran but did not answer with the project id (is the Merv MCP server reachable from it?)"
@@ -2925,35 +2926,6 @@ TRACE_EXCERPT_EVENTS = 60
 TRACE_EXCERPT_EVENT_BYTES = 4 * 1024
 TRACE_EXCERPT_TAIL_BYTES = 256 * 1024
 TRACE_EXCERPT_STDERR_BYTES = 8 * 1024
-_EXCERPT_SECRET_KEY = re.compile(
-    r"(?i)(api[-_]?key|token|secret|password|credential|authorization)"
-)
-_EXCERPT_SECRET_VALUE = re.compile(
-    r"\b(?:mk_|mas_|rr_sk_|sk-|ghp_|xox[a-z]-)[A-Za-z0-9_\-]{8,}|Bearer\s+[A-Za-z0-9._\-]{8,}"
-)
-
-
-def _redact_excerpt(value: Any, *, depth: int = 0) -> Any:
-    if depth > 12:
-        return "<nested>"
-    if isinstance(value, Mapping):
-        return {
-            str(key)[:120]: (
-                "<redacted>"
-                if _EXCERPT_SECRET_KEY.search(str(key))
-                else _redact_excerpt(item, depth=depth + 1)
-            )
-            for key, item in list(value.items())[:64]
-        }
-    if isinstance(value, list):
-        return [_redact_excerpt(item, depth=depth + 1) for item in value[:64]]
-    if isinstance(value, str):
-        return _EXCERPT_SECRET_VALUE.sub("<redacted>", value)
-    if isinstance(value, (int, float, bool)) or value is None:
-        return value
-    return str(value)[:240]
-
-
 def _trace_excerpt(trace_dir: Path, *, complete: bool) -> dict[str, Any] | None:
     """The last few provider events and the stderr tail, capped and redacted.
 
@@ -2981,25 +2953,24 @@ def _trace_excerpt(trace_dir: Path, *, complete: bool) -> dict[str, Any] | None:
             text = line.decode("utf-8", errors="replace")
             if len(text.encode("utf-8")) > TRACE_EXCERPT_EVENT_BYTES:
                 events.append(
-                    {"truncated": True, "preview": _EXCERPT_SECRET_VALUE.sub(
-                        "<redacted>", text[: TRACE_EXCERPT_EVENT_BYTES // 2]
-                    )}
+                    {"truncated": True,
+                     "preview": redact_secrets(text[: TRACE_EXCERPT_EVENT_BYTES // 2])}
                 )
                 continue
             try:
                 parsed = json.loads(text)
             except ValueError:
-                events.append({"raw": _EXCERPT_SECRET_VALUE.sub("<redacted>", text)})
+                events.append({"raw": redact_secrets(text)})
                 continue
-            events.append(_redact_excerpt(parsed))
+            events.append(redact_excerpt(parsed))
     stderr_tail = ""
     stderr_size = -1
     try:
         stderr_size = stderr_path.stat().st_size
         with stderr_path.open("rb") as handle:
             handle.seek(max(stderr_size - TRACE_EXCERPT_STDERR_BYTES, 0))
-            stderr_tail = _EXCERPT_SECRET_VALUE.sub(
-                "<redacted>", handle.read().decode("utf-8", errors="replace")
+            stderr_tail = redact_secrets(
+                handle.read().decode("utf-8", errors="replace")
             )
     except FileNotFoundError:
         pass
