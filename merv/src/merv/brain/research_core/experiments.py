@@ -7,11 +7,13 @@ from contextlib import closing, nullcontext
 import json
 from typing import Any
 
-from ..workflows import EXHIBIT_ROLE, KINDS, Snapshot
+from ..workflows import EXHIBIT_ROLE, Snapshot
 
 from .policy import (
     ACTIVE_EXPERIMENT_CAP,
+    EXPERIMENT,
     GateEvaluation,
+    REFLECTION,
     active_experiment_cap_reached_message,
     covered_terminal_ids,
     reflection_create_block_message,
@@ -23,7 +25,6 @@ from ..kernel.state.store import BaseStateStore, row_to_dict, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
 from .models import CommittedExperimentUpdate
 
-EXPERIMENT, REFLECTION = KINDS["experiment"], KINDS["reflection"]
 
 
 class ExperimentService(RecordHooks):

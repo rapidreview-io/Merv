@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, TypedDict, cast
 
 from ..workflows import TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE
-from ..research_core import content_tldr
+from ..research_core import TASK, content_tldr
 
 from ..research_core import ResearchArtifacts as Artifacts
 from ..feed import FeedAdvisory
@@ -21,7 +21,7 @@ from ..research_core import (
     project_rows,
     public_record,
 )
-from ..workflows import KINDS, Public, preferred_artifact
+from ..workflows import Public, preferred_artifact
 from .experiments.presentation import review_body, slim_review_rows
 from .experiments.transition import feed_transition_note
 
@@ -64,7 +64,7 @@ class TaskTransitionReceipt(TypedDict, total=False):
 
 def rich_task_state(full: TaskState) -> TaskState:
     """The full Research state, unchanged: the UI reads everything."""
-    return cast(TaskState, public_record(KINDS["task"].public, full))
+    return cast(TaskState, public_record(TASK.public, full))
 
 
 def slim_task_state(full: TaskState) -> SlimTaskState:

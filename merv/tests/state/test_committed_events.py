@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from merv.brain.programs import INSTALLED, PROGRAM
 from merv.brain.workflows import Workflows
 from merv.brain.agent_sessions import WorkspaceAdvances
 
@@ -89,7 +90,7 @@ class CommittedEventTest(unittest.TestCase):
         self.assertEqual(event.payload["z"][0]["nested"], "original")
 
     def test_research_transition_returns_its_exact_committed_event(self) -> None:
-        research = Research(store=self.store, advances=WorkspaceAdvances(store=self.store), artifacts=self.artifacts, workflows=Workflows(store=self.store))
+        research = Research(store=self.store, advances=WorkspaceAdvances(store=self.store), artifacts=self.artifacts, workflows=Workflows(store=self.store, programs=INSTALLED), program=PROGRAM)
         created = research.experiments.create(
             project_id=self.project_id, name="committed-event", intent="test"
         )
@@ -134,7 +135,7 @@ class CommittedEventTest(unittest.TestCase):
         )
 
     def test_event_insert_failure_rolls_back_state_and_event_together(self) -> None:
-        experiments = Research(store=self.store, advances=WorkspaceAdvances(store=self.store), artifacts=self.artifacts, workflows=Workflows(store=self.store)).experiments
+        experiments = Research(store=self.store, advances=WorkspaceAdvances(store=self.store), artifacts=self.artifacts, workflows=Workflows(store=self.store, programs=INSTALLED), program=PROGRAM).experiments
         created = experiments.create(
             project_id=self.project_id, name="rollback-event", intent="test"
         )

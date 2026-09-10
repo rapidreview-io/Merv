@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from merv.brain.programs import INSTALLED, PROGRAM
 from merv.brain.workflows import Workflows
 from merv.brain.agent_sessions import WorkspaceAdvances
 
@@ -30,7 +31,7 @@ class ExperimentSummaryTest(unittest.TestCase):
         self.store = CountingStateStore(
             db_path=Path(self.tmp.name) / "state.sqlite"
         )
-        self.research = Research(store=self.store, advances=WorkspaceAdvances(store=self.store), artifacts=Mock(), workflows=Workflows(store=self.store))
+        self.research = Research(store=self.store, advances=WorkspaceAdvances(store=self.store), artifacts=Mock(), workflows=Workflows(store=self.store, programs=INSTALLED), program=PROGRAM)
         self.experiments = self.research.experiments
         self.one_ids = self._seed("proj_one", 1)
         self.many_ids = self._seed("proj_many", 25)

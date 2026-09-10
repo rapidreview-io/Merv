@@ -13,7 +13,7 @@ import json
 from typing import Any
 
 from ..agent_sessions import WorkspaceAdvances
-from ..workflows import KINDS, PROJECT_GRAPH_ROLE, REFLECTION_LENS_DOC_ROLE, TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE
+from ..workflows import Binding, PROJECT_GRAPH_ROLE, REFLECTION_LENS_DOC_ROLE, TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE
 from ..workflows.definitions import reflection_corpus as corpus
 from ..workflows import (
     ArtifactDocument,
@@ -36,6 +36,7 @@ from .policy import (
     EXPERIMENT_TERMINAL_STATUSES,
     TASK_TERMINAL_STATUSES,
     GateEvaluation,
+    REFLECTION,
     active_experiment_cap_would_exceed_message,
     covered_terminal_ids,
     reflection_signal_state,
@@ -56,7 +57,6 @@ from ..kernel.utils import (
     now_iso,
 )
 
-REFLECTION = KINDS["reflection"]
 # Which child action a parent action closes, and the states that hold this
 # wave's reserved names: entering one from a pinning edge reserves the
 # validated spec's names, and leaving them releases the rows.
@@ -515,6 +515,11 @@ class ReflectionService(RecordHooks):
             artifact_id=artifact_id,
             what=what,
         )
+
+    def bindings(self) -> dict[str, Binding]:
+        """The lens and the published wave: graphs this service owns without a row."""
+        return {"reflection_lens": Binding(self._lens_knowledge, self._commit_lens_change, self.initialize_lens),
+                "research_wave": Binding(self._wave_knowledge, self._commit_wave_change, self.initialize_wave)}
 
     def _lens_knowledge(self, snapshot: Snapshot, conn):
         reflection = self.get_state(reflection_id=str(snapshot.data["reflection_id"]), project_id=snapshot.project_id, conn=conn)

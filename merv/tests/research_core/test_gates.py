@@ -5,8 +5,10 @@ from __future__ import annotations
 import unittest
 
 from merv.brain.research_core.policy import GateContext, resolve_requirement
+from merv.brain.programs import PROGRAM
+from merv.brain.research_core import EXPERIMENT, REFLECTION, TASK
 from merv.brain.workflows import (
-    ArtifactNeed, DependenciesDone, Issue, KINDS, RecordNeed, ReviewGate, Snapshot,
+    ArtifactNeed, DependenciesDone, Issue, RecordNeed, ReviewGate, Snapshot,
 )
 
 from .scenarios import VALID_PLAN, ResearchCase
@@ -14,10 +16,10 @@ from .scenarios import VALID_PLAN, ResearchCase
 # Every checklist item the UI and the agent presenters read, whatever its kind.
 COMMON_KEYS = frozenset({"id", "kind", "role", "label", "satisfied", "status", "gate", "action"})
 
-PLAN = KINDS["experiment"].requirements("planned")[0]
-DEPENDENCIES = next(need for need in KINDS["task"].requirements("in_progress")
+PLAN = EXPERIMENT.requirements("planned")[0]
+DEPENDENCIES = next(need for need in TASK.requirements("in_progress")
                     if isinstance(need, DependenciesDone))
-PROPOSAL = next(need for need in KINDS["reflection"].requirements("consolidating")
+PROPOSAL = next(need for need in REFLECTION.requirements("consolidating")
                 if isinstance(need, RecordNeed))
 
 
@@ -54,7 +56,7 @@ class RequirementResolverTest(unittest.TestCase):
         self.assertEqual(valid["validator"], "plan")
 
     def test_a_need_without_a_validator_reports_presence_not_validity(self) -> None:
-        result = KINDS["experiment"].requirements("running")
+        result = EXPERIMENT.requirements("running")
         need = next(item for item in result if isinstance(item, ArtifactNeed) and item.role == "result")
         item = resolve_requirement(need, context(
             record={"id": "rec_1", "project_id": "proj_1",
@@ -88,7 +90,7 @@ class RequirementResolverTest(unittest.TestCase):
         self.assertTrue(resolve_requirement(PROPOSAL, context(state="consolidating")).items[0]["satisfied"])
 
     def test_every_declared_requirement_produces_one_item_with_the_shared_keys(self) -> None:
-        for kind in KINDS.values():
+        for kind in PROGRAM.kinds:
             for node in kind.workflow.nodes:
                 for need in node.requires:
                     if isinstance(need, ReviewGate):

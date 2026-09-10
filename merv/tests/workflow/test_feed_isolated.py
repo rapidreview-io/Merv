@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from merv.brain.programs import INSTALLED, PROGRAM
 from merv.brain.workflows import Workflows
 from merv.brain.agent_sessions import WorkspaceAdvances
 
@@ -91,7 +92,7 @@ def feed(tmp_path: Path) -> tuple[FeedService, str, _CountingStore]:
     store = _CountingStore(db_path=tmp_path / "state.sqlite3")
     project = Research(
         store=store, advances=WorkspaceAdvances(store=store),
-        artifacts=unittest.mock.Mock(), workflows=Workflows(store=store),
+        artifacts=unittest.mock.Mock(), workflows=Workflows(store=store, programs=INSTALLED), program=PROGRAM,
     ).create_project(name="Feed tests")
     service = FeedService(
         store=store,
@@ -423,7 +424,7 @@ def test_schema_installer_converges_legacy_posts_idempotently(tmp_path: Path) ->
     store = StateStore(db_path=tmp_path / "legacy.sqlite3")
     project_id = Research(
         store=store, advances=WorkspaceAdvances(store=store),
-        artifacts=unittest.mock.Mock(), workflows=Workflows(store=store),
+        artifacts=unittest.mock.Mock(), workflows=Workflows(store=store, programs=INSTALLED), program=PROGRAM,
     ).create_project(name="Legacy Feed")["id"]
     with store.transaction() as connection:
         connection.execute(

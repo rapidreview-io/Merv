@@ -352,9 +352,9 @@ def test_existing_child_composition_preserves_revision_and_rejects_second_parent
 
 
 def test_idempotency_conflict_is_checked_before_support_preparation(system):
-    from merv.brain.workflows import Workflows
+    from merv.brain.workflows import Program, Workflows
     runtime, project_id = system
-    workflows = Workflows(store=runtime.store, definitions={"replication": replication()})
+    workflows = Workflows(store=runtime.store, programs=(Program(name="test", version=1, workflows=(replication(),)),))
     preparations = []
     workflows.register_preparation("replication", lambda snapshot, action, payload: preparations.append(action))
     started = workflows.start(project_id=project_id, workflow="replication", request_id="start")
