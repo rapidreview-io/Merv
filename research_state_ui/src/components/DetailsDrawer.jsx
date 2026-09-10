@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import StatusPill from './StatusPill';
-import { fmtSpan } from '../utils/format';
+import { fmtSpan, formatBytes } from '../utils/format';
+import { nodeRoute } from '../utils/entityResolve';
 import { ago, msBetween } from '../utils/time';
 
 /*
@@ -93,6 +94,51 @@ export default function DetailsDrawer({ id, open, onClose, title = 'Details', ch
 
 /* ── Shared drawer sections: the operations grammar. The pages hand in rows;
    nothing here repeats what a page already shows. ── */
+/* ── Row builders for the three sections. The experiment and the task drawer
+   show the same operations grammar, so they read the record the same way. ── */
+
+// Submission order: the stamp, then the server's tiebreak for a same-second
+// batch (second-resolution timestamps tie more often than you would think).
+const byArtifactOrder = (a, b) =>
+  String(a.created_at || '').localeCompare(String(b.created_at || ''))
+  || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0));
+
+export function sortedArtifacts(record) {
+  return (record.artifacts || []).slice().sort(byArtifactOrder);
+}
+
+/** One role's submissions as version rows: "v2 · attempt 3", size, age. */
+export function versionRows(artifacts, role) {
+  return artifacts.filter(a => a.role === role).map((a, i) => ({
+    id: a.id,
+    name: `v${i + 1}${a.attempt_index != null ? ` · attempt ${a.attempt_index}` : ''}`,
+    meta: [a.size_bytes != null ? formatBytes(a.size_bytes) : null, ago(a.created_at)].filter(Boolean).join(' · '),
+    title: a.path,
+  }));
+}
+
+/** Review rounds as version rows: the round, the verdict pill, the age. */
+export function reviewRows(reviews) {
+  return reviews.map((r, i) => ({
+    id: r.id,
+    name: `round ${i + 1}`,
+    pill: String(r.verdict || 'pending').toLowerCase(),
+    meta: ago(r.created_at) || '',
+  }));
+}
+
+/** Timeline items in the order they happened; `rank` breaks a same-second tie. */
+export function orderedTimeline(items) {
+  return items
+    .filter(i => i.t)
+    .sort((a, b) => String(a.t).localeCompare(String(b.t)) || (a.rank - b.rank));
+}
+
+/** Dependency/dependent nodes, each carrying the href of its own page. */
+export function linkedNodes(nodes, px) {
+  return (nodes || []).map(d => ({ ...d, href: px(nodeRoute(d)) }));
+}
+
 export function OpsTimeline({ items, done, createdAt, endedAt }) {
   if (!items.length) return null;
   const spans = items.map((item, i) => {

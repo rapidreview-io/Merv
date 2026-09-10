@@ -10,9 +10,10 @@ import ReviewCard from '../components/ReviewCard';
 import StatusPill from '../components/StatusPill';
 import ObjId from '../components/ObjId';
 import InlineMd from '../components/InlineMd';
-import DetailsDrawer, { DetailsButton, OpsTimeline, OpsVersions, OpsPosition } from '../components/DetailsDrawer';
-import { formatBytes } from '../utils/format';
-import { nodeRoute } from '../utils/entityResolve';
+import DetailsDrawer, {
+  DetailsButton, OpsPosition, OpsTimeline, OpsVersions,
+  linkedNodes, orderedTimeline, reviewRows, sortedArtifacts, versionRows,
+} from '../components/DetailsDrawer';
 import { ago } from '../utils/time';
 import { workflowActionButtons } from '../utils/workflowActions';
 
@@ -408,9 +409,7 @@ function ReviewQuote({ review, round }) {
 function buildTimeline(task, reviews) {
   const items = [];
   if (task.created_at) items.push({ t: task.created_at, rank: 0, tone: null, label: 'created' });
-  const arts = (task.artifacts || []).slice().sort((a, b) =>
-    String(a.created_at || '').localeCompare(String(b.created_at || ''))
-    || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0)));
+  const arts = sortedArtifacts(task);
   let resultSeen = 0;
   for (const a of arts) {
     if (a.role === 'delivery') {
@@ -434,39 +433,22 @@ function buildTimeline(task, reviews) {
   } else if (task.status === 'failed' && task.updated_at) {
     items.push({ t: task.updated_at, rank: 99, tone: 'bad', label: `ended by ${task.failed_by || 'owner'}` });
   }
-  return items
-    .filter(i => i.t)
-    .sort((a, b) => String(a.t).localeCompare(String(b.t)) || (a.rank - b.rank));
+  return orderedTimeline(items);
 }
 
 function TaskFacts({ task, reviews, px }) {
   const timeline = buildTimeline(task, reviews);
   const done = task.status === 'done' || task.status === 'failed';
-  const arts = (task.artifacts || []).slice().sort((a, b) =>
-    String(a.created_at || '').localeCompare(String(b.created_at || ''))
-    || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0)));
-  const versionsOf = (role) => arts.filter(a => a.role === role).map((a, i) => ({
-    id: a.id,
-    name: `v${i + 1}`,
-    meta: [a.size_bytes != null ? formatBytes(a.size_bytes) : null, ago(a.created_at)].filter(Boolean).join(' · '),
-    title: a.path,
-  }));
-  const reviewRows = reviews.map((r, i) => ({
-    id: r.id,
-    name: `round ${i + 1}`,
-    pill: String(r.verdict || 'pending').toLowerCase(),
-    meta: ago(r.created_at) || '',
-  }));
-  const withHref = (d) => ({ ...d, href: px(nodeRoute(d)) });
-  const upstream = (task.dependencies || []).map(withHref);
-  const downstream = (task.dependents || []).map(withHref);
+  const arts = sortedArtifacts(task);
+  const upstream = linkedNodes(task.dependencies, px);
+  const downstream = linkedNodes(task.dependents, px);
   const isOpen = !TASK_TERMINAL.has(task.status);
   return (
     <>
       <OpsTimeline items={timeline} done={done} createdAt={task.created_at} endedAt={task.updated_at} />
       <OpsVersions groups={[
-        { label: 'result', rows: versionsOf('delivery') },
-        { label: 'reviews', rows: reviewRows },
+        { label: 'result', rows: versionRows(arts, 'delivery') },
+        { label: 'reviews', rows: reviewRows(reviews) },
       ]} />
       <OpsPosition
         upstream={upstream}

@@ -11,11 +11,11 @@ import ExperimentGraphs from '../components/ExperimentGraphs';
 import SandboxTerminal from '../components/SandboxTerminal';
 import ArtifactList from '../components/ArtifactList';
 import TerminalTransitionConfirm from '../components/TerminalTransitionConfirm';
-import DetailsDrawer, { DetailsButton, OpsTimeline, OpsVersions, OpsPosition } from '../components/DetailsDrawer';
+import DetailsDrawer, {
+  DetailsButton, OpsPosition, OpsTimeline, OpsVersions,
+  linkedNodes, orderedTimeline, reviewRows, sortedArtifacts, versionRows,
+} from '../components/DetailsDrawer';
 import { expName } from '../utils/experiment';
-import { formatBytes } from '../utils/format';
-import { nodeRoute } from '../utils/entityResolve';
-import { ago } from '../utils/time';
 import { gateToSectionId, useScrollToHash } from '../utils/useScrollToHash';
 import { workflowActionButtons } from '../utils/workflowActions';
 import InlineMd from '../components/InlineMd';
@@ -344,9 +344,7 @@ function AskCard({ experiment }) {
 function buildExperimentTimeline(experiment, designReviews, experimentReviews) {
   const items = [];
   if (experiment.created_at) items.push({ t: experiment.created_at, rank: 0, tone: null, label: 'created' });
-  const arts = (experiment.artifacts || []).slice().sort((a, b) =>
-    String(a.created_at || '').localeCompare(String(b.created_at || ''))
-    || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0)));
+  const arts = sortedArtifacts(experiment);
   let planSeen = 0, reportSeen = 0;
   for (const a of arts) {
     if (a.role === 'plan') {
@@ -381,32 +379,15 @@ function buildExperimentTimeline(experiment, designReviews, experimentReviews) {
       label: status === 'complete' ? 'complete' : status,
     });
   }
-  return items
-    .filter(i => i.t)
-    .sort((a, b) => String(a.t).localeCompare(String(b.t)) || (a.rank - b.rank));
+  return orderedTimeline(items);
 }
 
 function ExperimentFacts({ experiment, designReviews, experimentReviews, px }) {
   const isClosed = ['complete', 'failed', 'abandoned'].includes(experiment.status);
   const timeline = buildExperimentTimeline(experiment, designReviews, experimentReviews);
-  const arts = (experiment.artifacts || []).slice().sort((a, b) =>
-    String(a.created_at || '').localeCompare(String(b.created_at || ''))
-    || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0)));
-  const versionsOf = (role) => arts.filter(a => a.role === role).map((a, i) => ({
-    id: a.id,
-    name: `v${i + 1}${a.attempt_index != null ? ` · attempt ${a.attempt_index}` : ''}`,
-    meta: [a.size_bytes != null ? formatBytes(a.size_bytes) : null, ago(a.created_at)].filter(Boolean).join(' · '),
-    title: a.path,
-  }));
-  const reviewRows = (rows) => rows.map((r, i) => ({
-    id: r.id,
-    name: rows.length > 1 ? `round ${i + 1}` : 'round 1',
-    pill: String(r.verdict || 'pending').toLowerCase(),
-    meta: ago(r.created_at) || '',
-  }));
-  const withHref = (d) => ({ ...d, href: px(nodeRoute(d)) });
-  const upstream = (experiment.dependencies || []).map(withHref);
-  const downstream = (experiment.dependents || []).map(withHref);
+  const arts = sortedArtifacts(experiment);
+  const upstream = linkedNodes(experiment.dependencies, px);
+  const downstream = linkedNodes(experiment.dependents, px);
   return (
     <>
       <OpsTimeline
@@ -416,8 +397,8 @@ function ExperimentFacts({ experiment, designReviews, experimentReviews, px }) {
         endedAt={experiment.updated_at}
       />
       <OpsVersions groups={[
-        { label: 'plan', rows: versionsOf('plan') },
-        { label: 'report', rows: versionsOf('report') },
+        { label: 'plan', rows: versionRows(arts, 'plan') },
+        { label: 'report', rows: versionRows(arts, 'report') },
         { label: 'design reviews', rows: reviewRows(designReviews) },
         { label: 'experiment reviews', rows: reviewRows(experimentReviews) },
       ]} />
