@@ -54,12 +54,12 @@ FAILURE_REASONS = (
 LIVE_STATUSES = ("offered", "active")
 
 _PUBLIC_COLUMNS = """
-id, project_id, target_type, target_id, attempt_index, role, label,
+id, project_id, target_type, target_id, attempt_index, role,
 workflow_instance_id, workflow_revision, workflow_node,
 runner_id, platform, status, host_session_ref,
 workspace_ref, base_sha, head_sha,
 execution_json, references_json, assignment_json, agent_setup_json,
-telemetry_json, telemetry_at,
+telemetry_json,
 created_at, activated_at, last_activity_at, lease_expires_at, hard_deadline_at,
 closed_at, close_reason
 """
@@ -211,16 +211,16 @@ class AgentSessions:
         session_id = new_id(prefix="ags")
         inserted = tx.execute(
             """INSERT INTO agent_sessions (
-              id, project_id, target_type, target_id, attempt_index, role, label,
+              id, project_id, target_type, target_id, attempt_index, role,
               workflow_instance_id, workflow_revision, workflow_node,
               execution_json, references_json, assignment_json,
               runner_id, platform, idempotency_key, secret_digest, status,
               created_at, lease_expires_at, hard_deadline_at, source_key_id, source_user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offered', ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offered', ?, ?, ?, ?, ?)
             ON CONFLICT DO NOTHING RETURNING id""",
             (session_id, project_id, str(packet.get("workflow") or ""), instance_id,
              int(packet.get("attempt_index") or 0), str(packet.get("role") or "")[:120],
-             str(packet.get("label") or "")[:240], instance_id, revision, str(packet.get("state") or ""),
+             instance_id, revision, str(packet.get("state") or ""),
              _bounded_json_object(execution if isinstance(execution, Mapping) else {},
                                   field="execution", limit=MAX_ASSIGNMENT_BYTES),
              _bounded_json_list(references if isinstance(references, list) else [],
@@ -516,9 +516,9 @@ class AgentSessions:
                 """
                 INSERT INTO agent_runners (
                   project_id, runner_id, machine_json, platforms_json,
-                  capacity, started_at, last_seen_at, inventory_json, applied_version
+                  capacity, last_seen_at, inventory_json, applied_version
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (project_id, runner_id) DO UPDATE SET
                   machine_json = excluded.machine_json,
                   platforms_json = excluded.platforms_json,
@@ -533,7 +533,6 @@ class AgentSessions:
                     encoded_machine,
                     encoded_platforms,
                     max(int(capacity), 0),
-                    now,
                     now,
                     encoded_inventory,
                     applied if applied is not None else 0,
@@ -734,11 +733,9 @@ class AgentSessions:
             )
             tx.execute(
                 """
-                UPDATE agent_sessions
-                SET telemetry_json = ?, telemetry_at = ?
-                WHERE id = ?
+                UPDATE agent_sessions SET telemetry_json = ? WHERE id = ?
                 """,
-                (encoded_telemetry, format_iso(datetime.now(UTC)), row["id"]),
+                (encoded_telemetry, row["id"]),
             )
 
     def workspaces(
@@ -1193,7 +1190,7 @@ def _trace_events_projection(events: Iterable[Any]) -> tuple[str, int]:
 
 
 _RUNNER_SELECT = """
-SELECT project_id, runner_id, machine_json, platforms_json, capacity, started_at,
+SELECT project_id, runner_id, machine_json, platforms_json, capacity,
        last_seen_at, desired_settings_json, desired_version, applied_version,
        inventory_json
 FROM agent_runners
@@ -1230,7 +1227,6 @@ def _runner_view(row: Any, *, now: datetime | None = None) -> dict[str, Any]:
         "machine": _json_column(row["machine_json"]),
         "platforms": platforms if isinstance(platforms, list) else [],
         "capacity": max(int(row["capacity"] or 0), 0),
-        "started_at": str(row["started_at"]),
         "last_seen_at": str(row["last_seen_at"]),
         "live": bool(
             seen is not None and (current - seen).total_seconds() <= RUNNER_LIVE_SECONDS

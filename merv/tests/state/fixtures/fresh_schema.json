@@ -46,8 +46,7 @@
       "machine_json",
       "platforms_json",
       "project_id",
-      "runner_id",
-      "started_at"
+      "runner_id"
     ],
     "agent_session_traces": [
       "complete",
@@ -72,7 +71,6 @@
       "host_session_ref",
       "id",
       "idempotency_key",
-      "label",
       "last_activity_at",
       "lease_expires_at",
       "platform",
@@ -86,7 +84,6 @@
       "status",
       "target_id",
       "target_type",
-      "telemetry_at",
       "telemetry_json",
       "workflow_instance_id",
       "workflow_node",

@@ -106,7 +106,7 @@ class AgentSessionsTest(unittest.TestCase):
         self.assertIsNone(blocked)
         self.assertEqual((first["target_type"], first["target_id"]), ("widget", "wf_1"))
         self.assertEqual((first["workflow_instance_id"], first["workflow_revision"], first["workflow_node"]), ("wf_1", 0, "working"))
-        self.assertEqual((first["role"], first["label"]), ("widget_owner", "Do the work"))
+        self.assertEqual(first["role"], "widget_owner")
         self.assertEqual(first["execution"], PERSISTENT)
         self.assertEqual(first["references"], [])
         self.assertEqual(first["assignment"]["brief"], "Work on wf_1.")
@@ -246,7 +246,6 @@ class AgentSessionsTest(unittest.TestCase):
         self.assertEqual(current["assignment"], self.packets[("wf_1", 0)])
         self.assertEqual(current["agent_setup"]["machine"], "research-mac")
         self.assertEqual(current["telemetry"], {"input_tokens": 1400, "output_tokens": 600, "total_tokens": 2000, "tool_calls": 5})
-        self.assertTrue(current["telemetry_at"])
         with self.assertRaisesRegex(ValidationError, "setup is immutable"):
             self.sessions.attach(
                 session_id=session["id"], runner_id="runner", host_session_ref="pid:1:birth",

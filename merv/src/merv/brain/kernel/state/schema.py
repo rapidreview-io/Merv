@@ -93,7 +93,7 @@ BASELINE_VERSION = 64
 # version here and the handler to its own module. A version whose owner has
 # not installed is skipped, not refused: every handler is guarded on the
 # tables it touches, so the next install converges it.
-MIGRATION_ORDER: tuple[int, ...] = (65,)
+MIGRATION_ORDER: tuple[int, ...] = (65, 67)
 
 
 def declared_tables(ddl: str) -> tuple[str, ...]:
@@ -131,6 +131,20 @@ def statements(sql: str) -> tuple[str, ...]:
     if tail:
         chunks.append(tail)
     return tuple(chunk for chunk in chunks if chunk)
+
+
+def has_column(conn: Connection, table: str, column: str) -> bool:
+    """Whether ``table`` still carries ``column`` — the guard a drop step runs."""
+    if getattr(conn, "dialect", "sqlite") == "postgres":
+        return conn.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' "
+            "AND table_name = ? AND column_name = ?",
+            (table, column),
+        ).fetchone() is not None
+    return any(
+        str(row["name"]) == column
+        for row in conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+    )
 
 
 def has_table(conn: Connection, table: str) -> bool:
