@@ -34,7 +34,7 @@ its versioned graph/runtime; their record services stay private collaborators.
 - `policy.py`: vocabulary, validation, gate evaluation, snapshot identity, reflection
   signal, limits. `evidence.py`: compatibility exports of workflow-owned pure
   document validation, evidence selection, and brief rendering. `models.py`: typed state shapes. `__init__.py`: narrow imports.
-- `content_summaries.py`: deterministic TLDRs of submitted documents. `paths.py`: safe experiment folder names. `tools.py`: the experiment/task/reflection/consolidation/review/claim/candidate/litreview MCP contracts, their enums and prose read off the graphs above; the support registry merges the table. `persistence.py`: every research table and the ladder steps that shaped them, including the two historical extractions (resources into artifacts, artifacts into content plus research links).
+- `content_summaries.py`: deterministic TLDRs of submitted documents. `paths.py`: safe experiment folder names. `tools.py`: the experiment/task/reflection/consolidation/review/claim/candidate/litreview MCP contracts, their enums and prose read off the graphs above; the support registry merges the table. `persistence.py`: every research table, its read-path indexes, and the `research_artifacts` view that joins a link row to the immutable content it names.
 
 ## Experiment lifecycle
 
@@ -52,8 +52,8 @@ the delivery committed and prevents duplicate external runs.
 
 A task is scoped non-experiment work with no claim: `in_progress -> in_review
 -> done`, `failed` the only other ending. Goal prose + deliverables (each
-verifiable as written) are IMMUTABLE structure at create (migration 53),
-rendered and pinned as brief.md; brief submissions are refused. The delivery
+verifiable as written) are IMMUTABLE structure at create, rendered and pinned
+as brief.md; brief submissions are refused. The delivery
 answers one confirmation per deliverable ("not delivered — why" is legal) plus
 Notes; resubmissions are complete versions, one review per version:
 `needs_changes` returns, `fail` or `mark_failed` ends. State parses the

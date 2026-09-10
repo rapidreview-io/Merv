@@ -36,7 +36,7 @@ export default function SandboxCardList() {
   const home = useProjectStore(s => s.home);
   const expById = Object.fromEntries(experiments.map(e => [e.id, e]));
   // One drawer open at a time (mirrors the desktop table) — the panel polls
-  // sandbox/metrics/terminal while mounted, so don't stack them.
+  // sandbox/terminal while mounted, so don't stack them.
   const [expandedId, setExpandedId] = useState(null);
 
   if (!home) {

@@ -393,15 +393,10 @@ export const api = {
       `${sandboxPath(pid, eid, sandboxUid, '/terminal')}?${p.toString()}`,
     );
   },
-  // Live in-container usage (CPU/RAM/GPU), sampled on demand. Best-effort:
-  // returns { available: false } when the sandbox is not running or the sampler
-  // came back empty (e.g. a CPU-only image without nvidia-smi).
-  getSandboxMetrics: (pid, eid, { sandboxUid = null } = {}) =>
-    request(sandboxPath(pid, eid, sandboxUid, '/metrics')),
   releaseSandbox: (pid, eid, { sandboxUid = null } = {}) =>
     request(sandboxPath(pid, eid, sandboxUid, '/release'), { method: 'POST' }),
-  // Project compute spend from the sandbox-generations ledger (price × runtime,
-  // open boxes bill to now) — covers terminated fleets, unlike listSandboxes.
+  // Project compute spend, as merv-sandboxes reports it for the authorized
+  // scope — covers released boxes, unlike listSandboxes.
   // Returns { total_usd, total_hours, unpriced_hours, generations,
   // open_generations, burn_usd_per_hour, by_experiment:[...], by_hardware:[...],
   // daily:[{date, usd, hours}] }.

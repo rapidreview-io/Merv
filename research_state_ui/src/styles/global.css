@@ -3148,66 +3148,6 @@ a.clb-card:focus-visible { outline: 2px solid var(--active); outline-offset: -2p
 }
 .sbx-ssh { color: var(--text); }
 
-/* Live in-container usage gauges (SandboxTerminal → SandboxUsage) */
-.sbx-usage {
-  margin-bottom: 14px;
-  padding: 10px 12px;
-  background: var(--bg-soft);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-.sbx-usage--empty {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
-}
-.sbx-usage-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-.sbx-usage-title {
-  font-size: var(--text-xs);
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.sbx-usage-note { font-size: var(--text-xs); color: var(--faint); font-style: italic; }
-.sbx-usage-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 8px 16px;
-}
-.sbx-usage-item { display: flex; flex-direction: column; gap: 4px; }
-.sbx-usage-item-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-}
-.sbx-usage-label {
-  font-size: 10.5px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-.sbx-usage-value { font-size: var(--text-xs); color: var(--text); }
-.sbx-usage-track {
-  height: 5px;
-  border-radius: 3px;
-  background: var(--line);
-  overflow: hidden;
-}
-.sbx-usage-fill {
-  height: 100%;
-  border-radius: 3px;
-  background: var(--active);
-  transition: width var(--motion-fast, 0.2s) ease;
-}
-.sbx-usage-fill.hot { background: var(--refutes); }
-
 .sbx-term-head {
   display: flex;
   justify-content: space-between;

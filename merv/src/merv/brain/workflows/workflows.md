@@ -21,8 +21,8 @@ whose contract declares the field, so every mutating tool must accept its scoped
 fields as keywords. `definitions/execution.py` holds the shared vocabularies.
 
 `persistence.py` declares the four tables this package owns — instances,
-history, the action outbox, and the tracking delivery key — plus the ladder
-step that adopted every pre-runtime work node into a versioned instance.
+history, the action outbox, and the tracking delivery key — and the unique
+index that makes "one delivery appends at most once" a database fact.
 
 `runtime.py` stores version-pinned instances, immutable history and requested
 actions. It enforces revision checks and idempotent request keys, records actual

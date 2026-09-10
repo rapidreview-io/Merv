@@ -18,7 +18,6 @@ import { densifyDaily } from '../utils/spend';
 const REVIEW_STATES = new Set(['design_review', 'experiment_review']);
 const SOON_MS = 30 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const METRICS_POLL_MS = 12000;
 
 // "8×H100" / "8x H100" → 8; bare "H100" → 1; no gpu → 0.
 function gpuCountOf(sandbox) {
@@ -58,40 +57,7 @@ function gpuHours24(sandboxes, now) {
   return String(Math.round(h));
 }
 
-// Live GPU-util/VRAM sampler — polls only while a running sandbox exists.
-function useLiveGpu(projectId, sandbox) {
-  const [gpu, setGpu] = useState(null); // {util, vram}
-  const sandboxUid = sandbox?.sandbox_uid || null;
-  const experimentId = sandbox?.experiment_id
-    || (Array.isArray(sandbox?.active_experiment_ids) ? sandbox.active_experiment_ids[0] : null);
-  useEffect(() => {
-    if (!projectId || !sandbox || sandbox.status !== 'running') { setGpu(null); return undefined; }
-    let cancelled = false;
-    const sample = async () => {
-      try {
-        const res = await api.getSandboxMetrics(projectId, experimentId, { sandboxUid });
-        if (cancelled) return;
-        const gpus = Array.isArray(res?.metrics?.gpus) ? res.metrics.gpus : [];
-        if (!res?.available || gpus.length === 0) { setGpu(null); return; }
-        const util = gpus.reduce((m, g) => Math.max(m, g.util_pct ?? 0), 0);
-        const withMem = gpus.filter(g => g.mem_total_mib);
-        const vram = withMem.length
-          ? Math.round(100 * withMem.reduce((a, g) => a + (g.mem_used_mib || 0), 0)
-            / withMem.reduce((a, g) => a + g.mem_total_mib, 0))
-          : null;
-        setGpu({ util: Math.round(util), vram });
-      } catch { /* live usage is best-effort */ }
-    };
-    sample();
-    const t = setInterval(() => {
-      if (document.visibilityState === 'visible') sample();
-    }, METRICS_POLL_MS);
-    return () => { cancelled = true; clearInterval(t); };
-  }, [projectId, experimentId, sandboxUid, sandbox?.status]);
-  return gpu;
-}
-
-// Project compute spend from the generations ledger — refetched when the
+// Project compute spend as merv-sandboxes reports it — refetched when the
 // fleet changes shape (the endpoint has no push signal; billing moves with
 // the clock, so the minute tick would over-fetch).
 function useComputeSpend(projectId, fleetSignal) {
@@ -148,7 +114,6 @@ export default function HomeScreen() {
   const liveExp = activeExperiments.find(e => e.status === 'running')
     || (liveSandbox ? experiments.find(e => e.id === liveSandbox.experiment_id) : null)
     || null;
-  const gpu = useLiveGpu(projectId, liveSandbox);
   const spend = useComputeSpend(projectId, `${sandboxes.length}:${running.length}`);
 
   // ── 24h snapshot band (derived client-side; approximate by design) ──
@@ -285,14 +250,8 @@ export default function HomeScreen() {
             <div className="mlive-name">{expName(liveExp)}</div>
             <div className="mlive-sub">running{liveElapsed != null ? ` · ${fmtDuration(liveElapsed)}` : ''}</div>
           </div>
-          {gpu && (
-            <>
-              <div className="mumeter"><i style={{ width: `${Math.min(100, gpu.util)}%` }} /></div>
-              <div className="mumlab">
-                <span>GPU {gpu.util}%{gpu.vram != null ? ` · VRAM ${gpu.vram}%` : ''}</span>
-                {liveSandbox?.gpu && <span>{liveSandbox.gpu}</span>}
-              </div>
-            </>
+          {liveSandbox?.gpu && (
+            <div className="mumlab"><span>{liveSandbox.gpu}</span></div>
           )}
         </Link>
       ) : (
