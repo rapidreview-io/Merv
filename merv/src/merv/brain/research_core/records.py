@@ -20,7 +20,6 @@ from .artifacts import ResearchArtifacts as Artifacts
 from .artifact_models import ArtifactTarget
 from .dependencies import dependency_rows, dependent_rows, record_dependencies
 from .policy import GateContext, GateEvaluation, read_review_fact, resolve_requirement, review_snapshot_id, snapshot_from_id
-from .workflow_schema import Workflow
 
 
 def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
@@ -179,10 +178,12 @@ class Records:
         record_ids = tuple(str(record["id"]) for record in records)
         history = self.artifacts.history(tx=conn, target_type=kind.name, target_ids=record_ids, summarize=True)
         reviews: dict[str, list[dict[str, Any]]] = {}
+        # A focused read pays for one record's reviews; a project read joins once.
+        focused = " AND r.target_id = ?" if len(record_ids) == 1 else ""
         for review in _query(conn, f"""SELECT r.* FROM reviews r JOIN {kind.table} t ON t.id = r.target_id
-                                       WHERE r.target_type = ? AND t.project_id = ?
+                                       WHERE r.target_type = ? AND t.project_id = ?{focused}
                                        ORDER BY t.created_at, t.id, r.created_seq DESC""",
-                             (kind.name, project_id)):
+                             (kind.name, project_id, *(record_ids[:1] if focused else ()))):
             review["findings"] = json.loads(review.pop("findings_json", "[]"))
             review["evidence"] = json.loads(review.pop("evidence_json", "{}"))
             reviews.setdefault(str(review["target_id"]), []).append(review)
@@ -239,7 +240,7 @@ class Records:
                                       *decision.dispatch_issues))
         resolved = [(need, resolve_requirement(need, context)) for need in kind.requirements(snapshot.state)]
         return GateEvaluation(
-            workflow=Workflow(definition, kind.metadata), status=str(record.get("status") or ""),
+            status=str(record.get("status") or ""),
             requirements=tuple(item for need, item in resolved if not isinstance(need, ReviewGate)),
             review=next((item for need, item in resolved if isinstance(need, ReviewGate)), None),
             decision=decision,

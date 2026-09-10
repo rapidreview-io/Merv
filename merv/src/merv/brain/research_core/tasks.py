@@ -17,7 +17,7 @@ from .evidence import (
     render_task_brief,
     require_artifact_document,
 )
-from .policy import GateEvaluation, validate_task_name
+from .policy import validate_task_name
 from .artifact_models import ArtifactTarget
 from .records import RecordHooks, Records
 from ..kernel.state.store import BaseStateStore, rows_to_dicts
@@ -186,10 +186,6 @@ class TaskService(RecordHooks):
 
     def get_state(self, *, task_id: str, project_id: str | None = None, conn=None) -> dict[str, Any]:
         return self.records.get_state(TASK, record_id=task_id, project_id=project_id, conn=conn)
-
-    def get_state_with_gate(self, *, task_id: str, project_id: str | None = None,
-                            conn=None) -> tuple[dict[str, Any], GateEvaluation]:
-        return self.records.get_state_with_gate(TASK, record_id=task_id, project_id=project_id, conn=conn)
 
     def list_states_with_gates(self, *, conn, project_id: str, detail_ids: tuple[str, ...] = ()):
         """``detail_ids`` name the tasks that also pay for the delivery read."""

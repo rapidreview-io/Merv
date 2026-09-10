@@ -38,7 +38,7 @@ from .reflection_workflow import (
     REFLECTION_WORKFLOW,
 )
 from .task_workflow import TASK_TERMINAL_STATUSES, TASK_WORKFLOW
-from .workflow_schema import ReviewReturn, Workflow
+from .workflow_schema import ReviewReturn
 
 
 REVIEW_VERDICT_VALUES = ("pass", "needs_changes", "fail")
@@ -268,22 +268,13 @@ class RequirementEvaluation:
     def satisfied(self) -> bool:
         return not self.enforcement_error
 
-    @property
-    def explanation(self) -> str:
-        return self.enforcement_error if not self.satisfied else ""
-
 
 @dataclass(frozen=True, slots=True)
 class GateEvaluation:
-    workflow: Workflow
     status: str
     requirements: tuple[RequirementEvaluation, ...]
     review: RequirementEvaluation | None
     decision: Evaluation
-
-    @property
-    def state(self):
-        return self.workflow.state(self.decision.snapshot.state)
 
     @property
     def transition(self) -> str | None:
@@ -302,16 +293,6 @@ class GateEvaluation:
         return tuple({"transition": action.edge.name, "leads_to": action.edge.target} for action in self.decision.actions)
 
     @property
-    def blocker_code(self) -> str:
-        selected = self.decision.suggested
-        return "" if selected is None or not selected.issues else selected.issues[0].code
-
-    @property
-    def explanation(self) -> str:
-        selected = self.decision.suggested
-        return "" if selected is None else "; ".join(issue.message for issue in selected.issues)
-
-    @property
     def ready(self) -> bool:
         selected = self.decision.suggested
         return self.terminal if selected is None else selected.available
@@ -327,9 +308,6 @@ class GateEvaluation:
             "ready": self.ready,
             "items": items,
         }
-
-    def require_transition(self, transition: str) -> str:
-        return self.decision.require(transition).target
 
 
 @dataclass(frozen=True, slots=True)

@@ -188,11 +188,6 @@ class ExperimentService(RecordHooks):
     def get_state(self, *, experiment_id: str, project_id: str | None = None, conn=None) -> dict[str, Any]:
         return self.records.get_state(EXPERIMENT, record_id=experiment_id, project_id=project_id, conn=conn)
 
-    def get_state_with_gate(self, *, experiment_id: str, project_id: str | None = None,
-                            conn=None) -> tuple[dict[str, Any], GateEvaluation]:
-        return self.records.get_state_with_gate(EXPERIMENT, record_id=experiment_id,
-                                                project_id=project_id, conn=conn)
-
     def list_states_with_gates(self, *, conn, project_id: str) -> list[tuple[dict[str, Any], GateEvaluation]]:
         return self.records.list_states_with_gates(EXPERIMENT, conn=conn, project_id=project_id)
 

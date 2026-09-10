@@ -985,9 +985,6 @@ class ReflectionService(RecordHooks):
             what=what,
         )
 
-    def _workflow_knowledge(self, snapshot: Snapshot, conn):
-        return self.records.knowledge(REFLECTION, snapshot, conn)
-
     def _lens_knowledge(self, snapshot: Snapshot, conn):
         reflection = self.get_state(reflection_id=str(snapshot.data["reflection_id"]), project_id=snapshot.project_id, conn=conn)
         if str(snapshot.data["lens_id"]) not in {str(item["id"]) for item in reflection["roster"]}:
