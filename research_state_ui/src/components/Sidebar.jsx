@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useProjectStore, useProjectHref, selectStats, selectSandboxes } from '../store/useProjectStore';
 import { useAutorunStatus } from '../store/useAutorunStatus';
-import { useTheme } from '../store/useTheme';
+import { NEXT_THEME_MODE, useTheme } from '../store/useTheme';
 import { useBackdrop, setBackdrop } from '../store/useBackdrop';
 import { setSurfaceOverride } from '../store/useViewport';
 import ProductSwitch from './ProductSwitch';
@@ -73,8 +73,6 @@ function AccountFoot() {
 
 // Cycle order for the theme button: explicit choices first, then back to
 // following the OS.
-const NEXT_THEME_MODE = { light: 'dark', dark: 'system', system: 'light' };
-
 // Platform-correct label for the sidebar toggle shortcut (also shown on the
 // shell's reveal button, so exported).
 export const SIDEBAR_KB = /Mac|iP/.test(navigator.platform || '') ? '⌘B' : 'Ctrl+B';

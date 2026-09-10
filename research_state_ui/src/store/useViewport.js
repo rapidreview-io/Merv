@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { createStore } from './createStore';
 
 /**
  * Surface gate: decides whether the app renders the mobile shell or the
@@ -39,14 +39,11 @@ function compute() {
   return coarsePhone || window.innerWidth <= NARROW_VIEWPORT;
 }
 
-const listeners = new Set();
-let cached = compute();
+const store = createStore(compute());
 
 function emit() {
   const next = compute();
-  if (next === cached) return;
-  cached = next;
-  listeners.forEach(l => l());
+  if (next !== store.get()) store.set(next);
 }
 
 if (typeof window !== 'undefined') {
@@ -57,17 +54,8 @@ if (typeof window !== 'undefined') {
   try { window.matchMedia(COARSE_MQ).addEventListener('change', emit); } catch {}
 }
 
-function subscribe(listener) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
 export function useViewport() {
-  return useSyncExternalStore(subscribe, () => cached, () => false);
-}
-
-export function surfaceOverride() {
-  return readOverride();
+  return store.use();
 }
 
 export function setSurfaceOverride(mode) {

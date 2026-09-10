@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { api } from '../api';
+import { useAsyncData } from '../store/usePolling';
 import PlanBody from './PlanBody';
 import ReviewEvolutionStepper from './ReviewEvolutionStepper';
 
@@ -18,24 +19,14 @@ export default function PlanSpotlight({
   experimentStatus,
   defaultOpen = true,
 }) {
-  const [content, setContent] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
   const [showBody, setShowBody] = useState(defaultOpen);
   const [showReview, setShowReview] = useState(false);
 
-  useEffect(() => {
-    if (!planArtifact) return undefined;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setContent(null);
-    api.getArtifactContent(projectId, planArtifact.id)
-      .then(d => { if (!cancelled) setContent(d); })
-      .catch(e => { if (!cancelled) setError(e.message); })
-      .finally(() => !cancelled && setLoading(false));
-    return () => { cancelled = true; };
-  }, [projectId, planArtifact?.id]);
+  const [content, error] = useAsyncData(
+    planArtifact ? () => api.getArtifactContent(projectId, planArtifact.id) : null,
+    [projectId, planArtifact?.id],
+  );
+  const loading = !!planArtifact && !content && !error;
 
   // Stable identity: MarkdownView keys its `img` component (and its memo) on
   // this — an inline arrow here would remount every figure per re-render.

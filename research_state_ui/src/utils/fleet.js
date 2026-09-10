@@ -12,7 +12,16 @@ import { fmtDuration } from './format.js';
 
 // Tones are behavioural, not lifecycle: a "running" box can be working, idle,
 // or sitting on a failure, and those are three different things to a watcher.
-export const FLEET_TONES = ['work', 'fail', 'idle', 'quiet'];
+
+/** The id a fleet row is keyed and linked by. */
+export const sandboxRowId = (s) => s.sandbox_uid || s.sandbox_id || s.experiment_id;
+
+/** The experiment a box is working for, when it is working for exactly one. */
+export const primaryExperimentId = (s) => (
+  s.experiment_id
+  || (Array.isArray(s.active_experiment_ids) ? s.active_experiment_ids[0] : '')
+  || ''
+);
 
 /**
  * What this box is doing right now, in the order a watcher cares about:
@@ -190,9 +199,13 @@ export function gpuLabel(sandbox) {
  * reports back).
  */
 export function hardwareLabel(sandbox) {
+  return [gpuLabel(sandbox), sizeLabel(sandbox)].filter(Boolean).join(' · ');
+}
+
+/** The size half alone — "6 cpu · 64 GiB RAM" (the row reports RAM in MiB). */
+export function sizeLabel(sandbox) {
   const s = sandbox || {};
   return [
-    gpuLabel(s),
     s.cpu && `${s.cpu} cpu`,
     s.memory && `${Math.round(s.memory / 1024)} GiB RAM`,
   ].filter(Boolean).join(' · ');

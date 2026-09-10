@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../api';
+import { shortDateTime } from '../../utils/time';
+import { cx, shortSha } from '../../utils/format';
 import {
   PRE_CONSOLIDATION, DECISIONS, LANDINGS, INTEGRATION_KIND_LABEL,
   consolidationPhase, provenanceSteps, ledgerRows, consolidationReview,
-  shortSha,
 } from './consolidationModel';
 
 /**
@@ -20,15 +21,6 @@ import {
  * only — the /reflections poll is never multiplied. Polls gently (12s) while
  * the wave is actively consolidating; terminal waves fetch once.
  */
-
-function shortDateTime(iso) {
-  if (!iso) return '';
-  try {
-    return new Date(iso).toLocaleString([], {
-      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-    });
-  } catch { return ''; }
-}
 
 // Phase → the one honest sentence under the ledger. Never implies completion
 // before runner settlement.
@@ -62,11 +54,11 @@ function phaseNote(phase, packet) {
 function AdvanceReceipt({ advance }) {
   if (!advance || advance.status !== 'bound') return null;
   const diff = advance.diffstat || {};
-  const stats = [
+  const stats = cx(
     diff.files_changed != null && `${diff.files_changed} files`,
     diff.insertions != null && `+${diff.insertions}`,
     diff.deletions != null && `−${diff.deletions}`,
-  ].filter(Boolean).join(' ');
+  );
   return (
     <div className="cons-receipt">
       Runner advanced central to{' '}

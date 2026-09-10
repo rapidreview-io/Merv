@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
+import { useNow } from '../store/useNow';
 import { useProjectStore } from '../store/useProjectStore';
 import ContextHeader from './ContextHeader';
 import PostCard from './PostCard';
 import {
-  useNow, dayLabel, withDayDividers, buildCards, cardMatches, isOpenQuestion, FILTERS,
+  dayLabel, withDayDividers, buildCards, cardMatches, isOpenQuestion, FILTERS,
 } from './feedModel';
 import { useFeedStream } from './useFeedStream';
 import './feed.css';

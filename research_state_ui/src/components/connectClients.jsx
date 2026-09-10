@@ -263,3 +263,33 @@ export function ClientMark({ client, size = 30 }) {
     </span>
   );
 }
+
+/**
+ * The client chooser both connect surfaces show: one tile per client Merv
+ * speaks natively, then the wide "anything else" tile.
+ */
+export function ClientChoices({ onPick, className = '' }) {
+  return (
+    <div className={`cnx-grid${className ? ` ${className}` : ''}`}>
+      {NATIVE_CLIENTS.map((c) => (
+        <button key={c.id} type="button" className="cnx-choice" onClick={() => onPick(c.id)}>
+          <ClientMark client={c.id} />
+          <span className="cnx-choice-title">{c.name}</span>
+        </button>
+      ))}
+      <button
+        type="button"
+        className="cnx-choice cnx-choice--wide"
+        onClick={() => onPick('other')}
+      >
+        <ClientMark client="other" />
+        <span className="cnx-choice-text">
+          <span className="cnx-choice-title">Another client</span>
+          <span className="cnx-choice-sub">
+            {OTHER_CLIENT_NAMES.join(', ')}, headless runners, CI…
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+}

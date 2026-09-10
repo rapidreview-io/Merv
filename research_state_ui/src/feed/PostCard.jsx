@@ -12,6 +12,7 @@ import PostText from './PostText';
 import QuoteCard from './QuoteCard';
 import ReplyComposer from './ReplyComposer';
 import EntityChip from '../components/EntityChip';
+import { cx } from '../utils/format';
 
 // Reaction glyphs — solid geometric "instrument marks", not pictograms:
 // boost (rounded triangle, "raise this"), watching (fisheye ring + dot),
@@ -193,11 +194,11 @@ export default function PostCard({
   const askYou = isOpenQuestion(card);
   const showRefChip = Boolean(post.ref) && !(post.text || '').includes(post.ref);
 
-  const cls = [
+  const cls = cx(
     'postcard',
     researcher ? 'postcard--researcher' : '',
     chain.length ? 'postcard--thread' : '',
-  ].filter(Boolean).join(' ');
+  );
 
   const actions = (onReact || onReply) && (
     <div className={`postcard-actions${anyOn ? ' has-on' : ''}`}>

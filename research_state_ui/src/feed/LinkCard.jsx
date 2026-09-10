@@ -1,8 +1,5 @@
 import { feedApi } from './feedApi';
-
-function hostOf(url) {
-  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
-}
+import { hostOf } from '../utils/format';
 
 // Defense in depth against stored non-web schemes (javascript:/data:) — the
 // backend refuses to store them, but rows written before that guard (or by

@@ -1,4 +1,5 @@
-import { useCallback, useRef, useSyncExternalStore } from 'react';
+import { useCallback, useRef } from 'react';
+import { createStore } from './createStore';
 
 /**
  * Shared, draggable width for EVERY graph detail sidebar — the experiment
@@ -18,7 +19,6 @@ const DEFAULT = 380;
 // Exported so camera math can reserve the same gutter the CSS paints, and so a
 // canvas can never be squeezed below a usable width by the drag.
 export const PANEL_MIN = MIN;
-export const PANEL_DEFAULT = DEFAULT;
 export const CANVAS_MIN = 300;
 // The panel never takes more than this share of the graph that hosts it. The
 // width is ONE persisted number shared by every graph: dragged wide on an
@@ -43,19 +43,11 @@ function load() {
   } catch { return DEFAULT; }
 }
 
-let width = load();
-const listeners = new Set();
-
-function setWidth(w) {
-  width = w;
-  for (const fn of listeners) fn();
-}
+const store = createStore(load());
+const setWidth = (w) => store.set(w);
 
 export function usePanelWidth() {
-  const value = useSyncExternalStore(
-    useCallback((fn) => { listeners.add(fn); return () => listeners.delete(fn); }, []),
-    () => width,
-  );
+  const value = store.use();
   const drag = useRef(null);
 
   const onMove = useCallback((e) => {
@@ -71,7 +63,7 @@ export function usePanelWidth() {
     window.removeEventListener('pointerup', onUp);
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
-    try { localStorage.setItem(KEY, String(Math.round(width))); } catch { /* best-effort */ }
+    try { localStorage.setItem(KEY, String(Math.round(store.get()))); } catch { /* best-effort */ }
   }, [onMove]);
 
   const startResize = useCallback((e) => {
@@ -85,7 +77,7 @@ export function usePanelWidth() {
     const maxW = Math.max(MIN, Math.min(bodyW - CANVAS_MIN, bodyW * PANEL_MAX_FRACTION));
     // A stored width past the cap renders capped; start the drag from what
     // is on screen, not from the number, so the handle doesn't jump.
-    drag.current = { startX: e.clientX, startW: Math.min(width, maxW), maxW };
+    drag.current = { startX: e.clientX, startW: Math.min(store.get(), maxW), maxW };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     document.body.style.cursor = 'col-resize';
@@ -97,10 +89,10 @@ export function usePanelWidth() {
   // carry the role with pointer events as the only way to operate it.
   const nudge = useCallback((delta) => {
     const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
-    const next = clamp(width + delta, MIN, Math.max(MIN, vw - CANVAS_MIN));
+    const next = clamp(store.get() + delta, MIN, Math.max(MIN, vw - CANVAS_MIN));
     setWidth(next);
     try { localStorage.setItem(KEY, String(Math.round(next))); } catch { /* best-effort */ }
-  }, [width]);
+  }, [value]);
 
   return { width: value, startResize, nudge };
 }

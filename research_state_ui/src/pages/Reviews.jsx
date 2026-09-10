@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useProjectStore, selectExperiments, useProjectHref } from '../store/useProjectStore';
 import { api } from '../api';
+import { useAsyncData } from '../store/usePolling';
 import ObjId from '../components/ObjId';
 import StatusPill from '../components/StatusPill';
 import ReviewCard from '../components/ReviewCard';
-import { expName } from '../utils/experiment';
+import { expName, reviewQueue } from '../utils/experiment';
 
 /**
  * Reviews page. Shows:
@@ -19,35 +19,14 @@ export default function Reviews() {
   const projectId = useProjectStore(s => s.projectId);
   const experiments = useProjectStore(selectExperiments);
   const px = useProjectHref();
-  const [queue, setQueue] = useState(null);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setQueue(null);
-    setError(null);
-    api.listReviews(projectId)
-      .then(data => !cancelled && setQueue(data))
-      .catch(err => !cancelled && setError(err.message));
-    return () => { cancelled = true; };
-  }, [projectId]);
+  const [queue, error] = useAsyncData(() => api.listReviews(projectId), [projectId]);
 
   const expById = Object.fromEntries(experiments.map(e => [e.id, e]));
 
   if (error) return <div className="page-stage"><div className="error-message">{error}</div></div>;
   if (!queue) return <div className="page-stage"><div className="empty">Loading…</div></div>;
 
-  // Server returns { requests: [...], reviews: [...] } at /reviews
-  const openRequests = queue.requests || queue.open_requests || queue.openRequests || [];
-  const submitted = queue.reviews || queue.submitted || [];
-
-  // Group submitted reviews by target experiment
-  const byExp = new Map();
-  for (const r of submitted) {
-    const eid = r.target_id || r.experiment_id;
-    if (!byExp.has(eid)) byExp.set(eid, []);
-    byExp.get(eid).push(r);
-  }
+  const { openRequests, byTarget: byExp } = reviewQueue(queue);
 
   return (
     <div className="page-stage">

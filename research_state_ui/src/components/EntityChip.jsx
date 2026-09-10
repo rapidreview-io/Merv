@@ -6,6 +6,7 @@ import { resolveEntity, fetchEntity, TYPE_GLYPH } from '../utils/entityResolve';
 import { useEntityHover } from './useEntityHover';
 import { useEntityRefScope } from './EntityRefScope';
 import EntityHoverCard from './EntityHoverCard';
+import { cx } from '../utils/format';
 
 /**
  * A compact link chip for any research entity: a type glyph + display name that
@@ -48,11 +49,13 @@ export default function EntityChip({ id, label: labelOverride, seed = null, comp
 
   const glyph = TYPE_GLYPH[resolved.type] || '•';
   const label = labelOverride || resolved.label;
-  const cls = ['echip'];
-  if (compact) cls.push('echip--compact');
-  if (!action && !(resolved.navigable && resolved.route)) cls.push('echip--static');
-  if (resolved.unresolved) cls.push('echip--dead');
-  if (className) cls.push(className);
+  const cls = cx(
+    'echip',
+    compact && 'echip--compact',
+    !action && !(resolved.navigable && resolved.route) && 'echip--static',
+    resolved.unresolved && 'echip--dead',
+    className,
+  );
 
   const inner = (
     <>
@@ -85,7 +88,7 @@ export default function EntityChip({ id, label: labelOverride, seed = null, comp
           ref={setReference}
           type="button"
           {...getReferenceProps({
-            className: cls.join(' '),
+            className: cls,
             'aria-label': action.label,
             onClick: action.onClick,
           })}
@@ -100,7 +103,7 @@ export default function EntityChip({ id, label: labelOverride, seed = null, comp
   if (resolved.navigable && resolved.route) {
     return (
       <>
-        <Link ref={setReference} {...getReferenceProps({ className: cls.join(' '), to: projectPath(pid, resolved.route) })}>
+        <Link ref={setReference} {...getReferenceProps({ className: cls, to: projectPath(pid, resolved.route) })}>
           {inner}
         </Link>
         {card}
@@ -110,7 +113,7 @@ export default function EntityChip({ id, label: labelOverride, seed = null, comp
 
   return (
     <>
-      <button ref={setReference} type="button" {...getReferenceProps({ className: cls.join(' '), onClick: (e) => e.preventDefault() })}>
+      <button ref={setReference} type="button" {...getReferenceProps({ className: cls, onClick: (e) => e.preventDefault() })}>
         {inner}
       </button>
       {card}

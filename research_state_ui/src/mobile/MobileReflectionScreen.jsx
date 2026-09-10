@@ -8,6 +8,7 @@ import GraphOutline from './GraphOutline';
 import { normalizeLogic, makeLogicDetail } from './graphModel';
 import { TERMINAL_WAVE, reflectionsByLens, secondaryDocs, resolveReflectionDoc } from '../components/reflection/waveModel';
 import ConsolidationLedger from '../components/reflection/ConsolidationLedger';
+import { keepIfUnchanged, useIntervalPoll } from '../store/usePolling';
 
 const GraphCanvasOverlay = lazy(() => import('./GraphCanvasOverlay'));
 
@@ -55,7 +56,7 @@ export default function MobileReflectionScreen() {
   const fetchReflections = useCallback(async () => {
     if (!projectId) return;
     const d = await api.getReflections(projectId).catch(() => null);
-    if (d) setData(prev => (JSON.stringify(prev) === JSON.stringify(d) ? prev : d));
+    if (d) setData(keepIfUnchanged(d));
   }, [projectId]);
 
   useEffect(() => { fetchReflections(); }, [fetchReflections]);
@@ -86,13 +87,8 @@ export default function MobileReflectionScreen() {
   }, [fetchGraph, attemptIndex]);
 
   // Poll both only while the wave is live — terminal waves are immutable.
-  useEffect(() => {
-    if (!isOpen) return undefined;
-    const t = setInterval(() => {
-      if (document.visibilityState === 'visible') { fetchReflections(); fetchGraph(); }
-    }, 8000);
-    return () => clearInterval(t);
-  }, [isOpen, fetchReflections, fetchGraph]);
+  const tick = useCallback(() => { fetchReflections(); fetchGraph(); }, [fetchReflections, fetchGraph]);
+  useIntervalPoll(tick, 8000, { enabled: isOpen, immediate: false });
 
   const backToCurrent = useCallback(() => setPinnedId(null), []);
 

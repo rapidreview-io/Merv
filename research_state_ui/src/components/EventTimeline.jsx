@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { useProjectStore, projectPath } from '../store/useProjectStore';
 import ObjId from './ObjId';
 import EntityChip from './EntityChip';
-import { entityType } from '../utils/entityResolve';
+import { entityRoute, entityType } from '../utils/entityResolve';
 import { PARACHUTE_CHIPS } from '../utils/parachute';
 
 function shortTime(iso) {
@@ -17,19 +17,12 @@ function shortTime(iso) {
 /**
  * Routes an event's target_id to the right detail page. Returns null when
  * we don't have a navigable destination (renders as plain text instead).
+ * `project` is the one target that isn't inside a project.
  */
 function targetHref(targetType, targetId) {
-  if (!targetId) return null;
-  const pid = useProjectStore.getState().projectId;
-  switch (targetType) {
-    case 'experiment': return projectPath(pid, `/experiments/${targetId}`);
-    case 'claim':      return projectPath(pid, `/claims/${targetId}`);
-    case 'project':    return `/projects`;
-    case 'artifact':   return projectPath(pid, `/artifacts/${targetId}`);
-    case 'review':     return projectPath(pid, `/reviews`);
-    case 'sandbox':    return projectPath(pid, `/experiments/${targetId}#execution`);
-    default:           return null;
-  }
+  if (targetType === 'project') return '/projects';
+  const route = entityRoute(targetType, targetId);
+  return route ? projectPath(useProjectStore.getState().projectId, route) : null;
 }
 
 export default function EventTimeline({ events, limit = 20 }) {

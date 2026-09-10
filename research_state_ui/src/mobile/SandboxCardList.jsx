@@ -13,15 +13,9 @@ import { expName } from '../utils/experiment';
 import { fmtDuration } from '../utils/format';
 import { PARACHUTE_CHIPS, latestParachute } from '../utils/parachute';
 import {
-  commandGist, fleetActivity, hardwareLabel, providerLabel, usageBars, usageLead, usageTrend,
+  commandGist, fleetActivity, hardwareLabel, primaryExperimentId, providerLabel,
+  sandboxRowId, usageBars, usageLead, usageTrend,
 } from '../utils/fleet';
-
-const sandboxRowId = (s) => s.sandbox_uid || s.sandbox_id || s.experiment_id;
-const primaryExperimentId = (s) => (
-  s.experiment_id
-  || (Array.isArray(s.active_experiment_ids) ? s.active_experiment_ids[0] : '')
-  || ''
-);
 
 /**
  * Mobile replacement for the 840px Sandboxes infra table: one card per

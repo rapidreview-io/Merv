@@ -1,6 +1,7 @@
 import CodeBlock from './CodeBlock';
 import MarkdownView from './MarkdownView';
 import SvgView from './SvgView';
+import { extOf } from '../utils/format';
 
 /**
  * Dispatch a text file to the right renderer based on its extension.
@@ -53,14 +54,6 @@ const EXT_TO_LANG = {
   cc: 'cpp',
   hpp: 'cpp',
 };
-
-function extOf(path) {
-  if (!path) return '';
-  const name = path.split('/').pop() || '';
-  const idx = name.lastIndexOf('.');
-  if (idx < 0) return '';
-  return name.slice(idx + 1).toLowerCase();
-}
 
 export default function FileRenderer({ text, path, resolveImageSrc = null }) {
   const ext = extOf(path);

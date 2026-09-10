@@ -24,11 +24,15 @@ export function ConfidenceSignal({ level }) {
   );
 }
 
-export function ConfidenceDots({ level }) {
+/**
+ * `titled` off drops the native tooltip: inside a hover card it would pop a
+ * grey box over the card, and the card's row label already says "confidence".
+ */
+export function ConfidenceDots({ level, titled = true }) {
   const n = CONFIDENCE_LEVELS[(level || '').toLowerCase()] || 0;
   const label = level ? `${level} confidence` : 'confidence unset';
   return (
-    <span className="claim-conf" title={label} aria-label={label}>
+    <span className="claim-conf" title={titled ? label : undefined} aria-label={label}>
       {[1, 2, 3].map(i => (
         <span key={i} className={`claim-conf-dot${i <= n ? ' is-on' : ''}`} aria-hidden="true" />
       ))}

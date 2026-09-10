@@ -3,6 +3,7 @@ import { api } from '../api';
 import StatusPill from './StatusPill';
 import TerminalLog from './TerminalLog';
 import { hardwareLabel, providerLabel } from '../utils/fleet';
+import { formatBytes } from '../utils/format';
 
 /**
  * SandboxTerminal — a window into a cloud sandbox.

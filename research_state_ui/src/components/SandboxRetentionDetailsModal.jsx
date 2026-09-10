@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { until } from '../utils/time';
 
 /**
  * SandboxRetentionDetailsModal - minimal drill-in for one sandbox's retention
@@ -45,7 +46,7 @@ export default function SandboxRetentionDetailsModal({
 
   const remoteDir = stripSlash(sandbox.sync_dir || sandbox.experiment_dir || sandbox.workdir || '');
   const dataDir = stripSlash(sandbox.sandbox_data_dir || sandbox.unsynced_dir || '/workspace/data');
-  const expiryLabel = sandbox.expires_at ? fmtUntil(sandbox.expires_at, now) : 'not set';
+  const expiryLabel = sandbox.expires_at ? until(sandbox.expires_at, now) : 'not set';
 
   const body = (
     <div className="retention-modal-overlay" onMouseDown={onClose}>
@@ -123,16 +124,4 @@ function shortenPath(p, segs = 3) {
   const parts = stripSlash(p).split('/').filter(Boolean);
   if (parts.length <= segs) return p;
   return '.../' + parts.slice(-segs).join('/');
-}
-
-function fmtUntil(iso, now) {
-  const ts = Date.parse(iso);
-  if (!Number.isFinite(ts)) return 'unknown';
-  const s = Math.max(0, Math.floor((ts - now) / 1000));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 48) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
 }

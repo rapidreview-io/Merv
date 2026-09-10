@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { GraphTabs, useGraphAvailability, useGraphExpand } from '../GraphExpandButton';
 import LogicGraph from '../LogicGraph';
 import WaveFigure from './WaveFigure';
 
@@ -12,25 +13,8 @@ import WaveFigure from './WaveFigure';
  */
 export default function ReflectionGraphs({ projectId, reflectionId, wave, isOpen, fetcher }) {
   const [chosen, setChosen] = useState('process');
-  const [avail, setAvail] = useState({ process: false, logic: false });
-  const [expanded, setExpanded] = useState(false);
-  const toggleExpand = useCallback(() => setExpanded(v => !v), []);
-
-  useEffect(() => {
-    if (!expanded) return undefined;
-    const onKey = e => { if (e.key === 'Escape') setExpanded(false); };
-    window.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [expanded]);
-
-  const report = useCallback((key, value) => {
-    setAvail(prev => (prev[key] === value ? prev : { ...prev, [key]: value }));
-  }, []);
+  const [avail, report] = useGraphAvailability({ process: false, logic: false });
+  const { expanded, toggleExpand, collapse } = useGraphExpand();
   const reportProcess = useCallback(v => report('process', v), [report]);
   const reportLogic = useCallback(v => report('logic', v), [report]);
 
@@ -39,36 +23,19 @@ export default function ReflectionGraphs({ projectId, reflectionId, wave, isOpen
     : (chosen === 'process' ? (avail.logic ? 'logic' : null) : (avail.process ? 'process' : null));
 
   const titleTabs = (
-    <span className="fig-title-tabs" role="tablist" aria-label="Graph view">
-      <button
-        type="button"
-        role="tab"
-        aria-selected={view === 'process'}
-        className={`fig-title-tab${view === 'process' ? ' fig-title-tab--on' : ''}`}
-        disabled={!avail.process}
-        onClick={() => setChosen('process')}
-      >
-        Process
-      </button>
-      <span className="fig-title-tab-sep" aria-hidden="true">/</span>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={view === 'logic'}
-        className={`fig-title-tab${view === 'logic' ? ' fig-title-tab--on' : ''}`}
-        disabled={!avail.logic}
-        onClick={() => setChosen('logic')}
-      >
-        Logic
-      </button>
-    </span>
+    <GraphTabs
+      tabs={[['process', 'Process'], ['logic', 'Logic']]}
+      view={view}
+      avail={avail}
+      onChoose={setChosen}
+    />
   );
 
   const shared = { titleTabs, expanded, onToggleExpand: toggleExpand };
   return (
     <>
       {expanded && (
-        <div className="fig-backdrop" onClick={() => setExpanded(false)} aria-hidden="true" />
+        <div className="fig-backdrop" onClick={collapse} aria-hidden="true" />
       )}
       <WaveFigure
         {...shared}

@@ -6,7 +6,7 @@ import { api } from '../api';
 import StatusPill from './StatusPill';
 import DetailPanelShell, { PanelResizer } from './DetailPanelShell';
 import GraphExpandButton from './GraphExpandButton';
-import GraphDrawer from './GraphDrawer';
+import GraphDrawer, { flowCanvasProps, useEscapeToDeselect } from './GraphDrawer';
 import ArtifactContentView from './ArtifactContentView';
 import { visibleWidth } from '../utils/graphCamera';
 import { layoutFigure, figureBounds, FIG_NODE_W } from '../utils/figureLayout';
@@ -14,42 +14,8 @@ import { TERMINAL_STATUSES } from '../utils/experiment';
 import { usePanelWidth } from '../store/usePanelWidth';
 import { useProjectHref } from '../store/useProjectStore';
 import { useStreamAwarePoll } from '../store/useEventStream';
-
-const TYPE_GLYPH = {
-  attempt: '◇',
-  submission: '▣',
-  artifact: '▤',
-  artifact_group: '▣',
-  review: '☑',
-  sandbox: '▶',
-  conclusion: '∴',
-  claim: '◎',
-};
-
-/**
- * Normalize per-type statuses from the figure document into the small set of
- * visual states the CSS knows: done | open | revise | failed | faded | neutral.
- * (`open` = blue/in-motion, `revise` = amber, `faded` = superseded history.)
- */
-function statusClass(node) {
-  const s = String(node.status || '');
-  if (node.type === 'review') {
-    return { pass: 'done', needs_changes: 'revise', fail: 'failed', open: 'open' }[s] || 'neutral';
-  }
-  if (node.type === 'claim') {
-    return {
-      supported: 'done', weakened: 'revise', contradicted: 'failed',
-      active: 'open', draft: 'neutral', abandoned: 'faded',
-    }[s] || 'open';
-  }
-  if (node.type === 'submission') {
-    return { open: 'open', done: 'done', returned: 'revise', failed: 'failed' }[s] || 'done';
-  }
-  return {
-    pending: 'neutral', active: 'open', done: 'done', failed: 'failed',
-    superseded: 'faded', abandoned: 'faded', none: 'neutral',
-  }[s] || 'neutral';
-}
+import { FIGURE_GLYPH, figureStatusClass } from '../utils/graphStatus';
+import { cx } from '../utils/format';
 
 // Attachment edges that are shown as placement, not lines: an execution-lane
 // file or the sandbox simply sits next to the beat it trails. Evidence edges
@@ -103,14 +69,14 @@ function FigureNode({ data }) {
   const { selectedId, select } = useContext(SelectedContext);
   return (
     <div
-      className={[
+      className={cx(
         'fig-node',
         `fig-node--${data.type}`,
         `fig-st--${data.statusClass}`,
         data.anchor ? 'fig-node--satellite' : '',
         data.current ? 'fig-node--current' : '',
         selectedId === data.id ? 'fig-node--selected' : '',
-      ].filter(Boolean).join(' ')}
+      )}
       style={{ width: FIG_NODE_W }}
       // react-flow's own Enter/Space handler drives its internal store and
       // never reaches our onNodeClick, so keyboard activation is the card's
@@ -124,7 +90,7 @@ function FigureNode({ data }) {
     >
       <Handle type="target" position={Position.Left} className="fig-handle" style={{ top: HANDLE_TOP }} />
       <div className="fig-node-head">
-        <span className="fig-node-glyph" aria-hidden="true">{TYPE_GLYPH[data.type] || '•'}</span>
+        <span className="fig-node-glyph" aria-hidden="true">{FIGURE_GLYPH[data.type] || '•'}</span>
         <span className="fig-node-type">{String(data.type || '').replace(/_/g, ' ')}</span>
         {data.statusClass === 'open' && <span className="fig-node-live" aria-hidden="true" />}
         {/* Which round this node is about ("attempt 2", "round 3.1"): the
@@ -178,13 +144,13 @@ export function MeasureSync({ topologyKey }) {
 function toFlow(figure) {
   const laid = layoutFigure(figure, { timeline: true });
   const liveIds = new Set(
-    laid.nodes.filter(n => statusClass(n) === 'open').map(n => n.id),
+    laid.nodes.filter(n => figureStatusClass(n) === 'open').map(n => n.id),
   );
   const nodes = laid.nodes.map(n => ({
     id: n.id,
     type: 'figure',
     position: { x: n.x, y: n.y },
-    data: { ...n, statusClass: statusClass(n) },
+    data: { ...n, statusClass: figureStatusClass(n) },
     draggable: false,
     connectable: false,
   }));
@@ -362,6 +328,7 @@ export default function ExperimentFigure({
   const canvasRef = useRef(null);
   const { width: panelWidth } = usePanelWidth();
   const select = useCallback((id) => setSelectedId(id), []);
+  const deselect = useCallback(() => setSelectedId(null), []);
   const selCtx = useMemo(() => ({ selectedId, select }), [selectedId, select]);
 
   const fetchFigure = useCallback(async () => {
@@ -415,18 +382,7 @@ export default function ExperimentFigure({
     return () => clearTimeout(t);
   }, [expanded, frame]);
 
-  // Escape closes the sidebar first; the graph slot's handler then gets the
-  // next Escape to leave fullscreen. Capture phase so this runs before it.
-  useEffect(() => {
-    if (!selectedId) return undefined;
-    const onKey = (e) => {
-      if (e.key !== 'Escape') return;
-      e.stopPropagation();
-      setSelectedId(null);
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [selectedId]);
+  useEscapeToDeselect(selectedId, deselect);
 
   // …and whenever the canvas itself changes size (page layout settling after
   // data arrives, sidebar toggles, window resizes): the framing depends on the
@@ -491,20 +447,7 @@ export default function ExperimentFigure({
               select(node.id);
             }}
             onPaneClick={() => setSelectedId(null)}
-            proOptions={{ hideAttribution: true }}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            // The card paints its own ring from selectedId; react-flow's own
-            // selection would be a second state that drifts from it.
-            nodesFocusable={false}
-            elementsSelectable={false}
-            edgesFocusable={false}
-            zoomOnDoubleClick={false}
-            zoomOnScroll={expanded}
-            zoomOnPinch
-            preventScrolling={expanded}
-            minZoom={0.3}
-            maxZoom={1.6}
+            {...flowCanvasProps(expanded)}
           >
             <MeasureSync topologyKey={topologyKey} />
             <Background gap={22} size={1.1} />

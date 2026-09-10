@@ -1,3 +1,5 @@
+import { shortSha } from '../../utils/format';
+
 /**
  * consolidationModel — pure semantics for the Consolidation Ledger, shared by
  * the desktop ProjectReflectionPanel and the mobile MobileReflectionScreen so
@@ -53,10 +55,6 @@ export const INTEGRATION_KIND_LABEL = {
   rewrite: 'rewrite',
   none: 'none',
 };
-
-export function shortSha(sha) {
-  return sha ? String(sha).slice(0, 9) : '';
-}
 
 // Research Core resolves this review through the exact proposal snapshot,
 // never by timestamps or "latest review" guesswork.

@@ -1,23 +1,8 @@
 // Presentation model for the feed: one shared clock, day dividers, and the
 // grouping of a flat newest-first post list into cards (a root post with its
 // thread continuations and its replies) plus the client-side filters.
-import { useEffect, useState } from 'react';
 import { fmtAgo } from '../utils/format.js';
-
-// Shared ticking clock. One instance lives in Feed and flows down as a prop.
-export function useNow(intervalMs = 30000) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(t);
-  }, [intervalMs]);
-  return now;
-}
-
-function dayKey(ts) {
-  const d = new Date(ts);
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-}
+import { dayKey } from '../utils/time.js';
 
 // Calendar-aware (setDate handles DST days that aren't 24h long).
 function yesterdayKey(now) {

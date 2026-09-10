@@ -11,6 +11,7 @@
  * called on hover-intent only and memoised per project.
  */
 import { api } from '../api';
+import { basename, clip, roleWord } from './format';
 import { expName } from './experiment';
 import { citedSections, paperRoute, paperSeed, sectionRoute, sectionSeed } from './litreview';
 
@@ -47,17 +48,34 @@ export const TYPE_LABEL = {
   paper: 'paper',
 };
 
-// Only these types have a project-scoped detail page; the rest render as a
-// non-navigating chip that still gets a hover card.
+// Where each target type lives, project-relative. Types absent from here have
+// no destination and render as a non-navigating chip that still hover-cards.
+// This is the whole product's route table: event rows, tool-call rows, and
+// dependency links all read it rather than re-listing the paths.
 const ROUTE = {
   experiment: (id) => `/experiments/${id}`,
+  task: (id) => `/tasks/${id}`,
   claim: (id) => `/claims/${id}`,
   artifact: (id) => `/artifacts/${id}`,
+  // No per-review page: the reviews screen is the destination.
+  review: () => '/reviews',
+  // A sandbox is a section of the experiment that ran on it.
+  sandbox: (id) => `/experiments/${id}#execution`,
   // Sections and papers live on the one lit-review screen (no per-id page),
   // deep-linked to the entry so the page can land on it and highlight it.
   litreview_section: sectionRoute,
   paper: paperRoute,
 };
+
+/** The project-relative route for a target, or null when it has no page. */
+export function entityRoute(type, id) {
+  return id && ROUTE[type] ? ROUTE[type](id) : null;
+}
+
+/** A workflow node (task or experiment) → its route. */
+export function nodeRoute(node) {
+  return entityRoute(node?.node_type === 'task' ? 'task' : 'experiment', node?.id);
+}
 
 // Matches a bare entity id in prose. `\b` at the head keeps `myexp_1` from
 // matching; the trailing negative lookahead lets ids carry hyphens without the
@@ -79,15 +97,6 @@ export function entityType(id) {
 
 function shortId(id) {
   return typeof id === 'string' && id.length > 14 ? `${id.slice(0, 4)}…${id.slice(-6)}` : id;
-}
-
-function basename(p) {
-  return (p || '').split('/').filter(Boolean).pop() || p || '';
-}
-
-function clamp(s, n) {
-  const t = (s || '').trim();
-  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 }
 
 // --- home-snapshot field extractors (tolerant: a missing field just drops its
@@ -138,7 +147,7 @@ function headlineMetric(e) {
 }
 
 function reviewLabel(rv) {
-  const role = (rv.role || 'review').replace(/_reviewer$/, '');
+  const role = roleWord(rv.role);
   return rv.verdict ? `${role} · ${rv.verdict}` : role;
 }
 
@@ -173,7 +182,7 @@ export function resolveEntity(id, home) {
     const c = (H.claims || []).find((x) => x.id === id);
     if (!c) return { ...DEAD(id, type), needsFetch: true };
     return {
-      id, type, label: clamp(c.statement, 44) || 'claim', route: ROUTE.claim(id), navigable: true,
+      id, type, label: clip(c.statement, 44) || 'claim', route: ROUTE.claim(id), navigable: true,
       detail: {
         type, statement: c.statement || '', status: c.status,
         confidence: c.confidence, linked: countClaimTests(id, H),
@@ -235,14 +244,14 @@ export function seedFromRefIndex(refString, entry) {
   }
   if (t === 'claim') {
     return {
-      id: refString, type: 'claim', label: clamp(entry.statement, 44) || 'claim',
+      id: refString, type: 'claim', label: clip(entry.statement, 44) || 'claim',
       route: entry.claim_id ? ROUTE.claim(entry.claim_id) : null, navigable: !!entry.claim_id,
       detail: { type: 'claim', statement: entry.statement || '', status: entry.status, confidence: entry.confidence },
     };
   }
   if (t === 'experiment') {
     return {
-      id: refString, type: 'experiment', label: entry.name || clamp(entry.intent, 40) || 'experiment',
+      id: refString, type: 'experiment', label: entry.name || clip(entry.intent, 40) || 'experiment',
       route: entry.experiment_id ? ROUTE.experiment(entry.experiment_id) : null, navigable: !!entry.experiment_id,
       detail: { type: 'experiment', name: entry.name, intent: entry.intent || '', status: entry.status },
     };
@@ -268,7 +277,7 @@ export function seedFromRefIndex(refString, entry) {
   }
   if (t === 'paper') {
     return {
-      id: refString, type: 'paper', label: clamp(entry.title, 44) || 'paper',
+      id: refString, type: 'paper', label: clip(entry.title, 44) || 'paper',
       route: ROUTE.paper(refString), navigable: true,
       detail: { type: 'paper', title: entry.title || '', url: entry.url || '', year: entry.year || '' },
     };
@@ -308,7 +317,7 @@ export async function fetchEntity(id, pid) {
       const s = await api.getClaim(pid, id);
       const c = s?.claim || s || {};
       out = {
-        id, type, label: clamp(c.statement, 44) || shortId(id), route: ROUTE.claim(id), navigable: true,
+        id, type, label: clip(c.statement, 44) || shortId(id), route: ROUTE.claim(id), navigable: true,
         detail: { type, statement: c.statement || '', status: c.status, confidence: c.confidence, linked: null },
       };
     } else if (type === 'artifact') {
@@ -354,11 +363,4 @@ export async function fetchEntity(id, pid) {
   // would poison the new project's map with the old project's entity.
   if (cachePid === pid) cache.set(id, out);
   return out;
-}
-
-// Drop the memo when the active project changes (call from a project-switch
-// effect); resolveEntity results are snapshot-derived and need no eviction.
-export function invalidateEntityCache() {
-  cachePid = null;
-  cache.clear();
 }

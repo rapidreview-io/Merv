@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
+import { useRecordStatus } from '../store/usePolling';
 import { useProjectStore, useProjectHref } from '../store/useProjectStore';
 import { useStreamAwarePoll } from '../store/useEventStream';
 import FSMStrip from '../components/FSMStrip';
@@ -10,8 +11,11 @@ import ReviewCard from '../components/ReviewCard';
 import StatusPill from '../components/StatusPill';
 import ObjId from '../components/ObjId';
 import InlineMd from '../components/InlineMd';
-import DetailsDrawer, { DetailsButton, OpsTimeline, OpsVersions, OpsPosition } from '../components/DetailsDrawer';
-import { fmtAgo, fmtSpan, formatBytes } from '../utils/format';
+import DetailsDrawer, {
+  DetailsButton, OpsPosition, OpsTimeline, OpsVersions, useDetailsDrawer,
+  linkedNodes, orderedTimeline, reviewRows, sortedArtifacts, versionRows,
+} from '../components/DetailsDrawer';
+import { ago } from '../utils/time';
 import { workflowActionButtons } from '../utils/workflowActions';
 
 /*
@@ -48,15 +52,6 @@ const SECONDARY_TRANSITIONS = [
   { transition: 'mark_failed', label: 'End task (mark failed)' },
 ];
 
-const ago = (iso) => {
-  const t = Date.parse(iso || '');
-  return Number.isFinite(t) ? fmtAgo(Date.now() - t) : null;
-};
-const msBetween = (a, b) => {
-  const t0 = Date.parse(a || ''), t1 = Date.parse(b || '');
-  return Number.isFinite(t0) && Number.isFinite(t1) ? Math.max(0, t1 - t0) : null;
-};
-const nodeHref = (px, node) => px(node.node_type === 'task' ? `/tasks/${node.id}` : `/experiments/${node.id}`);
 
 export default function TaskDetail() {
   const { taskId } = useParams();
@@ -64,37 +59,20 @@ export default function TaskDetail() {
   const projectId = useProjectStore(s => s.projectId);
   const refreshHome = useProjectStore(s => s.refreshHome);
 
-  const [statusData, setStatusData] = useState(null);
-  const [error, setError] = useState(null);
   const [busy, setBusy] = useState(new Set());
   const [actionError, setActionError] = useState(null);
   const [gateOpen, setGateOpen] = useState(false);
   const [pendingEnd, setPendingEnd] = useState(false);
   const [endReason, setEndReason] = useState('');
   const [acceptOutcome, setAcceptOutcome] = useState('');
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const detailsBtnRef = useRef(null);
-  const closeDetails = useCallback(() => {
-    setDetailsOpen(false);
-    detailsBtnRef.current?.focus({ preventScroll: true });
-  }, []);
+  const { detailsOpen, setDetailsOpen, toggleDetails, closeDetails, detailsBtnRef } = useDetailsDrawer();
 
   useEffect(() => { setPendingEnd(false); setEndReason(''); setDetailsOpen(false); }, [taskId]);
 
-  const lastStatusJsonRef = useRef(null);
-  const fetchStatus = useCallback(async () => {
-    try {
-      const data = await api.getTaskStatus(projectId, taskId);
-      const json = JSON.stringify(data);
-      if (lastStatusJsonRef.current !== json) {
-        lastStatusJsonRef.current = json;
-        setStatusData(data);
-      }
-      setError(null);
-    } catch (err) {
-      setError(err.message);
-    }
-  }, [projectId, taskId]);
+  const [statusData, error, fetchStatus] = useRecordStatus(
+    () => api.getTaskStatus(projectId, taskId),
+    [projectId, taskId],
+  );
 
   useStreamAwarePoll(fetchStatus, {
     matches: (row) => row.target_id === taskId || row.payload?.task_id === taskId,
@@ -190,7 +168,7 @@ export default function TaskDetail() {
           </div>
           <DetailsButton
             open={detailsOpen}
-            onToggle={() => setDetailsOpen(v => !v)}
+            onToggle={toggleDetails}
             controls="task-details"
             buttonRef={detailsBtnRef}
           />
@@ -415,9 +393,7 @@ function ReviewQuote({ review, round }) {
 function buildTimeline(task, reviews) {
   const items = [];
   if (task.created_at) items.push({ t: task.created_at, rank: 0, tone: null, label: 'created' });
-  const arts = (task.artifacts || []).slice().sort((a, b) =>
-    String(a.created_at || '').localeCompare(String(b.created_at || ''))
-    || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0)));
+  const arts = sortedArtifacts(task);
   let resultSeen = 0;
   for (const a of arts) {
     if (a.role === 'delivery') {
@@ -441,39 +417,22 @@ function buildTimeline(task, reviews) {
   } else if (task.status === 'failed' && task.updated_at) {
     items.push({ t: task.updated_at, rank: 99, tone: 'bad', label: `ended by ${task.failed_by || 'owner'}` });
   }
-  return items
-    .filter(i => i.t)
-    .sort((a, b) => String(a.t).localeCompare(String(b.t)) || (a.rank - b.rank));
+  return orderedTimeline(items);
 }
 
 function TaskFacts({ task, reviews, px }) {
   const timeline = buildTimeline(task, reviews);
   const done = task.status === 'done' || task.status === 'failed';
-  const arts = (task.artifacts || []).slice().sort((a, b) =>
-    String(a.created_at || '').localeCompare(String(b.created_at || ''))
-    || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0)));
-  const versionsOf = (role) => arts.filter(a => a.role === role).map((a, i) => ({
-    id: a.id,
-    name: `v${i + 1}`,
-    meta: [a.size_bytes != null ? formatBytes(a.size_bytes) : null, ago(a.created_at)].filter(Boolean).join(' · '),
-    title: a.path,
-  }));
-  const reviewRows = reviews.map((r, i) => ({
-    id: r.id,
-    name: `round ${i + 1}`,
-    pill: String(r.verdict || 'pending').toLowerCase(),
-    meta: ago(r.created_at) || '',
-  }));
-  const withHref = (d) => ({ ...d, href: nodeHref(px, d) });
-  const upstream = (task.dependencies || []).map(withHref);
-  const downstream = (task.dependents || []).map(withHref);
+  const arts = sortedArtifacts(task);
+  const upstream = linkedNodes(task.dependencies, px);
+  const downstream = linkedNodes(task.dependents, px);
   const isOpen = !TASK_TERMINAL.has(task.status);
   return (
     <>
       <OpsTimeline items={timeline} done={done} createdAt={task.created_at} endedAt={task.updated_at} />
       <OpsVersions groups={[
-        { label: 'result', rows: versionsOf('delivery') },
-        { label: 'reviews', rows: reviewRows },
+        { label: 'result', rows: versionRows(arts, 'delivery') },
+        { label: 'reviews', rows: reviewRows(reviews) },
       ]} />
       <OpsPosition
         upstream={upstream}

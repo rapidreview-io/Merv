@@ -11,13 +11,15 @@ import {
   selectSandboxes,
   selectExperiments,
 } from '../store/useProjectStore';
+import { useNow } from '../store/useNow';
+import { useAsyncData } from '../store/usePolling';
 import { expName } from '../utils/experiment';
 import { fmtDuration, fmtUsd, fmtHrs } from '../utils/format';
+import { DAY_MS } from '../utils/time';
 import { densifyDaily } from '../utils/spend';
 
 const REVIEW_STATES = new Set(['design_review', 'experiment_review']);
 const SOON_MS = 30 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 // "8×H100" / "8x H100" → 8; bare "H100" → 1; no gpu → 0.
 function gpuCountOf(sandbox) {
@@ -57,27 +59,11 @@ function gpuHours24(sandboxes, now) {
   return String(Math.round(h));
 }
 
-// Project compute spend as merv-sandboxes reports it — refetched when the
-// fleet changes shape (the endpoint has no push signal; billing moves with
-// the clock, so the minute tick would over-fetch).
-function useComputeSpend(projectId, fleetSignal) {
-  const [spend, setSpend] = useState(null);
-  useEffect(() => {
-    if (!projectId) { setSpend(null); return undefined; }
-    let cancelled = false;
-    api.getComputeCost(projectId)
-      .then(d => { if (!cancelled) setSpend(d); })
-      .catch(() => { if (!cancelled) setSpend(null); });
-    return () => { cancelled = true; };
-  }, [projectId, fleetSignal]);
-  return spend;
-}
-
 /**
  * Home — the supervisor's instrument snapshot: what this project
  * IS (a clamped project.summary — the name's already in the app bar), a
- * one-line standing, a 24h snapshot band, what's live now with real GPU-util
- * telemetry, then a compact Needs-you. One Surface: hairlines
+ * one-line standing, a 24h snapshot band, what's live now, then a compact
+ * Needs-you. One Surface: hairlines
  * only at section breaks, the 3px orange index the sole rupture.
  */
 export default function HomeScreen() {
@@ -102,19 +88,21 @@ export default function HomeScreen() {
     setSummaryClamped(el.scrollHeight > el.clientHeight + 1);
   }, [project?.summary]);
 
-  // Minute tick keeps the standing line and elapsed times honest.
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 30000);
-    return () => clearInterval(t);
-  }, []);
+  // Half-minute tick keeps the standing line and elapsed times honest.
+  const now = useNow();
 
   const running = sandboxes.filter(s => s.status === 'running');
   const liveSandbox = running[0] || null;
   const liveExp = activeExperiments.find(e => e.status === 'running')
     || (liveSandbox ? experiments.find(e => e.id === liveSandbox.experiment_id) : null)
     || null;
-  const spend = useComputeSpend(projectId, `${sandboxes.length}:${running.length}`);
+  // Compute spend from the generations ledger — refetched when the fleet
+  // changes shape (the endpoint has no push signal; billing moves with the
+  // clock, so the minute tick would over-fetch).
+  const [spend] = useAsyncData(
+    projectId ? () => api.getComputeCost(projectId) : null,
+    [projectId, sandboxes.length, running.length],
+  );
 
   // ── 24h snapshot band (derived client-side; approximate by design) ──
   const tiles = useMemo(() => {

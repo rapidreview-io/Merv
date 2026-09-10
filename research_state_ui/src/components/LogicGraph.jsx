@@ -5,7 +5,7 @@ import { api } from '../api';
 import { MeasureSync } from './ExperimentFigure';
 import DetailPanelShell, { PanelResizer } from './DetailPanelShell';
 import GraphExpandButton from './GraphExpandButton';
-import GraphDrawer from './GraphDrawer';
+import GraphDrawer, { flowCanvasProps, useEscapeToDeselect } from './GraphDrawer';
 import StatusPill from './StatusPill';
 import EntityChip from './EntityChip';
 import { seedFromRefIndex } from '../utils/entityResolve';
@@ -15,30 +15,8 @@ import { readableViewport, visibleWidth } from '../utils/graphCamera';
 import { motionMs } from '../utils/motion';
 import { usePanelWidth } from '../store/usePanelWidth';
 import { useStreamAwarePoll } from '../store/useEventStream';
-
-// Node `kind` is the agent's own vocabulary — there is no fixed taxonomy, so
-// each kind gets an accent color by order of first appearance, used as the
-// node's left border (each node also prints its kind as text).
-const KIND_COLORS = [
-  'var(--active)',
-  'var(--supports)',
-  'var(--qualifies)',
-  'var(--refutes)',
-  'var(--mcp)',
-  'var(--ice)',
-];
-const NEUTRAL_COLOR = 'var(--line-strong)';
-
-function kindColorMap(graph) {
-  const colors = new Map();
-  for (const node of graph?.nodes || []) {
-    const kind = String(node.kind || '').trim();
-    if (kind && !colors.has(kind)) {
-      colors.set(kind, KIND_COLORS[colors.size % KIND_COLORS.length]);
-    }
-  }
-  return colors;
-}
+import { KIND_NEUTRAL, kindColorMap } from '../utils/graphStatus';
+import { cx } from '../utils/format';
 
 /**
  * Selection reaches the nodes through context rather than node data, so
@@ -55,11 +33,11 @@ function LogicNode({ data }) {
   const selected = selectedId === data.id;
   return (
     <div
-      className={[
+      className={cx(
         'fig-node',
         data.dead ? 'lgr-node--dead' : '',
         selected ? 'fig-node--selected' : '',
-      ].filter(Boolean).join(' ')}
+      )}
       style={{ width: FIG_NODE_W, borderLeftColor: data.color }}
       role="button"
       tabIndex={0}
@@ -106,7 +84,7 @@ function toFlow(graph) {
     data: {
       ...n,
       kind: String(n.kind || '').trim(),
-      color: colors.get(String(n.kind || '').trim()) || NEUTRAL_COLOR,
+      color: colors.get(String(n.kind || '').trim()) || KIND_NEUTRAL,
       dead: String(n.status || '') === 'dead_end',
     },
     draggable: false,
@@ -279,21 +257,9 @@ export default function LogicGraph({
     return () => clearTimeout(t);
   }, [expanded, applyView]);
 
-  // Escape closes the sidebar. Registered only while something is selected, so
-  // the graph slot's own Escape handler still gets the keystroke when the
-  // sidebar is shut and only fullscreen is left to peel.
-  useEffect(() => {
-    if (!selectedId) return undefined;
-    const onKey = (e) => {
-      if (e.key !== 'Escape') return;
-      e.stopPropagation();
-      setSelectedId(null);
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [selectedId]);
-
   const select = useCallback((id) => setSelectedId(id), []);
+  const deselect = useCallback(() => setSelectedId(null), []);
+  useEscapeToDeselect(selectedId, deselect);
   const logicCtx = useMemo(() => ({ selectedId, select }), [selectedId, select]);
 
   if (!available || !active) return null;
@@ -340,22 +306,7 @@ export default function LogicGraph({
             }}
             onPaneClick={() => setSelectedId(null)}
             fitView={!useReadable}
-            proOptions={{ hideAttribution: true }}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            // The node paints its own ring from our selectedId; leaving
-            // react-flow's selection on as well gave the graph two selection
-            // states that drifted apart — closing the panel left a ringed node
-            // with nothing open, and Enter ringed a node without opening it.
-            nodesFocusable={false}
-            elementsSelectable={false}
-            edgesFocusable={false}
-            zoomOnDoubleClick={false}
-            zoomOnScroll={expanded}
-            zoomOnPinch
-            preventScrolling={expanded}
-            minZoom={0.3}
-            maxZoom={1.6}
+            {...flowCanvasProps(expanded)}
           >
             <MeasureSync topologyKey={topologyKey} />
             <Background gap={22} size={1.1} />

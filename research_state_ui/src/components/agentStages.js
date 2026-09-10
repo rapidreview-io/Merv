@@ -13,17 +13,7 @@ const AUTH_STATUS_LABEL = {
   'n/a': 'not applicable',
 };
 
-function ago(iso, now) {
-  const t = Date.parse(iso || '');
-  if (!Number.isFinite(t)) return '';
-  const s = Math.max(0, Math.round((now - t) / 1000));
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 48) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
+import { ago } from '../utils/time.js';
 
 /**
  * @param {object} args
@@ -95,9 +85,9 @@ export function agentStages({ entry = null, readiness, enabled = true, now = Dat
     stages.push({ key: 'smoke', label: 'Test call', state: 'running', detail: 'queued on the machine…' });
   } else if (smoke?.status === 'ok') {
     const secs = smoke.duration_ms ? ` in ${(smoke.duration_ms / 1000).toFixed(1)} s` : '';
-    stages.push({ key: 'smoke', label: 'Test call', state: 'ok', detail: `passed ${ago(smoke.at, now)}${secs}` });
+    stages.push({ key: 'smoke', label: 'Test call', state: 'ok', detail: `passed ${ago(smoke.at, now) || ''}${secs}` });
   } else if (smoke?.status === 'failed') {
-    stages.push({ key: 'smoke', label: 'Test call', state: 'fail', detail: `failed ${ago(smoke.at, now)}`, hint: smoke.detail || '' });
+    stages.push({ key: 'smoke', label: 'Test call', state: 'fail', detail: `failed ${ago(smoke.at, now) || ''}`, hint: smoke.detail || '' });
   } else if (notInstalled || !enabled) {
     stages.push({ key: 'smoke', label: 'Test call', state: 'pending', detail: enabled ? '' : 'enable the agent to test it' });
   } else {

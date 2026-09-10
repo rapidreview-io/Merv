@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
+import { useAsyncData } from '../store/usePolling';
 import { useProjectStore, selectExperiments, selectEventsAll, useProjectHref } from '../store/useProjectStore';
 import ObjId from '../components/ObjId';
 import StatusPill from '../components/StatusPill';
 import { ConfidenceSignal } from '../components/ClaimEvidence';
 import { classifyExperiment, outcomeColor, outcomeLabel, outcomeGlyph, claimStatusColor } from '../utils/evidence';
 import { expName } from '../utils/experiment';
-import { computeClaimShifts, relDays } from '../utils/claimShifts';
+import { computeClaimShifts } from '../utils/claimShifts';
+import { relDays } from '../utils/time';
 import { fmtStamp } from '../utils/format';
 
 export default function ClaimDetail() {
@@ -16,18 +18,7 @@ export default function ClaimDetail() {
   const projectId = useProjectStore(s => s.projectId);
   const experiments = useProjectStore(selectExperiments);
   const events = useProjectStore(selectEventsAll);
-  const [claim, setClaim] = useState(null);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setClaim(null);
-    setError(null);
-    api.getClaim(projectId, claimId)
-      .then(c => !cancelled && setClaim(c))
-      .catch(err => !cancelled && setError(err.message));
-    return () => { cancelled = true; };
-  }, [projectId, claimId]);
+  const [claim, error] = useAsyncData(() => api.getClaim(projectId, claimId), [projectId, claimId]);
 
   const linkedExperiments = experiments.filter(e =>
     Array.isArray(e.tested_claims) && e.tested_claims.some(c => c.id === claimId),

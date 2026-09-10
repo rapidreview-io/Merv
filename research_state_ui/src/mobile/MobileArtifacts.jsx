@@ -4,10 +4,9 @@ import { useProjectStore, useProjectHref, selectExperiments } from '../store/use
 import { api } from '../api';
 import ArtifactContentView from '../components/ArtifactContentView';
 import ObjId from '../components/ObjId';
-import { formatBytes } from '../utils/format';
-import { expName } from '../utils/experiment';
-
-const basename = (p) => (p || '').split('/').filter(Boolean).pop() || p || '';
+import { basename, formatBytes } from '../utils/format';
+import { keepIfUnchanged } from '../store/usePolling';
+import { expName, groupArtifactsByTarget } from '../utils/experiment';
 
 /**
  * Mobile Artifacts: the same flat per-target ledger as desktop, restacked as
@@ -25,7 +24,7 @@ export default function MobileArtifacts() {
   const fetchArtifacts = useCallback(async () => {
     try {
       const d = await api.listArtifacts(projectId);
-      setData(prev => (JSON.stringify(prev) === JSON.stringify(d) ? prev : d));
+      setData(keepIfUnchanged(d));
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -70,17 +69,7 @@ export default function MobileArtifacts() {
     );
   }
 
-  // Group by target, experiments first in home order.
-  const expOrder = new Map(experiments.map((e, i) => [e.id, i]));
-  const groups = new Map();
-  for (const a of artifacts) {
-    const key = `${a.target_type}:${a.target_id}`;
-    if (!groups.has(key)) groups.set(key, { target_type: a.target_type, target_id: a.target_id, rows: [] });
-    groups.get(key).rows.push(a);
-  }
-  const rank = (g) => g.target_type === 'experiment' ? (expOrder.get(g.target_id) ?? 1e6)
-    : g.target_type === 'reflection' ? 2e6 : 3e6;
-  const ordered = Array.from(groups.values()).sort((a, b) => rank(a) - rank(b));
+  const ordered = groupArtifactsByTarget(artifacts, experiments);
 
   return (
     <div className="page-stage">

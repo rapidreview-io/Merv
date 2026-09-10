@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useProjectHref } from '../store/useProjectStore';
+import { useNow } from '../store/useNow';
 import ProviderIcon from './ProviderIcon';
 import SandboxTerminal from './SandboxTerminal';
 import StatusPill from './StatusPill';
@@ -13,7 +14,10 @@ import {
   fleetActivity,
   gpuLabel,
   hardwareLabel,
+  primaryExperimentId,
   providerLabel,
+  sandboxRowId,
+  sizeLabel,
   usageBars,
 } from '../utils/fleet';
 
@@ -22,12 +26,6 @@ import {
 // every liveness line share one source of truth and stay aligned.
 
 const rank = (st) => (st === 'running' ? 0 : st === 'provisioning' ? 1 : 2);
-const sandboxRowId = (s) => s.sandbox_uid || s.sandbox_id || s.experiment_id;
-const primaryExperimentId = (s) => (
-  s.experiment_id
-  || (Array.isArray(s.active_experiment_ids) ? s.active_experiment_ids[0] : '')
-  || ''
-);
 
 /**
  * SandboxTable — the compute fleet as an infra table.
@@ -56,7 +54,6 @@ const primaryExperimentId = (s) => (
  */
 export default function SandboxTable({ sandboxes, experiments, events, projectId, empty = null }) {
   const [expanded, setExpanded] = useState(null);
-  const [now, setNow] = useState(Date.now());
 
   const rows = useMemo(() => (
     (sandboxes || []).slice().sort((a, b) => {
@@ -67,12 +64,9 @@ export default function SandboxTable({ sandboxes, experiments, events, projectId
     })
   ), [sandboxes]);
 
+  // Live uptime / "expires in" labels tick at 1Hz only while something runs.
   const anyLive = rows.some(s => s.status === 'running' || s.status === 'provisioning');
-  useEffect(() => {
-    if (!anyLive) return undefined;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [anyLive]);
+  const now = useNow(anyLive ? 1000 : 0);
 
   const expById = useMemo(
     () => Object.fromEntries((experiments || []).map(e => [e.id, e])),
@@ -187,10 +181,7 @@ function SandboxRow({ sandbox, experiment, experimentId, projectId, now, parachu
 function SandboxMachine({ sandbox: s }) {
   const provider = providerLabel(s.provider);
   const gpu = gpuLabel(s);
-  const size = [
-    s.cpu && `${s.cpu} cpu`,
-    s.memory && `${Math.round(s.memory / 1024)} GiB RAM`,
-  ].filter(Boolean).join(' · ');
+  const size = sizeLabel(s);
   const sku = [s.instance_type, s.region].filter(Boolean).join(' · ');
   const title = [provider, hardwareLabel(s), s.heartbeat?.gpus?.name, sku].filter(Boolean).join(' · ');
   return (

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { GraphTabs, useGraphAvailability, useGraphExpand } from './GraphExpandButton';
 import ExperimentFigure from './ExperimentFigure';
 import LogicGraph from './LogicGraph';
 
@@ -16,28 +17,11 @@ import LogicGraph from './LogicGraph';
  */
 export default function ExperimentGraphs({ projectId, experimentId, experimentStatus, attemptIndex }) {
   const [chosen, setChosen] = useState('figure');
-  const [avail, setAvail] = useState({ figure: false, logic: false });
+  const [avail, report] = useGraphAvailability({ figure: false, logic: false });
   // Expanded (near-fullscreen) mode lives here so it survives switching
   // between the two graphs while fullscreen. Escape or the backdrop closes
   // it; page scroll is locked while it is open.
-  const [expanded, setExpanded] = useState(false);
-  const toggleExpand = useCallback(() => setExpanded(v => !v), []);
-
-  useEffect(() => {
-    if (!expanded) return undefined;
-    const onKey = e => { if (e.key === 'Escape') setExpanded(false); };
-    window.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [expanded]);
-
-  const report = useCallback((key, value) => {
-    setAvail(prev => (prev[key] === value ? prev : { ...prev, [key]: value }));
-  }, []);
+  const { expanded, toggleExpand, collapse } = useGraphExpand();
   const reportFigure = useCallback(v => report('figure', v), [report]);
   const reportLogic = useCallback(v => report('logic', v), [report]);
 
@@ -46,29 +30,12 @@ export default function ExperimentGraphs({ projectId, experimentId, experimentSt
     : (chosen === 'figure' ? (avail.logic ? 'logic' : null) : (avail.figure ? 'figure' : null));
 
   const titleTabs = (
-    <span className="fig-title-tabs" role="tablist" aria-label="Graph view">
-      <button
-        type="button"
-        role="tab"
-        aria-selected={view === 'figure'}
-        className={`fig-title-tab${view === 'figure' ? ' fig-title-tab--on' : ''}`}
-        disabled={!avail.figure}
-        onClick={() => setChosen('figure')}
-      >
-        Figure
-      </button>
-      <span className="fig-title-tab-sep" aria-hidden="true">/</span>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={view === 'logic'}
-        className={`fig-title-tab${view === 'logic' ? ' fig-title-tab--on' : ''}`}
-        disabled={!avail.logic}
-        onClick={() => setChosen('logic')}
-      >
-        Logic
-      </button>
-    </span>
+    <GraphTabs
+      tabs={[['figure', 'Figure'], ['logic', 'Logic']]}
+      view={view}
+      avail={avail}
+      onChoose={setChosen}
+    />
   );
 
   const shared = {
@@ -78,11 +45,7 @@ export default function ExperimentGraphs({ projectId, experimentId, experimentSt
   return (
     <>
       {expanded && (
-        <div
-          className="fig-backdrop"
-          onClick={() => setExpanded(false)}
-          aria-hidden="true"
-        />
+        <div className="fig-backdrop" onClick={collapse} aria-hidden="true" />
       )}
       <ExperimentFigure
         {...shared}

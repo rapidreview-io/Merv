@@ -10,7 +10,15 @@
  * Persistence: explicit choices are stored under 'rsui:theme'; 'system'
  * is represented by the absence of the key.
  */
-import { useCallback, useSyncExternalStore } from 'react';
+import { createStore } from './createStore';
+
+// The toggle's cycle, shared by the desktop sidebar and the mobile shell.
+export const NEXT_THEME_MODE = { light: 'dark', dark: 'system', system: 'light' };
+
+/** The live value of a design token, for canvases that paint their own DOM. */
+export function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
 
 const KEY = 'rsui:theme';
 const media = window.matchMedia('(prefers-color-scheme: dark)');
@@ -24,20 +32,20 @@ function storedMode() {
   }
 }
 
-let mode = storedMode();
-const listeners = new Set();
+const store = createStore(storedMode());
 
 function effectiveTheme() {
+  const mode = store.get();
   return mode === 'system' ? (media.matches ? 'dark' : 'light') : mode;
 }
 
 function apply() {
   document.documentElement.dataset.theme = effectiveTheme();
-  for (const fn of listeners) fn();
+  store.emit();
 }
 
 media.addEventListener('change', () => {
-  if (mode === 'system') apply();
+  if (store.get() === 'system') apply();
 });
 
 // Idempotent re-application at module load: index.html already set the
@@ -45,22 +53,17 @@ media.addEventListener('change', () => {
 apply();
 
 export function setThemeMode(next) {
-  mode = next === 'light' || next === 'dark' ? next : 'system';
+  const mode = next === 'light' || next === 'dark' ? next : 'system';
   try {
     if (mode === 'system') localStorage.removeItem(KEY);
     else localStorage.setItem(KEY, mode);
   } catch {
     /* persistence is best-effort */
   }
+  store.set(mode);
   apply();
 }
 
 export function useTheme() {
-  const subscribe = useCallback((fn) => {
-    listeners.add(fn);
-    return () => listeners.delete(fn);
-  }, []);
-  const themeMode = useSyncExternalStore(subscribe, () => mode);
-  const theme = useSyncExternalStore(subscribe, effectiveTheme);
-  return { mode: themeMode, theme, setMode: setThemeMode };
+  return { mode: store.use(), theme: store.use(effectiveTheme), setMode: setThemeMode };
 }

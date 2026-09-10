@@ -1,13 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { useTheme } from '../store/useTheme';
+import { cssVar, useTheme } from '../store/useTheme';
 
 // The design system as a Vega config, read from the live tokens so it follows
 // the theme. Loaded lazily with vega-embed — the feed pays for Vega only when
 // a `vega` attachment is on screen.
-function cssVar(name) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
-
 export function mervVegaConfig() {
   const text = cssVar('--text');
   const muted = cssVar('--muted');

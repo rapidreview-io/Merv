@@ -10,7 +10,7 @@ import GraphExpandButton from '../GraphExpandButton';
 import GraphDrawer from '../GraphDrawer';
 import { usePanelWidth } from '../../store/usePanelWidth';
 import { useProjectHref } from '../../store/useProjectStore';
-import { fmtSpan } from '../../utils/format';
+import { cx, fmtSpan, statusWord } from '../../utils/format';
 import { buildBraid } from './braidModel.js';
 import WaveFlowPanel from './WaveFlowPanel';
 
@@ -45,8 +45,6 @@ const SPINE = 200;
 const REFL_GAP = (STEP - EXP_W - REFL_W) / 2;
 const expX = (c) => X0 + (c + 1) * STEP;
 const reflX = (i) => X0 + i * STEP + EXP_W + REFL_GAP;
-
-const statusWord = (s) => String(s || '').replace(/_/g, ' ') || '—';
 
 // Lifecycle tone → the figure graph's status-tint vocabulary (fig-st--*).
 // Queued work stays neutral: no tint is what "not judged yet" looks like.
@@ -397,11 +395,11 @@ function ExpNode({ data }) {
   const figSt = FIG_ST[data.tone];
   return (
     <div
-      className={[
+      className={cx(
         'fig-node', 'wflow-fig', isTask ? 'fig-node--task' : 'fig-node--experiment',
         figSt ? `fig-st--${figSt}` : '',
         selected ? 'fig-node--selected' : '',
-      ].filter(Boolean).join(' ')}
+      )}
       title={`${data.name} · ${data.sub}`}
       role="button"
       tabIndex={0}
@@ -430,11 +428,11 @@ function ExpGroupNode({ id, data }) {
     || ((sel?.kind === 'exp' || sel?.kind === 'task') && data.ids.includes(sel.id));
   return (
     <div
-      className={[
+      className={cx(
         'fig-node', 'wflow-fig', 'fig-node--experiment', 'wflow-fig--group',
         'fig-st--failed',
         selected ? 'fig-node--selected' : '',
-      ].filter(Boolean).join(' ')}
+      )}
       title={data.sub}
       role="button"
       tabIndex={0}

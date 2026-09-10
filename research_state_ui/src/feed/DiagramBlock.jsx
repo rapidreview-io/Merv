@@ -1,14 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { useTheme } from '../store/useTheme';
+import { cssVar, useTheme } from '../store/useTheme';
 
 // Mermaid, loaded lazily and rendered under securityLevel 'strict' (labels
 // are sanitized, click callbacks are inert). Colors come from the live design
 // tokens so a diagram follows the theme; the mark stays quiet — muted strokes,
 // soft fills, no rainbow.
-function cssVar(name) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
-
 let counter = 0;
 
 function mermaidTheme() {

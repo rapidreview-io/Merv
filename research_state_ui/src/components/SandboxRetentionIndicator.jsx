@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   useProjectStore,
   selectSandboxes,
   selectExperiments,
 } from '../store/useProjectStore';
+import { useNow } from '../store/useNow';
 import { expName } from '../utils/experiment';
+import { until } from '../utils/time';
 import SandboxRetentionDetailsModal from './SandboxRetentionDetailsModal';
 
 /**
@@ -21,14 +23,8 @@ export default function SandboxRetentionIndicator() {
   const sandboxes = useProjectStore(selectSandboxes);
   const experiments = useProjectStore(selectExperiments);
 
-  const [now, setNow] = useState(Date.now());
   const [detailKey, setDetailKey] = useState(null);
-
-  // 1Hz tick for expiry labels.
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, []);
+  const now = useNow(1000); // expiry labels
 
   const titleFor = useMemo(() => {
     const map = {};
@@ -115,7 +111,7 @@ function deriveRow(sandbox, title, now) {
     dotClass = 'retention-dot retention-dot--pending';
     metaLabel = 'provisioning';
   } else if (sandbox.expires_at) {
-    metaLabel = `expires ${fmtUntil(sandbox.expires_at, now)}`;
+    metaLabel = `expires ${until(sandbox.expires_at, now, 'soon')}`;
   }
 
   return { key, status, title: label, dotClass, metaLabel };
@@ -128,14 +124,4 @@ function sandboxKey(sandbox) {
 function sandboxLabel(sandbox) {
   const uid = sandbox.sandbox_uid || sandbox.sandbox_id || '';
   return uid ? `sandbox ${String(uid).slice(0, 12)}` : 'sandbox';
-}
-
-function fmtUntil(iso, now) {
-  const ts = Date.parse(iso);
-  if (!Number.isFinite(ts)) return 'soon';
-  const s = Math.max(0, Math.floor((ts - now) / 1000));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  return `${Math.floor(m / 60)}h`;
 }

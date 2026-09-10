@@ -4,6 +4,9 @@ import { api } from '../api';
 import JsonView from '../components/JsonView';
 import ObjId from '../components/ObjId';
 import { tsToTime } from '../utils/format';
+import { tsMs } from '../utils/time';
+import { entityRoute } from '../utils/entityResolve';
+import { useIntervalPoll } from '../store/usePolling';
 import { expName } from '../utils/experiment';
 import { useProjectStore, selectExperiments, useProjectHref } from '../store/useProjectStore';
 
@@ -67,25 +70,10 @@ function targetFromArgs(args) {
   return [null, null];
 }
 
-function targetHref(type, id) {
-  switch (type) {
-    case 'experiment': return `/experiments/${id}`;
-    case 'claim':      return `/claims/${id}`;
-    case 'artifact':   return `/artifacts/${id}`;
-    case 'review':     return `/reviews`;
-    default:           return null;
-  }
-}
-
 function percentile(sorted, p) {
   if (!sorted.length) return 0;
   const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
   return sorted[idx];
-}
-
-function tsMs(ts) {
-  const v = Date.parse(ts);
-  return Number.isFinite(v) ? v : 0;
 }
 
 export default function Debug() {
@@ -141,13 +129,7 @@ export default function Debug() {
   useEffect(() => { fetchNow(); }, [fetchNow]);
 
   // Live auto-refresh, but hold still while a call is expanded for reading.
-  useEffect(() => {
-    if (paused || expandedKey != null) return undefined;
-    const t = setInterval(() => {
-      if (document.visibilityState === 'visible') fetchNow();
-    }, POLL_MS);
-    return () => clearInterval(t);
-  }, [fetchNow, paused, expandedKey]);
+  useIntervalPoll(fetchNow, POLL_MS, { enabled: !paused && expandedKey == null, immediate: false });
 
   // Ring events (oldest-first) -> tool-call rows, newest-first.
   const allCalls = useMemo(() => {
@@ -314,11 +296,11 @@ export default function Debug() {
         </div>
 
         <div className="dbg-totals">
-          <Stat label="calls" value={fmtNum(stats.n)} />
+          <Stat label="calls" value={fmtCount(stats.n)} />
           <Stat label="ok / err" value={`${stats.ok}/${stats.err}`} accent={stats.err ? 'err' : null} />
           <Stat label="avg dur" value={formatMs(stats.avg)} accent={stats.slow ? 'warn' : null} />
-          <Stat label="slow" value={fmtNum(stats.slow)} accent={stats.slow ? 'err' : null} />
-          <Stat label="heavy" value={fmtNum(stats.heavy)} accent={stats.heavy ? 'warn' : null} />
+          <Stat label="slow" value={fmtCount(stats.slow)} accent={stats.slow ? 'err' : null} />
+          <Stat label="heavy" value={fmtCount(stats.heavy)} accent={stats.heavy ? 'warn' : null} />
           <Stat label="recv / sent" value={`${fmtChars(stats.recv)} / ${fmtChars(stats.sent)}`} accent="recv" />
         </div>
       </header>
@@ -366,13 +348,13 @@ export default function Debug() {
                         {t.tool}
                         {t.error_calls > 0 && <span className="dbg-err-badge">{t.error_calls} err</span>}
                       </span>
-                      <span className="dbg-c-num tabular">{fmtNum(t.calls)}</span>
+                      <span className="dbg-c-num tabular">{fmtCount(t.calls)}</span>
                       <span className={`dbg-c-num tabular${hot ? ' hot' : ''}`}>{fmtChars(t.received_chars)}</span>
                       <span className="dbg-c-num tabular">{fmtChars(t.avg_received_chars)}</span>
                       <span className="dbg-c-num tabular">{fmtChars(t.p95_received_chars)}</span>
                       <span className={`dbg-c-num tabular${hot ? ' hot' : ''}`}>{fmtChars(t.max_received_chars)}</span>
                       <span className="dbg-c-num tabular faint">{fmtChars(t.sent_chars)}</span>
-                      <span className={`dbg-c-num tabular${t.error_calls ? ' err' : ' faint'}`}>{fmtNum(t.error_calls)}</span>
+                      <span className={`dbg-c-num tabular${t.error_calls ? ' err' : ' faint'}`}>{fmtCount(t.error_calls)}</span>
                       <span className="dbg-c-bar">
                         <span className="dbg-bar-track">
                           <span className={`dbg-bar-fill${hot ? ' hot' : ''}`}
@@ -388,7 +370,7 @@ export default function Debug() {
 
           <section className="dbg-section">
             <div className="dbg-section-head">
-              Calls · {fmtNum(visibleCalls.length)}{toolQuery && <> · <span className="mono">{toolQuery}</span></>}<span className="dbg-hint"> · newest first · click to inspect I/O</span>
+              Calls · {fmtCount(visibleCalls.length)}{toolQuery && <> · <span className="mono">{toolQuery}</span></>}<span className="dbg-hint"> · newest first · click to inspect I/O</span>
             </div>
             <div className="activity-list">
               <div className="act-row act-row--head con-head">
@@ -427,7 +409,7 @@ function StreamRow({ call, expById, open, onToggle, onFilterTool }) {
   const ok = call.status !== 'error';
   const slow = call.duration_ms >= SLOW_CALL_MS;
   const heavy = call.received_chars >= HOT_RECEIVED_CHARS;
-  const rawHref = call.target_type ? targetHref(call.target_type, call.target_id) : null;
+  const rawHref = entityRoute(call.target_type, call.target_id);
   const href = rawHref ? px(rawHref) : null;
   const exp = call.target_type === 'experiment' ? expById[call.target_id] : null;
   return (
@@ -544,7 +526,7 @@ function Stat({ label, value, accent }) {
   );
 }
 
-function fmtNum(n) { return Number(n || 0).toLocaleString(); }
+function fmtCount(n) { return Number(n || 0).toLocaleString(); }
 
 function fmtChars(n) {
   const v = Number(n || 0);

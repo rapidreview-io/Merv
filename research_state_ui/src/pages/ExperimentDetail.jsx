@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
+import { useRecordStatus } from '../store/usePolling';
 import { useProjectStore, useProjectHref } from '../store/useProjectStore';
 import { useStreamAwarePoll } from '../store/useEventStream';
 import FSMStrip from '../components/FSMStrip';
@@ -11,9 +12,11 @@ import ExperimentGraphs from '../components/ExperimentGraphs';
 import SandboxTerminal from '../components/SandboxTerminal';
 import ArtifactList from '../components/ArtifactList';
 import TerminalTransitionConfirm from '../components/TerminalTransitionConfirm';
-import DetailsDrawer, { DetailsButton, OpsTimeline, OpsVersions, OpsPosition } from '../components/DetailsDrawer';
-import { expName } from '../utils/experiment';
-import { fmtAgo, formatBytes } from '../utils/format';
+import DetailsDrawer, {
+  DetailsButton, OpsPosition, OpsTimeline, OpsVersions, useDetailsDrawer,
+  linkedNodes, orderedTimeline, reviewRows, sortedArtifacts, versionRows,
+} from '../components/DetailsDrawer';
+import { expName, experimentDocs } from '../utils/experiment';
 import { gateToSectionId, useScrollToHash } from '../utils/useScrollToHash';
 import { workflowActionButtons } from '../utils/workflowActions';
 import InlineMd from '../components/InlineMd';
@@ -38,18 +41,16 @@ export default function ExperimentDetail() {
   const projectId = useProjectStore(s => s.projectId);
   const refreshHome = useProjectStore(s => s.refreshHome);
 
-  const [statusData, setStatusData] = useState(null);
-  const [error, setError] = useState(null);
   const [busy, setBusy] = useState(new Set());
   const [actionError, setActionError] = useState(null);
   const [gateOpen, setGateOpen] = useState(false);
   const [pendingTerminalTransition, setPendingTerminalTransition] = useState(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const detailsBtnRef = useRef(null);
-  const closeDetails = useCallback(() => {
-    setDetailsOpen(false);
-    detailsBtnRef.current?.focus({ preventScroll: true });
-  }, []);
+  const { detailsOpen, setDetailsOpen, toggleDetails, closeDetails, detailsBtnRef } = useDetailsDrawer();
+
+  const [statusData, error, fetchStatus] = useRecordStatus(
+    () => api.getExperimentStatus(projectId, experimentId),
+    [projectId, experimentId],
+  );
 
   useEffect(() => {
     setPendingTerminalTransition(null);
@@ -59,23 +60,6 @@ export default function ExperimentDetail() {
   // experiment has loaded and its sections rendered, scroll the matching id
   // into view.
   useScrollToHash([statusData]);
-
-  // Unchanged payloads keep their state identity so idle poll ticks don't
-  // re-render the page (same guard ExperimentFigure uses on its document).
-  const lastStatusJsonRef = useRef(null);
-  const fetchStatus = useCallback(async () => {
-    try {
-      const data = await api.getExperimentStatus(projectId, experimentId);
-      const json = JSON.stringify(data);
-      if (lastStatusJsonRef.current !== json) {
-        lastStatusJsonRef.current = json;
-        setStatusData(data);
-      }
-      setError(null);
-    } catch (err) {
-      setError(err.message);
-    }
-  }, [projectId, experimentId]);
 
   // 3s poll only while the event stream is down; otherwise refetch when an
   // event touches this experiment (safety poll catches event-less changes).
@@ -143,38 +127,9 @@ export default function ExperimentDetail() {
   const isClosed = ['complete', 'failed', 'abandoned'].includes(experiment.status);
 
   // Partition artifacts by role.
-  const currentRes = (experiment.current_attempt_artifacts || [])
-    .slice()
-    .sort((a, b) => (a.role || '').localeCompare(b.role || ''));
-  const currentIds = new Set(currentRes.map(r => r.id));
-  // Fallback: if the current attempt has no plan yet (e.g. just bumped to a
-  // new attempt), show the newest earlier-attempt plan so PlanSpotlight can
-  // still render it.
-  const planRes = currentRes.find(r => r.role === 'plan')
-    || (experiment.artifacts || [])
-      .filter(r => r.role === 'plan')
-      .sort((a, b) => (a.attempt_index ?? 0) - (b.attempt_index ?? 0))
-      .pop()
-    || null;
-  // The results report (role 'report') mirrors the plan: current attempt only
-  // (a prior attempt's report is history, not the face of this attempt).
-  const reportRes = currentRes.find(r => r.role === 'report') || null;
-  // `result` artifacts are intentionally not surfaced on this page (they feed
-  // the metrics exhibit); anything beyond plan/report/graph falls through.
-  const otherRes = currentRes.filter(r => !['plan', 'report', 'graph', 'result'].includes(r.role));
-
-  // Historical (deduped by id).
-  const historicalRes = (experiment.artifacts || [])
-    .filter(r => r.attempt_index !== currentAttempt)
-    .filter(r => !currentIds.has(r.id));
-
-  // Reviews — split by role, ascending by created_at so the stepper reads
-  // left-to-right as the timeline.
-  const allReviews = (experiment.reviews || []).slice().sort((a, b) =>
-    (a.created_at || '').localeCompare(b.created_at || ''),
-  );
-  const designReviews = allReviews.filter(r => (r.role || '').toLowerCase().includes('design'));
-  const experimentReviews = allReviews.filter(r => !(r.role || '').toLowerCase().includes('design'));
+  const {
+    planRes, reportRes, otherRes, historicalRes, designReviews, experimentReviews,
+  } = experimentDocs(experiment);
 
   return (
     <div className="page-stage">
@@ -208,7 +163,7 @@ export default function ExperimentDetail() {
           </div>
           <DetailsButton
             open={detailsOpen}
-            onToggle={() => setDetailsOpen(v => !v)}
+            onToggle={toggleDetails}
             controls="experiment-details"
             buttonRef={detailsBtnRef}
           />
@@ -342,9 +297,7 @@ function AskCard({ experiment }) {
 function buildExperimentTimeline(experiment, designReviews, experimentReviews) {
   const items = [];
   if (experiment.created_at) items.push({ t: experiment.created_at, rank: 0, tone: null, label: 'created' });
-  const arts = (experiment.artifacts || []).slice().sort((a, b) =>
-    String(a.created_at || '').localeCompare(String(b.created_at || ''))
-    || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0)));
+  const arts = sortedArtifacts(experiment);
   let planSeen = 0, reportSeen = 0;
   for (const a of arts) {
     if (a.role === 'plan') {
@@ -379,36 +332,15 @@ function buildExperimentTimeline(experiment, designReviews, experimentReviews) {
       label: status === 'complete' ? 'complete' : status,
     });
   }
-  return items
-    .filter(i => i.t)
-    .sort((a, b) => String(a.t).localeCompare(String(b.t)) || (a.rank - b.rank));
+  return orderedTimeline(items);
 }
 
 function ExperimentFacts({ experiment, designReviews, experimentReviews, px }) {
-  const ago = (iso) => {
-    const t = Date.parse(iso || '');
-    return Number.isFinite(t) ? fmtAgo(Date.now() - t) : null;
-  };
   const isClosed = ['complete', 'failed', 'abandoned'].includes(experiment.status);
   const timeline = buildExperimentTimeline(experiment, designReviews, experimentReviews);
-  const arts = (experiment.artifacts || []).slice().sort((a, b) =>
-    String(a.created_at || '').localeCompare(String(b.created_at || ''))
-    || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0)));
-  const versionsOf = (role) => arts.filter(a => a.role === role).map((a, i) => ({
-    id: a.id,
-    name: `v${i + 1}${a.attempt_index != null ? ` · attempt ${a.attempt_index}` : ''}`,
-    meta: [a.size_bytes != null ? formatBytes(a.size_bytes) : null, ago(a.created_at)].filter(Boolean).join(' · '),
-    title: a.path,
-  }));
-  const reviewRows = (rows) => rows.map((r, i) => ({
-    id: r.id,
-    name: rows.length > 1 ? `round ${i + 1}` : 'round 1',
-    pill: String(r.verdict || 'pending').toLowerCase(),
-    meta: ago(r.created_at) || '',
-  }));
-  const withHref = (d) => ({ ...d, href: px(d.node_type === 'task' ? `/tasks/${d.id}` : `/experiments/${d.id}`) });
-  const upstream = (experiment.dependencies || []).map(withHref);
-  const downstream = (experiment.dependents || []).map(withHref);
+  const arts = sortedArtifacts(experiment);
+  const upstream = linkedNodes(experiment.dependencies, px);
+  const downstream = linkedNodes(experiment.dependents, px);
   return (
     <>
       <OpsTimeline
@@ -418,8 +350,8 @@ function ExperimentFacts({ experiment, designReviews, experimentReviews, px }) {
         endedAt={experiment.updated_at}
       />
       <OpsVersions groups={[
-        { label: 'plan', rows: versionsOf('plan') },
-        { label: 'report', rows: versionsOf('report') },
+        { label: 'plan', rows: versionRows(arts, 'plan') },
+        { label: 'report', rows: versionRows(arts, 'report') },
         { label: 'design reviews', rows: reviewRows(designReviews) },
         { label: 'experiment reviews', rows: reviewRows(experimentReviews) },
       ]} />

@@ -86,22 +86,85 @@ export function fmtSpan(ms) {
 
 // Split timestamp for compact two-line table cells: "Jun 11" over "1:36 PM".
 export function fmtDayTime(iso) {
-  if (!iso) return null;
-  try {
-    const d = new Date(iso);
-    const sameYear = d.getFullYear() === new Date().getFullYear();
-    return {
-      day: d.toLocaleDateString([], {
-        month: 'short',
-        day: 'numeric',
-        ...(sameYear ? {} : { year: 'numeric' }),
-      }),
-      time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-    };
-  } catch { return null; }
+  const t = Date.parse(iso || '');
+  if (!Number.isFinite(t)) return null;
+  const d = new Date(t);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return {
+    day: d.toLocaleDateString([], {
+      month: 'short',
+      day: 'numeric',
+      ...(sameYear ? {} : { year: 'numeric' }),
+    }),
+    time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+  };
 }
 
 export function isMarkdown(path) {
   const ext = (path || '').split('.').pop().toLowerCase();
   return ext === 'md' || ext === 'markdown' || ext === 'mdx';
+}
+
+// A class list from parts, dropping the falsy ones:
+//   cx('row', open && 'is-open', className)
+export function cx(...parts) {
+  return parts.filter(Boolean).join(' ');
+}
+
+// The last non-empty path segment ("runs/2/loss.svg" -> "loss.svg").
+export function basename(p) {
+  return (p || '').split('/').filter(Boolean).pop() || p || '';
+}
+
+// A file's lowercase extension, from the last dot of the last segment; '' when
+// the name has no dot (a dotted directory never leaks into the answer).
+export function extOf(path) {
+  if (!path) return '';
+  const name = path.split('/').pop() || '';
+  const i = name.lastIndexOf('.');
+  return i < 0 ? '' : name.slice(i + 1).toLowerCase();
+}
+
+// Trim to n characters with an ellipsis in the nth slot.
+export function clip(s, n) {
+  const t = (s || '').trim();
+  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+}
+
+// A reviewer role as words: 'design_reviewer' -> 'design review'. A role that
+// already ends in "review" is left alone rather than doubled.
+const ROLE_WORD = {
+  design_reviewer: 'design review',
+  experiment_reviewer: 'experiment review',
+  task_reviewer: 'task review',
+  reflection_reviewer: 'reflection review',
+  consolidation_reviewer: 'consolidation review',
+  human: 'human review',
+};
+
+export function roleWord(role) {
+  if (ROLE_WORD[role]) return ROLE_WORD[role];
+  const r = String(role || 'review').replace(/_reviewer$/, '').replace(/_/g, ' ');
+  return /review$/.test(r) ? r : `${r} review`;
+}
+
+// A snake_case status as words: 'ready_to_run' -> 'ready to run'.
+export function statusWord(s) {
+  return String(s || '').replace(/_/g, ' ');
+}
+
+// A typed-in pairing / device code: upper case, digits and letters only, the
+// eight characters the backend issues.
+export function normalizeCode(value) {
+  return String(value || '').toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 8);
+}
+
+// A commit, abbreviated the way git abbreviates it.
+export function shortSha(sha) {
+  return sha ? String(sha).slice(0, 7) : '';
+}
+
+// A link's display host, www- stripped; '' when the string isn't a URL.
+export function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 }

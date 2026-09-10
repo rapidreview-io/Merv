@@ -3,10 +3,11 @@ import { Link } from 'react-router-dom';
 import DetailPanelShell from '../DetailPanelShell';
 import StatusPill from '../StatusPill';
 import { useProjectHref } from '../../store/useProjectStore';
-import { fmtAgo, fmtSpan } from '../../utils/format';
+import { fmtSpan, statusWord } from '../../utils/format';
+import { dayAgo, fmtDay } from '../../utils/time';
 import {
   buildIntentIndex, consolidationSummary, debtMeter, expTimeline, gateSummary,
-  lineageOf, outcomeOf, reviewHistory, seedStrands, statusWord,
+  TERMINAL_TONES, lineageOf, outcomeOf, reviewHistory, seedStrands,
   waveLenses, waveStory,
 } from './panelModel.js';
 
@@ -23,25 +24,6 @@ import {
  * reader can walk the braid from inside the panel: an experiment to the wave
  * that proposed it, the wave to what it consumed, and back.
  */
-
-const TERMINAL_TONES = new Set(['done', 'failed', 'abandoned']);
-
-function fmtDay(iso) {
-  if (!iso) return null;
-  try {
-    const d = new Date(iso);
-    const sameYear = d.getFullYear() === new Date().getFullYear();
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) });
-  } catch { return null; }
-}
-
-// "Jul 5 · 41d ago" — an absolute day the reader can place, and the distance.
-function dayAgo(iso, now = Date.now()) {
-  const day = fmtDay(iso);
-  if (!day) return null;
-  const t = Date.parse(iso);
-  return Number.isFinite(t) ? `${day} · ${fmtAgo(now - t)}` : day;
-}
 
 function Eyebrow({ children }) {
   return <div className="refl-eyebrow wflow-panel-eyebrow">{children}</div>;

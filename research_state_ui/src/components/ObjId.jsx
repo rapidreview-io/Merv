@@ -4,6 +4,7 @@ import { useProjectStore } from '../store/useProjectStore';
 import { resolveEntity, fetchEntity, entityType } from '../utils/entityResolve';
 import { useEntityHover } from './useEntityHover';
 import EntityHoverCard from './EntityHoverCard';
+import { cx } from '../utils/format';
 
 /**
  * Small monospace ID chip for console-dialect id columns. Shortens
@@ -38,10 +39,7 @@ export default function ObjId({ id, strong = false, accent = false, className = 
   // "not found" card.
   const hasCard = !!entityType(id);
   const short = id.length > 14 ? `${id.slice(0, 4)}…${id.slice(-6)}` : id;
-  const cls = ['obj-id'];
-  if (strong) cls.push('obj-id--strong');
-  if (accent) cls.push('obj-id--accent');
-  if (className) cls.push(className);
+  const cls = cx('obj-id', strong && 'obj-id--strong', accent && 'obj-id--accent', className);
 
   const card = hasCard && enabled && open && resolved
     ? createPortal(
@@ -61,8 +59,8 @@ export default function ObjId({ id, strong = false, accent = false, className = 
   // OS-drawn grey tooltip otherwise appears over the card. Non-entity ids (no
   // card) keep `title` as their only way to reveal the full id on hover.
   const idProps = hasCard
-    ? getReferenceProps({ 'aria-label': id, className: cls.join(' ') })
-    : { title: id, className: cls.join(' ') };
+    ? getReferenceProps({ 'aria-label': id, className: cls })
+    : { title: id, className: cls };
 
   return (
     <>

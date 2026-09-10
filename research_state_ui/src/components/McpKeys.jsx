@@ -1,14 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
-
-// Compact absolute stamp for the ledger ("Jul 23 · 6:03 PM"). Null-safe.
-function fmtWhen(iso) {
-  if (!iso) return null;
-  try {
-    const d = new Date(iso);
-    return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} · ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
-  } catch { return iso; }
-}
+import { dayTime } from '../utils/time';
 
 // One key's lifecycle state, derived fresh from its stamps (the same order the
 // backend enforces: revoked wins, then expiry).
@@ -183,8 +175,8 @@ export default function McpKeys({ projectId, hosted }) {
                     <span className="mcpk-scope" role="cell">
                       {k.grant_scope === 'account' ? 'All my projects' : 'This project'}
                     </span>
-                    <span className="mcpk-when" role="cell">{fmtWhen(k.created_at) || '—'}</span>
-                    <span className="mcpk-when" role="cell">{fmtWhen(k.expires_at) || 'Never'}</span>
+                    <span className="mcpk-when" role="cell">{dayTime(k.created_at) || '—'}</span>
+                    <span className="mcpk-when" role="cell">{dayTime(k.expires_at) || 'Never'}</span>
                     <span className="mcpk-cell" role="cell">
                       <span className={`mcpk-state mcpk-state--${state}`}>{state}</span>
                     </span>

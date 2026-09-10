@@ -5,6 +5,7 @@ import {
   selectTasks,
 } from '../store/useProjectStore';
 import WaveFlow from './reflection/WaveFlow';
+import { useIntervalPoll } from '../store/usePolling';
 
 const NO_WAVES = Object.freeze([]);
 
@@ -32,9 +33,8 @@ export default function ProjectReflectionPanel({ projectId }) {
   useEffect(() => {
     // Insurance only: the snapshot normally hands the slice over settled.
     if (!useProjectStore.getState().reflections) refreshReflections();
-    const t = setInterval(refreshReflections, 8000);
-    return () => clearInterval(t);
   }, [refreshReflections, projectId]);
+  useIntervalPoll(refreshReflections, 8000, { immediate: false });
 
   const waves = data?.reflections || NO_WAVES;
   const signal = data?.signal || null;

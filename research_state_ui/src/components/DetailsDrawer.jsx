@@ -1,7 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import StatusPill from './StatusPill';
-import { fmtAgo, fmtSpan } from '../utils/format';
+import { fmtSpan, formatBytes } from '../utils/format';
+import { nodeRoute } from '../utils/entityResolve';
+import { ago, msBetween } from '../utils/time';
 
 /*
  * DetailsDrawer — the operational sidecar of a work node (experiment or
@@ -39,6 +41,18 @@ function IconPanelRight(props) {
 
 // Icon-only, at the status strip's height on the far right — the mirror of
 // the left sidebar's hide button.
+/** The drawer's open state, with focus returning to the button that opened it. */
+export function useDetailsDrawer() {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsBtnRef = useRef(null);
+  const closeDetails = useCallback(() => {
+    setDetailsOpen(false);
+    detailsBtnRef.current?.focus({ preventScroll: true });
+  }, []);
+  const toggleDetails = useCallback(() => setDetailsOpen(v => !v), []);
+  return { detailsOpen, setDetailsOpen, toggleDetails, closeDetails, detailsBtnRef };
+}
+
 export function DetailsButton({ open, onToggle, controls, buttonRef }) {
   return (
     <button
@@ -92,14 +106,50 @@ export default function DetailsDrawer({ id, open, onClose, title = 'Details', ch
 
 /* ── Shared drawer sections: the operations grammar. The pages hand in rows;
    nothing here repeats what a page already shows. ── */
-const ago = (iso) => {
-  const t = Date.parse(iso || '');
-  return Number.isFinite(t) ? fmtAgo(Date.now() - t) : null;
-};
-const msBetween = (a, b) => {
-  const t0 = Date.parse(a || ''), t1 = Date.parse(b || '');
-  return Number.isFinite(t0) && Number.isFinite(t1) ? Math.max(0, t1 - t0) : null;
-};
+/* ── Row builders for the three sections. The experiment and the task drawer
+   show the same operations grammar, so they read the record the same way. ── */
+
+// Submission order: the stamp, then the server's tiebreak for a same-second
+// batch (second-resolution timestamps tie more often than you would think).
+const byArtifactOrder = (a, b) =>
+  String(a.created_at || '').localeCompare(String(b.created_at || ''))
+  || ((a.submitted_order ?? 0) - (b.submitted_order ?? 0));
+
+export function sortedArtifacts(record) {
+  return (record.artifacts || []).slice().sort(byArtifactOrder);
+}
+
+/** One role's submissions as version rows: "v2 · attempt 3", size, age. */
+export function versionRows(artifacts, role) {
+  return artifacts.filter(a => a.role === role).map((a, i) => ({
+    id: a.id,
+    name: `v${i + 1}${a.attempt_index != null ? ` · attempt ${a.attempt_index}` : ''}`,
+    meta: [a.size_bytes != null ? formatBytes(a.size_bytes) : null, ago(a.created_at)].filter(Boolean).join(' · '),
+    title: a.path,
+  }));
+}
+
+/** Review rounds as version rows: the round, the verdict pill, the age. */
+export function reviewRows(reviews) {
+  return reviews.map((r, i) => ({
+    id: r.id,
+    name: `round ${i + 1}`,
+    pill: String(r.verdict || 'pending').toLowerCase(),
+    meta: ago(r.created_at) || '',
+  }));
+}
+
+/** Timeline items in the order they happened; `rank` breaks a same-second tie. */
+export function orderedTimeline(items) {
+  return items
+    .filter(i => i.t)
+    .sort((a, b) => String(a.t).localeCompare(String(b.t)) || (a.rank - b.rank));
+}
+
+/** Dependency/dependent nodes, each carrying the href of its own page. */
+export function linkedNodes(nodes, px) {
+  return (nodes || []).map(d => ({ ...d, href: px(nodeRoute(d)) }));
+}
 
 export function OpsTimeline({ items, done, createdAt, endedAt }) {
   if (!items.length) return null;

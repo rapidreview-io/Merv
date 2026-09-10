@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
+import { useIntervalPoll, useRecordStatus } from '../store/usePolling';
 import { useProjectStore, useProjectHref } from '../store/useProjectStore';
 import SandboxTerminal from '../components/SandboxTerminal';
 import MobileGraphSection from './MobileGraphSection';
 import MobileDoc from './MobileDoc';
 import { Skeleton } from './Skeleton';
-import { expName, statusColor, statusLine, TERMINAL_STATUSES } from '../utils/experiment';
+import { expName, experimentDocs, statusColor, statusLine, TERMINAL_STATUSES } from '../utils/experiment';
 
 /**
  * Mobile experiment detail — one continuous scroll. Status → Plan → Run →
@@ -26,53 +27,28 @@ export default function MobileExperimentDetail() {
   const px = useProjectHref();
   const projectId = useProjectStore(s => s.projectId);
 
-  const [statusData, setStatusData] = useState(null);
-  const [error, setError] = useState(null);
   const [termOpen, setTermOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
   const [askOpen, setAskOpen] = useState(false);
+
+  const [statusData, error, fetchStatus, resetStatus] = useRecordStatus(
+    () => api.getExperimentStatus(projectId, experimentId),
+    [projectId, experimentId],
+  );
 
   // Run only exists while a sandbox is attached — a terminal with nothing
   // to attach to is dead chrome.
   const hasSandbox = (statusData?.sandboxes || []).length > 0;
 
-  // Unchanged payloads keep their state identity so idle poll ticks don't
-  // re-render the page (same guard ExperimentFigure uses on its document).
-  const lastStatusJsonRef = useRef(null);
-  const fetchStatus = useCallback(async () => {
-    try {
-      const data = await api.getExperimentStatus(projectId, experimentId);
-      const json = JSON.stringify(data);
-      if (lastStatusJsonRef.current !== json) {
-        lastStatusJsonRef.current = json;
-        setStatusData(data);
-      }
-      setError(null);
-    } catch (err) {
-      setError(err.message);
-    }
-  }, [projectId, experimentId]);
-
   // Navigating experiment→experiment keeps this component mounted; reset so
   // the old experiment never flashes and heavy panes fold back shut.
   useEffect(() => {
-    lastStatusJsonRef.current = null; // blanked state must not block the refill
-    setStatusData(null);
-    setError(null);
+    resetStatus();
     setTermOpen(false);
     setGraphOpen(false);
   }, [experimentId]);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchStatus();
-    const t = setInterval(() => {
-      if (!cancelled && document.visibilityState === 'visible') fetchStatus();
-    }, 5000);
-    const onVis = () => { if (document.visibilityState === 'visible') fetchStatus(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => { cancelled = true; clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
-  }, [fetchStatus]);
+  useIntervalPoll(fetchStatus, 5000);
 
   const experiment = statusData?.experiment;
   const workflow = statusData?.workflow;
@@ -97,23 +73,7 @@ export default function MobileExperimentDetail() {
   const currentAttempt = experiment.attempt_index;
   const isClosed = TERMINAL_STATUSES.includes(experiment.status);
 
-  // ── Artifact partition (same derivation as the desktop detail page) ──
-  const currentRes = (experiment.current_attempt_artifacts || [])
-    .slice()
-    .sort((a, b) => (a.role || '').localeCompare(b.role || ''));
-  const planRes = currentRes.find(r => r.role === 'plan')
-    || (experiment.artifacts || [])
-      .filter(r => r.role === 'plan')
-      .sort((a, b) => (a.attempt_index ?? 0) - (b.attempt_index ?? 0))
-      .pop()
-    || null;
-  const reportRes = currentRes.find(r => r.role === 'report') || null;
-
-  const allReviews = (experiment.reviews || []).slice().sort((a, b) =>
-    (a.created_at || '').localeCompare(b.created_at || ''),
-  );
-  const designReviews = allReviews.filter(r => (r.role || '').toLowerCase().includes('design'));
-  const experimentReviews = allReviews.filter(r => !(r.role || '').toLowerCase().includes('design'));
+  const { planRes, reportRes, designReviews, experimentReviews } = experimentDocs(experiment);
 
   // The lede is the ask the experiment was created with; reviewer synopses
   // live with their reviews below.

@@ -1,13 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
+import { normalizeCode } from '../utils/format';
 import { runnerPresentation } from './runnerPresentation';
 
 export const INSTALL_COMMAND = 'curl -fsSL https://rapidreview.io/merv/runner/install.sh | sh';
 export const RUNNER_COMMAND = '$HOME/.merv/bin/merv-agent-runner';
-
-function normalizeCode(value) {
-  return String(value || '').toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 8);
-}
 
 /** Clipboard with honest feedback: Copy → Copied, or Copy failed. */
 export function useCopy() {

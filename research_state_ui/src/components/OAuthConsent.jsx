@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api, request, mcpEndpoint } from '../api';
 
-const ACCOUNT = 'account';
-const PROJECT = 'project';
+export const ACCOUNT = 'account';
+export const PROJECT = 'project';
 const PICKUP_POLL_MS = 3000;
 
 // A coarse pointer means a phone or tablet — never the machine the agent
@@ -192,48 +192,15 @@ export default function OAuthConsent() {
         Choose how much of Merv this client may reach. You can revoke it at any
         time.
       </p>
-      <div className="oauth-scope-choices">
-        <ScopeChoice
-          checked={grantScope === ACCOUNT}
-          disabled={busy}
-          onSelect={() => setGrantScope(ACCOUNT)}
-          title="All my projects"
-          detail="The client picks a project per request and follows your membership as it changes. Connect once and never again."
-        />
-        <ScopeChoice
-          checked={grantScope === PROJECT}
-          disabled={busy}
-          onSelect={() => setGrantScope(PROJECT)}
-          title="One project only"
-          detail="The client is locked to a single project and cannot see the others."
-        />
-      </div>
-      {grantScope === PROJECT && (
-        <label className="auth-field">
-          <span>Project</span>
-          <select
-            className="auth-input oauth-project-select"
-            value={projectId}
-            onChange={event => setProjectId(event.target.value)}
-            disabled={busy}
-          >
-            <option value="">Select one project…</option>
-            {state.projects.map(project => (
-              <option key={project.id} value={project.id}>{project.name}</option>
-            ))}
-          </select>
-        </label>
-      )}
-      {grantScope === ACCOUNT && homeProject && (
-        <p className="oauth-consent-resource">
-          Listed under {homeProject.name} in your MCP keys.
-        </p>
-      )}
-      {!homeProject && (
-        <p className="oauth-consent-error">
-          Create a project before connecting a client.
-        </p>
-      )}
+      <ScopeFields
+        grantScope={grantScope}
+        setGrantScope={setGrantScope}
+        projects={state.projects}
+        projectId={projectId}
+        setProjectId={setProjectId}
+        homeProject={homeProject}
+        busy={busy}
+      />
       {COARSE_POINTER && (
         <p className="oauth-remote-note">
           Approving from this device — after you approve, you'll get one short
@@ -385,6 +352,61 @@ export function HandoffScreen({ clientName, url, goToken, pickup }) {
         </p>
       )}
     </ConsentFrame>
+  );
+}
+
+/**
+ * The scope question every consent screen asks — the whole account or one
+ * project — with the picker and the two notes that follow from the answer.
+ */
+export function ScopeFields({
+  grantScope, setGrantScope, projects, projectId, setProjectId, homeProject, busy,
+}) {
+  return (
+    <>
+      <div className="oauth-scope-choices">
+        <ScopeChoice
+          checked={grantScope === ACCOUNT}
+          disabled={busy}
+          onSelect={() => setGrantScope(ACCOUNT)}
+          title="All my projects"
+          detail="The client picks a project per request and follows your membership as it changes. Connect once and never again."
+        />
+        <ScopeChoice
+          checked={grantScope === PROJECT}
+          disabled={busy}
+          onSelect={() => setGrantScope(PROJECT)}
+          title="One project only"
+          detail="The client is locked to a single project and cannot see the others."
+        />
+      </div>
+      {grantScope === PROJECT && (
+        <label className="auth-field">
+          <span>Project</span>
+          <select
+            className="auth-input oauth-project-select"
+            value={projectId}
+            onChange={event => setProjectId(event.target.value)}
+            disabled={busy}
+          >
+            <option value="">Select one project…</option>
+            {projects.map(project => (
+              <option key={project.id} value={project.id}>{project.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
+      {grantScope === ACCOUNT && homeProject && (
+        <p className="oauth-consent-resource">
+          Listed under {homeProject.name} in your MCP keys.
+        </p>
+      )}
+      {!homeProject && (
+        <p className="oauth-consent-error">
+          Create a project before connecting a client.
+        </p>
+      )}
+    </>
   );
 }
 

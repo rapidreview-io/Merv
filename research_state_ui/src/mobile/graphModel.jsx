@@ -1,5 +1,8 @@
 import { Link } from 'react-router-dom';
 import { useProjectStore, projectPath } from '../store/useProjectStore';
+import {
+  FIGURE_GLYPH, FIGURE_STATUS_COLOR, KIND_NEUTRAL, figureStatusClass, kindColorMap,
+} from '../utils/graphStatus';
 
 /**
  * Shared graph-model helpers — normalize the figure and logic/reflection graph
@@ -8,38 +11,9 @@ import { useProjectStore, projectPath } from '../store/useProjectStore';
  * reflection card.
  */
 
-// figure node status → small visual family (mirrors ExperimentFigure.statusClass).
-function figStatusClass(node) {
-  const s = String(node.status || '');
-  if (node.type === 'review') {
-    return { pass: 'done', needs_changes: 'revise', fail: 'failed', open: 'open' }[s] || 'neutral';
-  }
-  if (node.type === 'claim') {
-    return {
-      supported: 'done', weakened: 'revise', contradicted: 'failed',
-      active: 'open', draft: 'neutral', abandoned: 'faded',
-    }[s] || 'open';
-  }
-  return {
-    pending: 'neutral', active: 'open', done: 'done', failed: 'failed',
-    superseded: 'faded', abandoned: 'faded', none: 'neutral',
-  }[s] || 'neutral';
-}
-const FIG_STATUS_COLOR = {
-  done: 'var(--supports)', open: 'var(--active)', revise: 'var(--qualifies)',
-  failed: 'var(--refutes)', faded: 'var(--faint)', neutral: 'var(--line-strong)',
-};
-const FIG_TYPE_GLYPH = {
-  attempt: '◇', artifact: '▤', artifact_group: '▣', review: '☑',
-  sandbox: '▶', conclusion: '∴', claim: '◎',
-};
-const LOGIC_KIND_COLORS = [
-  'var(--active)', 'var(--supports)', 'var(--qualifies)', 'var(--refutes)', 'var(--mcp)', 'var(--ice)',
-];
-
 export function normalizeFigure(figure) {
   const nodes = (figure?.nodes || []).map(n => {
-    const sc = figStatusClass(n);
+    const sc = figureStatusClass(n);
     // The round qualifier rides in the sublabel on mobile ("round 3.1 ·
     // report"); anchor/lane pass through so the outline's reading order
     // follows the same timeline layout as the desktop canvas.
@@ -47,7 +21,7 @@ export function normalizeFigure(figure) {
     return {
       id: n.id, label: n.label, sublabel,
       kindLabel: String(n.type || '').replace(/_/g, ' '),
-      color: FIG_STATUS_COLOR[sc], glyph: FIG_TYPE_GLYPH[n.type] || '•',
+      color: FIGURE_STATUS_COLOR[sc], glyph: FIGURE_GLYPH[n.type] || '•',
       anchor: n.anchor, lane: n.lane,
       raw: n,
     };
@@ -57,16 +31,12 @@ export function normalizeFigure(figure) {
 }
 
 export function normalizeLogic(graph) {
-  const colors = new Map();
-  for (const n of graph?.nodes || []) {
-    const k = String(n.kind || '').trim();
-    if (k && !colors.has(k)) colors.set(k, LOGIC_KIND_COLORS[colors.size % LOGIC_KIND_COLORS.length]);
-  }
+  const colors = kindColorMap(graph);
   const nodes = (graph?.nodes || []).map(n => {
     const k = String(n.kind || '').trim();
     return {
       id: n.id, label: n.label, sublabel: n.detail || '',
-      kindLabel: k, color: colors.get(k) || 'var(--line-strong)',
+      kindLabel: k, color: colors.get(k) || KIND_NEUTRAL,
       glyph: String(n.status || '') === 'dead_end' ? '·' : '◆',
       raw: n,
     };

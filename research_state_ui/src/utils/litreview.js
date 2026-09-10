@@ -13,11 +13,12 @@
 export const paperRoute = (id) => `/litreview#paper-${id}`;
 export const sectionRoute = (id) => `/litreview#lit-${id}`;
 
+import { hostOf } from './format.js';
+
 const SOURCE_WORD = { arxiv: 'arXiv', doi: 'DOI' };
 
-export function hostOf(url) {
-  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
-}
+/** How a paper's row got here, when it wasn't a clean fetch. */
+export const FLAG_LABEL = { manual: 'manual entry', failed: 'fetch failed' };
 
 /** The source word alone — a ledger line's title already carries the link. */
 export function sourceLabel(paper) {

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { api } from '../api';
+import { useAsyncData } from '../store/usePolling';
 import PlanBody from '../components/PlanBody';
 import MarkdownView from '../components/MarkdownView';
 import FileRenderer from '../components/FileRenderer';
@@ -21,20 +22,11 @@ export default function MobileDoc({
   experimentStatus,
   attemptIndex,
 }) {
-  const [content, setContent] = useState(null);
-  const [error, setError] = useState(null);
   const [showReview, setShowReview] = useState(false);
-
-  useEffect(() => {
-    if (!artifact) return undefined;
-    let cancelled = false;
-    setContent(null);
-    setError(null);
-    api.getArtifactContent(projectId, artifact.id)
-      .then(d => { if (!cancelled) setContent(d); })
-      .catch(e => { if (!cancelled) setError(e.message); });
-    return () => { cancelled = true; };
-  }, [projectId, artifact?.id]);
+  const [content, error] = useAsyncData(
+    artifact ? () => api.getArtifactContent(projectId, artifact.id) : null,
+    [projectId, artifact?.id],
+  );
 
   // Stable identity: MarkdownView keys its `img` component (and its memo) on
   // this — an inline arrow here would remount every figure per re-render.

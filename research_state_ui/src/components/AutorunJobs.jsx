@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { projectPath } from '../store/useProjectStore';
 import TracePeek from './TracePeek';
 import { runnerPresentation } from './runnerPresentation';
+import { shortSha } from '../utils/format';
 import {
   assignmentFor,
   formatTokens,
@@ -265,10 +266,6 @@ function WaitingRow({ item, reason, projectId }) {
       </div>
     </div>
   );
-}
-
-function shortSha(value) {
-  return String(value || '').slice(0, 7);
 }
 
 /**
