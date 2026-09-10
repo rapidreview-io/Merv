@@ -313,30 +313,6 @@ def _format_counter(counter: Counter[tuple[str, str]]) -> str:
     )
 
 
-VOCABULARY_NAMES = {
-    "CLAIM_CONFIDENCES",
-    "CLAIM_STATUSES",
-    "EXPERIMENT_ACTIVE_PROCESS_STATUSES",
-    "EXPERIMENT_TERMINAL_STATUSES",
-    "GATED_ROLES",
-    "GATED_ROLE_BYTE_CAPS",
-    "LEGACY_PROJECT_GRAPH_ROLE",
-    "LEGACY_PROPOSALS_ROLE",
-    "LEGACY_REFLECTION_DOC_ROLE",
-    "LEGACY_REFLECTION_LENS_DOC_ROLE",
-    "LEGACY_RESOURCE_ROLES",
-    "PROJECT_GRAPH_ROLE",
-    "PROJECT_GRAPH_ROLES",
-    "REFLECTION_LENS_DOC_ROLE",
-    "REFLECTION_LENS_DOC_ROLES",
-    "RESOURCE_ROLES",
-    "RESOURCE_TARGET_TYPES",
-    "REVIEW_ROLE_VALUES",
-    "REVIEW_ROLES",
-    "REVIEW_VERDICT_VALUES",
-    "REVIEW_VERDICTS",
-}
-
 class ServiceLayoutTest(unittest.TestCase):
     def test_http_policy_is_fastapi_free(self) -> None:
         imports = _import_module_names(SURFACE_ROOT / "transport" / "http_policy.py")
@@ -366,6 +342,13 @@ class ServiceLayoutTest(unittest.TestCase):
         self.assertFalse((PORTS_ROOT / "sandbox_worker.py").exists())
         self.assertFalse((PORTS_ROOT / "task_channel.py").exists())
         self.assertFalse((PORTS_ROOT / "reflection_writers.py").exists())
+
+    def test_research_core_keeps_no_compatibility_modules(self) -> None:
+        # A module whose whole job was re-exporting another's names, or viewing
+        # a canonical graph a second time. Callers name the owner instead.
+        for removed in ("evidence.py", "workflow_schema.py", "experiment_workflow.py",
+                        "task_workflow.py", "reflection_workflow.py"):
+            self.assertFalse((RESEARCH_CORE / removed).exists(), removed)
 
     def test_auto_sync_poller_is_removed(self) -> None:
         local_source = (BACKEND_ROOT / "infrastructure" / "sandboxes.py").read_text()

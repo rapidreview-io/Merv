@@ -25,7 +25,7 @@ from typing import Any, Literal, TypeAlias
 from ..kernel.state.store import Connection
 from ..kernel.utils import ValidationError, now_iso
 from ..workflows import (
-    KINDS, ArtifactNeed, DependenciesDone, Evaluation, Issue, RecordNeed, Requirement,
+    KINDS, ArtifactNeed, DependenciesDone, Evaluation, Issue, Requirement,
     ReviewGate, ReviewReturn, Snapshot,
 )
 
