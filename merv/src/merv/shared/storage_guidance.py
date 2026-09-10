@@ -17,7 +17,7 @@ STORAGE_RULE_OF_THUMB = (
 STORAGE_USE_FOR = (
     "checkpoints and trained model weights worth reusing",
     "precious datasets, dataset shards, parquet/archive outputs, and cache directories",
-    "long logs or traces over about 10 MB that a reviewer may need",
+    "long logs or traces over about 10 MB that someone may need to read later",
     "generated intermediates that must survive sandbox release but do not belong in git",
 )
 
@@ -44,7 +44,7 @@ def storage_guidance(*, enabled: bool = True) -> dict[str, Any]:
     if not enabled:
         guidance["disabled_note"] = (
             "Storage is not enabled on this backend; copy the small files you need "
-            "into the local experiment folder and expect large sandbox-only files "
+            "into the local working folder and expect large sandbox-only files "
             "to be lost at release unless another durable path is available."
         )
     return guidance

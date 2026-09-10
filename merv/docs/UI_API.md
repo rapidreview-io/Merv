@@ -104,7 +104,6 @@ GET   /api/projects/{project_id}
 PATCH /api/projects/{project_id}
 PUT   /api/projects/{project_id}
 GET   /api/projects/{project_id}/home
-GET   /api/projects/{project_id}/status?experiment_id={experiment_id}
 ```
 
 Create projects with `name` and `summary`. Do not send a repo path: projects are
@@ -402,7 +401,7 @@ child processes on its next reconcile.
 The runner's own control plane — `POST /api/agent-runners/pairing` and
 `POST /api/agent-runners/pairing/token` (unauthenticated by construction: the
 runner has no credential yet and polls with the 256-bit device code it alone
-holds), `POST /api/agent-sessions/claim`, `/{session_id}/attach`,
+holds), `POST /api/agent-sessions/lease`, `/{session_id}/attach`,
 `/{session_id}/release`, `/{session_id}/heartbeat`,
 `POST /api/projects/{project_id}/agent-runners/heartbeat` (whose reply carries
 the caller's own row and desired settings), `POST

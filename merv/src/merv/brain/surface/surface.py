@@ -27,6 +27,7 @@ from ..artifacts import Artifacts
 from ..feed import FeedService
 from ..literature import Literature
 from ..research_core import (
+    ACTIVITY_VOCABULARY,
     ENTITY_REF_VOCABULARY,
     FEED_ADOPTABLE_ROLES,
     FEED_AUTHOR_ROLES,
@@ -53,6 +54,7 @@ from ..kernel.env import env_bool, env_value
 from ..kernel.ports.blob_store import BlobStore, EvidenceBlobStore
 from ..kernel.secret_tokens import load_wait_secret
 from ..kernel.state import BaseStateStore
+from ..kernel.state.activity import register_activity_vocabulary
 from ..kernel.state.tool_call_ledger import (
     ToolCallLedger,
     configured_retention_days,
@@ -104,6 +106,9 @@ class Surface:
         for schema in (PROJECT_KEY_SCHEMA, OAUTH_SCHEMA):
             store.install(schema)
         self.sandbox_enabled = sandbox_enabled
+        # Every owner names its own argument fields for the shared log; the
+        # kernel shapes them without knowing what any of them mean.
+        register_activity_vocabulary(**ACTIVITY_VOCABULARY)
         self.activity = ControlActivitySink()
         self.tool_calls = ControlToolCallSink()
         # Agent-attributed request/response records ride the same blob store

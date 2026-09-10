@@ -10,9 +10,16 @@ from merv.brain.kernel.state.activity import (
     ToolActivityEmitter,
     cap_result,
     redact_sensitive,
+    register_activity_vocabulary,
     scrub_secret_text,
 )
+from merv.brain.research_core import ACTIVITY_VOCABULARY
 from merv.brain.surface.telemetry import ControlActivitySink
+
+# `reviewer_capability` is Research's field name, and Kernel has never heard
+# of it: it is redacted because Research declared it at composition, which is
+# what Surface does before it builds anything that can log.
+register_activity_vocabulary(**ACTIVITY_VOCABULARY)
 
 # A realistic storage.submit result: bytes go direct to S3 via a presigned PUT,
 # and the ledger is finalized through the one-time completion token — both live

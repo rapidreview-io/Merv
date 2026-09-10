@@ -57,6 +57,16 @@ SUBMITTABLE_ROLES = frozenset(
     }
 )
 
+# Everything the generic Artifacts tool schema needs to describe one
+# association: the target kinds, the roles an agent may submit, and the single
+# role that also carries a lens id. Passed as a bundle so the tool registry
+# never spells a research role itself.
+ARTIFACT_TOOL_VOCABULARY = {
+    "target_types": ARTIFACT_TARGET_TYPES,
+    "roles": SUBMITTABLE_ROLES,
+    "lens_role": REFLECTION_LENS_DOC_ROLE,
+}
+
 
 def artifact_byte_cap(role: str) -> int | None:
     """Upload byte cap for a submittable role; None = role is not size-capped."""

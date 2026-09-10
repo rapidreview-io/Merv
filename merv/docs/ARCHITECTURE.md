@@ -141,14 +141,24 @@ tools and the upload/download commands they return, as is artifact submission
 
 ## Composition and persistence
 
-Both deployment presets use the same `ControlApp` composition. The composition
-root selects adapters and wires the modular monolith:
+Both deployment presets build the same `Surface` (`surface/surface.py`). It is
+the one composition root: it selects adapters, constructs each component, and
+wires the modular monolith together —
 
 - record store: SQLite locally or PostgreSQL through `MERV_DB_URL`;
 - infrastructure transport: authenticated, namespace-scoped merv-sandboxes HTTP;
 - artifact and feed blobs: Merv-owned R2, with a local disk adapter for development;
 - heavy datasets/models: object storage through merv-sandboxes;
 - sandbox/provider facades: native connections, offers, lifecycle, and jobs.
+
+Composition is also where research meaning reaches support. A support component
+declares a narrow `Protocol` in its own module and receives an implementation
+here: Agent Sessions learns whether a leased instance still stands through
+`InstanceFacts`, the Feed receives its reference vocabulary and author roles,
+Artifacts receives the association vocabulary its tool schema renders, and the
+kernel's activity log receives the argument names Research declares
+(`register_activity_vocabulary`). Nothing in a support module names a research
+record; `tests/structure/test_support_vocabulary.py` holds that.
 
 The independent service owns compute-provider credentials, cloud SDKs, SSH
 certificates, job workers, sandbox leases, and the heavy-object catalog
@@ -190,6 +200,16 @@ Each component declares its own tools in `<component>/tools.py` and exports the
 table as `TOOLS`; the brain registry in `src/merv/brain/surface/tools/contracts.py`
 merges those tables under unique names and is the served source of truth. Since
 the no-dataplane transition every tool is a control tool that runs in the brain.
+The `ToolContract` type lives in `kernel/tools.py`, so a component declares its
+tools without importing delivery, and each contract also declares what the
+gateway must supply for it — the verified producer session, a review
+capability, the caller's bound project, the telemetry scope field, a base URL,
+a wait secret, an action a machine key may not take. The gateway therefore
+names no tool of its own. What an agent session may call is the support
+baseline in `transport/http_policy.py` united with the tools that node's
+`Execution` declared, and each `Scope` rule binds an argument to the leased
+instance or to a reference the packet carried.
+
 Byte operations (`storage.submit`, `storage.fetch`, `artifact.upload`, and
 `feed.post`) hand back a one-line command. Storage uses presigned provider URLs;
 Artifact and Feed use bounded token endpoints. Sandbox operations are served by
@@ -296,17 +316,21 @@ calls. Session separation does not prove independent model reasoning.
 
 ## Code boundaries
 
-The brain is a modular monolith. Workflows, Research, Artifacts, Infrastructure,
-Feed, and Agent Sessions expose package-root capabilities. Application coordinates
-only genuinely cross-component work. Surface delivers HTTP/MCP, and Kernel is
-the shared dependency floor. Every file is classified independently by
-component ownership and architectural layer. The exact mappings and import laws
-live in
-`tests/structure/test_module_boundaries.py`.
+The brain is a modular monolith in three layers. Research is the science —
+research core, workflows, literature, and the cross-component coordination in
+`application/` — and it reaches HTTP through its own routers inside `surface/`.
+Artifacts, Feed, Agent Sessions and the rest of Surface are support: they carry
+research work and never interpret it. Infrastructure adapts merv-sandboxes.
+Kernel is the shared floor under all three, and MLflow is a frozen exception.
+Each component exposes package-root capabilities; every file is classified
+independently by component and by architectural layer. The exact mappings and
+import laws live in `tests/structure/test_module_boundaries.py`, and the
+vocabulary law in `tests/structure/test_support_vocabulary.py`.
 
 Additional structure tests enforce:
 
 - every tool is a control tool servable from the brain;
+- no support file names a research record in an identifier, a string, or SQL;
 - no checkout/process/local-IO dependencies in brain-owned policy modules;
 - the record store never learns a `repo_root`;
 - provider-neutral sandbox services.

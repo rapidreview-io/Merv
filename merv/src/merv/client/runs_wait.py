@@ -520,7 +520,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     this function is as total as the module invoked as a script.
     """
     _ANSWERED.clear()  # one answer per invocation, and this one is importable
-    _claim_std_fds()
+    _hold_std_fds()
     restore = _arm_teardown()
     try:
         return _answer(_observed(argv))
@@ -707,7 +707,7 @@ def _label_of(args: argparse.Namespace) -> str:
     return echo(args.label) if args.label else "_"
 
 
-def _claim_std_fds() -> None:
+def _hold_std_fds() -> None:
     """Hold fds 1 and 2 open, pointed at the void if they arrived closed.
 
     A process spawned with stdout closed has no wake channel — but it does

@@ -66,8 +66,8 @@ def build_router(
                 )
             raise
 
-    @router.post("/api/agent-sessions/claim")
-    def claim(request: Request, body: JsonBody = Body(default=None)) -> dict[str, Any]:
+    @router.post("/api/agent-sessions/lease")
+    def lease(request: Request, body: JsonBody = Body(default=None)) -> dict[str, Any]:
         payload = dict(body or {})
         project_id = str(payload.get("project_id") or "")
         gateway.authorize_project(request, project_id)
@@ -78,7 +78,7 @@ def build_router(
                 "hard_deadline_seconds must be an integer",
                 details={"field": "hard_deadline_seconds"},
             )
-        return application.claim_agent_session(
+        return application.lease_agent_session(
             project_id=project_id,
             runner_id=owner(request, payload),
             platform=str(payload.get("platform") or ""),

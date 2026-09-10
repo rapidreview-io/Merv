@@ -2,7 +2,7 @@
 
 The brain decides which workflow node may run and declares, in the assignment
 packet, how its session may execute.  This process is only the local
-actuator: it claims work, prepares the workspace the packet asks for, starts
+actuator: it leases work, prepares the workspace the packet asks for, starts
 an independently authenticated coding-agent process, and reports the process
 reference back to Merv.  Nothing here interprets what the work is.
 
@@ -95,7 +95,6 @@ SMOKE_INSTRUCTION_CLI = (
 # A loopback brain has no credential to hand a child; the bridge still wants
 # a non-empty value, and the local gateway ignores it.
 SMOKE_LOOPBACK_TOKEN = "local-smoke"
-SMOKE_MIN_RUNNER_VERSION = "2026.08.16"
 # client.json key that remembers which brain-held settings version this
 # machine last applied, so a restart does not re-report "pending".
 SETTINGS_VERSION_KEY = "desired_settings_version"
@@ -170,7 +169,7 @@ class WorkspacePolicy:
 
 
 @dataclass(frozen=True)
-class Claim:
+class Lease:
     """One leased assignment as the packet declared it: the runner applies
     ``execution`` and resolves the kinds it names, never the work itself."""
 
@@ -654,7 +653,7 @@ class QwenHost(CommandHost):
 class HermesHost(CommandHost):
     """Native Hermes Agent scripted invocation.
 
-    Hermes has no per-run MCP configuration flag. Claimed sessions therefore
+    Hermes has no per-run MCP configuration flag. Leased sessions therefore
     use the scoped ``merv-client call`` bridge described in their instruction
     while preserving the user's normal Hermes model and skill configuration.
     """
@@ -793,7 +792,7 @@ class SessionLedger:
 
     def __init__(self, path: Path):
         self.path = path
-        self.runner_id, self.sessions, self.pending_claims = self._read()
+        self.runner_id, self.sessions, self.pending_leases = self._read()
 
     def _read(
         self,
@@ -830,13 +829,13 @@ class SessionLedger:
                     "refusing to risk a duplicate launch"
                 ) from exc
             sessions[session.session_id] = session
-        pending = raw.get("pending_claims") or {}
+        pending = raw.get("pending_leases") or {}
         if not isinstance(pending, dict) or not all(
             isinstance(name, str) and isinstance(key, str) and name and key
             for name, key in pending.items()
         ):
             raise RunnerError(
-                "runner ledger contains malformed pending claims; "
+                "runner ledger contains malformed pending leases; "
                 "refusing to lose retry identity"
             )
         return runner_id, sessions, dict(pending)
@@ -846,7 +845,7 @@ class SessionLedger:
         temporary = self.path.with_suffix(".tmp")
         payload = {
             "runner_id": self.runner_id,
-            "pending_claims": self.pending_claims,
+            "pending_leases": self.pending_leases,
             "sessions": [asdict(item) for item in self.sessions.values()],
         }
         descriptor = os.open(
@@ -859,41 +858,41 @@ class SessionLedger:
             output.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         temporary.replace(self.path)
 
-    def claim_key(self, platform: str) -> str:
-        key = self.pending_claims.get(platform)
+    def lease_key(self, platform: str) -> str:
+        key = self.pending_leases.get(platform)
         if key is None:
             key = uuid.uuid4().hex
-            self.pending_claims[platform] = key
+            self.pending_leases[platform] = key
             self.save()
         return key
 
-    def clear_claim(self, platform: str) -> None:
-        if self.pending_claims.pop(platform, None) is not None:
+    def clear_lease(self, platform: str) -> None:
+        if self.pending_leases.pop(platform, None) is not None:
             self.save()
 
-    def reserve(self, claim: Claim, platform: Platform) -> LocalSession:
-        existing = self.sessions.get(claim.session_id)
+    def reserve(self, lease: Lease, platform: Platform) -> LocalSession:
+        existing = self.sessions.get(lease.session_id)
         if existing is not None:
-            raise RunnerError(f"session {claim.session_id} already has a launch record")
-        policy = claim.workspace
+            raise RunnerError(f"session {lease.session_id} already has a launch record")
+        policy = lease.workspace
         session = LocalSession(
-            session_id=claim.session_id,
-            project_id=claim.project_id,
+            session_id=lease.session_id,
+            project_id=lease.project_id,
             platform=platform.name,
             launch_attempted=True,
-            instance_id=claim.instance_id,
-            target_type=claim.target_type,
-            target_id=claim.target_id,
-            role=claim.role,
-            label=claim.label,
-            source_sha=claim.reference("code"),
+            instance_id=lease.instance_id,
+            target_type=lease.target_type,
+            target_id=lease.target_id,
+            role=lease.role,
+            label=lease.label,
+            source_sha=lease.reference("code"),
             adapter=platform.adapter,
             workspace_mode=policy.mode,
             workspace_retain=policy.retain,
-            read_only=claim.read_only,
+            read_only=lease.read_only,
         )
-        self.sessions[claim.session_id] = session
-        self.pending_claims.pop(platform.name, None)
+        self.sessions[lease.session_id] = session
+        self.pending_leases.pop(platform.name, None)
         self.save()
         return session
 
@@ -928,7 +927,7 @@ class WorkspaceManager:
         self.settings = settings
         self._bare_repository: Path | None = None
 
-    def prepare(self, claim: Claim) -> Workspace:
+    def prepare(self, lease: Lease) -> Workspace:
         """The workspace the policy declares: a session-private scratch
         directory, a detached worktree, or a branch keyed by the instance."""
         root = self.settings.root
@@ -936,18 +935,18 @@ class WorkspaceManager:
             raise RunnerError("git_worktree requires a workspace root")
         root = root.expanduser().resolve()
         root.mkdir(parents=True, exist_ok=True)
-        policy = claim.workspace
-        project_id = _safe_name(claim.project_id)
-        session_id = _safe_name(claim.session_id)
+        policy = lease.workspace
+        project_id = _safe_name(lease.project_id)
+        session_id = _safe_name(lease.session_id)
         if policy.mode == "none":
             path = root / "sessions" / project_id / session_id
             path.mkdir(parents=True, exist_ok=False)
             return Workspace(path=path, mode="none", retain=policy.retain)
-        if not claim.instance_id:
+        if not lease.instance_id:
             raise RunnerError("a Git workspace needs the assignment's instance id")
-        instance_id = _safe_name(claim.instance_id)
+        instance_id = _safe_name(lease.instance_id)
         pinned = (
-            claim.reference(policy.base_reference_kind)
+            lease.reference(policy.base_reference_kind)
             if policy.base_reference_kind
             else ""
         )
@@ -1387,10 +1386,10 @@ class AgentSessionsClient:
         self.control_url = _safe_control_url(control_url)
         self.runner_key = runner_key
         self.timeout = timeout
-        self.last_claim_reason = ""
+        self.last_lease_reason = ""
         self._opener = urllib.request.build_opener(_NoRedirect())
 
-    def claim(
+    def lease(
         self,
         *,
         project_id: str,
@@ -1398,9 +1397,9 @@ class AgentSessionsClient:
         runner_id: str,
         idempotency_key: str,
         session_key: str,
-    ) -> Claim | None:
+    ) -> Lease | None:
         result = self._post(
-            "/api/agent-sessions/claim",
+            "/api/agent-sessions/lease",
             {
                 "project_id": project_id,
                 "platform": platform,
@@ -1411,15 +1410,15 @@ class AgentSessionsClient:
             allow_empty=True,
         )
         if result is None or result.get("session") is None:
-            self.last_claim_reason = str((result or {}).get("reason") or "")
+            self.last_lease_reason = str((result or {}).get("reason") or "")
             return None
-        self.last_claim_reason = ""
+        self.last_lease_reason = ""
         session = result.get("session")
         if not isinstance(session, dict):
-            raise RunnerError("malformed claim response: session must be an object")
+            raise RunnerError("malformed lease response: session must be an object")
         if str(session.get("status") or "") not in {"offered", "active"}:
             return None
-        return _claim_from_session(session, project_id=project_id)
+        return _lease_from_session(session, project_id=project_id)
 
     def attach(
         self,
@@ -1658,7 +1657,7 @@ class AgentSessionsClient:
 
 
 class AgentRunner:
-    """Claim available slots and reconcile their local processes."""
+    """Lease available slots and reconcile their local processes."""
 
     def __init__(
         self,
@@ -1723,7 +1722,7 @@ class AgentRunner:
         """Replace the platform set for future launches; live ones drain.
 
         Tuple replacement is atomic in CPython. A launch already in progress
-        retains its Platform value; the next claim sees the new tuning. An
+        retains its Platform value; the next lease sees the new tuning. An
         entry that disappeared from configuration while it still has live
         sessions is retained as a draining ``enabled=False`` platform so
         ``_platform()`` keeps resolving it until those sessions close.
@@ -2513,7 +2512,7 @@ class AgentRunner:
             platform.name: (
                 max(platform.parallelism - self.ledger.running_count(platform.name), 0)
                 if platform.enabled
-                else 0  # disabled or draining: never claim, keep resolving
+                else 0  # disabled or draining: never lease, keep resolving
             )
             for platform in self.platforms
         }
@@ -2523,7 +2522,7 @@ class AgentRunner:
                     continue
                 remaining[platform.name] -= 1
                 try:
-                    if self._claim_and_launch(platform):
+                    if self._lease_and_launch(platform):
                         launched += 1
                     else:
                         remaining[platform.name] = 0
@@ -2535,30 +2534,30 @@ class AgentRunner:
                     remaining[platform.name] = 0
         return launched
 
-    def _claim_and_launch(self, platform: Platform) -> bool:
-        idempotency_key = self.ledger.claim_key(platform.name)
+    def _lease_and_launch(self, platform: Platform) -> bool:
+        idempotency_key = self.ledger.lease_key(platform.name)
         session_key = _session_key(
             runner_secret=self.runner_secret,
             idempotency_key=idempotency_key,
         )
-        claim = self.client.claim(
+        lease = self.client.lease(
             project_id=self.project_id,
             platform=platform.name,
             runner_id=self.ledger.runner_id,
             idempotency_key=idempotency_key,
             session_key=session_key,
         )
-        if claim is None:
-            self.ledger.clear_claim(platform.name)
-            self._note_idle(self.client.last_claim_reason)
+        if lease is None:
+            self.ledger.clear_lease(platform.name)
+            self._note_idle(self.client.last_lease_reason)
             return False
         self._idle_reason = ""
-        session = self.ledger.reserve(claim, platform)
+        session = self.ledger.reserve(lease, platform)
         host = HOSTS[platform.adapter]
         workspace: Workspace | None = None
         try:
-            instruction = claim.instruction or _default_instruction(claim)
-            workspace = self.workspaces.prepare(claim)
+            instruction = lease.instruction or _default_instruction(lease)
+            workspace = self.workspaces.prepare(lease)
             session.cwd = str(workspace.path)
             session.branch = workspace.branch
             self._remember_workspace(session, workspace)
@@ -2590,7 +2589,7 @@ class AgentRunner:
                 )
             trace_files = _prepare_trace(
                 root=self.trace_dir,
-                claim=claim,
+                lease=lease,
                 platform=platform,
                 host=host,
                 instruction=instruction,
@@ -2601,7 +2600,7 @@ class AgentRunner:
                 self.environment,
                 session_key=session_key,
                 control_url=self.client.control_url,
-                session_id=claim.session_id,
+                session_id=lease.session_id,
             )
             child_environment["MERV_AGENT_TRACE_DIR"] = str(trace_files.directory)
             if self.skills is not None:
@@ -2621,7 +2620,7 @@ class AgentRunner:
             )
             self.ledger.save()
             self.client.release(
-                session_id=claim.session_id,
+                session_id=lease.session_id,
                 runner_id=self.ledger.runner_id,
                 reason=session.status,
                 telemetry=self._observe_telemetry(session),
@@ -2635,7 +2634,7 @@ class AgentRunner:
         session.started_at = time.time()
         self.ledger.save()
         self.client.attach(
-            session_id=claim.session_id,
+            session_id=lease.session_id,
             runner_id=self.ledger.runner_id,
             host_session_ref=host_session.ref,
             workspace_ref=workspace.branch or "",
@@ -2648,8 +2647,8 @@ class AgentRunner:
         session.attached = True
         self.ledger.save()
         print(
-            f"started {platform.name} session {claim.session_id} "
-            f"for {claim.target_type or 'assignment'} {claim.target_id}"
+            f"started {platform.name} session {lease.session_id} "
+            f"for {lease.target_type or 'assignment'} {lease.target_id}"
         )
         return True
 
@@ -2661,7 +2660,7 @@ class AgentRunner:
         if reason == "agent_dispatch_disabled":
             print(
                 f"{self.project_id}: automatic dispatch is off for this "
-                "project; turn it on at the top of the Auto-run page to claim work"
+                "project; turn it on at the top of the Auto-run page to pick up work"
             )
 
     def _agent_setup(self, session: LocalSession) -> dict[str, Any]:
@@ -2975,21 +2974,21 @@ def _child_environment(
 def _prepare_trace(
     *,
     root: Path,
-    claim: Claim,
+    lease: Lease,
     platform: Platform,
     host: AgentHost,
     instruction: str,
     workspace: Workspace,
 ) -> TraceFiles:
-    """Create the private recording envelope for one claimed auto-run session."""
+    """Create the private recording envelope for one leased auto-run session."""
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(root, 0o700)
-    directory = root / _safe_name(claim.session_id)
+    directory = root / _safe_name(lease.session_id)
     try:
         directory.mkdir(mode=0o700)
     except FileExistsError as exc:
         raise RunnerError(
-            f"trace directory already exists for session {claim.session_id}"
+            f"trace directory already exists for session {lease.session_id}"
         ) from exc
     stdout_filename = str(getattr(host, "stdout_filename", "trace.jsonl"))
     trace_filename = getattr(host, "trace_filename", "trace.jsonl")
@@ -2999,19 +2998,19 @@ def _prepare_trace(
     )
     metadata = {
         "schema_version": 2,
-        "merv_agent_session_id": claim.session_id,
-        "assignment": dict(claim.assignment),
+        "merv_agent_session_id": lease.session_id,
+        "assignment": dict(lease.assignment),
         "work_item": {
-            "project_id": claim.project_id,
-            "instance_id": claim.instance_id,
-            "target_type": claim.target_type,
-            "target_id": claim.target_id,
-            "role": claim.role,
-            "label": claim.label,
-            "review_request_id": claim.reference("review_request") or None,
-            "source_sha": claim.reference("code"),
-            "execution": dict(claim.execution),
-            "references": [dict(item) for item in claim.references],
+            "project_id": lease.project_id,
+            "instance_id": lease.instance_id,
+            "target_type": lease.target_type,
+            "target_id": lease.target_id,
+            "role": lease.role,
+            "label": lease.label,
+            "review_request_id": lease.reference("review_request") or None,
+            "source_sha": lease.reference("code"),
+            "execution": dict(lease.execution),
+            "references": [dict(item) for item in lease.references],
             "instruction": instruction,
             "workspace": {
                 "path": str(workspace.path),
@@ -3417,7 +3416,7 @@ def _append_private_text(path: Path, value: str) -> None:
 
 
 def _session_key(*, runner_secret: bytes, idempotency_key: str) -> str:
-    """Re-create a claim credential after a lost response without storing it."""
+    """Re-create a lease credential after a lost response without storing it."""
     digest = hmac.new(
         runner_secret,
         f"merv-agent-session:{idempotency_key}".encode("utf-8"),
@@ -3427,13 +3426,13 @@ def _session_key(*, runner_secret: bytes, idempotency_key: str) -> str:
     return SESSION_KEY_PREFIX + encoded
 
 
-def _default_instruction(claim: Claim) -> str:
+def _default_instruction(lease: Lease) -> str:
     """A minimal prompt for a packet that carried no instruction of its own."""
     return (
         "Complete the Merv assignment leased to this session, then exit.\n"
-        f"Project: {claim.project_id}\n"
-        f"Assignment: {claim.label or claim.role or claim.target_type or 'assigned work'} "
-        f"(instance {claim.instance_id})\n"
+        f"Project: {lease.project_id}\n"
+        f"Assignment: {lease.label or lease.role or lease.target_type or 'assigned work'} "
+        f"(instance {lease.instance_id})\n"
         "Call workflow.assignment for the brief and workflow.status_and_next "
         "with this instance_id for the available actions. Follow every gate, "
         "preserve evidence, and do not work on another assignment in this "
@@ -3442,8 +3441,8 @@ def _default_instruction(claim: Claim) -> str:
     )
 
 
-def _claim_from_session(session: Mapping[str, Any], *, project_id: str) -> Claim:
-    """Lift a leased session into a Claim, reading each packet field from the
+def _lease_from_session(session: Mapping[str, Any], *, project_id: str) -> Lease:
+    """Lift a leased session into a Lease, reading each packet field from the
     session first and refusing an execution policy this build cannot apply."""
     assignment = session.get("assignment")
     assignment = dict(assignment) if isinstance(assignment, Mapping) else {}
@@ -3454,21 +3453,21 @@ def _claim_from_session(session: Mapping[str, Any], *, project_id: str) -> Claim
 
     session_id = str(session.get("session_id") or session.get("id") or "")
     if not session_id:
-        raise RunnerError("malformed claim response: missing session id")
+        raise RunnerError("malformed lease response: missing session id")
     instance_id = str(pick("workflow_instance_id", "instance_id") or "")
     if not instance_id:
-        raise RunnerError("malformed claim response: missing instance id")
+        raise RunnerError("malformed lease response: missing instance id")
     execution = pick("execution")
     references = pick("references")
     if execution is not None and not isinstance(execution, Mapping):
-        raise RunnerError("malformed claim response: execution must be an object")
+        raise RunnerError("malformed lease response: execution must be an object")
     if not isinstance(references, (list, type(None))) or not all(
         isinstance(item, Mapping) for item in references or ()
     ):
-        raise RunnerError("malformed claim response: references must be a list of objects")
+        raise RunnerError("malformed lease response: references must be a list of objects")
     execution = dict(execution or {})
     WorkspacePolicy.from_execution(execution)
-    return Claim(
+    return Lease(
         session_id=session_id, instance_id=instance_id, execution=execution,
         project_id=str(session.get("project_id") or project_id),
         target_type=str(pick("target_type", "workflow") or ""),
@@ -3765,11 +3764,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             platforms = load_platforms(config_path, include_disabled=True)
             if not any(item.enabled for item in platforms):
                 # A paired machine with nothing enabled yet is the normal
-                # first-run state: heartbeat, report inventory, claim nothing,
+                # first-run state: heartbeat, report inventory, lease nothing,
                 # and pick up agents as soon as the Auto-run page saves them.
                 print(
                     "no agents enabled yet; this machine will heartbeat and "
-                    "start claiming once the Auto-run page enables one"
+                    "start leasing once the Auto-run page enables one"
                 )
             runner_secret, _ = private_token(config_path.parent / "agent-runner.secret")
             workspace_settings = load_workspace_settings(config_path)

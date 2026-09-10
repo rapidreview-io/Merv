@@ -160,13 +160,13 @@ class AgentSessions:
                 return self._find_retry(
                     tx=tx, runner_id=runner_id, idempotency_key=idempotency_key
                 )
-            for candidate in candidates:
-                instance_id = str(candidate.get("instance_id") or "")
+            for offer in candidates:
+                instance_id = str(offer.get("instance_id") or "")
                 if not instance_id:
                     continue
                 session = self._lease(
                     tx=tx, project_id=project_id, instance_id=instance_id,
-                    revision=int(candidate.get("revision", -1)),
+                    revision=int(offer.get("revision", -1)),
                     runner_id=runner_id, platform=platform,
                     idempotency_key=idempotency_key, digest=digest,
                     now=now, deadline_seconds=deadline_seconds,

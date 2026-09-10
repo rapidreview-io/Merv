@@ -74,7 +74,7 @@ class _FakeSettingsClient:
     """Enough of AgentSessionsClient for report_presence/apply_desired/reconcile."""
 
     control_url = "https://merv.test"
-    last_claim_reason = ""
+    last_lease_reason = ""
 
     def __init__(self, response=None):
         self.response = response or {"desired_version": 0, "desired_settings": {}}
@@ -92,7 +92,7 @@ class _FakeSettingsClient:
     def pending_advance(self, *, project_id):
         return self.pending
 
-    def claim(self, **kwargs):
+    def lease(self, **kwargs):
         return None
 
 
@@ -359,8 +359,8 @@ class RunnerSettingsApplyTest(unittest.TestCase):
         )
         runner = self._runner(client)
         # A live local session on codex.
-        from merv.client.agent_runner import Claim
-        session = runner.ledger.reserve(Claim("ags_1", "proj_1", "wf_1"), runner._platform("codex"))
+        from merv.client.agent_runner import Lease
+        session = runner.ledger.reserve(Lease("ags_1", "proj_1", "wf_1"), runner._platform("codex"))
         session.status = "running"
         with redirect_stdout(io.StringIO()):
             runner.apply_desired(runner.report_presence())
@@ -380,8 +380,8 @@ class RunnerSettingsApplyTest(unittest.TestCase):
             }
         )
         runner = self._runner(client)
-        from merv.client.agent_runner import Claim
-        session = runner.ledger.reserve(Claim("ags_1", "proj_1", "wf_1"), runner._platform("codex"))
+        from merv.client.agent_runner import Lease
+        session = runner.ledger.reserve(Lease("ags_1", "proj_1", "wf_1"), runner._platform("codex"))
         session.status = "running"
         with redirect_stdout(io.StringIO()):
             runner.apply_desired(runner.report_presence())
@@ -412,10 +412,10 @@ class RunnerSettingsApplyTest(unittest.TestCase):
     def test_prune_frees_a_slot_only_for_a_visibly_closed_dead_session(self) -> None:
         client = _FakeSettingsClient()
         runner = self._runner(client)
-        from merv.client.agent_runner import Claim
-        stuck = runner.ledger.reserve(Claim("ags_stuck", "proj_1", "wf_1"), runner._platform("codex"))
+        from merv.client.agent_runner import Lease
+        stuck = runner.ledger.reserve(Lease("ags_stuck", "proj_1", "wf_1"), runner._platform("codex"))
         stuck.status = "uncertain"
-        held = runner.ledger.reserve(Claim("ags_held", "proj_1", "wf_2"), runner._platform("codex"))
+        held = runner.ledger.reserve(Lease("ags_held", "proj_1", "wf_2"), runner._platform("codex"))
         held.status = "uncertain"
         client.remote_sessions = [{"id": "ags_stuck", "status": "expired"}]  # ags_held absent
         with redirect_stderr(io.StringIO()):

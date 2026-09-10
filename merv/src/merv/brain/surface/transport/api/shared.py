@@ -17,7 +17,6 @@ from fastapi.responses import JSONResponse, Response
 
 from ....kernel.env import env_value
 from ....kernel.request_context import bind_principal
-from ....kernel.state import monotonic_ms
 from ....kernel.utils import ValidationError
 from ...identity import (
     HumanSessionRequiredError, is_human_session, is_local_principal,
@@ -222,48 +221,6 @@ def ledger_tool_refusal(
             error_code=str(getattr(exc, "error_code", "") or "unexpected"),
             error=str(getattr(exc, "message", "") or exc),
         )
-
-
-def ledger_direct_call(
-    ledger: CallLedger | None,
-    *,
-    tool: str,
-    source: str,
-    project_id: str,
-    arguments: dict[str, Any],
-    run: Callable[[], dict[str, Any]],
-) -> dict[str, Any]:
-    """Run a call that answers OUTSIDE the dispatcher, and record its outcome.
-
-    The hosted sandbox lookup is served straight from SandboxEngine, so
-    the dispatcher never sees it; without this every hosted ``sandbox.get`` —
-    success and failure alike — would be missing from the durable ledger.
-    """
-    started = monotonic_ms()
-    try:
-        result = run()
-    except Exception as exc:
-        _direct_row(
-            ledger, tool=tool, source=source, project_id=project_id,
-            arguments=arguments, started=started, status="error",
-            error=str(getattr(exc, "message", "") or exc),
-            error_code=str(getattr(exc, "error_code", "") or "unexpected"),
-        )
-        raise
-    _direct_row(
-        ledger, tool=tool, source=source, project_id=project_id,
-        arguments=arguments, started=started, status="ok", result=result,
-    )
-    return result
-
-
-def _direct_row(
-    ledger: CallLedger | None, *, started: int, **fields: Any
-) -> None:
-    if ledger is None:
-        return
-    with suppress(Exception):  # telemetry never breaks the call it observes
-        ledger.record(duration_ms=monotonic_ms() - started, **fields)
 
 
 # Global mutators/aggregates gated behind the operator token in hosted mode.

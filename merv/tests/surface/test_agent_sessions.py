@@ -68,7 +68,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
 
     def claim(self, *, secret: str, runner_id: str) -> dict:
         response = self.client.post(
-            "/api/agent-sessions/claim",
+            "/api/agent-sessions/lease",
             json={
                 "project_id": self.project_id,
                 "platform": "codex",
@@ -647,7 +647,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         key = str(minted["secret"])
         session_secret = self.secret()
         claimed = hosted.post(
-            "/api/agent-sessions/claim",
+            "/api/agent-sessions/lease",
             headers={"Authorization": f"Bearer {key}"},
             json={
                 "project_id": self.project_id,
@@ -776,7 +776,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         )
         key = str(minted["secret"])
         claimed = hosted.post(
-            "/api/agent-sessions/claim",
+            "/api/agent-sessions/lease",
             headers={"Authorization": f"Bearer {key}"},
             json={
                 "project_id": self.project_id,
@@ -1075,7 +1075,7 @@ class AgentDispatchSwitchTest(unittest.TestCase):
 
     def claim(self, *, runner_id: str = "runner-a") -> dict:
         response = self.client.post(
-            "/api/agent-sessions/claim",
+            "/api/agent-sessions/lease",
             json={
                 "project_id": self.project_id,
                 "platform": "codex",

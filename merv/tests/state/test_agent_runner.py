@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 from merv.client.agent_runner import (
     AgentRunner,
     AgentSessionsClient,
-    Claim,
+    Lease,
     ClaudeHost,
     CodexHost,
     CommandHost,
@@ -60,10 +60,10 @@ from merv.client.cli import (
 from merv.client.private_files import private_token
 
 
-def _claim(session_id: str, instance_id: str = "wf_1", **fields: object) -> Claim:
+def _lease(session_id: str, instance_id: str = "wf_1", **fields: object) -> Lease:
     """A leased assignment carrying the packet fields the runner reads."""
     fields.setdefault("project_id", "proj_1")
-    return Claim(session_id=session_id, instance_id=instance_id, **fields)
+    return Lease(session_id=session_id, instance_id=instance_id, **fields)
 
 
 def _execution(
@@ -725,9 +725,9 @@ class AgentHostTest(unittest.TestCase):
                 )
             )
             persistent = _execution(namespace="experiments")
-            one = manager.prepare(_claim("ags_1", "exp_1", execution=persistent))
-            two = manager.prepare(_claim("ags_2", "exp_2", execution=persistent))
-            resumed = manager.prepare(_claim("ags_3", "exp_1", execution=persistent))
+            one = manager.prepare(_lease("ags_1", "exp_1", execution=persistent))
+            two = manager.prepare(_lease("ags_2", "exp_2", execution=persistent))
+            resumed = manager.prepare(_lease("ags_3", "exp_1", execution=persistent))
 
             # Directory and branch names come from the namespace the node
             # declared, so deployed branches keep the names they have.
@@ -747,7 +747,7 @@ class AgentHostTest(unittest.TestCase):
             self.assertEqual(manager._git(bare, "remote").strip(), "")
 
             shutil.rmtree(one.path)
-            restored = manager.prepare(_claim("ags_4", "exp_1", execution=persistent))
+            restored = manager.prepare(_lease("ags_4", "exp_1", execution=persistent))
             self.assertEqual(restored.path, one.path)
             self.assertEqual(restored.branch, one.branch)
             manager.close(restored)
@@ -761,7 +761,7 @@ class AgentHostTest(unittest.TestCase):
                 retain=False, read_only=True,
             )
             checkout = manager.prepare(
-                _claim(
+                _lease(
                     "ags_r1", "exp_1", execution=ephemeral,
                     references=[{"kind": "review_request", "id": "rr_1", "label": "x"}],
                 )
@@ -776,26 +776,26 @@ class AgentHostTest(unittest.TestCase):
             )
             self.assertTrue(checkout.path.exists())
             with self.assertRaisesRegex(RunnerError, "refusing to reuse"):
-                manager.prepare(_claim("ags_r1", "exp_1", execution=ephemeral))
+                manager.prepare(_lease("ags_r1", "exp_1", execution=ephemeral))
             manager.close(checkout)
             self.assertFalse(checkout.path.exists())
 
             # The default namespace; progress survives across sessions.
-            work = manager.prepare(_claim("ags_plugin", "wf_replication", execution=_execution()))
+            work = manager.prepare(_lease("ags_plugin", "wf_replication", execution=_execution()))
             self.assertEqual(work.path, root / "workers" / "workflows" / "proj_1" / "wf_replication")
             (work.path / "progress.md").write_text("retained progress\n", encoding="utf-8")
             captured = manager.capture(
                 path=work.path, branch=work.branch, base_sha=work.base_sha,
                 session_id="ags_plugin", mode=work.mode, writable=True,
             )
-            resumed = manager.prepare(_claim("ags_plugin_resume", "wf_replication", execution=_execution()))
+            resumed = manager.prepare(_lease("ags_plugin_resume", "wf_replication", execution=_execution()))
             self.assertEqual(resumed.path, captured.path)
             self.assertEqual(resumed.head_sha, captured.head_sha)
             self.assertEqual((resumed.path / "progress.md").read_text(), "retained progress\n")
 
             # retain: false on a persistent node drops the worktree, never the
             # branch: the next session on the instance checks it out again.
-            dropped = manager.prepare(_claim("ags_drop", "wf_drop", execution=_execution(retain=False)))
+            dropped = manager.prepare(_lease("ags_drop", "wf_drop", execution=_execution(retain=False)))
             (dropped.path / "note.md").write_text("kept in the branch\n", encoding="utf-8")
             dropped = manager.capture(
                 path=dropped.path, branch=dropped.branch, base_sha=dropped.base_sha,
@@ -803,12 +803,12 @@ class AgentHostTest(unittest.TestCase):
             )
             manager.close(dropped)
             self.assertFalse(dropped.path.exists())
-            back = manager.prepare(_claim("ags_drop_2", "wf_drop", execution=_execution(retain=False)))
+            back = manager.prepare(_lease("ags_drop_2", "wf_drop", execution=_execution(retain=False)))
             self.assertEqual(back.head_sha, dropped.head_sha)
             self.assertEqual((back.path / "note.md").read_text(), "kept in the branch\n")
 
             # mode none: a scratch directory per session, removed at close.
-            scratch = manager.prepare(_claim("ags_scratch", "wf_note", execution=_execution(mode="none")))
+            scratch = manager.prepare(_lease("ags_scratch", "wf_note", execution=_execution(mode="none")))
             self.assertEqual(scratch.mode, "none")
             self.assertEqual(scratch.path, root / "workers" / "sessions" / "proj_1" / "ags_scratch")
             self.assertFalse((scratch.path / ".git").exists())
@@ -824,11 +824,11 @@ class AgentHostTest(unittest.TestCase):
 
             # A policy this build cannot apply is refused before any Git work.
             with self.assertRaisesRegex(RunnerError, "unknown workspace mode"):
-                manager.prepare(_claim("ags_bad", "wf_bad", execution={"workspace": {"mode": "shared"}}))
+                manager.prepare(_lease("ags_bad", "wf_bad", execution={"workspace": {"mode": "shared"}}))
             with self.assertRaisesRegex(RunnerError, "unknown workspace base"):
-                manager.prepare(_claim("ags_bad", "wf_bad", execution={"workspace": {"base": "upstream"}}))
+                manager.prepare(_lease("ags_bad", "wf_bad", execution={"workspace": {"base": "upstream"}}))
             with self.assertRaisesRegex(RunnerError, "not a path segment"):
-                manager.prepare(_claim("ags_bad", "wf_bad", execution={"workspace": {"namespace": "a/b"}}))
+                manager.prepare(_lease("ags_bad", "wf_bad", execution={"workspace": {"namespace": "a/b"}}))
 
     def test_central_advance_records_verified_source_ancestry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -841,7 +841,7 @@ class AgentHostTest(unittest.TestCase):
                     base_ref="main",
                 )
             )
-            work = manager.prepare(_claim("ags_src", "src_1", execution=_execution(namespace="experiments")))
+            work = manager.prepare(_lease("ags_src", "src_1", execution=_execution(namespace="experiments")))
             (work.path / "model.py").write_text("score = 1\n", encoding="utf-8")
             _commit(work.path, "source work")
             work = manager.observe(
@@ -850,7 +850,7 @@ class AgentHostTest(unittest.TestCase):
 
             # An ephemeral checkout pinned to a code reference sits at that commit.
             pinned = manager.prepare(
-                _claim(
+                _lease(
                     "ags_pinned", "ref_1",
                     execution=_execution(mode="ephemeral", namespace="reviews", base="reference:code", retain=False),
                     references=_code(work.head_sha),
@@ -864,7 +864,7 @@ class AgentHostTest(unittest.TestCase):
             # A per-base persistent branch with no code reference starts from
             # central and is keyed by that base.
             integration = manager.prepare(
-                _claim(
+                _lease(
                     "ags_int", "ref_1",
                     execution=_execution(namespace="consolidations", base="reference:code", per_base=True),
                 )
@@ -923,11 +923,11 @@ class AgentHostTest(unittest.TestCase):
             )
             per_base = _execution(namespace="consolidations", base="reference:code", per_base=True)
             old_base = manager.central_sha()
-            old = manager.prepare(_claim("ags_old", "ref_1", execution=per_base, references=_code(old_base)))
-            same = manager.prepare(_claim("ags_same", "ref_1", execution=per_base, references=_code(old_base)))
+            old = manager.prepare(_lease("ags_old", "ref_1", execution=per_base, references=_code(old_base)))
+            same = manager.prepare(_lease("ags_same", "ref_1", execution=per_base, references=_code(old_base)))
             self.assertEqual(same.branch, old.branch)
 
-            central_change = manager.prepare(_claim("ags_src", "src_1", execution=_execution(namespace="experiments")))
+            central_change = manager.prepare(_lease("ags_src", "src_1", execution=_execution(namespace="experiments")))
             (central_change.path / "advance.py").write_text("advanced = True\n", encoding="utf-8")
             _commit(central_change.path, "advance central")
             new_base = manager.observe(
@@ -936,7 +936,7 @@ class AgentHostTest(unittest.TestCase):
             ).head_sha
             manager.advance(expected_sha=old_base, target_sha=new_base, sources=[])
 
-            fresh = manager.prepare(_claim("ags_fresh", "ref_1", execution=per_base, references=_code(new_base)))
+            fresh = manager.prepare(_lease("ags_fresh", "ref_1", execution=per_base, references=_code(new_base)))
 
             self.assertNotEqual(fresh.branch, old.branch)
             self.assertNotEqual(fresh.path, old.path)
@@ -946,9 +946,9 @@ class AgentHostTest(unittest.TestCase):
             # A persistent branch not keyed by base keeps the base it was
             # created on; pinning it elsewhere later is refused, not rebased.
             single = _execution(base="reference:code")
-            manager.prepare(_claim("ags_one", "wf_pin", execution=single, references=_code(old_base)))
+            manager.prepare(_lease("ags_one", "wf_pin", execution=single, references=_code(old_base)))
             with self.assertRaisesRegex(RunnerError, "wrong base"):
-                manager.prepare(_claim("ags_two", "wf_pin", execution=single, references=_code(new_base)))
+                manager.prepare(_lease("ags_two", "wf_pin", execution=single, references=_code(new_base)))
 
 
 _PACKET: dict[str, object] = {
@@ -997,10 +997,10 @@ class _CapturingClient(AgentSessionsClient):
 
 
 class AgentSessionProtocolTest(unittest.TestCase):
-    def test_claim_wire_contract_is_concentrated_in_client(self) -> None:
+    def test_lease_wire_contract_is_concentrated_in_client(self) -> None:
         client = _CapturingClient()
 
-        claim = client.claim(
+        lease = client.lease(
             project_id="proj_1",
             platform="codex",
             runner_id="runner_1",
@@ -1009,8 +1009,8 @@ class AgentSessionProtocolTest(unittest.TestCase):
         )
 
         self.assertEqual(
-            claim,
-            Claim(
+            lease,
+            Lease(
                 session_id="ags_1",
                 project_id="proj_1",
                 instance_id="wf_1",
@@ -1025,16 +1025,16 @@ class AgentSessionProtocolTest(unittest.TestCase):
             ),
         )
         # Reference kinds the policy names are resolved; nothing else is read.
-        self.assertEqual(claim.reference("code"), "a" * 40)
-        self.assertEqual(claim.reference("review_request"), "rr_1")
-        self.assertEqual(claim.reference("missing"), "")
-        self.assertEqual(claim.workspace, WorkspacePolicy(namespace="experiments"))
-        self.assertFalse(claim.read_only)
+        self.assertEqual(lease.reference("code"), "a" * 40)
+        self.assertEqual(lease.reference("review_request"), "rr_1")
+        self.assertEqual(lease.reference("missing"), "")
+        self.assertEqual(lease.workspace, WorkspacePolicy(namespace="experiments"))
+        self.assertFalse(lease.read_only)
         self.assertEqual(
             client.calls,
             [
                 (
-                    "/api/agent-sessions/claim",
+                    "/api/agent-sessions/lease",
                     {
                         "project_id": "proj_1",
                         "platform": "codex",
@@ -1047,12 +1047,12 @@ class AgentSessionProtocolTest(unittest.TestCase):
             ],
         )
 
-    def test_claim_reads_packet_fields_from_the_assignment_when_the_row_lacks_them(self) -> None:
+    def test_lease_reads_packet_fields_from_the_assignment_when_the_row_lacks_them(self) -> None:
         client = _CapturingClient(
             {"id": "ags_2", "project_id": "proj_1", "status": "active", "assignment": _PACKET}
         )
 
-        claim = client.claim(
+        lease = client.lease(
             project_id="proj_1",
             platform="codex",
             runner_id="runner_1",
@@ -1060,19 +1060,19 @@ class AgentSessionProtocolTest(unittest.TestCase):
             session_key="mas_child-secret-with-enough-entropy-123456789",
         )
 
-        self.assertEqual(claim.session_id, "ags_2")
-        self.assertEqual(claim.instance_id, "wf_1")
-        self.assertEqual(claim.target_type, "replication")
-        self.assertEqual(claim.target_id, "wf_1")
-        self.assertEqual(claim.role, "worker")
-        self.assertEqual(claim.label, "Reproduce the baseline")
-        self.assertEqual(claim.execution, _execution(namespace="experiments"))
-        self.assertEqual(claim.references, _PACKET["references"])
-        self.assertEqual(claim.instruction, "do the work")
+        self.assertEqual(lease.session_id, "ags_2")
+        self.assertEqual(lease.instance_id, "wf_1")
+        self.assertEqual(lease.target_type, "replication")
+        self.assertEqual(lease.target_id, "wf_1")
+        self.assertEqual(lease.role, "worker")
+        self.assertEqual(lease.label, "Reproduce the baseline")
+        self.assertEqual(lease.execution, _execution(namespace="experiments"))
+        self.assertEqual(lease.references, _PACKET["references"])
+        self.assertEqual(lease.instruction, "do the work")
 
-    def test_claim_refuses_a_packet_this_runner_cannot_apply(self) -> None:
-        def claim(session):
-            return _CapturingClient(session).claim(
+    def test_lease_refuses_a_packet_this_runner_cannot_apply(self) -> None:
+        def lease(session):
+            return _CapturingClient(session).lease(
                 project_id="proj_1",
                 platform="codex",
                 runner_id="runner_1",
@@ -1081,13 +1081,13 @@ class AgentSessionProtocolTest(unittest.TestCase):
             )
 
         with self.assertRaisesRegex(RunnerError, "unknown workspace mode"):
-            claim({**_SESSION, "execution": {"workspace": {"mode": "shared"}}})
+            lease({**_SESSION, "execution": {"workspace": {"mode": "shared"}}})
         with self.assertRaisesRegex(RunnerError, "missing instance id"):
-            claim({"id": "ags_3", "project_id": "proj_1", "status": "offered"})
+            lease({"id": "ags_3", "project_id": "proj_1", "status": "offered"})
         with self.assertRaisesRegex(RunnerError, "references must be a list"):
-            claim({**_SESSION, "references": {"kind": "code"}})
+            lease({**_SESSION, "references": {"kind": "code"}})
         # Defaults are the spec's: persistent, retained, from central.
-        bare = claim(
+        bare = lease(
             {
                 **_SESSION,
                 "execution": {"read_only": True},
@@ -1207,7 +1207,7 @@ class AgentSessionProtocolTest(unittest.TestCase):
         self.assertEqual(payload["capacity"], 2)
         self.assertNotIn("command", payload["platforms"][0])
 
-    def test_closed_idempotent_claim_is_never_launched(self) -> None:
+    def test_closed_idempotent_lease_is_never_launched(self) -> None:
         client = _CapturingClient()
 
         def closed(path, payload, *, allow_empty=False):
@@ -1222,7 +1222,7 @@ class AgentSessionProtocolTest(unittest.TestCase):
 
         client._post = closed
         self.assertIsNone(
-            client.claim(
+            client.lease(
                 project_id="proj_1",
                 platform="codex",
                 runner_id="runner_1",
@@ -1242,7 +1242,7 @@ class AgentSessionProtocolTest(unittest.TestCase):
                 json.dumps(
                     {
                         "runner_id": "runner_1",
-                        "pending_claims": {},
+                        "pending_leases": {},
                         "sessions": [
                             {
                                 "session_id": "ags_old",
@@ -1269,7 +1269,7 @@ class AgentSessionProtocolTest(unittest.TestCase):
             self.assertEqual(row.instance_id, "")
             self.assertTrue(row.workspace_retain)
             with self.assertRaisesRegex(RunnerError, "already has a launch record"):
-                ledger.reserve(_claim("ags_old"), Platform("codex", "codex", ("codex",)))
+                ledger.reserve(_lease("ags_old"), Platform("codex", "codex", ("codex",)))
             ledger.save()
             self.assertEqual(SessionLedger(path).sessions["ags_old"].status, "stopped")
 
@@ -1299,11 +1299,11 @@ class _FakeHost:
 
 class _FakeClient:
     control_url = "https://merv.test"
-    last_claim_reason = ""
+    last_lease_reason = ""
 
-    def __init__(self, claim: Claim):
-        self.claim_result = claim
-        self.claim_calls: list[dict[str, object]] = []
+    def __init__(self, lease: Lease):
+        self.lease_result = lease
+        self.lease_calls: list[dict[str, object]] = []
         self.attached: list[tuple[str, str]] = []
         self.released: list[tuple[str, str]] = []
         self.heartbeats: list[str] = []
@@ -1314,9 +1314,9 @@ class _FakeClient:
         self.prepared: list[dict[str, object]] = []
         self.settled: list[dict[str, object]] = []
 
-    def claim(self, **kwargs):
-        self.claim_calls.append(kwargs)
-        return self.claim_result
+    def lease(self, **kwargs):
+        self.lease_calls.append(kwargs)
+        return self.lease_result
 
     def attach(
         self,
@@ -1358,10 +1358,10 @@ class _FakeWorkspaces:
     def __init__(self, root: Path):
         self.root = root
 
-    def prepare(self, claim):
+    def prepare(self, lease):
         return Workspace(
-            path=self.root / claim.session_id,
-            branch=f"merv/{claim.session_id}",
+            path=self.root / lease.session_id,
+            branch=f"merv/{lease.session_id}",
             base_sha="1" * 40,
             head_sha="1" * 40,
             stats={
@@ -1433,7 +1433,7 @@ class AgentRunnerTest(unittest.TestCase):
         runner.fill_available_slots.assert_called_once_with()
 
     def test_pending_advance_is_leased_swapped_and_settled_once(self) -> None:
-        client = _FakeClient(_claim("unused"))
+        client = _FakeClient(_lease("unused"))
         advance = {
             "advance_id": "adv_1",
             "instance_id": "wf_1",
@@ -1473,7 +1473,7 @@ class AgentRunnerTest(unittest.TestCase):
         self.assertEqual(receipt["error"], "")
 
     def test_advance_waits_until_the_brain_grants_the_lease(self) -> None:
-        client = _FakeClient(_claim("unused"))
+        client = _FakeClient(_lease("unused"))
         client.pending = {"advance_id": "adv_1", "instance_id": "wf_1", "revision": 7}
         client.advance = None
         with tempfile.TemporaryDirectory() as tmp:
@@ -1498,7 +1498,7 @@ class AgentRunnerTest(unittest.TestCase):
         self.assertEqual(client.settled, [])
 
     def test_a_failed_swap_is_settled_with_its_error(self) -> None:
-        client = _FakeClient(_claim("unused"))
+        client = _FakeClient(_lease("unused"))
         advance = {
             "advance_id": "adv_2",
             "instance_id": "wf_1",
@@ -1529,7 +1529,7 @@ class AgentRunnerTest(unittest.TestCase):
         self.assertEqual(receipt["error"], "central moved")
 
     def test_launch_is_reserved_first_and_secret_reaches_only_child_env(self) -> None:
-        claim = _claim(
+        lease = _lease(
             "ags_1",
             "wf_1",
             target_type="replication",
@@ -1540,7 +1540,7 @@ class AgentRunnerTest(unittest.TestCase):
             instruction="Execute the assigned work with the supplied context.",
             assignment={"instance_id": "wf_1", "role": "worker", "brief": "the brief"},
         )
-        client = _FakeClient(claim)
+        client = _FakeClient(lease)
         host = _FakeHost()
         platform = Platform(
             "custom",
@@ -1578,12 +1578,12 @@ class AgentRunnerTest(unittest.TestCase):
 
             self.assertEqual(len(host.spawns), 1)
             launch = host.spawns[0]
-            claim_call = client.claim_calls[0]
+            lease_call = client.lease_calls[0]
             self.assertEqual(
                 launch["child_env"]["MERV_AGENT_SESSION_KEY"],
                 _session_key(
                     runner_secret=b"r" * 32,
-                    idempotency_key=claim_call["idempotency_key"],
+                    idempotency_key=lease_call["idempotency_key"],
                 ),
             )
             self.assertNotIn("runner-secret", launch["instruction"])
@@ -1651,7 +1651,7 @@ class AgentRunnerTest(unittest.TestCase):
                 0o600,
             )
 
-            # Even if the remote claim is replayed after the process stops,
+            # Even if the remote lease is replayed after the process stops,
             # the durable launch record makes a second spawn impossible.
             ledger.sessions["ags_1"].status = "stopped"
             with patch.dict(
@@ -1662,12 +1662,12 @@ class AgentRunnerTest(unittest.TestCase):
                 self.assertEqual(runner.fill_available_slots(), 0)
             self.assertEqual(len(host.spawns), 1)
 
-    def test_lost_claim_response_reuses_identity_without_storing_the_secret(
+    def test_lost_lease_response_reuses_identity_without_storing_the_secret(
         self,
     ) -> None:
-        claim = _claim("ags_1")
-        client = _FakeClient(claim)
-        client.claim = MagicMock(side_effect=[RunnerError("response lost"), claim])
+        lease = _lease("ags_1")
+        client = _FakeClient(lease)
+        client.lease = MagicMock(side_effect=[RunnerError("response lost"), lease])
         host = _FakeHost()
         platform = Platform("custom", "command", ("agent",))
         with tempfile.TemporaryDirectory() as tmp:
@@ -1696,19 +1696,19 @@ class AgentRunnerTest(unittest.TestCase):
                 self.assertNotIn("mas_", first_ledger)
                 self.assertEqual(runner.fill_available_slots(), 1)
 
-            first = client.claim.call_args_list[0].kwargs
-            second = client.claim.call_args_list[1].kwargs
+            first = client.lease.call_args_list[0].kwargs
+            second = client.lease.call_args_list[1].kwargs
             self.assertEqual(first["idempotency_key"], second["idempotency_key"])
             self.assertEqual(first["session_key"], second["session_key"])
-            self.assertEqual(ledger.pending_claims, {})
+            self.assertEqual(ledger.pending_leases, {})
             self.assertEqual(len(host.spawns), 1)
 
     def test_launch_mounts_skills_and_tells_the_child_where_they_are(self) -> None:
-        claim = _claim(
+        lease = _lease(
             "ags_1",
             instruction="Resume the assignment and follow the research-workflow skill.",
         )
-        client = _FakeClient(claim)
+        client = _FakeClient(lease)
         host = _FakeHost()
         platform = Platform("codex", "codex", ("codex",))
         with tempfile.TemporaryDirectory() as tmp:
@@ -1754,13 +1754,13 @@ class AgentRunnerTest(unittest.TestCase):
     def test_one_bad_platform_does_not_stop_other_launches(self) -> None:
         bad = Platform("bad", "bad", ("missing-agent",))
         good = Platform("good", "good", ("working-agent",))
-        client = _FakeClient(_claim("unused"))
+        client = _FakeClient(_lease("unused"))
 
-        def claim_for_platform(**kwargs):
+        def lease_for_platform(**kwargs):
             name = kwargs["platform"]
-            return _claim(f"ags_{name}", f"wf_{name}")
+            return _lease(f"ags_{name}", f"wf_{name}")
 
-        client.claim = claim_for_platform
+        client.lease = lease_for_platform
         bad_host = _FakeHost()
         bad_host.spawn = MagicMock(side_effect=RunnerError("binary missing"))
         good_host = _FakeHost()
@@ -1789,15 +1789,15 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertIn(("ags_bad", "launch_failed"), client.released)
 
     def test_reconcile_stops_a_process_revoked_by_merv(self) -> None:
-        claim = _claim("ags_1")
-        client = _FakeClient(claim)
+        lease = _lease("ags_1")
+        client = _FakeClient(lease)
         client.remote_sessions = [{"id": "ags_1", "status": "expired"}]
         host = _FakeHost()
         platform = Platform("custom", "command", ("agent",))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ledger = SessionLedger(root / "sessions.json")
-            session = ledger.reserve(claim, platform)
+            session = ledger.reserve(lease, platform)
             session.host_ref = "pid:41"
             session.pid = 41
             session.status = "running"
@@ -1822,8 +1822,8 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertEqual(host.stopped, [HostSession(ref="pid:41", pid=41)])
 
     def test_second_rapid_stop_without_progress_is_backed_off(self) -> None:
-        first = _claim("ags_1", "wf_1", role="worker")
-        second = _claim("ags_2", "wf_1", role="worker")
+        first = _lease("ags_1", "wf_1", role="worker")
+        second = _lease("ags_2", "wf_1", role="worker")
         client = _FakeClient(second)
         client.remote_sessions = [{"id": "ags_2", "status": "active"}]
         host = _FakeHost()
@@ -1875,15 +1875,15 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertIn(("ags_2", "host_process_crash_loop"), client.released)
 
     def test_capture_failure_does_not_wedge_a_finished_session(self) -> None:
-        claim = _claim("ags_1")
-        client = _FakeClient(claim)
+        lease = _lease("ags_1")
+        client = _FakeClient(lease)
         client.remote_sessions = [{"id": "ags_1", "status": "expired"}]
         host = _FakeHost()
         platform = Platform("custom", "command", ("agent",))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ledger = SessionLedger(root / "sessions.json")
-            session = ledger.reserve(claim, platform)
+            session = ledger.reserve(lease, platform)
             session.host_ref = "pid:41"
             session.pid = 41
             session.cwd = str(root / "ags_1")
@@ -1918,13 +1918,13 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertIn(("ags_1", "remote_expired"), client.released)
 
     def test_recovery_without_a_persisted_pid_waits_out_the_lease(self) -> None:
-        claim = _claim("ags_1")
-        client = _FakeClient(claim)
+        lease = _lease("ags_1")
+        client = _FakeClient(lease)
         platform = Platform("custom", "command", ("agent",))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ledger = SessionLedger(root / "sessions.json")
-            session = ledger.reserve(claim, platform)
+            session = ledger.reserve(lease, platform)
             runner = AgentRunner(
                 project_id="proj_1",
                 platforms=(platform,),
@@ -1942,8 +1942,8 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertEqual(ledger.sessions["ags_1"].status, "uncertain")
 
     def test_reconcile_heartbeats_only_after_host_is_confirmed_alive(self) -> None:
-        claim = _claim("ags_1")
-        client = _FakeClient(claim)
+        lease = _lease("ags_1")
+        client = _FakeClient(lease)
         client.remote_sessions = [
             {
                 "id": "ags_1",
@@ -1956,7 +1956,7 @@ class AgentRunnerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ledger = SessionLedger(root / "sessions.json")
-            session = ledger.reserve(claim, platform)
+            session = ledger.reserve(lease, platform)
             session.host_ref = "pid:41"
             session.pid = 41
             session.attached = True
@@ -1982,8 +1982,8 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertEqual(client.attached, [])
 
     def test_reconcile_mirrors_the_trace_excerpt_on_change_and_finally_complete(self) -> None:
-        claim = _claim("ags_1")
-        client = _FakeClient(claim)
+        lease = _lease("ags_1")
+        client = _FakeClient(lease)
         client.remote_sessions = [
             {"id": "ags_1", "status": "active", "host_session_ref": "pid:41"}
         ]
@@ -1998,7 +1998,7 @@ class AgentRunnerTest(unittest.TestCase):
             )
             (trace_dir / "stderr.log").write_text("boot\n", encoding="utf-8")
             ledger = SessionLedger(root / "sessions.json")
-            session = ledger.reserve(claim, platform)
+            session = ledger.reserve(lease, platform)
             session.host_ref = "pid:41"
             session.pid = 41
             session.attached = True
@@ -2032,7 +2032,7 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertEqual(session.status, "stopped")
 
     def test_one_broken_session_does_not_stop_peer_reconciliation(self) -> None:
-        client = _FakeClient(_claim("unused"))
+        client = _FakeClient(_lease("unused"))
         client.remote_sessions = [
             {"id": "ags_bad", "status": "active", "host_session_ref": "pid:40"},
             {"id": "ags_good", "status": "active", "host_session_ref": "pid:41"},
@@ -2053,7 +2053,7 @@ class AgentRunnerTest(unittest.TestCase):
                 ("ags_bad", "wf_bad", 40),
                 ("ags_good", "wf_good", 41),
             ):
-                session = ledger.reserve(_claim(session_id, instance_id), platform)
+                session = ledger.reserve(_lease(session_id, instance_id), platform)
                 session.host_ref = f"pid:{pid}"
                 session.pid = pid
                 session.attached = True

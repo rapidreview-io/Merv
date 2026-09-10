@@ -84,7 +84,7 @@ def artifact_tools(*, target_types: Iterable[str], roles: Iterable[str], lens_ro
             ),
         )
         target_type: str = Field(
-            default="", description="List filter: target kind (e.g. 'experiment')."
+            default="", description="List filter: the target kind of the association."
         )
         target_id: str = Field(default="", description="List filter: target id.")
         role: str = Field(default="", description="List filter: artifact role.")

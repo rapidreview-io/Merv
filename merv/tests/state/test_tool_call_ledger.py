@@ -19,7 +19,16 @@ from unittest import mock
 
 from merv.brain.kernel.request_context import begin_request, bind_principal, reset_request
 from merv.brain.kernel.state import tool_call_ledger as ledger_module
-from merv.brain.kernel.state.activity import LEDGER_LABEL_MAX_CHARS
+from merv.brain.kernel.state.activity import (
+    LEDGER_LABEL_MAX_CHARS,
+    register_activity_vocabulary,
+)
+from merv.brain.research_core import ACTIVITY_VOCABULARY
+
+# Research names its own argument fields; Surface registers them before it
+# builds anything that can log. A ledger built without composition, as these
+# tests do, has to say so itself.
+register_activity_vocabulary(**ACTIVITY_VOCABULARY)
 from merv.brain.kernel.state.persistence import TOOL_CALL_LEDGER_INDEXES
 from merv.brain.kernel.state.schema import statements
 from merv.brain.kernel.state.store import StateStore

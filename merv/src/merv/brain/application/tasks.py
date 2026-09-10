@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, TypedDict, cast
+from typing import Any, TypedDict, cast
 
 from ..workflows import TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE
 from ..research_core import content_tldr
@@ -257,10 +257,6 @@ class TaskContextQuery:
         if full:
             record["content"] = text
         return record
-
-
-def rows_for_status(tasks: Iterable[Record], fields: Iterable[str]) -> list[Record]:
-    return project_rows(tasks, fields)
 
 
 __all__ = [

@@ -44,12 +44,12 @@ def _loopback_bind_host(host: str) -> str:
     non-numeric spelling is pinned to numeric loopback and numeric spellings
     bind as themselves: what was classified is what gets bound.
     """
-    candidate = _normalize_host(host)
+    spelling = _normalize_host(host)
     try:
-        ipaddress.ip_address(candidate)
+        ipaddress.ip_address(spelling)
     except ValueError:
         return "127.0.0.1"
-    return candidate
+    return spelling
 
 
 def _bind_socket(*, host: str, port: int) -> socket.socket:
@@ -65,11 +65,11 @@ def _bind_socket(*, host: str, port: int) -> socket.socket:
 
 def is_loopback_host(host: str) -> bool:
     """Whether binding ``host`` can only be reached from this machine."""
-    candidate = _normalize_host(host).lower()
-    if candidate == "localhost":
+    spelling = _normalize_host(host).lower()
+    if spelling == "localhost":
         return True
     try:
-        address = ipaddress.ip_address(candidate)
+        address = ipaddress.ip_address(spelling)
     except ValueError:
         return False
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:

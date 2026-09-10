@@ -153,11 +153,11 @@ def auth_signal(
         if environment.get(name, "").strip():
             return {"status": "present", "via": f"env {name}"}
     for raw in signals["files"]:
-        candidate = (
+        location = (
             Path(raw.replace("~", str(home_dir), 1)) if raw.startswith("~") else Path(raw)
         )
         try:
-            if candidate.is_file():
+            if location.is_file():
                 return {"status": "present", "via": raw}
         except OSError:
             continue

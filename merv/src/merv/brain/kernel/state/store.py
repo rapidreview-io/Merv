@@ -240,55 +240,6 @@ class BaseStateStore:
                 (project_id, user_id),
             )
 
-    def set_user_hf_token(self, *, user_id: str, token: str) -> None:
-        """Upsert a user's Hugging Face token (no-dataplane Phase C).
-
-        Write-only by contract: this + ``clear_user_hf_token`` are the only
-        mutators, and no read method returns the value to an API — ``resolve``
-        below is internal-only (sandbox provisioning). Dialect-neutral upsert
-        (``excluded`` works on both SQLite >= 3.24 and Postgres)."""
-        with self.transaction() as conn:
-            conn.execute(
-                """
-                INSERT INTO user_hf_tokens (user_id, token, updated_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT (user_id) DO UPDATE
-                  SET token = excluded.token, updated_at = excluded.updated_at
-                """,
-                (user_id, token, now_iso()),
-            )
-
-    def clear_user_hf_token(self, *, user_id: str) -> None:
-        with self.transaction() as conn:
-            conn.execute("DELETE FROM user_hf_tokens WHERE user_id = ?", (user_id,))
-
-    def user_hf_token(self, *, user_id: str) -> str:
-        """Resolve a user's HF token for sandbox provisioning. INTERNAL ONLY —
-        never surface this through an API. Empty when unset/unauthenticated,
-        which the sandbox path treats as public-models-only graceful degrade."""
-        if not user_id:
-            return ""
-        with closing(self.connect()) as conn:
-            row = conn.execute(
-                "SELECT token FROM user_hf_tokens WHERE user_id = ?", (user_id,)
-            ).fetchone()
-        return str(row["token"]) if row and row["token"] else ""
-
-    def api_key_owner(self, *, key_id: str) -> str:
-        """Owner user of a management key, for payer-of-record resolution.
-
-        Resolved at write time — key rows can be revoked or deleted later, so
-        spend attribution must never depend on a read-time join.
-        """
-        if not key_id:
-            return ""
-        with closing(self.connect()) as conn:
-            row = conn.execute(
-                "SELECT owner_user_id FROM project_api_keys WHERE id = ?",
-                (key_id,),
-            ).fetchone()
-        return str(row["owner_user_id"]) if row is not None else ""
-
     def is_project_member(self, *, project_id: str, user_id: str) -> bool:
         with closing(self.connect()) as conn:
             row = conn.execute(
@@ -320,44 +271,6 @@ class BaseStateStore:
             if row is None:
                 return "0:0"
             return f"{int(row['max_id'] or 0)}:{int(row['count'] or 0)}"
-
-    def project_sandbox_signal(self, *, project_id: str | None) -> str:
-        """Change signal for a project's sandbox rows (no event-table proxy).
-
-        Sandbox lifecycle mutations — provision, status, heartbeat, command,
-        terminate — every one bumps ``updated_at`` (see repository) but,
-        unlike claims/experiments/reviews, do NOT append an event, so the event
-        signal can't stand in for them. Digest each row's identity plus the
-        fields the sandbox_list_view surfaces: it changes iff that payload would.
-        Cheap — a few rows, a handful of columns, no per-row view rendering.
-        """
-        with closing(self.connect()) as conn:
-            project_id = self.require_project_id(conn=conn, project_id=project_id)
-            rows = conn.execute(
-                """
-                SELECT sandbox_uid, status, updated_at, last_seen_at,
-                       last_command_snapshot_at, terminated_at
-                FROM sandboxes
-                WHERE project_id = ?
-                ORDER BY sandbox_uid
-                """,
-                (project_id,),
-            ).fetchall()
-            digest = "\n".join(
-                "|".join(
-                    str(row[column] or "")
-                    for column in (
-                        "sandbox_uid",
-                        "status",
-                        "updated_at",
-                        "last_seen_at",
-                        "last_command_snapshot_at",
-                        "terminated_at",
-                    )
-                )
-                for row in rows
-            )
-            return f"{len(rows)}:{digest}"
 
     def tenant_event_count(self, *, tenant_id: str) -> int:
         """Count durable project events for one tenant."""

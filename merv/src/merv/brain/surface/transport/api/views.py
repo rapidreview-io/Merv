@@ -18,9 +18,7 @@ class ToolCallTelemetry(Protocol):
     def stats(self, **kwargs: Any) -> dict[str, Any]: ...
     def get(self, **kwargs: Any) -> dict[str, Any] | None: ...
 
-_LOCAL_DATA_PLANE_RESPONSE_KEYS = frozenset(
-    {"repo_root", "local_sync_dir", "local_experiment_dir"}
-)
+_LOCAL_DATA_PLANE_RESPONSE_KEYS = frozenset({"repo_root", "local_sync_dir"})
 
 
 def present(value: Any) -> Any:

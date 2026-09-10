@@ -88,7 +88,7 @@ def feed_tools(*, vocabulary: RefVocabulary, author_roles: Iterable[str], adopta
                 "not pursuing but want on record), paper (something you read, with "
                 "your take), question (you need the researcher's steer — state your "
                 "default and continue), bottleneck, direction (a pivot), status (a "
-                "checkpoint of a running experiment; keep them hours apart)."
+                "checkpoint of work in flight; keep them hours apart)."
             ),
         )
         attachments: list[dict[str, Any]] | None = Field(
@@ -131,9 +131,10 @@ def feed_tools(*, vocabulary: RefVocabulary, author_roles: Iterable[str], adopta
             default=None,
             description=(
                 "Id of the one previous post this one follows — an answer, a "
-                "continuation of your own thread, a verdict on a claim, a "
-                "correction. The feed shows it as a thread under that post, "
-                "whoever wrote it. A live experiment is a thread you keep adding to."
+                "continuation of your own thread, a verdict on an earlier "
+                "call, a correction. The feed shows it as a thread under that "
+                "post, whoever wrote it. Work in flight is a thread you keep "
+                "adding to."
             ),
         )
         quote_of: str | None = Field(
@@ -173,7 +174,7 @@ def feed_tools(*, vocabulary: RefVocabulary, author_roles: Iterable[str], adopta
             handler_identity="feed.register",
             input_model=FeedRegisterInput,
             description=(
-                "Claim your voice in the project feed: register once per session "
+                "Take your voice in the project feed: register once per session "
                 "with a handle and a one-line bio, then post as that voice. Returns "
                 "the roster of existing voices (adopt one for continuity), whether "
                 "your role's voice was adopted, and the researcher's latest replies."
