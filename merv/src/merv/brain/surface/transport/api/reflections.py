@@ -6,22 +6,28 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from ....application import Application
+from ....application import Application, LogicGraphQuery
+from ....application.reflections import present_reflection_overview
+from ....research_core import Research
 
 
-def build_router(*, application: Application) -> APIRouter:
+def build_router(
+    *, application: Application, research: Research, graphs: LogicGraphQuery
+) -> APIRouter:
     api_router = APIRouter()
 
     @api_router.get("/api/projects/{project_id}/reflections")
     def list_reflections(project_id: str) -> dict[str, Any]:
         # Reflection waves + staleness/coverage signal for the UI panel.
-        return application.reflection_overview(project_id=project_id)
+        return present_reflection_overview(
+            research.reflection_overview(project_id=project_id)
+        )
 
     @api_router.get("/api/projects/{project_id}/reflections/current/graph")
     def project_logic_graph(project_id: str) -> dict[str, Any]:
         # The living project logic graph; same payload shape as the
         # per-experiment graph endpoint. UI-only read, no agent tool.
-        return application.project_graph(project_id=project_id)
+        return graphs.project(project_id=project_id)
 
     @api_router.get("/api/projects/{project_id}/reflections/{reflection_id}/graph")
     def reflection_graph(project_id: str, reflection_id: str) -> dict[str, Any]:
@@ -30,7 +36,7 @@ def build_router(*, application: Application) -> APIRouter:
         # living file. Same payload shape as /reflections/current/graph (minus
         # signal). Registered after the literal current/graph route so
         # "current" is not captured as a reflection_id. UI-only read.
-        return application.reflection_graph(
+        return graphs.reflection_graph(
             project_id=project_id, reflection_id=reflection_id
         )
 

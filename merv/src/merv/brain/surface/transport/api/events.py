@@ -9,25 +9,25 @@ from fastapi import APIRouter, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import Response, StreamingResponse
 
-from ....application import Application
+from ....research_core import Research
 from .shared import conditional_json_from_signal
 
 
-def build_router(*, application: Application) -> APIRouter:
+def build_router(*, research: Research) -> APIRouter:
     api_router = APIRouter()
 
     @api_router.get("/api/projects/{project_id}/events")
     def events(
         project_id: str, request: Request, limit: int = Query(100, ge=1)
     ) -> Response:
-        signal = application.timeline_signal(project_id=project_id)
+        signal = research.project_event_signal(project_id=project_id)
         # Mirror the store's limit clamp so limit=501 and limit=502 share one
         # ETag (identical bodies must not cache-miss on token identity).
         effective_limit = max(1, min(int(limit), 500))
         return conditional_json_from_signal(
             request,
             signal_parts=("events", project_id, effective_limit, signal),
-            payload=lambda: application.recent_events(
+            payload=lambda: research.recent_events(
                 project_id=project_id, limit=limit
             ),
         )
@@ -51,7 +51,7 @@ def build_router(*, application: Application) -> APIRouter:
         """
         # Resolve the starting cursor eagerly so an unknown project 404s as
         # normal JSON instead of dying after SSE headers were sent.
-        head = application.recent_events(project_id=project_id, limit=1)["events"]
+        head = research.recent_events(project_id=project_id, limit=1)["events"]
         cursor = since
         if cursor is None:
             last_event_id = request.headers.get("last-event-id") or ""
@@ -73,7 +73,7 @@ def build_router(*, application: Application) -> APIRouter:
             idle_ms = 0
             elapsed_ms = 0
             while True:
-                batch = application.events_since(
+                batch = research.events_since(
                     project_id=project_id,
                     after_id=cursor,
                 )["events"]

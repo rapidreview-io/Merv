@@ -644,7 +644,7 @@ TOOLS: dict[str, ToolContract] = {
         ),
     ),
     "experiment.list": ToolContract(
-        handler_identity="application.list_experiments",
+        handler_identity="application.experiments",
         visibility="internal",
         input_model=ProjectScopedInput,
         description="List experiments with state.",
@@ -708,7 +708,7 @@ TOOLS: dict[str, ToolContract] = {
         ),
     ),
     "task.list": ToolContract(
-        handler_identity="application.list_tasks",
+        handler_identity="application.tasks",
         visibility="internal",
         input_model=ProjectScopedInput,
         description="List tasks with state.",

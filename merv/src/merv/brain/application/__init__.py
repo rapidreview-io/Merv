@@ -2,6 +2,7 @@
 """Cross-component use cases and the ports they require."""
 """Cross-module orchestration."""
 
-from .application import Application
+from .application import Application, present_session
+from .queries import LogicGraphQuery
 
-__all__ = ["Application"]
+__all__ = ["Application", "LogicGraphQuery", "present_session"]

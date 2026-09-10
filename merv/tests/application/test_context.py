@@ -411,9 +411,14 @@ class ProjectContextBatchingTest(unittest.TestCase):
                     ),
                 )
 
+    def _context(self) -> ProjectContextQuery:
+        return ProjectContextQuery(
+            research=self.app.research, artifacts=self.app.artifacts
+        )
+
     def _select_count(self, *, project_id: str) -> int:
         self.store.statements.clear()
-        self.app.application.project_context(project_id=project_id)
+        self._context().build(project_id=project_id)
         return sum(
             statement.lstrip().upper().startswith(("SELECT", "WITH"))
             for statement in self.store.statements
@@ -451,7 +456,7 @@ class ProjectContextBatchingTest(unittest.TestCase):
 
         self.app.artifacts.get = record_get
         try:
-            self.app.application.project_context(project_id="proj_roles")
+            self._context().build(project_id="proj_roles")
         finally:
             self.app.artifacts.get = original
 

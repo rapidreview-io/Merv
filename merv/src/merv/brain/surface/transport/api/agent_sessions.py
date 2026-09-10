@@ -6,7 +6,8 @@ from typing import Any, Protocol
 
 from fastapi import APIRouter, Body, Request
 
-from ....application import Application
+from ....agent_sessions import AgentSessions
+from ....application import Application, present_session
 from ....kernel.utils import NotFoundError, PermissionDeniedError, ValidationError
 from ...identity import LOCAL_PRINCIPAL, ProjectKeyScopeError, principal_label
 from .gateway import ToolInvocationGateway
@@ -34,7 +35,8 @@ class AgentAdvances(Protocol):
 
 
 def build_router(
-    gateway: ToolInvocationGateway, *, application: Application, advances: AgentAdvances,
+    gateway: ToolInvocationGateway, *, application: Application,
+    sessions: AgentSessions, advances: AgentAdvances,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -49,7 +51,7 @@ def build_router(
 
     def authorize_session_control(request: Request, session_id: str) -> None:
         """Re-check the session's immutable parent project before mutation."""
-        authority = application.agent_session_authority(session_id=session_id)
+        authority = sessions.authority(session_id=session_id)
         principal = getattr(request.state, "principal", LOCAL_PRINCIPAL)
         same_source = str(authority["source_user_id"]) == str(
             getattr(principal, "user_id", "") or ""
@@ -60,7 +62,7 @@ def build_router(
             gateway.authorize_project(request, authority["project_id"])
         except (NotFoundError, ProjectKeyScopeError):
             if same_source:
-                application.agent_sessions.invalidate(
+                sessions.invalidate(
                     session_id=session_id,
                     reason="source_authority_revoked",
                 )
@@ -95,7 +97,7 @@ def build_router(
     ) -> dict[str, Any]:
         payload = dict(body or {})
         authorize_session_control(request, session_id)
-        return application.attach_agent_session(
+        return {"session": present_session(sessions.attach(
             session_id=session_id,
             runner_id=owner(request, payload),
             host_session_ref=str(payload.get("host_session_ref") or ""),
@@ -117,7 +119,7 @@ def build_router(
                 if isinstance(payload.get("telemetry"), dict)
                 else None
             ),
-        )
+        ))}
 
     @router.post("/api/agent-sessions/{session_id}/release")
     def release(
@@ -125,7 +127,7 @@ def build_router(
     ) -> dict[str, Any]:
         payload = dict(body or {})
         authorize_session_control(request, session_id)
-        return application.release_agent_session(
+        return {"session": present_session(sessions.release(
             session_id=session_id,
             runner_id=owner(request, payload),
             reason=str(payload.get("reason") or "runner_released"),
@@ -140,7 +142,7 @@ def build_router(
                 if isinstance(payload.get("telemetry"), dict)
                 else None
             ),
-        )
+        ))}
 
     @router.post("/api/agent-sessions/{session_id}/heartbeat")
     def heartbeat(
@@ -148,7 +150,7 @@ def build_router(
     ) -> dict[str, Any]:
         payload = dict(body or {})
         authorize_session_control(request, session_id)
-        return application.heartbeat_agent_session(
+        return {"session": present_session(sessions.heartbeat(
             session_id=session_id,
             runner_id=owner(request, payload),
             head_sha=str(payload.get("head_sha") or ""),
@@ -162,7 +164,7 @@ def build_router(
                 if isinstance(payload.get("telemetry"), dict)
                 else None
             ),
-        )
+        ))}
 
     @router.post("/api/projects/{project_id}/agent-advances/prepare")
     def prepare_agent_advance(
@@ -246,7 +248,7 @@ def build_router(
                 "applied_version must be an integer",
                 details={"field": "applied_version"},
             )
-        return application.heartbeat_agent_runner(
+        response = sessions.heartbeat_runner(
             project_id=project_id,
             runner_id=owner(request, payload),
             machine=(
@@ -267,6 +269,10 @@ def build_router(
             ),
             applied_version=applied_version,
         )
+        # ``runner`` keeps the pre-existing key for one release; the caller's
+        # own row, the desired version, and the desired settings are the
+        # contract.
+        return {"runner": response["presence"], **response}
 
     @router.put("/api/projects/{project_id}/agent-runners/settings")
     def set_runner_settings(
@@ -292,11 +298,13 @@ def build_router(
             raise ValidationError(
                 "settings must be an object", details={"field": "settings"}
             )
-        return application.set_agent_runner_settings(
-            project_id=project_id,
-            runner_ref=str(payload.get("runner_ref") or ""),
-            settings=settings,
-        )
+        return {
+            "runner": sessions.set_desired_settings(
+                project_id=project_id,
+                runner_ref=str(payload.get("runner_ref") or ""),
+                settings=settings,
+            )
+        }
 
     @router.post("/api/agent-sessions/{session_id}/trace")
     def record_trace(
@@ -313,7 +321,7 @@ def build_router(
             raise ValidationError(
                 "stderr_tail must be a string", details={"field": "stderr_tail"}
             )
-        return application.record_agent_session_trace(
+        return sessions.record_trace(
             session_id=session_id,
             runner_id=owner(request, payload),
             events=events,
@@ -324,12 +332,17 @@ def build_router(
     @router.get("/api/projects/{project_id}/agent-sessions/{session_id}/trace")
     def session_trace(project_id: str, session_id: str, request: Request) -> dict[str, Any]:
         gateway.authorize_project(request, project_id)
-        return application.agent_session_trace(project_id=project_id, session_id=session_id)
+        return {"trace": sessions.trace(project_id=project_id, session_id=session_id)}
 
     @router.post("/api/projects/{project_id}/agent-sessions/{session_id}/halt")
     def halt_session(project_id: str, session_id: str, request: Request) -> dict[str, Any]:
+        """Stop one live session now; its runner kills the child on reconcile."""
         gateway.authorize_project(request, project_id)
-        return application.halt_agent_session(project_id=project_id, session_id=session_id)
+        return {
+            "session": present_session(
+                sessions.halt_session(project_id=project_id, session_id=session_id)
+            )
+        }
 
     @router.post("/api/projects/{project_id}/agent-sessions/halt")
     def halt_sessions(project_id: str, request: Request) -> dict[str, Any]:

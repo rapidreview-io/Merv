@@ -5,8 +5,10 @@
 Application coordinates product operations that cross module boundaries. It
 does not own research state, artifact bytes, sandboxes, feed posts, heavy
 objects, authentication, or transport. Those remain with their module roots.
-Surface calls one concrete `Application`; module-local tools call their owning
-module directly.
+Surface calls one concrete `Application`, and only for work that joins two of
+them: a route or tool whose whole job is one component's call takes that
+component from composition instead. One `return` into a collaborator is not a
+method that belongs here.
 
 ## Main flow
 
@@ -28,12 +30,14 @@ spans them. Research remains the public owner of its event ledger reads.
   native views also hydrate pinned research artifacts and bounded context.
 - Reflection commands use the same graph/runtime and present either
   compact agent documents or the richer UI overview.
-- Dashboard, cost, timeline, and graph reads join facts without
-  exposing module internals to Surface.
+- Dashboard and cost join facts without exposing module internals to Surface;
+  the event ledger is read from Research at the routes that serve it.
 - Candidate submission resolves and pins an Artifact or storage-object pointer, or
   records a pathless experiment-workspace nomination for evaluator staging;
   Research owns the immutable candidate and champion lineage.
-- Agent-session leases enumerate dispatchable workflow nodes. Each node declares
+- Agent-session leases enumerate dispatchable workflow nodes. Runner control
+  itself — attach, heartbeat, release, halt, traces, tuning — is Agent
+  Sessions' own and is called there. Each node declares
   its role, concise brief, exact references and execution policy (tools, scopes,
   sandbox, workspace). Agent Sessions rechecks the pinned revision inside the
   lease transaction and freezes the packet. Authentication records actual work
@@ -57,7 +61,7 @@ spans them. Research remains the public owner of its event ledger reads.
   experiment views and compatibility input translation.
 - `reviews.py`, `reflections.py`, and `reflection_guidance.py`: review handoff,
   reflection presentation, and guidance.
-- `queries.py`: logic-graph composition only.
+- `queries.py`: logic-graph composition, built once and shared by its routes.
 - `maintenance.py`: token/log retention and coding-agent lease cleanup.
   merv-sandboxes owns machine and object expiry.
 
@@ -90,5 +94,6 @@ spans them. Research remains the public owner of its event ledger reads.
 ## Forbidden regression
 
 Do not recreate a service bag, generic event bus, facade, repository, or
-Application-owned port forest. New cross-module behavior belongs as a clear
-method on `Application`; module-local behavior belongs on the module root.
+Application-owned port forest, and do not grow a pass-through back: new
+cross-module behavior belongs as a clear method on `Application`, while
+module-local behavior belongs on the module root and is called there.

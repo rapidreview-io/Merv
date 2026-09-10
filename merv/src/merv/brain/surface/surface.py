@@ -19,7 +19,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from ..application import Application
+from ..application import Application, LogicGraphQuery
 from ..application.maintenance import CleanupService
 from .workflow_knowledge import WorkflowKnowledge
 from ..agent_sessions import AgentSessions
@@ -141,6 +141,10 @@ class Surface:
             ) is not None,
         )
         self.literature = Literature(store=store, unfurl=AllowlistedPaperPreview())
+        # The logic-graph read the experiment and reflection routes both
+        # render; it joins Research facts with the pinned graph bytes and
+        # belongs to neither router.
+        self.logic_graphs = LogicGraphQuery(research=self.research, artifacts=self.artifacts)
         # Leases learn whether their instance still stands from the workflow
         # runtime's facts; Agent Sessions never reads a research record.
         self.agent_sessions = AgentSessions(store=store, facts=self.workflows.runtime)
@@ -354,7 +358,6 @@ def build_control_server(
         app=app,
         allowed_origins=origins,
         cleanup=cleanup,
-        tenant_counters=app.application.tenant_counters,
         surface_policy=surface,
         auth=auth,
         user_directory=auth if auth is not None and auth.service_key else None,
@@ -400,7 +403,6 @@ def build_local_server(
         app=app,
         allowed_origins=allowed_origins or [],
         cleanup=cleanup,
-        tenant_counters=app.application.tenant_counters,
         surface_policy=_local_http_surface(),
     )
     return ControlPlaneServer(

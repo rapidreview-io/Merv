@@ -149,6 +149,7 @@ def create_fastapi_app(
     routers = (
         agent_sessions.build_router(
             gateway, application=api.application,
+            sessions=api.agent_sessions,
             advances=getattr(api, "agent_advances", api.application),
         ),
         meta.build_router(
@@ -166,18 +167,20 @@ def create_fastapi_app(
             user_directory=user_directory,
         ),
         claims.build_router(gateway),
-        experiments.build_router(gateway, application=api.application),
+        experiments.build_router(
+            gateway, application=api.application, graphs=api.logic_graphs
+        ),
         tasks.build_router(gateway, application=api.application),
-        reflections.build_router(application=api.application),
-        artifacts.build_router(artifacts=api.artifacts),
-        storage.build_router(storage=api.storage),
-        reviews.build_router(
-            gateway,
+        reflections.build_router(
             application=api.application,
             research=api.research,
+            graphs=api.logic_graphs,
         ),
+        artifacts.build_router(artifacts=api.artifacts),
+        storage.build_router(storage=api.storage),
+        reviews.build_router(gateway, research=api.research),
         *sandbox_routers,
-        events.build_router(application=api.application),
+        events.build_router(research=api.research),
         user_settings.build_router(user_settings=api.user_settings),
     )
     for router in routers:
@@ -217,7 +220,6 @@ def create_fastapi_app(
         )
 
     if cleanup is not None:
-        counters = tenant_counters or api.application.tenant_counters
 
         @http.post("/api/admin/cleanup")
         def admin_cleanup() -> dict[str, Any]:
@@ -225,6 +227,11 @@ def create_fastapi_app(
 
         @http.get("/api/admin/tenants/{tenant_id}/counters")
         def admin_tenant_counters(tenant_id: str) -> dict[str, Any]:
-            return counters(tenant_id=tenant_id)
+            if tenant_counters is not None:
+                return tenant_counters(tenant_id=tenant_id)
+            return {
+                "tenant_id": tenant_id,
+                "tool_calls": api.research.tenant_event_count(tenant_id=tenant_id),
+            }
 
     return http

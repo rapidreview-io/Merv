@@ -34,7 +34,6 @@ from .experiments.presentation import (
 )
 from .experiments.transition import TransitionExperiment
 from .project_context import ProjectContextQuery
-from .queries import LogicGraphQuery
 from .reflections import (
     consolidation_packet,
     present_agent_reflection_state,
@@ -122,7 +121,6 @@ class Application:
             project_context=self._project_context,
             task_context=self._task_context,
         )
-        self._graphs = LogicGraphQuery(research=research, artifacts=artifacts)
 
     # Coding-agent execution ----------------------------------------------
 
@@ -235,147 +233,11 @@ class Application:
             revision=int(row["workflow_revision"]), session_id=str(row["id"]),
         )
 
-    def attach_agent_session(
-        self,
-        *,
-        session_id: str,
-        runner_id: str,
-        host_session_ref: str,
-        workspace_ref: str = "",
-        base_sha: str = "",
-        head_sha: str = "",
-        workspace_stats: dict[str, Any] | None = None,
-        agent_setup: dict[str, Any] | None = None,
-        telemetry: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        return {
-            "session": present_session(self.agent_sessions.attach(
-                session_id=session_id,
-                runner_id=runner_id,
-                host_session_ref=host_session_ref,
-                workspace_ref=workspace_ref,
-                base_sha=base_sha,
-                head_sha=head_sha,
-                workspace_stats=workspace_stats,
-                agent_setup=agent_setup,
-                telemetry=telemetry,
-            ))
-        }
-
-    def agent_session_authority(self, *, session_id: str) -> dict[str, str]:
-        """The immutable parent authority for one runner-owned session."""
-        return self.agent_sessions.authority(session_id=session_id)
-
     def halt_agent_sessions(self, *, project_id: str) -> dict[str, Any]:
         """Stop every live session now; runners kill their children on reconcile."""
         halted = self.agent_sessions.halt(project_id=project_id)
         listing = self.agent_sessions.list(project_id=project_id)
         return {"halted": halted, **listing, "sessions": [present_session(row) for row in listing["sessions"]]}
-
-    def release_agent_session(
-        self,
-        *,
-        session_id: str,
-        runner_id: str,
-        reason: str,
-        head_sha: str = "",
-        workspace_stats: dict[str, Any] | None = None,
-        telemetry: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        return {
-            "session": present_session(self.agent_sessions.release(
-                session_id=session_id,
-                runner_id=runner_id,
-                reason=reason,
-                head_sha=head_sha,
-                workspace_stats=workspace_stats,
-                telemetry=telemetry,
-            ))
-        }
-
-    def heartbeat_agent_session(
-        self,
-        *,
-        session_id: str,
-        runner_id: str,
-        head_sha: str = "",
-        workspace_stats: dict[str, Any] | None = None,
-        telemetry: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        return {
-            "session": present_session(self.agent_sessions.heartbeat(
-                session_id=session_id,
-                runner_id=runner_id,
-                head_sha=head_sha,
-                workspace_stats=workspace_stats,
-                telemetry=telemetry,
-            ))
-        }
-
-    def heartbeat_agent_runner(
-        self,
-        *,
-        project_id: str,
-        runner_id: str,
-        machine: dict[str, Any],
-        platforms: list[dict[str, Any]],
-        capacity: int,
-        inventory: dict[str, Any] | None = None,
-        applied_version: int | None = None,
-    ) -> dict[str, Any]:
-        """Record presence and answer with the caller's own desired tuning."""
-        response = self.agent_sessions.heartbeat_runner(
-            project_id=project_id,
-            runner_id=runner_id,
-            machine=machine,
-            platforms=platforms,
-            capacity=capacity,
-            inventory=inventory,
-            applied_version=applied_version,
-        )
-        # ``runner`` keeps the pre-existing key for one release; the caller's own
-        # row, the desired version, and the desired settings are the contract.
-        return {"runner": response["presence"], **response}
-
-    def set_agent_runner_settings(
-        self, *, project_id: str, runner_ref: str, settings: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Owner saves runner tuning; the runner pulls it on its next heartbeat."""
-        return {
-            "runner": self.agent_sessions.set_desired_settings(
-                project_id=project_id, runner_ref=runner_ref, settings=settings
-            )
-        }
-
-    def record_agent_session_trace(
-        self,
-        *,
-        session_id: str,
-        runner_id: str,
-        events: list[Any],
-        stderr_tail: str,
-        complete: bool,
-    ) -> dict[str, Any]:
-        """The runner mirrors a bounded, redacted excerpt for the job card."""
-        return self.agent_sessions.record_trace(
-            session_id=session_id,
-            runner_id=runner_id,
-            events=events,
-            stderr_tail=stderr_tail,
-            complete=complete,
-        )
-
-    def agent_session_trace(self, *, project_id: str, session_id: str) -> dict[str, Any]:
-        trace = self.agent_sessions.trace(project_id=project_id, session_id=session_id)
-        return {"trace": trace}
-
-    def halt_agent_session(self, *, project_id: str, session_id: str) -> dict[str, Any]:
-        """Stop one live session now; its runner kills the child on reconcile."""
-        return {
-            "session": present_session(self.agent_sessions.halt_session(
-                project_id=project_id, session_id=session_id
-            ))
-        }
 
     # Workflow and context -------------------------------------------------
 
@@ -407,9 +269,6 @@ class Application:
             experiment_id=experiment_id,
             task_id=task_id,
         )
-
-    def project_context(self, *, project_id: str | None = None) -> dict[str, Any]:
-        return self._project_context.build(project_id=project_id)
 
     def submit_candidate(
         self,
@@ -566,7 +425,7 @@ class Application:
                     "projects you can work in, then pass project_id explicitly.",
                     details={"field": "project_id"},
                 )
-            return self.project_context(project_id=resolved)
+            return self._project_context.build(project_id=resolved)
         raise ValidationError(f'action="{action}" is not recognized for project')
 
     def _reachable_projects(
@@ -588,19 +447,6 @@ class Application:
                 for project in listed
             ]
         }
-
-    def experiment_context(
-        self,
-        *,
-        state: dict[str, Any],
-        project_id: str | None = None,
-        pinned_artifacts: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
-        return self._experiment_context.build(
-            state=state,
-            project_id=project_id,
-            pinned_artifacts=pinned_artifacts,
-        )
 
     # Experiments ----------------------------------------------------------
 
@@ -650,9 +496,6 @@ class Application:
             for state in states
         ]
         return presented if rich else {"experiments": presented}
-
-    def list_experiments(self, *, project_id: str | None = None) -> dict[str, Any]:
-        return self.experiments(project_id=project_id, rich=False)
 
     def experiment(
         self,
@@ -771,9 +614,6 @@ class Application:
         ]
         return presented if rich else {"tasks": presented}
 
-    def list_tasks(self, *, project_id: str | None = None) -> dict[str, Any]:
-        return self.tasks(project_id=project_id, rich=False)
-
     def task(
         self,
         *,
@@ -878,9 +718,6 @@ class Application:
             project_id=project_id,
         )
 
-    def review_queue(self, *, project_id: str | None = None) -> dict[str, Any]:
-        return review_queue(self.research, project_id=project_id)
-
     def create_reflection(
         self,
         *,
@@ -923,11 +760,6 @@ class Application:
                 ),
                 **result,
             }
-        )
-
-    def reflection_overview(self, *, project_id: str) -> dict[str, Any]:
-        return present_reflection_overview(
-            self.research.reflection_overview(project_id=project_id)
         )
 
     def transition_reflection(
@@ -1143,7 +975,7 @@ class Application:
             artifact_list_record(artifact)
             for artifact in self.artifacts.scan(project_id=project_id)
         ]
-        reviews = self.review_queue(project_id=project_id)
+        reviews = review_queue(self.research, project_id=project_id)
         claims = status["project"]["active_claims"]
         active_experiments = work["active_experiments"]
         active_tasks = work.get("active_tasks", [])
@@ -1160,7 +992,7 @@ class Application:
             "artifacts": artifacts,
             "reviews": reviews,
             "pending_change_sets": [],
-            "recent_events": self.recent_events(
+            "recent_events": self.research.recent_events(
                 project_id=project_id,
                 limit=25,
             )["events"],
@@ -1204,52 +1036,7 @@ class Application:
             entry["experiment_name"] = names.get(entry["experiment_id"], "")
         return spend
 
-    def tenant_counters(self, *, tenant_id: str) -> dict[str, Any]:
-        return {
-            "tenant_id": tenant_id,
-            "tool_calls": self.research.tenant_event_count(tenant_id=tenant_id),
-        }
-
-    def timeline_signal(self, *, project_id: str) -> str:
-        return self.research.project_event_signal(project_id=project_id)
-
-    def recent_events(self, *, project_id: str, limit: int) -> dict[str, Any]:
-        result = self.research.recent_events(project_id=project_id, limit=500)
-        return {
-            **result,
-            "events": (result.get("events") or [])[:limit],
-        }
-
-    def events_since(self, *, project_id: str, after_id: int) -> dict[str, Any]:
-        result = self.research.events_since(
-            project_id=project_id,
-            after_id=after_id,
-        )
-        return {
-            **result,
-            "events": result.get("events") or [],
-        }
-
-    def experiment_graph(
-        self, *, project_id: str, experiment_id: str
-    ) -> dict[str, Any]:
-        return self._graphs.experiment(
-            project_id=project_id,
-            experiment_id=experiment_id,
-        )
-
-    def project_graph(self, *, project_id: str) -> dict[str, Any]:
-        return self._graphs.project(project_id=project_id)
-
-    def reflection_graph(
-        self, *, project_id: str, reflection_id: str
-    ) -> dict[str, Any]:
-        return self._graphs.reflection_graph(
-            project_id=project_id,
-            reflection_id=reflection_id,
-        )
-
-__all__ = ["Application"]
+__all__ = ["Application", "present_session"]
 
 
 def session_kind(execution: Mapping[str, Any]) -> str:

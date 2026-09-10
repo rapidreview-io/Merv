@@ -175,7 +175,7 @@ def build_router(
             signal_parts=(
                 "home",
                 project_id,
-                application.timeline_signal(project_id=project_id),
+                research.project_event_signal(project_id=project_id),
                 sandboxes.project_signal(project_id=project_id),
             ),
             payload=lambda: application.dashboard(project_id=project_id),

@@ -113,13 +113,14 @@ class TenantCountersTest(unittest.TestCase):
                 target_id="exp",
                 payload={"k": "v"},
             )
-        counts = self.app.application.tenant_counters(tenant_id="tenant_x")
-        self.assertEqual(counts["tenant_id"], "tenant_x")
-        self.assertGreaterEqual(counts["tool_calls"], 1)
+        self.assertGreaterEqual(
+            self.app.research.tenant_event_count(tenant_id="tenant_x"), 1
+        )
 
     def test_other_tenant_sees_nothing(self) -> None:
-        counts = self.app.application.tenant_counters(tenant_id="tenant_none")
-        self.assertEqual(counts["tool_calls"], 0)
+        self.assertEqual(
+            self.app.research.tenant_event_count(tenant_id="tenant_none"), 0
+        )
 
 
 if __name__ == "__main__":
