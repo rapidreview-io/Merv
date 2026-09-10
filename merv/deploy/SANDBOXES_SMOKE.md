@@ -40,10 +40,10 @@ and creates synthetic research records and an agent key only in temporary SQLite
 It checks hosted HTTP/MCP authentication and the configured native connection.
 Run it in a disposable container with no published ports and a temporary `/tmp`.
 
-If translating legacy upload handles, run `verify_migrated_uploads.py --report -`
-inside the new control container, passing the successful reviewed import receipt
-on stdin. It checks only the selected migrated receipts and native object metadata,
-preserves completion handles, and does not complete or delete migration sessions.
+Legacy upload-handle translation (`verify_migrated_uploads.py`) was retired with
+the storage ledger. The retained `storage_objects` rows are carried into Research's
+`research_objects` associations by `migrate_storage_ledger.py` (see its header);
+merv-sandboxes is the object catalog from then on.
 See [the historical storage record](SANDBOXES_STORAGE_MIGRATION_HISTORY.md) only
 to interpret old receipts; its retired authentication instructions do not apply.
 

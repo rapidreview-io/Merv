@@ -25,8 +25,8 @@ import psycopg
 from psycopg.rows import dict_row
 
 from merv.brain.infrastructure.client import InfrastructureClient, build_infrastructure_client
-from merv.brain.infrastructure.storage import RemoteObjectProvider, _decode_upload
 from merv.brain.infrastructure.ports import infrastructure_actor, project_namespace
+from merv.brain.infrastructure.storage import upload_target
 from merv.brain.kernel.state.store import MIGRATIONS
 from merv.brain.kernel.utils import NotFoundError
 from merv.brain.surface.config import build_blob_store
@@ -81,6 +81,20 @@ def bounded_download(url: str, *, size: int, expected_sha: str, full_limit: int)
     if full:
         require(digest.hexdigest() == expected_sha, "download SHA-256 mismatch")
     return {"bytes_read": received, "verification": "full_sha256" if full else "range_and_total_size"}
+
+
+def available_by_sha(client: InfrastructureClient, *, namespace: str, sha256: str) -> dict[str, Any] | None:
+    """Legacy uploads were registered under name = sha256; find the live one."""
+    offset = 0
+    while True:
+        page = client.request("GET", "/storage/objects", namespace=namespace,
+                              params={"name": sha256, "limit": 1000, "offset": offset})["objects"]
+        for row in page:
+            if row["sha256"] == sha256 and row["state"] == "available":
+                return row
+        if len(page) < 1000:
+            return None
+        offset += len(page)
 
 
 def missing_in_namespace(client: InfrastructureClient, object_id: str, namespace: str) -> None:
@@ -155,7 +169,6 @@ def verify_history(args: argparse.Namespace, client: InfrastructureClient) -> No
     require(bool(artifacts), "no bounded artifact samples available")
     require(bool(heavy), "no heavy-object samples available")
     blobs = build_blob_store(default_root=Path("."))
-    provider = RemoteObjectProvider(client=client)
     budget = args.history_budget_mib * MIB
     consumed = 0
     for row in artifacts:
@@ -170,14 +183,14 @@ def verify_history(args: argparse.Namespace, client: InfrastructureClient) -> No
     for row in rows.values():
         namespace = row["namespace"]
         require(namespace == row["project_id"], "historical heavy namespace does not match project")
-        stat = provider.stat(namespace=namespace, sha256=row["content_sha256"])
-        require(stat is not None and stat.size_bytes == row["size_bytes"], "native stat does not match research heavy metadata")
+        native = available_by_sha(client, namespace=namespace, sha256=row["content_sha256"])
+        require(native is not None and native["size_bytes"] == row["size_bytes"], "native stat does not match research heavy metadata")
         limit = min(args.full_limit_mib * MIB, max(0, budget - consumed))
         if row["id"] in recovered_ids:
             require(row["size_bytes"] <= limit, "recovered object cannot receive full SHA-256 within byte limits")
         expected_read = row["size_bytes"] if row["size_bytes"] <= limit else min(MIB, row["size_bytes"])
         require(consumed + expected_read <= budget, "historical download budget would be exceeded")
-        target = provider.presign_download(namespace=namespace, sha256=row["content_sha256"], expires_in=300)
+        target = client.request("GET", f"/storage/objects/{native['id']}/download", namespace=namespace)
         verified = bounded_download(target["url"], size=row["size_bytes"], expected_sha=row["content_sha256"], full_limit=limit)
         consumed += verified["bytes_read"]
         emit("historical_heavy", ok=True, id=row["id"], project_id=row["project_id"], recovered=row["id"] in recovered_ids, **verified)
@@ -273,7 +286,6 @@ def verify_writes(args: argparse.Namespace, client: InfrastructureClient) -> Non
     cleanup_ok = False
     try:
         verify_artifact_write(run_id)
-        provider = RemoteObjectProvider(client=client)
         with tempfile.TemporaryDirectory(prefix="merv-storage-smoke-") as temporary:
             source = Path(temporary) / "payload.bin"
             digesting = hashlib.sha256()
@@ -286,34 +298,43 @@ def verify_writes(args: argparse.Namespace, client: InfrastructureClient) -> Non
             sha = digesting.hexdigest()
             emit("new_heavy_intent", namespace=namespace, sha256=sha, bytes=length)
             try:
-                target = provider.presign_upload(namespace=namespace, sha256=sha, size_bytes=length, expires_in=300)
+                status = client.request("POST", "/storage/objects", namespace=namespace,
+                                        json={"name": sha, "sha256": sha, "size_bytes": length,
+                                              "content_type": "application/octet-stream"})
+                target = upload_target(client, namespace=namespace, status=status)
             finally:
                 # Recover an accepted create whose HTTP response was lost.
-                owned.extend((namespace, row["id"]) for row in provider._find(namespace=namespace, sha256=sha))
-            _, oid = _decode_upload(target["upload_id"])
+                owned.extend((namespace, row["id"]) for row in client.request(
+                    "GET", "/storage/objects", namespace=namespace,
+                    params={"name": sha, "limit": 1000, "offset": 0})["objects"] if row["sha256"] == sha)
+            oid = target["upload_id"]
             owned.append((namespace, oid))
             emit("new_heavy_created", object_id=oid, namespace=namespace, bytes=length, parts=target["part_count"])
             require(target["part_count"] >= 2, "configured smoke payload did not exercise multipart upload")
             first = target["parts"][0]
             put_part(first, source=source, part_size=target["part_size"], total_size=length)
-            resumed = provider.resume_upload(upload_id=target["upload_id"], expires_in=300)
+            resumed = upload_target(client, namespace=namespace, status=client.request(
+                "GET", f"/storage/objects/{oid}/upload", namespace=namespace))
             require(first["part_number"] in resumed["completed_parts"], "resume did not recognize the uploaded first part")
             require(all(part["part_number"] != first["part_number"] for part in resumed["parts"]), "resume requested retransmission of completed part")
             for part in resumed["parts"]:
                 put_part(part, source=source, part_size=resumed["part_size"], total_size=length)
-            stat = provider.complete_upload(upload_id=target["upload_id"])
-            require(stat.sha256 == sha and stat.size_bytes == length, "completed smoke upload metadata differs")
-            # Heavy adapter uploads default to pinned. Cleanup tracks exact
-            # IDs and requires worker-confirmed deletion before reporting pass.
-            require(provider.stat(namespace=namespace, sha256=sha) == stat, "heavy facade stat disagrees after completion")
-            download = provider.presign_download(namespace=namespace, sha256=sha, expires_in=300)
+            completed = client.request("POST", f"/storage/objects/{oid}/complete", namespace=namespace)
+            require(completed["state"] == "available" and completed["sha256"] == sha
+                    and completed["size_bytes"] == length, "completed smoke upload metadata differs")
+            # Cleanup tracks exact IDs and requires worker-confirmed deletion
+            # before reporting pass.
+            found = available_by_sha(client, namespace=namespace, sha256=sha)
+            require(found is not None and found["id"] == oid, "service catalog disagrees after completion")
+            download = client.request("GET", f"/storage/objects/{oid}/download", namespace=namespace)
             checked = bounded_download(download["url"], size=length, expected_sha=sha, full_limit=length)
             missing_in_namespace(client, oid, wrong_namespace)
-            require(provider.stat(namespace=wrong_namespace, sha256=sha) is None, "another project found smoke content")
+            require(available_by_sha(client, namespace=wrong_namespace, sha256=sha) is None, "another project found smoke content")
             emit("new_heavy", ok=True, object_id=oid, namespace=namespace, resume_verified=True, **checked)
-        # Exercise the public adapter deletion path; final cleanup verifies
-        # physical deletion after the service worker acknowledges it.
-        require(provider.delete(namespace=namespace, sha256=sha), "heavy deletion did not find smoke object")
+        # Exercise the service deletion path; final cleanup verifies physical
+        # deletion after the service worker acknowledges it.
+        deleted = client.request("DELETE", f"/storage/objects/{oid}", namespace=namespace)
+        require(deleted["state"] in {"delete_pending", "deleted"}, "heavy deletion did not find smoke object")
     finally:
         cleanup_ok = clean_owned(client, list(dict.fromkeys(owned)))
     require(cleanup_ok, "smoke objects need operator cleanup using the reported exact IDs")
