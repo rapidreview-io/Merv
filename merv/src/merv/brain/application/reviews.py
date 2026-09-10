@@ -21,8 +21,7 @@ from .project_context import ProjectContextQuery
 from .reflections import present_agent_reflection_state
 from .tasks import TaskContextQuery
 
-_SUBMITTED_FIELDS = {"role": "role", "lens_id": "lens_id", "path": "path",
-                     "id": "artifact_id", "submission_id": "submission_id"}
+_SUBMITTED_FIELDS = ("role", "lens_id", "path", "submission_id")
 
 
 def request_review(research: Research, **kwargs: Any) -> dict[str, Any]:
@@ -257,7 +256,8 @@ def _submitted_artifacts(
             else artifact.data.decode("utf-8", errors="replace")
         )
         result.append({
-            **{public: getattr(artifact, name) for name, public in _SUBMITTED_FIELDS.items()},
+            **{name: getattr(artifact, name) for name in _SUBMITTED_FIELDS},
+            "artifact_id": artifact.id,
             "submitted_at": artifact.updated_at or artifact.created_at,
             "content": content,
             **({} if content is not None else {"note": (

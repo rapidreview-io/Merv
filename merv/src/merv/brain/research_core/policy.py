@@ -25,7 +25,7 @@ from typing import Any, Literal, TypeAlias
 from ..kernel.state.store import Connection
 from ..kernel.utils import ValidationError, now_iso
 from ..workflows import (
-    KINDS, ArtifactNeed, DependenciesDone, Evaluation, Issue, Requirement,
+    KINDS, ArtifactNeed, DependenciesDone, Evaluation, Issue, RecordKind, Requirement,
     ReviewGate, ReviewReturn, Snapshot,
 )
 
@@ -470,7 +470,9 @@ def validate_review_verdict(*, verdict: str) -> None:
         raise ValidationError(f"unknown review verdict: {verdict}")
 
 
-def resolve_review_return(*, kind, role: str, verdict: str, return_to: str) -> ReviewReturn | None:
+def resolve_review_return(
+    *, kind: RecordKind, role: str, verdict: str, return_to: str
+) -> ReviewReturn | None:
     """Validate a submitted review's routing input against the kind's gates.
 
     The graph decides which edge the verdict eventually takes; this only
