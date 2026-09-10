@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass, field
 from types import MappingProxyType
 from typing import Any, Protocol, TYPE_CHECKING
 
+from merv.shared.workspace_policy import REFERENCE_BASE_PREFIX, WorkspacePolicy
+
 from ..kernel.utils import WorkflowError
 
 if TYPE_CHECKING:
@@ -131,18 +133,6 @@ class Scope:
 
 
 @dataclass(frozen=True, slots=True)
-class Workspace:
-    """How the runner lays out code for a session; opaque to the brain beyond ``mode``."""
-
-    mode: str = "persistent"        # "none" | "ephemeral" | "persistent"
-    namespace: str = "workflows"    # path/branch segment ("experiments", "consolidations", "reviews")
-    base: str = "central"           # "central" | "reference:<kind>" (base sha from that Reference)
-    per_base: bool = False          # persistent branch keyed by instance AND base sha
-    retain: bool = True             # keep branch/worktree when the session ends
-    advances_central: bool = False  # accepted work may advance the central ref
-
-
-@dataclass(frozen=True, slots=True)
 class Execution:
     """What a session leased on this node may do. Research declares; support enforces.
 
@@ -155,7 +145,7 @@ class Execution:
     mutating: frozenset[str] = frozenset()
     scope: tuple[Scope, ...] = ()
     sandbox: bool = False
-    workspace: Workspace = Workspace()
+    workspace: WorkspacePolicy = WorkspacePolicy()
 
     def public(self) -> dict[str, Any]:
         """The JSON form carried by the assignment packet and stored with the lease."""
@@ -169,29 +159,21 @@ class Execution:
         }
 
     def problems(self) -> list[str]:
-        issues = []
-        if self.workspace.mode not in {"none", "ephemeral", "persistent"}:
-            issues.append(f"unknown workspace mode {self.workspace.mode!r}")
-        if not self.workspace.namespace:
-            issues.append("workspace namespace is required")
-        if not _valid_source(self.workspace.base, allow_workflow=False):
-            issues.append(f"unknown workspace base {self.workspace.base!r}")
+        issues = self.workspace.problems()
         if not self.mutating <= self.tools:
             issues.append("mutating tools must be declared in tools")
         if self.read_only and (self.mutating or self.sandbox):
             issues.append("a read-only node has no mutating tools or sandbox")
         for rule in self.scope:
-            if not rule.field or not _valid_source(rule.source, allow_workflow=True):
+            if not rule.field or not _valid_source(rule.source):
                 issues.append(f"invalid scope {rule.field!r} from {rule.source!r}")
         return issues
 
 
-def _valid_source(source: str, *, allow_workflow: bool) -> bool:
-    if source == "central" and not allow_workflow:
-        return True
-    if source in {"instance", "workflow"} and allow_workflow:
-        return True
-    return source.startswith("reference:") and len(source) > len("reference:")
+def _valid_source(source: str) -> bool:
+    return source in {"instance", "workflow"} or (
+        source.startswith(REFERENCE_BASE_PREFIX) and len(source) > len(REFERENCE_BASE_PREFIX)
+    )
 
 
 @dataclass(frozen=True, slots=True)

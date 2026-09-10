@@ -1,9 +1,8 @@
 """Machine client configuration and the plumbing every client shares.
 
 One error family, one reader of ``client.json``, one rule about which control
-URLs may carry a credential, and one redirect-refusing opener: the CLI, the
-runner, pairing and the harness all come through here, so a machine cannot
-disagree with itself about what it is configured to do.
+URLs may carry a credential, one redirect-refusing opener — so a machine
+cannot disagree with itself about what it is configured to do.
 
 Env-var names resolve dual-spelled here exactly as in ``merv.brain.kernel.env``:
 ``MERV_X`` primary, ``RESEARCH_PLUGIN_X`` legacy fallback (non-empty wins;
@@ -26,12 +25,8 @@ from .machine_dirs import resolve_machine_state_dir
 
 
 class ClientError(Exception):
-    """A machine client cannot read its configuration or carry out a command.
-
-    Every client-side failure that a caller is expected to report rather than
-    crash on derives from this: settings outside the closed schema, an
-    unreadable private file, a local launch that failed.
-    """
+    """Every client failure a caller reports rather than crashes on: settings
+    outside the closed schema, an unreadable private file, a failed launch."""
 
 
 ENV_PREFIX = "MERV_"
@@ -138,12 +133,8 @@ def resolve_client_control_url(
 
 
 def read_client_config(env: Mapping[str, str] | None = None) -> dict[str, Any]:
-    """The machine client document, or ``{}`` when it cannot be read at all.
-
-    The precedence resolvers must never fail on a damaged file: they fall back
-    to their defaults instead. Everything that edits the document reads it
-    through ``read_client_document`` and hears about the damage.
-    """
+    """The document, or ``{}``: the precedence resolvers fall back to their
+    defaults on a damaged file rather than refusing to start."""
     try:
         return read_client_document(resolve_client_config_path(env))
     except ClientError:
@@ -151,12 +142,9 @@ def read_client_config(env: Mapping[str, str] | None = None) -> dict[str, Any]:
 
 
 def read_client_document(path: Path) -> dict[str, Any]:
-    """The JSON object at ``path``; ``{}`` when absent, an error when damaged.
-
-    The one reader of a machine client file. "Not written yet" is ordinary and
-    answers ``{}``; unreadable or not-an-object is a failure, so a read-modify-
-    write never silently replaces a document it could not understand.
-    """
+    """The one reader of a machine client file. "Not written yet" is ordinary
+    and answers ``{}``; damaged is a failure, so a read-modify-write never
+    silently replaces a document it could not understand."""
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -169,12 +157,8 @@ def read_client_document(path: Path) -> dict[str, Any]:
 
 
 def safe_control_url(raw: str) -> str:
-    """``raw`` normalized, refused unless a credential may travel to it.
-
-    HTTPS anywhere, plain HTTP only to an explicit loopback host. Both the
-    runner (wiring a child's MCP server) and the CLI (posting a tool call)
-    apply this before a secret leaves the machine.
-    """
+    """``raw`` normalized, refused unless a credential may travel to it: HTTPS
+    anywhere, plain HTTP only to an explicit loopback host."""
     url = raw.strip().rstrip("/")
     parsed = urlsplit(url)
     if (parsed.scheme == "https" and parsed.netloc) or (

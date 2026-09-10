@@ -13,7 +13,7 @@ and exact evidence references. Wait and terminal nodes dispatch no agent.
 Every agent node declares an `Execution`: whether it is read-only, its
 node-specific tools beyond the support baseline, the `mutating` subset, `Scope`
 rules binding arguments to the instance id, the workflow name, or a brief
-`Reference` by kind, sandbox authority, and the runner `Workspace` layout (mode,
+`Reference` by kind, sandbox authority, and the runner `WorkspacePolicy` layout (mode,
 namespace, base, per-base branches, retention, central advance). Research
 declares; support enforces. The gateway verifies a present scoped argument and
 binds the resolved value into the handler call for mutating tools and for tools

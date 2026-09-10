@@ -9,7 +9,7 @@ the runner prepares. Nothing in support names a workflow or a record type.
 
 from __future__ import annotations
 
-from ..graph import Execution, Scope, Workspace
+from ..graph import Execution, Scope, WorkspacePolicy
 
 
 # Project-scoped knowledge every research agent reads; mutations stay scoped.
@@ -28,7 +28,7 @@ SANDBOX_TOOLS = SANDBOX_BOUND_TOOLS | {"sandbox.health", "sandbox.options"}
 
 REVIEW_TOOLS = KNOWLEDGE_TOOLS | {"consolidation.get", "review.start", "review.status", "review.submit"}
 
-REVIEW_WORKSPACE = Workspace(mode="ephemeral", namespace="reviews", base="reference:code", retain=False)
+REVIEW_WORKSPACE = WorkspacePolicy(mode="ephemeral", namespace="reviews", base="reference:code", retain=False)
 
 
 def owner_scopes(field: str) -> tuple[Scope, ...]:
@@ -44,7 +44,7 @@ def owner_scopes(field: str) -> tuple[Scope, ...]:
 
 
 def owner_execution(field: str, *, tools: frozenset[str], mutating: frozenset[str], sandbox: bool = False,
-                    workspace: Workspace = Workspace(), scope: tuple[Scope, ...] = ()) -> Execution:
+                    workspace: WorkspacePolicy = WorkspacePolicy(), scope: tuple[Scope, ...] = ()) -> Execution:
     return Execution(tools=tools, mutating=mutating, scope=(*owner_scopes(field), *scope), sandbox=sandbox,
                      workspace=workspace)
 
@@ -63,7 +63,7 @@ EXPERIMENT_EXECUTION = owner_execution(
     },
     mutating=SANDBOX_BOUND_TOOLS | {"experiment.transition", "experiment.exhibit", "mlflow.finalize_run"},
     sandbox=True,
-    workspace=Workspace(namespace="experiments"),
+    workspace=WorkspacePolicy(namespace="experiments"),
     scope=(Scope("producing_experiment_id", "instance", tools=("storage.submit",)),),
 )
 
@@ -83,7 +83,7 @@ CONSOLIDATION_EXECUTION = owner_execution(
     "reflection_id",
     tools=KNOWLEDGE_TOOLS | {"consolidation.get", "consolidation.submit", "review.request", "review.status"},
     mutating=frozenset({"consolidation.submit"}),
-    workspace=Workspace(namespace="consolidations", base="reference:code", per_base=True, advances_central=True),
+    workspace=WorkspacePolicy(namespace="consolidations", base="reference:code", per_base=True, advances_central=True),
 )
 
 # A lens reads the fixed corpus and submits its own document through the

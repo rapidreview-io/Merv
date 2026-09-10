@@ -63,12 +63,8 @@ class RunnerSettingsError(ClientError):
 
 
 def platform_problem(name: str, parallelism: object = None) -> str:
-    """Why this platform cannot be configured here, or ``""``.
-
-    The one place the two standing refusals live: an agent that cannot emit a
-    complete trace, and a slot count outside what one machine may run. Callers
-    raise their own error type with the sentence this returns.
-    """
+    """Why this platform cannot be configured, or ``""`` — the one home of the
+    two standing refusals. Callers raise their own error type with it."""
     if name.strip().lower() == "aider":
         return (
             "Aider is not supported for auto-run because it cannot emit a "
@@ -97,10 +93,9 @@ def platform_entry(
 ) -> dict[str, Any]:
     """One ``agent_platforms`` entry, whether an owner or the brain asked.
 
-    An entry that does not exist yet is created around its adapter's default
-    executable; an entry that does keeps everything the caller did not name,
-    so a ``command``-adapter agent's local argv survives a settings push.
-    Blank model/effort remove the field rather than storing emptiness.
+    A new entry is created around its adapter's default executable; an
+    existing one keeps every field the caller did not name. Blank model or
+    effort removes the field rather than storing emptiness.
     """
     entry: dict[str, Any] = dict(current) if isinstance(current, Mapping) else {
         "adapter": name if name in NATIVE_ADAPTERS else "command",

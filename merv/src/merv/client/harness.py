@@ -399,11 +399,8 @@ def _version_of(command: Sequence[str], environment: Mapping[str, str]) -> str:
 def installed_commands(
     names: Iterable[str], environment: Mapping[str, str] | None = None
 ) -> dict[str, str]:
-    """Each command name mapped to where it resolves on PATH, or ``""``.
-
-    One PATH sweep per cycle: the readiness report and the inventory's
-    "is this agent installed?" flags are two readings of this one probe.
-    """
+    """Each command name mapped to where it resolves on PATH, or ``""``: one
+    sweep, which the readiness report and the "installed" flags both read."""
     path = dict(os.environ if environment is None else environment).get("PATH")
     return {
         name: (shutil.which(name, path=path) or "")
@@ -420,9 +417,8 @@ def install_and_report(
 ) -> tuple[SkillsInstall | None, dict[str, Any]]:
     """Install the skills, then say what each harness will get from Merv.
 
-    Setup (``merv-client harness``) and the running daemon's heartbeat ask
-    the same question and must get the same answer, including how the install
-    itself failed.
+    Setup (``merv-client harness``) and the daemon's heartbeat ask the same
+    question and must get the same answer, including how the install failed.
     """
     install: SkillsInstall | None = None
     failure = ""

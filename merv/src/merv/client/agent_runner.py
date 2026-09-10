@@ -55,6 +55,7 @@ from merv.shared.redaction import (
     MAX_TRACE_TAIL_BYTES,
     redact_secrets,
 )
+from merv.shared.workspace_policy import WorkspacePolicy
 from merv.shared.runner_settings import (
     DEFAULT_PLATFORM_EXECUTABLES,
     TELEMETRY_COUNTERS,
@@ -135,53 +136,6 @@ class Platform:
     parallelism: int = 1
 
 
-WORKSPACE_MODES = frozenset({"none", "ephemeral", "persistent"})
-REFERENCE_BASE_PREFIX = "reference:"
-
-
-@dataclass(frozen=True)
-class WorkspacePolicy:
-    """A node's declared workspace: ``namespace`` is the branch and directory
-    segment it keeps, ``base`` is ``"central"`` or ``"reference:<kind>"``."""
-
-    mode: str = "persistent"
-    namespace: str = "workflows"
-    base: str = "central"
-    per_base: bool = False
-    retain: bool = True
-
-    def __post_init__(self) -> None:
-        if self.mode not in WORKSPACE_MODES:
-            raise RunnerError(f"unknown workspace mode {self.mode!r}")
-        if self.base != "central" and not self.base_reference_kind:
-            raise RunnerError(f"unknown workspace base {self.base!r}")
-        if _safe_name(self.namespace) != self.namespace:
-            raise RunnerError(
-                f"workspace namespace is not a path segment: {self.namespace!r}"
-            )
-
-    @classmethod
-    def from_execution(cls, execution: Mapping[str, Any]) -> WorkspacePolicy:
-        """The policy a packet declares; fields it omits keep their default."""
-        raw = execution.get("workspace")
-        if raw is not None and not isinstance(raw, Mapping):
-            raise RunnerError("assignment execution.workspace must be an object")
-        raw = raw or {}
-        return cls(
-            **{
-                spec.name: type(spec.default)(value)
-                for spec in fields(cls)
-                if (value := raw.get(spec.name)) not in (None, "")
-            }
-        )
-
-    @property
-    def base_reference_kind(self) -> str:
-        """The reference kind ``base`` names, or "" for the central ref."""
-        prefix = REFERENCE_BASE_PREFIX
-        return self.base[len(prefix):] if self.base.startswith(prefix) else ""
-
-
 @dataclass(frozen=True)
 class Lease:
     """One leased assignment as the packet declared it: the runner applies
@@ -210,7 +164,7 @@ class Lease:
 
     @property
     def workspace(self) -> WorkspacePolicy:
-        return WorkspacePolicy.from_execution(self.execution)
+        return _workspace_policy(self.execution)
 
     def reference(self, kind: str) -> str:
         """The id of the first brief reference of ``kind``, or ""."""
@@ -3270,7 +3224,7 @@ def _lease_from_session(session: Mapping[str, Any], *, project_id: str) -> Lease
     ):
         raise RunnerError("malformed lease response: references must be a list of objects")
     execution = dict(execution or {})
-    WorkspacePolicy.from_execution(execution)
+    _workspace_policy(execution)
     return Lease(
         session_id=session_id, instance_id=instance_id, execution=execution,
         project_id=str(session.get("project_id") or project_id),
@@ -3281,6 +3235,17 @@ def _lease_from_session(session: Mapping[str, Any], *, project_id: str) -> Lease
         instruction=_optional_text(pick("instruction", "prompt")),
         assignment=assignment,
     )
+
+
+def _workspace_policy(execution: Mapping[str, Any]) -> WorkspacePolicy:
+    """The layout a packet declares, refused when this build cannot make it."""
+    try:
+        policy = WorkspacePolicy.from_execution(execution)
+    except ValueError as exc:
+        raise RunnerError(str(exc)) from exc
+    for problem in policy.problems():
+        raise RunnerError(problem)
+    return policy
 
 
 def _advance_of(result: Mapping[str, Any] | None) -> dict[str, Any] | None:
