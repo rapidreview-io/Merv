@@ -1,8 +1,10 @@
-"""Run Merv experiment assignments in local coding-agent sessions.
+"""Run Merv agent assignments in local coding-agent sessions.
 
-The brain decides which experiment may run.  This process is only the local
-actuator: it claims work, starts an independently authenticated coding-agent
-process, and reports the process reference back to Merv.
+The brain decides which workflow node may run and declares, in the assignment
+packet, how its session may execute.  This process is only the local
+actuator: it claims work, prepares the workspace the packet asks for, starts
+an independently authenticated coding-agent process, and reports the process
+reference back to Merv.  Nothing here interprets what the work is.
 
 The session credential is supplied to a child only as
 ``MERV_AGENT_SESSION_KEY``. It is never written to disk, added to argv,
@@ -31,7 +33,7 @@ import urllib.error
 import urllib.request
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -69,7 +71,7 @@ SESSION_KEY_PREFIX = "mas_"
 # Reported in the heartbeat inventory so Settings can tell an old runner
 # archive from a current one; the runner is brain-free and has no package
 # version of its own. Bump when the runner/brain contract changes.
-RUNNER_VERSION = "2026.09.09"
+RUNNER_VERSION = "2026.09.10"
 DEFAULT_POLL_SECONDS = 10.0
 RAPID_STOP_SECONDS = 30.0
 CRASH_LOOP_WINDOW_SECONDS = 2 * 60.0
@@ -120,35 +122,109 @@ class Platform:
     parallelism: int = 1
 
 
+WORKSPACE_MODES = frozenset({"none", "ephemeral", "persistent"})
+REFERENCE_BASE_PREFIX = "reference:"
+
+
+@dataclass(frozen=True)
+class WorkspacePolicy:
+    """The workspace half of a node's execution policy, applied verbatim.
+
+    ``namespace`` is the directory and branch segment every checkout for the
+    node lives under, so a node keeps the branch names its work has always
+    used.  ``base`` is ``"central"`` or ``"reference:<kind>"``; the latter
+    names the brief reference whose id is the base commit.
+    """
+
+    mode: str = "persistent"
+    namespace: str = "workflows"
+    base: str = "central"
+    per_base: bool = False
+    retain: bool = True
+    advances_central: bool = False
+
+    @classmethod
+    def from_execution(cls, execution: Mapping[str, Any]) -> WorkspacePolicy:
+        raw = execution.get("workspace")
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, Mapping):
+            raise RunnerError("assignment execution.workspace must be an object")
+        policy = cls(
+            mode=str(raw.get("mode") or cls.mode),
+            namespace=str(raw.get("namespace") or cls.namespace),
+            base=str(raw.get("base") or cls.base),
+            per_base=bool(raw.get("per_base", cls.per_base)),
+            retain=bool(raw.get("retain", cls.retain)),
+            advances_central=bool(raw.get("advances_central", cls.advances_central)),
+        )
+        if policy.mode not in WORKSPACE_MODES:
+            raise RunnerError(f"unknown workspace mode {policy.mode!r}")
+        if policy.base != "central" and not policy.base_reference_kind:
+            raise RunnerError(f"unknown workspace base {policy.base!r}")
+        if _safe_name(policy.namespace) != policy.namespace:
+            raise RunnerError(
+                f"workspace namespace is not a path segment: {policy.namespace!r}"
+            )
+        return policy
+
+    @property
+    def base_reference_kind(self) -> str:
+        """The reference kind ``base`` names, or "" for the central ref."""
+        if not self.base.startswith(REFERENCE_BASE_PREFIX):
+            return ""
+        return self.base[len(REFERENCE_BASE_PREFIX):]
+
+
 @dataclass(frozen=True)
 class Claim:
-    """A Merv-authorized experiment session."""
+    """One leased assignment, exactly as the brain's packet declared it.
+
+    ``execution`` and ``references`` are carried verbatim, and ``target_type``
+    and ``target_id`` are opaque labels for people and pages.  The runner
+    applies the execution policy and resolves the reference kinds that policy
+    names; it never reads what the work is.
+    """
 
     session_id: str
-    experiment_id: str
     project_id: str
-    target_type: str = "experiment"
+    instance_id: str
+    target_type: str = ""
     target_id: str = ""
-    source_sha: str = ""
+    role: str = ""
+    label: str = ""
+    execution: dict[str, Any] = field(default_factory=dict)
+    references: list[dict[str, Any]] = field(default_factory=list)
     instruction: str | None = None
-    kind: str = "experiment"
-    review_request_id: str | None = None
-    attempt_index: int = 0
-    assignment: dict[str, Any] | None = None
+    # The whole packet as the brain sent it, recorded beside the trace.
+    assignment: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.target_id:
-            object.__setattr__(self, "target_id", self.experiment_id)
-
-    @property
-    def workspace_mode(self) -> str:
-        return str(((self.assignment or {}).get("execution") or {}).get(
-            "workspace", self.kind if self.kind in {"review", "consolidation"} else "work"
-        ))
+            object.__setattr__(self, "target_id", self.instance_id)
 
     @property
     def read_only(self) -> bool:
-        return bool(((self.assignment or {}).get("execution") or {}).get("read_only", self.kind == "review"))
+        return bool(self.execution.get("read_only"))
+
+    @property
+    def workspace(self) -> WorkspacePolicy:
+        return WorkspacePolicy.from_execution(self.execution)
+
+    def reference(self, kind: str) -> str:
+        """The id of the first brief reference of ``kind``, or ""."""
+        for item in self.references:
+            if isinstance(item, Mapping) and str(item.get("kind") or "") == kind:
+                return str(item.get("id") or "")
+        return ""
+
+    @property
+    def review_request_id(self) -> str | None:
+        return self.reference("review_request") or None
+
+    @property
+    def source_sha(self) -> str:
+        return self.reference("code")
 
 
 @dataclass(frozen=True)
@@ -165,8 +241,8 @@ class Workspace:
 
     path: Path
     branch: str | None = None
-    kind: str = "experiment"
-    review_request_id: str | None = None
+    mode: str = "persistent"
+    retain: bool = True
     base_sha: str = ""
     head_sha: str = ""
     stats: dict[str, int] | None = None
@@ -696,12 +772,14 @@ class LocalSession:
     """Durable launch intent; a session id is never spawned twice."""
 
     session_id: str
-    experiment_id: str
     project_id: str
     platform: str
     launch_attempted: bool
-    target_type: str = "experiment"
+    instance_id: str = ""
+    target_type: str = ""
     target_id: str = ""
+    role: str = ""
+    label: str = ""
     source_sha: str = ""
     adapter: str | None = None
     host_ref: str | None = None
@@ -714,10 +792,8 @@ class LocalSession:
     workspace_stats: dict[str, int] | None = None
     status: str = "launching"
     started_at: float | None = None
-    kind: str = "experiment"
-    review_request_id: str | None = None
-    attempt_index: int = 0
     workspace_mode: str = ""
+    workspace_retain: bool = True
     read_only: bool = False
     trace_dir: str | None = None
     trace_offset: int = 0
@@ -757,11 +833,17 @@ class SessionLedger:
             raise RunnerError(f"runner ledger must contain an object: {self.path}")
         runner_id = str(raw.get("runner_id") or uuid.uuid4().hex)
         sessions: dict[str, LocalSession] = {}
+        known = set(LocalSession.__dataclass_fields__)
         for value in raw.get("sessions") or []:
             if not isinstance(value, dict):
                 raise RunnerError(f"runner ledger contains a malformed session")
             try:
-                session = LocalSession(**value)
+                # A row written by an earlier runner build may carry fields
+                # this one no longer has; it is still the launch record that
+                # keeps a session from being spawned twice, so keep it.
+                session = LocalSession(
+                    **{key: item for key, item in value.items() if key in known}
+                )
             except (TypeError, ValueError) as exc:
                 raise RunnerError(
                     "runner ledger contains an unreadable session; "
@@ -813,20 +895,21 @@ class SessionLedger:
         existing = self.sessions.get(claim.session_id)
         if existing is not None:
             raise RunnerError(f"session {claim.session_id} already has a launch record")
+        policy = claim.workspace
         session = LocalSession(
             session_id=claim.session_id,
-            experiment_id=claim.experiment_id,
             project_id=claim.project_id,
             platform=platform.name,
             launch_attempted=True,
+            instance_id=claim.instance_id,
             target_type=claim.target_type,
-            target_id=claim.target_id or claim.experiment_id,
+            target_id=claim.target_id,
+            role=claim.role,
+            label=claim.label,
             source_sha=claim.source_sha,
             adapter=platform.adapter,
-            kind=claim.kind,
-            review_request_id=claim.review_request_id,
-            attempt_index=claim.attempt_index,
-            workspace_mode=claim.workspace_mode,
+            workspace_mode=policy.mode,
+            workspace_retain=policy.retain,
             read_only=claim.read_only,
         )
         self.sessions[claim.session_id] = session
@@ -859,99 +942,89 @@ class RunnerLock:
 
 
 class WorkspaceManager:
-    """Own the bare central repository and persistent per-experiment worktrees."""
+    """Own the bare central repository and the checkouts each policy asks for."""
 
     def __init__(self, settings: WorkspaceSettings):
         self.settings = settings
         self._bare_repository: Path | None = None
 
     def prepare(self, claim: Claim) -> Workspace:
+        """Give one session the workspace its execution policy declares.
+
+        ``none`` is a private scratch directory per session.  ``ephemeral`` is
+        a detached worktree at the base commit, one per session.
+        ``persistent`` is a branch keyed by the instance (and by the base
+        commit when ``per_base``), resumed with its recorded base when it
+        already exists.  The base is the central ref or the id of the brief
+        reference the policy names, falling back to central when that
+        reference is absent.
+        """
         root = self.settings.root
         if root is None:
             raise RunnerError("git_worktree requires a workspace root")
         root = root.expanduser().resolve()
         root.mkdir(parents=True, exist_ok=True)
-        target_id = _safe_name(claim.target_id or claim.experiment_id)
+        policy = claim.workspace
         project_id = _safe_name(claim.project_id)
-        if claim.workspace_mode == "none":
-            path = root / "sessions" / project_id / _safe_name(claim.session_id)
+        session_id = _safe_name(claim.session_id)
+        if policy.mode == "none":
+            path = root / "sessions" / project_id / session_id
             path.mkdir(parents=True, exist_ok=False)
-            return Workspace(path=path, kind="none")
+            return Workspace(path=path, mode="none", retain=policy.retain)
+        if not claim.instance_id:
+            raise RunnerError("a Git workspace needs the assignment's instance id")
+        instance_id = _safe_name(claim.instance_id)
+        pinned = (
+            claim.reference(policy.base_reference_kind)
+            if policy.base_reference_kind
+            else ""
+        )
         bare = self._canonical_repository()
         self._git(bare, "worktree", "prune")
-        if claim.workspace_mode == "review":
-            # Consolidation reviews carry an exact proposal SHA. Experiment
-            # plan/result reviews are evidence reviews and may have no code
-            # snapshot at all; give those reviewers a clean central checkout
-            # instead of making an unrelated Git fact a launch prerequisite.
-            review_sha = claim.source_sha or self.central_sha()
-            path = (
-                root
-                / "reviews"
-                / project_id
-                / _safe_name(claim.review_request_id or claim.session_id)
-                / _safe_name(claim.session_id)
-            )
+        if policy.mode == "ephemeral":
+            base_sha = pinned or self.central_sha()
+            path = root / policy.namespace / project_id / instance_id / session_id
             if path.exists():
-                raise RunnerError(f"refusing to reuse reviewer workspace: {path}")
+                raise RunnerError(f"refusing to reuse a session workspace: {path}")
             path.parent.mkdir(parents=True, exist_ok=True)
-            self._git(
-                bare,
-                "worktree",
-                "add",
-                "--detach",
-                str(path),
-                review_sha,
-            )
+            self._git(bare, "worktree", "add", "--detach", str(path), base_sha)
             return self._workspace(
                 path=path,
                 branch=None,
-                base_sha=review_sha,
-                kind="review",
-                review_request_id=claim.review_request_id,
+                base_sha=base_sha,
+                mode="ephemeral",
+                retain=policy.retain,
             )
 
-        if claim.workspace_mode == "consolidation":
-            # A rejected proposal keeps its declared base and therefore resumes
-            # this exact revision branch. A stale central advance supplies a new
-            # observed base, selecting a fresh worktree while preserving the old
-            # proposal for review and audit.
-            base_sha = claim.source_sha or self.central_sha()
-            revision = base_sha[:12]
-            category = "consolidations"
-            branch = f"merv/{category}/{project_id}/{target_id}/{revision}"
-            path = root / category / project_id / target_id / revision
-            base_ref = f"refs/merv/bases/{category}/{project_id}/{target_id}/{revision}"
-        else:
-            base_sha = ""
-            # Preserve the deployed experiment branches; every new graph shares
-            # one generic namespace keyed by its unique instance id.
-            category = "experiments" if claim.target_type == "experiment" else "workflows"
-            branch = f"merv/{category}/{project_id}/{target_id}"
-            path = root / category / project_id / target_id
-            base_ref = f"refs/merv/bases/{category}/{project_id}/{target_id}"
-        branch_ref = f"refs/heads/{branch}"
-        branch_head = self._try_rev_parse(bare, branch_ref)
-        if branch_head:
+        lineage = f"{policy.namespace}/{project_id}/{instance_id}"
+        expected_base = pinned
+        if policy.per_base:
+            # A branch per base: a re-run on the same base resumes it, while a
+            # moved base selects a fresh branch and leaves the old one intact
+            # for audit.
+            expected_base = pinned or self.central_sha()
+            lineage = f"{lineage}/{_safe_name(expected_base[:12])}"
+        branch = f"merv/{lineage}"
+        path = root.joinpath(*lineage.split("/"))
+        base_ref = f"refs/merv/bases/{lineage}"
+        if self._try_rev_parse(bare, f"refs/heads/{branch}"):
             recorded_base = self._try_rev_parse(bare, base_ref)
             if not recorded_base:
                 raise RunnerError(f"persistent branch has no recorded base: {branch}")
-            if base_sha and recorded_base != base_sha:
-                raise RunnerError(
-                    f"persistent consolidation branch has the wrong base: {branch}"
-                )
-            base_sha = recorded_base
+            if expected_base and recorded_base != expected_base:
+                raise RunnerError(f"persistent branch has the wrong base: {branch}")
             if not path.exists():
                 path.parent.mkdir(parents=True, exist_ok=True)
                 self._git(bare, "worktree", "add", str(path), branch)
             return self._workspace(
                 path=path,
                 branch=branch,
-                base_sha=base_sha,
-                kind=claim.kind,
+                base_sha=recorded_base,
+                mode="persistent",
+                retain=policy.retain,
             )
 
-        base_sha = base_sha or claim.source_sha or self.central_sha()
+        base_sha = expected_base or self.central_sha()
         path.parent.mkdir(parents=True, exist_ok=True)
         self._git(
             bare,
@@ -967,7 +1040,8 @@ class WorkspaceManager:
             path=path,
             branch=branch,
             base_sha=base_sha,
-            kind=claim.kind,
+            mode="persistent",
+            retain=policy.retain,
         )
 
     def capture(
@@ -977,12 +1051,13 @@ class WorkspaceManager:
         branch: str | None,
         base_sha: str,
         session_id: str,
-        kind: str,
+        mode: str,
         writable: bool,
+        retain: bool = True,
     ) -> Workspace:
-        """Commit bounded WIP so a conversation ending cannot lose an experiment."""
-        if kind == "none":
-            return Workspace(path=path, kind=kind)
+        """Commit bounded WIP so a conversation ending cannot lose work."""
+        if mode == "none":
+            return Workspace(path=path, mode=mode, retain=retain)
         if writable and self._git(path, "status", "--porcelain").strip():
             changed = self._git(
                 path,
@@ -1024,7 +1099,8 @@ class WorkspaceManager:
             path=path,
             branch=branch,
             base_sha=base_sha or self._rev_parse(path, "HEAD"),
-            kind=kind,
+            mode=mode,
+            retain=retain,
         )
 
     def observe(
@@ -1033,24 +1109,34 @@ class WorkspaceManager:
         path: Path,
         branch: str | None,
         base_sha: str,
-        kind: str,
+        mode: str,
+        retain: bool = True,
     ) -> Workspace:
-        if kind == "none":
-            return Workspace(path=path, kind=kind)
+        if mode == "none":
+            return Workspace(path=path, mode=mode, retain=retain)
         return self._workspace(
             path=path,
             branch=branch,
             base_sha=base_sha or self._rev_parse(path, "HEAD"),
-            kind=kind,
+            mode=mode,
+            retain=retain,
         )
 
     def close(self, workspace: Workspace) -> None:
-        """Remove temporary reviewer worktrees; durable branches stay put."""
-        if workspace.kind == "none":
-            if workspace.path.exists():
-                shutil.rmtree(workspace.path)
+        """Drop what the policy did not ask to keep.
+
+        A ``none`` workspace is a session-private scratch directory with
+        nothing to resume, so it always goes.  A Git checkout stays unless the
+        node declared ``retain: false``; a persistent branch and its recorded
+        base survive either way, so the next session on that instance checks
+        the branch out again.
+        """
+        if not workspace.path.exists():
             return
-        if workspace.kind != "review" or not workspace.path.exists():
+        if workspace.mode == "none":
+            shutil.rmtree(workspace.path)
+            return
+        if workspace.retain:
             return
         self._git(
             self._canonical_repository(),
@@ -1199,15 +1285,15 @@ class WorkspaceManager:
         path: Path,
         branch: str | None,
         base_sha: str,
-        kind: str,
-        review_request_id: str | None = None,
+        mode: str,
+        retain: bool,
     ) -> Workspace:
         head_sha = self._rev_parse(path, "HEAD")
         return Workspace(
             path=path,
             branch=branch,
-            kind=kind,
-            review_request_id=review_request_id,
+            mode=mode,
+            retain=retain,
             base_sha=base_sha,
             head_sha=head_sha,
             stats=self._diffstat(
@@ -1373,34 +1459,7 @@ class AgentSessionsClient:
             raise RunnerError("malformed claim response: session must be an object")
         if str(session.get("status") or "") not in {"offered", "active"}:
             return None
-        try:
-            return Claim(
-                session_id=str(session.get("session_id") or session["id"]),
-                experiment_id=str(session.get("experiment_id") or ""),
-                project_id=str(session.get("project_id") or project_id),
-                target_type=str(session.get("target_type") or "experiment"),
-                target_id=str(
-                    session.get("target_id") or session.get("experiment_id") or ""
-                ),
-                source_sha=str(session.get("source_sha") or ""),
-                instruction=_optional_text(
-                    session.get("instruction") or session.get("prompt")
-                ),
-                kind=str(session.get("kind") or result.get("kind") or "experiment"),
-                review_request_id=_optional_text(
-                    session.get("review_request_id") or result.get("review_request_id")
-                ),
-                attempt_index=int(session.get("attempt_index") or 0),
-                assignment=(
-                    dict(session.get("assignment") or {})
-                    if isinstance(session.get("assignment"), dict)
-                    else None
-                ),
-            )
-        except KeyError as exc:
-            raise RunnerError(
-                f"malformed claim response: missing {exc.args[0]}"
-            ) from exc
+        return _claim_from_session(session, project_id=project_id)
 
     def attach(
         self,
@@ -2367,8 +2426,8 @@ class AgentRunner:
         return any(
             previous.session_id != session.session_id
             and previous.platform == session.platform
-            and previous.kind == session.kind
-            and previous.target_id == session.target_id
+            and previous.instance_id == session.instance_id
+            and previous.role == session.role
             and previous.status == "stopped"
             and previous.started_at is not None
             and previous.started_at >= cutoff
@@ -2440,7 +2499,8 @@ class AgentRunner:
             path=Path(session.cwd),
             branch=session.branch,
             base_sha=session.base_sha,
-            kind="none" if session.workspace_mode == "none" else session.kind,
+            mode=session.workspace_mode,
+            retain=session.workspace_retain,
         )
         self._remember_workspace(session, workspace)
         return workspace
@@ -2453,8 +2513,9 @@ class AgentRunner:
             branch=session.branch,
             base_sha=session.base_sha,
             session_id=session.session_id,
-            kind="none" if session.workspace_mode == "none" else session.kind,
-            writable=not session.read_only and session.kind != "review" and session.workspace_mode != "none",
+            mode=session.workspace_mode,
+            retain=session.workspace_retain,
+            writable=not session.read_only and session.workspace_mode != "none",
         )
         self._remember_workspace(session, workspace)
         return workspace
@@ -2542,16 +2603,12 @@ class AgentRunner:
         host = HOSTS[platform.adapter]
         workspace: Workspace | None = None
         try:
-            if claim.kind == "review" and not claim.instruction:
-                raise RunnerError(
-                    "review assignment is missing its reviewer instruction"
-                )
             instruction = claim.instruction or _default_instruction(claim)
             workspace = self.workspaces.prepare(claim)
             session.cwd = str(workspace.path)
             session.branch = workspace.branch
             self._remember_workspace(session, workspace)
-            if claim.workspace_mode != "none":
+            if workspace.mode != "none":
                 instruction += (
                     "\nGit workspace: "
                     f"{workspace.branch or 'detached'} at {workspace.head_sha}; "
@@ -2563,7 +2620,7 @@ class AgentRunner:
                         adapter=platform.adapter,
                         workspace=workspace.path,
                         install=self.skills,
-                        exclude_file=None if claim.workspace_mode == "none" else self.workspaces.exclude_file(),
+                        exclude_file=None if workspace.mode == "none" else self.workspaces.exclude_file(),
                     )
                 except (HarnessError, OSError) as exc:
                     # The note below still names the install path, so the
@@ -2638,7 +2695,7 @@ class AgentRunner:
         self.ledger.save()
         print(
             f"started {platform.name} session {claim.session_id} "
-            f"for {claim.target_type} {claim.target_id or claim.experiment_id}"
+            f"for {claim.target_type or 'assignment'} {claim.target_id}"
         )
         return True
 
@@ -2987,22 +3044,26 @@ def _prepare_trace(
         command_for(platform) if callable(command_for) else list(platform.command)
     )
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
         "merv_agent_session_id": claim.session_id,
-        "assignment": dict(claim.assignment or {}),
+        "assignment": dict(claim.assignment),
         "work_item": {
             "project_id": claim.project_id,
-            "experiment_id": claim.experiment_id,
-            "kind": claim.kind,
+            "instance_id": claim.instance_id,
             "target_type": claim.target_type,
             "target_id": claim.target_id,
-            "attempt_index": claim.attempt_index,
+            "role": claim.role,
+            "label": claim.label,
             "review_request_id": claim.review_request_id,
             "source_sha": claim.source_sha,
+            "execution": dict(claim.execution),
+            "references": [dict(item) for item in claim.references],
             "instruction": instruction,
             "workspace": {
                 "path": str(workspace.path),
                 "branch": workspace.branch,
+                "mode": workspace.mode,
+                "retain": workspace.retain,
                 "base_sha": workspace.base_sha,
                 "head_sha": workspace.head_sha,
             },
@@ -3413,14 +3474,74 @@ def _session_key(*, runner_secret: bytes, idempotency_key: str) -> str:
 
 
 def _default_instruction(claim: Claim) -> str:
+    """A minimal prompt for a packet that carried no instruction of its own."""
     return (
-        "Own this Merv experiment until it reaches a terminal state.\n"
+        "Complete the Merv assignment leased to this session, then exit.\n"
         f"Project: {claim.project_id}\n"
-        f"Experiment: {claim.experiment_id}\n"
-        "Use the research-workflow skill. Start with workflow.status_and_next, "
-        "follow every gate, preserve evidence, and do not work on another "
-        "experiment in this session. If native MCP is unavailable, call tools "
-        "with `merv-client call TOOL --arguments JSON`.\n"
+        f"Assignment: {claim.label or claim.role or claim.target_type or 'assigned work'} "
+        f"(instance {claim.instance_id})\n"
+        "Call workflow.assignment for the brief and workflow.status_and_next "
+        "with this instance_id for the available actions. Follow every gate, "
+        "preserve evidence, and do not work on another assignment in this "
+        "session. If native MCP is unavailable, call tools with "
+        "`merv-client call TOOL --arguments JSON`.\n"
+    )
+
+
+def _claim_from_session(session: Mapping[str, Any], *, project_id: str) -> Claim:
+    """Lift a leased session into a Claim without interpreting its packet.
+
+    The brain keeps the packet's ``role``, ``label``, ``execution`` and
+    ``references`` on the session and returns the whole packet as
+    ``assignment``; a field missing from the session is read from the packet.
+    The execution policy is validated here so an assignment this build cannot
+    apply is refused at claim time rather than after a launch record exists.
+    """
+    assignment = session.get("assignment")
+    assignment = dict(assignment) if isinstance(assignment, Mapping) else {}
+
+    def pick(*names: str) -> Any:
+        for source in (session, assignment):
+            for name in names:
+                value = source.get(name)
+                if value not in (None, "", [], {}):
+                    return value
+        return None
+
+    session_id = str(session.get("session_id") or session.get("id") or "")
+    if not session_id:
+        raise RunnerError("malformed claim response: missing session id")
+    instance_id = str(pick("workflow_instance_id", "instance_id") or "")
+    if not instance_id:
+        raise RunnerError("malformed claim response: missing instance id")
+    execution = pick("execution")
+    if execution is None:
+        execution = {}
+    if not isinstance(execution, Mapping):
+        raise RunnerError("malformed claim response: execution must be an object")
+    references = pick("references")
+    if references is None:
+        references = []
+    if not isinstance(references, list) or not all(
+        isinstance(item, Mapping) for item in references
+    ):
+        raise RunnerError(
+            "malformed claim response: references must be a list of objects"
+        )
+    execution = dict(execution)
+    WorkspacePolicy.from_execution(execution)
+    return Claim(
+        session_id=session_id,
+        project_id=str(session.get("project_id") or project_id),
+        instance_id=instance_id,
+        target_type=str(pick("target_type", "workflow") or ""),
+        target_id=str(session.get("target_id") or instance_id),
+        role=str(pick("role") or ""),
+        label=str(pick("label") or ""),
+        execution=execution,
+        references=[dict(item) for item in references],
+        instruction=_optional_text(pick("instruction", "prompt")),
+        assignment=assignment,
     )
 
 
@@ -3608,7 +3729,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="merv-agent-runner",
         description=(
-            "Run Merv experiments in configured local coding agents. Pairs this "
+            "Run Merv agent assignments in configured local coding agents. Pairs this "
             "machine with a project on first run; `pair` starts a fresh pairing."
         ),
     )

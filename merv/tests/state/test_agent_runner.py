@@ -36,6 +36,7 @@ from merv.client.agent_runner import (
     SessionLedger,
     Workspace,
     WorkspaceManager,
+    WorkspacePolicy,
     WorkspaceSettings,
     _child_environment,
     _detected_commands,
@@ -57,6 +58,65 @@ from merv.client.cli import (
     main,
 )
 from merv.client.private_files import private_token
+
+
+def _claim(session_id: str, instance_id: str = "wf_1", **fields: object) -> Claim:
+    """A leased assignment carrying the packet fields the runner reads."""
+    fields.setdefault("project_id", "proj_1")
+    return Claim(session_id=session_id, instance_id=instance_id, **fields)
+
+
+def _execution(
+    *,
+    mode: str = "persistent",
+    namespace: str = "workflows",
+    base: str = "central",
+    per_base: bool = False,
+    retain: bool = True,
+    read_only: bool = False,
+) -> dict[str, object]:
+    """The JSON form of a node's execution policy, as the packet carries it."""
+    return {
+        "read_only": read_only,
+        "tools": [],
+        "mutating": [],
+        "scope": [],
+        "sandbox": False,
+        "workspace": {
+            "mode": mode,
+            "namespace": namespace,
+            "base": base,
+            "per_base": per_base,
+            "retain": retain,
+            "advances_central": False,
+        },
+    }
+
+
+def _code(sha: str) -> list[dict[str, str]]:
+    return [{"kind": "code", "id": sha, "label": "base commit"}]
+
+
+def _git_repository(path: Path) -> Path:
+    path.mkdir()
+    subprocess.run(["git", "init", "-b", "main", str(path)], check=True, capture_output=True)
+    (path / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "README.md"], check=True)
+    _commit(path, "base")
+    return path
+
+
+def _commit(path: Path, message: str) -> None:
+    subprocess.run(["git", "-C", str(path), "add", "-A"], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(path),
+            "-c", "user.name=Merv Test", "-c", "user.email=merv@test.invalid",
+            "commit", "-m", message,
+        ],
+        check=True,
+        capture_output=True,
+    )
 
 
 class AgentConfigurationTest(unittest.TestCase):
@@ -281,7 +341,7 @@ class AgentConfigurationTest(unittest.TestCase):
                         "call",
                         "workflow.status_and_next",
                         "--arguments",
-                        '{"project_id":"proj_1","experiment_id":"exp_1"}',
+                        '{"project_id":"proj_1","instance_id":"wf_1"}',
                     ]
                 )
 
@@ -412,7 +472,7 @@ class AgentHostTest(unittest.TestCase):
                 "--forward-subagent-text",
             ],
         )
-        instruction = "Run the assigned experiment."
+        instruction = "Run the assigned work."
         native = {
             "gemini": (
                 GeminiHost(),
@@ -653,52 +713,28 @@ class AgentHostTest(unittest.TestCase):
         with self.assertRaisesRegex(RunnerError, "must use HTTPS"):
             _safe_control_url("http://192.0.2.10:8787")
 
-    def test_git_workspace_persists_one_branch_per_experiment(self) -> None:
+    def test_git_workspace_follows_the_declared_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
-            repository = root / "repo"
-            repository.mkdir()
-            subprocess.run(
-                ["git", "init", "-b", "main", str(repository)],
-                check=True,
-                capture_output=True,
-            )
-            (repository / "README.md").write_text("base\n", encoding="utf-8")
-            subprocess.run(
-                ["git", "-C", str(repository), "add", "README.md"],
-                check=True,
-            )
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repository),
-                    "-c",
-                    "user.name=Merv Test",
-                    "-c",
-                    "user.email=merv@test.invalid",
-                    "commit",
-                    "-m",
-                    "base",
-                ],
-                check=True,
-                capture_output=True,
-            )
             manager = WorkspaceManager(
                 WorkspaceSettings(
                     strategy="git_worktree",
-                    repository=repository,
+                    repository=_git_repository(root / "repo"),
                     root=root / "workers",
                     base_ref="main",
                 )
             )
-            one = manager.prepare(Claim("ags_1", "exp_1", "proj_1"))
-            two = manager.prepare(Claim("ags_2", "exp_2", "proj_1"))
-            resumed = manager.prepare(Claim("ags_3", "exp_1", "proj_1"))
+            persistent = _execution(namespace="experiments")
+            one = manager.prepare(_claim("ags_1", "exp_1", execution=persistent))
+            two = manager.prepare(_claim("ags_2", "exp_2", execution=persistent))
+            resumed = manager.prepare(_claim("ags_3", "exp_1", execution=persistent))
 
+            # Directory and branch names come from the namespace the node
+            # declared, so deployed branches keep the names they have.
             self.assertEqual(
                 one.path, root / "workers" / "experiments" / "proj_1" / "exp_1"
             )
+            self.assertEqual(one.branch, "merv/experiments/proj_1/exp_1")
             self.assertEqual(
                 two.path, root / "workers" / "experiments" / "proj_1" / "exp_2"
             )
@@ -711,297 +747,253 @@ class AgentHostTest(unittest.TestCase):
             self.assertEqual(manager._git(bare, "remote").strip(), "")
 
             shutil.rmtree(one.path)
-            restored = manager.prepare(Claim("ags_4", "exp_1", "proj_1"))
+            restored = manager.prepare(_claim("ags_4", "exp_1", execution=persistent))
             self.assertEqual(restored.path, one.path)
             self.assertEqual(restored.branch, one.branch)
+            manager.close(restored)
+            self.assertTrue(restored.path.exists())
 
-            # Plan and result reviews are pinned to Merv evidence, not
-            # necessarily to code. They still receive an isolated clean
-            # checkout; consolidation reviews override this with proposal SHA.
-            review = manager.prepare(
-                Claim(
-                    "ags_review",
-                    "exp_1",
-                    "proj_1",
-                    kind="review",
-                    review_request_id="rr_1",
+            # An ephemeral checkout whose base reference is absent starts from
+            # central, lives under its namespace per session, and goes at
+            # close when the node did not ask to retain it.
+            ephemeral = _execution(
+                mode="ephemeral", namespace="reviews", base="reference:code",
+                retain=False, read_only=True,
+            )
+            checkout = manager.prepare(
+                _claim(
+                    "ags_r1", "exp_1", execution=ephemeral,
+                    references=[{"kind": "review_request", "id": "rr_1", "label": "x"}],
                 )
             )
-            self.assertIsNone(review.branch)
-            self.assertEqual(review.base_sha, manager.central_sha())
-            self.assertTrue(review.path.exists())
-            manager.close(review)
-            self.assertFalse(review.path.exists())
+            self.assertIsNone(checkout.branch)
+            self.assertEqual(checkout.mode, "ephemeral")
+            self.assertFalse(checkout.retain)
+            self.assertEqual(checkout.base_sha, manager.central_sha())
+            self.assertEqual(
+                checkout.path,
+                root / "workers" / "reviews" / "proj_1" / "exp_1" / "ags_r1",
+            )
+            self.assertTrue(checkout.path.exists())
+            with self.assertRaisesRegex(RunnerError, "refusing to reuse"):
+                manager.prepare(_claim("ags_r1", "exp_1", execution=ephemeral))
+            manager.close(checkout)
+            self.assertFalse(checkout.path.exists())
 
-            plugin = Claim("ags_plugin", "", "proj_1", target_type="replication", target_id="wf_replication",
-                           kind="workflow", assignment={"execution": {"workspace": "work", "read_only": False}})
-            work = manager.prepare(plugin)
+            # The default namespace; progress survives across sessions.
+            work = manager.prepare(_claim("ags_plugin", "wf_replication", execution=_execution()))
             self.assertEqual(work.path, root / "workers" / "workflows" / "proj_1" / "wf_replication")
             (work.path / "progress.md").write_text("retained progress\n", encoding="utf-8")
-            captured = manager.capture(path=work.path, branch=work.branch, base_sha=work.base_sha,
-                                       session_id=plugin.session_id, kind=plugin.kind, writable=not plugin.read_only)
-            resumed = manager.prepare(Claim("ags_plugin_resume", "", "proj_1", target_type="replication",
-                                             target_id="wf_replication", kind="workflow", assignment=plugin.assignment))
+            captured = manager.capture(
+                path=work.path, branch=work.branch, base_sha=work.base_sha,
+                session_id="ags_plugin", mode=work.mode, writable=True,
+            )
+            resumed = manager.prepare(_claim("ags_plugin_resume", "wf_replication", execution=_execution()))
             self.assertEqual(resumed.path, captured.path)
             self.assertEqual(resumed.head_sha, captured.head_sha)
             self.assertEqual((resumed.path / "progress.md").read_text(), "retained progress\n")
 
-            scratch = manager.prepare(Claim("ags_scratch", "", "proj_1", target_type="research_note", target_id="wf_note",
-                                             kind="workflow", assignment={"execution": {"workspace": "none", "read_only": False}}))
-            self.assertEqual(scratch.kind, "none")
+            # retain: false on a persistent node drops the worktree, never the
+            # branch: the next session on the instance checks it out again.
+            dropped = manager.prepare(_claim("ags_drop", "wf_drop", execution=_execution(retain=False)))
+            (dropped.path / "note.md").write_text("kept in the branch\n", encoding="utf-8")
+            dropped = manager.capture(
+                path=dropped.path, branch=dropped.branch, base_sha=dropped.base_sha,
+                session_id="ags_drop", mode=dropped.mode, writable=True, retain=False,
+            )
+            manager.close(dropped)
+            self.assertFalse(dropped.path.exists())
+            back = manager.prepare(_claim("ags_drop_2", "wf_drop", execution=_execution(retain=False)))
+            self.assertEqual(back.head_sha, dropped.head_sha)
+            self.assertEqual((back.path / "note.md").read_text(), "kept in the branch\n")
+
+            # mode none: a scratch directory per session, removed at close.
+            scratch = manager.prepare(_claim("ags_scratch", "wf_note", execution=_execution(mode="none")))
+            self.assertEqual(scratch.mode, "none")
+            self.assertEqual(scratch.path, root / "workers" / "sessions" / "proj_1" / "ags_scratch")
             self.assertFalse((scratch.path / ".git").exists())
-            self.assertEqual(manager.capture(path=scratch.path, branch=None, base_sha="", session_id="ags_scratch",
-                                             kind="none", writable=False), scratch)
+            self.assertEqual(
+                manager.capture(
+                    path=scratch.path, branch=None, base_sha="",
+                    session_id="ags_scratch", mode="none", writable=False,
+                ),
+                scratch,
+            )
             manager.close(scratch)
             self.assertFalse(scratch.path.exists())
 
-    def test_central_advance_records_verified_experiment_ancestry(self) -> None:
+            # A policy this build cannot apply is refused before any Git work.
+            with self.assertRaisesRegex(RunnerError, "unknown workspace mode"):
+                manager.prepare(_claim("ags_bad", "wf_bad", execution={"workspace": {"mode": "shared"}}))
+            with self.assertRaisesRegex(RunnerError, "unknown workspace base"):
+                manager.prepare(_claim("ags_bad", "wf_bad", execution={"workspace": {"base": "upstream"}}))
+            with self.assertRaisesRegex(RunnerError, "not a path segment"):
+                manager.prepare(_claim("ags_bad", "wf_bad", execution={"workspace": {"namespace": "a/b"}}))
+
+    def test_central_advance_records_verified_source_ancestry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
-            repository = root / "repo"
-            repository.mkdir()
-            subprocess.run(
-                ["git", "init", "-b", "main", str(repository)],
-                check=True,
-                capture_output=True,
-            )
-            (repository / "README.md").write_text("base\n", encoding="utf-8")
-            subprocess.run(
-                ["git", "-C", str(repository), "add", "README.md"],
-                check=True,
-            )
-            commit_command = [
-                "git",
-                "-C",
-                str(repository),
-                "-c",
-                "user.name=Merv Test",
-                "-c",
-                "user.email=merv@test.invalid",
-                "commit",
-                "-m",
-                "base",
-            ]
-            subprocess.run(commit_command, check=True, capture_output=True)
             manager = WorkspaceManager(
                 WorkspaceSettings(
                     strategy="git_worktree",
-                    repository=repository,
+                    repository=_git_repository(root / "repo"),
                     root=root / "workers",
                     base_ref="main",
                 )
             )
-            experiment = manager.prepare(Claim("ags_exp", "exp_1", "proj_1"))
-            (experiment.path / "model.py").write_text("score = 1\n", encoding="utf-8")
-            subprocess.run(
-                ["git", "-C", str(experiment.path), "add", "model.py"],
-                check=True,
+            work = manager.prepare(_claim("ags_src", "src_1", execution=_execution(namespace="experiments")))
+            (work.path / "model.py").write_text("score = 1\n", encoding="utf-8")
+            _commit(work.path, "source work")
+            work = manager.observe(
+                path=work.path, branch=work.branch, base_sha=work.base_sha, mode="persistent",
+            )
+
+            # An ephemeral checkout pinned to a code reference sits at that commit.
+            pinned = manager.prepare(
+                _claim(
+                    "ags_pinned", "ref_1",
+                    execution=_execution(mode="ephemeral", namespace="reviews", base="reference:code", retain=False),
+                    references=_code(work.head_sha),
+                )
+            )
+            self.assertEqual(pinned.head_sha, work.head_sha)
+            self.assertEqual(pinned.base_sha, work.head_sha)
+            manager.close(pinned)
+            self.assertFalse(pinned.path.exists())
+
+            # A per-base persistent branch with no code reference starts from
+            # central and is keyed by that base.
+            integration = manager.prepare(
+                _claim(
+                    "ags_int", "ref_1",
+                    execution=_execution(namespace="consolidations", base="reference:code", per_base=True),
+                )
+            )
+            base12 = manager.central_sha()[:12]
+            self.assertEqual(integration.branch, f"merv/consolidations/proj_1/ref_1/{base12}")
+            self.assertEqual(
+                integration.path,
+                root / "workers" / "consolidations" / "proj_1" / "ref_1" / base12,
             )
             subprocess.run(
                 [
-                    "git",
-                    "-C",
-                    str(experiment.path),
-                    "-c",
-                    "user.name=Merv Test",
-                    "-c",
-                    "user.email=merv@test.invalid",
-                    "commit",
-                    "-m",
-                    "experiment",
-                ],
-                check=True,
-                capture_output=True,
-            )
-            experiment = manager.observe(
-                path=experiment.path,
-                branch=experiment.branch,
-                base_sha=experiment.base_sha,
-                kind="experiment",
-            )
-            pinned_review = manager.prepare(
-                Claim(
-                    "ags_review",
-                    "",
-                    "proj_1",
-                    target_type="reflection",
-                    target_id="ref_1",
-                    source_sha=experiment.head_sha,
-                    kind="review",
-                    review_request_id="rr_1",
-                )
-            )
-            self.assertEqual(pinned_review.head_sha, experiment.head_sha)
-            self.assertEqual(pinned_review.base_sha, experiment.head_sha)
-            manager.close(pinned_review)
-            consolidation = manager.prepare(
-                Claim(
-                    "ags_con",
-                    "",
-                    "proj_1",
-                    target_type="reflection",
-                    target_id="ref_1",
-                    kind="consolidation",
-                )
-            )
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(consolidation.path),
-                    "-c",
-                    "user.name=Merv Test",
-                    "-c",
-                    "user.email=merv@test.invalid",
-                    "merge",
-                    "--no-ff",
-                    str(experiment.branch),
-                    "-m",
-                    "consolidate",
+                    "git", "-C", str(integration.path),
+                    "-c", "user.name=Merv Test", "-c", "user.email=merv@test.invalid",
+                    "merge", "--no-ff", str(work.branch), "-m", "integrate",
                 ],
                 check=True,
                 capture_output=True,
             )
             target = subprocess.run(
-                ["git", "-C", str(consolidation.path), "rev-parse", "HEAD"],
-                check=True,
-                capture_output=True,
-                text=True,
+                ["git", "-C", str(integration.path), "rev-parse", "HEAD"],
+                check=True, capture_output=True, text=True,
             ).stdout.strip()
+            sources = [{"id": "src_1", "sha": work.head_sha}]
 
             receipt = manager.advance(
-                expected_sha=experiment.base_sha,
-                target_sha=target,
-                sources=[{"id": "exp_1", "sha": experiment.head_sha}],
+                expected_sha=work.base_sha, target_sha=target, sources=sources,
             )
 
             self.assertEqual(receipt["observed_sha"], target)
-            self.assertEqual(receipt["ancestry"], {"exp_1": True})
+            self.assertEqual(receipt["ancestry"], {"src_1": True})
+            self.assertEqual(receipt["error"], "")
             self.assertEqual(manager.central_sha(), target)
+            # Idempotent: the same advance settles again without moving anything.
+            again = manager.advance(
+                expected_sha=work.base_sha, target_sha=target, sources=sources,
+            )
+            self.assertEqual(again["observed_sha"], target)
+            self.assertEqual(again["ancestry"], {"src_1": True})
+            self.assertEqual(again["error"], "")
+            with self.assertRaisesRegex(RunnerError, "source lineage"):
+                manager.advance(
+                    expected_sha=target, target_sha=target, sources=[{"id": "src_2"}],
+                )
 
-    def test_stale_consolidation_retry_gets_a_fresh_base_specific_branch(
-        self,
-    ) -> None:
+    def test_per_base_branch_follows_a_moved_base(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
-            repository = root / "repo"
-            repository.mkdir()
-            subprocess.run(
-                ["git", "init", "-b", "main", str(repository)],
-                check=True,
-                capture_output=True,
-            )
-            (repository / "README.md").write_text("base\n", encoding="utf-8")
-            subprocess.run(
-                ["git", "-C", str(repository), "add", "README.md"],
-                check=True,
-            )
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(repository),
-                    "-c",
-                    "user.name=Merv Test",
-                    "-c",
-                    "user.email=merv@test.invalid",
-                    "commit",
-                    "-m",
-                    "base",
-                ],
-                check=True,
-                capture_output=True,
-            )
             manager = WorkspaceManager(
                 WorkspaceSettings(
                     strategy="git_worktree",
-                    repository=repository,
+                    repository=_git_repository(root / "repo"),
                     root=root / "workers",
                     base_ref="main",
                 )
             )
+            per_base = _execution(namespace="consolidations", base="reference:code", per_base=True)
             old_base = manager.central_sha()
-            old = manager.prepare(
-                Claim(
-                    "ags_old",
-                    "",
-                    "proj_1",
-                    target_type="reflection",
-                    target_id="ref_1",
-                    source_sha=old_base,
-                    kind="consolidation",
-                )
-            )
-            central_change = manager.prepare(Claim("ags_exp", "exp_1", "proj_1"))
-            (central_change.path / "advance.py").write_text(
-                "advanced = True\n", encoding="utf-8"
-            )
-            subprocess.run(
-                ["git", "-C", str(central_change.path), "add", "advance.py"],
-                check=True,
-            )
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(central_change.path),
-                    "-c",
-                    "user.name=Merv Test",
-                    "-c",
-                    "user.email=merv@test.invalid",
-                    "commit",
-                    "-m",
-                    "advance central",
-                ],
-                check=True,
-                capture_output=True,
-            )
-            new_base = manager.observe(
-                path=central_change.path,
-                branch=central_change.branch,
-                base_sha=central_change.base_sha,
-                kind="experiment",
-            ).head_sha
-            manager.advance(
-                expected_sha=old_base,
-                target_sha=new_base,
-                sources=[],
-            )
+            old = manager.prepare(_claim("ags_old", "ref_1", execution=per_base, references=_code(old_base)))
+            same = manager.prepare(_claim("ags_same", "ref_1", execution=per_base, references=_code(old_base)))
+            self.assertEqual(same.branch, old.branch)
 
-            fresh = manager.prepare(
-                Claim(
-                    "ags_fresh",
-                    "",
-                    "proj_1",
-                    target_type="reflection",
-                    target_id="ref_1",
-                    source_sha=new_base,
-                    kind="consolidation",
-                )
-            )
+            central_change = manager.prepare(_claim("ags_src", "src_1", execution=_execution(namespace="experiments")))
+            (central_change.path / "advance.py").write_text("advanced = True\n", encoding="utf-8")
+            _commit(central_change.path, "advance central")
+            new_base = manager.observe(
+                path=central_change.path, branch=central_change.branch,
+                base_sha=central_change.base_sha, mode="persistent",
+            ).head_sha
+            manager.advance(expected_sha=old_base, target_sha=new_base, sources=[])
+
+            fresh = manager.prepare(_claim("ags_fresh", "ref_1", execution=per_base, references=_code(new_base)))
 
             self.assertNotEqual(fresh.branch, old.branch)
             self.assertNotEqual(fresh.path, old.path)
             self.assertEqual(fresh.base_sha, new_base)
             self.assertTrue(old.path.exists())
 
+            # A persistent branch not keyed by base keeps the base it was
+            # created on; pinning it elsewhere later is refused, not rebased.
+            single = _execution(base="reference:code")
+            manager.prepare(_claim("ags_one", "wf_pin", execution=single, references=_code(old_base)))
+            with self.assertRaisesRegex(RunnerError, "wrong base"):
+                manager.prepare(_claim("ags_two", "wf_pin", execution=single, references=_code(new_base)))
+
+
+_PACKET: dict[str, object] = {
+    "instance_id": "wf_1",
+    "workflow": "replication",
+    "state": "running",
+    "revision": 4,
+    "project_id": "proj_1",
+    "role": "worker",
+    "label": "Reproduce the baseline",
+    "brief": "Reproduce the baseline on the pinned commit.",
+    "execution": _execution(namespace="experiments"),
+    "references": [
+        {"kind": "code", "id": "a" * 40, "label": "base commit"},
+        {"kind": "review_request", "id": "rr_1", "label": "open request"},
+    ],
+    "handoff": "Complete only this node's assignment, then hand off and exit.",
+    "instruction": "do the work",
+}
+
+_SESSION: dict[str, object] = {
+    "id": "ags_1",
+    "project_id": "proj_1",
+    "status": "offered",
+    "workflow_instance_id": "wf_1",
+    "workflow_revision": 4,
+    "target_type": "replication",
+    "target_id": "wf_1",
+    "role": "worker",
+    "label": "Reproduce the baseline",
+    "execution": _PACKET["execution"],
+    "references": _PACKET["references"],
+    "instruction": "do the work",
+    "assignment": _PACKET,
+}
+
 
 class _CapturingClient(AgentSessionsClient):
-    def __init__(self):
+    def __init__(self, session: dict[str, object] | None = None):
         self.calls: list[tuple[str, dict[str, object], bool]] = []
+        self.session = dict(_SESSION if session is None else session)
 
     def _post(self, path, payload, *, allow_empty=False):
         self.calls.append((path, dict(payload), allow_empty))
-        return {
-            "session": {
-                "id": "ags_1",
-                "project_id": "proj_1",
-                "experiment_id": "exp_1",
-                "status": "offered",
-                "instruction": "do the experiment",
-                "attempt_index": 3,
-            }
-        }
+        return {"session": self.session}
 
 
 class AgentSessionProtocolTest(unittest.TestCase):
@@ -1020,12 +1012,24 @@ class AgentSessionProtocolTest(unittest.TestCase):
             claim,
             Claim(
                 session_id="ags_1",
-                experiment_id="exp_1",
                 project_id="proj_1",
-                instruction="do the experiment",
-                attempt_index=3,
+                instance_id="wf_1",
+                target_type="replication",
+                target_id="wf_1",
+                role="worker",
+                label="Reproduce the baseline",
+                execution=_execution(namespace="experiments"),
+                references=list(_PACKET["references"]),
+                instruction="do the work",
+                assignment=_PACKET,
             ),
         )
+        # Reference kinds the policy names are resolved; nothing else is read.
+        self.assertEqual(claim.source_sha, "a" * 40)
+        self.assertEqual(claim.review_request_id, "rr_1")
+        self.assertEqual(claim.reference("missing"), "")
+        self.assertEqual(claim.workspace, WorkspacePolicy(namespace="experiments"))
+        self.assertFalse(claim.read_only)
         self.assertEqual(
             client.calls,
             [
@@ -1042,6 +1046,59 @@ class AgentSessionProtocolTest(unittest.TestCase):
                 )
             ],
         )
+
+    def test_claim_reads_packet_fields_from_the_assignment_when_the_row_lacks_them(self) -> None:
+        client = _CapturingClient(
+            {"id": "ags_2", "project_id": "proj_1", "status": "active", "assignment": _PACKET}
+        )
+
+        claim = client.claim(
+            project_id="proj_1",
+            platform="codex",
+            runner_id="runner_1",
+            idempotency_key="delivery_2",
+            session_key="mas_child-secret-with-enough-entropy-123456789",
+        )
+
+        self.assertEqual(claim.session_id, "ags_2")
+        self.assertEqual(claim.instance_id, "wf_1")
+        self.assertEqual(claim.target_type, "replication")
+        self.assertEqual(claim.target_id, "wf_1")
+        self.assertEqual(claim.role, "worker")
+        self.assertEqual(claim.label, "Reproduce the baseline")
+        self.assertEqual(claim.execution, _execution(namespace="experiments"))
+        self.assertEqual(claim.references, _PACKET["references"])
+        self.assertEqual(claim.instruction, "do the work")
+
+    def test_claim_refuses_a_packet_this_runner_cannot_apply(self) -> None:
+        def claim(session):
+            return _CapturingClient(session).claim(
+                project_id="proj_1",
+                platform="codex",
+                runner_id="runner_1",
+                idempotency_key="delivery_3",
+                session_key="mas_child-secret-with-enough-entropy-123456789",
+            )
+
+        with self.assertRaisesRegex(RunnerError, "unknown workspace mode"):
+            claim({**_SESSION, "execution": {"workspace": {"mode": "shared"}}})
+        with self.assertRaisesRegex(RunnerError, "missing instance id"):
+            claim({"id": "ags_3", "project_id": "proj_1", "status": "offered"})
+        with self.assertRaisesRegex(RunnerError, "references must be a list"):
+            claim({**_SESSION, "references": {"kind": "code"}})
+        # Defaults are the spec's: persistent, retained, from central.
+        bare = claim(
+            {
+                **_SESSION,
+                "execution": {"read_only": True},
+                "references": [],
+                "assignment": {},
+            }
+        )
+        self.assertEqual(bare.workspace, WorkspacePolicy())
+        self.assertTrue(bare.read_only)
+        self.assertEqual(bare.source_sha, "")
+        self.assertIsNone(bare.review_request_id)
 
     def test_trace_excerpt_is_the_redacted_tail_and_changes_signature(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1158,7 +1215,7 @@ class AgentSessionProtocolTest(unittest.TestCase):
                 "session": {
                     "id": "ags_old",
                     "project_id": "proj_1",
-                    "experiment_id": "exp_old",
+                    "workflow_instance_id": "wf_old",
                     "status": "released",
                 }
             }
@@ -1173,6 +1230,48 @@ class AgentSessionProtocolTest(unittest.TestCase):
                 session_key="mas_child-secret-with-enough-entropy-123456789",
             )
         )
+
+
+    def test_ledger_keeps_rows_written_by_an_earlier_runner(self) -> None:
+        # The ledger is the at-most-once launch record for every session this
+        # machine ever started; a row from a build that stored other fields
+        # must still load, or the runner could not start after an upgrade.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sessions.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "runner_id": "runner_1",
+                        "pending_claims": {},
+                        "sessions": [
+                            {
+                                "session_id": "ags_old",
+                                "experiment_id": "exp_old",
+                                "project_id": "proj_1",
+                                "platform": "codex",
+                                "launch_attempted": True,
+                                "target_type": "experiment",
+                                "target_id": "exp_old",
+                                "kind": "experiment",
+                                "attempt_index": 2,
+                                "workspace_mode": "work",
+                                "status": "stopped",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            ledger = SessionLedger(path)
+            row = ledger.sessions["ags_old"]
+            self.assertEqual(row.status, "stopped")
+            self.assertEqual(row.target_id, "exp_old")
+            self.assertEqual(row.instance_id, "")
+            self.assertTrue(row.workspace_retain)
+            with self.assertRaisesRegex(RunnerError, "already has a launch record"):
+                ledger.reserve(_claim("ags_old"), Platform("codex", "codex", ("codex",)))
+            ledger.save()
+            self.assertEqual(SessionLedger(path).sessions["ags_old"].status, "stopped")
 
 
 class _FakeHost:
@@ -1273,21 +1372,24 @@ class _FakeWorkspaces:
             },
         )
 
-    def observe(self, *, path, branch, base_sha, kind):
+    def observe(self, *, path, branch, base_sha, mode, retain=True):
         return Workspace(
             path=path,
             branch=branch,
+            mode=mode,
+            retain=retain,
             base_sha=base_sha,
             head_sha="2" * 40,
             stats={"commit_count": 1, "files_changed": 1},
         )
 
-    def capture(self, *, path, branch, base_sha, kind, **kwargs):
+    def capture(self, *, path, branch, base_sha, mode, retain=True, **kwargs):
         return self.observe(
             path=path,
             branch=branch,
             base_sha=base_sha,
-            kind=kind,
+            mode=mode,
+            retain=retain,
         )
 
     def close(self, workspace):
@@ -1331,7 +1433,7 @@ class AgentRunnerTest(unittest.TestCase):
         runner.fill_available_slots.assert_called_once_with()
 
     def test_pending_advance_is_leased_swapped_and_settled_once(self) -> None:
-        client = _FakeClient(Claim("unused", "exp_1", "proj_1"))
+        client = _FakeClient(_claim("unused"))
         advance = {
             "advance_id": "adv_1",
             "instance_id": "wf_1",
@@ -1371,7 +1473,7 @@ class AgentRunnerTest(unittest.TestCase):
         self.assertEqual(receipt["error"], "")
 
     def test_advance_waits_until_the_brain_grants_the_lease(self) -> None:
-        client = _FakeClient(Claim("unused", "exp_1", "proj_1"))
+        client = _FakeClient(_claim("unused"))
         client.pending = {"advance_id": "adv_1", "instance_id": "wf_1", "revision": 7}
         client.advance = None
         with tempfile.TemporaryDirectory() as tmp:
@@ -1396,7 +1498,7 @@ class AgentRunnerTest(unittest.TestCase):
         self.assertEqual(client.settled, [])
 
     def test_a_failed_swap_is_settled_with_its_error(self) -> None:
-        client = _FakeClient(Claim("unused", "exp_1", "proj_1"))
+        client = _FakeClient(_claim("unused"))
         advance = {
             "advance_id": "adv_2",
             "instance_id": "wf_1",
@@ -1427,13 +1529,16 @@ class AgentRunnerTest(unittest.TestCase):
         self.assertEqual(receipt["error"], "central moved")
 
     def test_launch_is_reserved_first_and_secret_reaches_only_child_env(self) -> None:
-        claim = Claim(
+        claim = _claim(
             "ags_1",
-            "exp_1",
-            "proj_1",
-            source_sha="a" * 40,
+            "wf_1",
+            target_type="replication",
+            role="worker",
+            label="Reproduce the baseline",
+            execution=_execution(namespace="experiments"),
+            references=_code("a" * 40),
             instruction="Execute the assigned work with the supplied context.",
-            attempt_index=2,
+            assignment={"instance_id": "wf_1", "role": "worker", "brief": "the brief"},
         )
         client = _FakeClient(claim)
         host = _FakeHost()
@@ -1503,9 +1608,29 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertEqual(
                 metadata["work_item"]["instruction"], launch["instruction"]
             )
-            self.assertEqual(metadata["work_item"]["experiment_id"], "exp_1")
-            self.assertEqual(metadata["work_item"]["attempt_index"], 2)
-            self.assertEqual(metadata["work_item"]["source_sha"], "a" * 40)
+            self.assertEqual(metadata["schema_version"], 2)
+            self.assertEqual(
+                metadata["assignment"],
+                {"instance_id": "wf_1", "role": "worker", "brief": "the brief"},
+            )
+            work_item = metadata["work_item"]
+            self.assertEqual(work_item["instance_id"], "wf_1")
+            self.assertEqual(work_item["target_type"], "replication")
+            self.assertEqual(work_item["target_id"], "wf_1")
+            self.assertEqual(work_item["role"], "worker")
+            self.assertEqual(work_item["label"], "Reproduce the baseline")
+            self.assertEqual(work_item["source_sha"], "a" * 40)
+            self.assertIsNone(work_item["review_request_id"])
+            self.assertEqual(work_item["execution"], _execution(namespace="experiments"))
+            self.assertEqual(work_item["references"], _code("a" * 40))
+            self.assertEqual(work_item["workspace"]["mode"], "persistent")
+            self.assertTrue(work_item["workspace"]["retain"])
+            ledger_row = ledger.sessions["ags_1"]
+            self.assertEqual(ledger_row.instance_id, "wf_1")
+            self.assertEqual(ledger_row.role, "worker")
+            self.assertEqual(ledger_row.workspace_mode, "persistent")
+            self.assertTrue(ledger_row.workspace_retain)
+            self.assertFalse(ledger_row.read_only)
             self.assertEqual(metadata["agent_setup"]["harness"], "command")
             self.assertEqual(metadata["agent_setup"]["model"], "model-1")
             self.assertEqual(metadata["agent_setup"]["effort"], "high")
@@ -1540,7 +1665,7 @@ class AgentRunnerTest(unittest.TestCase):
     def test_lost_claim_response_reuses_identity_without_storing_the_secret(
         self,
     ) -> None:
-        claim = Claim("ags_1", "exp_1", "proj_1")
+        claim = _claim("ags_1")
         client = _FakeClient(claim)
         client.claim = MagicMock(side_effect=[RunnerError("response lost"), claim])
         host = _FakeHost()
@@ -1579,11 +1704,9 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertEqual(len(host.spawns), 1)
 
     def test_launch_mounts_skills_and_tells_the_child_where_they_are(self) -> None:
-        claim = Claim(
+        claim = _claim(
             "ags_1",
-            "exp_1",
-            "proj_1",
-            instruction="Resume the experiment and follow the research-workflow skill.",
+            instruction="Resume the assignment and follow the research-workflow skill.",
         )
         client = _FakeClient(claim)
         host = _FakeHost()
@@ -1631,11 +1754,11 @@ class AgentRunnerTest(unittest.TestCase):
     def test_one_bad_platform_does_not_stop_other_launches(self) -> None:
         bad = Platform("bad", "bad", ("missing-agent",))
         good = Platform("good", "good", ("working-agent",))
-        client = _FakeClient(Claim("unused", "exp_1", "proj_1"))
+        client = _FakeClient(_claim("unused"))
 
         def claim_for_platform(**kwargs):
             name = kwargs["platform"]
-            return Claim(f"ags_{name}", f"exp_{name}", "proj_1")
+            return _claim(f"ags_{name}", f"wf_{name}")
 
         client.claim = claim_for_platform
         bad_host = _FakeHost()
@@ -1666,7 +1789,7 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertIn(("ags_bad", "launch_failed"), client.released)
 
     def test_reconcile_stops_a_process_revoked_by_merv(self) -> None:
-        claim = Claim("ags_1", "exp_1", "proj_1")
+        claim = _claim("ags_1")
         client = _FakeClient(claim)
         client.remote_sessions = [{"id": "ags_1", "status": "expired"}]
         host = _FakeHost()
@@ -1699,8 +1822,8 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertEqual(host.stopped, [HostSession(ref="pid:41", pid=41)])
 
     def test_second_rapid_stop_without_progress_is_backed_off(self) -> None:
-        first = Claim("ags_1", "exp_1", "proj_1")
-        second = Claim("ags_2", "exp_1", "proj_1")
+        first = _claim("ags_1", "wf_1", role="worker")
+        second = _claim("ags_2", "wf_1", role="worker")
         client = _FakeClient(second)
         client.remote_sessions = [{"id": "ags_2", "status": "active"}]
         host = _FakeHost()
@@ -1752,7 +1875,7 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertIn(("ags_2", "host_process_crash_loop"), client.released)
 
     def test_capture_failure_does_not_wedge_a_finished_session(self) -> None:
-        claim = Claim("ags_1", "exp_1", "proj_1")
+        claim = _claim("ags_1")
         client = _FakeClient(claim)
         client.remote_sessions = [{"id": "ags_1", "status": "expired"}]
         host = _FakeHost()
@@ -1795,7 +1918,7 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertIn(("ags_1", "remote_expired"), client.released)
 
     def test_recovery_without_a_persisted_pid_waits_out_the_lease(self) -> None:
-        claim = Claim("ags_1", "exp_1", "proj_1")
+        claim = _claim("ags_1")
         client = _FakeClient(claim)
         platform = Platform("custom", "command", ("agent",))
         with tempfile.TemporaryDirectory() as tmp:
@@ -1819,7 +1942,7 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertEqual(ledger.sessions["ags_1"].status, "uncertain")
 
     def test_reconcile_heartbeats_only_after_host_is_confirmed_alive(self) -> None:
-        claim = Claim("ags_1", "exp_1", "proj_1")
+        claim = _claim("ags_1")
         client = _FakeClient(claim)
         client.remote_sessions = [
             {
@@ -1859,7 +1982,7 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertEqual(client.attached, [])
 
     def test_reconcile_mirrors_the_trace_excerpt_on_change_and_finally_complete(self) -> None:
-        claim = Claim("ags_1", "exp_1", "proj_1")
+        claim = _claim("ags_1")
         client = _FakeClient(claim)
         client.remote_sessions = [
             {"id": "ags_1", "status": "active", "host_session_ref": "pid:41"}
@@ -1909,7 +2032,7 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertEqual(session.status, "stopped")
 
     def test_one_broken_session_does_not_stop_peer_reconciliation(self) -> None:
-        client = _FakeClient(Claim("unused", "exp_1", "proj_1"))
+        client = _FakeClient(_claim("unused"))
         client.remote_sessions = [
             {"id": "ags_bad", "status": "active", "host_session_ref": "pid:40"},
             {"id": "ags_good", "status": "active", "host_session_ref": "pid:41"},
@@ -1926,14 +2049,11 @@ class AgentRunnerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ledger = SessionLedger(root / "sessions.json")
-            for session_id, experiment_id, pid in (
-                ("ags_bad", "exp_bad", 40),
-                ("ags_good", "exp_good", 41),
+            for session_id, instance_id, pid in (
+                ("ags_bad", "wf_bad", 40),
+                ("ags_good", "wf_good", 41),
             ):
-                session = ledger.reserve(
-                    Claim(session_id, experiment_id, "proj_1"),
-                    platform,
-                )
+                session = ledger.reserve(_claim(session_id, instance_id), platform)
                 session.host_ref = f"pid:{pid}"
                 session.pid = pid
                 session.attached = True

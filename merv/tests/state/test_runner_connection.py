@@ -360,7 +360,7 @@ class RunnerSettingsApplyTest(unittest.TestCase):
         runner = self._runner(client)
         # A live local session on codex.
         from merv.client.agent_runner import Claim
-        session = runner.ledger.reserve(Claim("ags_1", "exp_1", "proj_1"), runner._platform("codex"))
+        session = runner.ledger.reserve(Claim("ags_1", "proj_1", "wf_1"), runner._platform("codex"))
         session.status = "running"
         with redirect_stdout(io.StringIO()):
             runner.apply_desired(runner.report_presence())
@@ -381,7 +381,7 @@ class RunnerSettingsApplyTest(unittest.TestCase):
         )
         runner = self._runner(client)
         from merv.client.agent_runner import Claim
-        session = runner.ledger.reserve(Claim("ags_1", "exp_1", "proj_1"), runner._platform("codex"))
+        session = runner.ledger.reserve(Claim("ags_1", "proj_1", "wf_1"), runner._platform("codex"))
         session.status = "running"
         with redirect_stdout(io.StringIO()):
             runner.apply_desired(runner.report_presence())
@@ -413,9 +413,9 @@ class RunnerSettingsApplyTest(unittest.TestCase):
         client = _FakeSettingsClient()
         runner = self._runner(client)
         from merv.client.agent_runner import Claim
-        stuck = runner.ledger.reserve(Claim("ags_stuck", "exp_1", "proj_1"), runner._platform("codex"))
+        stuck = runner.ledger.reserve(Claim("ags_stuck", "proj_1", "wf_1"), runner._platform("codex"))
         stuck.status = "uncertain"
-        held = runner.ledger.reserve(Claim("ags_held", "exp_2", "proj_1"), runner._platform("codex"))
+        held = runner.ledger.reserve(Claim("ags_held", "proj_1", "wf_2"), runner._platform("codex"))
         held.status = "uncertain"
         client.remote_sessions = [{"id": "ags_stuck", "status": "expired"}]  # ags_held absent
         with redirect_stderr(io.StringIO()):
@@ -682,7 +682,7 @@ class RunnerTestCallTest(unittest.TestCase):
         trace_dir.mkdir(parents=True)
         (trace_dir / "stderr.log").write_text("codex: API Error 401 Unauthorized — please run codex login\n")
         session = LocalSession(
-            session_id="ags_1", experiment_id="exp_1", project_id="proj_1", platform="codex",
+            session_id="ags_1", instance_id="wf_1", project_id="proj_1", platform="codex",
             launch_attempted=True, adapter="codex", host_ref="pid:1:x", pid=1, trace_dir=str(trace_dir),
             base_sha="a" * 40, head_sha="a" * 40,
         )
@@ -726,7 +726,7 @@ class RunnerTestCallTest(unittest.TestCase):
         trace_dir.mkdir(parents=True)
         (trace_dir / "stderr.log").write_text("warning: 429 rate limit hit once, retried\n")
         long_turn = LocalSession(
-            session_id="ags_2", experiment_id="exp_1", project_id="proj_1", platform="codex",
+            session_id="ags_2", instance_id="wf_1", project_id="proj_1", platform="codex",
             launch_attempted=True, adapter="codex", host_ref="pid:1:x", pid=1, trace_dir=str(trace_dir),
             base_sha="a" * 40, head_sha="b" * 40,
         )
