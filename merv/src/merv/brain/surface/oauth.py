@@ -221,7 +221,9 @@ class OAuthService:
             client=OAuthClient(
                 client_id=new_id(prefix="oauthc"),
                 client_name=name,
-                redirect_uris=tuple(sorted(redirect_uris)),
+                redirect_uris=tuple(
+                    sorted({canonical_redirect_uri(uri) for uri in redirect_uris})
+                ),
                 grant_types=tuple(sorted(grants)),
                 created_at=now_iso(),
             )
@@ -438,8 +440,12 @@ class OAuthService:
         if client is None:
             raise OAuthError("invalid_request", "unknown client_id")
         redirect_uri = str(params.get("redirect_uri") or "")
-        if not redirect_uri or redirect_uri not in client.redirect_uris:
+        if not valid_redirect_uri(redirect_uri) or canonical_redirect_uri(
+            redirect_uri
+        ) not in {canonical_redirect_uri(uri) for uri in client.redirect_uris}:
             # An unregistered URI is never reflected into a redirect response.
+            # A loopback port is not part of the registration, so the presented
+            # URI is validated here rather than assumed from the stored list.
             raise OAuthError("invalid_request", "redirect_uri is not registered")
         state = params.get("state")
 
@@ -577,12 +583,42 @@ def valid_redirect_uri(uri: str) -> bool:
         return False
     if parsed.scheme == "https":
         return True
-    if parsed.scheme != "http":
+    return parsed.scheme == "http" and _is_loopback(parsed.hostname)
+
+
+def canonical_redirect_uri(uri: str) -> str:
+    """A loopback callback's identity, with its ephemeral port removed.
+
+    RFC 8252 §7.3: a native client binds whatever port the OS gives it, so a
+    different port on every launch is the normal case and not a different
+    client. Registration stores this form and the metadata fingerprint hashes
+    it, so a client that re-registers per login resolves to the one row it
+    already has instead of growing the table; authorize then accepts any port
+    on a loopback host whose scheme, host and path already match. An HTTPS
+    callback is returned untouched and stays exact-match.
+    """
+    parsed = urlsplit(uri)
+    host = parsed.hostname or ""
+    if parsed.scheme != "http" or not _is_loopback(host):
+        return uri
+    return urlunsplit(
+        (
+            parsed.scheme,
+            f"[{host}]" if ":" in host else host,
+            parsed.path,
+            parsed.query,
+            "",
+        )
+    )
+
+
+def _is_loopback(hostname: str | None) -> bool:
+    if not hostname:
         return False
-    if parsed.hostname == "localhost":
+    if hostname == "localhost":
         return True
     try:
-        return ipaddress.ip_address(parsed.hostname).is_loopback
+        return ipaddress.ip_address(hostname).is_loopback
     except ValueError:
         return False
 
@@ -686,6 +722,7 @@ __all__ = [
     "REFRESH_TOKEN_TTL_SECONDS",
     "UNUSED_CLIENT_TTL_DAYS_ENV_VAR",
     "authorization_redirect",
+    "canonical_redirect_uri",
     "oauth_error_redirect",
     "valid_redirect_uri",
 ]

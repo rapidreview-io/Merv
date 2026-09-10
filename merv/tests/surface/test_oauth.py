@@ -310,6 +310,47 @@ class OAuthSurfaceTest(unittest.TestCase):
                 )
                 self.assertEqual(response.headers["cache-control"], "no-store")
 
+    def test_a_loopback_client_keeps_one_row_across_ephemeral_ports(self) -> None:
+        """RFC 8252 §7.3: the port a native client got is not its identity."""
+        first = self._register(redirect_uris=["http://127.0.0.1:1455/callback"])
+        again = self._register(redirect_uris=["http://127.0.0.1:52341/callback"])
+        self.assertEqual(again["client_id"], first["client_id"])
+        self.assertEqual(first["redirect_uris"], ["http://127.0.0.1/callback"])
+        with self.app.store.connect() as conn:
+            count = conn.execute("SELECT COUNT(*) AS n FROM oauth_clients").fetchone()
+        self.assertEqual(int(count["n"]), 1)
+
+        # Any port on that host and path authorizes; a different path or host
+        # does not, and an HTTPS callback stays exact-match.
+        live = "http://127.0.0.1:60999/callback"
+        _redirect, query = self._authorize(
+            first["client_id"],
+            params=self._authorization_params(first["client_id"], redirect_uri=live),
+        )
+        exchanged = self._exchange(
+            client_id=first["client_id"], code=query["code"][0], redirect_uri=live
+        )
+        self.assertEqual(exchanged.status_code, 200, exchanged.text)
+        for rejected in (
+            "http://127.0.0.1:60999/other",
+            "http://10.0.0.5:60999/callback",
+            "https://127.0.0.1/callback",
+        ):
+            with self.subTest(redirect_uri=rejected):
+                denied = self.client.post(
+                    "/oauth/authorize",
+                    json={
+                        **self._authorization_params(
+                            first["client_id"], redirect_uri=rejected
+                        ),
+                        "decision": "approve",
+                        "project_id": self.project_a,
+                    },
+                    headers=_bearer(self.jwt_a),
+                )
+                self.assertEqual(denied.status_code, 400, denied.text)
+                self.assertEqual(denied.json()["error"], "invalid_request")
+
     def test_identical_re_registration_returns_the_same_client(self) -> None:
         """AUTH-03: public DCR must not grow a row per client restart."""
         first = self._register()
