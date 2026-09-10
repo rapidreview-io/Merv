@@ -33,7 +33,7 @@ import urllib.error
 import urllib.request
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -128,63 +128,51 @@ REFERENCE_BASE_PREFIX = "reference:"
 
 @dataclass(frozen=True)
 class WorkspacePolicy:
-    """The workspace half of a node's execution policy, applied verbatim.
-
-    ``namespace`` is the directory and branch segment every checkout for the
-    node lives under, so a node keeps the branch names its work has always
-    used.  ``base`` is ``"central"`` or ``"reference:<kind>"``; the latter
-    names the brief reference whose id is the base commit.
-    """
+    """A node's declared workspace: ``namespace`` is the branch and directory
+    segment it keeps, ``base`` is ``"central"`` or ``"reference:<kind>"``."""
 
     mode: str = "persistent"
     namespace: str = "workflows"
     base: str = "central"
     per_base: bool = False
     retain: bool = True
-    advances_central: bool = False
+
+    def __post_init__(self) -> None:
+        if self.mode not in WORKSPACE_MODES:
+            raise RunnerError(f"unknown workspace mode {self.mode!r}")
+        if self.base != "central" and not self.base_reference_kind:
+            raise RunnerError(f"unknown workspace base {self.base!r}")
+        if _safe_name(self.namespace) != self.namespace:
+            raise RunnerError(
+                f"workspace namespace is not a path segment: {self.namespace!r}"
+            )
 
     @classmethod
     def from_execution(cls, execution: Mapping[str, Any]) -> WorkspacePolicy:
+        """The policy a packet declares; fields it omits keep their default."""
         raw = execution.get("workspace")
-        if raw is None:
-            raw = {}
-        if not isinstance(raw, Mapping):
+        if raw is not None and not isinstance(raw, Mapping):
             raise RunnerError("assignment execution.workspace must be an object")
-        policy = cls(
-            mode=str(raw.get("mode") or cls.mode),
-            namespace=str(raw.get("namespace") or cls.namespace),
-            base=str(raw.get("base") or cls.base),
-            per_base=bool(raw.get("per_base", cls.per_base)),
-            retain=bool(raw.get("retain", cls.retain)),
-            advances_central=bool(raw.get("advances_central", cls.advances_central)),
+        raw = raw or {}
+        return cls(
+            **{
+                spec.name: type(spec.default)(value)
+                for spec in fields(cls)
+                if (value := raw.get(spec.name)) not in (None, "")
+            }
         )
-        if policy.mode not in WORKSPACE_MODES:
-            raise RunnerError(f"unknown workspace mode {policy.mode!r}")
-        if policy.base != "central" and not policy.base_reference_kind:
-            raise RunnerError(f"unknown workspace base {policy.base!r}")
-        if _safe_name(policy.namespace) != policy.namespace:
-            raise RunnerError(
-                f"workspace namespace is not a path segment: {policy.namespace!r}"
-            )
-        return policy
 
     @property
     def base_reference_kind(self) -> str:
         """The reference kind ``base`` names, or "" for the central ref."""
-        if not self.base.startswith(REFERENCE_BASE_PREFIX):
-            return ""
-        return self.base[len(REFERENCE_BASE_PREFIX):]
+        prefix = REFERENCE_BASE_PREFIX
+        return self.base[len(prefix):] if self.base.startswith(prefix) else ""
 
 
 @dataclass(frozen=True)
 class Claim:
-    """One leased assignment, exactly as the brain's packet declared it.
-
-    ``execution`` and ``references`` are carried verbatim, and ``target_type``
-    and ``target_id`` are opaque labels for people and pages.  The runner
-    applies the execution policy and resolves the reference kinds that policy
-    names; it never reads what the work is.
-    """
+    """One leased assignment as the packet declared it: the runner applies
+    ``execution`` and resolves the kinds it names, never the work itself."""
 
     session_id: str
     project_id: str
@@ -217,14 +205,6 @@ class Claim:
             if isinstance(item, Mapping) and str(item.get("kind") or "") == kind:
                 return str(item.get("id") or "")
         return ""
-
-    @property
-    def review_request_id(self) -> str | None:
-        return self.reference("review_request") or None
-
-    @property
-    def source_sha(self) -> str:
-        return self.reference("code")
 
 
 @dataclass(frozen=True)
@@ -906,7 +886,7 @@ class SessionLedger:
             target_id=claim.target_id,
             role=claim.role,
             label=claim.label,
-            source_sha=claim.source_sha,
+            source_sha=claim.reference("code"),
             adapter=platform.adapter,
             workspace_mode=policy.mode,
             workspace_retain=policy.retain,
@@ -949,16 +929,8 @@ class WorkspaceManager:
         self._bare_repository: Path | None = None
 
     def prepare(self, claim: Claim) -> Workspace:
-        """Give one session the workspace its execution policy declares.
-
-        ``none`` is a private scratch directory per session.  ``ephemeral`` is
-        a detached worktree at the base commit, one per session.
-        ``persistent`` is a branch keyed by the instance (and by the base
-        commit when ``per_base``), resumed with its recorded base when it
-        already exists.  The base is the central ref or the id of the brief
-        reference the policy names, falling back to central when that
-        reference is absent.
-        """
+        """The workspace the policy declares: a session-private scratch
+        directory, a detached worktree, or a branch keyed by the instance."""
         root = self.settings.root
         if root is None:
             raise RunnerError("git_worktree requires a workspace root")
@@ -1056,9 +1028,7 @@ class WorkspaceManager:
         retain: bool = True,
     ) -> Workspace:
         """Commit bounded WIP so a conversation ending cannot lose work."""
-        if mode == "none":
-            return Workspace(path=path, mode=mode, retain=retain)
-        if writable and self._git(path, "status", "--porcelain").strip():
+        if mode != "none" and writable and self._git(path, "status", "--porcelain").strip():
             changed = self._git(
                 path,
                 "ls-files",
@@ -1095,12 +1065,8 @@ class WorkspaceManager:
                 "-m",
                 f"merv: capture {session_id}",
             )
-        return self._workspace(
-            path=path,
-            branch=branch,
-            base_sha=base_sha or self._rev_parse(path, "HEAD"),
-            mode=mode,
-            retain=retain,
+        return self.observe(
+            path=path, branch=branch, base_sha=base_sha, mode=mode, retain=retain
         )
 
     def observe(
@@ -1123,14 +1089,8 @@ class WorkspaceManager:
         )
 
     def close(self, workspace: Workspace) -> None:
-        """Drop what the policy did not ask to keep.
-
-        A ``none`` workspace is a session-private scratch directory with
-        nothing to resume, so it always goes.  A Git checkout stays unless the
-        node declared ``retain: false``; a persistent branch and its recorded
-        base survive either way, so the next session on that instance checks
-        the branch out again.
-        """
+        """Drop what the policy did not ask to keep: scratch always, a Git
+        checkout only when the node declared ``retain: false``."""
         if not workspace.path.exists():
             return
         if workspace.mode == "none":
@@ -2436,14 +2396,8 @@ class AgentRunner:
         )
 
     def advance_ready(self) -> bool:
-        """Perform one brain-approved central advance, if one is pending.
-
-        The brain says which instance's accepted work may move the central
-        ref and, once this runner holds the lease, the exact compare-and-swap
-        (expected and target commits, plus the source lineage to verify).
-        The swap is idempotent: an advance whose target is already central
-        settles again from the observed state without moving anything.
-        """
+        """Perform one brain-approved central advance, if one is pending; the
+        brain supplies the compare-and-swap and the swap is idempotent."""
         pending = self.client.pending_advance(project_id=self.project_id)
         if pending is None:
             return False
@@ -3054,8 +3008,8 @@ def _prepare_trace(
             "target_id": claim.target_id,
             "role": claim.role,
             "label": claim.label,
-            "review_request_id": claim.review_request_id,
-            "source_sha": claim.source_sha,
+            "review_request_id": claim.reference("review_request") or None,
+            "source_sha": claim.reference("code"),
             "execution": dict(claim.execution),
             "references": [dict(item) for item in claim.references],
             "instruction": instruction,
@@ -3489,24 +3443,14 @@ def _default_instruction(claim: Claim) -> str:
 
 
 def _claim_from_session(session: Mapping[str, Any], *, project_id: str) -> Claim:
-    """Lift a leased session into a Claim without interpreting its packet.
-
-    The brain keeps the packet's ``role``, ``label``, ``execution`` and
-    ``references`` on the session and returns the whole packet as
-    ``assignment``; a field missing from the session is read from the packet.
-    The execution policy is validated here so an assignment this build cannot
-    apply is refused at claim time rather than after a launch record exists.
-    """
+    """Lift a leased session into a Claim, reading each packet field from the
+    session first and refusing an execution policy this build cannot apply."""
     assignment = session.get("assignment")
     assignment = dict(assignment) if isinstance(assignment, Mapping) else {}
 
     def pick(*names: str) -> Any:
-        for source in (session, assignment):
-            for name in names:
-                value = source.get(name)
-                if value not in (None, "", [], {}):
-                    return value
-        return None
+        found = (source.get(name) for source in (session, assignment) for name in names)
+        return next((value for value in found if value not in (None, "", [], {})), None)
 
     session_id = str(session.get("session_id") or session.get("id") or "")
     if not session_id:
@@ -3515,31 +3459,22 @@ def _claim_from_session(session: Mapping[str, Any], *, project_id: str) -> Claim
     if not instance_id:
         raise RunnerError("malformed claim response: missing instance id")
     execution = pick("execution")
-    if execution is None:
-        execution = {}
-    if not isinstance(execution, Mapping):
-        raise RunnerError("malformed claim response: execution must be an object")
     references = pick("references")
-    if references is None:
-        references = []
-    if not isinstance(references, list) or not all(
-        isinstance(item, Mapping) for item in references
+    if execution is not None and not isinstance(execution, Mapping):
+        raise RunnerError("malformed claim response: execution must be an object")
+    if not isinstance(references, (list, type(None))) or not all(
+        isinstance(item, Mapping) for item in references or ()
     ):
-        raise RunnerError(
-            "malformed claim response: references must be a list of objects"
-        )
-    execution = dict(execution)
+        raise RunnerError("malformed claim response: references must be a list of objects")
+    execution = dict(execution or {})
     WorkspacePolicy.from_execution(execution)
     return Claim(
-        session_id=session_id,
+        session_id=session_id, instance_id=instance_id, execution=execution,
         project_id=str(session.get("project_id") or project_id),
-        instance_id=instance_id,
         target_type=str(pick("target_type", "workflow") or ""),
         target_id=str(session.get("target_id") or instance_id),
-        role=str(pick("role") or ""),
-        label=str(pick("label") or ""),
-        execution=execution,
-        references=[dict(item) for item in references],
+        role=str(pick("role") or ""), label=str(pick("label") or ""),
+        references=[dict(item) for item in references or ()],
         instruction=_optional_text(pick("instruction", "prompt")),
         assignment=assignment,
     )

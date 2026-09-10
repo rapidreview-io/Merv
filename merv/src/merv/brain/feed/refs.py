@@ -38,11 +38,11 @@ class RefParser:
 
     def __init__(self, vocabulary: RefVocabulary) -> None:
         entries = tuple((str(prefix), str(kind)) for prefix, kind in vocabulary)
-        if not entries:
-            raise ValueError("a ref vocabulary needs at least one (prefix, kind) entry")
-        for prefix, kind in entries:
-            if not prefix or not kind:
-                raise ValueError(f"ref vocabulary entries need a prefix and a kind: {(prefix, kind)!r}")
+        if not entries or not all(all(entry) for entry in entries):
+            raise ValueError(
+                "a ref vocabulary needs at least one entry, each with a prefix "
+                f"and a kind: {entries!r}"
+            )
         self.vocabulary: RefVocabulary = entries
         self.prefixes: tuple[str, ...] = tuple(prefix for prefix, _ in entries)
         alternatives = "|".join(re.escape(prefix) for prefix in self.prefixes)
@@ -53,10 +53,6 @@ class RefParser:
     def accepts(self, ref: str) -> bool:
         """Whether ``ref`` carries one of the declared prefixes."""
         return bool(ref) and ref.startswith(self.prefixes)
-
-    def describe(self) -> str:
-        """The vocabulary as prose for validation messages."""
-        return ", ".join(f"{kind} {prefix}…" for prefix, kind in self.vocabulary)
 
     def parse(self, text: str) -> ParsedRefs:
         """Entity ids and links mentioned in ``text``, in order of appearance."""

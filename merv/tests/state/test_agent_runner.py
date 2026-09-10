@@ -1025,8 +1025,8 @@ class AgentSessionProtocolTest(unittest.TestCase):
             ),
         )
         # Reference kinds the policy names are resolved; nothing else is read.
-        self.assertEqual(claim.source_sha, "a" * 40)
-        self.assertEqual(claim.review_request_id, "rr_1")
+        self.assertEqual(claim.reference("code"), "a" * 40)
+        self.assertEqual(claim.reference("review_request"), "rr_1")
         self.assertEqual(claim.reference("missing"), "")
         self.assertEqual(claim.workspace, WorkspacePolicy(namespace="experiments"))
         self.assertFalse(claim.read_only)
@@ -1097,8 +1097,8 @@ class AgentSessionProtocolTest(unittest.TestCase):
         )
         self.assertEqual(bare.workspace, WorkspacePolicy())
         self.assertTrue(bare.read_only)
-        self.assertEqual(bare.source_sha, "")
-        self.assertIsNone(bare.review_request_id)
+        self.assertEqual(bare.reference("code"), "")
+        self.assertEqual(bare.reference("review_request"), "")
 
     def test_trace_excerpt_is_the_redacted_tail_and_changes_signature(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
