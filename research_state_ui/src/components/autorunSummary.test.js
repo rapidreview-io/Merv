@@ -9,6 +9,7 @@ const runner = (hostname, secondsAgo, capacity = 2) => ({
   machine: { hostname },
   capacity,
   last_seen_at: new Date(NOW - secondsAgo * 1000).toISOString(),
+  live: secondsAgo < 45, // the brain's call, mirrored for the fixture
 });
 
 test('nothing fetched yet is unknown, and an empty project reads not connected', () => {

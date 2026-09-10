@@ -8,6 +8,7 @@ const runner = (hostname, ageMs, extra = {}) => ({
   runner_ref: hostname,
   machine: { hostname },
   last_seen_at: new Date(NOW - ageMs).toISOString(),
+  live: ageMs < 45_000, // the brain's call, mirrored for the fixture
   capacity: 2,
   ...extra,
 });
