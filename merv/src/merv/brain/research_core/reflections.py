@@ -13,24 +13,13 @@ import json
 from typing import Any
 
 from ..agent_sessions import WorkspaceAdvances
-
-from ..workflows import (
-    KINDS,
-    PROJECT_GRAPH_ROLE,
-    REFLECTION_LENS_DOC_ROLE,
-    TASK_BRIEF_ROLE,
-    TASK_DELIVERY_ROLE,
-)
-
+from ..workflows import KINDS, PROJECT_GRAPH_ROLE, REFLECTION_LENS_DOC_ROLE, TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE
+from ..workflows.definitions import reflection_corpus as corpus
 from .evidence import (
     ArtifactDocument,
     artifact_state_record,
-    artifact_submission_recency_key,
     claim_refs,
     depends_on_refs,
-    graph_diff,
-    graph_diff_summary,
-    graph_problems,
     parse_change_spec,
     preferred_artifact,
     reflection_coverage_for,
@@ -44,7 +33,6 @@ from .reflection_workflow import REFLECTION_WORKFLOW
 from .tasks import TaskService
 from .task_workflow import TASK_TERMINAL_STATUSES
 from .artifacts import ResearchArtifacts as Artifacts
-from ..workflows import METRIC_RESULT_MAX_BYTES as MAX_SUBMITTED_TEXT_BYTES
 from .artifact_models import ArtifactTarget
 from .policy import (
     ACTIVE_EXPERIMENT_CAP,
@@ -67,7 +55,6 @@ from ..kernel.utils import (
     WorkflowError,
     new_id,
     now_iso,
-    parse_iso,
 )
 
 REFLECTION = KINDS["reflection"]
@@ -81,6 +68,12 @@ HOLDS_WAVE_NAMES = ("reflection_review", "consolidating")
 
 def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
     return rows_to_dicts(rows=conn.execute(sql, parameters).fetchall())
+
+
+def _pins(snapshot: dict[str, Any], proposal: dict[str, Any]) -> bool:
+    """A review is current only for the exact proposal and code sha it graded."""
+    return (snapshot.get("snapshot_token") == proposal["id"]
+            and snapshot.get("code_sha") == proposal["proposal_sha"])
 
 
 class ReflectionService(RecordHooks):
@@ -156,139 +149,35 @@ class ReflectionService(RecordHooks):
             )
 
     def _corpus_snapshot(self, *, conn, project_id: str) -> dict[str, Any]:
-        terminal = ", ".join(f"'{s}'" for s in sorted(EXPERIMENT_TERMINAL_STATUSES))
-        exp_rows = conn.execute(
-            f"""
-            SELECT id, name, attempt_index, status FROM experiments
-            WHERE project_id = ? AND status IN ({terminal})
-            ORDER BY created_at, id
-            """,
-            (project_id,),
-        ).fetchall()
-        claim_rows = conn.execute(
-            "SELECT id, statement, status, confidence, scope FROM claims"
-            " WHERE project_id = ? ORDER BY created_at, id",
-            (project_id,),
-        ).fetchall()
-        experiments = rows_to_dicts(rows=exp_rows)
-        experiment_history = self.artifacts.history(
-            tx=conn,
-            target_type="experiment",
-            target_ids=tuple(str(experiment["id"]) for experiment in experiments),
-        )
-        for experiment in experiments:
-            authoritative: dict[str, dict[str, Any]] = {}
-            for evidence in experiment_history[str(experiment["id"])].artifacts:
-                if evidence.attempt_index != int(
-                    experiment["attempt_index"]
-                ) or evidence.role not in {"report", "graph"}:
-                    continue
-                artifact = artifact_state_record(evidence)
-                current = authoritative.get(evidence.role)
-                if current is None or artifact_submission_recency_key(
-                    artifact
-                ) > artifact_submission_recency_key(current):
-                    authoritative[evidence.role] = artifact
-            experiment["artifacts"] = [
-                self._artifact_content_ref(artifact=authoritative[role])
-                for role in ("report", "graph")
-                if role in authoritative
-            ]
-        task_terminal = ", ".join(f"'{s}'" for s in sorted(TASK_TERMINAL_STATUSES))
-        task_rows = conn.execute(
-            f"""
-            SELECT id, name, goal, attempt_index, status, outcome, failed_by
-            FROM tasks
-            WHERE project_id = ? AND status IN ({task_terminal})
-            ORDER BY created_at, id
-            """,
-            (project_id,),
-        ).fetchall()
-        tasks = rows_to_dicts(rows=task_rows)
-        task_history = self.artifacts.history(
-            tx=conn,
-            target_type="task",
-            target_ids=tuple(str(task["id"]) for task in tasks),
-        )
-        for task in tasks:
-            authoritative_task: dict[str, dict[str, Any]] = {}
-            for evidence in task_history[str(task["id"])].artifacts:
-                if evidence.attempt_index != int(task["attempt_index"]) or (
-                    evidence.role not in {TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE}
-                ):
-                    continue
-                artifact = artifact_state_record(evidence)
-                current = authoritative_task.get(evidence.role)
-                if current is None or artifact_submission_recency_key(
-                    artifact
-                ) > artifact_submission_recency_key(current):
-                    authoritative_task[evidence.role] = artifact
-            task["artifacts"] = [
-                self._artifact_content_ref(artifact=authoritative_task[role])
-                for role in (TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE)
-                if role in authoritative_task
-            ]
+        """Read the rows this wave freezes; the corpus shape is declared."""
         previous = self.latest_published(conn=conn, project_id=project_id)
-        covered = covered_terminal_ids(
-            None if previous is None else (previous.get("corpus") or {})
-        )
-        covered_tasks = covered_terminal_ids(
-            None if previous is None else (previous.get("corpus") or {}),
-            key="terminal_tasks",
-        )
-        previous_artifacts: dict[str, dict[str, Any]] = {}
-        if previous is not None:
-            graph = self._project_graph_artifact(reflection=previous)
-            reflection_doc = preferred_artifact(
-                artifacts=previous.get("current_attempt_artifacts") or [],
-                roles=("reflection_doc",),
-            )
-            for role, artifact in (
-                (PROJECT_GRAPH_ROLE, graph),
-                ("reflection_doc", reflection_doc),
-            ):
-                if artifact is not None:
-                    previous_artifacts[role] = self._artifact_content_ref(
-                        artifact=artifact
-                    )
-        # The wave's new signal: terminal experiments the last published wave
-        # never saw. The reflection still reads the whole project; these name
-        # why it is happening now. Prior artifacts are pinned by id in the
-        # snapshot and their immutable bytes are hydrated only on focused reads.
-        return {
-            "captured_at": now_iso(),
-            "terminal_experiments": experiments,
-            "terminal_tasks": tasks,
-            "claims": rows_to_dicts(rows=claim_rows),
-            "new_terminal_experiments": [
-                {"id": exp["id"], "name": exp["name"], "status": exp["status"]}
-                for exp in experiments
-                if str(exp["id"]) not in covered
-            ],
-            "new_terminal_tasks": [
-                {"id": task["id"], "name": task["name"], "status": task["status"]}
-                for task in tasks
-                if str(task["id"]) not in covered_tasks
-            ],
-            "previous_published_reflection_id": (
-                None if previous is None else previous["id"]
-            ),
-            "previous_lens_reflections": (
-                {}
-                if previous is None
-                else {
-                    str(lens["lens_id"]): {
-                        "artifact_id": lens["artifact_id"],
-                        "path": lens["path"],
-                        "role": lens["role"],
-                        "submitted_order": lens["submitted_order"],
-                    }
-                    for lens in previous["reflection_coverage"]["lenses"]
-                    if lens.get("covered")
-                }
-            ),
-            "previous_published_artifacts": previous_artifacts,
-        }
+        return corpus.corpus_snapshot(
+            captured_at=now_iso(), previous=previous,
+            experiments=self._terminal_nodes(conn=conn, project_id=project_id, kind="experiment",
+                                             statuses=EXPERIMENT_TERMINAL_STATUSES, roles=("report", "graph"),
+                                             columns="id, name, attempt_index, status"),
+            tasks=self._terminal_nodes(conn=conn, project_id=project_id, kind="task",
+                                       statuses=TASK_TERMINAL_STATUSES, roles=(TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE),
+                                       columns="id, name, goal, attempt_index, status, outcome, failed_by"),
+            claims=_query(conn, "SELECT id, statement, status, confidence, scope FROM claims"
+                                " WHERE project_id = ? ORDER BY created_at, id", (project_id,)),
+            covered=covered_terminal_ids(None if previous is None else (previous.get("corpus") or {})),
+            covered_tasks=covered_terminal_ids(None if previous is None else (previous.get("corpus") or {}),
+                                               key="terminal_tasks"))
+
+    def _terminal_nodes(self, *, conn, project_id: str, kind: str, statuses, roles, columns: str):
+        """Every finished node of one kind, each naming its authoritative evidence."""
+        table = f"{kind}s"
+        nodes = _query(conn, f"SELECT {columns} FROM {table} WHERE project_id = ? AND status IN "
+                             f"({', '.join(repr(status) for status in sorted(statuses))}) ORDER BY created_at, id",
+                       (project_id,))
+        history = self.artifacts.history(tx=conn, target_type=kind,
+                                         target_ids=tuple(str(node["id"]) for node in nodes))
+        for node in nodes:
+            node["artifacts"] = corpus.authoritative_references(
+                artifacts=[artifact_state_record(item) for item in history[str(node["id"])].artifacts],
+                attempt_index=int(node["attempt_index"]), roles=roles)
+        return nodes
 
     # ---- read ----
 
@@ -310,9 +199,12 @@ class ReflectionService(RecordHooks):
             reflection_id = str(data["id"])
             self._pin_lens_artifacts(conn=conn, reflection=data)
             if include_content:
-                content = self._artifact_content(corpus=data["corpus"], current=data["current_attempt_artifacts"])
-                data["corpus"] = self._hydrate_corpus_content(conn=conn, corpus=data["corpus"], content=content)
-                data["current_attempt_artifacts"] = self._hydrate_current_attempt_artifacts(
+                content = self._submitted_bytes(artifact_ids=corpus.referenced_content_ids(
+                    corpus=data["corpus"], current=data["current_attempt_artifacts"]))
+                data["corpus"] = corpus.hydrated_corpus(
+                    corpus=data["corpus"], content=content,
+                    claims=self._backfill_claim_fields(conn=conn, claims=data["corpus"].get("claims") or []))
+                data["current_attempt_artifacts"] = corpus.hydrated_artifacts(
                     artifacts=data["current_attempt_artifacts"], content=content)
             data["materialized_claims"] = _query(conn, """
                 SELECT sc.reflection_id, sc.claim_id, sc.op, sc.claim_key, sc.created_at,
@@ -377,319 +269,44 @@ class ReflectionService(RecordHooks):
                 "non_terminal_experiments": tuple(str(row["name"] or row["id"]) for row in experiments
                                                   if row["status"] not in EXPERIMENT_TERMINAL_STATUSES)}
 
-    def _consolidation_state(
-        self, *, conn, reflection: dict[str, Any]
-    ) -> dict[str, Any]:
-        proposal_row = conn.execute(
-            """
-            SELECT * FROM consolidation_proposals
-            WHERE reflection_id = ?
-            ORDER BY revision DESC
-            LIMIT 1
-            """,
-            (reflection["id"],),
-        ).fetchone()
-        proposal = row_to_dict(row=proposal_row)
-        corpus = reflection.get("corpus") or {}
-        experiments = [
-            item
-            for item in corpus.get("terminal_experiments") or []
-            if isinstance(item, dict) and item.get("id")
-        ]
-        decisions_by_id: dict[str, dict[str, Any]] = {}
+    def _consolidation_state(self, *, conn, reflection: dict[str, Any]) -> dict[str, Any]:
+        """Where code consolidation stands: its latest proposal and its receipt."""
+        proposal = row_to_dict(row=conn.execute(
+            "SELECT * FROM consolidation_proposals WHERE reflection_id = ? ORDER BY revision DESC LIMIT 1",
+            (reflection["id"],)).fetchone())
+        decisions: list[dict[str, Any]] = []
+        review = advance = None
         if proposal is not None:
-            proposal["validation"] = json.loads(
-                str(proposal.pop("validation_json", "{}"))
-            )
-            decision_rows = conn.execute(
-                """
-                SELECT * FROM consolidation_decisions
-                WHERE proposal_id = ?
-                ORDER BY experiment_id
-                """,
-                (proposal["id"],),
-            ).fetchall()
-            for decision in rows_to_dicts(rows=decision_rows):
-                decisions_by_id[str(decision["experiment_id"])] = decision
-        decisions = []
-        for experiment in experiments:
-            experiment_id = str(experiment["id"])
-            decision = decisions_by_id.get(experiment_id)
-            decisions.append(
-                {
-                    "experiment_id": experiment_id,
-                    "experiment_name": str(experiment.get("name") or ""),
-                    **(
-                        {
-                            "disposition": "pending",
-                            "rationale": "",
-                            "source_sha": "",
-                            "integration_kind": "none",
-                            "superseded_by": "",
-                        }
-                        if decision is None
-                        else decision
-                    ),
-                }
-            )
-        current_review = None
-        if proposal is not None:
-            for review in reflection.get("reviews", []):
-                if review.get("role") != "consolidation_reviewer":
-                    continue
-                snapshot = snapshot_from_id(
-                    snapshot_id=str(review.get("target_snapshot_id") or "")
-                )
-                if (
-                    snapshot.get("snapshot_token") == proposal["id"]
-                    and snapshot.get("code_sha") == proposal["proposal_sha"]
-                ):
-                    current_review = {
-                        key: review.get(key)
-                        for key in ("id", "role", "verdict", "created_at", "synopsis")
-                    }
-                    break
-        advance = None
-        if proposal is not None:
-            receipt = self.advances.latest(conn=conn, proposal_ids=(str(proposal["id"]),))
-            advance = self._advance_view(receipt.get(str(proposal["id"])))
-        ancestry = (advance or {}).get("ancestry") or {}
-        for decision in decisions:
-            disposition = str(decision.get("disposition") or "")
-            verified = bool(ancestry.get(str(decision["experiment_id"]), False))
-            decision["ancestry_verified"] = verified
-            merged = verified and decision.get("integration_kind") in {
-                "merge",
-                "fast_forward",
-            }
-            decision["integration_outcome"] = (
-                "not_applied"
-                if disposition in {"pending", "reviewed_not_used", "superseded"}
-                else "merged" if merged else "applied"
-            )
-        considered = sum(
-            decision.get("disposition") != "pending" for decision in decisions
-        )
-        return {
-            "proposal": proposal,
-            "decisions": decisions,
-            "coverage": {
-                "total": len(decisions),
-                "considered": considered,
-                "pending": len(decisions) - considered,
-                "complete": considered == len(decisions),
-            },
-            "review": current_review,
-            "advance": advance,
-        }
+            proposal["validation"] = json.loads(str(proposal.pop("validation_json", "{}")))
+            decisions = _query(conn, "SELECT * FROM consolidation_decisions WHERE proposal_id = ? "
+                                     "ORDER BY experiment_id", (proposal["id"],))
+            advance = self._advance_view(
+                self.advances.latest(conn=conn, proposal_ids=(str(proposal["id"]),)).get(str(proposal["id"])))
+            review = next((
+                {key: item.get(key) for key in ("id", "role", "verdict", "created_at", "synopsis")}
+                for item in reflection.get("reviews", []) if item.get("role") == "consolidation_reviewer"
+                and _pins(snapshot_from_id(snapshot_id=str(item.get("target_snapshot_id") or "")), proposal)), None)
+        return corpus.consolidation_state(proposal=proposal, decisions=decisions, review=review, advance=advance,
+                                          corpus=reflection.get("corpus") or {})
 
-    @staticmethod
-    def _artifact_content_ref(*, artifact: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "artifact_id": artifact.get("id"),
-            "path": artifact.get("path"),
-            "role": artifact.get("role"),
-            "submitted_order": artifact.get("submitted_order"),
-        }
+    def _submitted_bytes(self, *, artifact_ids: tuple[str, ...]) -> dict[str, bytes | None]:
+        """The immutable bytes behind every content id this wave shows."""
+        return {artifact.id: artifact.data for artifact
+                in self.artifacts.get(artifact_ids=artifact_ids, include="content")}
 
-    def _hydrate_artifact_content(
-        self,
-        *,
-        artifact: dict[str, Any],
-        content: dict[str, bytes | None],
-    ) -> dict[str, Any]:
-        artifact_id = str(artifact.get("artifact_id") or artifact.get("id") or "")
-        data = content.get(artifact_id)
-        text = None
-        truncated = False
-        if data is not None:
-            truncated = len(data) > MAX_SUBMITTED_TEXT_BYTES
-            text = data[:MAX_SUBMITTED_TEXT_BYTES].decode("utf-8", errors="replace")
-            encoded = text.encode("utf-8")
-            if len(encoded) > MAX_SUBMITTED_TEXT_BYTES:
-                text = encoded[:MAX_SUBMITTED_TEXT_BYTES].decode(
-                    "utf-8", errors="ignore"
-                )
-        return {
-            **{key: value for key, value in artifact.items() if key != "tldr"},
-            "content": text,
-            "content_available": text is not None,
-            "content_truncated": truncated,
-        }
-
-    def _hydrate_current_attempt_artifacts(
-        self,
-        *,
-        artifacts: list[dict[str, Any]],
-        content: dict[str, bytes | None],
-    ) -> list[dict[str, Any]]:
-        latest_lens_docs: dict[str, dict[str, Any]] = {}
-        for artifact in artifacts:
-            if artifact.get("role") != REFLECTION_LENS_DOC_ROLE:
-                continue
-            lens_id = str(artifact.get("lens_id") or "")
-            current = latest_lens_docs.get(lens_id)
-            if current is None or artifact_submission_recency_key(
-                artifact
-            ) > artifact_submission_recency_key(current):
-                latest_lens_docs[lens_id] = artifact
-
-        authoritative_lens_ids = {
-            str(artifact.get("id") or "") for artifact in latest_lens_docs.values()
-        }
-        hydrated: list[dict[str, Any]] = []
-        for artifact in artifacts:
-            role = artifact.get("role")
-            if (
-                role == REFLECTION_LENS_DOC_ROLE
-                and str(artifact.get("id") or "") not in authoritative_lens_ids
-            ):
-                continue
-            hydrated.append(
-                self._hydrate_artifact_content(artifact=artifact, content=content)
-                if role
-                in {
-                    REFLECTION_LENS_DOC_ROLE,
-                    PROJECT_GRAPH_ROLE,
-                    "reflection_doc",
-                    "change_spec",
-                }
-                else artifact
-            )
-        return hydrated
-
-    def _hydrate_corpus_content(
-        self,
-        *,
-        conn,
-        corpus: dict[str, Any],
-        content: dict[str, bytes | None],
-    ) -> dict[str, Any]:
-        hydrated = dict(corpus)
-        hydrated["claims"] = self._backfill_claim_fields(
-            conn=conn, claims=corpus.get("claims") or []
-        )
-        previous_lenses: dict[str, dict[str, Any]] = {}
-        for lens_id, raw in (corpus.get("previous_lens_reflections") or {}).items():
-            reference = (
-                dict(raw)
-                if isinstance(raw, dict)
-                else {
-                    "artifact_id": None,
-                    "path": str(raw),
-                    "role": REFLECTION_LENS_DOC_ROLE,
-                }
-            )
-            previous_lenses[str(lens_id)] = self._hydrate_artifact_content(
-                artifact=reference, content=content
-            )
-        hydrated["previous_lens_reflections"] = previous_lenses
-        hydrated["previous_published_artifacts"] = {
-            str(role): self._hydrate_artifact_content(
-                artifact=dict(reference), content=content
-            )
-            for role, reference in (
-                corpus.get("previous_published_artifacts") or {}
-            ).items()
-            if isinstance(reference, dict)
-        }
-        hydrated["terminal_experiments"] = [
-            {
-                **experiment,
-                "artifacts": [
-                    self._hydrate_artifact_content(
-                        artifact=dict(reference), content=content
-                    )
-                    for reference in experiment.get("artifacts") or []
-                    if isinstance(reference, dict)
-                ],
-            }
-            for experiment in corpus.get("terminal_experiments") or []
-            if isinstance(experiment, dict)
-        ]
-        hydrated["terminal_tasks"] = [
-            {
-                **task,
-                "artifacts": [
-                    self._hydrate_artifact_content(
-                        artifact=dict(reference), content=content
-                    )
-                    for reference in task.get("artifacts") or []
-                    if isinstance(reference, dict)
-                ],
-            }
-            for task in corpus.get("terminal_tasks") or []
-            if isinstance(task, dict)
-        ]
-        return hydrated
-
-    def _artifact_content(
-        self,
-        *,
-        corpus: dict[str, Any],
-        current: list[dict[str, Any]],
-    ) -> dict[str, bytes | None]:
-        references: list[dict[str, Any]] = list(current)
-        references.extend(
-            reference
-            for reference in (corpus.get("previous_lens_reflections") or {}).values()
-            if isinstance(reference, dict)
-        )
-        references.extend(
-            reference
-            for reference in (corpus.get("previous_published_artifacts") or {}).values()
-            if isinstance(reference, dict)
-        )
-        for node in (
-            *(corpus.get("terminal_experiments") or []),
-            *(corpus.get("terminal_tasks") or []),
-        ):
-            if isinstance(node, dict):
-                references.extend(
-                    reference
-                    for reference in node.get("artifacts") or []
-                    if isinstance(reference, dict)
-                )
-        artifact_ids = tuple(
-            dict.fromkeys(
-                str(reference.get("artifact_id") or reference.get("id") or "")
-                for reference in references
-                if reference.get("artifact_id") or reference.get("id")
-            )
-        )
-        return {
-            artifact.id: artifact.data
-            for artifact in self.artifacts.get(
-                artifact_ids=artifact_ids,
-                include="content",
-            )
-        }
-
-    def _backfill_claim_fields(
-        self, *, conn, claims: list[Any]
-    ) -> list[dict[str, Any]]:
+    def _backfill_claim_fields(self, *, conn, claims: list[Any]) -> list[dict[str, Any]]:
         """Snapshots taken before claims carried text get it joined in live.
 
-        The claim SET stays pinned by the snapshot; a claim deleted since
-        keeps its snapshotted id and status.
+        The claim SET stays pinned by the snapshot; a claim deleted since keeps
+        its snapshotted id and status.
         """
         rows = [dict(claim) for claim in claims if isinstance(claim, dict)]
-        missing = tuple(
-            str(row.get("id") or "") for row in rows if "statement" not in row
-        )
+        missing = tuple(str(row.get("id") or "") for row in rows if "statement" not in row)
         if not missing:
             return rows
-        placeholders = ", ".join("?" for _ in missing)
-        live = {
-            str(record["id"]): record
-            for record in rows_to_dicts(
-                rows=conn.execute(
-                    "SELECT id, statement, confidence, scope FROM claims"
-                    f" WHERE id IN ({placeholders})",
-                    missing,
-                ).fetchall()
-            )
-        }
+        live = {str(record["id"]): record for record in _query(
+            conn, "SELECT id, statement, confidence, scope FROM claims"
+                  f" WHERE id IN ({', '.join('?' * len(missing))})", missing)}
         return [{**live.get(str(row.get("id") or ""), {}), **row} for row in rows]
 
     def list_reflections(self, *, project_id: str | None = None) -> dict[str, Any]:
@@ -841,73 +458,26 @@ class ReflectionService(RecordHooks):
             roles=(PROJECT_GRAPH_ROLE,),
         )
 
-    def _project_graph_diff(
-        self, *, conn, reflection: dict[str, Any]
-    ) -> dict[str, Any]:
-        current_artifact = self._project_graph_artifact(reflection=reflection)
+    def _project_graph_diff(self, *, conn, reflection: dict[str, Any]) -> dict[str, Any]:
+        """Compare this wave's graph with the last published one, or say why not."""
+        published = reflection.get("status") == REFLECTION_WORKFLOW.success_status
         # published_graph_version_id holds the artifact id pinned at publish.
-        current_artifact_id = str(
-            (
-                reflection.get("published_graph_version_id")
-                if reflection.get("status") == REFLECTION_WORKFLOW.success_status
-                else None
-            )
-            or (current_artifact or {}).get("id")
-            or ""
-        )
+        current = str((reflection.get("published_graph_version_id") if published else None)
+                      or (self._project_graph_artifact(reflection=reflection) or {}).get("id") or "")
         base = self._previous_published_graph_ref(conn=conn, reflection=reflection)
-        result: dict[str, Any] = {
-            "available": False,
-            "reason": "",
-            "summary": "",
-            "base_reflection_id": base.get("reflection_id") if base else None,
-            "base_graph_version_id": base.get("graph_version_id") if base else None,
-            "current_reflection_id": reflection.get("id"),
-            "current_graph_version_id": current_artifact_id or None,
-            "problems": [],
-        }
-        if not current_artifact_id:
-            result.update(
-                {
-                    "reason": "no_current_project_graph",
-                    "summary": "No current project graph is associated for this reflection wave.",
-                }
-            )
-            return result
-        if base is None or not base.get("graph_version_id"):
-            result.update(
-                {
-                    "reason": "no_previous_project_graph",
-                    "summary": "No previous published project graph is available to compare.",
-                }
-            )
-            return result
+        comparable = current and base and base.get("graph_version_id")
+        return corpus.graph_comparison(
+            base=base, current_graph_version_id=current, current_reflection_id=reflection.get("id"),
+            read={} if not comparable else {
+                artifact_id: self._graph_text(artifact_id=artifact_id, what=f"{side} project logic graph")
+                for artifact_id, side in ((str(base["graph_version_id"]), "previous"), (current, "current"))})
 
-        base_graph, base_problems = self._load_graph_for_diff(
-            artifact_id=str(base["graph_version_id"]),
-            what="previous project logic graph",
-        )
-        current_graph, current_problems = self._load_graph_for_diff(
-            artifact_id=current_artifact_id,
-            what="current project logic graph",
-        )
-        problems = [*base_problems, *current_problems]
-        if problems or base_graph is None or current_graph is None:
-            result.update(
-                {
-                    "reason": "graph_unavailable",
-                    "summary": "Project graph diff is unavailable because one graph cannot be read.",
-                    "problems": problems,
-                }
-            )
-            return result
-
-        diff = graph_diff(base_graph=base_graph, current_graph=current_graph)
-        result.update(diff)
-        result["available"] = True
-        result["reason"] = ""
-        result["summary"] = graph_diff_summary(diff=diff)
-        return result
+    def _graph_text(self, *, artifact_id: str, what: str) -> dict[str, str]:
+        """One submitted graph as strict UTF-8, or why it could not be read."""
+        try:
+            return {"text": self._read_document(artifact_id=artifact_id, what=what).text}
+        except WorkflowError as exc:
+            return {"error": str(exc)}
 
     def _previous_published_graph_ref(
         self, *, conn, reflection: dict[str, Any]
@@ -947,19 +517,6 @@ class ReflectionService(RecordHooks):
             "reflection_id": row["id"],
             "graph_version_id": row["published_graph_version_id"],
         }
-
-    def _load_graph_for_diff(
-        self, *, artifact_id: str, what: str
-    ) -> tuple[dict[str, Any] | None, list[str]]:
-        try:
-            text = self._read_document(artifact_id=artifact_id, what=what).text
-        except WorkflowError as exc:
-            return None, [str(exc)]
-        problems = graph_problems(text)
-        if problems:
-            return None, [f"{what}: {problem}" for problem in problems]
-        data = json.loads(text)
-        return data, []
 
     def _read_document(self, *, artifact_id: str, what: str) -> ArtifactDocument:
         """Read one complete artifact as strict UTF-8 for a workflow gate."""
