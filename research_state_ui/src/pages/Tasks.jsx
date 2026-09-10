@@ -1,16 +1,17 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   useProjectStore, selectTasks, selectExperiments, useProjectHref,
 } from '../store/useProjectStore';
 import { api } from '../api';
 import ObjId from '../components/ObjId';
 import StatusPill from '../components/StatusPill';
+import ConsoleTable, {
+  DurationCell, SPAN_SORTS, WhenCell, spanFacts, useTableSort,
+} from '../components/ConsoleTable';
 import { NAME_RE, expName } from '../utils/experiment';
-import { fmtDayTime, fmtDuration } from '../utils/format';
+import { fmtDayTime } from '../utils/format';
 
 // Task lifecycle: two working states, two endings (mirrors task_workflow.py).
-const LIFECYCLE = ['in_progress', 'in_review', 'done'];
 const TERMINAL = ['done', 'failed'];
 const STATUS_ORDER = ['in_progress', 'in_review', 'done', 'failed'];
 
@@ -20,17 +21,14 @@ function isTerminal(status) {
 
 function rowFacts(t, nowMs) {
   const status = (t.status || 'in_progress').toLowerCase();
-  const createdMs = t.created_at ? Date.parse(t.created_at) : NaN;
-  const settled = isTerminal(status);
-  const endMs = settled && t.updated_at ? Date.parse(t.updated_at) : nowMs;
-  const durationMs = Number.isFinite(createdMs) ? Math.max(0, endMs - createdMs) : NaN;
-  return { status, createdMs, settled, endMs, durationMs };
+  return {
+    status,
+    ...spanFacts({ createdAt: t.created_at, endAt: t.updated_at, settled: isTerminal(status) }, nowMs),
+  };
 }
 
 const SORTS = {
-  created: (a, b) => (a.facts.createdMs || 0) - (b.facts.createdMs || 0),
-  finished: (a, b) => (a.facts.settled ? a.facts.endMs : 0) - (b.facts.settled ? b.facts.endMs : 0),
-  duration: (a, b) => (a.facts.durationMs || 0) - (b.facts.durationMs || 0),
+  ...SPAN_SORTS,
   status: (a, b) => STATUS_ORDER.indexOf(a.facts.status) - STATUS_ORDER.indexOf(b.facts.status),
   title: (a, b) => a.title.localeCompare(b.title),
 };
@@ -41,29 +39,15 @@ export default function Tasks() {
   const tasks = useProjectStore(selectTasks);
   const experiments = useProjectStore(selectExperiments);
   const [showForm, setShowForm] = useState(false);
-  const [sortKey, setSortKey] = useState('created');
-  const [sortDir, setSortDir] = useState('desc');
+  const sort = useTableSort('created', { ascKeys: ['title'] });
 
   const rows = useMemo(() => {
     const nowMs = Date.now();
-    const list = tasks.map(t => ({
-      task: t,
-      title: t.name || t.id,
-      facts: rowFacts(t, nowMs),
-    }));
-    const cmp = SORTS[sortKey] || SORTS.created;
-    list.sort((a, b) => (sortDir === 'asc' ? cmp(a, b) : cmp(b, a)));
-    return list;
-  }, [tasks, sortKey, sortDir]);
-
-  function toggleSort(key) {
-    if (key === sortKey) {
-      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortKey(key);
-      setSortDir(key === 'title' ? 'asc' : 'desc');
-    }
-  }
+    return sort.sorted(
+      tasks.map(t => ({ task: t, title: t.name || t.id, facts: rowFacts(t, nowMs) })),
+      SORTS,
+    );
+  }, [tasks, sort.sortKey, sort.sortDir]);
 
   return (
     <div className="page-stage">
@@ -101,7 +85,7 @@ export default function Tasks() {
           <p>Work that tests a claim is an experiment; everything else the project needs is a task.</p>
         </div>
       ) : (
-        <TaskTable rows={rows} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+        <TaskTable rows={rows} sort={sort} />
       )}
     </div>
   );
@@ -115,57 +99,23 @@ const COLUMNS = [
   { key: 'duration', label: 'Duration', right: true },
 ];
 
-function WhenCell({ parts, title }) {
-  if (!parts) return <div className="expt-when expt-when--none">—</div>;
-  return (
-    <div className="expt-when" title={title}>
-      <span className="expt-when-day">{parts.day}</span>
-      <span className="expt-when-time">{parts.time}</span>
-    </div>
-  );
-}
-
-function TaskTable({ rows, sortKey, sortDir, onSort }) {
-  const navigate = useNavigate();
+function TaskTable({ rows, sort }) {
   const px = useProjectHref();
   return (
-    <div className="expt-scroll">
-      <div className="expt" role="table" aria-label="Tasks">
-        <div className="expt-head con-head" role="row">
-          {COLUMNS.map(col => (
-            <button
-              key={col.key}
-              type="button"
-              role="columnheader"
-              aria-sort={sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-              className={[
-                'th', 'th--con', col.right ? 'th--r' : '', sortKey === col.key ? 'on' : '',
-              ].filter(Boolean).join(' ')}
-              onClick={() => onSort(col.key)}
-            >
-              {col.label}
-              {sortKey === col.key && (
-                <span className="arr" aria-hidden="true">{sortDir === 'asc' ? '▲' : '▼'}</span>
-              )}
-            </button>
-          ))}
-        </div>
-        {rows.map(({ task: t, title, facts }) => {
-          const checkCount = Array.isArray(t.checks) ? t.checks.length : 0;
-          const depCount = Array.isArray(t.dependencies) ? t.dependencies.length : 0;
-          const unblockCount = Array.isArray(t.dependents) ? t.dependents.length : 0;
-          const reviewCount = Array.isArray(t.reviews) ? t.reviews.length : 0;
-          const created = fmtDayTime(t.created_at);
-          const finished = facts.settled ? fmtDayTime(t.updated_at) : null;
-          return (
-            <div
-              key={t.id}
-              className="expt-row"
-              role="row"
-              tabIndex={0}
-              onClick={() => navigate(px(`/tasks/${t.id}`))}
-              onKeyDown={ev => { if (ev.key === 'Enter') navigate(px(`/tasks/${t.id}`)); }}
-            >
+    <ConsoleTable
+      label="Tasks"
+      columns={COLUMNS}
+      sort={sort}
+      rows={rows.map(({ task: t, title, facts }) => {
+        const checkCount = Array.isArray(t.checks) ? t.checks.length : 0;
+        const depCount = Array.isArray(t.dependencies) ? t.dependencies.length : 0;
+        const unblockCount = Array.isArray(t.dependents) ? t.dependents.length : 0;
+        const reviewCount = Array.isArray(t.reviews) ? t.reviews.length : 0;
+        return {
+          key: t.id,
+          href: px(`/tasks/${t.id}`),
+          cells: (
+            <>
               <div className="expt-main">
                 <div className="expt-title" title={title}>{title}</div>
                 {t.goal && <div className="expt-desc" title={t.goal}>{t.goal}</div>}
@@ -178,24 +128,22 @@ function TaskTable({ rows, sortKey, sortDir, onSort }) {
                 </div>
               </div>
               <div><StatusPill value={t.status} /></div>
-              <WhenCell parts={created} title={t.created_at || ''} />
-              {finished ? (
-                <WhenCell parts={finished} title={t.updated_at || ''} />
-              ) : (
-                <div className="expt-when expt-when--none" title="still in progress">—</div>
-              )}
-              <div
-                className={`expt-dur${facts.settled ? '' : ' expt-dur--live'}`}
-                title={facts.settled ? 'created → last transition' : 'elapsed since created'}
-              >
-                {fmtDuration(facts.durationMs)}
-                {!facts.settled && <span className="expt-live-dot" aria-hidden="true" />}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+              <WhenCell parts={fmtDayTime(t.created_at)} title={t.created_at || ''} />
+              <WhenCell
+                parts={facts.settled ? fmtDayTime(t.updated_at) : null}
+                title={t.updated_at || ''}
+                noneTitle="still in progress"
+              />
+              <DurationCell
+                facts={facts}
+                doneTitle="created → last transition"
+                liveTitle="elapsed since created"
+              />
+            </>
+          ),
+        };
+      })}
+    />
   );
 }
 const OPEN_EXPERIMENT = new Set(['planned', 'design_review', 'ready_to_run', 'running', 'experiment_review']);

@@ -1,13 +1,16 @@
 import { useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useProjectStore, selectExperiments, selectClaims, useProjectHref } from '../store/useProjectStore';
 import ExperimentMap from '../expmap/ExperimentMap';
 import { api } from '../api';
 import ObjId from '../components/ObjId';
 import GraphExpandButton from '../components/GraphExpandButton';
 import StatusPill from '../components/StatusPill';
+import ConsoleTable, {
+  DurationCell, SPAN_SORTS, WhenCell, spanFacts, useTableSort,
+} from '../components/ConsoleTable';
 import { NAME_RE, expName } from '../utils/experiment';
-import { fmtDayTime, fmtDuration } from '../utils/format';
+import { fmtDayTime } from '../utils/format';
 
 const LIFECYCLE = ['planned', 'design_review', 'running', 'experiment_review', 'complete'];
 const TERMINAL = ['failed', 'abandoned'];
@@ -19,24 +22,18 @@ function isTerminal(status) {
   return status === 'complete' || TERMINAL.includes(status);
 }
 
-/**
- * Per-row derived facts the table sorts and renders on. Duration is
- * created→last transition for settled experiments, created→now for ones
- * still in flight (the 3s home poll keeps the live value ticking).
- */
+// Duration is created→last transition for settled experiments, created→now
+// for ones still in flight (the 3s home poll keeps the live value ticking).
 function rowFacts(e, nowMs) {
   const status = (e.status || 'planned').toLowerCase();
-  const createdMs = e.created_at ? Date.parse(e.created_at) : NaN;
-  const settled = isTerminal(status);
-  const endMs = settled && e.updated_at ? Date.parse(e.updated_at) : nowMs;
-  const durationMs = Number.isFinite(createdMs) ? Math.max(0, endMs - createdMs) : NaN;
-  return { status, createdMs, settled, endMs, durationMs };
+  return {
+    status,
+    ...spanFacts({ createdAt: e.created_at, endAt: e.updated_at, settled: isTerminal(status) }, nowMs),
+  };
 }
 
 const SORTS = {
-  created: (a, b) => (a.facts.createdMs || 0) - (b.facts.createdMs || 0),
-  finished: (a, b) => (a.facts.settled ? a.facts.endMs : 0) - (b.facts.settled ? b.facts.endMs : 0),
-  duration: (a, b) => (a.facts.durationMs || 0) - (b.facts.durationMs || 0),
+  ...SPAN_SORTS,
   status: (a, b) => (STATUS_ORDER[a.facts.status] ?? -1) - (STATUS_ORDER[b.facts.status] ?? -1),
   title: (a, b) => a.title.localeCompare(b.title),
 };
@@ -47,8 +44,7 @@ export default function Experiments() {
   const experiments = useProjectStore(selectExperiments);
   const claims = useProjectStore(selectClaims);
   const [showForm, setShowForm] = useState(false);
-  const [sortKey, setSortKey] = useState('created');
-  const [sortDir, setSortDir] = useState('desc');
+  const sort = useTableSort('created', { ascKeys: ['title'] });
   // The map expands like every other graph. Escape leaves it — the map's own
   // Escape handler takes precedence while the detail sidebar is open.
   const [mapExpanded, setMapExpanded] = useState(false);
@@ -64,25 +60,11 @@ export default function Experiments() {
 
   const rows = useMemo(() => {
     const nowMs = Date.now();
-    const list = experiments.map(e => ({
-      exp: e,
-      title: expName(e),
-      facts: rowFacts(e, nowMs),
-    }));
-    const cmp = SORTS[sortKey] || SORTS.created;
-    list.sort((a, b) => (sortDir === 'asc' ? cmp(a, b) : cmp(b, a)));
-    return list;
-  }, [experiments, sortKey, sortDir]);
-
-  function toggleSort(key) {
-    if (key === sortKey) {
-      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortKey(key);
-      // Time-ish columns read best newest/longest first; title A→Z.
-      setSortDir(key === 'title' ? 'asc' : 'desc');
-    }
-  }
+    return sort.sorted(
+      experiments.map(e => ({ exp: e, title: expName(e), facts: rowFacts(e, nowMs) })),
+      SORTS,
+    );
+  }, [experiments, sort.sortKey, sort.sortDir]);
 
   return (
     <div className={`page-stage${view === 'map' ? ' xmap-stage' : ''}`}>
@@ -143,12 +125,7 @@ export default function Experiments() {
           <h2>No experiments yet</h2>
         </div>
       ) : (
-        <ExperimentTable
-          rows={rows}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSort={toggleSort}
-        />
+        <ExperimentTable rows={rows} sort={sort} />
       )}
     </div>
   );
@@ -162,58 +139,21 @@ const COLUMNS = [
   { key: 'duration', label: 'Duration', right: true },
 ];
 
-function WhenCell({ parts, title }) {
-  if (!parts) return <div className="expt-when expt-when--none">—</div>;
-  return (
-    <div className="expt-when" title={title}>
-      <span className="expt-when-day">{parts.day}</span>
-      <span className="expt-when-time">{parts.time}</span>
-    </div>
-  );
-}
-
-function ExperimentTable({ rows, sortKey, sortDir, onSort }) {
-  const navigate = useNavigate();
+function ExperimentTable({ rows, sort }) {
   const px = useProjectHref();
   return (
-    <div className="expt-scroll">
-      <div className="expt" role="table" aria-label="Experiments">
-        <div className="expt-head con-head" role="row">
-          {COLUMNS.map(col => (
-            <button
-              key={col.key}
-              type="button"
-              role="columnheader"
-              aria-sort={sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-              className={[
-                'th',
-                'th--con',
-                col.right ? 'th--r' : '',
-                sortKey === col.key ? 'on' : '',
-              ].filter(Boolean).join(' ')}
-              onClick={() => onSort(col.key)}
-            >
-              {col.label}
-              {sortKey === col.key && (
-                <span className="arr" aria-hidden="true">{sortDir === 'asc' ? '▲' : '▼'}</span>
-              )}
-            </button>
-          ))}
-        </div>
-        {rows.map(({ exp: e, title, facts }) => {
-          const claimCount = Array.isArray(e.tested_claims) ? e.tested_claims.length : 0;
-          const reviewCount = Array.isArray(e.reviews) ? e.reviews.length : 0;
-          const created = fmtDayTime(e.created_at);
-          const finished = facts.settled ? fmtDayTime(e.updated_at) : null;
-          return (
-            <div
-              key={e.id}
-              className="expt-row"
-              role="row"
-              tabIndex={0}
-              onClick={() => navigate(px(`/experiments/${e.id}`))}
-              onKeyDown={ev => { if (ev.key === 'Enter') navigate(px(`/experiments/${e.id}`)); }}
-            >
+    <ConsoleTable
+      label="Experiments"
+      columns={COLUMNS}
+      sort={sort}
+      rows={rows.map(({ exp: e, title, facts }) => {
+        const claimCount = Array.isArray(e.tested_claims) ? e.tested_claims.length : 0;
+        const reviewCount = Array.isArray(e.reviews) ? e.reviews.length : 0;
+        return {
+          key: e.id,
+          href: px(`/experiments/${e.id}`),
+          cells: (
+            <>
               <div className="expt-main">
                 <div className="expt-title" title={title}>{title}</div>
                 {e.intent && <div className="expt-desc" title={e.intent}>{e.intent}</div>}
@@ -224,24 +164,22 @@ function ExperimentTable({ rows, sortKey, sortDir, onSort }) {
                 </div>
               </div>
               <div><StatusPill value={e.status} /></div>
-              <WhenCell parts={created} title={e.created_at || ''} />
-              {finished ? (
-                <WhenCell parts={finished} title={e.updated_at || ''} />
-              ) : (
-                <div className="expt-when expt-when--none" title="still in progress">—</div>
-              )}
-              <div
-                className={`expt-dur${facts.settled ? '' : ' expt-dur--live'}`}
-                title={facts.settled ? 'created → last transition' : 'elapsed since created'}
-              >
-                {fmtDuration(facts.durationMs)}
-                {!facts.settled && <span className="expt-live-dot" aria-hidden="true" />}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+              <WhenCell parts={fmtDayTime(e.created_at)} title={e.created_at || ''} />
+              <WhenCell
+                parts={facts.settled ? fmtDayTime(e.updated_at) : null}
+                title={e.updated_at || ''}
+                noneTitle="still in progress"
+              />
+              <DurationCell
+                facts={facts}
+                doneTitle="created → last transition"
+                liveTitle="elapsed since created"
+              />
+            </>
+          ),
+        };
+      })}
+    />
   );
 }
 

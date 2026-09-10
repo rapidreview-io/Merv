@@ -4,9 +4,12 @@ import { api } from '../api';
 import { keepIfUnchanged, useIntervalPoll } from '../store/usePolling';
 import { useProjectStore, useProjectHref, selectExperiments, selectTasks } from '../store/useProjectStore';
 import StatusPill from '../components/StatusPill';
+import ConsoleTable, {
+  DurationCell, SPAN_SORTS, WhenCell, spanFacts, useTableSort,
+} from '../components/ConsoleTable';
 import { buildBraid } from '../components/reflection/braidModel';
 import { TERMINAL_WAVE } from '../components/reflection/waveModel';
-import { fmtDayTime, fmtDuration } from '../utils/format';
+import { fmtDayTime } from '../utils/format';
 
 /**
  * Reflection list — "What we learned": one row per reflection wave, in the
@@ -18,21 +21,23 @@ import { fmtDayTime, fmtDuration } from '../utils/format';
 // waves, started→now for the open one.
 function rowFacts(w, nowMs) {
   const status = String(w.status || '');
-  const settled = TERMINAL_WAVE.has(status);
-  const createdMs = w.created_at ? Date.parse(w.created_at) : NaN;
-  const endMs = settled && w.published_at ? Date.parse(w.published_at) : nowMs;
-  const durationMs = Number.isFinite(createdMs) ? Math.max(0, endMs - createdMs) : NaN;
-  const publishedMs = w.published_at ? Date.parse(w.published_at) : 0;
-  return { status, settled, createdMs, endMs, durationMs, publishedMs };
+  return {
+    status,
+    publishedMs: w.published_at ? Date.parse(w.published_at) : 0,
+    ...spanFacts(
+      { createdAt: w.created_at, endAt: w.published_at, settled: TERMINAL_WAVE.has(status) },
+      nowMs,
+    ),
+  };
 }
 
 const SORTS = {
+  duration: SPAN_SORTS.duration,
   wave: (a, b) => a.ordinal - b.ordinal,
   status: (a, b) => a.facts.status.localeCompare(b.facts.status),
   consumed: (a, b) => a.consumed - b.consumed,
   produced: (a, b) => a.produced - b.produced,
   published: (a, b) => a.facts.publishedMs - b.facts.publishedMs,
-  duration: (a, b) => (a.facts.durationMs || 0) - (b.facts.durationMs || 0),
 };
 
 const COLUMNS = [
@@ -44,16 +49,6 @@ const COLUMNS = [
   { key: 'duration', label: 'Duration', right: true },
 ];
 
-function WhenCell({ parts, title }) {
-  if (!parts) return <div className="expt-when expt-when--none">—</div>;
-  return (
-    <div className="expt-when" title={title}>
-      <span className="expt-when-day">{parts.day}</span>
-      <span className="expt-when-time">{parts.time}</span>
-    </div>
-  );
-}
-
 export default function Reflection() {
   const projectId = useProjectStore(s => s.projectId);
   const experiments = useProjectStore(selectExperiments);
@@ -61,8 +56,7 @@ export default function Reflection() {
   const navigate = useNavigate();
   const px = useProjectHref();
   const [data, setData] = useState(null);
-  const [sortKey, setSortKey] = useState('wave');
-  const [sortDir, setSortDir] = useState('desc');
+  const sort = useTableSort('wave');
 
   // Legacy deep links (?wave=<id>) predate per-wave pages — forward them.
   const [searchParams] = useSearchParams();
@@ -91,15 +85,8 @@ export default function Reflection() {
       produced: strands.filter(s => s.spawnIdx === i).length,
       facts: rowFacts(w, nowMs),
     }));
-    const cmp = SORTS[sortKey] || SORTS.wave;
-    list.sort((a, b) => (sortDir === 'asc' ? cmp(a, b) : cmp(b, a)));
-    return list;
-  }, [waves, experiments, tasks, sortKey, sortDir]);
-
-  function toggleSort(key) {
-    if (key === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
-    else { setSortKey(key); setSortDir('desc'); }
-  }
+    return sort.sorted(list, SORTS);
+  }, [waves, experiments, tasks, sort.sortKey, sort.sortDir]);
 
   return (
     <div className="page-stage">
@@ -113,38 +100,16 @@ export default function Reflection() {
           <p>The first wave grows from the project graph on Home.</p>
         </div>
       ) : (
-        <div className="expt-scroll">
-          <div className="expt expt--refl" role="table" aria-label="Reflections">
-            <div className="expt-head con-head" role="row">
-              {COLUMNS.map(col => (
-                <button
-                  key={col.key}
-                  type="button"
-                  role="columnheader"
-                  aria-sort={sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-                  className={[
-                    'th', 'th--con',
-                    col.right ? 'th--r' : '',
-                    sortKey === col.key ? 'on' : '',
-                  ].filter(Boolean).join(' ')}
-                  onClick={() => toggleSort(col.key)}
-                >
-                  {col.label}
-                  {sortKey === col.key && (
-                    <span className="arr" aria-hidden="true">{sortDir === 'asc' ? '▲' : '▼'}</span>
-                  )}
-                </button>
-              ))}
-            </div>
-            {rows.map(({ wave: w, ordinal, consumed, produced, facts }) => (
-              <div
-                key={w.id}
-                className="expt-row"
-                role="row"
-                tabIndex={0}
-                onClick={() => navigate(px(`/reflection/${w.id}`))}
-                onKeyDown={ev => { if (ev.key === 'Enter') navigate(px(`/reflection/${w.id}`)); }}
-              >
+        <ConsoleTable
+          label="Reflections"
+          className="expt--refl"
+          columns={COLUMNS}
+          sort={sort}
+          rows={rows.map(({ wave: w, ordinal, consumed, produced, facts }) => ({
+            key: w.id,
+            href: px(`/reflection/${w.id}`),
+            cells: (
+              <>
                 <div className="expt-main">
                   <div className="expt-title">R{ordinal} · {w.title || `Wave ${ordinal}`}</div>
                   {w.revision_context && (
@@ -157,20 +122,20 @@ export default function Reflection() {
                 <div><StatusPill value={w.status} /></div>
                 <div className="expt-dur">{consumed || '—'}</div>
                 <div className="expt-dur">{produced || '—'}</div>
-                {facts.settled
-                  ? <WhenCell parts={fmtDayTime(w.published_at)} title={w.published_at || ''} />
-                  : <div className="expt-when expt-when--none" title="still open">—</div>}
-                <div
-                  className={`expt-dur${facts.settled ? '' : ' expt-dur--live'}`}
-                  title={facts.settled ? 'started → published' : 'elapsed since started'}
-                >
-                  {fmtDuration(facts.durationMs)}
-                  {!facts.settled && <span className="expt-live-dot" aria-hidden="true" />}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+                <WhenCell
+                  parts={facts.settled ? fmtDayTime(w.published_at) : null}
+                  title={w.published_at || ''}
+                  noneTitle="still open"
+                />
+                <DurationCell
+                  facts={facts}
+                  doneTitle="started → published"
+                  liveTitle="elapsed since started"
+                />
+              </>
+            ),
+          }))}
+        />
       )}
     </div>
   );
