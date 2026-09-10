@@ -14,6 +14,7 @@ from typing import Any, Literal
 from pydantic import Field, field_validator, model_validator
 
 from ..kernel.tools import ContractModel, ProjectScopedInput, ToolContract
+from ..workflows import documents
 from .experiment_workflow import EXPERIMENT_TRANSITION_VALUES, EXPERIMENT_WORKFLOW
 from .reflection_workflow import REFLECTION_TRANSITION_VALUES, REFLECTION_WORKFLOW
 from .task_workflow import TASK_TRANSITION_VALUES, TASK_WORKFLOW
@@ -156,14 +157,14 @@ class ExperimentCreateInput(ProjectScopedInput):
         default="",
         description="Optional free prose addressed to whoever writes the plan: givens, boundaries with sibling experiments, preferences, budgets, warnings — up to a full design sketch. Immutable once created, and advice rather than contract: the approved plan supersedes it on anything about how. Empty is fine — the intent alone is a complete create.",
     )
-    tested_claim_ids: list[str] | str | None = Field(default_factory=list)
+    tested_claim_ids: documents.WrittenList = Field(default_factory=list)
     claim_id: str | None = Field(
         default=None, description="Alias for a single tested claim id."
     )
-    claim_ids: list[str] | str | None = Field(
+    claim_ids: documents.WrittenList = Field(
         default=None, description="Alias for tested_claim_ids."
     )
-    depends_on: list[str] | str | None = Field(
+    depends_on: documents.WrittenList = Field(
         default_factory=list,
         description=(
             "Optional exp_/task_ ids of the same project this experiment must "
@@ -241,7 +242,7 @@ class TaskCreateInput(ProjectScopedInput):
             "after creation."
         ),
     )
-    deliverables: list[str] | str | None = Field(
+    deliverables: documents.WrittenList = Field(
         default=None,
         description=(
             "REQUIRED. The things that must exist when the task is done — "
@@ -253,7 +254,7 @@ class TaskCreateInput(ProjectScopedInput):
             "delivery, or the owner ends the task and creates a better one."
         ),
     )
-    depends_on: list[str] | str | None = Field(
+    depends_on: documents.WrittenList = Field(
         default_factory=list,
         description=(
             "Optional exp_/task_ ids of the same project this task must not "
@@ -285,37 +286,11 @@ class TaskTransitionInput(ProjectScopedInput):
     )
 
 
-class ReflectionLensInput(ContractModel):
-    id: str = Field(
-        description=(
-            "Lens id slug (lowercase letters/digits/'_'/'-'). It doubles as the "
-            "reflection filename: the lens's subagent submits <id>.md."
-        )
-    )
-    title: str = ""
-    charter: str = Field(
-        default="",
-        description=(
-            "What angle this lens reads the project from. The core lenses "
-            "(amplify, avoid, entropy) default their charter; the two "
-            "wave-authored lenses must supply one."
-        ),
-    )
-    why_distinct: str = Field(
-        default="",
-        description=(
-            "Required for the two wave-authored lenses: how this lens differs "
-            "from the core three and from the other authored lens. Engineered "
-            "diversity is the point of the roster."
-        ),
-    )
-
-
 class ReflectionCreateInput(ProjectScopedInput):
     title: str = Field(
         default="", description="Optional short headline for this reflection wave."
     )
-    lenses: list[ReflectionLensInput] = Field(
+    lenses: list[documents.ReflectionLens] = Field(
         default_factory=list,
         description=(
             "The declared reflection roster: exactly 5 lenses — the 3 core ids "
@@ -347,32 +322,13 @@ class ConsolidationGetInput(ProjectScopedInput):
     reflection_id: str
 
 
-class ConsolidationDecisionInput(ContractModel):
-    experiment_id: str
-    disposition: Literal[
-        "used_as_is",
-        "adapted",
-        "reviewed_not_used",
-        "superseded",
-    ]
-    rationale: str
-    integration_kind: Literal[
-        "merge",
-        "fast_forward",
-        "cherry_pick",
-        "rewrite",
-        "none",
-    ]
-    superseded_by: str = ""
-
-
 class ConsolidationSubmitInput(ProjectScopedInput):
     reflection_id: str
     base_sha: str
     proposal_sha: str
     summary: str
     validation: dict[str, Any] = Field(default_factory=dict)
-    decisions: list[ConsolidationDecisionInput]
+    decisions: list[documents.ConsolidationDecision]
 
 
 class ReviewRequestInput(ProjectScopedInput):
