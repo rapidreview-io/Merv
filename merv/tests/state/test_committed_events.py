@@ -71,7 +71,7 @@ class CommittedEventTest(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             event.type = "changed"
 
-        wire = self.store.events_since(
+        wire = self.store.recent_events(
             project_id=self.project_id, after_id=event.id - 1
         )["events"]
         self.assertEqual(

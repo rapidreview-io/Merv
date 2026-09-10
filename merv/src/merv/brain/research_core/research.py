@@ -1683,7 +1683,10 @@ class Research:
         return self.store.recent_events(project_id=project_id, limit=limit)
 
     def events_since(self, *, project_id: str, after_id: int) -> dict[str, Any]:
-        return self.store.events_since(project_id=project_id, after_id=after_id)
+        """Ascending tail of the events table — the SSE cursor read."""
+        return self.store.recent_events(
+            project_id=project_id, limit=500, after_id=after_id
+        )
 
     # Read helpers ---------------------------------------------------------
 
