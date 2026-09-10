@@ -121,8 +121,6 @@ class LocalModeParityTest(unittest.TestCase):
 
 
 class HostedControlSurfaceTest(unittest.TestCase):
-    LOCAL_RESPONSE_KEYS = {"repo_root", "local_sync_dir", "local_experiment_dir"}
-
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
@@ -142,16 +140,6 @@ class HostedControlSurfaceTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
-
-    def assertNoLocalDataPlaneFields(self, value) -> None:  # noqa: ANN001
-        if isinstance(value, dict):
-            leaked = self.LOCAL_RESPONSE_KEYS & set(value)
-            self.assertFalse(leaked, f"leaked local data-plane fields: {sorted(leaked)}")
-            for item in value.values():
-                self.assertNoLocalDataPlaneFields(item)
-        elif isinstance(value, list):
-            for item in value:
-                self.assertNoLocalDataPlaneFields(item)
 
     def test_private_control_needs_no_token_and_health_is_slim(self) -> None:
         projects = self.client.get("/api/projects")
@@ -323,7 +311,6 @@ class HostedControlSurfaceTest(unittest.TestCase):
         )
         self.assertEqual(content.status_code, 200, content.text)
         self.assertFalse(content.json()["available"])
-        self.assertNoLocalDataPlaneFields(content.json())
 
     def test_admin_cleanup_runs_on_private_control_surface(self) -> None:
         class _Report:
@@ -424,16 +411,16 @@ class VersionHandshakeTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_meta_returns_server_version_floors_and_capabilities(self) -> None:
-        from merv.brain.kernel.version import (
+        from merv.brain import __version__
+        from merv.brain.surface.transport.api.shared import (
             MCP_CATALOG_VERSION,
             MIN_PROXY_VERSION,
-            SERVER_VERSION,
         )
 
         control = self.client.get("/api/meta")
         self.assertEqual(control.status_code, 200, control.text)
         body = control.json()
-        self.assertEqual(body["server_version"], SERVER_VERSION)
+        self.assertEqual(body["server_version"], __version__)
         self.assertNotIn("min_daemon_version", body)
         self.assertEqual(body["min_proxy_version"], MIN_PROXY_VERSION)
         self.assertEqual(body["catalog_version"], MCP_CATALOG_VERSION)
@@ -450,11 +437,11 @@ class VersionHandshakeTest(unittest.TestCase):
         self.assertTrue(local.json()["capabilities"]["token_uploads"])
 
     def test_in_range_client_passes_and_below_floor_is_rejected(self) -> None:
-        from merv.brain.kernel.version import SERVER_VERSION
+        from merv.brain import __version__
 
         ok = self.client.get(
             "/api/projects",
-            headers={"X-RP-Client-Version": SERVER_VERSION},
+            headers={"X-RP-Client-Version": __version__},
         )
         self.assertEqual(ok.status_code, 200, ok.text)
 

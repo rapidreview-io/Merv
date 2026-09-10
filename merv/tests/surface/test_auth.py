@@ -27,7 +27,7 @@ from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.surface.auth import SupabaseVerifier, UnauthorizedError
 from merv.brain.surface.transport.api import create_fastapi_app
 from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
-from merv.brain.kernel.version import CLIENT_VERSION_HEADER
+from merv.brain.surface.transport.api.shared import CLIENT_VERSION_HEADER
 
 SECRET = "test-jwt-secret"
 USER_A = "11111111-1111-1111-1111-111111111111"

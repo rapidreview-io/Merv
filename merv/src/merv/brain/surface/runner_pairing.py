@@ -23,9 +23,10 @@ Shape (RFC 8628 device authorization, trimmed):
 from __future__ import annotations
 
 import secrets
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import json
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from ..kernel.secret_tokens import hash_secret, secret_digest_matches
 from ..kernel.state.store import BaseStateStore
@@ -49,6 +50,10 @@ DEVICE_CODE_BYTES = 32
 PAIRING_TTL_SECONDS = 10 * 60
 APPROVED_READ_WINDOW_SECONDS = 10 * 60
 POLL_INTERVAL_SECONDS = 5
+# The per-IP creation budget every short-code exchange on this surface holds.
+# Runner pairing, RFC 8628 device grants and handoff links face one attack from
+# one place — someone spraying an eight-character code space — so they hold the
+# same three lines and refuse on the same terms.
 CREATE_PER_IP_PER_MINUTE = 10
 PENDING_PER_IP = 5
 PENDING_GLOBAL_CAP = 1000
@@ -56,6 +61,49 @@ APPROVAL_MISS_LIMIT = 10
 APPROVAL_MISS_WINDOW_SECONDS = 10 * 60
 MAX_MACHINE_BYTES = 4 * 1024
 _DIGEST_HEX_LENGTH = 64
+
+
+class BudgetRefusal(Protocol):
+    """Builds the error a blown budget raises, fresh on every refusal."""
+
+    def __call__(self) -> Exception: ...
+
+
+@dataclass(frozen=True)
+class IpCreationBudget:
+    """The counting queries of one table of pending exchanges.
+
+    Each query stays written where its table is owned; only the counting, the
+    comparison and the refusal live here. An empty query is a line this table
+    does not hold — handoff links keep no pending state.
+    """
+
+    recent_by_ip: str
+    refusal: BudgetRefusal
+    pending_by_ip: str = ""
+    pending_total: str = ""
+
+    def enforce(self, *, conn: Any, client_ip: str, now: datetime) -> None:
+        window = format_iso(now - timedelta(minutes=1))
+        for sql, params, cap in (
+            (self.recent_by_ip, (client_ip, window), CREATE_PER_IP_PER_MINUTE),
+            (self.pending_by_ip, (client_ip,), PENDING_PER_IP),
+            (self.pending_total, (), PENDING_GLOBAL_CAP),
+        ):
+            if sql and int(conn.execute(sql, params).fetchone()["n"]) >= cap:
+                raise self.refusal()
+
+
+_PAIRING_COUNT = "SELECT COUNT(*) AS n FROM agent_runner_pairings WHERE "
+_PAIRING_BUDGET = IpCreationBudget(
+    recent_by_ip=_PAIRING_COUNT + "client_ip = ? AND created_at > ?",
+    pending_by_ip=_PAIRING_COUNT + "client_ip = ? AND status = 'pending'",
+    pending_total=_PAIRING_COUNT + "status = 'pending'",
+    refusal=lambda: ThrottledError(
+        "too many pairing requests; wait a minute and try again",
+        details={"retry_after_seconds": 60},
+    ),
+)
 
 
 class RunnerPairings:
@@ -84,32 +132,7 @@ class RunnerPairings:
         device_code = secrets.token_urlsafe(DEVICE_CODE_BYTES)
         with self._store.transaction() as tx:
             self._sweep(tx=tx, now=now)
-            recent = tx.execute(
-                """
-                SELECT COUNT(*) AS n FROM agent_runner_pairings
-                WHERE client_ip = ? AND created_at > ?
-                """,
-                (client_ip, format_iso(now - timedelta(minutes=1))),
-            ).fetchone()
-            pending_ip = tx.execute(
-                """
-                SELECT COUNT(*) AS n FROM agent_runner_pairings
-                WHERE client_ip = ? AND status = 'pending'
-                """,
-                (client_ip,),
-            ).fetchone()
-            pending_all = tx.execute(
-                "SELECT COUNT(*) AS n FROM agent_runner_pairings WHERE status = 'pending'"
-            ).fetchone()
-            if (
-                int(recent["n"]) >= CREATE_PER_IP_PER_MINUTE
-                or int(pending_ip["n"]) >= PENDING_PER_IP
-                or int(pending_all["n"]) >= PENDING_GLOBAL_CAP
-            ):
-                raise ThrottledError(
-                    "too many pairing requests; wait a minute and try again",
-                    details={"retry_after_seconds": 60},
-                )
+            _PAIRING_BUDGET.enforce(conn=tx, client_ip=client_ip, now=now)
             existing = tx.execute(
                 "SELECT status FROM agent_runner_pairings WHERE key_digest = ?",
                 (digest,),

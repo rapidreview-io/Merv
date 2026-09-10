@@ -7,10 +7,10 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 
 from .... import __version__
-from ....kernel.version import meta
 from ....research_core import Research
 
 from .gateway import ToolInvocationGateway
+from .shared import MCP_CATALOG_VERSION, MIN_PROXY_VERSION
 from .views import ActivityTelemetry, ToolCallTelemetry
 from .views import activity_view, tool_call_detail as select_tool_call_detail
 
@@ -49,7 +49,11 @@ def build_router(
         # Version/compat handshake: server and catalog versions plus the
         # retained minimum proxy floor. Capabilities advertise the universal
         # HTTP MCP and token-upload paths.
-        payload = meta()
+        payload = {
+            "server_version": __version__,
+            "min_proxy_version": MIN_PROXY_VERSION,
+            "catalog_version": MCP_CATALOG_VERSION,
+        }
         payload["mode"] = "control" if surface.hosted_control else "local"
         payload["capabilities"] = {
             "hosted_control": surface.hosted_control,

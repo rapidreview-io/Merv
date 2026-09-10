@@ -20,7 +20,6 @@ from ....kernel.utils import (
     ResearchPluginError,
     ValidationError,
 )
-from ....kernel.version import CLIENT_VERSION_HEADER, MIN_PROXY_VERSION, is_below_floor
 from ...agent_identity import HELLO_TOOL, AgentIdentities, CallerFacts
 from ...auth import UnauthorizedError
 from ...identity import (
@@ -38,10 +37,13 @@ from ....research_core import Research
 from ....infrastructure import RemoteSandboxes as SandboxEngine
 from ..http_policy import HttpSurfacePolicy, SessionExecution
 from .shared import (
+    CLIENT_VERSION_HEADER,
     CallLedger,
     GLOBAL_MUTATOR_PREFIXES,
+    MIN_PROXY_VERSION,
     RefusalLedger,
     bind_request_principal,
+    is_below_floor,
     is_local_origin,
     ledger_refusal,
     ledger_tool_refusal,
@@ -49,7 +51,6 @@ from .shared import (
     operator_denial,
     operator_membership_recovery,
 )
-from .views import present
 from . import oauth, project_keys, runner_pairing
 from ...runner_pairing import RunnerPairings
 
@@ -669,15 +670,13 @@ class ToolInvocationGateway:
         arguments: dict[str, Any] | None = None,
         project_scope: str | None = None,
     ) -> dict[str, Any]:
-        return present(
-            self.call(
-                name=name,
-                arguments=arguments,
-                project_scope=project_scope,
-                activity_source="http",
-                principal=getattr(request.state, "principal", LOCAL_PRINCIPAL),
-                base_url=str(request.base_url).rstrip("/"),
-            )
+        return self.call(
+            name=name,
+            arguments=arguments,
+            project_scope=project_scope,
+            activity_source="http",
+            principal=getattr(request.state, "principal", LOCAL_PRINCIPAL),
+            base_url=str(request.base_url).rstrip("/"),
         )
 
     def authorize_project(self, request: Request, project_id: str) -> None:

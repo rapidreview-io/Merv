@@ -34,7 +34,7 @@ from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
 from merv.brain.kernel.state import StateStore
 from tests.support.blobs import LocalDirBlobStore
 from merv.brain.kernel.utils import ValidationError
-from merv.brain.kernel.version import CLIENT_VERSION_HEADER
+from merv.brain.surface.transport.api.shared import CLIENT_VERSION_HEADER
 from merv.shared.client_config import CLIENT_CONFIG_ENV_VAR
 
 

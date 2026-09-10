@@ -653,7 +653,7 @@ class CappedReadOrderingTest(unittest.TestCase):
     def test_read_capped_checks_projected_size_before_extending(self) -> None:
         import asyncio
 
-        from merv.brain.surface.transport.api.artifacts import _read_capped
+        from merv.brain.surface.transport.request_body import read_capped_body
 
         class _UniterableChunk:
             def __len__(self) -> int:
@@ -672,7 +672,7 @@ class CappedReadOrderingTest(unittest.TestCase):
             def stream(self):
                 return _stream([_UniterableChunk()])
 
-        result = asyncio.run(_read_capped(_FakeRequest(), cap=16))
+        result = asyncio.run(read_capped_body(_FakeRequest(), cap=16))
         self.assertIsNone(result)
 
 

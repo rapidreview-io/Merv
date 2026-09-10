@@ -12,7 +12,12 @@ class RequestBodyTooLarge(Exception):
 
 
 async def read_limited_body(request: Request, *, limit: int) -> bytes:
-    """Read at most ``limit`` bytes without calling Starlette's body buffer."""
+    """Read at most ``limit`` bytes without calling Starlette's body buffer.
+
+    INV-6: a declared Content-Length over the limit is refused before any read,
+    and each chunk is checked on its PROJECTED size before it is appended, so
+    one oversized ASGI chunk is never allocated past the limit.
+    """
     declared = request.headers.get("Content-Length", "").strip()
     if declared:
         try:
@@ -28,4 +33,12 @@ async def read_limited_body(request: Request, *, limit: int) -> bytes:
     return bytes(body)
 
 
-__all__ = ["RequestBodyTooLarge", "read_limited_body"]
+async def read_capped_body(request: Request, *, cap: int) -> bytes | None:
+    """The same read for a caller that answers 413 instead of raising."""
+    try:
+        return await read_limited_body(request, limit=cap)
+    except RequestBodyTooLarge:
+        return None
+
+
+__all__ = ["RequestBodyTooLarge", "read_capped_body", "read_limited_body"]

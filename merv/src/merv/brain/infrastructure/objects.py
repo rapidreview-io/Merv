@@ -13,7 +13,6 @@ import secrets
 from contextlib import closing, suppress
 from typing import Any, Mapping, Protocol
 
-from merv.shared.errors import ResearchPluginError
 from merv.shared.storage_guidance import DEFAULT_STORAGE_MAX_UPLOAD_BYTES, storage_guidance
 
 from ..kernel.ports.blob_store import validate_blob_keys
@@ -42,12 +41,6 @@ _COMPACT_FIELDS = (
     "id", "project_id", "name", "version", "kind", "content_sha256",
     "size_bytes", "status", "expires_at", "updated_at",
 )
-
-
-class RetentionConflictError(ResearchPluginError):
-    """merv-sandboxes retention only extends; a pinned object cannot be released."""
-
-    error_code = "retention_conflict"
 
 
 class ObjectLifecycle(Protocol):
@@ -418,16 +411,8 @@ class RemoteObjects:
     def manage(
         self, *, object_id: str, action: str, project_id: str | None = None
     ) -> dict[str, Any]:
-        """pin (retention removed), renew (extend by Merv's window), delete.
-        unpin cannot be expressed on a service whose retention only extends,
-        so it is refused rather than silently ignored."""
+        """pin (retention removed), renew (extend by Merv's window), delete."""
         project_id = self._project(project_id)
-        if action == "unpin":
-            raise RetentionConflictError(
-                "merv-sandboxes cannot release a pinned object: retention only extends "
-                "and null pins permanently. Delete the object instead, or leave it pinned.",
-                details={"object_id": object_id, "action": "unpin"},
-            )
         if action == "delete":
             entry = present(
                 self._call("DELETE", _object_path(object_id), project_id=project_id),
@@ -474,5 +459,5 @@ class RemoteObjects:
 __all__ = [
     "COMPLETION_TOKEN_TTL_SECONDS", "DEFAULT_MAX_UPLOAD_BYTES",
     "STORAGE_DEFAULT_TTL_SECONDS", "STORAGE_STATES", "ObjectLifecycle",
-    "RemoteObjects", "RetentionConflictError", "present",
+    "RemoteObjects", "present",
 ]

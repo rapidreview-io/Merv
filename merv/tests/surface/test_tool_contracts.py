@@ -182,7 +182,7 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "storage.complete_upload": "25c9c4e741c2c3c0e284b60213dc18e67eb8751c2fcd0498d4fa60d47d60a879",
     "storage.fetch": "8c6547f9b6845f29addb6c7388fe39eee144a7ff5ce8f17ebd83fa300317bec4",
     "storage.find": "47228bc70ae51084bbbaad6ad31b86f839db7d26fd483e0791d74ec30ce3e672",
-    "storage.object": "3fba20bb5e16ab17aa3e96c203332716c9eb3688332c2e11e573d220046451db",
+    "storage.object": "0a480a5fb382d8667a5146cbe11c5f1155158ef1b6460e1dc0bb173c93d8820b",
     "storage.put_object": "550c3f55aa135821f658eba9800d062f4e37b4ad3956af523b105be96d7da15a",
     "storage.submit": "074879ce62d47c893a33b707fb7e307d7bb58c9d3aaccf3da66812f52c7e5fe9",
     "task.create": "b7491b256aea7e16230389fff86175c025aeed06db094b688dd6e94bcc7dfa87",
