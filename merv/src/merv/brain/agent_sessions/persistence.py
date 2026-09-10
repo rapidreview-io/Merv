@@ -137,6 +137,32 @@ CREATE TABLE IF NOT EXISTS agent_workspaces (
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
+-- One compare-and-swap of the machine's central ref per accepted proposal.
+-- Git and the database cannot commit atomically: intent is durable first, the
+-- runner performs exactly one swap, and settle is idempotently replayed from
+-- the observed ref after a crash. Every id here is opaque — the instance the
+-- packet named and the proposal its owner accepted — so this row records that
+-- a swap happened without recording what it carried.
+CREATE TABLE IF NOT EXISTS workspace_advances (
+  id TEXT PRIMARY KEY,
+  instance_id TEXT NOT NULL,
+  proposal_id TEXT NOT NULL UNIQUE,
+  expected_sha TEXT NOT NULL,
+  target_sha TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('intended', 'bound', 'stale', 'failed')),
+  observed_sha TEXT NOT NULL DEFAULT '',
+  runner_id TEXT NOT NULL,
+  proposal_parents_json TEXT NOT NULL DEFAULT '[]',
+  diffstat_json TEXT NOT NULL DEFAULT '{}',
+  ancestry_json TEXT NOT NULL DEFAULT '{}',
+  intended_at TEXT NOT NULL,
+  bound_at TEXT,
+  error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_advances_instance
+  ON workspace_advances(instance_id, intended_at);
+
 -- One live lease per workflow instance revision, and one lease per runner
 -- retry key: the concurrency laws the offer path relies on the database to
 -- hold, not only its own check.

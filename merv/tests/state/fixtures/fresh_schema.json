@@ -376,22 +376,6 @@
       "summary",
       "tenant_id"
     ],
-    "reflection_advances": [
-      "ancestry_json",
-      "bound_at",
-      "diffstat_json",
-      "error",
-      "expected_sha",
-      "id",
-      "intended_at",
-      "observed_sha",
-      "proposal_id",
-      "proposal_parents_json",
-      "reflection_id",
-      "runner_id",
-      "status",
-      "target_sha"
-    ],
     "reflection_claim_changes": [
       "claim_id",
       "claim_key",
@@ -660,6 +644,22 @@
       "updated_at",
       "version",
       "workflow"
+    ],
+    "workspace_advances": [
+      "ancestry_json",
+      "bound_at",
+      "diffstat_json",
+      "error",
+      "expected_sha",
+      "id",
+      "instance_id",
+      "intended_at",
+      "observed_sha",
+      "proposal_id",
+      "proposal_parents_json",
+      "runner_id",
+      "status",
+      "target_sha"
     ]
   },
   "views": [

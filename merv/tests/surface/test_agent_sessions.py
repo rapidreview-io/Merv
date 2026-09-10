@@ -921,7 +921,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.assertEqual(verdict.status_code, 200, verdict.text)
 
         pending = self.client.get(
-            f"/api/projects/{self.project_id}/agent-advances/pending"
+            f"/api/projects/{self.project_id}/workspace-advances/pending"
         )
         self.assertEqual(pending.status_code, 200, pending.text)
         waiting = pending.json()["advance"]
@@ -929,7 +929,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.assertEqual((waiting["advance_id"], waiting["expected_sha"], waiting["target_sha"]), ("", "1" * 40, "2" * 40))
         self.assertEqual(waiting["sources"], [])
         prepared = self.client.post(
-            f"/api/projects/{self.project_id}/agent-advances/prepare",
+            f"/api/projects/{self.project_id}/workspace-advances/prepare",
             json={
                 "instance_id": reflection_id,
                 "runner_id": "central-runner",
@@ -941,10 +941,10 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.assertTrue(advance_id)
         self.assertEqual({**advance, "advance_id": ""}, waiting)
         self.assertEqual(
-            self.client.get(f"/api/projects/{self.project_id}/agent-advances/pending").json()["advance"], advance,
+            self.client.get(f"/api/projects/{self.project_id}/workspace-advances/pending").json()["advance"], advance,
         )
         settled = self.client.post(
-            f"/api/projects/{self.project_id}/agent-advances/settle",
+            f"/api/projects/{self.project_id}/workspace-advances/settle",
             json={
                 "advance_id": advance_id,
                 "runner_id": "central-runner",
@@ -958,7 +958,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.assertEqual(settled.json()["advance"]["status"], "bound")
         self.assertEqual(settled.json()["advance"]["outcome"], "published")
         self.assertIsNone(
-            self.client.get(f"/api/projects/{self.project_id}/agent-advances/pending").json()["advance"],
+            self.client.get(f"/api/projects/{self.project_id}/workspace-advances/pending").json()["advance"],
         )
         ledger = self.client.get(
             f"/api/projects/{self.project_id}/reflections/"

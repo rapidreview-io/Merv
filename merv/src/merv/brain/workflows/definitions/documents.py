@@ -1386,6 +1386,36 @@ def validate_consolidation_decisions(
     return normalized
 
 
+def sealed_consolidation_proposal(
+    *,
+    summary: Any,
+    validation: Any,
+    producer_session_id: Any,
+    base_sha: Any,
+    proposal_sha: Any,
+    decisions: list[dict[str, Any]],
+    expected_experiments: set[str],
+) -> dict[str, Any]:
+    """One immutable code proposal: every field checked before anything stores it."""
+    summary, session = str(summary or "").strip(), str(producer_session_id or "").strip()
+    if not session:
+        raise ValidationError("producer_session_id is required")
+    if not summary:
+        raise ValidationError("consolidation summary is required")
+    if not isinstance(validation, dict):
+        raise ValidationError("validation must be an object")
+    try:
+        validation_json = json.dumps(validation, sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("validation must contain JSON values") from exc
+    return {
+        "base_sha": git_sha(base_sha), "proposal_sha": git_sha(proposal_sha), "summary": summary,
+        "validation_json": validation_json, "created_by_session_id": session,
+        "decisions": validate_consolidation_decisions(
+            decisions=decisions, expected_experiments=expected_experiments),
+    }
+
+
 def git_sha(value: Any) -> str:
     sha = str(value or "").strip().lower()
     if not (40 <= len(sha) <= 64) or any(

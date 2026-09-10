@@ -2,6 +2,7 @@
 """Merv-owned coding-agent session lifecycle."""
 
 from .persistence import AGENT_SESSION_SCHEMA
+from .advances import OWNER_LEASE_SECONDS, WorkspaceAdvances
 from .agent_sessions import (
     AGENT_SESSION_SECRET_PREFIX,
     AgentSessions,
@@ -10,4 +11,5 @@ from .agent_sessions import (
     runner_ref,
 )
 
-__all__ = ["AGENT_SESSION_SCHEMA", "AGENT_SESSION_SECRET_PREFIX", "AgentSessions", "InstanceFact", "InstanceFacts", "runner_ref"]
+__all__ = ["AGENT_SESSION_SCHEMA", "AGENT_SESSION_SECRET_PREFIX", "AgentSessions", "InstanceFact", "InstanceFacts",
+           "OWNER_LEASE_SECONDS", "WorkspaceAdvances", "runner_ref"]

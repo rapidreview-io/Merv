@@ -55,6 +55,10 @@ migration explicitly preserves or replaces children and never replaces live work
 and published research-wave graphs, each beside its `RecordKind`. It also owns
 pure evidence validators, context builders, research contracts and the passive
 legacy `Metadata` (action effects and how a subject is named).
+`reflection_corpus.py` states what a wave reads — its fixed corpus, the content
+hydration behind it, consolidation coverage and the project-graph diff — as pure
+functions over rows and submitted bytes, so the record service asks only the
+questions a database answers.
 `documents.py` declares one model per research document and validates from it;
 only what a schema cannot say stays code, each a named rule — cycles, uniqueness
 across entries, references resolved through a caller's callback. Research tool

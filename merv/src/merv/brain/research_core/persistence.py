@@ -287,28 +287,6 @@ CREATE TABLE IF NOT EXISTS consolidation_decisions (
   FOREIGN KEY(experiment_id) REFERENCES experiments(id)
 );
 
--- Git and the database cannot commit atomically. Intent is durable first, the
--- runner performs one compare-and-swap, and settle is idempotently replayed
--- from the observed central ref after a crash.
-CREATE TABLE IF NOT EXISTS reflection_advances (
-  id TEXT PRIMARY KEY,
-  reflection_id TEXT NOT NULL,
-  proposal_id TEXT NOT NULL UNIQUE,
-  expected_sha TEXT NOT NULL,
-  target_sha TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('intended', 'bound', 'stale', 'failed')),
-  observed_sha TEXT NOT NULL DEFAULT '',
-  runner_id TEXT NOT NULL,
-  proposal_parents_json TEXT NOT NULL DEFAULT '[]',
-  diffstat_json TEXT NOT NULL DEFAULT '{}',
-  ancestry_json TEXT NOT NULL DEFAULT '{}',
-  intended_at TEXT NOT NULL,
-  bound_at TEXT,
-  error TEXT NOT NULL DEFAULT '',
-  FOREIGN KEY(reflection_id) REFERENCES reflections(id),
-  FOREIGN KEY(proposal_id) REFERENCES consolidation_proposals(id)
-);
-
 CREATE TABLE IF NOT EXISTS reflection_reserved_names (
   reflection_id TEXT NOT NULL,
   project_id TEXT NOT NULL,
@@ -447,8 +425,8 @@ CREATE INDEX IF NOT EXISTS idx_research_artifacts_content
   ON research_artifact_links(artifact_id);
 
 -- The reads one work node makes about itself: wave DAG edges both ways,
--- tasks, candidate order, the proposals and advances under a reflection, and
--- the objects produced against it.
+-- tasks, candidate order, the proposals under a reflection, and the objects
+-- produced against it.
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_node_dependencies_project
   ON node_dependencies(project_id, node_id);
@@ -458,8 +436,6 @@ CREATE INDEX IF NOT EXISTS idx_project_candidates_order
   ON project_candidates(project_id, created_seq);
 CREATE INDEX IF NOT EXISTS idx_consolidation_proposals_reflection
   ON consolidation_proposals(reflection_id, revision);
-CREATE INDEX IF NOT EXISTS idx_reflection_advances_reflection
-  ON reflection_advances(reflection_id, intended_at);
 CREATE INDEX IF NOT EXISTS idx_research_objects_target
   ON research_objects(project_id, target_type, target_id, status);
 
@@ -497,8 +473,27 @@ def _drop_tracking_columns(conn: Connection) -> None:
             conn.execute(f"ALTER TABLE experiments DROP COLUMN {column}")
 
 
+def _hand_advances_to_workspaces(conn: Connection) -> None:
+    """Migration 70: a central compare-and-swap receipt is a workspace fact.
+
+    Research decides which accepted work may advance the central ref; carrying
+    the receipt of the swap is Agent Sessions' job, so the table moves there
+    and its owning row becomes the opaque instance the packet named. This step
+    lives here because only research may write the retiring name.
+    """
+    if not has_table(conn, "reflection_advances"):
+        return
+    if has_table(conn, "workspace_advances"):
+        # The new owner's idempotent DDL landed first on this database; its
+        # empty twin gives way to the rows that carry the actual history.
+        conn.execute("DROP TABLE workspace_advances")
+    conn.execute("ALTER TABLE reflection_advances RENAME TO workspace_advances")
+    conn.execute("ALTER TABLE workspace_advances RENAME COLUMN reflection_id TO instance_id")
+
+
 RESEARCH_SCHEMA = SchemaModule(
     name="research_core",
     ddl=RESEARCH_DDL,
-    migrations=(Migration(68, "drop_experiment_tracking_columns", _drop_tracking_columns),),
+    migrations=(Migration(68, "drop_experiment_tracking_columns", _drop_tracking_columns),
+                Migration(70, "hand_advances_to_workspaces", _hand_advances_to_workspaces)),
 )

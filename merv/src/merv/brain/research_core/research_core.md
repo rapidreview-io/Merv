@@ -28,9 +28,9 @@ native record runs on one engine; its service keeps only that kind's own rules.
   exhibit. `tasks.py`: the immutable goal, its pinned brief, and delivery parsing.
 - `dependencies.py`: the wave DAG (`node_dependencies`): edges with cycle checks, and the
   per-node dependency and dependent rows the shared gate and the UI read.
-- `reflections.py`: the wave's own machinery — single-open-wave guard, corpus snapshots,
-  lens pinning and coverage, graph comparison, reserved names, central advance, atomic
-  change-spec materialization and drift facts.
+- `reflections.py`: the wave's own machinery — single-open-wave guard, the rows behind its
+  fixed corpus, lens pinning, reserved names, change-spec materialization and drift facts;
+  its reads are declared in `definitions/reflection_corpus.py`.
 - `reviews.py`: review requests, one-time capabilities, isolated sessions, pinned snapshots,
   verdicts, return routing. `association_targets.py`: target resolution. `objects.py`:
   `ResearchObjects` — the object facade's lifecycle hook and the per-experiment
@@ -68,7 +68,7 @@ consolidation_review -> published`; the row has no column for the last review st
 declared projection keeps every reader on `consolidating`. Review makes its research
 artifacts authoritative. A separate consolidator covers every experiment, a separate
 reviewer approves the exact code proposal, and the runner binds it to the Merv-owned
-central Git ref; only then does publication atomically materialize the change spec and pin
+central Git ref through Agent Sessions' receipt; only then does publication atomically materialize the change spec and pin
 the graph. Code review returns only to consolidation.
 
 A review capability is random, expiring, returned once, and stored only as a hash; a new
