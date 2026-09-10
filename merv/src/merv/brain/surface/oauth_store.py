@@ -53,16 +53,13 @@ def oauth_client_fingerprint(
 ) -> str:
     """The identity of one OAuth DCR registration's metadata (migration 38).
 
-    A row whose identity IS its content needs one definition of that content,
-    used by both the migration that backfills the column and the writes above —
-    otherwise the UNIQUE index enforces two subtly different notions of "the
-    same thing". Both arrays are sorted: their order carries no meaning to
-    either side, so a client that merely shuffles its own list is the same
-    client and must not fork a second row on every launch. Unparseable stored
-    JSON fingerprints as its own literal text rather than raising — a legacy row
-    is still entitled to a stable, distinct identity. Not secret material: these
-    digests are computed over public metadata, so they deliberately do not go
-    through ``kernel/secret_tokens.py``.
+    The writes above and the migration that backfills the column must agree, or
+    the UNIQUE index enforces two notions of "the same thing"; this is that one
+    definition. Both arrays are sorted, because their order carries no meaning
+    to either side and a client that shuffles its own list must not fork a
+    second row. Unparseable stored JSON fingerprints as its own literal text
+    rather than raising — a legacy row is still entitled to a stable identity.
+    Public metadata, not secret material, so deliberately not secret_tokens.
     """
     payload = json.dumps(
         {
@@ -111,32 +108,25 @@ _BY_FINGERPRINT = """
 SELECT * FROM oauth_clients WHERE metadata_fingerprint = ?
 """
 # The same per-IP budget runner pairing holds, over the two Surface tables an
-# unauthenticated or browser-session caller can grow.
+# unauthenticated or browser-session caller can grow. Handoff links keep no
+# pending state, and their mint is often made on the user's behalf mid-consent,
+# so that one refuses with ``slow_down`` for the caller to degrade to the full
+# command rather than fail the approval.
+_GRANT_COUNT = "SELECT COUNT(*) AS n FROM oauth_device_grants WHERE "
 _DEVICE_BUDGET = IpCreationBudget(
-    recent_by_ip="""
-        SELECT COUNT(*) AS n FROM oauth_device_grants
-        WHERE client_ip = ? AND created_at > ?
-    """,
-    pending_by_ip="""
-        SELECT COUNT(*) AS n FROM oauth_device_grants
-        WHERE client_ip = ? AND status = 'pending'
-    """,
-    pending_total=(
-        "SELECT COUNT(*) AS n FROM oauth_device_grants WHERE status = 'pending'"
-    ),
+    recent_by_ip=_GRANT_COUNT + "client_ip = ? AND created_at > ?",
+    pending_by_ip=_GRANT_COUNT + "client_ip = ? AND status = 'pending'",
+    pending_total=_GRANT_COUNT + "status = 'pending'",
     refusal=lambda: ThrottledError(
         "too many device authorization requests; wait a minute and try again",
         details={"retry_after_seconds": 60},
     ),
 )
-# Handoff links keep no pending state, and the mint is often made on the user's
-# behalf mid-consent, so it refuses with ``slow_down`` for the caller to degrade
-# to the full command rather than fail the approval.
 _HANDOFF_BUDGET = IpCreationBudget(
-    recent_by_ip="""
-        SELECT COUNT(*) AS n FROM oauth_handoff_links
-        WHERE client_ip = ? AND created_at > ?
-    """,
+    recent_by_ip=(
+        "SELECT COUNT(*) AS n FROM oauth_handoff_links "
+        "WHERE client_ip = ? AND created_at > ?"
+    ),
     refusal=lambda: OAuthError("slow_down", "too many handoff links; retry shortly"),
 )
 

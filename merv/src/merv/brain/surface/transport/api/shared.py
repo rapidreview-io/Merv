@@ -321,21 +321,20 @@ def open_hosted_operator_denial(request: Request) -> JSONResponse | None:
     )
 
 
-def _version_tuple(version: str) -> tuple[int, ...]:
-    """Parse a dotted numeric version to a comparable tuple.
-
-    Lenient: non-numeric segments contribute 0 so a malformed version sorts low
-    (and is therefore refused against any real floor) rather than raising.
-    """
-    parts: list[int] = []
-    for segment in str(version).strip().split("."):
-        try:
-            parts.append(int(segment))
-        except ValueError:
-            parts.append(0)
-    return tuple(parts) or (0,)
-
-
 def is_below_floor(*, client_version: str, floor: str) -> bool:
-    """True when ``client_version`` is strictly older than ``floor``."""
-    return _version_tuple(client_version) < _version_tuple(floor)
+    """True when ``client_version`` is strictly older than ``floor``.
+
+    Lenient: a non-numeric segment contributes 0, so a malformed version sorts
+    low and is refused against any real floor rather than raising.
+    """
+
+    def parsed(version: str) -> tuple[int, ...]:
+        parts: list[int] = []
+        for segment in str(version).strip().split("."):
+            try:
+                parts.append(int(segment))
+            except ValueError:
+                parts.append(0)
+        return tuple(parts) or (0,)
+
+    return parsed(client_version) < parsed(floor)

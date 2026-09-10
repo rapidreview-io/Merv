@@ -353,16 +353,9 @@ def build_router(
 
     @router.post("/oauth/token")
     async def token(request: Request):
-        authorization = request.headers.get("Authorization")
-        if authorization:
-            # RFC 6749 §5.2: a client that attempted to authenticate via the
-            # Authorization header must get 401 with a matching challenge.
-            scheme = authorization.split(" ", 1)[0] or "Basic"
-            return _oauth_error(
-                OAuthError("invalid_client", "public clients must not authenticate"),
-                status_code=401,
-                challenge=scheme,
-            )
+        denial = _public_client_denial(request)
+        if denial is not None:
+            return denial
         try:
             form = await _read_form(request, what="token")
         except OAuthError as exc:
@@ -391,14 +384,9 @@ def build_router(
 
     @router.post("/oauth/device_authorization")
     async def device_authorization(request: Request):
-        authorization = request.headers.get("Authorization")
-        if authorization:
-            scheme = authorization.split(" ", 1)[0] or "Basic"
-            return _oauth_error(
-                OAuthError("invalid_client", "public clients must not authenticate"),
-                status_code=401,
-                challenge=scheme,
-            )
+        denial = _public_client_denial(request)
+        if denial is not None:
+            return denial
         issuer = _origin(request)
         ui = _ui_origin(
             request, allowed_origins=allowed_origins, ui_base_url=ui_base_url
@@ -530,6 +518,19 @@ def _unique_query(request: Request) -> dict[str, str]:
 
 def _session_owner(request: Request) -> str:
     return str(getattr(request.state.principal, "user_id", "") or "")
+
+
+def _public_client_denial(request: Request) -> JSONResponse | None:
+    """RFC 6749 §5.2: a client that tried to authenticate on an endpoint only
+    public clients use gets 401 echoing the scheme it attempted."""
+    authorization = request.headers.get("Authorization")
+    if not authorization:
+        return None
+    return _oauth_error(
+        OAuthError("invalid_client", "public clients must not authenticate"),
+        status_code=401,
+        challenge=authorization.split(" ", 1)[0] or "Basic",
+    )
 
 
 async def _consent_body(request: Request) -> tuple[Any, dict[str, Any]]:

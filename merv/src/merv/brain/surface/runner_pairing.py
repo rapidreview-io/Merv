@@ -64,7 +64,7 @@ _DIGEST_HEX_LENGTH = 64
 
 
 class BudgetRefusal(Protocol):
-    """Builds the error one blown budget raises, fresh on every refusal."""
+    """Builds the error a blown budget raises, fresh on every refusal."""
 
     def __call__(self) -> Exception: ...
 
@@ -73,10 +73,9 @@ class BudgetRefusal(Protocol):
 class IpCreationBudget:
     """The counting queries of one table of pending exchanges.
 
-    Each query stays written where its table is owned, so table ownership is
-    still visible in the owner's own SQL; only the counting, the comparison and
-    the refusal live here. A table that keeps no pending state (handoff links)
-    gives ``recent_by_ip`` alone and is bounded by the per-minute line.
+    Each query stays written where its table is owned; only the counting, the
+    comparison and the refusal live here. An empty query is a line this table
+    does not hold — handoff links keep no pending state.
     """
 
     recent_by_ip: str
@@ -85,34 +84,21 @@ class IpCreationBudget:
     pending_total: str = ""
 
     def enforce(self, *, conn: Any, client_ip: str, now: datetime) -> None:
-        lines = [
-            (
-                self.recent_by_ip,
-                (client_ip, format_iso(now - timedelta(minutes=1))),
-                CREATE_PER_IP_PER_MINUTE,
-            )
-        ]
-        if self.pending_by_ip:
-            lines.append((self.pending_by_ip, (client_ip,), PENDING_PER_IP))
-        if self.pending_total:
-            lines.append((self.pending_total, (), PENDING_GLOBAL_CAP))
-        for sql, params, cap in lines:
-            if int(conn.execute(sql, params).fetchone()["n"]) >= cap:
+        window = format_iso(now - timedelta(minutes=1))
+        for sql, params, cap in (
+            (self.recent_by_ip, (client_ip, window), CREATE_PER_IP_PER_MINUTE),
+            (self.pending_by_ip, (client_ip,), PENDING_PER_IP),
+            (self.pending_total, (), PENDING_GLOBAL_CAP),
+        ):
+            if sql and int(conn.execute(sql, params).fetchone()["n"]) >= cap:
                 raise self.refusal()
 
 
+_PAIRING_COUNT = "SELECT COUNT(*) AS n FROM agent_runner_pairings WHERE "
 _PAIRING_BUDGET = IpCreationBudget(
-    recent_by_ip="""
-        SELECT COUNT(*) AS n FROM agent_runner_pairings
-        WHERE client_ip = ? AND created_at > ?
-    """,
-    pending_by_ip="""
-        SELECT COUNT(*) AS n FROM agent_runner_pairings
-        WHERE client_ip = ? AND status = 'pending'
-    """,
-    pending_total=(
-        "SELECT COUNT(*) AS n FROM agent_runner_pairings WHERE status = 'pending'"
-    ),
+    recent_by_ip=_PAIRING_COUNT + "client_ip = ? AND created_at > ?",
+    pending_by_ip=_PAIRING_COUNT + "client_ip = ? AND status = 'pending'",
+    pending_total=_PAIRING_COUNT + "status = 'pending'",
     refusal=lambda: ThrottledError(
         "too many pairing requests; wait a minute and try again",
         details={"retry_after_seconds": 60},
