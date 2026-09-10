@@ -164,7 +164,11 @@ def build_router(
             ),
         )
 
-    def prepare_advance(project_id: str, request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+    @router.post("/api/projects/{project_id}/agent-advances/prepare")
+    def prepare_agent_advance(
+        project_id: str, request: Request, body: JsonBody = Body(default=None)
+    ) -> dict[str, Any]:
+        payload = dict(body or {})
         gateway.authorize_project(request, project_id)
         return {
             "advance": advances.prepare_agent_advance(
@@ -174,7 +178,16 @@ def build_router(
             )
         }
 
-    def settle_advance(project_id: str, request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+    @router.get("/api/projects/{project_id}/agent-advances/pending")
+    def pending_agent_advance(project_id: str, request: Request) -> dict[str, Any]:
+        gateway.authorize_project(request, project_id)
+        return {"advance": advances.pending_agent_advance(project_id=project_id)}
+
+    @router.post("/api/projects/{project_id}/agent-advances/settle")
+    def settle_agent_advance(
+        project_id: str, request: Request, body: JsonBody = Body(default=None)
+    ) -> dict[str, Any]:
+        payload = dict(body or {})
         gateway.authorize_project(request, project_id)
         return {
             "advance": advances.settle_agent_advance(
@@ -203,42 +216,6 @@ def build_router(
                 error=str(payload.get("error") or ""),
             )
         }
-
-    @router.post("/api/projects/{project_id}/agent-advances/prepare")
-    def prepare_agent_advance(
-        project_id: str, request: Request, body: JsonBody = Body(default=None)
-    ) -> dict[str, Any]:
-        return prepare_advance(project_id, request, dict(body or {}))
-
-    @router.get("/api/projects/{project_id}/agent-advances/pending")
-    def pending_agent_advance(project_id: str, request: Request) -> dict[str, Any]:
-        gateway.authorize_project(request, project_id)
-        return {"advance": advances.pending_agent_advance(project_id=project_id)}
-
-    @router.post("/api/projects/{project_id}/agent-advances/settle")
-    def settle_agent_advance(
-        project_id: str, request: Request, body: JsonBody = Body(default=None)
-    ) -> dict[str, Any]:
-        return settle_advance(project_id, request, dict(body or {}))
-
-    # Deprecated aliases for runners in the field: the same Protocol and body
-    # behind the paths they still call.
-    @router.post("/api/projects/{project_id}/consolidation/prepare")
-    def prepare_advance_alias(
-        project_id: str, request: Request, body: JsonBody = Body(default=None)
-    ) -> dict[str, Any]:
-        return prepare_advance(project_id, request, dict(body or {}))
-
-    @router.get("/api/projects/{project_id}/consolidation/pending")
-    def pending_advance_alias(project_id: str, request: Request) -> dict[str, Any]:
-        gateway.authorize_project(request, project_id)
-        return {"pending": advances.pending_agent_advance(project_id=project_id)}
-
-    @router.post("/api/projects/{project_id}/consolidation/settle")
-    def settle_advance_alias(
-        project_id: str, request: Request, body: JsonBody = Body(default=None)
-    ) -> dict[str, Any]:
-        return settle_advance(project_id, request, dict(body or {}))
 
     @router.get("/api/projects/{project_id}/agent-sessions")
     def list_sessions(project_id: str, request: Request) -> dict[str, Any]:
