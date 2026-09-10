@@ -16,10 +16,8 @@ from ...research_core import (
     EXPERIMENT_TERMINAL_STATUSES,
     EXPERIMENT_WORKFLOW,
     ExperimentState,
-    PersistedRunState,
     Research,
 )
-from ..mlflow import MlflowIntegration, TrackingContextPayload
 from .create import experiment_folder
 from .exhibits import ExhibitBuilder, should_pin_exhibit
 from .metrics_exhibit import METRICS_EXHIBIT_FILENAME, exhibit_bytes
@@ -27,9 +25,6 @@ from .presentation import ProducedObjectCatalog, SlimExperimentState, slim_exper
 
 
 class TransitionResponse(SlimExperimentState, total=False):
-    mlflow: TrackingContextPayload
-    mlflow_guidance: str
-    mlflow_warning: dict[str, str]
     metrics_exhibit: dict[str, object]
     feed_note: str
 
@@ -47,10 +42,6 @@ class TransitionReceipt(TypedDict, total=False):
     accepted_at: str
     metrics_exhibit: dict[str, object]
     feed_note: str
-    mlflow: TrackingContextPayload
-    mlflow_run: PersistedRunState
-    mlflow_guidance: str
-    mlflow_warning: dict[str, str]
 
 
 # What a committed research event is called on the feed. Research owns the
@@ -84,7 +75,6 @@ class TransitionExperiment:
     research: Research
     artifacts: Artifacts
     feed: FeedAdvisory
-    mlflow: MlflowIntegration
     exhibits: ExhibitBuilder
     objects: ProducedObjectCatalog
 
@@ -101,7 +91,6 @@ class TransitionExperiment:
             transition=transition,
             evidence=evidence,
             project_id=project_id,
-            include_tracking_credentials=True,
         )
         receipt = TransitionReceipt(
             experiment_id=experiment_id,
@@ -116,16 +105,8 @@ class TransitionExperiment:
             accepted_at=event.created_at,
         )
         # These are operation-specific side-effect receipts, not experiment
-        # context. The normal composition has no tracking fields; compatibility
-        # builds keep them reversible for a later reintroduction.
-        for key in (
-            "metrics_exhibit",
-            "feed_note",
-            "mlflow",
-            "mlflow_run",
-            "mlflow_guidance",
-            "mlflow_warning",
-        ):
+        # context.
+        for key in ("metrics_exhibit", "feed_note"):
             if key in response:
                 receipt[key] = response[key]
         return receipt
@@ -137,14 +118,12 @@ class TransitionExperiment:
         transition: str,
         evidence: dict[str, Any] | None = None,
         project_id: str | None = None,
-        include_tracking_credentials: bool = False,
     ) -> TransitionResponse:
         response, _event = self._execute(
             experiment_id=experiment_id,
             transition=transition,
             evidence=evidence,
             project_id=project_id,
-            include_tracking_credentials=include_tracking_credentials,
         )
         return response
 
@@ -155,7 +134,6 @@ class TransitionExperiment:
         transition: str,
         evidence: dict[str, Any] | None,
         project_id: str | None,
-        include_tracking_credentials: bool,
     ) -> tuple[TransitionResponse, StoredEvent]:
         step = EXPERIMENT_WORKFLOW.transition(transition)
         effects = () if step is None else step.effects
@@ -189,28 +167,10 @@ class TransitionExperiment:
             **({"expected_revision": prepared_snapshot.revision} if prepared_snapshot is not None else {}),
         )
         state = committed.state
-        # The committed graph queues tracking actions. The durable delivery
-        # worker owns retry and idempotency for native and generic transitions.
         response = cast(
             TransitionResponse,
-            dict(
-                slim_experiment_state(
-                    state,
-                    storage_objects=storage_objects,
-                    include_legacy_tracking=self.mlflow.enabled,
-                )
-            ),
+            dict(slim_experiment_state(state, storage_objects=storage_objects)),
         )
-        if not self.mlflow.enabled:
-            response.pop("mlflow_run", None)
-        presentation_warning = self.mlflow.decorate_after_commit(
-            response,
-            project_id=resolved_project_id,
-            experiment_id=experiment_id,
-            include_credentials=include_tracking_credentials,
-        )
-        if presentation_warning is not None:
-            response["mlflow_warning"] = presentation_warning
         if "show_metrics_exhibit" in effects:
             response["metrics_exhibit"] = self._exhibit_expectation(
                 experiment_id=experiment_id, state=response
@@ -258,10 +218,8 @@ class TransitionExperiment:
         # Remote reads happen before any database transaction. The native
         # capability locks/rechecks this revision and evidence before pinning.
         exhibit = self.exhibits.generate(state=state)
-        pinned = should_pin_exhibit(exhibit=exhibit, state=state)
+        pinned = should_pin_exhibit(exhibit=exhibit)
         verdict = {**dict(exhibit["verdict"]), "attempt_index": exhibit["attempt_index"], "pinned": pinned}
-        if "mlflow" in exhibit:
-            verdict["mlflow"] = exhibit["mlflow"]
         self.research.record_exhibit_verdict(
             experiment_id=experiment_id, project_id=project_id, verdict=verdict,
             expected_revision=snapshot.revision, expected_attempt_index=int(state["attempt_index"]),
@@ -284,36 +242,17 @@ class TransitionExperiment:
         self, *, experiment_id: str, state: dict[str, Any]
     ) -> dict[str, object]:
         path = self._exhibit_path(experiment_id=experiment_id, state=state)
-        if not self.mlflow.enabled:
-            return {
-                "final_path": path,
-                "preview_tool": "experiment.exhibit",
-                "notice": (
-                    "Retain every quantitative run as a role-'result' JSON or "
-                    "CSV artifact, including failed and aborted runs, plus the "
-                    "figures used by the report. At submit_results the system "
-                    "evaluates the attempt's submitted result evidence. Preview "
-                    "the current exhibit with experiment.exhibit; when one is "
-                    f"pinned at {path}, report.md must reference and interpret "
-                    f"{METRICS_EXHIBIT_FILENAME}."
-                ),
-            }
         return {
             "final_path": path,
             "preview_tool": "experiment.exhibit",
             "notice": (
-                "At submit_results the system generates a metrics exhibit from "
-                "up to the newest 50 MLflow runs in this attempt's window (no "
-                "curation; the cap is recorded) and every role-'result' artifact "
-                "submitted for the attempt (JSON is parsed into the exhibit). "
-                "It pins the exhibit when matching runs are found, "
-                "or when MLflow is unavailable after a plugin-created run, at "
-                f"{path}. When pinned, your report must reference "
-                f"{METRICS_EXHIBIT_FILENAME} and answer around it — log every run "
-                "to the MLflow env you were handed, tag project_id/experiment_id, "
-                "and pull result files before submitting. Preview anytime with "
-                "experiment.exhibit; later runs remain in MLflow but are outside "
-                "the finalized exhibit."
+                "Retain every quantitative run as a role-'result' JSON or "
+                "CSV artifact, including failed and aborted runs, plus the "
+                "figures used by the report. At submit_results the system "
+                "evaluates the attempt's submitted result evidence. Preview "
+                "the current exhibit with experiment.exhibit; when one is "
+                f"pinned at {path}, report.md must reference and interpret "
+                f"{METRICS_EXHIBIT_FILENAME}."
             ),
         }
 

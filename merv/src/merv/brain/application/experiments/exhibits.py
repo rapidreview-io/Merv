@@ -9,7 +9,6 @@ from typing import Protocol
 from ...research_core import Artifact, ResearchArtifacts as Artifacts
 from ...kernel.utils import WorkflowError
 from ...research_core import EXPERIMENT_WORKFLOW, ExperimentState, Research
-from ..mlflow import MlflowIntegration
 from .create import experiment_folder
 from .metrics_exhibit import METRICS_EXHIBIT_FILENAME, build_metrics_exhibit
 
@@ -21,46 +20,27 @@ class ExhibitBuilder(Protocol):
 class ExperimentExhibits:
     """Build current observations; transition decides whether to commit them."""
 
-    def __init__(
-        self,
-        *,
-        research: Research,
-        artifacts: Artifacts,
-        mlflow: MlflowIntegration,
-    ) -> None:
+    def __init__(self, *, research: Research, artifacts: Artifacts) -> None:
         self.research = research
         self.artifacts = artifacts
-        self.mlflow = mlflow
 
     def generate(self, *, state: ExperimentState) -> dict[str, object]:
         project_id = str(state.get("project_id") or "")
         experiment_id = str(state.get("id") or "")
         attempt_index = int(state.get("attempt_index") or 1)
-        experiment_name, configured, snapshot = self.mlflow.exhibit_snapshot(
-            project_id=project_id,
-            experiment_id=experiment_id,
-        )
-        exhibit = build_metrics_exhibit(
+        return build_metrics_exhibit(
             project_id=project_id,
             experiment_id=experiment_id,
             attempt_index=attempt_index,
-            experiment_name=experiment_name,
             window_started_at=self.research.attempt_started_running_at(
                 experiment_id=experiment_id
             ),
-            snapshot=snapshot,
-            mlflow_configured=configured,
             file_sources=self._metric_file_sources(
                 project_id=project_id,
                 experiment_id=experiment_id,
                 attempt_index=attempt_index,
             ),
         )
-        if not self.mlflow.enabled:
-            # Keep the legacy adapter's envelope dormant without leaking its
-            # name or namespace into normal previews and pinned artifacts.
-            exhibit.pop("mlflow", None)
-        return exhibit
 
     def preview(
         self, *, experiment_id: str, project_id: str | None = None
@@ -151,18 +131,17 @@ class ExperimentExhibits:
         return sources
 
 
-def should_pin_exhibit(*, exhibit: dict[str, object], state: ExperimentState) -> bool:
-    verdict = exhibit["verdict"]
-    tracking = exhibit.get("mlflow") or {}
-    run = state.get("mlflow_run") or {}
-    assert isinstance(verdict, dict) and isinstance(tracking, dict)
-    return bool(
-        verdict.get("runs_found")
-        or (
-            tracking.get("configured")
-            and not tracking.get("available")
-            and run.get("run_id")
-        )
+def should_pin_exhibit(*, exhibit: dict[str, object]) -> bool:
+    """Pin for a quantitative attempt: one machine-readable result file is enough.
+
+    A result artifact that does not parse is evidence the agent wrote for a
+    reader, not numbers the system can be the record of, so a qualitative
+    attempt still passes through without an exhibit.
+    """
+    files = exhibit.get("result_files") or []
+    assert isinstance(files, list)
+    return any(
+        isinstance(entry, dict) and entry.get("data") is not None for entry in files
     )
 
 
