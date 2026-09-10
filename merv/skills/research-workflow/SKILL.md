@@ -159,7 +159,7 @@ robustness checks, then call `candidate.promote` with the observed champion id
 fails. A pending workspace nomination is visible but cannot become champion.
 Keep submitting later challengers as they arrive; promotion never ends research.
 Put small candidate files in Artifacts and large model/checkpoint bytes in
-Object Storage—never Git.
+merv-sandboxes storage—never Git.
 
 ## Author the experiment record
 
