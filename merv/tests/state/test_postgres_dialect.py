@@ -40,6 +40,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tests.support.brain import TestBrain
+from tests.support.schema import install_all_schemas
+from tests.state.test_schema_snapshot import expected_schema
 from tests.state import test_workflow_migration as workflow_migration_cases
 from merv.brain.artifacts import Artifacts
 from merv.brain.feed.persistence import install_feed_schema
@@ -421,6 +423,42 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                 (project_id, "PG Project", "", now_iso()),
             )
         return project_id
+
+    def test_fresh_install_matches_the_pre_move_schema_snapshot(self) -> None:
+        """Component-owned DDL is a move: the Postgres shape is unchanged."""
+        install_all_schemas(self.store)
+        conn = self.store.connect()
+        try:
+            kinds = {
+                str(row["table_name"]): str(row["table_type"])
+                for row in conn.execute(
+                    "SELECT table_name, table_type FROM information_schema.tables "
+                    "WHERE table_schema = 'public'"
+                ).fetchall()
+            }
+            columns: dict[str, list[str]] = {}
+            for row in conn.execute(
+                "SELECT table_name, column_name FROM information_schema.columns "
+                "WHERE table_schema = 'public'"
+            ).fetchall():
+                columns.setdefault(str(row["table_name"]), []).append(
+                    str(row["column_name"])
+                )
+        finally:
+            conn.close()
+        observed = {
+            "tables": {
+                name: sorted(cols)
+                for name, cols in columns.items()
+                if kinds.get(name) != "VIEW"
+            },
+            "views": [
+                {"name": name, "columns": sorted(cols)}
+                for name, cols in sorted(columns.items())
+                if kinds.get(name) == "VIEW"
+            ],
+        }
+        self.assertEqual(observed, expected_schema())
 
     def test_schema_and_ledger_apply_cleanly_and_idempotently(self) -> None:
         conn = self.store.connect()
