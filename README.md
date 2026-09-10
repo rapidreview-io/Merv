@@ -42,7 +42,13 @@ Merv has three main pieces:
 - **Agent adapters** connect Claude Code, Codex, GitHub Copilot CLI, Cursor,
   Gemini CLI, Qwen Code, Kilo Code, Hermes Agent, OpenCode, OpenHands, Replit
   Agent, and other agentic clients to the same workflow.
-- **Backend** owns the research state: projects, claims, experiments, artifacts, review gates, reflections, and sandbox orchestration.
+- **Backend** owns the research state. It is one service built in three layers:
+  the research core (projects, claims, experiments, tasks, reviews, reflections
+  and the workflow graphs that sequence them), the support systems that carry
+  that work without interpreting it (immutable artifacts, the project feed,
+  agent leases, credentials, the HTTP/MCP surface, the local runner), and an
+  adapter to merv-sandboxes, which owns compute, provider credentials, and
+  heavy files.
 - **Frontend** gives humans a visual way to inspect the project: experiments, reviews, artifacts, logic graphs, timelines, and current progress.
 
 By default the plugin connects to the hosted brain; it can also run fully

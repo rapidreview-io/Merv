@@ -14,7 +14,7 @@ sessions on the user's machine.
 ## Dispatch and lifecycle
 
 Automatic dispatch is per project and off by default. The project must set
-`agent_dispatch` before runners receive work. Turning it off stops new claims;
+`agent_dispatch` before runners receive work. Turning it off stops new leases;
 halting a project/session closes leases so runners stop their children.
 
 `Application._dispatch_plan` enumerates dispatchable nodes from the workflow
@@ -22,7 +22,7 @@ registry, prioritizing read-only nodes. The queue subtracts current live
 instance/revision leases. New workflow names require no scheduler branch.
 Dependencies and review prerequisites use the same evaluation as status/tools.
 
-1. A runner persists its claim key before network I/O and derives its `mas_`
+1. A runner persists its lease key before network I/O and derives its `mas_`
    secret from an owner-only machine key without writing the secret to disk.
 2. Application supplies current workflow instance/revision candidates.
 3. `lease` locks and rechecks the revision and prerequisites, rebuilds the node
@@ -67,7 +67,7 @@ project membership remain authoritative. Secrets never appear in argv,
 prompts, logs, or responses.
 
 The runner records launch intent before spawning, verifies process identity on
-restart, and holds uncertain pre-PID claims until expiry to avoid duplicates.
+restart, and holds uncertain pre-PID leases until expiry to avoid duplicates.
 `execution.workspace` alone drives its layout: `none` is a scratch directory,
 `ephemeral` a detached worktree at the referenced base, `persistent` a branch
 per instance (per base sha when `per_base`) under the declared namespace, so
@@ -75,8 +75,7 @@ experiment and consolidation branch names are unchanged. Only persistent
 workspaces record branch facts, keyed by instance, for later sessions and the
 UI. The runner alone compare-and-swaps accepted work into `refs/merv/central`
 through the generic `agent-advances` prepare/pending/settle routes, whose
-`sources[].id` are opaque lineage ids; the `consolidation/*` paths are
-deprecated aliases of the same Protocol. Its bare repository has no remotes.
+`sources[].id` are opaque lineage ids. Its bare repository has no remotes.
 
 ## Pairing and observability
 

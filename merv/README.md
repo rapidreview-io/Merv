@@ -12,6 +12,22 @@ short-lived OAuth access token or, for headless automation, a scoped static
 key. The brain never receives the checkout root or reads it directly; gated
 documents are explicitly uploaded as size-capped artifacts.
 
+## How the system fits together
+
+- The **research core** owns the science: projects, claims, experiments, tasks,
+  reviews, reflections, literature, and the versioned workflow graphs that
+  sequence them. It decides what may happen next.
+- The **support systems** carry that work without knowing what it is: immutable
+  artifacts and their bytes, the project feed, agent leases and runner identity,
+  credentials and OAuth, the HTTP/MCP surface, and the local runner. They store
+  and echo the ids research gives them; they never interpret one. What an agent
+  session may do is data the workflow node declared, not a rule support keeps.
+- **merv-sandboxes** is a separate service that owns compute, provider
+  credentials, durable jobs, and heavy files. Merv adapts it and records which
+  experiment produced each object.
+
+`docs/MODULE_BOUNDARIES.md` states the law, and `tests/structure/` enforces it.
+
 ## Get started
 
 Interactive users do not need this repository, Python, or a Merv key. Install

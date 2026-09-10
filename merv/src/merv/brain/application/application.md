@@ -33,7 +33,7 @@ spans them. Research remains the public owner of its event ledger reads.
 - Candidate submission resolves and pins an Artifact or storage-object pointer, or
   records a pathless experiment-workspace nomination for evaluator staging;
   Research owns the immutable candidate and champion lineage.
-- Agent-session claims enumerate dispatchable workflow nodes. Each node declares
+- Agent-session leases enumerate dispatchable workflow nodes. Each node declares
   its role, concise brief, exact references and execution policy (tools, scopes,
   sandbox, workspace). Agent Sessions rechecks the pinned revision inside the
   lease transaction and freezes the packet. Authentication records actual work

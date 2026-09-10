@@ -61,7 +61,8 @@ There is no linking step and no `connect` action. Use
   `candidate.submit` immediately, then promote only a durably staged candidate
   after refreshing `candidate.list`, validating it, and comparing it with the
   champion.
-  Large candidate bytes belong in Object Storage, never Git.
+  Large candidate bytes belong in merv-sandboxes storage through
+  `storage.submit`, never in Git.
 
 ## Review boundary
 
