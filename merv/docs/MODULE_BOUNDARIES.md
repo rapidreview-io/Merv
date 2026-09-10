@@ -88,7 +88,7 @@ else receives a facade or a port.
 | foundation | `kernel/**` |
 | port | `kernel/ports/**`, `infrastructure/ports.py` |
 | domain | `workflows/{graph,composition,registry,definitions/**}` and pure policy |
-| application | component roots, `research_core/**`, `application/**`, `infrastructure/objects.py` |
+| application | component roots, `research_core/**`, the `workflows/` runtime and delivery, `application/**`, `infrastructure/objects.py`, the Surface flows that own their own tables |
 | adapter | `mlflow/**`, `infrastructure/client.py`, `artifacts/r2.py`, `kernel/state/dialects.py`, `surface/{web_preview,oauth_store}.py` |
 | delivery | ordinary `surface/**` HTTP/MCP/auth/serialization code |
 | bootstrap | `surface/surface.py`, `surface/config.py`, `surface/transport/http_server.py` |
@@ -160,9 +160,10 @@ component edge.
 
 `ToolContract` lives in `kernel/tools.py`, so a component can declare its tools
 without importing delivery. Each owner exports a `TOOLS` table from its package
-root; `surface/tools/contracts.py` merges those tables in a fixed order, asserts
-unique names, and keeps the two tools Surface itself owns — `agent.hello` and
-the merged `project` tool.
+root; `surface/tools/contracts.py` merges those tables in a fixed order,
+asserts unique names, and keeps the few Surface itself owns: `agent.hello`, the
+merged `project` tool, and the internal `project.get`/`list`/`update` the UI
+reads.
 
 The gateway names no tool. What it must inject is declared on the contract by
 the tool's owner: `binds_producer_session`, `binds_capability`,
@@ -205,8 +206,7 @@ primitives; every tool is a control tool the brain can serve; no brain-owned
 policy module depends on a checkout, a process, or local IO; the record store
 never learns a `repo_root`.
 
-Each component also keeps a design note beside its code —
-`brain/<component>/<component>.md`, plus `surface/surface.md`,
-`application/application.md` and `workflows/workflows.md`. A note must stay
-accurate and under 100 lines; the header comment on each source file says when
-to revisit one.
+Each component also keeps a design note beside its code, at
+`brain/<component>/<component>.md`: agent_sessions, application, artifacts,
+feed, research_core, surface, workflows. A note must stay accurate and under
+100 lines; the header comment on each source file says when to revisit one.
