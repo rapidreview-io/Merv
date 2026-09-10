@@ -23,6 +23,7 @@ from merv.client.agent_runner import (
     Lease,
     CommandHost,
     HOSTS,
+    HOST_SPECS,
     HostSession,
     Platform,
     RunnerError,
@@ -42,6 +43,7 @@ from merv.client.agent_runner import (
     main as runner_main,
 )
 from merv.shared.client_config import ClientError, safe_control_url
+from merv.shared.runner_settings import NATIVE_ADAPTERS
 from merv.client.cli import (
     configure_agent,
     configure_client,
@@ -112,6 +114,10 @@ def _commit(path: Path, message: str) -> None:
 
 class AgentConfigurationTest(unittest.TestCase):
 
+    def test_every_shared_adapter_name_has_an_invocation_row(self) -> None:
+        """The CLI, the brain's schema and the host table name one adapter set."""
+        self.assertEqual(set(HOST_SPECS), {*NATIVE_ADAPTERS, "command"})
+        self.assertEqual(set(HOSTS), set(HOST_SPECS))
 
     def test_built_in_names_select_native_adapters(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

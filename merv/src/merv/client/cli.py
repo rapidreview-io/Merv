@@ -24,6 +24,13 @@ from merv.shared.client_config import (
     resolve_client_control_url,
     safe_control_url,
 )
+from merv.shared.runner_settings import (
+    NATIVE_ADAPTERS,
+    WORKSPACE_STRATEGY,
+    platform_entry,
+    platform_problem,
+    workspace_entry,
+)
 from .private_files import write_private_json
 from .storage_upload import StorageUploadError, upload_storage_file
 
@@ -96,23 +103,12 @@ def _parser() -> argparse.ArgumentParser:
     agent.add_argument(
         "platform",
         help=(
-            "Local platform name: codex, claude, gemini, cursor, opencode, "
-            "copilot, qwen, hermes, or a custom name"
+            f"Local platform name: {', '.join(NATIVE_ADAPTERS)}, or a custom name"
         ),
     )
     agent.add_argument(
         "--adapter",
-        choices=(
-            "codex",
-            "claude",
-            "gemini",
-            "cursor",
-            "opencode",
-            "copilot",
-            "qwen",
-            "hermes",
-            "command",
-        ),
+        choices=(*NATIVE_ADAPTERS, "command"),
         help="Native invocation adapter; custom platforms use command.",
     )
     enabled = agent.add_mutually_exclusive_group()
@@ -140,8 +136,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     workspace.add_argument(
         "--strategy",
-        choices=("git_worktree",),
-        default="git_worktree",
+        choices=(WORKSPACE_STRATEGY,),
+        default=WORKSPACE_STRATEGY,
     )
     workspace.add_argument(
         "--repository",
@@ -392,13 +388,9 @@ def configure_agent(
     name = platform.strip()
     if not name:
         raise ClientError("platform is required")
-    if name.lower() == "aider":
-        raise ClientError(
-            "Aider is not supported for auto-run because it cannot emit a "
-            "complete JSONL interaction trace"
-        )
-    if parallelism is not None and not 1 <= parallelism <= 32:
-        raise ClientError("parallelism must be between 1 and 32")
+    problem = platform_problem(name, parallelism)
+    if problem:
+        raise ClientError(problem)
     if command is not None and (not command or not all(str(item) for item in command)):
         raise ClientError("command must not be empty")
 
@@ -407,43 +399,22 @@ def configure_agent(
     if not isinstance(platforms, dict):
         platforms = {}
         config["agent_platforms"] = platforms
-    current = platforms.get(name)
-    settings = dict(current) if isinstance(current, dict) else {}
-    settings.setdefault(
-        "adapter",
-        adapter
-        or (
-            name
-            if name
-            in {
-                "codex",
-                "claude",
-                "gemini",
-                "cursor",
-                "opencode",
-                "copilot",
-                "qwen",
-                "hermes",
-            }
-            else "command"
-        ),
+    platforms[name] = platform_entry(
+        platforms.get(name),
+        name=name,
+        adapter=adapter,
+        command=command,
+        tuning={
+            field: value
+            for field, value in (
+                ("enabled", enabled),
+                ("model", None if model is None else model.strip()),
+                ("effort", None if effort is None else effort.strip()),
+                ("parallelism", parallelism),
+            )
+            if value is not None
+        },
     )
-    settings.setdefault("enabled", True if enabled is None else enabled)
-    settings.setdefault("command", [name])
-    settings.setdefault("parallelism", 1)
-    if adapter is not None:
-        settings["adapter"] = adapter
-    if enabled is not None:
-        settings["enabled"] = enabled
-    if command is not None:
-        settings["command"] = [str(item) for item in command]
-    if model is not None:
-        settings["model"] = model.strip() or None
-    if effort is not None:
-        settings["effort"] = effort.strip() or None
-    if parallelism is not None:
-        settings["parallelism"] = parallelism
-    platforms[name] = settings
     write_private_json(config_path, config)
     return config
 
@@ -456,21 +427,21 @@ def configure_workspace(
     root: str | None = None,
     base_ref: str = "HEAD",
 ) -> dict[str, Any]:
-    if strategy != "git_worktree":
+    if strategy != WORKSPACE_STRATEGY:
         raise ClientError("agent workspaces must use persistent Git worktrees")
-    repo_path = str(Path(repository).expanduser().resolve())
-    settings: dict[str, Any] = {
-        "strategy": strategy,
-        "repository": repo_path,
-    }
-    settings["root"] = str(
-        Path(root).expanduser().resolve()
-        if root
-        else (config_path.parent / "worktrees").resolve()
-    )
-    settings["base_ref"] = (base_ref or "HEAD").strip()
     config = read_client_document(config_path)
-    config["agent_workspace"] = settings
+    config["agent_workspace"] = workspace_entry(
+        None,
+        {
+            "repository": str(Path(repository).expanduser().resolve()),
+            "root": str(
+                Path(root).expanduser().resolve()
+                if root
+                else (config_path.parent / "worktrees").resolve()
+            ),
+            "base_ref": (base_ref or "HEAD").strip(),
+        },
+    )
     write_private_json(config_path, config)
     return config
 

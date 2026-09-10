@@ -51,8 +51,11 @@ from merv.shared.client_config import (
 from merv.shared.redaction import redact_excerpt, redact_secrets
 from merv.shared.runner_settings import (
     DEFAULT_PLATFORM_EXECUTABLES,
-    RunnerSettingsError,
+    WORKSPACE_STRATEGY,
+    platform_entry,
+    platform_problem,
     validate_desired_settings,
+    workspace_entry,
 )
 from .harness import HarnessError, SkillsInstall
 from . import harness as harness_kit
@@ -1642,7 +1645,7 @@ class AgentRunner:
         assert self.config_path is not None
         try:
             normalized = validate_desired_settings(desired)
-        except RunnerSettingsError as exc:
+        except ClientError as exc:
             self.settings_error = str(exc)
             print(f"settings v{version} rejected: {exc}", file=sys.stderr)
             return
@@ -2616,15 +2619,9 @@ def load_platforms(
     configured entry with its ``enabled`` flag so the runner can drain and
     report the ones an owner switched off.
     """
-    try:
-        document = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        document = {}
     # A clean machine file has no agent_platforms yet: that is zero platforms,
     # not an error — the paired runner heartbeats until Settings enables one.
-    configured = (
-        document.get("agent_platforms") if isinstance(document, dict) else None
-    )
+    configured = read_client_document(config_path).get("agent_platforms")
     if configured is None:
         configured = {}
     if not isinstance(configured, dict):
@@ -2636,11 +2633,10 @@ def load_platforms(
         enabled = bool(raw.get("enabled", True))
         if not enabled and not include_disabled:
             continue
-        if str(name).lower() == "aider":
-            raise RunnerError(
-                "Aider is not supported for auto-run because it cannot emit a "
-                "complete JSONL interaction trace"
-            )
+        parallelism = raw.get("parallelism", 1)
+        problem = platform_problem(str(name), parallelism)
+        if problem:
+            raise RunnerError(problem)
         adapter = str(raw.get("adapter") or name)
         if adapter not in HOSTS:
             raise RunnerError(
@@ -2655,11 +2651,6 @@ def load_platforms(
             or not all(isinstance(item, str) and item for item in command)
         ):
             raise RunnerError(f"{name}: command must be a non-empty string array")
-        parallelism = raw.get("parallelism", 1)
-        if not isinstance(parallelism, int) or isinstance(parallelism, bool):
-            raise RunnerError(f"{name}: parallelism must be an integer")
-        if not 1 <= parallelism <= 32:
-            raise RunnerError(f"{name}: parallelism must be between 1 and 32")
         platforms.append(
             Platform(
                 name=str(name),
@@ -2693,48 +2684,26 @@ def merge_desired_settings(
         current = platforms.get(name)
         if isinstance(current, dict) and str(current.get("adapter") or name) == "command":
             continue
-        if not isinstance(current, dict):
-            current = {
-                "adapter": name,
-                "command": [DEFAULT_PLATFORM_EXECUTABLES[name]],
-                "enabled": False,
-            }
-        updated = dict(current)
-        for field in ("enabled", "model", "effort", "parallelism"):
-            if field in entry:
-                if field in ("model", "effort") and not entry[field]:
-                    updated.pop(field, None)
-                else:
-                    updated[field] = entry[field]
-        platforms[name] = updated
+        platforms[name] = platform_entry(
+            current if isinstance(current, dict) else None,
+            name=name,
+            tuning=entry,
+            default_enabled=False,
+        )
     if "platforms" in desired:
         result["agent_platforms"] = platforms
     if "workspace" in desired:
-        current_workspace = result.get("agent_workspace")
-        workspace = (
-            dict(current_workspace) if isinstance(current_workspace, dict) else {}
+        result["agent_workspace"] = workspace_entry(
+            result.get("agent_workspace"), desired["workspace"]
         )
-        for field in ("repository", "root", "base_ref"):
-            if field in desired["workspace"]:
-                value = desired["workspace"][field]
-                if value:
-                    workspace[field] = value
-                else:
-                    workspace.pop(field, None)
-        workspace["strategy"] = "git_worktree"
-        result["agent_workspace"] = workspace
     return result
 
 
 def load_workspace_settings(
     config_path: Path, *, default_repository: Path | None = None
 ) -> WorkspaceSettings:
-    try:
-        document = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        document = {}
     return load_workspace_settings_from(
-        document if isinstance(document, dict) else {},
+        read_client_document(config_path),
         config_path,
         default_repository=default_repository,
     )
@@ -2752,8 +2721,8 @@ def load_workspace_settings_from(
         raw = {}
     if not isinstance(raw, dict):
         raise RunnerError("agent_workspace must be an object")
-    strategy = str(raw.get("strategy") or "git_worktree")
-    if strategy != "git_worktree":
+    strategy = str(raw.get("strategy") or WORKSPACE_STRATEGY)
+    if strategy != WORKSPACE_STRATEGY:
         raise RunnerError("agent workspaces must use persistent Git worktrees")
     repository = Path(
         str(raw.get("repository") or default_repository or Path.cwd())
