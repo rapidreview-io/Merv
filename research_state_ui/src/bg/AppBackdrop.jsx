@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useProjectStore } from '../store/useProjectStore';
 import { useBackdrop } from '../store/useBackdrop';
+import { reducedMotionQuery } from '../utils/motion';
 import { createField } from './field';
 import { createRenderer } from './renderer';
 
@@ -46,7 +47,7 @@ function BackdropCanvas() {
     st.raf = 0;
     st.last = 0;
     st.lastPaint = 0;
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const reduced = reducedMotionQuery();
 
     const view = (still) => {
       const doc = document.scrollingElement;

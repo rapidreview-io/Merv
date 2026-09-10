@@ -1,16 +1,13 @@
 // The one sentence at the top of the Auto-run page: is the project's work
 // moving on its own right now, and if not, why not. Pure so every state has a
 // unit test and the page never has to reason about it in JSX.
+import { isLiveSession } from './agentSessionOutcome.js';
 import { runnerPresentation } from './runnerPresentation.js';
 
 const EMPTY = Object.freeze([]);
 
 function plural(count, one, many = `${one}s`) {
   return `${count} ${count === 1 ? one : many}`;
-}
-
-function isLive(session) {
-  return session?.status === 'offered' || session?.status === 'active';
 }
 
 /**
@@ -31,7 +28,7 @@ export function autorunHeadline({
 } = {}) {
   const views = runners.map((runner) => runnerPresentation(runner, now));
   const live = views.filter((view) => view.live);
-  const running = sessions.filter(isLive).length;
+  const running = sessions.filter(isLiveSession).length;
   const rejected = views.find((view) => view.settingsTone === 'error');
   const attention = rejected
     ? ` ${rejected.machineName} rejected its settings — open the machine to fix them.`

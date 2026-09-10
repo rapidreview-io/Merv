@@ -1,13 +1,10 @@
 import { useEffect, useState } from 'react';
 import { api, request } from '../api';
+import { normalizeCode } from '../utils/format';
 import { ConsentFrame, ScopeChoice } from './OAuthConsent';
 
 const ACCOUNT = 'account';
 const PROJECT = 'project';
-
-function normalizeCode(value) {
-  return String(value || '').toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 8);
-}
 
 function formatCode(code) {
   return code.length > 4 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;

@@ -153,6 +153,17 @@ export function statusWord(s) {
   return String(s || '').replace(/_/g, ' ');
 }
 
+// A typed-in pairing / device code: upper case, digits and letters only, the
+// eight characters the backend issues.
+export function normalizeCode(value) {
+  return String(value || '').toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 8);
+}
+
+// A commit, abbreviated the way git abbreviates it.
+export function shortSha(sha) {
+  return sha ? String(sha).slice(0, 7) : '';
+}
+
 // A link's display host, www- stripped; '' when the string isn't a URL.
 export function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }

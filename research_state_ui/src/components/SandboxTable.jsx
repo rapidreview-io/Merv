@@ -14,7 +14,9 @@ import {
   fleetActivity,
   gpuLabel,
   hardwareLabel,
+  primaryExperimentId,
   providerLabel,
+  sandboxRowId,
   sizeLabel,
   usageBars,
 } from '../utils/fleet';
@@ -24,12 +26,6 @@ import {
 // every liveness line share one source of truth and stay aligned.
 
 const rank = (st) => (st === 'running' ? 0 : st === 'provisioning' ? 1 : 2);
-const sandboxRowId = (s) => s.sandbox_uid || s.sandbox_id || s.experiment_id;
-const primaryExperimentId = (s) => (
-  s.experiment_id
-  || (Array.isArray(s.active_experiment_ids) ? s.active_experiment_ids[0] : '')
-  || ''
-);
 
 /**
  * SandboxTable — the compute fleet as an infra table.

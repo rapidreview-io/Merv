@@ -1,9 +1,5 @@
 import { projectPath } from '../store/useProjectStore';
-export { sessionOutcome } from './agentSessionOutcome.js';
-
-export function isLiveSession(session) {
-  return session?.status === 'offered' || session?.status === 'active';
-}
+export { isLiveSession, sessionOutcome } from './agentSessionOutcome.js';
 
 export function assignmentFor(session) {
   const assignment = session?.assignment;

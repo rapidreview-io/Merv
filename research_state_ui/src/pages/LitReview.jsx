@@ -7,6 +7,7 @@ import MarkdownView from '../components/MarkdownView';
 import EntityChip from '../components/EntityChip';
 import { EntityRefScope } from '../components/EntityRefScope';
 import { citedSections, paperSeed, sectionSeed, sourceLabel } from '../utils/litreview';
+import { prefersReducedMotion } from '../utils/motion';
 
 /**
  * The living literature review: one continuous document in the product's
@@ -433,8 +434,7 @@ function shortAuthors(p) {
 
 /** Smooth by default; a jump, not a glide, when the reader asked for less motion. */
 function scrollToEl(el, block) {
-  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block });
+  el.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block });
 }
 
 function PaperEntry({ paper: p, num, sectionsById, flash, onJumpToSection }) {

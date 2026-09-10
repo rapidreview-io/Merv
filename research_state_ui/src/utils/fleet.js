@@ -13,6 +13,16 @@ import { fmtDuration } from './format.js';
 // Tones are behavioural, not lifecycle: a "running" box can be working, idle,
 // or sitting on a failure, and those are three different things to a watcher.
 
+/** The id a fleet row is keyed and linked by. */
+export const sandboxRowId = (s) => s.sandbox_uid || s.sandbox_id || s.experiment_id;
+
+/** The experiment a box is working for, when it is working for exactly one. */
+export const primaryExperimentId = (s) => (
+  s.experiment_id
+  || (Array.isArray(s.active_experiment_ids) ? s.active_experiment_ids[0] : '')
+  || ''
+);
+
 /**
  * What this box is doing right now, in the order a watcher cares about:
  * work in flight, then a failure worth acting on, then idle (money burning),

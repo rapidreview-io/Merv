@@ -15,6 +15,11 @@ import { useCallback, useSyncExternalStore } from 'react';
 // The toggle's cycle, shared by the desktop sidebar and the mobile shell.
 export const NEXT_THEME_MODE = { light: 'dark', dark: 'system', system: 'light' };
 
+/** The live value of a design token, for canvases that paint their own DOM. */
+export function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
 const KEY = 'rsui:theme';
 const media = window.matchMedia('(prefers-color-scheme: dark)');
 

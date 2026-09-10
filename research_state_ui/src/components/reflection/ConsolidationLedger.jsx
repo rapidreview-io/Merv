@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../api';
 import { shortDateTime } from '../../utils/time';
-import { cx } from '../../utils/format';
+import { cx, shortSha } from '../../utils/format';
 import {
   PRE_CONSOLIDATION, DECISIONS, LANDINGS, INTEGRATION_KIND_LABEL,
   consolidationPhase, provenanceSteps, ledgerRows, consolidationReview,
-  shortSha,
 } from './consolidationModel';
 
 /**

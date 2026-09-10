@@ -296,11 +296,11 @@ export default function Debug() {
         </div>
 
         <div className="dbg-totals">
-          <Stat label="calls" value={fmtNum(stats.n)} />
+          <Stat label="calls" value={fmtCount(stats.n)} />
           <Stat label="ok / err" value={`${stats.ok}/${stats.err}`} accent={stats.err ? 'err' : null} />
           <Stat label="avg dur" value={formatMs(stats.avg)} accent={stats.slow ? 'warn' : null} />
-          <Stat label="slow" value={fmtNum(stats.slow)} accent={stats.slow ? 'err' : null} />
-          <Stat label="heavy" value={fmtNum(stats.heavy)} accent={stats.heavy ? 'warn' : null} />
+          <Stat label="slow" value={fmtCount(stats.slow)} accent={stats.slow ? 'err' : null} />
+          <Stat label="heavy" value={fmtCount(stats.heavy)} accent={stats.heavy ? 'warn' : null} />
           <Stat label="recv / sent" value={`${fmtChars(stats.recv)} / ${fmtChars(stats.sent)}`} accent="recv" />
         </div>
       </header>
@@ -348,13 +348,13 @@ export default function Debug() {
                         {t.tool}
                         {t.error_calls > 0 && <span className="dbg-err-badge">{t.error_calls} err</span>}
                       </span>
-                      <span className="dbg-c-num tabular">{fmtNum(t.calls)}</span>
+                      <span className="dbg-c-num tabular">{fmtCount(t.calls)}</span>
                       <span className={`dbg-c-num tabular${hot ? ' hot' : ''}`}>{fmtChars(t.received_chars)}</span>
                       <span className="dbg-c-num tabular">{fmtChars(t.avg_received_chars)}</span>
                       <span className="dbg-c-num tabular">{fmtChars(t.p95_received_chars)}</span>
                       <span className={`dbg-c-num tabular${hot ? ' hot' : ''}`}>{fmtChars(t.max_received_chars)}</span>
                       <span className="dbg-c-num tabular faint">{fmtChars(t.sent_chars)}</span>
-                      <span className={`dbg-c-num tabular${t.error_calls ? ' err' : ' faint'}`}>{fmtNum(t.error_calls)}</span>
+                      <span className={`dbg-c-num tabular${t.error_calls ? ' err' : ' faint'}`}>{fmtCount(t.error_calls)}</span>
                       <span className="dbg-c-bar">
                         <span className="dbg-bar-track">
                           <span className={`dbg-bar-fill${hot ? ' hot' : ''}`}
@@ -370,7 +370,7 @@ export default function Debug() {
 
           <section className="dbg-section">
             <div className="dbg-section-head">
-              Calls · {fmtNum(visibleCalls.length)}{toolQuery && <> · <span className="mono">{toolQuery}</span></>}<span className="dbg-hint"> · newest first · click to inspect I/O</span>
+              Calls · {fmtCount(visibleCalls.length)}{toolQuery && <> · <span className="mono">{toolQuery}</span></>}<span className="dbg-hint"> · newest first · click to inspect I/O</span>
             </div>
             <div className="activity-list">
               <div className="act-row act-row--head con-head">
@@ -526,7 +526,7 @@ function Stat({ label, value, accent }) {
   );
 }
 
-function fmtNum(n) { return Number(n || 0).toLocaleString(); }
+function fmtCount(n) { return Number(n || 0).toLocaleString(); }
 
 function fmtChars(n) {
   const v = Number(n || 0);

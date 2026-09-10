@@ -1,3 +1,8 @@
+/** A session that has work in flight, or is about to. */
+export function isLiveSession(session) {
+  return session?.status === 'offered' || session?.status === 'active';
+}
+
 export function sessionOutcome(session) {
   if (session?.status === 'active') return { label: 'Running', tone: 'live' };
   if (session?.status === 'offered') return { label: 'Starting', tone: 'starting' };
