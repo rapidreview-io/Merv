@@ -1575,13 +1575,8 @@ class AgentRunner:
         self.settings_error = ""
         # The Merv skills every child may read, copied beside the traces once
         # per runner build. Missing skills degrade to the old search-the-disk
-        # behaviour rather than blocking dispatch; the inventory says so.
+        # behaviour rather than blocking dispatch; the report says so.
         self.skills: SkillsInstall | None = None
-        self.harness_error = ""
-        try:
-            self.skills = harness_kit.install_skills(trace_dir.parent)
-        except HarnessError as exc:
-            self.harness_error = str(exc)
         self._harness_report: tuple[tuple[Any, ...], dict[str, Any]] | None = None
         # Evidence about each harness beyond the static probe: what a dead
         # child's stderr said (auth, quota), and the outcome of the last test
@@ -1592,6 +1587,9 @@ class AgentRunner:
         self._smoke_queue: list[tuple[str, str, str]] = []  # (platform, nonce, why)
         self._smoke_active: _ActiveSmoke | None = None
         self._smoke_auto_done: set[str] = set()
+        # Installs the skills and probes each harness once, so a launch that
+        # precedes the first heartbeat still has them.
+        self.harness_readiness()
         # First run after pairing or upgrade: prove every enabled harness once.
         for item in self.platforms:
             if item.enabled and item.name not in self._smoke_results:
@@ -1780,9 +1778,19 @@ class AgentRunner:
                 "root": str(workspace.root or ""),
                 "base_ref": workspace.base_ref,
             }
-        if self.config_path is not None:
-            result["available_commands"] = _detected_commands(self.config_path)
-        result["harness"] = self.harness_readiness()
+        # One PATH sweep answers both "is this agent installed?" (every native
+        # default plus each configured command) and the readiness report.
+        commands = harness_kit.installed_commands(
+            (
+                *DEFAULT_PLATFORM_EXECUTABLES.values(),
+                *(item.command[0] for item in self.platforms if item.command),
+            ),
+            self.environment,
+        )
+        result["available_commands"] = {
+            name: bool(path) for name, path in commands.items()
+        }
+        result["harness"] = self.harness_readiness(commands)
         reason = self._pending_reason()
         if reason:
             result["pending"] = {"reason": reason}
@@ -1790,25 +1798,26 @@ class AgentRunner:
             result["settings_error"] = self.settings_error
         return result
 
-    def harness_readiness(self) -> dict[str, Any]:
+    def harness_readiness(
+        self, executables: Mapping[str, str] | None = None
+    ) -> dict[str, Any]:
         """What each configured harness will get from Merv, cached per tuning.
 
-        Probing executables costs subprocesses, so the report is recomputed
-        only when the platform set changes; the heartbeat carries it to the
-        Settings page.
+        Asking a CLI its version costs a subprocess, so the report — and the
+        skills install it begins with — is redone only when the platform set
+        changes; the heartbeat carries it to the Settings page.
         """
         key = tuple(
             (item.name, item.adapter, tuple(item.command), item.enabled)
             for item in self.platforms
         )
         if self._harness_report is None or self._harness_report[0] != key:
-            report = harness_kit.readiness(
+            self.skills, report = harness_kit.install_and_report(
                 platforms=self.platforms,
-                install=self.skills,
+                state_dir=self.trace_dir.parent,
                 environment=self.environment,
+                executables=executables,
             )
-            if self.harness_error:
-                report["error"] = self.harness_error
             self._harness_report = (key, report)
         report = json.loads(json.dumps(self._harness_report[1]))
         platforms = report.get("platforms")
@@ -3366,29 +3375,6 @@ def _validate_settings(config_path: Path) -> None:
     """Every configured entry must load, enabled or not, before a write lands."""
     load_platforms(config_path, include_disabled=True)
     load_workspace_settings(config_path)
-
-
-def _detected_commands(config_path: Path) -> dict[str, bool]:
-    """Which agent executables resolve on this machine's PATH.
-
-    Covers every native adapter default plus the first argument of each
-    configured platform command, so custom executables are probed too. Reported
-    in the heartbeat inventory so Settings can mark agents installed or not.
-    """
-    names = set(DEFAULT_PLATFORM_EXECUTABLES.values())
-    try:
-        document = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        document = {}
-    configured = document.get("agent_platforms") if isinstance(document, dict) else {}
-    if isinstance(configured, dict):
-        for raw in configured.values():
-            command = raw.get("command") if isinstance(raw, dict) else None
-            if isinstance(command, list) and command and isinstance(command[0], str):
-                names.add(command[0])
-    return {
-        name: shutil.which(name) is not None for name in sorted(names) if name.strip()
-    }
 
 
 def _stored_settings_version(config_path: Path) -> int:

@@ -396,11 +396,57 @@ def _version_of(command: Sequence[str], environment: Mapping[str, str]) -> str:
     return ""
 
 
+def installed_commands(
+    names: Iterable[str], environment: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """Each command name mapped to where it resolves on PATH, or ``""``.
+
+    One PATH sweep per cycle: the readiness report and the inventory's
+    "is this agent installed?" flags are two readings of this one probe.
+    """
+    path = dict(os.environ if environment is None else environment).get("PATH")
+    return {
+        name: (shutil.which(name, path=path) or "")
+        for name in sorted({str(item).strip() for item in names if str(item).strip()})
+    }
+
+
+def install_and_report(
+    *,
+    platforms: Iterable[Any],
+    state_dir: Path,
+    environment: Mapping[str, str] | None = None,
+    executables: Mapping[str, str] | None = None,
+) -> tuple[SkillsInstall | None, dict[str, Any]]:
+    """Install the skills, then say what each harness will get from Merv.
+
+    Setup (``merv-client harness``) and the running daemon's heartbeat ask
+    the same question and must get the same answer, including how the install
+    itself failed.
+    """
+    install: SkillsInstall | None = None
+    failure = ""
+    try:
+        install = install_skills(state_dir)
+    except HarnessError as exc:
+        failure = str(exc)
+    report = readiness(
+        platforms=platforms,
+        install=install,
+        environment=environment,
+        executables=executables,
+    )
+    if failure:
+        report["error"] = failure
+    return install, report
+
+
 def readiness(
     *,
     platforms: Iterable[Any],
     install: SkillsInstall | None,
     environment: Mapping[str, str] | None = None,
+    executables: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Static readiness of every configured platform; no model call.
 
@@ -409,6 +455,12 @@ def readiness(
     what each harness will receive from the runner, never argv or secrets.
     """
     environment = dict(os.environ if environment is None else environment)
+    platforms = tuple(platforms)
+    if executables is None:
+        executables = installed_commands(
+            (tuple(getattr(item, "command", ()) or ("",))[0] for item in platforms),
+            environment,
+        )
     report: dict[str, Any] = {
         "skills": (
             {
@@ -425,10 +477,10 @@ def readiness(
         command = tuple(getattr(platform, "command", ()) or ())
         adapter = str(getattr(platform, "adapter", "") or "")
         problems: list[str] = []
-        executable = shutil.which(command[0], path=environment.get("PATH")) if command else None
+        executable = executables.get(command[0], "") if command else ""
         if not command:
             problems.append("no command configured")
-        elif executable is None:
+        elif not executable:
             problems.append(f"{command[0]!r} is not on PATH")
         version = _version_of(command, environment) if executable else ""
         if executable and not version:
@@ -438,7 +490,7 @@ def readiness(
         entry = {
             "adapter": adapter,
             "enabled": bool(getattr(platform, "enabled", True)),
-            "executable": executable or "",
+            "executable": executable,
             "version": version,
             "merv_mcp": "native" if adapter in NATIVE_MCP_ADAPTERS else "merv-client",
             "skills": (

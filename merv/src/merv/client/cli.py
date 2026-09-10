@@ -312,16 +312,11 @@ def _cmd_harness(args: argparse.Namespace) -> int:
 
     config_path = _config_path(args)
     _, trace_dir = _runtime_paths(config_path)
-    error = ""
-    install = None
-    try:
-        install = kit.install_skills(trace_dir.parent)
-    except kit.HarnessError as exc:
-        error = str(exc)
-    platforms = load_platforms(config_path, include_disabled=True)
-    report = kit.readiness(platforms=platforms, install=install)
-    if error:
-        report["error"] = error
+    install, report = kit.install_and_report(
+        platforms=load_platforms(config_path, include_disabled=True),
+        state_dir=trace_dir.parent,
+    )
+    error = str(report.get("error") or "")
     ready = not error and all(
         entry["ok"] for entry in report["platforms"].values() if entry["enabled"]
     )
