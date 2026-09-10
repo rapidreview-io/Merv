@@ -10,9 +10,8 @@ Generic Artifacts owns immutable content, Feed publishes observations, Sandbox
 executes workloads, and Object Storage tracks ML workload objects.
 
 `Research` is the public root, built from `BaseStateStore` and `ResearchArtifacts`;
-Surface also injects `Workflows`. Research supplies project-scoped record bindings;
-experiment, task and reflection lifecycles use its versioned graph/runtime. Their
-reflection, and review record services remain private collaborators during extraction.
+Surface also injects `Workflows`. Experiment, task and reflection lifecycles use its
+versioned graph/runtime; their record services remain private collaborators.
 
 ## Files
 - `artifacts.py`: research-owned associations, role/target policy, accepted
@@ -35,6 +34,7 @@ reflection, and review record services remain private collaborators during extra
 - `policy.py`: vocabulary, validation, gate evaluation, snapshot identity, reflection
   signal, limits. `evidence.py`: compatibility exports of workflow-owned pure
   document validation, evidence selection, and brief rendering. `models.py`: typed state shapes. `__init__.py`: narrow imports.
+- `content_summaries.py`: deterministic TLDRs of submitted documents. `paths.py`: safe experiment folder names.
 
 ## Experiment lifecycle
 

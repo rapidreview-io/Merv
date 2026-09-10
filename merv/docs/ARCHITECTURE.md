@@ -113,10 +113,13 @@ a checkout root. Tools return one-line transfer commands: Artifact and Feed use
 bounded one-time upload endpoints, Storage uses presigned provider URLs, and
 Sandbox uses SSH/`rsync`.
 
-Pure two-sided contracts live in `merv.shared`: error identities, path naming,
-narrow tool-shape validation, storage transfer/guidance, feed-media primitives,
-artifact roles, and markdown-image parsing. Workflow policy, Pydantic models,
-service composition, and mutation authority remain brain-owned.
+Pure two-sided contracts live in `merv.shared`: error identities, narrow
+tool-shape validation, storage transfer/guidance, feed-media primitives, and
+markdown-image parsing. Research vocabulary stays in research: artifact roles
+and association targets in `brain/workflows/definitions/artifact_roles.py`,
+document summaries and experiment folder naming in `brain/research_core`.
+Workflow policy, Pydantic models, service composition, and mutation authority
+remain brain-owned.
 
 The connection URL lives in `.mcp.json` (default
 `https://experiments.rapidreview.io/mcp`); self-hosted deployments regenerate
