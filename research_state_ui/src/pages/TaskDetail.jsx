@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { useRecordStatus } from '../store/usePolling';
@@ -12,7 +12,7 @@ import StatusPill from '../components/StatusPill';
 import ObjId from '../components/ObjId';
 import InlineMd from '../components/InlineMd';
 import DetailsDrawer, {
-  DetailsButton, OpsPosition, OpsTimeline, OpsVersions,
+  DetailsButton, OpsPosition, OpsTimeline, OpsVersions, useDetailsDrawer,
   linkedNodes, orderedTimeline, reviewRows, sortedArtifacts, versionRows,
 } from '../components/DetailsDrawer';
 import { ago } from '../utils/time';
@@ -65,12 +65,7 @@ export default function TaskDetail() {
   const [pendingEnd, setPendingEnd] = useState(false);
   const [endReason, setEndReason] = useState('');
   const [acceptOutcome, setAcceptOutcome] = useState('');
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const detailsBtnRef = useRef(null);
-  const closeDetails = useCallback(() => {
-    setDetailsOpen(false);
-    detailsBtnRef.current?.focus({ preventScroll: true });
-  }, []);
+  const { detailsOpen, setDetailsOpen, toggleDetails, closeDetails, detailsBtnRef } = useDetailsDrawer();
 
   useEffect(() => { setPendingEnd(false); setEndReason(''); setDetailsOpen(false); }, [taskId]);
 
@@ -173,7 +168,7 @@ export default function TaskDetail() {
           </div>
           <DetailsButton
             open={detailsOpen}
-            onToggle={() => setDetailsOpen(v => !v)}
+            onToggle={toggleDetails}
             controls="task-details"
             buttonRef={detailsBtnRef}
           />

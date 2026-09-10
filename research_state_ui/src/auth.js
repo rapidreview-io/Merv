@@ -11,16 +11,12 @@
 let client = null;
 let token = '';
 let email = '';
-const listeners = new Set();
-
-function notify() {
-  listeners.forEach((fn) => fn());
-}
+const store = createStore(null);
 
 function applySession(session) {
   token = session?.access_token || '';
   email = session?.user?.email || '';
-  notify();
+  store.emit();
 }
 
 // Synchronous reads for the fetch wrapper and UI chrome.
@@ -37,10 +33,7 @@ export function isAuthEnabled() {
   return client !== null;
 }
 
-export function onAuthChange(fn) {
-  listeners.add(fn);
-  return () => listeners.delete(fn);
-}
+export const onAuthChange = store.subscribe;
 
 // Returns true when hosted auth is active (a client exists after this call).
 export async function initAuth(authMeta) {

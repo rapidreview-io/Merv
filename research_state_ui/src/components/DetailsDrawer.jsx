@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import StatusPill from './StatusPill';
 import { fmtSpan, formatBytes } from '../utils/format';
@@ -41,6 +41,18 @@ function IconPanelRight(props) {
 
 // Icon-only, at the status strip's height on the far right — the mirror of
 // the left sidebar's hide button.
+/** The drawer's open state, with focus returning to the button that opened it. */
+export function useDetailsDrawer() {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsBtnRef = useRef(null);
+  const closeDetails = useCallback(() => {
+    setDetailsOpen(false);
+    detailsBtnRef.current?.focus({ preventScroll: true });
+  }, []);
+  const toggleDetails = useCallback(() => setDetailsOpen(v => !v), []);
+  return { detailsOpen, setDetailsOpen, toggleDetails, closeDetails, detailsBtnRef };
+}
+
 export function DetailsButton({ open, onToggle, controls, buttonRef }) {
   return (
     <button

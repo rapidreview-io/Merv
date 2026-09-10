@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { useRecordStatus } from '../store/usePolling';
@@ -13,10 +13,10 @@ import SandboxTerminal from '../components/SandboxTerminal';
 import ArtifactList from '../components/ArtifactList';
 import TerminalTransitionConfirm from '../components/TerminalTransitionConfirm';
 import DetailsDrawer, {
-  DetailsButton, OpsPosition, OpsTimeline, OpsVersions,
+  DetailsButton, OpsPosition, OpsTimeline, OpsVersions, useDetailsDrawer,
   linkedNodes, orderedTimeline, reviewRows, sortedArtifacts, versionRows,
 } from '../components/DetailsDrawer';
-import { expName } from '../utils/experiment';
+import { expName, experimentDocs } from '../utils/experiment';
 import { gateToSectionId, useScrollToHash } from '../utils/useScrollToHash';
 import { workflowActionButtons } from '../utils/workflowActions';
 import InlineMd from '../components/InlineMd';
@@ -45,12 +45,7 @@ export default function ExperimentDetail() {
   const [actionError, setActionError] = useState(null);
   const [gateOpen, setGateOpen] = useState(false);
   const [pendingTerminalTransition, setPendingTerminalTransition] = useState(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const detailsBtnRef = useRef(null);
-  const closeDetails = useCallback(() => {
-    setDetailsOpen(false);
-    detailsBtnRef.current?.focus({ preventScroll: true });
-  }, []);
+  const { detailsOpen, setDetailsOpen, toggleDetails, closeDetails, detailsBtnRef } = useDetailsDrawer();
 
   useEffect(() => {
     setPendingTerminalTransition(null);
@@ -132,38 +127,9 @@ export default function ExperimentDetail() {
   const isClosed = ['complete', 'failed', 'abandoned'].includes(experiment.status);
 
   // Partition artifacts by role.
-  const currentRes = (experiment.current_attempt_artifacts || [])
-    .slice()
-    .sort((a, b) => (a.role || '').localeCompare(b.role || ''));
-  const currentIds = new Set(currentRes.map(r => r.id));
-  // Fallback: if the current attempt has no plan yet (e.g. just bumped to a
-  // new attempt), show the newest earlier-attempt plan so PlanSpotlight can
-  // still render it.
-  const planRes = currentRes.find(r => r.role === 'plan')
-    || (experiment.artifacts || [])
-      .filter(r => r.role === 'plan')
-      .sort((a, b) => (a.attempt_index ?? 0) - (b.attempt_index ?? 0))
-      .pop()
-    || null;
-  // The results report (role 'report') mirrors the plan: current attempt only
-  // (a prior attempt's report is history, not the face of this attempt).
-  const reportRes = currentRes.find(r => r.role === 'report') || null;
-  // `result` artifacts are intentionally not surfaced on this page (they feed
-  // the metrics exhibit); anything beyond plan/report/graph falls through.
-  const otherRes = currentRes.filter(r => !['plan', 'report', 'graph', 'result'].includes(r.role));
-
-  // Historical (deduped by id).
-  const historicalRes = (experiment.artifacts || [])
-    .filter(r => r.attempt_index !== currentAttempt)
-    .filter(r => !currentIds.has(r.id));
-
-  // Reviews — split by role, ascending by created_at so the stepper reads
-  // left-to-right as the timeline.
-  const allReviews = (experiment.reviews || []).slice().sort((a, b) =>
-    (a.created_at || '').localeCompare(b.created_at || ''),
-  );
-  const designReviews = allReviews.filter(r => (r.role || '').toLowerCase().includes('design'));
-  const experimentReviews = allReviews.filter(r => !(r.role || '').toLowerCase().includes('design'));
+  const {
+    planRes, reportRes, otherRes, historicalRes, designReviews, experimentReviews,
+  } = experimentDocs(experiment);
 
   return (
     <div className="page-stage">
@@ -197,7 +163,7 @@ export default function ExperimentDetail() {
           </div>
           <DetailsButton
             open={detailsOpen}
-            onToggle={() => setDetailsOpen(v => !v)}
+            onToggle={toggleDetails}
             controls="experiment-details"
             buttonRef={detailsBtnRef}
           />
