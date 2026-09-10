@@ -441,7 +441,7 @@ class ServiceLayoutTest(unittest.TestCase):
         path = BACKEND_ROOT / "kernel" / "utils.py"
         self.assertEqual(
             _import_module_names(path),
-            {"datetime", "uuid", "merv.shared.errors", "merv.shared.path_utils"},
+            {"datetime", "uuid", "merv.shared.errors"},
         )
         source = path.read_text(encoding="utf-8")
         self.assertNotIn("resolve_repo_relative_file", source)
@@ -462,12 +462,6 @@ class ServiceLayoutTest(unittest.TestCase):
         ):
             with self.subTest(error=name):
                 self.assertIs(getattr(kernel_utils, name), getattr(shared_errors, name))
-
-    def test_kernel_path_helper_reexport_preserves_shared_identity(self) -> None:
-        from merv.brain.kernel.utils import safe_experiment_dirname as kernel_helper
-        from merv.shared.path_utils import safe_experiment_dirname as shared_helper
-
-        self.assertIs(kernel_helper, shared_helper)
 
     def test_iso_parsing_is_single_sourced(self) -> None:
         for path in sorted(BACKEND_ROOT.rglob("*.py")):

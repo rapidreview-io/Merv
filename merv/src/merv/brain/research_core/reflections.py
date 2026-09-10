@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 import json
 from typing import Any
 
-from merv.shared.artifact_roles import (
+from ..workflows import (
     PROJECT_GRAPH_ROLE,
     REFLECTION_LENS_DOC_ROLE,
     TASK_BRIEF_ROLE,
@@ -44,7 +44,7 @@ from .reflection_workflow import REFLECTION_WORKFLOW
 from .tasks import TaskService
 from .task_workflow import TASK_TERMINAL_STATUSES
 from .artifacts import ResearchArtifacts as Artifacts
-from merv.shared.artifact_roles import METRIC_RESULT_MAX_BYTES as MAX_SUBMITTED_TEXT_BYTES
+from ..workflows import METRIC_RESULT_MAX_BYTES as MAX_SUBMITTED_TEXT_BYTES
 from .artifact_models import ArtifactTarget
 from .policy import (
     ACTIVE_EXPERIMENT_CAP,

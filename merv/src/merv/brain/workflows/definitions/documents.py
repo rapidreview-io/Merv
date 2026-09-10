@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from merv.shared.artifact_roles import REFLECTION_LENS_DOC_ROLE
+from .artifact_roles import REFLECTION_LENS_DOC_ROLE
 from merv.shared.markdown_images import markdown_image_links
 
 from .research_contracts import (

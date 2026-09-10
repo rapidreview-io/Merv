@@ -10,9 +10,9 @@ from __future__ import annotations
 from contextlib import closing
 from typing import Any
 
-from merv.shared import artifact_roles as roles
+from ..workflows import artifact_roles as roles
 from merv.shared import markdown_images as markdown
-from merv.shared.content_summaries import content_tldr
+from .content_summaries import content_tldr
 from ..artifacts import Artifacts, CompletedFigure, PendingUpload
 from ..kernel.state.store import BaseStateStore, Connection, next_created_seq
 from ..kernel.utils import NotFoundError, ValidationError, new_id, now_iso
@@ -55,7 +55,7 @@ class ResearchArtifacts:
                 title=title,
                 max_bytes=roles.artifact_byte_cap(role)
                 or markdown.MARKDOWN_FIGURE_MAX_BYTES,
-                discover_figures=role in markdown.MARKDOWN_FIGURE_ROLES,
+                discover_figures=role in roles.MARKDOWN_FIGURE_ROLES,
                 tx=tx,
             )
             self._link(
@@ -153,7 +153,7 @@ class ResearchArtifacts:
                 "artifact exceeds this research role's size limit",
                 details={"max_bytes": cap},
             )
-        if role in markdown.MARKDOWN_FIGURE_ROLES:
+        if role in roles.MARKDOWN_FIGURE_ROLES:
             text = (content.data or b"").decode("utf-8", errors="replace")
             for link in markdown.markdown_image_links(text):
                 problem = markdown.figure_link_problem(link)

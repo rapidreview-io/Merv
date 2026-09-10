@@ -7,7 +7,7 @@ from contextlib import closing
 import json
 from typing import Any
 
-from merv.shared.artifact_roles import TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE
+from ..workflows import TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE
 
 from .dependencies import dependency_rows, dependent_rows, record_dependencies
 from .evidence import (

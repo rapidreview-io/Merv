@@ -6,8 +6,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, TypedDict, cast
 
-from merv.shared.artifact_roles import TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE
-from merv.shared.content_summaries import content_tldr
+from ..workflows import TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE
+from ..research_core import content_tldr
 
 from ..research_core import ResearchArtifacts as Artifacts
 from ..feed import FeedAdvisory

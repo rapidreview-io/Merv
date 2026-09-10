@@ -1,3 +1,4 @@
+# If you update this file, you must consult research_core.md to see whether research_core.md needs to be updated. research_core.md must not exceed 100 lines.
 """Deterministic TLDRs for submitted content shared by evidence projections."""
 
 from __future__ import annotations

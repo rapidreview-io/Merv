@@ -1,6 +1,13 @@
 """Versioned workflow definitions, runtime and composition."""
 
-from .definitions import documents, experiment, metadata, reflection, research_contracts, task
+from .definitions import (
+    artifact_roles, documents, experiment, metadata, reflection, research_contracts, task,
+)
+from .definitions.artifact_roles import (
+    ARTIFACT_TARGET_TYPES, EXHIBIT_ROLE, GATED_ROLES, METRIC_RESULT_MAX_BYTES,
+    PROJECT_GRAPH_ROLE, REFLECTION_LENS_DOC_ROLE, SUBMITTABLE_ROLES, TASK_BRIEF_ROLE,
+    TASK_DELIVERY_ROLE,
+)
 from .definitions.artifacts import artifact_references, retain_artifacts
 from .composition import Child, ChildResult, join_guard, wait_for_all
 from .delivery import Deliveries, Delivery
@@ -13,7 +20,10 @@ from .registry import WORKFLOWS
 from .workflows import Binding, Workflows
 
 __all__ = [
-    "documents", "experiment", "metadata", "reflection", "research_contracts", "task",
+    "artifact_roles", "documents", "experiment", "metadata", "reflection", "research_contracts", "task",
+    "ARTIFACT_TARGET_TYPES", "EXHIBIT_ROLE", "GATED_ROLES", "METRIC_RESULT_MAX_BYTES",
+    "PROJECT_GRAPH_ROLE", "REFLECTION_LENS_DOC_ROLE", "SUBMITTABLE_ROLES", "TASK_BRIEF_ROLE",
+    "TASK_DELIVERY_ROLE",
     "artifact_references", "retain_artifacts", "join_guard",
     "Action", "Brief", "Change", "Child", "ChildResult", "Edge", "Evaluation",
     "Issue", "Knowledge", "Node", "Reference", "Registry", "Snapshot", "Workflow",

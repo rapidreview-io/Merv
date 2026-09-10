@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from merv.shared.content_summaries import content_tldr
+from ...research_core import content_tldr
 
 from ...research_core import ResearchArtifacts as Artifacts
 from ...research_core import (

@@ -28,6 +28,9 @@ and published research-wave graphs. It also owns pure evidence validators,
 context builders, research contracts and passive legacy presentation metadata.
 `artifacts.py` there pins arbitrary semantic labels to immutable content IDs;
 new plugins need no storage role vocabulary or native research record.
+`artifact_roles.py` holds Merv's own role and association-target vocabulary
+with per-role byte caps; Research, Application and Surface import it through
+this package root, and support components never do.
 
 `workflows.py` is the public root. Its explicit registry keeps every deployed
 version. Optional bindings supply read-only verified facts and transactional

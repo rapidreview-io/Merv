@@ -5,8 +5,13 @@ from __future__ import annotations
 
 from typing import TypedDict, Unpack
 
-from ...kernel.utils import ValidationError, safe_experiment_dirname
-from ...research_core import EXPERIMENT_WORKFLOW, ExperimentState, Research
+from ...kernel.utils import ValidationError
+from ...research_core import (
+    EXPERIMENT_WORKFLOW,
+    ExperimentState,
+    Research,
+    safe_experiment_dirname,
+)
 from .presentation import rich_experiment_state
 
 

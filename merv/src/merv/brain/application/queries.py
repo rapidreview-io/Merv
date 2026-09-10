@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from merv.shared.artifact_roles import PROJECT_GRAPH_ROLE
+from ..workflows import PROJECT_GRAPH_ROLE
 
 from ..research_core import Artifact, ResearchArtifacts as Artifacts
 from ..research_core import (
