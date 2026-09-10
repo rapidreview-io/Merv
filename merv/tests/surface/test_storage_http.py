@@ -53,12 +53,8 @@ class StorageHttpApiTest(unittest.TestCase):
         self.app.shutdown()
         self.tmp.cleanup()
 
-    def test_meta_advertises_storage_ceiling(self) -> None:
-        capabilities = self.client.get("/api/meta").json()["capabilities"]
-        self.assertTrue(capabilities["storage"])
-        self.assertEqual(
-            capabilities["storage_max_upload_bytes"], 50 * 1024 * 1024 * 1024
-        )
+    def test_meta_advertises_storage(self) -> None:
+        self.assertTrue(self.client.get("/api/meta").json()["capabilities"]["storage"])
         self.assertIsInstance(self.app.storage, RemoteObjects)
 
     def test_storage_routes_list_get_download_pin_unpin_renew_delete(self) -> None:
@@ -423,8 +419,8 @@ class StorageCompositionTest(unittest.TestCase):
                     & {"storage.put_object", "storage.find", "storage.object"}
                 )
                 with TestClient(server.fastapi_app) as client:
-                    self.assertIsNone(
-                        client.get("/api/meta").json()["capabilities"]["storage_max_upload_bytes"]
+                    self.assertFalse(
+                        client.get("/api/meta").json()["capabilities"]["storage"]
                     )
             finally:
                 server.shutdown()

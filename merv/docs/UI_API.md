@@ -54,16 +54,14 @@ GET /api/meta
     "hosted_control": false,
     "mcp": true,
     "token_uploads": true,
-    "storage": true,
-    "storage_max_upload_bytes": 53687091200
+    "storage": true
   }
 }
 ```
 
 The `capabilities` block reports `mcp: true` and `token_uploads: true`: clients
 use `/mcp`, while byte operations return tokenized transfer commands. `storage`
-and `storage_max_upload_bytes` advertise the optional heavy-object backend and
-its deployment ceiling.
+advertises the optional heavy-object backend.
 `catalog_version` identifies the MCP catalog. In control mode, a request with
 `X-RP-Client-Version` explicitly below `min_proxy_version` receives
 `426 client_too_old`; a missing version header is currently tolerated.
@@ -112,10 +110,6 @@ GET   /api/projects/{project_id}/status?experiment_id={experiment_id}
 Create projects with `name` and `summary`. Do not send a repo path: projects are
 never tied to a checkout; each agent key carries an immutable scope (one
 project, or the owner's whole account).
-
-Project updates may set `storage_max_upload_bytes` to a positive byte count.
-The deployment ceiling from `/api/meta` remains authoritative; omitting the
-setting uses the 50 GiB project default.
 
 `/home` is the primary UI bootstrap. It returns `project`, `claims`, the full
 `experiments` and `tasks` lists, `artifacts`, `reviews`, `recent_events`,

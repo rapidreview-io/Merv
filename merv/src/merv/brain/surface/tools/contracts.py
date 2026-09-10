@@ -155,15 +155,6 @@ class ProjectUpdateInput(ProjectScopedInput):
             "leave unchanged."
         ),
     )
-    storage_max_upload_bytes: int | None = Field(
-        default=None,
-        gt=0,
-        description=(
-            "Project Object Storage policy: maximum bytes accepted by "
-            "storage.submit. The server-wide maximum remains an upper bound. "
-            "Omit to leave unchanged."
-        ),
-    )
 
 
 SURFACE_TOOLS: dict[str, ToolContract] = {

@@ -119,10 +119,6 @@ def resolve_control_url(env: Mapping[str, str] | None = None) -> str | None:
     return raw.rstrip("/") or None
 
 
-def storage_feature_enabled(env: Mapping[str, str] | None = None) -> bool:
-    return bool(env_value("MERV_SANDBOXES_URL", env=env))
-
-
 def resolve_storage_max_upload_bytes(env: Mapping[str, str] | None = None) -> int:
     """Absolute server-side ceiling for a storage.submit upload (default 50 GiB).
     A non-integer value falls back to the default rather than failing startup."""
