@@ -240,21 +240,6 @@ class BaseStateStore:
                 (project_id, user_id),
             )
 
-    def api_key_owner(self, *, key_id: str) -> str:
-        """Owner user of a management key, for payer-of-record resolution.
-
-        Resolved at write time — key rows can be revoked or deleted later, so
-        spend attribution must never depend on a read-time join.
-        """
-        if not key_id:
-            return ""
-        with closing(self.connect()) as conn:
-            row = conn.execute(
-                "SELECT owner_user_id FROM project_api_keys WHERE id = ?",
-                (key_id,),
-            ).fetchone()
-        return str(row["owner_user_id"]) if row is not None else ""
-
     def is_project_member(self, *, project_id: str, user_id: str) -> bool:
         with closing(self.connect()) as conn:
             row = conn.execute(

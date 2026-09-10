@@ -154,7 +154,8 @@ and Postgres reach an identical shape.
 table's `CREATE TABLE` must live in its owner's schema module, an unowned new
 table fails closed, and a stale entry must be deleted. Runtime SQL may name
 only its own component's tables, Kernel tables, and tables behind a ratified
-component edge.
+component edge — and the Kernel store's own SQL now names nothing but Kernel
+tables: projects, project_members, events, schema_migrations.
 
 ## Tool contracts
 
