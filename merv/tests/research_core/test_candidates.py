@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import ValidationError as PydanticValidationError
 
 from merv.brain.kernel.utils import ValidationError
-from merv.brain.surface.tools.contracts import CandidateSubmitInput
+from merv.brain.research_core.tools import CandidateSubmitInput
 from tests.support.brain import TestBrain
 
 

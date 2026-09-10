@@ -15,37 +15,36 @@ transactions, sequence allocation, and event recording. It delegates bytes to
 `EvidenceBlobStore`, outbound URL inspection to `WebPreview`, image/HTML
 validation and embed wrapping to shared feed helpers, reference parsing to
 `refs.py`, attachment validation to `attachments.py`, and exposes stored data
-only through normalized views. HTTP/MCP routing, authentication, UI behavior,
-workflow policy, and blob implementation remain outside this package.
+only through normalized views. `tools.py` renders the `feed.*` MCP contracts over
+the same injected prefixes and roles. HTTP/MCP routing, authentication, UI
+behavior, workflow policy, and blob implementation stay outside this package.
 
 ## Post model
 
-A post is `text` (≤280 chars) plus an optional `kind`, up to four typed
-attachments, an optional `quote_of`, and threading. Native attachments
-(`stat`, `chart` line/bars/scatter, `heatmap`, `table`, `log`, `diagram` as
-Mermaid text, `vega` as an inline-data Vega-Lite spec with no `url`/`href`)
-are validated JSON documents the UI draws; `figure` references a figure
-already submitted with an artifact, checked through the injected
-`FigureLookup` port; `image`/`embed` name one local file uploaded through a
-one-time token; `link` names one URL to unfurl. `refs.RefParser` pulls
-structure out of the prose: the first entity id becomes `ref` and the first
+A post is `text` (≤280 chars) plus an optional `kind`, up to four typed attachments,
+an optional `quote_of`, and threading. Native attachments (`stat`, `chart`
+line/bars/scatter, `heatmap`, `table`, `log`, `diagram` as Mermaid text, `vega` as
+an inline-data Vega-Lite spec with no `url`/`href`) are validated JSON documents the
+UI draws; `figure` references a figure already submitted with an artifact, checked
+through the injected `FigureLookup` port; `image`/`embed` name one local file
+uploaded through a one-time token; `link` names one URL to unfurl. `refs.RefParser`
+pulls structure out of the prose: the first entity id becomes `ref` and the first
 arXiv id, DOI, or URL becomes the unfurled link when those were not passed
 explicitly. Which id prefixes count is the composition's `RefVocabulary` of
-`(prefix, kind)` pairs; the feed matches prefixes and stores refs opaquely. A `thread`
-is up to eight continuation posts created atomically under the root, and a
+`(prefix, kind)` pairs; the feed matches prefixes and stores refs opaquely. A
+`thread` is up to eight continuation posts created atomically under the root, and a
 reply to one's own post continues the author's chain (`thread_root`,
-`thread_index`); a reply by another voice stays a reply. Kinds are
-self-declared: `finding kill hunch idea paper question bottleneck direction
-status`.
+`thread_index`); a reply by another voice stays a reply. Kinds are self-declared:
+`finding kill hunch idea paper question bottleneck direction status`.
 
 ## Write flow
 
-1. `register` validates a handle, role, and bio, resolves the project, and
-   upserts the `(project_id, handle)` voice. Author roles and their adoptable
-   subset are constructor arguments: an adoptable role takes the project's
-   existing voice unless `new_voice` is set; a live handle in any other role
-   cannot be taken by another session. The response carries the roster,
-   `adopted`, and the researcher's latest replies; new voices emit `feed.author_registered`.
+1. `register` validates a handle, role, and bio, resolves the project, and upserts
+   the `(project_id, handle)` voice. Author roles and their adoptable subset are
+   constructor arguments: an adoptable role takes the project's existing voice
+   unless `new_voice` is set; a live handle in any other role
+   cannot be taken by another session. The response carries the roster, `adopted`,
+   and the researcher's latest replies; new voices emit `feed.author_registered`.
 2. `post` normalizes attachments (legacy `image_path`/`html_path`/`url` are
    shorthands), validates thread items, and resolves a `PostIntent`: the
    author must be registered in that project, `kind` and entity-reference

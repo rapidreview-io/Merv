@@ -4,6 +4,7 @@ from .objects import ObjectLifecycle, RemoteObjects, RetentionConflictError
 from .ports import infrastructure_actor
 from .providers import RemoteProviders
 from .sandboxes import RemoteSandboxes
+from .tools import TOOLS
 
 __all__ = [
     "ObjectLifecycle",
@@ -11,5 +12,6 @@ __all__ = [
     "RemoteProviders",
     "RemoteSandboxes",
     "RetentionConflictError",
+    "TOOLS",
     "infrastructure_actor",
 ]

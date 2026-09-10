@@ -51,6 +51,7 @@ from .policy import (
 )
 from .objects import STORAGE_KINDS, ProducedObject, ResearchObjects
 from .research import Research
+from .tools import TOOLS
 
 __all__ = [
     "AGENT_DISPATCH_SETTING",
@@ -89,6 +90,7 @@ __all__ = [
     "TASK_TERMINAL_STATUSES",
     "TASK_TRANSITION_VALUES",
     "TASK_WORKFLOW",
+    "TOOLS",
     "TaskState",
     "TaskSummary",
     "agent_dispatch_enabled",

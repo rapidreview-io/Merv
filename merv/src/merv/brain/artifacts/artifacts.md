@@ -14,6 +14,8 @@ Large datasets and models live in merv-sandboxes behind the Infrastructure facad
   and completeness validation.
 - `models.py`: content metadata and upload receipts without consumer-specific
   fields.
+- `tools.py`: the `artifact.*` MCP contracts, rendered over the association
+  vocabulary (targets, roles) the composition injects.
 - `__init__.py`: public content-store interface.
 - `r2.py`: boto3-backed put/get/delete, project/digest keys, upload integrity,
   verified downloads, and explicit failure when R2 is not configured.

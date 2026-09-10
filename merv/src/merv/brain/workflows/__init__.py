@@ -17,6 +17,7 @@ from .graph import (
 )
 from .runtime import InstanceFact, Runtime, snapshot_view
 from .registry import WORKFLOWS
+from .tools import TOOLS
 from .workflows import Binding, Workflows
 
 __all__ = [
@@ -28,5 +29,5 @@ __all__ = [
     "Action", "Brief", "Change", "Child", "ChildResult", "Edge", "Evaluation", "Execution",
     "InstanceFact", "Issue", "Knowledge", "Node", "Reference", "Registry", "Scope", "Snapshot",
     "Workflow", "Workspace",
-    "Binding", "Deliveries", "Delivery", "Runtime", "WORKFLOWS", "Workflows", "snapshot_view", "all_of", "wait_for_all",
+    "Binding", "Deliveries", "Delivery", "Runtime", "TOOLS", "WORKFLOWS", "Workflows", "snapshot_view", "all_of", "wait_for_all",
 ]

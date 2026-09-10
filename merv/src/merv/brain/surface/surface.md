@@ -5,7 +5,7 @@
 `surface` is the product boundary. It turns HTTP and MCP requests into calls on
 Application or a module-owned public root, and turns their results into stable
 wire responses. It owns authentication, authorization at the delivery edge,
-tool schemas, upload/download protocols, OAuth/project keys, request telemetry,
+the tool registry, upload/download protocols, OAuth/project keys, telemetry,
 and deployment composition. It does not own research workflow decisions,
 artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
 
@@ -16,7 +16,8 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
    telemetry, and tools.
    Machine setting `features.sandbox=false` substitutes a fail-closed backend
    and omits Sandbox tools and HTTP routes; absence keeps Sandbox enabled.
-2. `tools/contracts.py` defines the public MCP input schemas and descriptions.
+2. `tools/contracts.py` merges each component's own `TOOLS` table into one
+   manifest (unique names, fixed order) and declares the surface's own tools.
    `tools/dispatcher.py` binds each manifest entry directly to its owning module,
    validates input, enforces reviewer read-only access, and records the outcome.
 3. `transport/mcp_http.py` and `transport/mcp_streamable_http.py` implement the

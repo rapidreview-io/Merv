@@ -52,7 +52,8 @@ by Surface. Application delivers review, tracking and child-start actions throug
 support-system public roots. Merv artifacts remain in Merv-owned R2; the sandbox
 service owns ML compute and workload storage only.
 
-Generic MCP tools expose catalog/start/status/assignment/begin/transition/history.
+Generic MCP tools expose catalog/start/status/assignment/begin/transition/history;
+`tools.py` owns their contracts and the support registry merges that table.
 Existing native tools use the same runtime. Auto-run activation and interactive
 `workflow.begin` start clocks/actions only when work starts; merely approving a
 plan or reading a context does not. Dispatch owns identities and leases, then

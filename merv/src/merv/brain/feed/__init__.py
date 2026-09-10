@@ -2,5 +2,6 @@
 """Public Feed entrypoint."""
 
 from .feed import FeedAdvisory, FeedService
+from .tools import feed_tools
 
-__all__ = ["FeedAdvisory", "FeedService"]
+__all__ = ["FeedAdvisory", "FeedService", "feed_tools"]

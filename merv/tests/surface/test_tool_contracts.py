@@ -12,12 +12,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from tests.support.brain import TestBrain
 from merv.brain.kernel.utils import PermissionDeniedError, ResearchPluginError
-from merv.brain.surface.tools.contracts import (
-    MCP_HIDDEN_TOOL_NAMES,
-    ArtifactReadInput,
-    ArtifactUploadInput,
-    MlflowFinalizeRunInput,
-    ReflectionGetInput,
+from merv.brain.infrastructure.tools import (
     SandboxExtendInput,
     SandboxPullOutputsInput,
     SandboxRequestInput,
@@ -27,13 +22,25 @@ from merv.brain.surface.tools.contracts import (
     StorageObjectInput,
     StoragePutObjectInput,
     StorageSubmitInput,
+)
+from merv.brain.research_core import ENTITY_REF_VOCABULARY, FEED_AUTHOR_ROLES
+from merv.brain.research_core.tools import ReflectionGetInput
+from merv.brain.surface.tools.contracts import (
+    MCP_HIDDEN_TOOL_NAMES,
     STORAGE_TOOL_NAMES,
     TOOL_CONTRACTS,
     TOOL_MANIFEST,
     available_tool_names,
 )
+from merv.brain.surface.tools.mlflow_contracts import MlflowFinalizeRunInput
+from merv.brain.workflows import ARTIFACT_TARGET_TYPES, SUBMITTABLE_ROLES
 from tests.support.infrastructure import FakeInfrastructureClient
 from merv.brain.surface.tools.dispatcher import ToolDispatcher
+
+# Artifacts renders the association vocabulary the composition injects, so the
+# models exist only inside the built table.
+ArtifactReadInput = TOOL_CONTRACTS["artifact.read"].input_model
+ArtifactUploadInput = TOOL_CONTRACTS["artifact.upload"].input_model
 
 
 BASE_PUBLIC_TOOLS = frozenset(
@@ -463,13 +470,26 @@ class ToolContractRegistryTest(unittest.TestCase):
             {name for name in TOOL_CONTRACTS if name.startswith("artifact.")},
             {"artifact.upload", "artifact.read", "artifact.attach"},
         )
-        self.assertIs(
-            TOOL_CONTRACTS["artifact.upload"].input_model, ArtifactUploadInput
+        association = TOOL_CONTRACTS["artifact.attach"].input_model.model_json_schema()
+        self.assertEqual(
+            association["properties"]["target_type"]["enum"],
+            sorted(ARTIFACT_TARGET_TYPES),
         )
-        self.assertIs(TOOL_CONTRACTS["artifact.read"].input_model, ArtifactReadInput)
+        self.assertEqual(
+            association["properties"]["role"]["enum"], sorted(SUBMITTABLE_ROLES)
+        )
         # The whole resource-tracking tool family died with the resource cut.
         for removed in ("resource.register", "resource.find", "resource.delete"):
             self.assertNotIn(removed, TOOL_CONTRACTS)
+
+    def test_feed_schema_renders_the_injected_vocabulary(self) -> None:
+        # The feed owns its contracts but not the ids or roles in them: the
+        # composition hands it the same vocabulary FeedService receives.
+        role = TOOL_CONTRACTS["feed.register"].input_model.model_fields["role"]
+        self.assertEqual(sorted(role.annotation.__args__), sorted(FEED_AUTHOR_ROLES))
+        ref = TOOL_CONTRACTS["feed.post"].input_model.model_fields["ref"].description
+        for prefix, _ in ENTITY_REF_VOCABULARY:
+            self.assertIn(prefix, ref)
 
     def test_removed_artifact_names_are_unknown(self) -> None:
         for name in ("artifact.store", "artifact.submit", "artifact.find"):

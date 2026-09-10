@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from tests.support.brain import TestBrain
-from merv.brain.surface.tools.contracts import ReviewStartInput
+from merv.brain.research_core.tools import ReviewStartInput
 from merv.brain.kernel.utils import ValidationError
 
 VALID_PLAN = (
