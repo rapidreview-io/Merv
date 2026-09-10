@@ -41,6 +41,22 @@ export function groupArtifactsByTarget(artifacts, experiments) {
   return out;
 }
 
+/**
+ * The /reviews payload as the two lists both review screens show, plus the
+ * submitted reviews grouped by the record they judged.
+ */
+export function reviewQueue(payload) {
+  const openRequests = payload.requests || payload.open_requests || payload.openRequests || [];
+  const submitted = payload.reviews || payload.submitted || [];
+  const byTarget = new Map();
+  for (const r of submitted) {
+    const id = r.target_id || r.experiment_id;
+    if (!byTarget.has(id)) byTarget.set(id, []);
+    byTarget.get(id).push(r);
+  }
+  return { openRequests, submitted, byTarget };
+}
+
 // Statuses where an experiment is done evolving — the figure/logic-graph
 // canvases stop polling once an experiment reaches one of these.
 export const TERMINAL_STATUSES = ['complete', 'failed', 'abandoned'];

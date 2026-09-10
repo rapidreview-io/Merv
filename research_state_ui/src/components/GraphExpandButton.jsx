@@ -1,4 +1,34 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
+import { cx } from '../utils/format';
+
+/**
+ * A graph slot's title IS its toggle: the active graph's name reads as the
+ * title, the other sits beside it, muted and clickable. A graph with nothing
+ * to show disables its own tab.
+ *
+ * @param {Array<[string, string]>} tabs  [key, label] in reading order
+ */
+export function GraphTabs({ tabs, view, avail, onChoose }) {
+  return (
+    <span className="fig-title-tabs" role="tablist" aria-label="Graph view">
+      {tabs.map(([key, label], i) => (
+        <Fragment key={key}>
+          {i > 0 && <span className="fig-title-tab-sep" aria-hidden="true">/</span>}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === key}
+            className={cx('fig-title-tab', view === key && 'fig-title-tab--on')}
+            disabled={!avail[key]}
+            onClick={() => onChoose(key)}
+          >
+            {label}
+          </button>
+        </Fragment>
+      ))}
+    </span>
+  );
+}
 
 /**
  * Expanded (near-fullscreen) mode for a graph slot: it survives switching

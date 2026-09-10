@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useProjectStore, useProjectHref, selectProject } from '../store/useProjectStore';
 import ConnectAgentWizard from './ConnectAgentWizard';
-import { NATIVE_CLIENTS, OTHER_CLIENT_NAMES, CLIENT_DOCS_URL, ClientMark } from './connectClients';
+import {
+  CLIENT_DOCS_URL, ClientChoices, ClientMark, NATIVE_CLIENTS, OTHER_CLIENT_NAMES,
+} from './connectClients';
 
 /**
  * The two replayable entry points into the connect-your-agent guide:
@@ -99,27 +101,7 @@ export function ConnectAgentSettings({ projectId }) {
           Choose a client to connect.
         </p>
       </div>
-      <div className="cnx-grid cnx-grid--settings">
-        {NATIVE_CLIENTS.map((c) => (
-          <button key={c.id} type="button" className="cnx-choice" onClick={() => open(c.id)}>
-            <ClientMark client={c.id} />
-            <span className="cnx-choice-title">{c.name}</span>
-          </button>
-        ))}
-        <button
-          type="button"
-          className="cnx-choice cnx-choice--wide"
-          onClick={() => open('other')}
-        >
-          <ClientMark client="other" />
-          <span className="cnx-choice-text">
-            <span className="cnx-choice-title">Another client</span>
-            <span className="cnx-choice-sub">
-              {OTHER_CLIENT_NAMES.join(', ')}, headless runners, CI…
-            </span>
-          </span>
-        </button>
-      </div>
+      <ClientChoices onPick={open} className="cnx-grid--settings" />
       <div className="settings-section">
         <div className="settings-section-head">
           <h3 className="settings-title">Headless & CI</h3>

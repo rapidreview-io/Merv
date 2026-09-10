@@ -3,9 +3,9 @@ import { createPortal } from 'react-dom';
 import { api, mcpEndpoint } from '../api';
 import { tsMs } from '../utils/time';
 import {
-  NATIVE_CLIENTS,
   OTHER_CLIENT_NAMES,
   CLIENT_DOCS_URL,
+  ClientChoices,
   ClientMark,
   clientById,
   verifyPrompt,
@@ -175,27 +175,7 @@ export default function ConnectAgentWizard({ projectId, projectName, initialClie
               Your agent talks straight to Merv over MCP. These clients ship a
               native plugin with browser sign-in — pick yours.
             </p>
-            <div className="cnx-grid">
-              {NATIVE_CLIENTS.map((c) => (
-                <button key={c.id} type="button" className="cnx-choice" onClick={() => pick(c.id)}>
-                  <ClientMark client={c.id} />
-                  <span className="cnx-choice-title">{c.name}</span>
-                </button>
-              ))}
-              <button
-                type="button"
-                className="cnx-choice cnx-choice--wide"
-                onClick={() => pick('other')}
-              >
-                <ClientMark client="other" />
-                <span className="cnx-choice-text">
-                  <span className="cnx-choice-title">Another client</span>
-                  <span className="cnx-choice-sub">
-                    {OTHER_CLIENT_NAMES.join(', ')}, headless runners, CI…
-                  </span>
-                </span>
-              </button>
-            </div>
+            <ClientChoices onPick={pick} />
           </div>
         )}
 

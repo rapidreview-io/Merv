@@ -5,7 +5,7 @@ import { useAsyncData } from '../store/usePolling';
 import ObjId from '../components/ObjId';
 import StatusPill from '../components/StatusPill';
 import ReviewCard from '../components/ReviewCard';
-import { expName } from '../utils/experiment';
+import { expName, reviewQueue } from '../utils/experiment';
 
 /**
  * Reviews page. Shows:
@@ -26,17 +26,7 @@ export default function Reviews() {
   if (error) return <div className="page-stage"><div className="error-message">{error}</div></div>;
   if (!queue) return <div className="page-stage"><div className="empty">Loading…</div></div>;
 
-  // Server returns { requests: [...], reviews: [...] } at /reviews
-  const openRequests = queue.requests || queue.open_requests || queue.openRequests || [];
-  const submitted = queue.reviews || queue.submitted || [];
-
-  // Group submitted reviews by target experiment
-  const byExp = new Map();
-  for (const r of submitted) {
-    const eid = r.target_id || r.experiment_id;
-    if (!byExp.has(eid)) byExp.set(eid, []);
-    byExp.get(eid).push(r);
-  }
+  const { openRequests, byTarget: byExp } = reviewQueue(queue);
 
   return (
     <div className="page-stage">

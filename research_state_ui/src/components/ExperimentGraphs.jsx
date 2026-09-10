@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useGraphAvailability, useGraphExpand } from './GraphExpandButton';
+import { GraphTabs, useGraphAvailability, useGraphExpand } from './GraphExpandButton';
 import ExperimentFigure from './ExperimentFigure';
 import LogicGraph from './LogicGraph';
 
@@ -21,7 +21,7 @@ export default function ExperimentGraphs({ projectId, experimentId, experimentSt
   // Expanded (near-fullscreen) mode lives here so it survives switching
   // between the two graphs while fullscreen. Escape or the backdrop closes
   // it; page scroll is locked while it is open.
-  const { expanded, toggleExpand } = useGraphExpand();
+  const { expanded, toggleExpand, collapse } = useGraphExpand();
   const reportFigure = useCallback(v => report('figure', v), [report]);
   const reportLogic = useCallback(v => report('logic', v), [report]);
 
@@ -30,29 +30,12 @@ export default function ExperimentGraphs({ projectId, experimentId, experimentSt
     : (chosen === 'figure' ? (avail.logic ? 'logic' : null) : (avail.figure ? 'figure' : null));
 
   const titleTabs = (
-    <span className="fig-title-tabs" role="tablist" aria-label="Graph view">
-      <button
-        type="button"
-        role="tab"
-        aria-selected={view === 'figure'}
-        className={`fig-title-tab${view === 'figure' ? ' fig-title-tab--on' : ''}`}
-        disabled={!avail.figure}
-        onClick={() => setChosen('figure')}
-      >
-        Figure
-      </button>
-      <span className="fig-title-tab-sep" aria-hidden="true">/</span>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={view === 'logic'}
-        className={`fig-title-tab${view === 'logic' ? ' fig-title-tab--on' : ''}`}
-        disabled={!avail.logic}
-        onClick={() => setChosen('logic')}
-      >
-        Logic
-      </button>
-    </span>
+    <GraphTabs
+      tabs={[['figure', 'Figure'], ['logic', 'Logic']]}
+      view={view}
+      avail={avail}
+      onChoose={setChosen}
+    />
   );
 
   const shared = {
@@ -62,11 +45,7 @@ export default function ExperimentGraphs({ projectId, experimentId, experimentSt
   return (
     <>
       {expanded && (
-        <div
-          className="fig-backdrop"
-          onClick={() => setExpanded(false)}
-          aria-hidden="true"
-        />
+        <div className="fig-backdrop" onClick={collapse} aria-hidden="true" />
       )}
       <ExperimentFigure
         {...shared}

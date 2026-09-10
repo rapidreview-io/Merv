@@ -6,6 +6,7 @@ import { api } from '../api';
 import ObjId from '../components/ObjId';
 import GraphExpandButton from '../components/GraphExpandButton';
 import StatusPill from '../components/StatusPill';
+import NameField from '../components/NameField';
 import ConsoleTable, {
   DurationCell, SPAN_SORTS, WhenCell, spanFacts, useTableSort,
 } from '../components/ConsoleTable';
@@ -221,28 +222,13 @@ function NewExperimentForm({ projectId, claims, onCancel, onCreated }) {
 
   return (
     <form className="form-card" onSubmit={submit} style={{ marginBottom: 18 }}>
-      <div className="form-row">
-        <label className="label">Name</label>
-        <input
-          className="input"
-          value={name}
-          onChange={e => setName(e.target.value)}
-          placeholder="lora-rank-sweep"
-          maxLength={48}
-          autoFocus
-          required
-        />
-        <div className="form-hint">
-          Becomes the experiment folder <code>experiments/{nameOk ? name : '<name>'}/</code> —
-          letters, digits, dots, dashes, underscores; unique within the project.
-        </div>
-        {name && !nameOk && (
-          <div className="error-message">
-            Folder-safe names start with a letter or digit and use only letters,
-            digits, '.', '_' and '-'.
-          </div>
-        )}
-      </div>
+      <NameField
+        value={name}
+        onChange={setName}
+        placeholder="lora-rank-sweep"
+        folder="experiments"
+        unique="unique within the project"
+      />
       <div className="form-row">
         <label className="label">Intent</label>
         <textarea

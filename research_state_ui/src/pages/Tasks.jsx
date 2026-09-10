@@ -5,6 +5,7 @@ import {
 import { api } from '../api';
 import ObjId from '../components/ObjId';
 import StatusPill from '../components/StatusPill';
+import NameField from '../components/NameField';
 import ConsoleTable, {
   DurationCell, SPAN_SORTS, WhenCell, spanFacts, useTableSort,
 } from '../components/ConsoleTable';
@@ -200,28 +201,13 @@ function NewTaskForm({ projectId, tasks, experiments, onCancel, onCreated }) {
 
   return (
     <form className="form-card" onSubmit={submit} style={{ marginBottom: 18 }}>
-      <div className="form-row">
-        <label className="label">Name</label>
-        <input
-          className="input"
-          value={name}
-          onChange={e => setName(e.target.value)}
-          placeholder="prep-cifar-splits"
-          maxLength={48}
-          autoFocus
-          required
-        />
-        <div className="form-hint">
-          Becomes the task folder <code>tasks/{nameOk ? name : '<name>'}/</code> —
-          letters, digits, dots, dashes, underscores; unique among the project's tasks.
-        </div>
-        {name && !nameOk && (
-          <div className="error-message">
-            Folder-safe names start with a letter or digit and use only letters,
-            digits, '.', '_' and '-'.
-          </div>
-        )}
-      </div>
+      <NameField
+        value={name}
+        onChange={setName}
+        placeholder="prep-cifar-splits"
+        folder="tasks"
+        unique="unique among the project's tasks"
+      />
       <div className="form-row">
         <label className="label">Goal</label>
         <textarea

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useGraphAvailability, useGraphExpand } from '../GraphExpandButton';
+import { GraphTabs, useGraphAvailability, useGraphExpand } from '../GraphExpandButton';
 import LogicGraph from '../LogicGraph';
 import WaveFigure from './WaveFigure';
 
@@ -14,7 +14,7 @@ import WaveFigure from './WaveFigure';
 export default function ReflectionGraphs({ projectId, reflectionId, wave, isOpen, fetcher }) {
   const [chosen, setChosen] = useState('process');
   const [avail, report] = useGraphAvailability({ process: false, logic: false });
-  const { expanded, toggleExpand } = useGraphExpand();
+  const { expanded, toggleExpand, collapse } = useGraphExpand();
   const reportProcess = useCallback(v => report('process', v), [report]);
   const reportLogic = useCallback(v => report('logic', v), [report]);
 
@@ -23,36 +23,19 @@ export default function ReflectionGraphs({ projectId, reflectionId, wave, isOpen
     : (chosen === 'process' ? (avail.logic ? 'logic' : null) : (avail.process ? 'process' : null));
 
   const titleTabs = (
-    <span className="fig-title-tabs" role="tablist" aria-label="Graph view">
-      <button
-        type="button"
-        role="tab"
-        aria-selected={view === 'process'}
-        className={`fig-title-tab${view === 'process' ? ' fig-title-tab--on' : ''}`}
-        disabled={!avail.process}
-        onClick={() => setChosen('process')}
-      >
-        Process
-      </button>
-      <span className="fig-title-tab-sep" aria-hidden="true">/</span>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={view === 'logic'}
-        className={`fig-title-tab${view === 'logic' ? ' fig-title-tab--on' : ''}`}
-        disabled={!avail.logic}
-        onClick={() => setChosen('logic')}
-      >
-        Logic
-      </button>
-    </span>
+    <GraphTabs
+      tabs={[['process', 'Process'], ['logic', 'Logic']]}
+      view={view}
+      avail={avail}
+      onChoose={setChosen}
+    />
   );
 
   const shared = { titleTabs, expanded, onToggleExpand: toggleExpand };
   return (
     <>
       {expanded && (
-        <div className="fig-backdrop" onClick={() => setExpanded(false)} aria-hidden="true" />
+        <div className="fig-backdrop" onClick={collapse} aria-hidden="true" />
       )}
       <WaveFigure
         {...shared}

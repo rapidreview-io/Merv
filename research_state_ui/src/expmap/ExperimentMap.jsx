@@ -6,7 +6,6 @@ import {
 import '@xyflow/react/dist/style.css';
 import { MeasureSync } from '../components/ExperimentFigure';
 import { PanelResizer } from '../components/DetailPanelShell';
-import GraphExpandButton from '../components/GraphExpandButton';
 import GraphDrawer from '../components/GraphDrawer';
 import { panExtentFor } from '../utils/graphCamera';
 import { motionMs } from '../utils/motion';
