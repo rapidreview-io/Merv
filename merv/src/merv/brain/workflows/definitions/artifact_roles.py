@@ -80,3 +80,7 @@ GATED_ROLE_BYTE_CAPS: dict[str, int] = {
     TASK_DELIVERY_ROLE: 16_000,
 }
 GATED_ROLES = frozenset(GATED_ROLE_BYTE_CAPS)
+
+# Gated markdown roles whose relative image links are captured as submitted
+# figures at artifact.upload time and pinned beside the document.
+MARKDOWN_FIGURE_ROLES = frozenset({"plan", "report", "reflection_doc"})
