@@ -198,7 +198,7 @@ class Application:
             "queue_total": len(queue),
         }
 
-    def claim_agent_session(
+    def lease_agent_session(
         self, *, project_id: str, runner_id: str, platform: str,
         idempotency_key: str, session_secret: str, source_key_id: str = "",
         source_user_id: str = "", hard_deadline_seconds: int = 24 * 60 * 60,

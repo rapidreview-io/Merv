@@ -1360,7 +1360,7 @@ class RealTrackingDeliveryTest(ResearchCase):
         self.assertEqual(tracking.create_calls, [])
 
         secret = "mas_" + "x" * 43
-        offered = self.app.application.claim_agent_session(
+        offered = self.app.application.lease_agent_session(
             project_id=self.project_id,
             runner_id="runner",
             platform="codex",

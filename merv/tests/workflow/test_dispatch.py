@@ -51,7 +51,7 @@ class WorkflowDispatchTest(ResearchCase):
 
     def claim(self, runner="runner"):
         secret = "mas_" + secrets.token_urlsafe(32)
-        result = self.app.application.claim_agent_session(
+        result = self.app.application.lease_agent_session(
             project_id=self.project_id, runner_id=runner, platform="codex",
             idempotency_key=runner, session_secret=secret,
         )
