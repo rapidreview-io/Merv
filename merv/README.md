@@ -177,12 +177,14 @@ same `trace.jsonl` through its post-run session export. These files stay on the
 client machine and are never created for interactive, non-auto-run sessions;
 the runner mirrors only a bounded, redacted excerpt (last events + stderr tail)
 so the Auto-run job card can show what a job is doing.
-The runner initializes a Merv-owned bare repository and central ref, then keeps
-one persistent branch/worktree per work instance. Reflection approval dispatches a
-separate consolidator and code reviewer; the runner alone advances central
-after review. Temporary reviewer worktrees are removed, while experiment and
-consolidation worktrees remain recoverable. The private bare clone has no
-remotes and never pushes into the user's repository. Worktrees isolate Git
+The runner initializes a Merv-owned bare repository and central ref, then gives
+each session the workspace its assignment's execution policy declares: a
+persistent branch/worktree per work instance (kept across sessions, named by
+the policy's namespace), an ephemeral detached checkout per session that is
+removed at close unless the policy retains it, or a plain scratch directory.
+The brain declares which node's accepted work may advance central; the runner
+alone performs that compare-and-swap once the brain approves it. The private
+bare clone has no remotes and never pushes into the user's repository. Worktrees isolate Git
 changes, not same-user filesystem access; use an OS sandbox for hostile agents.
 
 Provider sign-in (`codex login`, signing in to `claude`, a provider API key)
