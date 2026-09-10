@@ -34,7 +34,6 @@ from .experiments.presentation import (
 )
 from .experiments.transition import TransitionExperiment
 from .project_context import ProjectContextQuery
-from .queries import LogicGraphQuery
 from .reflections import (
     consolidation_packet,
     present_agent_reflection_state,
@@ -122,7 +121,6 @@ class Application:
             project_context=self._project_context,
             task_context=self._task_context,
         )
-        self._graphs = LogicGraphQuery(research=research, artifacts=artifacts)
 
     # Coding-agent execution ----------------------------------------------
 
@@ -271,9 +269,6 @@ class Application:
             experiment_id=experiment_id,
             task_id=task_id,
         )
-
-    def project_context(self, *, project_id: str | None = None) -> dict[str, Any]:
-        return self._project_context.build(project_id=project_id)
 
     def submit_candidate(
         self,
@@ -430,7 +425,7 @@ class Application:
                     "projects you can work in, then pass project_id explicitly.",
                     details={"field": "project_id"},
                 )
-            return self.project_context(project_id=resolved)
+            return self._project_context.build(project_id=resolved)
         raise ValidationError(f'action="{action}" is not recognized for project')
 
     def _reachable_projects(
@@ -514,9 +509,6 @@ class Application:
             for state in states
         ]
         return presented if rich else {"experiments": presented}
-
-    def list_experiments(self, *, project_id: str | None = None) -> dict[str, Any]:
-        return self.experiments(project_id=project_id, rich=False)
 
     def experiment(
         self,
@@ -635,9 +627,6 @@ class Application:
         ]
         return presented if rich else {"tasks": presented}
 
-    def list_tasks(self, *, project_id: str | None = None) -> dict[str, Any]:
-        return self.tasks(project_id=project_id, rich=False)
-
     def task(
         self,
         *,
@@ -741,9 +730,6 @@ class Application:
             target_id=target_id,
             project_id=project_id,
         )
-
-    def review_queue(self, *, project_id: str | None = None) -> dict[str, Any]:
-        return review_queue(self.research, project_id=project_id)
 
     def create_reflection(
         self,
@@ -1007,7 +993,7 @@ class Application:
             artifact_list_record(artifact)
             for artifact in self.artifacts.scan(project_id=project_id)
         ]
-        reviews = self.review_queue(project_id=project_id)
+        reviews = review_queue(self.research, project_id=project_id)
         claims = status["project"]["active_claims"]
         active_experiments = work["active_experiments"]
         active_tasks = work.get("active_tasks", [])
@@ -1067,25 +1053,6 @@ class Application:
         for entry in spend["by_experiment"]:
             entry["experiment_name"] = names.get(entry["experiment_id"], "")
         return spend
-
-    def experiment_graph(
-        self, *, project_id: str, experiment_id: str
-    ) -> dict[str, Any]:
-        return self._graphs.experiment(
-            project_id=project_id,
-            experiment_id=experiment_id,
-        )
-
-    def project_graph(self, *, project_id: str) -> dict[str, Any]:
-        return self._graphs.project(project_id=project_id)
-
-    def reflection_graph(
-        self, *, project_id: str, reflection_id: str
-    ) -> dict[str, Any]:
-        return self._graphs.reflection_graph(
-            project_id=project_id,
-            reflection_id=reflection_id,
-        )
 
 __all__ = ["Application", "present_session"]
 

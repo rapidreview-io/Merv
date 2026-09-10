@@ -3,5 +3,6 @@
 """Cross-module orchestration."""
 
 from .application import Application, present_session
+from .queries import LogicGraphQuery
 
-__all__ = ["Application", "present_session"]
+__all__ = ["Application", "LogicGraphQuery", "present_session"]

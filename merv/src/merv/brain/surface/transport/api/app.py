@@ -167,16 +167,16 @@ def create_fastapi_app(
             user_directory=user_directory,
         ),
         claims.build_router(gateway),
-        experiments.build_router(gateway, application=api.application),
+        experiments.build_router(
+            gateway, application=api.application, graphs=api.logic_graphs
+        ),
         tasks.build_router(gateway, application=api.application),
-        reflections.build_router(application=api.application),
+        reflections.build_router(
+            application=api.application, graphs=api.logic_graphs
+        ),
         artifacts.build_router(artifacts=api.artifacts),
         storage.build_router(storage=api.storage),
-        reviews.build_router(
-            gateway,
-            application=api.application,
-            research=api.research,
-        ),
+        reviews.build_router(gateway, research=api.research),
         *sandbox_routers,
         events.build_router(research=api.research),
         user_settings.build_router(user_settings=api.user_settings),

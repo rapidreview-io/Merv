@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Request
 
-from ....application import Application
+from ....application import Application, LogicGraphQuery
 from .shared import JsonBody, path_scoped_body
 
 from .gateway import ToolInvocationGateway
@@ -16,6 +16,7 @@ def build_router(
     gateway: ToolInvocationGateway,
     *,
     application: Application,
+    graphs: LogicGraphQuery,
 ) -> APIRouter:
     api_router = APIRouter()
 
@@ -64,7 +65,7 @@ def build_router(
     @api_router.get("/api/projects/{project_id}/experiments/{experiment_id}/graph")
     def experiment_logic_graph(project_id: str, experiment_id: str) -> dict[str, Any]:
         # Agent-authored logic graph (role 'graph'); UI-only read, no agent tool.
-        return application.experiment_graph(
+        return graphs.experiment(
             project_id=project_id, experiment_id=experiment_id
         )
 

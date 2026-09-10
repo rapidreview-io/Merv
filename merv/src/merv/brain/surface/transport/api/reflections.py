@@ -6,10 +6,10 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from ....application import Application
+from ....application import Application, LogicGraphQuery
 
 
-def build_router(*, application: Application) -> APIRouter:
+def build_router(*, application: Application, graphs: LogicGraphQuery) -> APIRouter:
     api_router = APIRouter()
 
     @api_router.get("/api/projects/{project_id}/reflections")
@@ -21,7 +21,7 @@ def build_router(*, application: Application) -> APIRouter:
     def project_logic_graph(project_id: str) -> dict[str, Any]:
         # The living project logic graph; same payload shape as the
         # per-experiment graph endpoint. UI-only read, no agent tool.
-        return application.project_graph(project_id=project_id)
+        return graphs.project(project_id=project_id)
 
     @api_router.get("/api/projects/{project_id}/reflections/{reflection_id}/graph")
     def reflection_graph(project_id: str, reflection_id: str) -> dict[str, Any]:
@@ -30,7 +30,7 @@ def build_router(*, application: Application) -> APIRouter:
         # living file. Same payload shape as /reflections/current/graph (minus
         # signal). Registered after the literal current/graph route so
         # "current" is not captured as a reflection_id. UI-only read.
-        return application.reflection_graph(
+        return graphs.reflection_graph(
             project_id=project_id, reflection_id=reflection_id
         )
 

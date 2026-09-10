@@ -18,7 +18,7 @@ from ..research_core import (
     preferred_artifact,
 )
 from .reflection_guidance import present_reflection_signal
-from .reflections import present_reflection_overview, present_reflection_state
+from .reflections import present_reflection_state
 
 Record = dict[str, Any]
 
@@ -64,18 +64,6 @@ class LogicGraphQuery:
             }
         return self._payload(base=base, chosen=chosen, text=text, project_id=project_id)
 
-    def reflections(self, *, project_id: str) -> Record:
-        return present_reflection_overview(
-            self.research.reflection_overview(project_id=project_id)
-        )
-
-    def reflection(self, *, project_id: str, reflection_id: str) -> Record:
-        return present_reflection_state(
-            self.research.reflection_state(
-                reflection_id=reflection_id, project_id=project_id
-            )
-        )
-
     def project(self, *, project_id: str) -> Record:
         selection = self.research.project_logic_graph_selection(project_id=project_id)
         return self._for_reflection(
@@ -88,8 +76,10 @@ class LogicGraphQuery:
     def reflection_graph(self, *, project_id: str, reflection_id: str) -> Record:
         return self._for_reflection(
             project_id=project_id,
-            reflection=self.reflection(
-                project_id=project_id, reflection_id=reflection_id
+            reflection=present_reflection_state(
+                self.research.reflection_state(
+                    reflection_id=reflection_id, project_id=project_id
+                )
             ),
         )
 

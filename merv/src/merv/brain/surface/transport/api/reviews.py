@@ -6,16 +6,14 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Request
 
-from ....application import Application
+from ....application.reviews import review_queue
 from ....research_core import Research
 from .shared import JsonBody, path_scoped_body
 
 from .gateway import ToolInvocationGateway
 
 
-def build_router(
-    gateway: ToolInvocationGateway, *, application: Application, research: Research
-) -> APIRouter:
+def build_router(gateway: ToolInvocationGateway, *, research: Research) -> APIRouter:
     api_router = APIRouter()
 
     @api_router.get("/api/projects/{project_id}/reviews")
@@ -26,7 +24,7 @@ def build_router(
         target_id: str | None = None,
     ) -> dict[str, Any]:
         if not target_id:
-            return application.review_queue(project_id=project_id)
+            return review_queue(research, project_id=project_id)
         return gateway.call_http(
             request,
             name="review.status",

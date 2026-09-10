@@ -19,7 +19,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from ..application import Application
+from ..application import Application, LogicGraphQuery
 from ..application.maintenance import CleanupService
 from .workflow_knowledge import WorkflowKnowledge
 from ..agent_sessions import AgentSessions
@@ -141,6 +141,10 @@ class Surface:
             ) is not None,
         )
         self.literature = Literature(store=store, unfurl=AllowlistedPaperPreview())
+        # The logic-graph read the experiment and reflection routes both
+        # render; it joins Research facts with the pinned graph bytes and
+        # belongs to neither router.
+        self.logic_graphs = LogicGraphQuery(research=self.research, artifacts=self.artifacts)
         # Leases learn whether their instance still stands from the workflow
         # runtime's facts; Agent Sessions never reads a research record.
         self.agent_sessions = AgentSessions(store=store, facts=self.workflows.runtime)
