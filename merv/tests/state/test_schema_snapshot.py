@@ -2,9 +2,10 @@
 
 `fixtures/fresh_schema.json` is the table-and-column set a fresh database
 reached by replaying the whole 1..64 ladder, minus the eight sandbox-fleet
-tables migration 65 drops. Squashing that ladder into the DDL is a move, not
-a change: installing every component on an empty database — SQLite here,
-Postgres in ``test_postgres_dialect`` — must land on exactly this shape.
+tables migration 65 drops and the three OAuth exchange tables migration 66
+drops. Squashing that ladder into the DDL is a move, not a change: installing
+every component on an empty database — SQLite here, Postgres in
+``test_postgres_dialect`` — must land on exactly this shape.
 """
 
 from __future__ import annotations

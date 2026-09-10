@@ -1,10 +1,10 @@
 """Request principal vocabulary.
 
-The current private hosted-control deployment authenticates via Supabase JWTs,
-RapidReview ``rr_sk_`` keys, and project-scoped ``mk_`` keys. HTTP requests run
-as ``LOCAL_PRINCIPAL`` — the trusted-local sentinel — until a verifier resolves
-a credential. A project (``mk_``) key carries its immutable project scope on the
-principal; everything else (JWT, rr_sk_) carries none.
+The current private hosted-control deployment authenticates via Supabase JWTs
+and project-scoped ``mk_`` keys. HTTP requests run as ``LOCAL_PRINCIPAL`` — the
+trusted-local sentinel — until a verifier resolves a credential. A project
+(``mk_``) key carries its immutable project scope on the principal; a browser
+session carries none.
 """
 
 from __future__ import annotations
@@ -91,7 +91,7 @@ def is_external_key(principal: object | None) -> bool:
 def is_human_session(principal: object | None) -> bool:
     """Whether a real person is driving this request (a Supabase browser JWT).
 
-    Every other verified credential — ``mk_``, ``rr_sk_`` — is a machine one,
+    Every other verified credential — an ``mk_`` key — is a machine one,
     however wide its reach, so operations that only a human may authorize
     (project-key management, personal tokens, membership) test this.
     """
@@ -102,7 +102,7 @@ def is_local_principal(principal: object | None) -> bool:
     """Whether this is the trusted-local sentinel (internal composition).
 
     Only ``LOCAL_PRINCIPAL`` is trusted-local; every verifier-minted principal
-    (JWT, rr_sk_, mk_) is external. The value-level check keeps the answer
+    (JWT, mk_) is external. The value-level check keeps the answer
     stable if the sentinel is ever reconstructed rather than shared by identity.
     """
     if principal is LOCAL_PRINCIPAL:

@@ -33,7 +33,7 @@ export function mcpEndpoint() {
 // token configured no Authorization header is sent, and the local backend
 // (auth=None) serves every request as the implicit local principal. The live
 // Supabase session (hosted sign-in) wins; the localStorage slot remains as a
-// dev override and can also hold an rr_sk_ API key.
+// dev override and can also hold an mk_ project key.
 import { getAuthToken, tryRefreshSession } from './auth';
 
 function authToken() {

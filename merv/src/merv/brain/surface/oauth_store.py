@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ..kernel.env import env_int
-from ..kernel.state.schema import SchemaModule
+from ..kernel.state.schema import Connection, Migration, SchemaModule
 from ..kernel.state.store import BaseStateStore, row_to_dict
 from ..kernel.utils import format_iso
 from .oauth import (
@@ -594,4 +594,23 @@ CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client
 """
 
 
-OAUTH_SCHEMA = SchemaModule(name="surface.oauth", ddl=OAUTH_DDL)
+# The device grant and the consent handoff link are gone: a machine with no
+# browser holds a project key, so neither exchange has anything left to carry.
+_RETIRED_OAUTH_TABLES = (
+    "oauth_device_grant_attempts",
+    "oauth_device_grants",
+    "oauth_handoff_links",
+)
+
+
+def _drop_retired_oauth_tables(conn: Connection) -> None:
+    """Migration 66: OAuth keeps only the redirect flow's own rows."""
+    for table in _RETIRED_OAUTH_TABLES:
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
+
+
+OAUTH_SCHEMA = SchemaModule(
+    name="surface.oauth",
+    ddl=OAUTH_DDL,
+    migrations=(Migration(66, "drop_retired_oauth_tables", _drop_retired_oauth_tables),),
+)

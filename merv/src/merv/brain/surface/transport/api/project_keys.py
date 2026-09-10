@@ -1,8 +1,7 @@
 """Owner-only HTTP lifecycle for project-scoped API keys.
 
 Every route requires a Supabase browser session (``client_id`` starts with
-``jwt:``): a project (``mk_``) key or an ``rr_sk_`` key cannot mint, list, or
-revoke keys. Owner-minted keys carry NO audience: the audience column confines
+``jwt:``): a project (``mk_``) key cannot mint, list, or revoke keys. Owner-minted keys carry NO audience: the audience column confines
 OAuth-issued keys to ``/mcp``, and stamping it here would revoke a directly
 minted key's REST authority (agent-sessions claim/attach/release rides it).
 """

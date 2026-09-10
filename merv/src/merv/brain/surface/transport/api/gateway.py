@@ -490,7 +490,7 @@ class ToolInvocationGateway:
     ) -> tuple[Any, dict[str, Any] | None, dict[str, Any]]:
         """The scope/visibility/membership half of pre-flight (see _preflight)."""
         contract = TOOL_MANIFEST.get(name)
-        # INV-5: an MCP call from any non-local principal (mk_/rr_sk_/JWT) is
+        # INV-5: an MCP call from any non-local principal (mk_ key or JWT) is
         # confined to public tools by the dispatcher; local composition is not.
         caller_is_external_mcp = activity_source == "mcp" and not is_local_principal(
             principal

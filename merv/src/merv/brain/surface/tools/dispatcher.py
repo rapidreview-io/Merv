@@ -144,8 +144,8 @@ class ToolDispatcher:
             if name not in self._tools:
                 raise ResearchPluginError(f"unknown tool: {name}", details={"tool": name})
             # Defense-in-depth for INV-5: an internal/hidden tool is never
-            # reachable over MCP by any non-local caller (mk_ key, rr_sk_, raw
-            # JWT). Only LOCAL_PRINCIPAL composition — which never sets this
+            # reachable over MCP by any non-local caller (mk_ key or raw JWT).
+            # Only LOCAL_PRINCIPAL composition — which never sets this
             # flag — keeps internal access over the same dispatch path.
             if caller_is_external_mcp and TOOL_CONTRACTS[name].visibility == "internal":
                 raise ToolVisibilityError(

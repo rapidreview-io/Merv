@@ -32,8 +32,6 @@ from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
 SECRET = "project-key-tests-jwt-secret-32-bytes"
 USER_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 USER_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-RR_KEY = "rr_sk_regression"
-RR_DIGEST = hashlib.sha256(RR_KEY.encode()).hexdigest()
 
 
 def _token(user_id: str) -> str:
@@ -53,9 +51,7 @@ def _bearer(secret: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {secret}"}
 
 
-def _postgrest(request: httpx.Request) -> httpx.Response:
-    if f"eq.{RR_DIGEST}" in str(request.url):
-        return httpx.Response(200, json=[{"user_id": USER_B}])
+def _postgrest(_request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, json=[])
 
 
@@ -334,30 +330,39 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         self.assertEqual(tuple(replacement), (None, None))
 
     def test_key_management_requires_a_supabase_session(self) -> None:
+        """AUTH-01: only a human mints keys or decides who belongs here."""
         self._add_member(self.project_a, USER_B)
-        for credential in (self.key, RR_KEY):
-            requests = (
-                self.client.post(
-                    f"/api/projects/{self.project_a}/keys",
-                    json={},
-                    headers=_bearer(credential),
-                ),
-                self.client.get(
-                    f"/api/projects/{self.project_a}/keys",
-                    headers=_bearer(credential),
-                ),
-                self.client.post(
-                    f"/api/projects/{self.project_a}/keys/{self.key_id}/revoke",
-                    headers=_bearer(credential),
-                ),
-            )
-            for response in requests:
-                with self.subTest(credential=credential[:6]):
-                    self.assertEqual(response.status_code, 403, response.text)
-                    self.assertEqual(
-                        response.json()["error_code"], "human_session_required"
-                    )
-        # The key still authenticates for ordinary use.
+        for response in (
+            self.client.post(
+                f"/api/projects/{self.project_a}/keys", json={}, headers=_bearer(self.key)
+            ),
+            self.client.get(
+                f"/api/projects/{self.project_a}/keys", headers=_bearer(self.key)
+            ),
+            self.client.post(
+                f"/api/projects/{self.project_a}/keys/{self.key_id}/revoke",
+                headers=_bearer(self.key),
+            ),
+            self.client.post(
+                f"/api/projects/{self.project_a}/members",
+                json={"user_id": "cccccccc-cccc-cccc-cccc-cccccccccccc"},
+                headers=_bearer(self.key),
+            ),
+            self.client.delete(
+                f"/api/projects/{self.project_a}/members/{USER_B}",
+                headers=_bearer(self.key),
+            ),
+        ):
+            self.assertEqual(response.status_code, 403, response.text)
+            self.assertEqual(response.json()["error_code"], "human_session_required")
+        # The membership the key tried to rewrite is untouched, and the key
+        # still authenticates for ordinary use.
+        members = self.client.get(
+            f"/api/projects/{self.project_a}/members", headers=_bearer(self.jwt_a)
+        )
+        self.assertEqual(
+            sorted(m["user_id"] for m in members.json()["members"]), [USER_A, USER_B]
+        )
         self.assertEqual(
             self.verifier.verify_bearer(f"Bearer {self.key}").key_id, self.key_id
         )
@@ -568,16 +573,12 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         self.assertEqual(response.status_code, 403, response.text)
         self.assertEqual(response.json()["error_code"], "project_scope_forbidden")
 
-    def test_jwt_and_rr_principals_carry_no_key_context(self) -> None:
-        jwt_principal = self.verifier.verify_bearer(f"Bearer {self.jwt_a}")
-        rr_principal = self.verifier.verify_bearer(f"Bearer {RR_KEY}")
-        for principal in (jwt_principal, rr_principal):
-            self.assertIsNone(principal.key_id)
-            self.assertIsNone(principal.key_project_id)
-            self.assertFalse(hasattr(principal, "profile"))
-        self.assertTrue(jwt_principal.client_id.startswith("jwt:"))
-        self.assertEqual(rr_principal.user_id, USER_B)
-        self.assertTrue(rr_principal.client_id.startswith("key:"))
+    def test_a_browser_session_carries_no_key_context(self) -> None:
+        principal = self.verifier.verify_bearer(f"Bearer {self.jwt_a}")
+        self.assertIsNone(principal.key_id)
+        self.assertIsNone(principal.key_project_id)
+        self.assertFalse(hasattr(principal, "profile"))
+        self.assertTrue(principal.client_id.startswith("jwt:"))
 
     def test_admin_routes_are_operator_only(self) -> None:
         import os
@@ -662,7 +663,7 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         self.assertEqual(open_client.get("/api/meta").status_code, 200)
 
     def test_mlflow_auth_route_is_absent_for_every_credential_audience(self) -> None:
-        for credential in (self.key, self.jwt_a, RR_KEY):
+        for credential in (self.key, self.jwt_a):
             response = self.client.get(
                 "/internal/auth/mlflow", headers=_bearer(credential)
             )
@@ -690,14 +691,13 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         self.assertEqual(self.app.user_settings.resolve(user_id=USER_A), "")
 
     def test_hf_token_write_requires_a_browser_session(self) -> None:
-        # A project (mk_) key and an rr_sk_ key cannot set a personal token.
-        for credential in (self.key, RR_KEY):
-            denied = self.client.put(
-                "/api/user/hf-token", json={"token": "x"}, headers=_bearer(credential)
-            )
-            self.assertEqual(denied.status_code, 403, denied.text)
-            self.assertEqual(denied.json()["error_code"], "human_session_required")
-        # The rejected writes stored nothing.
+        # A project (mk_) key cannot set a personal token.
+        denied = self.client.put(
+            "/api/user/hf-token", json={"token": "x"}, headers=_bearer(self.key)
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
+        self.assertEqual(denied.json()["error_code"], "human_session_required")
+        # The rejected write stored nothing.
         self.assertEqual(self.app.user_settings.resolve(user_id=USER_B), "")
 
     def test_hf_token_empty_body_is_rejected(self) -> None:
