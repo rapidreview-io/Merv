@@ -322,47 +322,30 @@ class ReflectionService(RecordHooks):
                 ]
             }
 
-    def experiment_consolidations(
-        self, *, project_id: str, experiment_ids: tuple[str, ...]
-    ) -> dict[str, list[dict[str, Any]]]:
+    def experiment_consolidations(self, *, project_id: str,
+                                  experiment_ids: tuple[str, ...]) -> dict[str, list[dict[str, Any]]]:
+        """Every consolidation decision each experiment has received, with its receipt."""
         ids = tuple(dict.fromkeys(value for value in experiment_ids if value))
-        result = {experiment_id: [] for experiment_id in ids}
+        result: dict[str, list[dict[str, Any]]] = {experiment_id: [] for experiment_id in ids}
         if not ids:
             return result
-        placeholders = ", ".join("?" for _ in ids)
         with closing(self.store.connect()) as conn:
             self.store.require_project_id(conn=conn, project_id=project_id)
-            rows = conn.execute(
-                f"""
-                SELECT d.*, p.reflection_id, p.revision, p.base_sha,
-                       p.proposal_sha, p.summary, p.created_at
-                FROM consolidation_decisions d
-                JOIN consolidation_proposals p ON p.id = d.proposal_id
-                WHERE p.project_id = ?
-                  AND d.experiment_id IN ({placeholders})
-                ORDER BY p.created_at, p.revision
-                """,
-                (project_id, *ids),
-            ).fetchall()
+            rows = _query(conn, "SELECT d.*, p.reflection_id, p.revision, p.base_sha, p.proposal_sha, p.summary, "
+                                "p.created_at FROM consolidation_decisions d "
+                                "JOIN consolidation_proposals p ON p.id = d.proposal_id WHERE p.project_id = ? "
+                                f"AND d.experiment_id IN ({', '.join('?' * len(ids))}) ORDER BY p.created_at, p.revision",
+                          (project_id, *ids))
             receipts = self.advances.latest(conn=conn, proposal_ids=tuple(
                 dict.fromkeys(str(row["proposal_id"]) for row in rows)))
-            for row in rows:
-                item = row_to_dict(row=row) or {}
+            for item in rows:
                 receipt = receipts.get(str(item["proposal_id"])) or {}
-                item["advance_status"] = receipt.get("status")
-                item["central_sha"] = receipt.get("observed_sha")
-                item["bound_at"] = receipt.get("bound_at")
-                verified = bool((receipt.get("ancestry") or {}).get(str(item["experiment_id"]), False))
-                item["ancestry_verified"] = verified
-                merged = verified and item.get("integration_kind") in {
-                    "merge",
-                    "fast_forward",
-                }
-                item["integration_outcome"] = (
-                    "not_applied"
-                    if item["disposition"] in {"reviewed_not_used", "superseded"}
-                    else "merged" if merged else "applied"
-                )
+                item.update(advance_status=receipt.get("status"), central_sha=receipt.get("observed_sha"),
+                            bound_at=receipt.get("bound_at"))
+                # A decision the wave never reached is pending in the wave's own
+                # view; a recorded one has already been considered.
+                item.update(corpus.integration_outcome(decision=item, ancestry=receipt.get("ancestry") or {},
+                                                       unapplied=("reviewed_not_used", "superseded")))
                 result[str(item["experiment_id"])].append(item)
         return result
 
@@ -1222,45 +1205,25 @@ class ReflectionService(RecordHooks):
         blocking threshold.
         """
         owns_conn = conn is None
-        if conn is None:
-            conn = self.store.connect()
+        conn = self.store.connect() if owns_conn else conn
         try:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            terminal = ", ".join(f"'{s}'" for s in sorted(EXPERIMENT_TERMINAL_STATUSES))
-            current_terminal = {
-                str(row["id"]): str(row["status"])
-                for row in conn.execute(
-                    f"SELECT id, status FROM experiments WHERE project_id = ? AND status IN ({terminal})",
-                    (project_id,),
-                ).fetchall()
-            }
-            current_claims = {
-                str(row["id"]): str(row["status"])
-                for row in conn.execute(
-                    "SELECT id, status FROM claims WHERE project_id = ?",
-                    (project_id,),
-                ).fetchall()
-            }
-            published = self.latest_published(conn=conn, project_id=project_id)
-            open_wave = self.open_reflection(conn=conn, project_id=project_id)
-            task_terminal = ", ".join(
-                f"'{status}'" for status in sorted(TASK_TERMINAL_STATUSES)
-            )
-            current_terminal_tasks = {
-                str(row["id"]): str(row["status"])
-                for row in conn.execute(
-                    f"SELECT id, status FROM tasks WHERE project_id = ? "
-                    f"AND status IN ({task_terminal})",
-                    (project_id,),
-                ).fetchall()
-            }
             return reflection_signal_state(
-                current_terminal=current_terminal,
-                current_claims=current_claims,
-                published=published,
-                open_wave=open_wave,
-                current_terminal_tasks=current_terminal_tasks,
-            )
+                current_terminal=self._statuses(conn=conn, project_id=project_id, table="experiments",
+                                                statuses=EXPERIMENT_TERMINAL_STATUSES),
+                current_terminal_tasks=self._statuses(conn=conn, project_id=project_id, table="tasks",
+                                                      statuses=TASK_TERMINAL_STATUSES),
+                current_claims=self._statuses(conn=conn, project_id=project_id, table="claims"),
+                published=self.latest_published(conn=conn, project_id=project_id),
+                open_wave=self.open_reflection(conn=conn, project_id=project_id))
         finally:
             if owns_conn:
                 conn.close()
+
+    @staticmethod
+    def _statuses(*, conn, project_id: str, table: str, statuses: frozenset[str] | None = None) -> dict[str, str]:
+        """The status of every row of one kind the drift signal compares."""
+        where = "" if statuses is None else f" AND status IN ({', '.join(repr(s) for s in sorted(statuses))})"
+        return {str(row["id"]): str(row["status"]) for row
+                in conn.execute(f"SELECT id, status FROM {table} WHERE project_id = ?{where}",
+                                (project_id,)).fetchall()}
