@@ -10,8 +10,7 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ....kernel.secret_tokens import hash_secret
-from ...identity import principal_label
-from ...oauth import DEVICE_GRANT, OAuthControl, OAuthError, oauth_error_redirect
+from ...oauth import OAuthControl, OAuthError, oauth_error_redirect
 from ...project_keys import PROJECT_GRANT
 from ..request_body import RequestBodyTooLarge, read_limited_body
 
@@ -59,7 +58,6 @@ def public_request(request: Request, *, enabled: bool) -> bool:
         "/.well-known/oauth-protected-resource/mcp",
         "/oauth/register",
         "/oauth/token",
-        "/oauth/device_authorization",
     ) or path == "/oauth/authorize" and request.method == "GET" or (
         path.startswith("/oauth/handoff/") and request.method == "GET"
     )
@@ -135,14 +133,9 @@ def build_router(
             "authorization_endpoint": f"{origin}/oauth/authorize",
             "token_endpoint": f"{origin}/oauth/token",
             "registration_endpoint": f"{origin}/oauth/register",
-            "device_authorization_endpoint": f"{origin}/oauth/device_authorization",
             "response_types_supported": ["code"],
             "response_modes_supported": ["query"],
-            "grant_types_supported": [
-                "authorization_code",
-                "refresh_token",
-                DEVICE_GRANT,
-            ],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
             "token_endpoint_auth_methods_supported": ["none"],
             "code_challenge_methods_supported": ["S256"],
             "authorization_response_iss_parameter_supported": True,
@@ -370,85 +363,10 @@ def build_router(
                 result = service.refresh(
                     form=form, canonical_resource=canonical_mcp_resource
                 )
-            elif grant_type == DEVICE_GRANT:
-                result = service.exchange_device_code(
-                    form=form, canonical_resource=canonical_mcp_resource
-                )
             else:
                 raise OAuthError(
                     "unsupported_grant_type", "grant_type is not supported"
                 )
-        except OAuthError as exc:
-            return _oauth_error(exc)
-        return JSONResponse(result, headers=_NO_STORE)
-
-    @router.post("/oauth/device_authorization")
-    async def device_authorization(request: Request):
-        denial = _public_client_denial(request)
-        if denial is not None:
-            return denial
-        issuer = _origin(request)
-        ui = _ui_origin(
-            request, allowed_origins=allowed_origins, ui_base_url=ui_base_url
-        )
-        if ui == issuer:
-            # The verification page lives on the UI origin; without one there
-            # is no page to send the user to, so refuse up front.
-            return _oauth_error(
-                OAuthError(
-                    "server_error", "OAuth consent UI base URL is not configured"
-                ),
-                status_code=503,
-            )
-        try:
-            form = await _read_form(request, what="device authorization")
-            result = service.device_authorization(
-                form=form,
-                canonical_resource=canonical_mcp_resource,
-                client_ip=_client_ip(request),
-            )
-        except OAuthError as exc:
-            return _oauth_error(exc)
-        verification_uri = f"{ui}/oauth/device"
-        result["verification_uri"] = verification_uri
-        result["verification_uri_complete"] = (
-            f"{verification_uri}?user_code={result['user_code']}"
-        )
-        return JSONResponse(result, headers=_NO_STORE)
-
-    @router.get("/oauth/device/details")
-    def device_details(request: Request):
-        denial = _require_supabase_session(request)
-        if denial is not None:
-            return denial
-        try:
-            result = service.device_details(
-                user_code=str(request.query_params.get("user_code") or ""),
-                principal=principal_label(request.state.principal),
-            )
-        except OAuthError as exc:
-            return _oauth_error(exc)
-        return JSONResponse(result, headers=_NO_STORE)
-
-    @router.post("/oauth/device")
-    async def device_decide(request: Request):
-        denial, body = await _consent_body(request)
-        if denial is not None:
-            return denial
-        decision = str(body.get("decision", ""))
-        if decision not in ("approve", "deny"):
-            return _oauth_error(
-                OAuthError("invalid_request", "invalid consent decision")
-            )
-        try:
-            result = service.device_decide(
-                user_code=str(body.get("user_code", "")),
-                principal=principal_label(request.state.principal),
-                owner_user_id=_session_owner(request),
-                project_id=str(body.get("project_id", "")),
-                approved=decision == "approve",
-                grant_scope=str(body.get("grant_scope", "") or PROJECT_GRANT),
-            )
         except OAuthError as exc:
             return _oauth_error(exc)
         return JSONResponse(result, headers=_NO_STORE)

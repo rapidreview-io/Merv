@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from '../api';
-import DeviceConsent from './DeviceConsent';
 import GoEntry from './GoEntry';
 import OAuthConsent from './OAuthConsent';
 import {
@@ -67,10 +66,6 @@ export default function AuthGate({ children }) {
   // access (the lane that mints the project key). Sits above the router — the
   // /oauth/authorize path is served by the backend, not an in-app route.
   if (state.required && location.pathname === '/oauth/authorize') return <OAuthConsent />;
-  // Device verification: same seam, same sign-in gate. The code was printed
-  // by a client on a machine no browser can address; approving it here is
-  // what stands in for the loopback redirect.
-  if (state.required && location.pathname === '/oauth/device') return <DeviceConsent />;
   return children;
 }
 

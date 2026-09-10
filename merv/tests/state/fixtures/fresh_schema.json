@@ -270,27 +270,6 @@
       "metadata_fingerprint",
       "redirect_uris_json"
     ],
-    "oauth_device_grant_attempts": [
-      "attempted_at",
-      "principal"
-    ],
-    "oauth_device_grants": [
-      "client_id",
-      "client_ip",
-      "consumed_at",
-      "created_at",
-      "decided_at",
-      "device_code_digest",
-      "expires_at",
-      "grant_scope",
-      "id",
-      "last_polled_at",
-      "owner_user_id",
-      "project_id",
-      "resource",
-      "status",
-      "user_code"
-    ],
     "oauth_handoff_links": [
       "client_ip",
       "consumed_at",
