@@ -17,27 +17,27 @@ from pathlib import Path
 
 from tests.paths import BACKEND_ROOT
 
+# Three layers, one component each side of the line: Research is the science,
+# the support components carry it, ML Infrastructure adapts merv-sandboxes,
+# and Kernel is what every component writes through. MLflow is the frozen
+# integration nobody edits.
 KERNEL = "kernel"
-RESEARCH_CORE = "research_core"
-WORKFLOWS = "workflows"
+RESEARCH = "research"
 ARTIFACTS = "artifacts"
-SANDBOX = "infrastructure"
+INFRASTRUCTURE = "infrastructure"
 FEED = "feed"
 MLFLOW = "mlflow"
 AGENT_SESSIONS = "agent_sessions"
-APPLICATION_COMPONENT = "application"
 SURFACE = "surface"
 
 MODULES = (
     KERNEL,
-    RESEARCH_CORE,
-    WORKFLOWS,
+    RESEARCH,
     ARTIFACTS,
-    SANDBOX,
+    INFRASTRUCTURE,
     FEED,
     MLFLOW,
     AGENT_SESSIONS,
-    APPLICATION_COMPONENT,
     SURFACE,
 )
 
@@ -45,15 +45,15 @@ MODULES = (
 # FILE_COMPONENTS wins over all prefixes). Paths are brain-relative posix.
 PACKAGE_COMPONENTS = {
     "kernel": KERNEL,
-    "research_core": RESEARCH_CORE,
-    "workflows": WORKFLOWS,
-    "literature": RESEARCH_CORE,
+    "research_core": RESEARCH,
+    "workflows": RESEARCH,
+    "literature": RESEARCH,
+    "application": RESEARCH,
     "artifacts": ARTIFACTS,
-    "infrastructure": SANDBOX,
+    "infrastructure": INFRASTRUCTURE,
     "feed": FEED,
     "mlflow": MLFLOW,
     "agent_sessions": AGENT_SESSIONS,
-    "application": APPLICATION_COMPONENT,
     "surface": SURFACE,
 }
 
@@ -61,41 +61,39 @@ PUBLIC_COMPONENT_ROOTS = frozenset(
     package for package in PACKAGE_COMPONENTS if "/" not in package
 )
 
-# File-level component overrides.
+# Research lives inside Surface wherever the science reaches HTTP: its
+# routers, the figure derivation, and the workflow-knowledge reader are
+# research files hosted in the delivery tree.
+RESEARCH_ROUTERS = (
+    "experiments", "reflections", "claims", "reviews", "tasks", "views", "sandboxes",
+)
 FILE_COMPONENTS = {
     # kernel: package root docstring/version shell.
     "__init__.py": KERNEL,
+    "surface/experiment_figure.py": RESEARCH,
+    "surface/workflow_knowledge.py": RESEARCH,
+    **{f"surface/transport/api/{name}.py": RESEARCH for name in RESEARCH_ROUTERS},
 }
 
-# Component answers "which capability owns this file?"  MLflow is an
-# integration, Infrastructure adapts the external merv-sandboxes service (which
-# owns heavy objects), and cross-component coordination belongs to
-# Application.  Surface is the outer delivery/composition component.
+# Component answers "which capability owns this file?"  Research may enter any
+# support component and ML Infrastructure through their public roots; a support
+# component sees only itself and Kernel, so nothing carries research meaning
+# sideways.  Surface composes, so Surface may name anyone.  MLflow is the one
+# frozen exception: a suspended integration that still reaches Research.
 ALLOWED_COMPONENT_EDGES = (
     {(KERNEL, KERNEL)}
     | {
-        (RESEARCH_CORE, dependency)
-        for dependency in (RESEARCH_CORE, WORKFLOWS, ARTIFACTS, KERNEL)
-    }
-    | {(WORKFLOWS, dependency) for dependency in (WORKFLOWS, KERNEL)}
-    | {(ARTIFACTS, dependency) for dependency in (ARTIFACTS, KERNEL)}
-    | {(SANDBOX, dependency) for dependency in (SANDBOX, KERNEL)}
-    | {(FEED, dependency) for dependency in (FEED, KERNEL)}
-    | {(AGENT_SESSIONS, dependency) for dependency in (AGENT_SESSIONS, KERNEL)}
-    | {
-        (APPLICATION_COMPONENT, dependency)
+        (RESEARCH, dependency)
         for dependency in (
-            APPLICATION_COMPONENT,
-            RESEARCH_CORE,
-            WORKFLOWS,
-            ARTIFACTS,
-            SANDBOX,
-            FEED,
-            AGENT_SESSIONS,
-            KERNEL,
+            RESEARCH, ARTIFACTS, FEED, AGENT_SESSIONS, INFRASTRUCTURE, KERNEL,
         )
     }
-    | {(MLFLOW, dependency) for dependency in (MLFLOW, APPLICATION_COMPONENT, KERNEL)}
+    | {
+        (component, dependency)
+        for component in (ARTIFACTS, FEED, AGENT_SESSIONS, INFRASTRUCTURE)
+        for dependency in (component, KERNEL)
+    }
+    | {(MLFLOW, dependency) for dependency in (MLFLOW, RESEARCH, KERNEL)}
     | {(SURFACE, dependency) for dependency in MODULES}
 )
 
@@ -212,37 +210,37 @@ TABLE_OWNERS = {
     "schema_migrations": KERNEL,
     "tenants": KERNEL,
     # Research: work nodes, their evidence links, and their literature.
-    "claims": RESEARCH_CORE,
-    "experiments": RESEARCH_CORE,
-    "experiment_claims": RESEARCH_CORE,
-    "tasks": RESEARCH_CORE,
-    "reflection_tasks": RESEARCH_CORE,
-    "node_dependencies": RESEARCH_CORE,
-    "reviews": RESEARCH_CORE,
-    "review_requests": RESEARCH_CORE,
-    "review_sessions": RESEARCH_CORE,
-    "reflections": RESEARCH_CORE,
-    "reflection_claim_changes": RESEARCH_CORE,
-    "reflection_experiments": RESEARCH_CORE,
-    "reflection_reserved_names": RESEARCH_CORE,
-    "reflection_advances": RESEARCH_CORE,
-    "consolidation_proposals": RESEARCH_CORE,
-    "consolidation_decisions": RESEARCH_CORE,
-    "project_candidates": RESEARCH_CORE,
-    "litreview_sections": RESEARCH_CORE,
-    "papers": RESEARCH_CORE,
-    "paper_links": RESEARCH_CORE,
+    "claims": RESEARCH,
+    "experiments": RESEARCH,
+    "experiment_claims": RESEARCH,
+    "tasks": RESEARCH,
+    "reflection_tasks": RESEARCH,
+    "node_dependencies": RESEARCH,
+    "reviews": RESEARCH,
+    "review_requests": RESEARCH,
+    "review_sessions": RESEARCH,
+    "reflections": RESEARCH,
+    "reflection_claim_changes": RESEARCH,
+    "reflection_experiments": RESEARCH,
+    "reflection_reserved_names": RESEARCH,
+    "reflection_advances": RESEARCH,
+    "consolidation_proposals": RESEARCH,
+    "consolidation_decisions": RESEARCH,
+    "project_candidates": RESEARCH,
+    "litreview_sections": RESEARCH,
+    "papers": RESEARCH,
+    "paper_links": RESEARCH,
     # Research owns content associations and complete evidence selections.
-    "research_artifact_links": RESEARCH_CORE,
-    "research_submission_artifacts": RESEARCH_CORE,
+    "research_artifact_links": RESEARCH,
+    "research_submission_artifacts": RESEARCH,
     # Research's own facts about merv-sandboxes objects: producing target,
     # classification, provenance, and the completion metadata snapshot.
-    "research_objects": RESEARCH_CORE,
+    "research_objects": RESEARCH,
     # Workflows: the runtime's durable state and its delivery barrier key.
-    "workflow_instances": WORKFLOWS,
-    "workflow_history": WORKFLOWS,
-    "workflow_actions": WORKFLOWS,
-    "tracking_deliveries": WORKFLOWS,
+    "workflow_instances": RESEARCH,
+    "workflow_history": RESEARCH,
+    "workflow_actions": RESEARCH,
+    "tracking_deliveries": RESEARCH,
     # Artifacts: immutable content, its figures, and the sealed round.
     "artifacts": ARTIFACTS,
     "artifact_figures": ARTIFACTS,
@@ -256,19 +254,19 @@ TABLE_OWNERS = {
     "agent_session_traces": AGENT_SESSIONS,
     # Infrastructure: sandbox machines, spend policy, provider connections,
     # and the retired heavy-object ledger until its migration script has run.
-    "sandboxes": SANDBOX,
-    "sandbox_attachments": SANDBOX,
-    "sandbox_generations": SANDBOX,
-    "sandbox_runs": SANDBOX,
-    "remote_sandbox_links": SANDBOX,
-    "sandbox_provider_settings": SANDBOX,
-    "tenant_quotas": SANDBOX,
-    "provider_user_caps": SANDBOX,
-    "spend_kill_switches": SANDBOX,
-    "storage_objects": SANDBOX,
+    "sandboxes": INFRASTRUCTURE,
+    "sandbox_attachments": INFRASTRUCTURE,
+    "sandbox_generations": INFRASTRUCTURE,
+    "sandbox_runs": INFRASTRUCTURE,
+    "remote_sandbox_links": INFRASTRUCTURE,
+    "sandbox_provider_settings": INFRASTRUCTURE,
+    "tenant_quotas": INFRASTRUCTURE,
+    "provider_user_caps": INFRASTRUCTURE,
+    "spend_kill_switches": INFRASTRUCTURE,
+    "storage_objects": INFRASTRUCTURE,
     # One-time completion tokens for service uploads: the infrastructure
     # facade mints and consumes them; the storage router only relays.
-    "storage_completion_tokens": SANDBOX,
+    "storage_completion_tokens": INFRASTRUCTURE,
     # Surface: credentials, OAuth exchange rows, per-user settings, agent
     # identity, and the router's one-time upload completion tokens.
     "project_api_keys": SURFACE,
@@ -293,11 +291,10 @@ TABLE_OWNERS = {
 # own the flows behind them.
 SCHEMA_MODULES = {
     KERNEL: ("kernel/state/persistence.py",),
-    RESEARCH_CORE: ("research_core/persistence.py",),
-    WORKFLOWS: ("workflows/persistence.py",),
+    RESEARCH: ("research_core/persistence.py", "workflows/persistence.py"),
     ARTIFACTS: ("artifacts/persistence.py",),
     AGENT_SESSIONS: ("agent_sessions/persistence.py",),
-    SANDBOX: ("infrastructure/persistence.py",),
+    INFRASTRUCTURE: ("infrastructure/persistence.py",),
     FEED: ("feed/persistence.py",),
     SURFACE: (
         "surface/project_keys.py",
@@ -307,10 +304,14 @@ SCHEMA_MODULES = {
     ),
 }
 
-SQL_RELATION_OWNERS = {**TABLE_OWNERS, "research_artifacts": RESEARCH_CORE}
+SQL_RELATION_OWNERS = {**TABLE_OWNERS, "research_artifacts": RESEARCH}
+RESEARCH_TABLES = frozenset(
+    table for table, owner in SQL_RELATION_OWNERS.items() if owner == RESEARCH
+)
 
 # Research declares; support enforces. These components may never name a
-# research record, in SQL or anywhere else.
+# research record, in SQL or anywhere else: see
+# ``test_support_vocabulary.py`` for the vocabulary half of the same law.
 SUPPORT_COMPONENTS = frozenset({ARTIFACTS, FEED, AGENT_SESSIONS, KERNEL, SURFACE})
 SQL_TABLE_REF = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_]+)\b", re.IGNORECASE)
 CREATE_TABLE_REF = re.compile(
@@ -486,14 +487,21 @@ def _component_violations() -> set[tuple[str, str]]:
     }
 
 
+def _hosted_together_in_surface(importer: str, target: str) -> bool:
+    """Both files live in Surface's delivery tree.
+
+    Surface hosts research files (its routers, the figure, the workflow
+    knowledge reader) and they share its request plumbing and presenters. The
+    component split inside ``surface/`` exists for the vocabulary law and the
+    documentation, not for imports.
+    """
+    return importer.startswith(f"{SURFACE}/") and target.startswith(f"{SURFACE}/")
+
+
 def _component_edge_allowed(*, importer: str, target: str) -> bool:
-    importer_component = _component(importer)
-    target_component = _component(target)
-    if importer_component == RESEARCH_CORE and target_component == ARTIFACTS:
-        # Research composes its associations and snapshots over the generic
-        # public content API. Artifacts has no callback into Research.
-        return target == f"{ARTIFACTS}/__init__.py"
-    return (importer_component, target_component) in ALLOWED_COMPONENT_EDGES
+    if _hosted_together_in_surface(importer, target):
+        return True
+    return (_component(importer), _component(target)) in ALLOWED_COMPONENT_EDGES
 
 
 def _layer_violations() -> set[tuple[str, str]]:
@@ -513,14 +521,12 @@ def _public_entrypoint_violations() -> set[tuple[str, str]]:
             importer_component == target_component
             or target_component == KERNEL
             or _layer(importer) == BOOTSTRAP
+            or _hosted_together_in_surface(importer, target)
         ):
             continue
         if target in {f"{package}/__init__.py" for package in PUBLIC_COMPONENT_ROOTS}:
             continue
-        if (
-            importer_component == MLFLOW
-            and target == f"{APPLICATION_COMPONENT}/mlflow.py"
-        ):
+        if importer_component == MLFLOW and target == "application/mlflow.py":
             # The optional adapter implements the single integration contract;
             # exporting its DTO forest from the Application root would turn
             # that root back into a service bag.
@@ -595,7 +601,7 @@ def _foreign_artifact_sql() -> Counter[tuple[str, str, str]]:
 def _application_purity_violations() -> list[str]:
     violations: list[str] = []
     dotted = _dotted_index()
-    for path in sorted((BACKEND_ROOT / APPLICATION_COMPONENT).rglob("*.py")):
+    for path in sorted((BACKEND_ROOT / "application").rglob("*.py")):
         rel = path.relative_to(BACKEND_ROOT).as_posix()
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source)
@@ -870,20 +876,24 @@ class ModuleBoundaryTest(unittest.TestCase):
         # delivery, and each table is owned by its capability.
         self.assertEqual(_layer("kernel/tools.py"), FOUNDATION)
         self.assertEqual(
-            {rel: _component(rel) for rel in (
-                "kernel/tools.py", "research_core/tools.py", "workflows/tools.py",
-                "artifacts/tools.py", "feed/tools.py", "infrastructure/tools.py",
-                "surface/tools/contracts.py", "surface/tools/mlflow_contracts.py",
-            )},
             {
                 "kernel/tools.py": KERNEL,
-                "research_core/tools.py": RESEARCH_CORE,
-                "workflows/tools.py": WORKFLOWS,
+                "research_core/tools.py": RESEARCH,
+                "workflows/tools.py": RESEARCH,
                 "artifacts/tools.py": ARTIFACTS,
                 "feed/tools.py": FEED,
-                "infrastructure/tools.py": SANDBOX,
+                "infrastructure/tools.py": INFRASTRUCTURE,
                 "surface/tools/contracts.py": SURFACE,
                 "surface/tools/mlflow_contracts.py": SURFACE,
+            },
+            {
+                rel: _component(rel)
+                for rel in (
+                    "kernel/tools.py", "research_core/tools.py",
+                    "workflows/tools.py", "artifacts/tools.py", "feed/tools.py",
+                    "infrastructure/tools.py", "surface/tools/contracts.py",
+                    "surface/tools/mlflow_contracts.py",
+                )
             },
         )
 
@@ -935,15 +945,6 @@ class ModuleBoundaryTest(unittest.TestCase):
                 f"[{_component(importer)} -> {_component(target)}]"
                 for importer, target in violations
             ),
-        )
-
-    def test_research_enters_only_the_public_artifacts_root(self) -> None:
-        importer = "research_core/reflections.py"
-        self.assertTrue(
-            _component_edge_allowed(importer=importer, target="artifacts/__init__.py")
-        )
-        self.assertFalse(
-            _component_edge_allowed(importer=importer, target="artifacts/artifacts.py")
         )
 
     def test_no_new_layer_boundary_violations(self) -> None:
@@ -1016,32 +1017,6 @@ class ModuleBoundaryTest(unittest.TestCase):
             + ", ".join(sorted(set(offenders))),
         )
 
-    def test_support_sql_never_names_a_research_table(self) -> None:
-        """Support stores and echoes what research hands it; it never joins to
-        research's own records, not even in a migration."""
-        research_tables = {
-            table
-            for table, owner in SQL_RELATION_OWNERS.items()
-            if owner in (RESEARCH_CORE, WORKFLOWS)
-        }
-        offenders: list[str] = []
-        for path in _backend_files():
-            rel = path.relative_to(BACKEND_ROOT).as_posix()
-            if _component(rel) not in SUPPORT_COMPONENTS:
-                continue
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
-                    continue
-                for match in FOREIGN_SQL_TABLE_REF.finditer(node.value):
-                    if match.group(1).lower() in research_tables:
-                        offenders.append(f"{rel}:{node.lineno} names {match.group(1)}")
-        self.assertFalse(
-            offenders,
-            "support SQL names a research table; the owning component must "
-            "supply the query at composition: " + ", ".join(sorted(set(offenders))),
-        )
-
     def test_every_stable_table_has_one_explicit_owner(self) -> None:
         created = _created_tables()
         unowned = sorted(created - TABLE_OWNERS.keys())
@@ -1054,11 +1029,6 @@ class ModuleBoundaryTest(unittest.TestCase):
         self.assertFalse(
             stale,
             "stale table-owner entries must be deleted: " + ", ".join(stale),
-        )
-        self.assertNotIn(
-            APPLICATION_COMPONENT,
-            TABLE_OWNERS.values(),
-            "Application coordinates components and may not own persistence",
         )
 
     def test_layer_exception_baseline_only_shrinks(self) -> None:
