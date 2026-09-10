@@ -369,7 +369,3 @@ WORKFLOW_SCHEMA = SchemaModule(
         Migration(60, "add_workflow_runtime", _add_workflow_runtime),
     ),
 )
-
-
-def install_workflow_schema(store) -> None:  # type: ignore[no-untyped-def]
-    store.install(WORKFLOW_SCHEMA)

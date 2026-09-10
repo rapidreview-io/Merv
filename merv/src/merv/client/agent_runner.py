@@ -95,7 +95,6 @@ SMOKE_INSTRUCTION_CLI = (
 # A loopback brain has no credential to hand a child; the bridge still wants
 # a non-empty value, and the local gateway ignores it.
 SMOKE_LOOPBACK_TOKEN = "local-smoke"
-SMOKE_MIN_RUNNER_VERSION = "2026.08.16"
 # client.json key that remembers which brain-held settings version this
 # machine last applied, so a restart does not re-report "pending".
 SETTINGS_VERSION_KEY = "desired_settings_version"
