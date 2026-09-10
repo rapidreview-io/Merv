@@ -70,20 +70,12 @@ There is no automatic fallback to local blob storage or built-in compute.
 
 ## Production changes and rollback
 
-The current [SANDBOXES_CUTOVER.md](SANDBOXES_CUTOVER.md) covers reviewed account
-ownership, backups, provider import and consumer connection activation. Follow
-[ARTIFACT_R2_CUTOVER.md](ARTIFACT_R2_CUTOVER.md) for schema59 and the separate
-artifact migration into Merv-owned R2, preserving content IDs and history.
-Use [BUDGET_MIGRATION.md](BUDGET_MIGRATION.md) for policy and usage ownership.
-Staging separates `prepare` from `finalize`; only finalization, after native
-account import and owner grant issuance, writes connection activation files.
-The read verifier
-now requires `--project-id` (or `MERV_VERIFY_PROJECT_ID`) naming a configured
-connection. `--write-storage` also requires a separately configured
-`--other-project-id` for isolation checks; it validates both grants before writing.
-Use `--subject`/`MERV_VERIFY_SUBJECT` when the grants require an external subject.
-The composition verifier uses the same `MERV_VERIFY_PROJECT_ID` and optional
-subject while keeping its synthetic research records in disposable SQLite.
+Account ownership, provider credentials, artifact bytes and infrastructure
+budgets already live where this README describes them; the one-time migrations
+that put them there are finished and their tooling is gone.
+[INFRASTRUCTURE_PRODUCTION_RELEASE.md](../docs/INFRASTRUCTURE_PRODUCTION_RELEASE.md)
+records what was deployed, what history was retained, and where the operator's
+private cutover evidence lives.
 
 For subsequent releases, back up the research database, retain the prior
 image, build an immutable release, and restart control against the same env
