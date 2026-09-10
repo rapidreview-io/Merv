@@ -11,8 +11,12 @@ from __future__ import annotations
 from typing import Any
 
 from ..kernel.utils import NotFoundError, ValidationError, now_iso
-from .experiment_workflow import EXPERIMENT_TERMINAL_STATUSES, EXPERIMENT_WORKFLOW
-from .task_workflow import TASK_TERMINAL_STATUSES, TASK_WORKFLOW
+from .policy import (
+    EXPERIMENT,
+    EXPERIMENT_TERMINAL_STATUSES,
+    TASK,
+    TASK_TERMINAL_STATUSES,
+)
 
 NODE_PREFIXES = ("exp_", "task_")
 
@@ -39,16 +43,14 @@ def _node_row(*, conn, project_id: str, node_id: str) -> dict[str, Any] | None:
 
 def _settled(node_type: str, status: str) -> bool:
     if node_type == "experiment":
-        return status == EXPERIMENT_WORKFLOW.success_status
-    return status == TASK_WORKFLOW.success_status
+        return status == EXPERIMENT.success_status
+    return status == TASK.success_status
 
 
 def _failed(node_type: str, status: str) -> bool:
     if node_type == "experiment":
-        return status in EXPERIMENT_TERMINAL_STATUSES - {
-            EXPERIMENT_WORKFLOW.success_status
-        }
-    return status in TASK_TERMINAL_STATUSES - {TASK_WORKFLOW.success_status}
+        return status in EXPERIMENT_TERMINAL_STATUSES - {EXPERIMENT.success_status}
+    return status in TASK_TERMINAL_STATUSES - {TASK.success_status}
 
 
 def dependency_rows(

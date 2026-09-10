@@ -6,14 +6,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from ..workflows import EXHIBIT_ROLE, GATED_ROLES
+from ..workflows import EXHIBIT_ROLE, GATED_ROLES, KINDS
 
 from ..feed import FeedAdvisory
 from ..kernel.utils import parse_iso
 from ..research_core import (
-    EXPERIMENT_WORKFLOW,
-    REFLECTION_WORKFLOW,
-    TASK_WORKFLOW,
     Research,
     project_fields,
 )
@@ -51,13 +48,9 @@ def reviewer_handoff_payload(
     review_request_id: str = "",
     reviewer_capability: str = "",
 ) -> dict[str, Any]:
-    workflow = {
-        "reflection": REFLECTION_WORKFLOW,
-        "experiment": EXPERIMENT_WORKFLOW,
-        "task": TASK_WORKFLOW,
-    }.get(target_type)
-    review = None if workflow is None else workflow.review(role)
-    skill = "" if review is None else review.skill
+    kind = KINDS.get(target_type)
+    gate = None if kind is None else kind.review_gate(role)
+    skill = "" if gate is None else gate.skill
     handoff: dict[str, Any] = {
         "role": role,
         "skill": skill,

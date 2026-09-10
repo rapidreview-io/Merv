@@ -11,7 +11,7 @@ from ..kernel.utils import NotFoundError
 from ..research_core import (
     EXPERIMENT_ACTIVE_PROCESS_STATUSES,
     EXPERIMENT_TERMINAL_STATUSES,
-    EXPERIMENT_WORKFLOW,
+    EXPERIMENT,
     Research,
     ResearchSnapshot,
     TASK_TERMINAL_STATUSES,
@@ -28,18 +28,18 @@ from .tasks import TaskContextQuery, rich_task_state, slim_task_state
 
 Record = dict[str, Any]
 
-_RESULT_WORK = EXPERIMENT_WORKFLOW.effect_sources("result_submission")
-_RESULT_REVIEW = EXPERIMENT_WORKFLOW.effect_destinations("result_submission")
+_RESULT_WORK = EXPERIMENT.effect_sources("result_submission")
+_RESULT_REVIEW = EXPERIMENT.effect_destinations("result_submission")
 _DESIGN_REVIEW = {
-    state.name
-    for state in EXPERIMENT_WORKFLOW.states
-    if state.review is not None and state.name not in _RESULT_REVIEW
+    node.name
+    for node in EXPERIMENT.workflow.nodes
+    if node.execution.read_only and node.name not in _RESULT_REVIEW
 }
 _EXPERIMENT_PRIORITY = {
     **{status: 0 for status in _RESULT_WORK},
     **{status: 1 for status in _RESULT_REVIEW},
     **{status: 2 for status in _DESIGN_REVIEW},
-    EXPERIMENT_WORKFLOW.initial: 3,
+    EXPERIMENT.workflow.initial: 3,
 }
 _PROCESS_PRIORITY = {"running": 0, "provisioning": 1}
 _STATUS_EXPERIMENT_FIELDS = ("id", "name", "intent", "status", "attempt_index")

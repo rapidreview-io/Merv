@@ -14,7 +14,7 @@ from ...feed import FeedAdvisory
 from ...kernel.events import StoredEvent
 from ...research_core import (
     EXPERIMENT_TERMINAL_STATUSES,
-    EXPERIMENT_WORKFLOW,
+    EXPERIMENT,
     ExperimentState,
     Research,
 )
@@ -135,8 +135,7 @@ class TransitionExperiment:
         evidence: dict[str, Any] | None,
         project_id: str | None,
     ) -> tuple[TransitionResponse, StoredEvent]:
-        step = EXPERIMENT_WORKFLOW.transition(transition)
-        effects = () if step is None else step.effects
+        effects = EXPERIMENT.metadata.effects.get(transition, ())
         before = (
             self.research.experiments.get_state(
                 experiment_id=experiment_id, project_id=project_id
@@ -154,7 +153,7 @@ class TransitionExperiment:
             "prepare_metrics_exhibit" in effects
             and before is not None
             and str(before.get("status"))
-            in EXPERIMENT_WORKFLOW.effect_sources("prepare_metrics_exhibit")
+            in EXPERIMENT.effect_sources("prepare_metrics_exhibit")
         ):
             prepared_snapshot = self.research.workflows.runtime.get(project_id=resolved_project_id, instance_id=experiment_id)
             exhibit = self._finalize_exhibit(state=before, snapshot=prepared_snapshot)
@@ -192,7 +191,7 @@ class TransitionExperiment:
     ) -> str | None:
         status = str(state.get("status") or "")
         if (
-            event.type != EXPERIMENT_WORKFLOW.event_type
+            event.type != EXPERIMENT.workflow.event_type
             or status not in EXPERIMENT_TERMINAL_STATUSES
         ):
             return None

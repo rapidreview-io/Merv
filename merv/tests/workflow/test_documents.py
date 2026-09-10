@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from merv.brain.research_core.evidence import (
+from merv.brain.workflows.definitions.documents import (
     GRAPH_SCHEMA_VERSION,
     MAX_GRAPH_BYTES,
     MAX_GRAPH_NODES,

@@ -8,7 +8,7 @@ import json
 from typing import Any
 
 from ..workflows import KINDS, TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE, Snapshot
-from .evidence import (
+from ..workflows import (
     ArtifactDocument,
     brief_checks,
     delivery_results,

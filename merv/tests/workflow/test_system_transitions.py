@@ -14,7 +14,7 @@ from pathlib import Path
 
 from tests.support.brain import TestBrain
 from tests.support.infrastructure import FakeInfrastructureClient, project_namespace
-from merv.brain.research_core.experiment_workflow import EXPERIMENT_WORKFLOW
+from merv.brain.research_core import EXPERIMENT
 from merv.brain.kernel.utils import WorkflowError
 
 
@@ -88,7 +88,8 @@ class SandboxDrivenTransitionTest(SystemTransitionTestBase):
 class WorkflowDeclarationTest(SystemTransitionTestBase):
     def test_enforcement_fact_drives_application_guidance(self) -> None:
         exp_id = self._experiment(status="planned")
-        plan_req = EXPERIMENT_WORKFLOW.requirement("plan")
+        plan_req = next(need for node in EXPERIMENT.workflow.nodes for need in node.requires
+                        if getattr(need, "role", "") == "plan")
         self.assertIsNotNone(plan_req)
         with self.assertRaises(WorkflowError) as ctx:
             self.call(

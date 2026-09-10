@@ -8,7 +8,7 @@ from typing import Protocol
 
 from ...research_core import Artifact, ResearchArtifacts as Artifacts
 from ...kernel.utils import WorkflowError
-from ...research_core import EXPERIMENT_WORKFLOW, ExperimentState, Research
+from ...research_core import EXPERIMENT, ExperimentState, Research
 from .create import experiment_folder
 from .metrics_exhibit import METRICS_EXHIBIT_FILENAME, build_metrics_exhibit
 
@@ -48,7 +48,7 @@ class ExperimentExhibits:
         state = self.research.experiments.get_state(
             experiment_id=experiment_id, project_id=project_id
         )
-        if str(state.get("status")) not in EXPERIMENT_WORKFLOW.effect_sources(
+        if str(state.get("status")) not in EXPERIMENT.effect_sources(
             "result_submission"
         ):
             raise WorkflowError(

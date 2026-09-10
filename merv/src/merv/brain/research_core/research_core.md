@@ -19,8 +19,8 @@ native record runs on one engine; its service keeps only that kind's own rules.
   evaluation, one `RecordKnowledge`, one commit. `RecordHooks` carries the per-kind steps
   that need the open transaction, and `read_fact` a reference only that kind knows.
 - `artifacts.py`: research-owned associations, role/target policy, accepted evidence,
-  replacement visibility, explicit immutable submission members. `artifact_models.py`:
-  association projections and snapshot references.
+  replacement visibility, immutable submission members. `artifact_models.py`: association
+  projections and snapshot references.
 - `research.py`: public root; only what crosses the kinds — project, claim and candidate
   writes, snapshots, project context, membership, events, graph refs. One kind is reached at `experiments`/`tasks`/`reflections`/`reviews`, never forwarded through here.
 - `experiments.py`: what is true of experiments alone — the create blocks (active cap,
@@ -33,13 +33,14 @@ native record runs on one engine; its service keeps only that kind's own rules.
   change-spec materialization and drift facts.
 - `reviews.py`: review requests, one-time capabilities, isolated sessions, pinned snapshots,
   verdicts, return routing. `association_targets.py`: target resolution. `objects.py`:
-  `ResearchObjects` — the object facade's lifecycle hook and the per-experiment
-  `ProducedObject` snapshot. `*_workflow.py`/`workflow_schema.py`: compatibility views.
-- `policy.py`: vocabulary, validation, snapshot identity, reflection signal, limits, and
-  one resolver per declared requirement kind — artifact, record, dependencies, review —
-  each returning one checklist item keyed `artifact:`/`record:`/`review:` plus the role;
-  only the review gate reads rows, the rest read the evaluation the graph produced.
-  `evidence.py`: compatibility exports of workflow-owned pure document validation, evidence selection, and brief rendering. `models.py`: typed state shapes. `__init__.py`: narrow imports.
+  `ResearchObjects` — the object facade's lifecycle hook and its `ProducedObject` snapshot.
+- `policy.py`: the record kinds and their status vocabulary read off the graphs, plus
+  validation, snapshot identity, review-return routing, reflection signal, limits, and one
+  resolver per declared requirement kind — artifact, record, dependencies, review — each
+  returning one checklist item keyed `artifact:`/`record:`/`review:` plus the role; only
+  the review gate reads rows, the rest read the evaluation the graph produced. `models.py`:
+  typed state shapes and `public_record`, the one projection every presenter applies to a
+  `Public` declaration. `__init__.py`: narrow imports.
 - `content_summaries.py`: deterministic TLDRs of submitted documents. `paths.py`: safe experiment folder names. `tools.py`: the experiment/task/reflection/consolidation/review/claim/candidate/litreview MCP contracts, their enums and prose read off the graphs above; the support registry merges the table. `persistence.py`: every research table, its read-path indexes, and the `research_artifacts` view that joins a link row to the immutable content it names.
 
 ## Experiment lifecycle
@@ -47,9 +48,9 @@ native record runs on one engine; its service keeps only that kind's own rules.
 The graph uses `planned -> design_review -> running -> experiment_review -> complete`;
 failure and abandonment are terminal outcomes. Passing design review immediately enters
 execution. Dependencies gate dispatch; actual activation starts the attempt clock. Graph
-decisions, native state, and evidence sealing commit together. Rejected design work
-returns to `planned` and increments the attempt; a rejected execution review returns to
-`planned` (new attempt) or `running` (keep the approved plan).
+decisions, native state, and evidence sealing commit together. Rejected design work returns
+to `planned` and increments the attempt; a rejected execution review returns to `planned`
+(new attempt) or `running` (keep the approved plan).
 
 A task is scoped non-experiment work with no claim: `in_progress -> in_review -> done`,
 `failed` the only other ending. Goal prose + deliverables (each verifiable as written) are
@@ -87,8 +88,7 @@ pathless experiment workspace awaiting evaluator staging; staging and promotions
 append-only, and promotion needs durable bytes, a reason, and compare-and-swap against the
 observed champion.
 
-All writes resolve a project through `BaseStateStore`; target lookups include project
-ownership. Events commit with their state mutations. Review snapshots are byte-stable
+All writes resolve a project through `BaseStateStore`; lookups include project ownership. Events commit with their state mutations. Review snapshots are byte-stable
 identities of the target state and submitted evidence. Research seals explicit association
 IDs on its own transaction; generic content stays immutable and reusable. Reflection
 publication materializes its reviewed change spec; its experiments and tasks pass through

@@ -11,7 +11,8 @@ from ..graph import (
     Metadata, Reference, Metadata, ReviewGate, ReviewReturn, Workflow,
 )
 from .execution import EXPERIMENT_EXECUTION, REVIEW_EXECUTION
-from .documents import graph_problems, markdown_section_body, plan_sections_missing, preferred_artifact, report_problems
+from .documents import (REQUIRED_PLAN_SECTIONS, graph_problems, markdown_section_body, preferred_artifact,
+                        report_problems, required_markdown_sections_missing)
 
 
 def _figure_problem(role, path, figures):
@@ -24,7 +25,7 @@ def _figure_problem(role, path, figures):
 
 def _plan_problems(document, snapshot, knowledge):
     text = str(document.get("text") or "")
-    missing_sections = plan_sections_missing(text)
+    missing_sections = required_markdown_sections_missing(text, REQUIRED_PLAN_SECTIONS)
     if missing_sections:
         return ("experiment plan is missing required sections before design review: " + ", ".join(missing_sections)
                 + ". Fill in the plan template's required spine — Summary; Objective & hypothesis; Evaluation — "

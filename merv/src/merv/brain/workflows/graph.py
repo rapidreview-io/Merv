@@ -622,6 +622,47 @@ class RecordKind:
         node = self.workflow.node(state)
         return () if node is None else node.requires
 
+    # ---- what the kind's own graph says, read off its nodes and edges ----
+
+    @property
+    def success_status(self) -> str:
+        """The single state whose outcome this kind's metadata calls success."""
+        return next(state for state, outcome in self.workflow.outcomes.items()
+                    if outcome == self.metadata.success_outcome)
+
+    @property
+    def actions(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(edge.name for edge in self.workflow.edges))
+
+    def action_with_effect(self, effect: str) -> str:
+        return next(edge.name for edge in self.workflow.edges
+                    if effect in self.metadata.effects.get(edge.name, ()))
+
+    def effect_sources(self, effect: str) -> frozenset[str]:
+        return frozenset(edge.source for edge in self.workflow.edges
+                         if effect in self.metadata.effects.get(edge.name, ()))
+
+    def effect_destinations(self, effect: str) -> frozenset[str]:
+        return frozenset(edge.target for edge in self.workflow.edges
+                         if effect in self.metadata.effects.get(edge.name, ()))
+
+    @property
+    def review_gates(self) -> tuple[ReviewGate, ...]:
+        return tuple(need for node in self.workflow.nodes for need in node.requires
+                     if isinstance(need, ReviewGate))
+
+    def review_gate(self, role: str) -> ReviewGate | None:
+        return next((gate for gate in self.review_gates if gate.role == role), None)
+
+    def review_state(self, role: str) -> str:
+        """The state a role reviews in, or empty when the kind has no such role."""
+        return next((node.name for node in self.workflow.nodes if node.role == role), "")
+
+    @property
+    def review_returns(self) -> tuple[ReviewReturn, ...]:
+        return tuple(dict.fromkeys(route for gate in self.review_gates
+                                   for route in gate.returns))
+
 
 class Registry:
     """Explicit plugins; previous definitions remain available to pinned instances."""

@@ -14,15 +14,14 @@ from ..feed import FeedAdvisory
 from ..kernel.events import StoredEvent
 from ..research_core import (
     TASK_TERMINAL_STATUSES,
-    TASK_WORKFLOW,
+    TASK,
     Research,
     TaskState,
-    preferred_artifact,
     project_fields,
     project_rows,
     public_record,
 )
-from ..workflows import KINDS, Public
+from ..workflows import KINDS, Public, preferred_artifact
 from .experiments.presentation import review_body, slim_review_rows
 from .experiments.transition import feed_transition_note
 
@@ -155,7 +154,7 @@ class TransitionTask:
 
     def _feed_advisory(self, *, event: StoredEvent, state: TaskState) -> str | None:
         status = str(state.get("status") or "")
-        if event.type != TASK_WORKFLOW.event_type or status not in TASK_TERMINAL_STATUSES:
+        if event.type != TASK.workflow.event_type or status not in TASK_TERMINAL_STATUSES:
             return None
         return feed_transition_note(
             self.feed,

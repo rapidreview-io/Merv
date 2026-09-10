@@ -21,7 +21,7 @@ from ..workflows import (
     TASK_DELIVERY_ROLE,
 )
 
-from .evidence import (
+from ..workflows import (
     ArtifactDocument,
     artifact_state_record,
     artifact_submission_recency_key,
@@ -38,15 +38,15 @@ from .evidence import (
 )
 from .dependencies import record_dependencies
 from .experiments import ExperimentService
-from .experiment_workflow import EXPERIMENT_TERMINAL_STATUSES
-from .reflection_workflow import REFLECTION_WORKFLOW
 from .tasks import TaskService
-from .task_workflow import TASK_TERMINAL_STATUSES
 from .artifacts import ResearchArtifacts as Artifacts
 from ..workflows import METRIC_RESULT_MAX_BYTES as MAX_SUBMITTED_TEXT_BYTES
 from .artifact_models import ArtifactTarget
 from .policy import (
     ACTIVE_EXPERIMENT_CAP,
+    EXPERIMENT_TERMINAL_STATUSES,
+    TASK_TERMINAL_STATUSES,
+    REFLECTION as REFLECTION_WORKFLOW,
     GateEvaluation,
     active_experiment_cap_would_exceed_message,
     covered_terminal_ids,

@@ -15,9 +15,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from merv.brain.research_core.evidence import (
+from merv.brain.workflows.definitions.documents import (
     current_slot_artifacts,
-    historical_latest_artifacts,
+    latest_per_slot,
     sealed_submission_artifacts,
 )
 from tests.research_core.scenarios import complete_no_code_consolidation
@@ -139,7 +139,7 @@ class EvidenceSelectorTest(unittest.TestCase):
         self.assertEqual(sealed_submission_artifacts(self.ROWS, submission_id=""), [])
 
     def test_historical_latest_crosses_attempts_by_design(self) -> None:
-        kept = historical_latest_artifacts(self.ROWS)
+        kept = latest_per_slot(self.ROWS)
         self.assertEqual([row["id"] for row in kept], ["a1", "a3"])
 
 

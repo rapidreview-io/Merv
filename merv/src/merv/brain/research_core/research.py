@@ -11,10 +11,10 @@ import math
 from typing import Any, cast
 
 
-from .experiment_workflow import EXPERIMENT_TERMINAL_STATUSES
-from .reflection_workflow import REFLECTION_WORKFLOW
-from .task_workflow import TASK_TERMINAL_STATUSES
 from .policy import (
+    EXPERIMENT_TERMINAL_STATUSES,
+    REFLECTION,
+    TASK_TERMINAL_STATUSES,
     AGENT_DISPATCH_SETTING,
     CLAIM_CONFIDENCES,
     CLAIM_STATUSES,
@@ -1145,7 +1145,7 @@ class Research:
                     (project_id,),
                 ).fetchall()
             )
-            reflection_terminal = tuple(sorted(REFLECTION_WORKFLOW.terminal_statuses))
+            reflection_terminal = tuple(sorted(REFLECTION.terminal_statuses))
             reflection_placeholders = ", ".join("?" for _ in reflection_terminal)
             latest = row_to_dict(
                 row=conn.execute(
@@ -1157,7 +1157,7 @@ class Research:
                     ORDER BY published_at DESC, created_seq DESC
                     LIMIT 1
                     """,
-                    (project_id, REFLECTION_WORKFLOW.success_status),
+                    (project_id, REFLECTION.success_status),
                 ).fetchone()
             )
             open_wave = row_to_dict(
@@ -1271,11 +1271,11 @@ class Research:
     def _reflection(
         self, *, conn: Any, project_id: str, terminal: bool
     ) -> tuple[dict[str, Any] | None, GateEvaluation | None]:
-        terminal_statuses = tuple(sorted(REFLECTION_WORKFLOW.terminal_statuses))
+        terminal_statuses = tuple(sorted(REFLECTION.terminal_statuses))
         placeholders = ", ".join("?" for _ in terminal_statuses)
         predicate = "status = ?" if terminal else f"status NOT IN ({placeholders})"
         parameters = (
-            (project_id, REFLECTION_WORKFLOW.success_status)
+            (project_id, REFLECTION.success_status)
             if terminal
             else (project_id, *terminal_statuses)
         )

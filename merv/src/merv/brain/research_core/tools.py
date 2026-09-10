@@ -15,48 +15,36 @@ from pydantic import Field, field_validator, model_validator
 
 from ..kernel.tools import ContractModel, ProjectScopedInput, ToolContract
 from ..workflows import documents
-from .experiment_workflow import EXPERIMENT_TRANSITION_VALUES, EXPERIMENT_WORKFLOW
-from .reflection_workflow import REFLECTION_TRANSITION_VALUES, REFLECTION_WORKFLOW
-from .task_workflow import TASK_TRANSITION_VALUES, TASK_WORKFLOW
-from .policy import REVIEW_VERDICT_VALUES
+from .policy import EXPERIMENT, REFLECTION, REVIEW_VERDICT_VALUES, TASK
 
-EXPERIMENT_INITIAL_VALUES = (EXPERIMENT_WORKFLOW.initial,)
-_TASK_REVIEW_RETURN = next(iter(TASK_WORKFLOW.review_returns))
-_TASK_FAIL_STATUS = next(iter(TASK_WORKFLOW.review_fail_statuses))
-_EXPERIMENT_RESULT_TRANSITION = next(
-    transition.name
-    for transition in EXPERIMENT_WORKFLOW.transitions
-    if "result_submission" in transition.effects
-)
-_EXPERIMENT_RETRY_TRANSITION = next(
-    transition.name
-    for transition in EXPERIMENT_WORKFLOW.transitions
-    if "record_retry_context" in transition.effects
-)
-_EXPERIMENT_EXECUTION_STATUS = next(
-    iter(EXPERIMENT_WORKFLOW.effect_sources("result_submission"))
-)
+# Every enum and every sentence below is read off the graphs, never restated.
+EXPERIMENT_TRANSITION_VALUES = EXPERIMENT.actions
+REFLECTION_TRANSITION_VALUES = REFLECTION.actions
+TASK_TRANSITION_VALUES = TASK.actions
+EXPERIMENT_INITIAL_VALUES = (EXPERIMENT.workflow.initial,)
+_TASK_REVIEW_RETURN = next(iter(TASK.review_returns))
+_TASK_FAIL_STATUS = next(gate.fail_route.to_status for gate in TASK.review_gates
+                         if gate.fail_route is not None)
+_EXPERIMENT_RESULT_TRANSITION = EXPERIMENT.action_with_effect("result_submission")
+_EXPERIMENT_RETRY_TRANSITION = EXPERIMENT.action_with_effect("record_retry_context")
+_EXPERIMENT_EXECUTION_STATUS = next(iter(EXPERIMENT.effect_sources("result_submission")))
 _EXPERIMENT_PLAN_RETURN = next(
-    route for route in EXPERIMENT_WORKFLOW.review_returns if route.attempt == "new"
+    route for route in EXPERIMENT.review_returns if route.attempt == "new"
 )
 _EXPERIMENT_EXECUTION_RETURN = next(
-    route for route in EXPERIMENT_WORKFLOW.review_returns if route.attempt == "same"
+    route for route in EXPERIMENT.review_returns if route.attempt == "same"
 )
 _REFLECTION_RERUN_RETURN = next(
-    route for route in REFLECTION_WORKFLOW.review_returns if route.attempt == "new"
+    route for route in REFLECTION.review_returns if route.attempt == "new"
 )
 _REFLECTION_REVISION_RETURN = next(
-    route for route in REFLECTION_WORKFLOW.review_returns if route.attempt == "same"
+    route for route in REFLECTION.review_returns if route.attempt == "same"
 )
-_REFLECTION_INITIAL_STATE = REFLECTION_WORKFLOW.state(REFLECTION_WORKFLOW.initial)
-if _REFLECTION_INITIAL_STATE is None:
-    raise RuntimeError("reflection workflow is missing its first transition")
-_REFLECTION_FIRST_TRANSITION = _REFLECTION_INITIAL_STATE.transitions[0].name
-_REFLECTION_PUBLISH_TRANSITION = next(
-    transition.name
-    for transition in REFLECTION_WORKFLOW.transitions
-    if "materialize_change_spec" in transition.effects
+_REFLECTION_FIRST_TRANSITION = next(
+    edge.name for edge in REFLECTION.workflow.edges
+    if edge.source == REFLECTION.workflow.initial
 )
+_REFLECTION_PUBLISH_TRANSITION = REFLECTION.action_with_effect("materialize_change_spec")
 
 
 class CandidateSubmitInput(ProjectScopedInput):
@@ -193,8 +181,8 @@ class ExperimentCreateInput(ProjectScopedInput):
         description="Deprecated; put risks in plan.md's 'Risks & confounders' section.",
     )
     status: Literal[*EXPERIMENT_INITIAL_VALUES] = Field(
-        default=EXPERIMENT_WORKFLOW.initial,
-        description=f"Create always starts {EXPERIMENT_WORKFLOW.initial}.",
+        default=EXPERIMENT.workflow.initial,
+        description=f"Create always starts {EXPERIMENT.workflow.initial}.",
     )
 
 
@@ -636,7 +624,7 @@ TOOLS: dict[str, ToolContract] = {
         handler_identity="application.create_experiment",
         input_model=ExperimentCreateInput,
         description=(
-            f"Create a {EXPERIMENT_WORKFLOW.initial} experiment. Requires an intent (the "
+            f"Create a {EXPERIMENT.workflow.initial} experiment. Requires an intent (the "
             "ask, one standalone line: what this tests and why, standalone) and a "
             "short folder-safe 'name' unique within the project; the name becomes "
             "the experiment folder experiments/<name>/. Optional 'details' carries "
@@ -694,7 +682,7 @@ TOOLS: dict[str, ToolContract] = {
         handler_identity="application.create_task",
         input_model=TaskCreateInput,
         description=(
-            f"Create a {TASK_WORKFLOW.initial} task: scoped non-experiment work "
+            f"Create a {TASK.workflow.initial} task: scoped non-experiment work "
             "with a verifiable finish line and no claim (lit review, data "
             "preparation, harness building, memos). Requires a goal (short "
             "standalone prose), deliverables (the things that must exist, each "
@@ -777,7 +765,7 @@ TOOLS: dict[str, ToolContract] = {
         input_model=ReflectionTransitionInput,
         description=(
             "Apply an allowed reflection transition ("
-            + ", ".join(REFLECTION_WORKFLOW.transition_names)
+            + ", ".join(REFLECTION.actions)
             + "). See "
             "reflection.get.allowed_transitions for preconditions from the "
             f"current status. {_REFLECTION_PUBLISH_TRANSITION} is internal: "

@@ -13,7 +13,7 @@ from tests.support.brain import TestBrain, upload_token
 from tests.research_core.scenarios import (
     REVIEW_SYNOPSIS, VALID_GRAPH, VALID_PLAN, VALID_REPORT, complete_no_code_consolidation,
 )
-from merv.brain.research_core.experiment_workflow import RETURN_TO_PLANNED
+from merv.brain.workflows.definitions.experiment import RETURN_TO_PLANNED
 from merv.brain.surface.transport.api import create_fastapi_app
 from tests.support.infrastructure import FakeInfrastructureClient, seed_sandbox
 from merv.brain.kernel.utils import now_iso

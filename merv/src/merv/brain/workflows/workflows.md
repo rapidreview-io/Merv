@@ -18,8 +18,11 @@ raises its issue there instead of a hand-written edge check, and Research reads
 the same declaration for the gate checklist. A check survives only where it says
 something a requirement cannot — a rejection verdict, a lens roster, an abandon
 guard. `RecordKind` declares the native row a graph is bound to: table, id
-prefix, insert and JSON columns, per-action commit columns, seal exemptions and
-any status projection. `registry.py` lists both; a plugin workflow declares no
+prefix, insert and JSON columns, per-action commit columns, seal exemptions, any
+status projection, and `Public` — what a reader of that row never sees, what a
+stored column is called, and where a computed field sits. It also answers what
+its own graph already says: the success status, the actions, which action carries
+an effect, and the review gates and returns, so nothing restates a state machine. `registry.py` lists both; a plugin workflow declares no
 kind and keeps its whole record in instance data.
 
 Every agent node declares an `Execution`: whether it is read-only, its

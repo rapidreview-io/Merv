@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..research_core import (
-    REFLECTION_WORKFLOW,
+    REFLECTION,
     content_tldr,
     project_fields,
     public_record,
@@ -19,7 +19,9 @@ Record = dict[str, Any]
 
 # A published wave's guidance is about the experiments it just created, and an
 # agent reads the two together; the reflection row has no other ordered field.
-REFLECTION = Public(after={"post_publish_guidance": "materialized_experiments"})
+# It is declared here rather than on the kind because the reflection graph is
+# owned by a parallel change.
+PUBLIC = Public(after={"post_publish_guidance": "materialized_experiments"})
 AUTHORITATIVE_ROLES = frozenset({"project_graph", "reflection_doc", "change_spec"})
 _PACKET_REFLECTION = ("id", "title", "status", "attempt_index", "created_at", "published_at")
 _PACKET_ARTIFACT = ("id", "artifact_id", "role", "path", "content", "tldr")
@@ -48,8 +50,8 @@ def _tldr_only(artifact: Record) -> Record:
 
 def present_reflection_state(state: Record) -> Record:
     materialized = state.get("materialized_experiments")
-    published = state.get("status") == REFLECTION_WORKFLOW.success_status
-    return public_record(REFLECTION, state, **(
+    published = state.get("status") == REFLECTION.success_status
+    return public_record(PUBLIC, state, **(
         {"post_publish_guidance": post_publish_guidance(materialized_experiments=materialized)}
         if published and materialized else {}
     ))
@@ -77,7 +79,7 @@ def present_agent_reflection_state(
         if isinstance(experiment, dict)
     ]
     return public_record(
-        REFLECTION,
+        PUBLIC,
         presented,
         reviews=slim_review_rows(presented.get("reviews", [])),
         current_attempt_artifacts=[

@@ -4,7 +4,7 @@ import json
 import unittest
 from unittest import mock
 
-from merv.brain.research_core.evidence import decision_problems
+from merv.brain.workflows.definitions.documents import decision_problems
 from merv.brain.kernel.utils import (
     PermissionDeniedError,
     ValidationError,

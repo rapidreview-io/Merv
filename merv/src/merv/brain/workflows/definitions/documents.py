@@ -176,12 +176,6 @@ def sealed_submission_artifacts(
     return [a for a in artifacts if str(a.get("submission_id") or "") == submission_id]
 
 
-def historical_latest_artifacts(
-    artifacts: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return latest_per_slot(artifacts)
-
-
 # The model is the shape: each attribute under the name a reader knows it by.
 _ARTIFACT_STATE_FIELDS = {
     "id": "id", "project_id": "project_id", "path": "path", "title": "title",
@@ -269,18 +263,6 @@ def required_markdown_sections_missing(
     return missing
 
 
-def plan_sections_missing(plan_text: str) -> list[str]:
-    return required_markdown_sections_missing(plan_text, REQUIRED_PLAN_SECTIONS)
-
-
-def report_sections_missing(report_text: str) -> list[str]:
-    return required_markdown_sections_missing(report_text, REQUIRED_REPORT_SECTIONS)
-
-
-def report_figure_links(report_text: str) -> list[str]:
-    return markdown_image_links(report_text)
-
-
 def report_problems(
     report_text: str,
     *,
@@ -288,7 +270,7 @@ def report_problems(
     exhibit_path: str | None = None,
 ) -> list[str]:
     problems: list[str] = []
-    missing = report_sections_missing(report_text)
+    missing = required_markdown_sections_missing(report_text, REQUIRED_REPORT_SECTIONS)
     if missing:
         problems.append("missing required sections: " + ", ".join(missing))
     if exhibit_path:
@@ -307,7 +289,7 @@ def report_problems(
         advice="move raw numbers and logs into result artifacts and link them instead",
     )
     if figure_problem is not None:
-        for target in report_figure_links(report_text):
+        for target in markdown_image_links(report_text):
             problem = figure_problem(target)
             if problem:
                 problems.append(problem)

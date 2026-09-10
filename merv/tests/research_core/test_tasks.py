@@ -4,14 +4,14 @@ import json
 
 from merv.brain.kernel.utils import NotFoundError, ValidationError, WorkflowError
 from merv.brain.research_core.dependencies import record_dependencies
-from merv.brain.research_core.evidence import (
+from merv.brain.workflows.definitions.documents import (
     brief_checks,
     delivery_entry_parts,
     delivery_results,
     delivery_section,
     render_task_brief,
 )
-from merv.brain.research_core.task_workflow import TASK_WORKFLOW
+from merv.brain.research_core import TASK
 
 from .scenarios import VALID_CHANGE_SPEC, VALID_PLAN, ResearchCase
 
@@ -101,7 +101,7 @@ class TaskWorkflowTest(ResearchCase):
     def test_full_lifecycle_is_gated_and_records_transitions(self) -> None:
         task_id = self.create_task()
         state = self.call("task.get_state", project_id=self.project_id, task_id=task_id)
-        self.assertEqual(state["status"], TASK_WORKFLOW.initial)
+        self.assertEqual(state["status"], TASK.workflow.initial)
         self.assertNotIn("tested_claims", state)
 
         status = self.task_status(task_id)

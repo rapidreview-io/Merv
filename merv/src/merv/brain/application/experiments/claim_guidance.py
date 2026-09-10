@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ...research_core import EXPERIMENT_WORKFLOW, ExperimentState
+from ...research_core import EXPERIMENT, ExperimentState
 
 
 _STATUS_MARKERS: tuple[tuple[re.Pattern[str], str | None, str | None], ...] = (
@@ -55,7 +55,7 @@ def infer_claim_status(conclusion: str) -> str | None:
 
 
 def claim_update_suggestions(experiment: ExperimentState) -> list[dict[str, Any]]:
-    if experiment.get("status") != EXPERIMENT_WORKFLOW.success_status:
+    if experiment.get("status") != EXPERIMENT.success_status:
         return []
     conclusion = str(experiment.get("conclusion") or "").strip()
     suggested_status = infer_claim_status(conclusion)

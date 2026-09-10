@@ -29,24 +29,14 @@ from .policy import (
     revision_context_for_review_return,
     snapshot_from_id,
     validate_review_role,
+    resolve_review_return,
     validate_review_verdict,
     validate_synopsis,
 )
-from .experiment_workflow import EXPERIMENT_WORKFLOW
-from .reflection_workflow import REFLECTION_WORKFLOW
-from .task_workflow import TASK_WORKFLOW
-from .workflow_schema import resolve_review_return
 from ..kernel.state.store import BaseStateStore, next_created_seq, row_to_dict
 from .records import Records
 from .reflections import ReflectionService
 from ..workflows import KINDS, Reference, Snapshot
-
-
-_WORKFLOW_BY_TARGET = {
-    EXPERIMENT_WORKFLOW.target_type: EXPERIMENT_WORKFLOW,
-    REFLECTION_WORKFLOW.target_type: REFLECTION_WORKFLOW,
-    TASK_WORKFLOW.target_type: TASK_WORKFLOW,
-}
 
 
 class ReviewService:
@@ -366,14 +356,11 @@ class ReviewService:
                     "target changed after this review started; the verdict no "
                     "longer applies — request a fresh review"
                 )
-            workflow = _WORKFLOW_BY_TARGET.get(str(req["target_type"]))
+            kind = KINDS.get(str(req["target_type"]))
             current = self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
             route = None
-            if workflow is not None and current.version == 1:
-                try:
-                    route = resolve_review_return(workflow=workflow, role=req["role"], verdict=verdict, return_to=return_to)
-                except ValueError as exc:
-                    raise ValidationError(str(exc)) from exc
+            if kind is not None and current.version == 1:
+                route = resolve_review_return(kind=kind, role=req["role"], verdict=verdict, return_to=return_to)
                 return_to = "" if route is None else route.to_status
             else:
                 if verdict == "pass" and return_to:
@@ -388,7 +375,7 @@ class ReviewService:
                 tx=conn,
                 target_type=str(req["target_type"]),
                 target_ids=(str(req["target_id"]),),
-            )[str(req["target_id"])].submissions if workflow is not None else ()
+            )[str(req["target_id"])].submissions if kind is not None else ()
             latest_submission = max(
                 (
                     submission

@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 from merv.brain.research_core import ArtifactTarget
-from merv.brain.research_core.evidence import latest_per_slot
+from merv.brain.workflows.definitions.documents import latest_per_slot
 from tests.support.brain import TestBrain
 
 VALID_PLAN = (

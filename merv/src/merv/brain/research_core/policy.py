@@ -25,33 +25,26 @@ from typing import Any, Literal, TypeAlias
 from ..kernel.state.store import Connection
 from ..kernel.utils import ValidationError, now_iso
 from ..workflows import (
-    ArtifactNeed, DependenciesDone, Evaluation, Issue, RecordNeed, Requirement, ReviewGate, Snapshot,
+    KINDS, ArtifactNeed, DependenciesDone, Evaluation, Issue, RecordNeed, Requirement,
+    ReviewGate, ReviewReturn, Snapshot,
 )
-from .experiment_workflow import (
-    EXPERIMENT_TERMINAL_STATUSES,
-    EXPERIMENT_WORKFLOW,
-)
-from .reflection_workflow import (
-    REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD,
-    REFLECTION_IDLE_RECOMMEND_NEW_TERMINAL_THRESHOLD,
-    REFLECTION_NUDGE_NEW_TERMINAL_THRESHOLD,
-    REFLECTION_WORKFLOW,
-)
-from .task_workflow import TASK_TERMINAL_STATUSES, TASK_WORKFLOW
-from .workflow_schema import ReviewReturn
 
+# The record kinds research policy speaks about, and the vocabulary their own
+# graphs already declare. Nothing here restates a state machine.
+EXPERIMENT, TASK, REFLECTION = KINDS["experiment"], KINDS["task"], KINDS["reflection"]
+EXPERIMENT_TERMINAL_STATUSES = EXPERIMENT.terminal_statuses
+TASK_TERMINAL_STATUSES = TASK.terminal_statuses
+REFLECTION_TERMINAL_STATUSES = REFLECTION.terminal_statuses
+REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD = research_contracts.REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD
+REFLECTION_IDLE_RECOMMEND_NEW_TERMINAL_THRESHOLD = research_contracts.REFLECTION_IDLE_RECOMMEND_NEW_TERMINAL_THRESHOLD
+REFLECTION_NUDGE_NEW_TERMINAL_THRESHOLD = research_contracts.REFLECTION_NUDGE_NEW_TERMINAL_THRESHOLD
 
 REVIEW_VERDICT_VALUES = ("pass", "needs_changes", "fail")
 REVIEW_VERDICTS = frozenset(REVIEW_VERDICT_VALUES)
 REVIEW_GATE_EXEMPT_ROLE_VALUES = ("human", "automated_check")
 REVIEW_GATE_EXEMPT_ROLES = frozenset(REVIEW_GATE_EXEMPT_ROLE_VALUES)
 REVIEW_ROLE_VALUES = (
-    *(
-        state.review.role
-        for workflow in (EXPERIMENT_WORKFLOW, REFLECTION_WORKFLOW, TASK_WORKFLOW)
-        for state in workflow.states
-        if state.review is not None
-    ),
+    *(gate.role for kind in (EXPERIMENT, REFLECTION, TASK) for gate in kind.review_gates),
     *REVIEW_GATE_EXEMPT_ROLE_VALUES,
 )
 REVIEW_ROLES = frozenset(REVIEW_ROLE_VALUES)
@@ -477,6 +470,37 @@ def validate_review_verdict(*, verdict: str) -> None:
         raise ValidationError(f"unknown review verdict: {verdict}")
 
 
+def resolve_review_return(*, kind, role: str, verdict: str, return_to: str) -> ReviewReturn | None:
+    """Validate a submitted review's routing input against the kind's gates.
+
+    The graph decides which edge the verdict eventually takes; this only
+    refuses an input the gate's declared returns cannot honour.
+    """
+    value = (return_to or "").strip()
+    if verdict == "pass":
+        if value:
+            raise ValidationError("return_to only applies when the verdict is needs_changes or fail")
+        return None
+    gate = kind.review_gate(role)
+    subject = kind.metadata.subject or kind.name
+    if verdict == "fail" and gate is not None and gate.fail_route is not None:
+        if value and value != gate.fail_route.to_status:
+            raise ValidationError(
+                f"a fail verdict from {role} ends the {subject}: return_to must be omitted or "
+                f"{gate.fail_route.to_status!r}; use needs_changes to send it back")
+        return gate.fail_route
+    routes = gate.returns if gate is not None and gate.returns else kind.review_returns
+    for destination, message in () if gate is None else gate.forbidden_returns:
+        if value == destination:
+            raise ValidationError(message)
+    if gate is not None and gate.return_choice_required and not value:
+        raise ValidationError(gate.return_required_error)
+    route = next((route for route in routes if route.to_status == value or (not value and route.default)), None)
+    if route is None:
+        raise ValidationError("return_to must be " + " or ".join(repr(route.to_status) for route in routes))
+    return route
+
+
 def validate_synopsis(value: str) -> str:
     synopsis = value.strip()
     hint = (
@@ -684,6 +708,10 @@ def revision_context_for_review_return(
 
 __all__ = [
     "ACTIVE_EXPERIMENT_CAP",
+    "EXPERIMENT",
+    "REFLECTION",
+    "REFLECTION_TERMINAL_STATUSES",
+    "TASK",
     "TASK_TERMINAL_STATUSES",
     "AGENT_DISPATCH_SETTING",
     "CLAIM_CONFIDENCES",
@@ -710,6 +738,7 @@ __all__ = [
     "project_settings",
     "reflection_create_block_message",
     "reflection_signal_state",
+    "resolve_review_return",
     "review_snapshot_id",
     "revision_context_for_review_return",
     "snapshot_from_id",

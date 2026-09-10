@@ -7,7 +7,7 @@ from typing import TypedDict, Unpack
 
 from ...kernel.utils import ValidationError
 from ...research_core import (
-    EXPERIMENT_WORKFLOW,
+    EXPERIMENT,
     ExperimentState,
     Research,
     safe_experiment_dirname,
@@ -43,7 +43,7 @@ def create_experiment(
     research: Research, **kwargs: Unpack[ExperimentCreateArgs]
 ) -> ExperimentState:
     """Translate released aliases, create in Research, and add folder guidance."""
-    initial = EXPERIMENT_WORKFLOW.initial
+    initial = EXPERIMENT.workflow.initial
     status = str(kwargs.pop("status", initial) or initial)
     if status != initial:
         raise ValidationError(
