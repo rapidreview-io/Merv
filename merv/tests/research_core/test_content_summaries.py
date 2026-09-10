@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from merv.shared.content_summaries import (
+from merv.brain.research_core.content_summaries import (
     MAX_CONTENT_TLDR_CHARS,
     content_tldr,
 )

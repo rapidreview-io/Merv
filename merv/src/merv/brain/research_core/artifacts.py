@@ -12,7 +12,7 @@ from typing import Any
 
 from ..workflows import artifact_roles as roles
 from merv.shared import markdown_images as markdown
-from merv.shared.content_summaries import content_tldr
+from .content_summaries import content_tldr
 from ..artifacts import Artifacts, CompletedFigure, PendingUpload
 from ..kernel.state.store import BaseStateStore, Connection, next_created_seq
 from ..kernel.utils import NotFoundError, ValidationError, new_id, now_iso

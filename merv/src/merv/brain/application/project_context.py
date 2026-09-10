@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..workflows import PROJECT_GRAPH_ROLE
-from merv.shared.content_summaries import content_tldr
+from ..research_core import content_tldr
 
 from ..research_core import Artifact, ResearchArtifacts as Artifacts
 from ..research_core import EXPERIMENT_WORKFLOW, Research, preferred_artifact
