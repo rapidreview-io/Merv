@@ -104,7 +104,6 @@ GET   /api/projects/{project_id}
 PATCH /api/projects/{project_id}
 PUT   /api/projects/{project_id}
 GET   /api/projects/{project_id}/home
-GET   /api/projects/{project_id}/status?experiment_id={experiment_id}
 ```
 
 Create projects with `name` and `summary`. Do not send a repo path: projects are
