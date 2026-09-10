@@ -71,7 +71,7 @@ class RecordingFeed:
         self.error = error
         self.calls: list[dict[str, Any]] = []
 
-    def transition_advisory(self, **kwargs: Any) -> str:
+    def advisory(self, **kwargs: Any) -> str:
         self.order.append("feed.advisory")
         self.calls.append(kwargs)
         if self.error is not None:
@@ -122,8 +122,8 @@ class ReadReviewStatusTest(unittest.TestCase):
             [
                 {
                     "project_id": "proj_1",
-                    "experiment_id": "exp_1",
-                    "event": "experiment_review_verdict",
+                    "ref": "exp_1",
+                    "message": "a review verdict just landed on exp_1",
                 }
             ],
         )

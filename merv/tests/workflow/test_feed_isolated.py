@@ -237,26 +237,22 @@ def test_role_sets_are_validated_at_construction(tmp_path: Path) -> None:
         build(author_roles={"main", "researcher"}, adoptable_roles=())
 
 
-def test_transition_advisory_disappears_after_referenced_post(feed) -> None:
+def test_advisory_disappears_after_referenced_post(feed) -> None:
     service, project_id, _store = feed
 
-    note = service.transition_advisory(
-        project_id=project_id,
-        experiment_id="exp_123",
-        event="experiment_complete",
+    note = service.advisory(
+        project_id=project_id, ref="exp_123", message="exp_123 just completed"
     )
     assert note and "exp_123 just completed" in note
 
     service.post(
         project_id=project_id,
         handle="Nova-7",
-        text="The experiment landed.",
+        text="The run landed.",
         ref="exp_123",
     )
-    assert service.transition_advisory(
-        project_id=project_id,
-        experiment_id="exp_123",
-        event="experiment_complete",
+    assert service.advisory(
+        project_id=project_id, ref="exp_123", message="exp_123 just completed"
     ) is None
 
 

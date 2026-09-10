@@ -833,7 +833,7 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.assertIs(self.app.research.artifacts, self.app.artifacts)
         self.assertFalse(hasattr(self.app._app, "_record_core"))
         self.assertIs(self.app.artifact_tools.artifacts, self.app.artifacts)
-        self.assertTrue(callable(self.app.feed.transition_advisory))
+        self.assertTrue(callable(self.app.feed.advisory))
         self.assertIs(self.app.application.research, self.app.research_core)
         self.assertIs(self.app.application.artifacts, self.app.artifacts)
         self.assertIs(self.app.application.feed, self.app.feed)

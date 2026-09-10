@@ -97,11 +97,12 @@ class FigureLookup(Protocol):
 
 @runtime_checkable
 class FeedAdvisory(Protocol):
-    """The narrow post-commit, best-effort capability Application consumes."""
+    """The narrow post-commit, best-effort capability Application consumes.
 
-    def transition_advisory(
-        self, *, project_id: str, experiment_id: str, event: str
-    ) -> str | None: ...
+    The caller says what just happened to ``ref`` in its own words; the feed
+    only decides whether the feed already covers it."""
+
+    def advisory(self, *, project_id: str, ref: str, message: str) -> str | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -654,7 +655,7 @@ class FeedService:
             else:
                 thread_links.append(("", {}))
         with self.store.transaction() as conn:
-            # Claim the token in the post/event transaction so concurrent or
+            # Consume the token in the post/event transaction so concurrent or
             # replayed PUTs cannot insert the pre-minted post twice.
             if consume_token is not None:
                 claimed = conn.execute(
@@ -949,8 +950,8 @@ class FeedService:
                 f"image is {len(data)} bytes; keep feed images under "
                 f"{MAX_FEED_IMAGE_BYTES}"
             )
-        candidate = Path(image_path or "feed-image")
-        content_type = sniff_image_type(candidate, data)
+        named = Path(image_path or "feed-image")
+        content_type = sniff_image_type(named, data)
         if content_type is None:
             raise ValidationError(
                 f"{image_path} does not look like an image (png/jpeg/gif/webp/svg)"
@@ -1354,52 +1355,35 @@ class FeedService:
             **signal,
         }
 
-    # -- event-carried advisory ---------------------------------------------
+    # -- advisory -----------------------------------------------------------
 
-    def transition_advisory(
-        self, *, project_id: str, experiment_id: str, event: str
-    ) -> str | None:
-        """Return an optional Feed nudge for a committed experiment transition.
+    def advisory(self, *, project_id: str, ref: str, message: str) -> str | None:
+        """Return ``message`` as a posting nudge, or None when the feed already
+        covers ``ref``.
 
-        Application attaches this only after committing its transition and
-        treats failures as advisory. A matching ``ref`` or text mention is the
-        deduplication state; no separate "already nudged" record is written.
-        Missing identifiers return None.
+        The caller phrases what just happened (``"exp_1 just completed"``) and
+        attaches the result only after committing its own work, treating any
+        failure as advisory. A post whose ``ref`` is ``ref`` or whose text
+        mentions it is the deduplication state; no "already nudged" record is
+        written. Missing identifiers or an empty message return None.
         """
         project_id = (project_id or "").strip()
-        experiment_id = (experiment_id or "").strip()
-        if not project_id or not experiment_id:
+        ref = (ref or "").strip()
+        message = (message or "").strip()
+        if not project_id or not ref or not message:
             return None
         with closing(self.store.connect()) as conn:
             mentioned = conn.execute(
                 "SELECT 1 FROM posts WHERE project_id = ? "
                 "AND (ref = ? OR text LIKE ? ESCAPE '\\') LIMIT 1",
-                (
-                    project_id,
-                    experiment_id,
-                    f"%{_escape_like(experiment_id)}%",
-                ),
+                (project_id, ref, f"%{_escape_like(ref)}%"),
             ).fetchone()
         if mentioned is not None:
             return None
-        phrase = _FEED_NOTE_PHRASES.get(
-            event, "{entity} just had a workflow update"
-        ).format(entity=experiment_id)
         return (
-            f"{phrase} and the feed has never mentioned it — if there's a "
+            f"{message} and the feed has never mentioned it — if there's a "
             "takeaway worth sharing, consider a post (see the feed-posting skill)."
         )
-
-
-_FEED_NOTE_PHRASES: dict[str, str] = {
-    "experiment_complete": "{entity} just completed",
-    "experiment_failed": "{entity} just failed",
-    "experiment_abandoned": "{entity} was just abandoned",
-    "task_done": "task {entity} was just accepted",
-    "task_failed": "task {entity} just failed",
-    "experiment_review_verdict": "a review verdict just landed on {entity}",
-    "mlflow_run_finalized": "an MLflow run for {entity} just finished",
-}
 
 
 def _load_attachments(item: dict[str, Any]) -> list[dict[str, Any]]:

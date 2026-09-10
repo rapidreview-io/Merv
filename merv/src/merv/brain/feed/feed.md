@@ -5,10 +5,10 @@
 `FeedService` owns the project-scoped social stream: voices (author
 registration with bios), short posts and threads, typed attachments, quotes,
 replies, reactions, media/link presentation, pagination, and non-blocking
-posting advisories. Posts are observations for humans, not research artifacts
-or workflow state. `FeedAdvisory` is the deliberately narrow capability
-consumed by Application after committed experiment transitions. `__init__.py`
-exports only `FeedService` and that protocol.
+posting advisories. Posts are observations for humans, not research state; the
+feed never names research entities. Which id prefixes and author roles exist
+is declared at composition. `FeedAdvisory` is the narrow post-commit capability
+Application consumes. `__init__.py` exports only `FeedService` and that protocol.
 
 The service depends inward on `BaseStateStore` for project resolution,
 transactions, sequence allocation, and event recording. It delegates bytes to
@@ -84,9 +84,9 @@ CSP-wrapped, while images retain their sniffed media type.
 
 Cadence counts non-feed events since the latest non-researcher post. A nudge
 appears only after at least eight such events and, when a prior agent post
-exists, six hours; it never gates work. `transition_advisory` is read-only and
-best-effort: after a committed transition it suggests posting only when no
-post in that project references or literally mentions the experiment.
+exists, six hours; it never gates work. `advisory(project_id, ref, message)` is
+read-only and best-effort: it returns the caller's own words as a posting hint
+only when no post in that project references or literally mentions the ref.
 
 ## Persistence and invariants
 

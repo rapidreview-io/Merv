@@ -79,6 +79,8 @@ spans them. Research remains the public owner of its event ledger reads.
 - Artifact sealing and Research mutations retain their existing transaction
   boundaries. MLflow and Feed effects occur after commit; Feed and automatic
   MLflow finalization failures remain advisory.
+- Feed advisories: `experiments/transition.py` phrases what a committed event
+  is called; the Feed only decides whether the feed already covers that ref.
 - Large candidates stay in Object Storage. Application validates candidate
   pointers through module roots and never queries sibling persistence tables.
 - Surface owns HTTP/MCP models, authentication, formatting, and UI-only

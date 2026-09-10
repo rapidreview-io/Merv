@@ -18,6 +18,7 @@ from ..research_core import (
 )
 from ..research_core import ResearchArtifacts as Artifacts
 from .experiments.context import ExperimentContextQuery
+from .experiments.transition import feed_transition_note
 from .project_context import ProjectContextQuery
 from .reflections import present_agent_reflection_state
 from .tasks import TaskContextQuery
@@ -190,14 +191,12 @@ def read_review_status(
         return result
     if event is None:
         return result
-    try:
-        note = feed.transition_advisory(
-            project_id=str(state.get("project_id") or ""),
-            experiment_id=str(state.get("id") or ""),
-            event="experiment_review_verdict",
-        )
-    except Exception:
-        note = None
+    note = feed_transition_note(
+        feed,
+        project_id=str(state.get("project_id") or ""),
+        ref=str(state.get("id") or ""),
+        event="experiment_review_verdict",
+    )
     if note:
         result["feed_note"] = note
     return result

@@ -217,7 +217,7 @@ class RecordingFeed:
         self.raises = raises
         self.calls: list[dict[str, Any]] = []
 
-    def transition_advisory(self, **kwargs: Any) -> str | None:
+    def advisory(self, **kwargs: Any) -> str | None:
         self.order.append("feed.advisory")
         self.calls.append(kwargs)
         if self.raises:
@@ -411,8 +411,8 @@ class MlflowFinalizeTest(unittest.TestCase):
             [
                 {
                     "project_id": PROJECT_ID,
-                    "experiment_id": EXPERIMENT_ID,
-                    "event": "mlflow_run_finalized",
+                    "ref": EXPERIMENT_ID,
+                    "message": f"an MLflow run for {EXPERIMENT_ID} just finished",
                 }
             ],
         )

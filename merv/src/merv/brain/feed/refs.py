@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 
 # ``(prefix, kind)`` pairs declared by whoever mints the ids, e.g.
-# ``(("exp_", "experiment"), ...)``. The prefix is what the feed matches on;
+# ``(("wid_", "widget"), ...)``. The prefix is what the feed matches on;
 # the kind is a label for messages and never drives behavior.
 RefVocabulary = tuple[tuple[str, str], ...]
 

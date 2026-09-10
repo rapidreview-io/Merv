@@ -645,11 +645,12 @@ class MlflowIntegration:
         return response
 
     def _feed_note(self, state: ExperimentState) -> str | None:
+        experiment_id = str(state.get("id") or "")
         try:
-            return self.feed.transition_advisory(
+            return self.feed.advisory(
                 project_id=str(state.get("project_id") or ""),
-                experiment_id=str(state.get("id") or ""),
-                event="mlflow_run_finalized",
+                ref=experiment_id,
+                message=f"an MLflow run for {experiment_id} just finished",
             )
         except Exception:
             return None
