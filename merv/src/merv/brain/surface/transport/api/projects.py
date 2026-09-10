@@ -189,13 +189,4 @@ def build_router(
             payload=lambda: present(application.dashboard(project_id=project_id)),
         )
 
-    @api_router.get("/api/projects/{project_id}/status")
-    def project_status(
-        project_id: str, experiment_id: str | None = None
-    ) -> dict[str, Any]:
-        # Full shape for the UI (see home()); the tool stays slim for the agent.
-        return present(
-            application.status(project_id=project_id, experiment_id=experiment_id)
-        )
-
     return api_router

@@ -446,16 +446,16 @@ class AgentIdentities:
         )
         with self.store.transaction() as tx:
             for _ in range(_MINT_ATTEMPTS):
-                candidate = "".join(
+                minted = "".join(
                     secrets.choice(AGENT_ID_ALPHABET) for _ in range(AGENT_ID_LENGTH)
                 )
                 taken = tx.execute(
-                    "SELECT 1 FROM agent_identities WHERE agent_id = ?", (candidate,)
+                    "SELECT 1 FROM agent_identities WHERE agent_id = ?", (minted,)
                 ).fetchone()
                 if taken is not None:
                     continue
                 row = {
-                    "agent_id": candidate,
+                    "agent_id": minted,
                     "tenant_id": _clip(caller.tenant_id),
                     "user_id": _clip(caller.user_id),
                     "principal_id": _clip(caller.principal_id),
@@ -475,7 +475,7 @@ class AgentIdentities:
                     tuple(row.values()),
                 )
                 with self._lock:
-                    self._cache[candidate] = (row, time.monotonic())
+                    self._cache[minted] = (row, time.monotonic())
                 return row
         raise RuntimeError("could not mint a unique agent_id")
 

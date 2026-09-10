@@ -86,6 +86,15 @@ _ENTITY_ID_RE = re.compile(
     % "|".join(prefix for prefix, _ in ENTITY_REF_VOCABULARY)
 )
 
+# What `project` action=overview hands back, in the sentence the caller
+# reads. Research owns the contents, so the tool registry quotes this instead
+# of listing research records itself.
+PROJECT_OVERVIEW_CONTENTS = (
+    "the latest published reflection, the literature General Summary, every "
+    "claim including settled and abandoned ones, and every experiment "
+    "including terminal ones with one status-dependent summary"
+)
+
 # Agent voices on the project feed. Adoptable roles share one persistent voice
 # per project so the reader follows one reviewer or lens instead of a new name
 # per session; the feed applies that rule without knowing what the roles are.

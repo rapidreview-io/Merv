@@ -17,8 +17,11 @@ from ...artifacts import artifact_tools
 from ...feed import feed_tools
 from ...infrastructure import TOOLS as INFRASTRUCTURE_TOOLS
 from ...kernel.tools import ContractModel, ProjectScopedInput, ToolContract
-from ...research_core import ENTITY_REF_VOCABULARY, FEED_ADOPTABLE_ROLES, FEED_AUTHOR_ROLES, TOOLS as RESEARCH_TOOLS
-from ...workflows import ARTIFACT_TARGET_TYPES, REFLECTION_LENS_DOC_ROLE, SUBMITTABLE_ROLES, TOOLS as WORKFLOW_TOOLS
+from ...research_core import (
+    ENTITY_REF_VOCABULARY, FEED_ADOPTABLE_ROLES, FEED_AUTHOR_ROLES,
+    PROJECT_OVERVIEW_CONTENTS, TOOLS as RESEARCH_TOOLS,
+)
+from ...workflows import ARTIFACT_TOOL_VOCABULARY, TOOLS as WORKFLOW_TOOLS
 from .mlflow_contracts import TOOLS as MLFLOW_TOOLS
 
 
@@ -41,7 +44,8 @@ class AgentHelloInput(ContractModel):
         default="",
         max_length=64,
         description=(
-            "Optional self-description: main, subagent, reviewer, lens, worker."
+            "Optional self-description of what this context is doing: "
+            "main, subagent, worker, or whatever role your assignment names."
         ),
     )
     parent_agent_id: str = Field(
@@ -68,10 +72,8 @@ class ProjectInput(ContractModel):
             "and creation dates — start here to pick a project_id; "
             "current = the project this credential is bound to, if it is "
             "bound to exactly one; "
-            "overview = the canonical bounded project context — latest "
-            "published reflection, literature General Summary, every claim "
-            "(incl. settled/abandoned), and every experiment (incl. terminal) "
-            "with one summary — for orienting or re-grounding; "
+            f"overview = the canonical bounded project context ({PROJECT_OVERVIEW_CONTENTS}) "
+            "for orienting or re-grounding; "
             "create = create a project."
         )
     )
@@ -131,8 +133,8 @@ class ProjectUpdateInput(ProjectScopedInput):
     require_verified_reviews: bool | None = Field(
         default=None,
         description=(
-            "Policy knob: when true, only reviews with verified reviewer "
-            "independence (verified_agent_review) satisfy review gates; "
+            "Policy knob: when true, only reviews with verified independent "
+            "authorship (verified_agent_review) satisfy review gates; "
             "attested reviews stop counting. Omit to leave unchanged."
         ),
     )
@@ -140,10 +142,9 @@ class ProjectUpdateInput(ProjectScopedInput):
         default=None,
         description=(
             "Policy knob (off by default): when true, local coding-agent "
-            "runners may claim this project's experiments, reviews, and "
-            "consolidations automatically. Turning it off stops new claims; "
-            "sessions already running keep going until halted. Omit to leave "
-            "unchanged."
+            "runners may take this project's assigned work automatically. "
+            "Turning it off stops new leases; sessions already running keep "
+            "going until halted. Omit to leave unchanged."
         ),
     )
     hidden: bool | None = Field(
@@ -192,10 +193,7 @@ SURFACE_TOOLS: dict[str, ToolContract] = {
             "and the same list, because there is no one current project. "
             "action=overview is the whole-project read for orienting or "
             "re-grounding: the same bounded project context used by project-"
-            "scoped workflow and review starts, including the latest published "
-            "reflection, the literature General Summary, every claim "
-            "(including settled/abandoned), and every experiment (including "
-            "terminal) with one status-dependent summary. "
+            f"scoped workflow and review starts, holding {PROJECT_OVERVIEW_CONTENTS}. "
             "action=create creates a project from a user-confirmed name and "
             "summary."
         ),
@@ -226,7 +224,7 @@ SURFACE_TOOLS: dict[str, ToolContract] = {
 
 # Fixed merge order, unique names: the registry is a view of the owners'
 # tables, never a second place a contract can be defined or overridden.
-ARTIFACT_TOOLS = artifact_tools(target_types=ARTIFACT_TARGET_TYPES, roles=SUBMITTABLE_ROLES, lens_role=REFLECTION_LENS_DOC_ROLE)
+ARTIFACT_TOOLS = artifact_tools(**ARTIFACT_TOOL_VOCABULARY)
 FEED_TOOLS = feed_tools(vocabulary=ENTITY_REF_VOCABULARY, author_roles=FEED_AUTHOR_ROLES, adoptable_roles=FEED_ADOPTABLE_ROLES)
 TOOL_MANIFEST: dict[str, ToolContract] = {}
 for _table in (SURFACE_TOOLS, WORKFLOW_TOOLS, RESEARCH_TOOLS, ARTIFACT_TOOLS, FEED_TOOLS, INFRASTRUCTURE_TOOLS, MLFLOW_TOOLS):

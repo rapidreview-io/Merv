@@ -12,12 +12,12 @@ from __future__ import annotations
 from ..kernel.state.schema import SchemaModule
 
 
+# The historical baseline migrations 24 and 36 replay against. Migration 59
+# moves the association fields out to Research-owned links and drops them
+# here, leaving immutable project-scoped content plus generic upload
+# settings. Keep the baseline replayable for pre-artifact databases; CREATE
+# IF NOT EXISTS does not reintroduce the old fields on an upgraded store.
 ARTIFACT_DDL = """\
--- Historical artifact baseline for migrations 24 and 36. Migration 59 moves
--- workflow fields into Research-owned links and drops them here, leaving
--- immutable project-scoped content plus generic upload settings. Keep this
--- baseline replayable for pre-artifact databases; CREATE IF NOT EXISTS does
--- not reintroduce the old fields when an upgraded store opens again.
 CREATE TABLE IF NOT EXISTS artifacts (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
@@ -48,8 +48,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
 -- immutable, because
 -- _supersede_slot only ever deletes unsealed rows. That is what keeps the
 -- report of a rejected round retrievable as a first-class artifact instead of
--- an unreachable blob. `experiments.attempt_index` stays the authoritative
--- plan-level counter, so the byte-stable review snapshot never moves; a
+-- an unreachable blob. The target's own attempt counter stays the
+-- authoritative plan-level counter, so the review snapshot never moves; a
 -- submission is the round WITHIN one attempt, which a return to running
 -- deliberately does not bump. created_seq is the total order the composition
 -- query depends on — a submission's contents are every row sealed at or
