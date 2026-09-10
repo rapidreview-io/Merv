@@ -303,8 +303,6 @@ SAMPLES: dict[type, object] = {
         gate_evaluations={"exp_1": {"ready": True}},
         tasks=[{"id": "task_1", "status": "in_progress"}],
         requested_task_id="task_1",
-        recent_claims=[{"id": "clm_1"}],
-        claim_events_since_reflection=[],
         literature_signal=LiteratureSignal(papers_total=1, papers_unreviewed=0),
     ),
     LiteratureSignal: LiteratureSignal(papers_total=1, papers_unreviewed=0),
@@ -332,11 +330,6 @@ ANNOTATION_DEBT = frozenset(
         ),
         ("merv.brain.research_core.models.ResearchSnapshot.reflection_signal", "Any"),
         ("merv.brain.research_core.models.ResearchSnapshot.gate_evaluations", "Any"),
-        ("merv.brain.research_core.models.ResearchSnapshot.recent_claims", "Any"),
-        (
-            "merv.brain.research_core.models.ResearchSnapshot.claim_events_since_reflection",
-            "Any",
-        ),
     }
 )
 

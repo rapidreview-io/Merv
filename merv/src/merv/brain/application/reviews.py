@@ -15,6 +15,7 @@ from ..research_core import (
     REFLECTION_WORKFLOW,
     TASK_WORKFLOW,
     Research,
+    project_fields,
 )
 from ..research_core import ResearchArtifacts as Artifacts
 from .experiments.context import ExperimentContextQuery
@@ -22,6 +23,9 @@ from .experiments.transition import feed_transition_note
 from .project_context import ProjectContextQuery
 from .reflections import present_agent_reflection_state
 from .tasks import TaskContextQuery
+
+_SUBMITTED_FIELDS = {"role": "role", "lens_id": "lens_id", "path": "path",
+                     "id": "artifact_id", "submission_id": "submission_id"}
 
 
 def request_review(research: Research, **kwargs: Any) -> dict[str, Any]:
@@ -218,31 +222,25 @@ def present_review_recovery(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _recovery(request: dict[str, Any]) -> dict[str, Any]:
-    status = str(request.get("status") or "")
+    """How a producer who lost a one-time capability gets a usable one back."""
     expires = parse_iso(str(request.get("expires_at") or ""))
-    expired = expires is None or datetime.now(UTC) > expires
-    can_refresh = status in {"requested", "started"}
-    recovery: dict[str, Any] = {
+    refresh = str(request.get("status") or "") in {"requested", "started"}
+    return {
         "capability_returned_once": True,
         "capability_available": False,
-        "expired": expired,
-        "can_request_fresh_capability": can_refresh,
+        "expired": expires is None or datetime.now(UTC) > expires,
+        "can_request_fresh_capability": refresh,
         "reason": (
             "capability lost or expired; request a fresh reviewer capability "
             "for the same target and role (this revokes the open request — "
             "the old capability can no longer start or submit)"
-            if can_refresh
+            if refresh
             else "review request is closed; inspect submitted reviews instead"
         ),
+        **({"tool": "review.request",
+            "arguments": project_fields(request, ("target_type", "target_id", "role"))}
+           if refresh else {}),
     }
-    if can_refresh:
-        recovery["tool"] = "review.request"
-        recovery["arguments"] = {
-            "target_type": request.get("target_type"),
-            "target_id": request.get("target_id"),
-            "role": request.get("role"),
-        }
-    return recovery
 
 
 def _submitted_artifacts(
@@ -265,21 +263,14 @@ def _submitted_artifacts(
             if artifact.data is None
             else artifact.data.decode("utf-8", errors="replace")
         )
-        entry: dict[str, Any] = {
-            "role": artifact.role,
-            "lens_id": artifact.lens_id,
-            "path": artifact.path,
-            "artifact_id": artifact.id,
-            "submission_id": artifact.submission_id,
+        result.append({
+            **{public: getattr(artifact, name) for name, public in _SUBMITTED_FIELDS.items()},
             "submitted_at": artifact.updated_at or artifact.created_at,
             "content": content,
-        }
-        if content is None:
-            entry["note"] = (
+            **({} if content is not None else {"note": (
                 "submitted content unavailable; ask the producer to "
-                "resubmit it with artifact.upload"
-            )
-        result.append(entry)
+                "resubmit it with artifact.upload")}),
+        })
     return result
 
 

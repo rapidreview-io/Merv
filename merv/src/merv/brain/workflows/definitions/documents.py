@@ -182,27 +182,29 @@ def historical_latest_artifacts(
     return latest_per_slot(artifacts)
 
 
+# The model is the shape: each attribute under the name a reader knows it by.
+_ARTIFACT_STATE_FIELDS = {
+    "id": "id", "project_id": "project_id", "path": "path", "title": "title",
+    "lens_id": "lens_id", "size_bytes": "size_bytes", "content_type": "content_type",
+    "created_by": "created_by", "created_at": "created_at", "updated_at": "updated_at",
+    "role": "role", "attempt_index": "attempt_index", "tldr": "tldr",
+    "submission_id": "submission_id", "order": "submitted_order",
+}
+_SUBMISSION_STATE_FIELDS = {
+    "id": "id", "attempt_index": "attempt_index", "transition": "transition",
+    "created_at": "created_at", "order": "created_seq",
+}
+
+
 def artifact_state_record(evidence: Any) -> dict[str, Any]:
-    record = {
-        field: getattr(evidence, field)
-        for field in (
-            "id", "project_id", "path", "title", "lens_id", "size_bytes",
-            "content_type", "created_by", "created_at", "updated_at", "role",
-            "attempt_index", "tldr", "submission_id",
-        )
-    }
-    return {**record, "submitted_order": evidence.order}
+    return {name: getattr(evidence, attribute)
+            for attribute, name in _ARTIFACT_STATE_FIELDS.items()}
 
 
 def submission_state_record(submission: Any) -> dict[str, Any]:
-    return {
-        "id": submission.id,
-        "attempt_index": submission.attempt_index,
-        "transition": submission.transition,
-        "created_at": submission.created_at,
-        "created_seq": submission.order,
-        "artifact_ids": list(submission.artifact_ids),
-    }
+    return {**{name: getattr(submission, attribute)
+               for attribute, name in _SUBMISSION_STATE_FIELDS.items()},
+            "artifact_ids": list(submission.artifact_ids)}
 
 
 def preferred_artifact(

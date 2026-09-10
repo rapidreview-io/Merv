@@ -52,11 +52,7 @@ from .tasks import (
     rich_task_state,
     slim_task_state,
 )
-from .workflow import (
-    StatusAndNextQuery,
-    artifact_list_record,
-    project_at_a_glance,
-)
+from .workflow import StatusAndNextQuery, artifact_list_record
 from .workflow_actions import WorkflowDeliveries
 
 
@@ -1010,19 +1006,6 @@ class Application:
             "active_experiment": active,
         }
         return result
-
-    def current_project(self, *, tenant_id: str | None = None) -> dict[str, Any]:
-        result = self.research.current_project(tenant_id=tenant_id)
-        project = result.get("project") or {}
-        project_id = str(project.get("id") or "")
-        if not result.get("exists") or not project_id:
-            return result
-        return {
-            **result,
-            "at_a_glance": project_at_a_glance(
-                self.research.snapshot(project_id=project_id)
-            ),
-        }
 
     def compute_cost(self, *, project_id: str) -> dict[str, Any]:
         spend = self.sandboxes.project_spend(project_id=project_id)

@@ -33,12 +33,13 @@ from .models import (
     ResearchSnapshot,
     TaskState,
     TaskSummary,
+    public_record,
 )
 from .reflections import ReflectionService
 from .records import Records
 from .reviews import ReviewService
 from .tasks import TaskService
-from ..workflows import Binding, KINDS, Workflows
+from ..workflows import Binding, KINDS, Public, Workflows
 from .artifacts import ResearchArtifacts as Artifacts
 from ..kernel.events import StoredEvent
 from ..kernel.state.store import (
@@ -81,6 +82,11 @@ _GRAPH_REFS = (
     ("paper_", "paper", "paper_id", "papers", ("title", "url", "year")),
 )
 _CANDIDATE_SELECT = "SELECT * FROM project_candidates"
+# Which stored columns a reader of a project or a candidate never sees; the
+# rest of each row is its public shape.
+PROJECT_PUBLIC = Public(hidden=("tenant_id",), renames={"settings_json": "settings"})
+CANDIDATE_PUBLIC = Public(hidden=("project_id", "validation_json", "idempotency_key",
+                                  "request_digest", "created_seq"))
 
 
 class Research:
@@ -729,39 +735,28 @@ class Research:
     def _candidate_view(
         row: Any, *, receipt: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        """The candidate row, plus what its validation and staging receipt say."""
         data = row_to_dict(row=row) or {}
         validation = json.loads(str(data.get("validation_json") or "{}"))
         workspace = data.get("source_kind") == "experiment_workspace"
-        staged = not workspace or receipt is not None
-        durable = receipt or (
-            {
-                "kind": data.get("source_kind"),
-                "ref": data.get("source_ref"),
-                "manifest_sha256": "",
-                "content_sha256": data.get("expected_sha256"),
+        return public_record(
+            CANDIDATE_PUBLIC, data,
+            source_experiment_id=data.get("source_experiment_id") or "",
+            expected_sha256=data.get("expected_sha256") or "",
+            staged=not workspace or receipt is not None,
+            receipt=receipt or (None if workspace else {
+                "kind": data.get("source_kind"), "ref": data.get("source_ref"),
+                "manifest_sha256": "", "content_sha256": data.get("expected_sha256"),
                 "staged_at": data.get("created_at"),
-            }
-            if not workspace
-            else None
+            }),
+            metrics=validation.get("metrics", {}),
+            primary_metric=validation.get("primary_metric"),
+            higher_is_better=bool(validation.get("higher_is_better", True)),
+            validation_summary=validation.get("summary", ""),
+            validated=False,
+            was_promoted=False,
+            is_champion=False,
         )
-        return {
-            "id": data.get("id"),
-            "name": data.get("name"),
-            "source_kind": data.get("source_kind"),
-            "source_ref": data.get("source_ref"),
-            "source_experiment_id": data.get("source_experiment_id") or "",
-            "expected_sha256": data.get("expected_sha256") or "",
-            "staged": staged,
-            "receipt": durable,
-            "metrics": validation.get("metrics", {}),
-            "primary_metric": validation.get("primary_metric"),
-            "higher_is_better": bool(validation.get("higher_is_better", True)),
-            "validation_summary": validation.get("summary", ""),
-            "validated": False,
-            "was_promoted": False,
-            "is_champion": False,
-            "created_at": data.get("created_at"),
-        }
 
     @classmethod
     def _candidate_context(
@@ -1426,9 +1421,6 @@ class Research:
                     if str(row["status"]) in TASK_TERMINAL_STATUSES
                 },
             )
-            recent_claims, claim_events = self._dashboard_facts(
-                conn=conn, project_id=project_id, published=published
-            )
             return ResearchSnapshot(
                 project_id=project_id,
                 requested_experiment_id=experiment_id,
@@ -1441,8 +1433,6 @@ class Research:
                 gate_evaluations=gates,
                 tasks=tasks,
                 requested_task_id=task_id,
-                recent_claims=recent_claims,
-                claim_events_since_reflection=claim_events,
                 literature_signal=self._literature_signal(
                     conn=conn, project_id=project_id
                 ),
@@ -1693,70 +1683,6 @@ class Research:
             papers_unreviewed=int(unreviewed["n"]),
         )
 
-    def _dashboard_facts(
-        self,
-        *,
-        conn: Any,
-        project_id: str,
-        published: dict[str, Any] | None,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        recent = rows_to_dicts(
-            rows=conn.execute(
-                """
-                SELECT c.id, c.statement, c.status, c.confidence
-                FROM claims c
-                LEFT JOIN events e
-                  ON e.project_id = c.project_id
-                 AND e.target_type = 'claim'
-                 AND e.target_id = c.id
-                 AND e.type IN ('claim.created', 'claim.updated')
-                WHERE c.project_id = ?
-                GROUP BY c.id
-                ORDER BY COALESCE(MAX(e.created_at), c.created_at) DESC,
-                         c.created_at DESC
-                LIMIT 5
-                """,
-                (project_id,),
-            ).fetchall()
-        )
-        if published is None:
-            return recent, []
-        event = conn.execute(
-            """
-            SELECT id FROM events
-            WHERE project_id = ?
-              AND type = ?
-              AND target_type = 'reflection'
-              AND target_id = ?
-            ORDER BY id DESC LIMIT 1
-            """,
-            (
-                project_id,
-                REFLECTION_WORKFLOW.event_type,
-                published.get("id"),
-            ),
-        ).fetchone()
-        if event is not None:
-            where, marker = "id > ?", event["id"]
-        elif published.get("published_at"):
-            where, marker = "created_at >= ?", published["published_at"]
-        else:
-            return recent, []
-        events = rows_to_dicts(
-            rows=conn.execute(
-                """
-                SELECT id, type, target_id, payload_json, created_at
-                FROM events
-                WHERE project_id = ?
-                  AND target_type = 'claim'
-                  AND type IN ('claim.created', 'claim.updated')
-                """
-                f" AND {where} ORDER BY id",
-                (project_id, marker),
-            ).fetchall()
-        )
-        return recent, events
-
     @staticmethod
     def _validate_project_name(name: str) -> str:
         name = (name or "").strip()
@@ -1771,13 +1697,8 @@ class Research:
     @staticmethod
     def _project_view(row: Any) -> dict[str, Any]:
         data = row_to_dict(row=row) or {}
-        view = {
-            key: data[key]
-            for key in ("id", "name", "summary", "status", "created_at")
-            if key in data
-        }
-        view["settings"] = parse_project_settings(data.get("settings_json"))
-        return view
+        return public_record(PROJECT_PUBLIC, data,
+                             settings=parse_project_settings(data.get("settings_json")))
 
 
 __all__ = ["Research"]

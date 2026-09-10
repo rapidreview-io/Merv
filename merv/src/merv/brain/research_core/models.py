@@ -158,10 +158,6 @@ class ResearchSnapshot:
     gate_evaluations: dict[str, Any]
     tasks: list[TaskState] = field(default_factory=list)
     requested_task_id: str | None = None
-    recent_claims: list[dict[str, Any]] = field(default_factory=list)
-    claim_events_since_reflection: list[dict[str, Any]] = field(
-        default_factory=list
-    )
     literature_signal: LiteratureSignal = field(
         default_factory=lambda: LiteratureSignal(
             papers_total=0, papers_unreviewed=0

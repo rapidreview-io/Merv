@@ -133,7 +133,7 @@ class TestBrain:
         return getattr(self._app, self._PRIVATE_ALIASES.get(name, name))
 
     def current_project(self, *, tenant_id: str | None = None) -> dict[str, Any]:
-        return self._app.application.current_project(tenant_id=tenant_id)
+        return self._app.research.current_project(tenant_id=tenant_id)
 
     def list_tools(self) -> list[dict[str, Any]]:
         return self._app.tools.list_tools()
