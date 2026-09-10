@@ -168,7 +168,6 @@ class RequestAuthenticator:
                 agent_workflow=str(record.get("target_type") or ""),
                 agent_workflow_instance_id=str(record.get("workflow_instance_id") or ""),
                 agent_workflow_revision=int(record.get("workflow_revision") or 0),
-                agent_workflow_node=str(record.get("workflow_node") or ""),
                 agent_execution=SessionExecution.from_packet(record.get("execution")),
                 agent_references=tuple(
                     (str(item.get("kind") or ""), str(item.get("id") or ""))

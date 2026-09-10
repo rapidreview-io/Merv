@@ -23,10 +23,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
+from merv.shared.client_config import ClientError, read_client_document
 from merv.shared.user_codes import format_user_code
 from .private_files import (
-    PrivateFileError,
-    read_json_document,
     replace_json_document,
     write_private_json,
     write_private_text,
@@ -77,8 +76,8 @@ def key_digest(key: str) -> str:
 
 def load_pairing(path: Path) -> PairingState | None:
     try:
-        raw = read_json_document(path)
-    except PrivateFileError as exc:
+        raw = read_client_document(path)
+    except ClientError as exc:
         raise PairingError(str(exc)) from exc
     if not raw:
         return None
@@ -288,15 +287,15 @@ def _already_promoted(key_path: Path, config_path: Path, state: PairingState) ->
     if key_digest(stored) != state.key_digest:
         return False
     try:
-        return str(read_json_document(config_path).get("project_id") or "") == state.project_id
-    except PrivateFileError:
+        return str(read_client_document(config_path).get("project_id") or "") == state.project_id
+    except ClientError:
         return False
 
 
 def _write_project_id(config_path: Path, project_id: str) -> None:
     try:
-        document = read_json_document(config_path)
-    except PrivateFileError as exc:
+        document = read_client_document(config_path)
+    except ClientError as exc:
         raise PairingError(str(exc)) from exc
     replace_json_document(config_path, {**document, "project_id": project_id})
 

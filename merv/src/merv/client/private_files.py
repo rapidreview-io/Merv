@@ -63,14 +63,6 @@ def write_private_json(path: Path, value: Mapping[str, Any]) -> None:
     write_private_text(path, json.dumps(dict(value), indent=2, sort_keys=True) + "\n")
 
 
-def read_json_document(path: Path) -> dict[str, Any]:
-    """The shared client reader, wearing the error type pairing catches by."""
-    try:
-        return read_client_document(path)
-    except ClientError as exc:
-        raise PrivateFileError(str(exc)) from exc
-
-
 def replace_json_document(
     path: Path,
     document: Mapping[str, Any],

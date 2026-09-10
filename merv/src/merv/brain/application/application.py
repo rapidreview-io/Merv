@@ -17,7 +17,7 @@ from merv.shared.storage_guidance import storage_guidance
 from ..agent_sessions import AgentSessions
 from ..research_core import ResearchArtifacts as Artifacts
 from ..feed import FeedService
-from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
+from ..kernel.utils import ValidationError, WorkflowError
 from ..research_core import (
     Research,
     AGENT_DISPATCH_SETTING,

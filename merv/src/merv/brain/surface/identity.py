@@ -71,7 +71,6 @@ class Principal:
     agent_workflow: str | None = None
     agent_workflow_instance_id: str | None = None
     agent_workflow_revision: int | None = None
-    agent_workflow_node: str | None = None
     agent_execution: SessionExecution | None = None
     agent_references: tuple[tuple[str, str], ...] = ()
     source_key_id: str | None = None
