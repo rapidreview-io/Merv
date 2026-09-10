@@ -1,8 +1,11 @@
 """Versioned workflow definitions, runtime and composition."""
 
-from .definitions import (
-    artifact_roles, documents, experiment, reflection, research_contracts, task,
-)
+from .definitions import artifact_roles, documents, research_contracts
+# The record kinds Research speaks about by name. Which of them a brain
+# installs is its program's business; this only publishes the declarations.
+from .definitions.experiment import KIND as EXPERIMENT_KIND
+from .definitions.reflection import KIND as REFLECTION_KIND
+from .definitions.task import KIND as TASK_KIND
 from .definitions.artifact_roles import (
     ARTIFACT_TARGET_TYPES, ARTIFACT_TOOL_VOCABULARY, EXHIBIT_ROLE, GATED_ROLES,
     METRIC_RESULT_MAX_BYTES, PROJECT_GRAPH_ROLE, REFLECTION_LENS_DOC_ROLE,
@@ -21,16 +24,16 @@ from .composition import Child, ChildResult, join_guard, wait_for_all
 from .delivery import Deliveries, Delivery
 from .graph import (
     Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Evaluation, Execution, Issue,
-    Knowledge, Metadata, Node, Public, RecordKind, RecordNeed, Reference, Registry, Requirement, ReviewGate,
-    ReviewReturn, Scope, Snapshot, Workflow, WorkspacePolicy, all_of,
+    Knowledge, Metadata, Node, Program, Public, RecordKind, RecordNeed, Reference, Registry, Requirement,
+    ReviewGate, ReviewReturn, Scope, Snapshot, Workflow, WorkspacePolicy, all_of,
 )
 from .runtime import InstanceFact, Runtime, snapshot_view
-from .registry import KINDS, WORKFLOWS
 from .tools import TOOLS
 from .workflows import Binding, Workflows
 
 __all__ = [
-    "artifact_roles", "documents", "experiment", "reflection", "research_contracts", "task",
+    "artifact_roles", "documents", "research_contracts",
+    "EXPERIMENT_KIND", "REFLECTION_KIND", "TASK_KIND",
     "ARTIFACT_TARGET_TYPES", "ARTIFACT_TOOL_VOCABULARY", "EXHIBIT_ROLE", "GATED_ROLES",
     "METRIC_RESULT_MAX_BYTES", "PROJECT_GRAPH_ROLE", "REFLECTION_LENS_DOC_ROLE",
     "SUBMITTABLE_ROLES", "TASK_BRIEF_ROLE", "TASK_DELIVERY_ROLE",
@@ -42,8 +45,8 @@ __all__ = [
     "reflection_coverage_for", "render_task_brief", "require_artifact_document",
     "task_deliverables", "validate_reflection_roster",
     "Action", "ArtifactNeed", "Brief", "Change", "Child", "ChildResult", "DependenciesDone",
-    "Edge", "Evaluation", "Execution", "InstanceFact", "Issue", "Knowledge", "Metadata", "Node", "Public", "RecordKind",
+    "Edge", "Evaluation", "Execution", "InstanceFact", "Issue", "Knowledge", "Metadata", "Node", "Program", "Public", "RecordKind",
     "RecordNeed", "Reference", "Registry", "Requirement", "ReviewGate", "ReviewReturn", "Scope",
     "Snapshot", "Workflow", "WorkspacePolicy",
-    "Binding", "Deliveries", "Delivery", "KINDS", "Runtime", "TOOLS", "WORKFLOWS", "Workflows", "snapshot_view", "all_of", "wait_for_all",
+    "Binding", "Deliveries", "Delivery", "Runtime", "TOOLS", "Workflows", "snapshot_view", "all_of", "wait_for_all",
 ]

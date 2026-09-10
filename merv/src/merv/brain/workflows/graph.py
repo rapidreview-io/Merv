@@ -14,6 +14,7 @@ from ..kernel.utils import WorkflowError
 
 if TYPE_CHECKING:
     from .composition import Child, ChildResult
+    from ..kernel.tools import ToolContract
 
 Data = Mapping[str, Any]
 
@@ -358,7 +359,25 @@ class ReviewGate:
         return None
 
 
-Requirement = ArtifactNeed | RecordNeed | DependenciesDone | ReviewGate
+class Requirement(Protocol):
+    """What a node declares its state needs, whatever class supplies it.
+
+    ``actions`` names the edges the need gates and ``dispatch`` says whether it
+    also blocks the agent handoff; the two checks answer both. A program
+    declares the classes its nodes use, and Research keeps one resolver per
+    class for the gate checklist, so a new kind of need is a new class plus a
+    resolver — never a case in an evaluation.
+    """
+
+    actions: tuple[str, ...]
+    dispatch: bool
+
+    @property
+    def key(self) -> str: ...
+
+    def check(self, snapshot: Snapshot, knowledge: Knowledge) -> Issue | Iterable[Issue] | None: ...
+
+    def dispatch_check(self, snapshot: Snapshot, knowledge: Knowledge) -> Issue | Iterable[Issue] | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -662,6 +681,37 @@ class RecordKind:
     def review_returns(self) -> tuple[ReviewReturn, ...]:
         return tuple(dict.fromkeys(route for gate in self.review_gates
                                    for route in gate.returns))
+
+
+@dataclass(frozen=True, slots=True)
+class Program:
+    """One research program: every part a brain must install to run it.
+
+    A program is composition, not behaviour. ``effects`` are the action kinds
+    its edges may emit and ``requirements`` the need classes its nodes use;
+    bootstrap refuses to start unless each has a handler and a resolver, so a
+    second program is an entry in ``programs/__init__.py`` and nothing else.
+    """
+
+    name: str
+    version: int
+    workflows: tuple[Workflow, ...] = ()
+    kinds: tuple[RecordKind, ...] = ()
+    effects: tuple[str, ...] = ()
+    requirements: tuple[type, ...] = ()
+    tools: Mapping[str, ToolContract] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "tools", MappingProxyType(dict(self.tools)))
+        installed = {workflow.name for workflow in self.workflows}
+        undeclared = sorted({type(need).__name__ for workflow in self.workflows for node in workflow.nodes
+                             for need in node.requires} - {cls.__name__ for cls in self.requirements})
+        if not self.name or self.version < 1:
+            raise ValueError("a program needs a name and a positive version")
+        if any(kind.workflow.name not in installed for kind in self.kinds):
+            raise ValueError(f"program {self.name!r} binds a record to an uninstalled workflow")
+        if undeclared:
+            raise ValueError(f"program {self.name!r} uses undeclared requirements: {undeclared}")
 
 
 class Registry:
