@@ -453,26 +453,6 @@ html[data-theme="dark"] .fmark { --mark-ink: #fff; }
 .postcard-tp--quoted .postcard-quote--inline { margin-top: 0; border: 0; padding: 0 0 4px; }
 .postcard-tp--quoted .postcard-quote-by { min-height: 22px; margin-bottom: 2px; }
 
-/* Replies — the researcher's answers always expanded and tinted; other
-   voices' replies fold behind a count until opened. */
-.postcard-reply {
-  margin-top: 10px;
-  border: 1px solid var(--line); border-radius: var(--radius-md);
-  padding: 9px 14px 8px;
-}
-.postcard-reply--human { background: color-mix(in srgb, var(--active) 5%, var(--bg-elev)); }
-.postcard-reply .postcard-head { margin-bottom: 3px; }
-.postcard-reply .postcard-text { font-size: var(--text-base); }
-.postcard-replies {
-  display: flex; align-items: center; gap: 8px;
-  margin-top: 8px; padding: 4px 0;
-  border: 0; background: none; font: inherit; font-size: var(--text-sm); color: var(--muted);
-  cursor: pointer;
-}
-.postcard-replies:hover { color: var(--text); }
-.postcard-replies-marks { display: inline-flex; gap: 3px; }
-.postcard-replies-marks .fmark { width: 16px; height: 16px; border-radius: 3px; }
-
 /* Footer — an explicit ref chip when the id was not in the text, and the
    actions, which appear on hover (a set reaction stays visible). */
 .postcard-foot { display: flex; align-items: center; gap: 8px; margin-top: 2px; min-height: 26px; }
