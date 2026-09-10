@@ -39,3 +39,10 @@ logs/
 /architecture_companion/
 merv/src/*.egg-info/
 cache/
+
+# Local deployment evidence, release copies, and generated browser dependencies.
+/output/
+/repo_browser/
+
+# Paper work is maintained locally, outside this repository.
+/drafts/

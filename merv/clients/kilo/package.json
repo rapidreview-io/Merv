@@ -9,7 +9,7 @@
       "import": "./clients/opencode/plugin.js"
     }
   },
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "author": {
     "name": "RapidReview"
   },
