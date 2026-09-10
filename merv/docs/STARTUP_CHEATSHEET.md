@@ -40,9 +40,9 @@ python3 -m venv .venv
 ```
 
 Starting the brain does not provision compute. For uploads or sandboxes, set
-`MERV_SANDBOXES_URL` and `MERV_SANDBOXES_JWT_SECRET` to a separate development
-merv-sandboxes deployment. The matching secret belongs in
-`SANDBOXES_MERV_JWT_SECRET` there. Configure provider credentials and object
+`MERV_SANDBOXES_URL` and `MERV_SANDBOXES_CONNECTIONS_FILE` to a separate development
+merv-sandboxes deployment. The private connection file contains consumer grants
+issued by that service. Configure provider credentials and object
 storage in that service. Omit both Merv variables for record-only development.
 
 ## Start the brain

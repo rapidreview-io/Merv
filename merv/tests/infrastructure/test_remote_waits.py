@@ -63,6 +63,24 @@ class NativeWaitContractTest(unittest.TestCase):
         with self.assertRaises(InfrastructureUnavailableError):
             self.service.run_wait_facts(sandbox_uid="sbx_one", label="job_1")
 
+    def test_wait_link_retains_the_authenticated_subject_after_the_request(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        from merv.brain.infrastructure.ports import infrastructure_actor
+        from merv.brain.kernel.secret_tokens import wait_signature_matches
+
+        self.client.seed_jobs(project_namespace("p1"), "sbx_one", {"label": "job_1", "exit_code": 0})
+        with infrastructure_actor("user+external"):
+            result = self.service.runs(project_id="p1", sandbox_uid="sbx_one",
+                                       base_url="https://merv.test", wait_secret=b"x" * 32)
+        url = urlsplit(result["runs"][0]["wait_url"])
+        subject = parse_qs(url.query)["subject"][0]
+        self.assertEqual(subject, "user+external")
+        self.assertTrue(wait_signature_matches(
+            key=b"x" * 32, sandbox_uid="sbx_one", label="job_1", subject=subject,
+            presented=url.path.rsplit("/", 1)[-1],
+        ))
+
     def test_closed_legacy_runs_remain_scoped_read_only_history(self):
         with self.store.transaction() as conn:
             conn.execute("INSERT INTO sandboxes (sandbox_uid,project_id,status,created_at,updated_at) VALUES (?,?,?,?,?)",

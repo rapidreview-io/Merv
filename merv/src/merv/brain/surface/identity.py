@@ -50,8 +50,8 @@ class Principal:
     ``LOCAL_PRINCIPAL``.
 
     A project (``mk_``) key additionally binds an immutable ``key_project_id``
-    and (for later OAuth + quota phases) ``audience``/``oauth_family_id`` plus
-    stored ceilings; only such a principal carries a non-None ``key_id``.
+    and optional ``audience``/``oauth_family_id``; only such a principal carries
+    a non-None ``key_id``. Infrastructure policies belong to merv-sandboxes.
     """
 
     tenant_id: str
@@ -61,8 +61,6 @@ class Principal:
     key_project_id: str | None = None
     audience: str | None = None
     oauth_family_id: str | None = None
-    key_sandbox_seconds_ceiling: int | None = None
-    key_blob_bytes_ceiling: int | None = None
     agent_session_id: str | None = None
     agent_experiment_id: str | None = None
     agent_target_type: str | None = None

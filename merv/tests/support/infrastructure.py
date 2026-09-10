@@ -18,6 +18,7 @@ class FakeInfrastructureClient:
         self.calls: list[tuple[str, str, str, Any]] = []
         self.healthy = True
         self.counter = 0
+        self.spend_reports = {}
         self.url = "https://sandboxes.test"
         self.offer = {
             "provider": "fake", "plugin": "fake", "offer_id": "tiny:east",
@@ -51,13 +52,18 @@ class FakeInfrastructureClient:
                            "request": {"command": "python train.py"}}
 
     def request(self, method: str, path: str, *, namespace: str,
-                json: Any = None, params: Any = None, budget: dict[str, Any] | None = None) -> dict[str, Any]:
-        if budget is not None and json is not None:
-            json = {**json, "merv_budget": deepcopy(budget)}
+                json: Any = None, params: Any = None) -> dict[str, Any]:
         self.calls.append((method, path, namespace, deepcopy(json)))
         if not self.healthy:
             raise InfrastructureUnavailableError("test infrastructure unavailable")
         records = self.records.setdefault(namespace, {})
+        if path == "/spend/report":
+            return deepcopy(self.spend_reports.get(namespace, {
+                "namespace": namespace, "member_id": None, "as_of": datetime.now(UTC).isoformat(),
+                "accrued": [], "reserved": [], "hourly_rate": [], "hours": "0", "unpriced_hours": "0",
+                "resource_count": 0, "active_resource_count": 0, "resources": [], "adjustments": [],
+                "daily": [], "by_hardware": [],
+            }))
         if path == "/sandboxes":
             if method == "GET":
                 return {"sandboxes": deepcopy(list(records.values()))}

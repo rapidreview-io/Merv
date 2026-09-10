@@ -419,7 +419,7 @@ def _control_repo_root(
     missing = []
     if not resolve_db_url(env):
         missing.append(DB_URL_ENV_VAR)
-    for key in ("MERV_SANDBOXES_URL", "MERV_SANDBOXES_JWT_SECRET"):
+    for key in ("MERV_SANDBOXES_URL", "MERV_SANDBOXES_CONNECTIONS_FILE"):
         if not env_value(key, env=env):
             missing.append(key)
     if missing:

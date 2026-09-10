@@ -4,8 +4,8 @@ A key's scope is immutable and is one of two shapes. A ``project`` grant binds
 one project. An ``account`` grant authorizes every project its owner belongs
 to, and its ``project_id`` names only the home project it is administered
 from. The presented secret is returned once at mint and only its digest is
-stored. There is no local/cloud profile: the key carries scope + audience +
-(stored, unenforced) ceilings, nothing else. ``verify_secret`` reads the
+stored. The key carries research scope and audience; infrastructure allowances
+belong to the independent sandbox service. ``verify_secret`` reads the
 database fresh on every call so a revoke is effective immediately (INV-4).
 """
 
@@ -43,8 +43,6 @@ class ProjectKeyRecord:
     expires_at: str | None
     revoked_at: str | None
     parent_key_id: str | None
-    sandbox_seconds_ceiling: int | None
-    blob_bytes_ceiling: int | None
     label: str | None = None
 
 
@@ -79,8 +77,6 @@ class ProjectKeys:
         owner_user_id: str,
         expires_at: str | None = None,
         parent_key_id: str | None = None,
-        sandbox_seconds_ceiling: int | None = None,
-        blob_bytes_ceiling: int | None = None,
         audience: str | None = None,
         oauth_family_id: str | None = None,
         grant_scope: str = PROJECT_GRANT,
@@ -90,8 +86,6 @@ class ProjectKeys:
             owner_user_id=owner_user_id,
             expires_at=expires_at,
             parent_key_id=parent_key_id,
-            sandbox_seconds_ceiling=sandbox_seconds_ceiling,
-            blob_bytes_ceiling=blob_bytes_ceiling,
             audience=audience,
             oauth_family_id=oauth_family_id,
             grant_scope=grant_scope,
@@ -106,8 +100,6 @@ class ProjectKeys:
         owner_user_id: str,
         parent_key_id: str,
         expires_at: str | None = None,
-        sandbox_seconds_ceiling: int | None = None,
-        blob_bytes_ceiling: int | None = None,
         audience: str | None = None,
         oauth_family_id: str | None = None,
         grant_scope: str = PROJECT_GRANT,
@@ -118,8 +110,6 @@ class ProjectKeys:
             owner_user_id=owner_user_id,
             expires_at=expires_at,
             parent_key_id=_required(parent_key_id, field="parent_key_id"),
-            sandbox_seconds_ceiling=sandbox_seconds_ceiling,
-            blob_bytes_ceiling=blob_bytes_ceiling,
             audience=audience,
             oauth_family_id=oauth_family_id,
             grant_scope=grant_scope,
@@ -174,8 +164,6 @@ class ProjectKeys:
             expires_at=_expiry(expires_at),
             revoked_at=None,
             parent_key_id=None,
-            sandbox_seconds_ceiling=None,
-            blob_bytes_ceiling=None,
             label=_label(label),
         )
         conn.execute(_INSERT_SQL, _insert_params(record))
@@ -188,8 +176,6 @@ class ProjectKeys:
         owner_user_id: str,
         expires_at: str | None,
         parent_key_id: str | None,
-        sandbox_seconds_ceiling: int | None,
-        blob_bytes_ceiling: int | None,
         audience: str | None,
         oauth_family_id: str | None,
         grant_scope: str,
@@ -198,10 +184,6 @@ class ProjectKeys:
         owner_user_id = _required(owner_user_id, field="owner_user_id")
         grant_scope = _grant_scope(grant_scope)
         expires_at = _expiry(expires_at)
-        sandbox_seconds_ceiling = _ceiling(
-            sandbox_seconds_ceiling, field="sandbox_seconds_ceiling"
-        )
-        blob_bytes_ceiling = _ceiling(blob_bytes_ceiling, field="blob_bytes_ceiling")
         parent_key_id = str(parent_key_id or "").strip() or None
         if parent_key_id:
             parent = self._record_by_id(parent_key_id)
@@ -227,8 +209,6 @@ class ProjectKeys:
             expires_at=expires_at,
             revoked_at=None,
             parent_key_id=parent_key_id,
-            sandbox_seconds_ceiling=sandbox_seconds_ceiling,
-            blob_bytes_ceiling=blob_bytes_ceiling,
         )
         return record, secret
 
@@ -446,9 +426,8 @@ class ProjectKeys:
 _INSERT_SQL = """
 INSERT INTO project_api_keys (
   id, secret_digest, owner_user_id, tenant_id, project_id, grant_scope,
-  audience, oauth_family_id, created_at, expires_at, revoked_at, parent_key_id,
-  sandbox_seconds_ceiling, blob_bytes_ceiling, label
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  audience, oauth_family_id, created_at, expires_at, revoked_at, parent_key_id, label
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -466,8 +445,6 @@ def _insert_params(record: ProjectKeyRecord) -> tuple[Any, ...]:
         record.expires_at,
         record.revoked_at,
         record.parent_key_id,
-        record.sandbox_seconds_ceiling,
-        record.blob_bytes_ceiling,
         record.label,
     )
 
@@ -505,16 +482,6 @@ def _record(row: Any) -> ProjectKeyRecord | None:
         parent_key_id=(
             str(data["parent_key_id"]) if data.get("parent_key_id") else None
         ),
-        sandbox_seconds_ceiling=(
-            int(data["sandbox_seconds_ceiling"])
-            if data.get("sandbox_seconds_ceiling") is not None
-            else None
-        ),
-        blob_bytes_ceiling=(
-            int(data["blob_bytes_ceiling"])
-            if data.get("blob_bytes_ceiling") is not None
-            else None
-        ),
         label=str(data["label"]) if data.get("label") else None,
     )
 
@@ -547,20 +514,6 @@ def _required(value: object, *, field: str) -> str:
     if not text:
         raise ValidationError(f"{field} is required", details={"field": field})
     return text
-
-
-def _ceiling(value: object, *, field: str) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        raise ValidationError(f"{field} must be a nonnegative integer")
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValidationError(f"{field} must be a nonnegative integer") from exc
-    if parsed < 0:
-        raise ValidationError(f"{field} must be a nonnegative integer")
-    return parsed
 
 
 def _expiry(value: object) -> str | None:

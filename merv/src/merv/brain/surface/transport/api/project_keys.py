@@ -24,8 +24,6 @@ _CREATE_KEY_FIELDS = frozenset(
     {
         "expires_at",
         "parent_key_id",
-        "sandbox_seconds_ceiling",
-        "blob_bytes_ceiling",
         # "account" mints a key that reaches every project this owner belongs
         # to; the path project_id becomes its home project. Absent = "project",
         # so an older client keeps minting exactly what it minted before.
@@ -44,16 +42,20 @@ def build_router(*, keys: ProjectKeyControl) -> APIRouter:
         payload = body or {}
         unknown = sorted(set(payload) - _CREATE_KEY_FIELDS)
         if unknown:
+            message = "unsupported key-create field(s)"
+            if set(unknown) & {"sandbox_seconds_ceiling", "blob_bytes_ceiling"}:
+                message = (
+                    "infrastructure limits cannot be configured on Merv keys; "
+                    "manage infrastructure allowances in merv-sandboxes"
+                )
             raise ValidationError(
-                "unsupported key-create field(s)", details={"fields": unknown}
+                message, details={"fields": unknown}
             )
         return keys.create(
             project_id=project_id,
             owner_user_id=_owner(request),
             expires_at=payload.get("expires_at"),
             parent_key_id=payload.get("parent_key_id"),
-            sandbox_seconds_ceiling=payload.get("sandbox_seconds_ceiling"),
-            blob_bytes_ceiling=payload.get("blob_bytes_ceiling"),
             grant_scope=payload.get("grant_scope") or PROJECT_GRANT,
         )
 

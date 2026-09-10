@@ -180,8 +180,6 @@ class SupabaseVerifier:
             ),
             audience=record.audience,
             oauth_family_id=record.oauth_family_id,
-            key_sandbox_seconds_ceiling=record.sandbox_seconds_ceiling,
-            key_blob_bytes_ceiling=record.blob_bytes_ceiling,
         )
 
     def _lookup_key_user(self, digest: str) -> str:

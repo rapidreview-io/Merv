@@ -17,7 +17,8 @@ def verify_composition() -> None:
     # No Merv helper in this process can accidentally resolve production DB.
     os.environ["MERV_DB_URL"] = ""
     os.environ["RESEARCH_PLUGIN_DB_URL"] = ""
-    from verify_sandboxes_cutover import emit, require
+    from verify_sandboxes_cutover import emit, require, verify_connection
+    from merv.brain.infrastructure import infrastructure_actor
     from fastapi.testclient import TestClient
     from merv.brain.kernel.state.store import MIGRATIONS, StateStore
     from merv.brain.kernel.version import SERVER_VERSION
@@ -54,10 +55,10 @@ def verify_composition() -> None:
                 require(initialized.json()["result"]["serverInfo"]["version"] == SERVER_VERSION, "MCP returned the wrong release version")
             client = server.app.infrastructure_client
             require(client is not None and client.health()["ok"], "native service health failed")
-            identity = client.request("GET", "/auth/me", namespace="merv-control")
-            require(identity["namespace"] == "merv-control" and identity["token_id"].startswith("svc_"), "native delegated JWT failed")
+            with infrastructure_actor(os.environ.get("MERV_VERIFY_SUBJECT")):
+                verify_connection(client, os.environ.get("MERV_VERIFY_PROJECT_ID", ""))
             emit("synthetic_hosted_composition", ok=True, version=SERVER_VERSION, database="temporary_sqlite",
-                 auth_enforced=True, synthetic_mcp_credential_verified=True, native_health=True, delegated_auth=True)
+                 auth_enforced=True, synthetic_mcp_credential_verified=True, native_health=True, consumer_auth=True)
         finally:
             server.shutdown()
 

@@ -872,6 +872,8 @@ class ServiceLayoutTest(unittest.TestCase):
         # read from the environment or generated into the state root, so the
         # module owns file and env access now. Still exact — a token helper
         # that starts reaching for anything else has stopped being one.
+        # urllib.parse encodes the authenticated subject in v2 wait URLs; it
+        # performs no network access and remains part of this URL helper.
         self.assertEqual(
             _import_module_names(BACKEND_ROOT / "kernel" / "secret_tokens.py"),
             {
@@ -883,6 +885,7 @@ class ServiceLayoutTest(unittest.TestCase):
                 "os",
                 "pathlib",
                 "secrets",
+                "urllib.parse",
             },
         )
         sensitive_paths = (

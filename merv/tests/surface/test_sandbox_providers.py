@@ -1,14 +1,7 @@
-"""Provider connections behind Sandboxes → Configure.
-
-Covers the write-only credential contract (secrets never echo, non-secret
-values re-render), partial-update semantics at the store, the request-time
-disable gate wired into SandboxEngine, and the human-session boundary on the
-HTTP writes.
-"""
+"""Merv exposes authorized provider discovery and links to native administration."""
 
 from __future__ import annotations
 
-import json
 import tempfile
 import time
 import unittest
@@ -20,7 +13,6 @@ from fastapi.testclient import TestClient
 
 from tests.support.brain import TestBrain
 from tests.support.infrastructure import FakeInfrastructureClient
-from merv.brain.kernel.utils import NotFoundError, ValidationError
 from merv.brain.surface.auth import SupabaseVerifier
 from merv.brain.surface.transport.api import create_fastapi_app
 from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
@@ -67,43 +59,16 @@ class SandboxProviderSettingsTest(unittest.TestCase):
         self.brain.shutdown()
         self.tmp.cleanup()
 
-    def test_catalog_and_required_fields_come_from_the_service(self) -> None:
+    def test_discovery_contains_no_credential_or_policy_forms(self) -> None:
         overview = self.settings.overview(project_id=self.project_id)
-        self.assertEqual({row["provider"] for row in overview["providers"]}, {"fake", "aws"})
-        aws = next(row for row in overview["providers"] if row["provider"] == "aws")
-        self.assertEqual({field["key"] for field in aws["fields"]}, {"access_key_id", "secret_access_key"})
-        self.assertFalse(aws["connected"])
-        self.assertTrue(aws["credentials_replace"])
+        self.assertEqual(overview["management_url"], "https://sandboxes.test/ui/settings")
+        self.assertEqual({row["provider"] for row in overview["providers"]}, {"fake"})
+        for row in overview["providers"]:
+            self.assertNotIn("fields", row)
+            self.assertNotIn("daily_usd_limit", row)
+        for method in ("set_credentials", "set_enabled", "set_daily_limit", "disconnect", "verify"):
+            self.assertFalse(hasattr(self.settings, method))
 
-    def test_credentials_replace_remotely_and_never_persist_or_echo(self) -> None:
-        entry = self.settings.set_credentials(project_id=self.project_id, provider="aws",
-            values={"access_key_id": "AKIAEXAMPLE", "secret_access_key": "private-key"})
-        self.assertTrue(entry["connected"])
-        self.assertNotIn("private-key", json.dumps(entry))
-        self.assertTrue(all(field["value"] == "" for field in entry["fields"]))
-        self.assertEqual(self.brain.store.sandbox_provider_credentials(project_id=self.project_id, provider="aws"), "{}")
-        with self.assertRaises(ValidationError):
-            self.settings.set_credentials(project_id=self.project_id, provider="aws", values={"access_key_id": "partial"})
-
-    def test_unknown_provider_and_field_are_rejected(self) -> None:
-        with self.assertRaises(NotFoundError):
-            self.settings.set_credentials(project_id=self.project_id, provider="missing", values={"X": "y"})
-        with self.assertRaises(ValidationError):
-            self.settings.set_credentials(project_id=self.project_id, provider="aws", values={"unknown": "x"})
-
-    def test_connections_are_project_scoped(self) -> None:
-        other = self.surface.research.create_project(name="Other")["id"]
-        self.settings.set_credentials(project_id=self.project_id, provider="aws",
-            values={"access_key_id": "AKIAEXAMPLE", "secret_access_key": "private-key"})
-        aws = next(row for row in self.settings.overview(project_id=other)["providers"] if row["provider"] == "aws")
-        self.assertFalse(aws["connected"])
-
-    def test_verify_and_disconnect_use_the_service(self) -> None:
-        self.settings.set_credentials(project_id=self.project_id, provider="aws",
-            values={"access_key_id": "AKIAEXAMPLE", "secret_access_key": "private-key"})
-        self.assertTrue(self.settings.verify(project_id=self.project_id, provider="aws")["ok"])
-        overview = self.settings.disconnect(project_id=self.project_id, provider="aws")
-        self.assertFalse(next(row for row in overview["providers"] if row["provider"] == "aws")["connected"])
 
 
 def _postgrest(request: httpx.Request) -> httpx.Response:
@@ -160,57 +125,29 @@ class SandboxProviderHttpBoundaryTest(unittest.TestCase):
         self.brain.shutdown()
         self.tmp.cleanup()
 
-    def test_browser_session_saves_and_disconnects(self) -> None:
-        saved = self.client.put(
-            f"/api/projects/{self.project_id}/sandbox-providers/aws",
-            json={"values": {"access_key_id": "AKIA1", "secret_access_key": "secret"}},
-            headers=_bearer(self.jwt_a),
-        )
-        self.assertEqual(saved.status_code, 200, saved.text)
-        self.assertTrue(saved.json()["connected"])
-        toggled = self.client.delete(
-            f"/api/projects/{self.project_id}/sandbox-providers/aws",
-            headers=_bearer(self.jwt_a),
-        )
-        self.assertEqual(toggled.status_code, 200, toggled.text)
-        overview = self.client.get(
-            f"/api/projects/{self.project_id}/sandbox-providers",
-            headers=_bearer(self.jwt_a),
-        )
-        self.assertEqual(overview.status_code, 200, overview.text)
-        aws = next(
-            e for e in overview.json()["providers"] if e["provider"] == "aws"
-        )
-        self.assertFalse(aws["enabled"])
+    def test_browser_and_machine_key_can_only_read_discovery(self) -> None:
+        for secret in (self.jwt_a, self.mk_key):
+            headers = _bearer(secret)
+            base = f"/api/projects/{self.project_id}/sandbox-providers"
+            response = self.client.get(base, headers=headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["management_url"], "https://sandboxes.test/ui/settings")
+            for method, path, body in (
+                ("PUT", "/aws", {"values": {"secret_access_key": "secret"}}),
+                ("DELETE", "/aws", None),
+                ("POST", "/aws/enabled", {"enabled": False}),
+                ("POST", "/aws/verify", None),
+                ("POST", "/aws/daily-limit", {"daily_usd_limit": 100}),
+            ):
+                denied = self.client.request(method, base + path, headers=headers, json=body)
+                self.assertIn(denied.status_code, {403, 404, 405}, denied.text)
 
-    def test_enabled_requires_a_real_boolean(self) -> None:
-        # bool("false") is True — a string must not flip the switch.
-        for bad in ("false", "true", 1, None):
-            rejected = self.client.post(
-                f"/api/projects/{self.project_id}/sandbox-providers/aws/enabled",
-                json={"enabled": bad},
-                headers=_bearer(self.jwt_a),
-            )
-            self.assertEqual(rejected.status_code, 400, rejected.text)
+    def test_discovery_requires_project_access(self) -> None:
+        response = self.client.get(
+            "/api/projects/not-my-project/sandbox-providers", headers=_bearer(self.mk_key),
+        )
+        self.assertIn(response.status_code, {403, 404}, response.text)
 
-    def test_machine_key_reads_but_cannot_write(self) -> None:
-        overview = self.client.get(
-            f"/api/projects/{self.project_id}/sandbox-providers",
-            headers=_bearer(self.mk_key),
-        )
-        self.assertEqual(overview.status_code, 200, overview.text)
-        denied_save = self.client.put(
-            f"/api/projects/{self.project_id}/sandbox-providers/aws",
-            json={"values": {"access_key_id": "AKIA1", "secret_access_key": "secret"}},
-            headers=_bearer(self.mk_key),
-        )
-        self.assertEqual(denied_save.status_code, 403, denied_save.text)
-        denied_toggle = self.client.post(
-            f"/api/projects/{self.project_id}/sandbox-providers/aws/enabled",
-            json={"enabled": False},
-            headers=_bearer(self.mk_key),
-        )
-        self.assertEqual(denied_toggle.status_code, 403, denied_toggle.text)
 
 
 if __name__ == "__main__":

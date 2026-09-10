@@ -6,6 +6,7 @@ import importlib.util
 import os
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -54,6 +55,35 @@ def test_failure_report_never_echoes_signed_urls():
     report = verifier.safe_failure(error)
     assert report == {"type": "HTTPStatusError", "http_status": 403}
     assert "very-secret" not in str(report)
+
+
+def test_storage_smoke_validates_both_consumer_connections_before_any_write():
+    class Client:
+        def namespace_for_project(self, project_id):
+            return {"p_one": "one", "p_two": "two"}[project_id]
+
+        def request(self, method, path, *, namespace):
+            assert method == "GET" and path == "/auth/me"
+            return {"namespace": self.namespace_for_project(namespace),
+                    "role": "consumer" if namespace == "p_one" else "admin"}
+
+    with patch.object(verifier, "verify_artifact_write") as write:
+        with pytest.raises(verifier.CheckFailed, match="consumer grant"):
+            verifier.verify_writes(SimpleNamespace(project_id="p_one", other_project_id="p_two"), Client())
+        write.assert_not_called()
+
+
+def test_verifier_uses_configured_namespace_without_inventing_an_identity():
+    class Client:
+        def namespace_for_project(self, project_id):
+            assert project_id == "p_existing"
+            return "legacy-resource-namespace"
+
+        def request(self, method, path, *, namespace):
+            assert (method, path, namespace) == ("GET", "/auth/me", "p_existing")
+            return {"namespace": "legacy-resource-namespace", "role": "consumer"}
+
+    assert verifier.verify_connection(Client(), "p_existing")["role"] == "consumer"
 
 
 def test_failed_blob_upload_still_deletes_only_its_owned_object():
@@ -128,9 +158,14 @@ def test_disposable_composition_uses_synthetic_database_and_authentication(capsy
     from tests.support.infrastructure import FakeInfrastructureClient
 
     class NativeClient(FakeInfrastructureClient):
+        def namespace_for_project(self, project_id):
+            assert project_id == "p_verify"
+            return "authorized-namespace"
+
         def request(self, method, path, *, namespace, **kwargs):
             if path == "/auth/me":
-                return {"namespace": namespace, "token_id": "svc_smoke"}
+                assert namespace == "p_verify"
+                return {"namespace": "authorized-namespace", "token_id": "tok_smoke", "role": "consumer"}
             return super().request(method, path, namespace=namespace, **kwargs)
 
     composition_spec = importlib.util.spec_from_file_location(
@@ -141,7 +176,8 @@ def test_disposable_composition_uses_synthetic_database_and_authentication(capsy
     env = {"MERV_DB_URL": "postgresql://must-never-connect/production",
            "RESEARCH_PLUGIN_DB_URL": "postgresql://must-never-connect/production",
            "SUPABASE_URL": "https://auth.test", "SUPABASE_JWT_SECRET": "synthetic-secret-for-test-only-12345",
-           "MERV_WAIT_SECRET": "synthetic-wait-secret-only-123456789", "MERV_REQUIRE_AUTH": "1"}
+           "MERV_WAIT_SECRET": "synthetic-wait-secret-only-123456789", "MERV_REQUIRE_AUTH": "1",
+           "MERV_VERIFY_PROJECT_ID": "p_verify"}
     with patch.dict(os.environ, env, clear=True), patch.dict(sys.modules, {"verify_sandboxes_cutover": verifier}), \
             patch("merv.brain.surface.surface.build_infrastructure_client", return_value=NativeClient()):
         composition.verify_composition()

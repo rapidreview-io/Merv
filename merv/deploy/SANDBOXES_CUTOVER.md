@@ -1,193 +1,336 @@
-# Move production to merv-sandboxes
+# Infrastructure ownership cutover
 
-This is the historical sandbox-infrastructure cutover runbook. Its evidence
-storage steps have been superseded: Merv now stores artifacts, figures, feed
-bytes, and diagnostic payloads in its own R2 bucket using `MERV_BLOB_*`
-configuration. See `ARTIFACT_R2_CUTOVER.md` for that migration. Native sandbox
-and large dataset/model storage remain under merv-sandboxes as described below.
+Merv retains research authentication, permissions, records and its own artifact
+R2 configuration. merv-sandboxes owns infrastructure identities, budgets, provider
+credentials, resource lifecycle and large workload storage. Merv connects with
+`MERV_SANDBOXES_URL` and a private `MERV_SANDBOXES_CONNECTIONS_FILE`; there is no
+shared signing key or application-supplied spending allowance.
 
-Merv retains its research PostgreSQL database. Sandbox lifecycle, provider
-credentials, submitted blobs, and heavy object bytes move to the independent
-`merv-sandboxes` service. The Merv process needs only `MERV_SANDBOXES_URL` and
-`MERV_SANDBOXES_JWT_SECRET` for infrastructure access.
+This procedure is not complete until policy/usage reconciliation and recovery
+rehearsal pass. [BUDGET_MIGRATION.md](BUDGET_MIGRATION.md) describes the exporter
+and importer, including outstanding legacy quota conflicts. Do not switch an
+account with unresolved conflicts. The older storage procedure is retained only
+as [historical evidence](SANDBOXES_STORAGE_MIGRATION_HISTORY.md).
 
-## Preserve the existing deployment
+## Prepare backups and reviewed mappings
 
-Production is reached through the existing `ResearchSuite_Control` SSH alias.
-The historical Merv service is `deploy-control-1`; its research database is
-`deploy-supabase-db-1`. Its release directory and exact image are available in
-`docker inspect`, under the Compose working-directory label and `Image`.
-Capture these before changing anything. The older `deploy-postgres-1` is not
-the current research database.
+By default the staging helper targets the existing Docker host: `deploy-control-1`,
+`deploy-supabase-db-1`, `sandboxes-control-1`, `sandboxes-pipelines-worker-1`,
+and `sandboxes-postgres-1`. Its source paths are explicit in the script. Review
+them against the actual deployment before use. For another host or a disposable
+rehearsal, supply the complete `deployment` object described below.
+It retains both database dumps, image references/tags, original configuration,
+native data and Merv management volumes. No service is restarted or database
+imported by staging. Backups contain secrets and must remain private.
 
-`stage_sandboxes_cutover.py --stage-directory <new-absolute-directory>` creates
-restricted backups, exact image rollback tags, the paired delegated secret,
-provider-transfer manifests, and Compose overlays without restarting services.
-Its Lambda and Thunder host connections use
-`namespace_prefixes=["merv-project-"]`; standalone native-service users cannot
-use Merv's platform credentials. The project's own GCP key is staged separately
-for its namespace vault.
+Create a reviewed deployment plan, consistent with the ownership manifest:
 
-On the Docker host, create a mode-0700 cutover directory outside the checkout.
-Save the previous image with a rollback tag; copy the existing Compose files,
-operator env files and Caddyfile there with mode 0600. Export both PostgreSQL
-databases before deployment, and again after stopping the old Merv writers:
+```json
+{
+  "version": 1,
+  "service_url": "https://sandboxes.example.org",
+  "application_id": "research-application",
+  "projects": {
+    "proj_existing": {
+      "namespace": "existing-resource-namespace",
+      "account_id": "acct_destination",
+      "subjects": {"merv-user-id": "member_destination"}
+    }
+  },
+  "host_provider_namespaces": {
+    "lambda": ["existing-resource-namespace"],
+    "thunder_compute": []
+  }
+}
+```
+
+An optional `deployment` object in this same plan identifies all source locations:
+
+```json
+{
+  "containers": {
+    "merv": "source-merv",
+    "native": "source-native",
+    "worker": "source-worker"
+  },
+  "databases": {
+    "merv": {"container": "source-merv-db", "user": "postgres", "database": "postgres"},
+    "native": {"container": "source-native-db", "user": "sandboxes", "database": "sandboxes"}
+  },
+  "volumes": {
+    "native-data": "source-native-data",
+    "merv-management": "source-management"
+  },
+  "files": {
+    "native-original.env": "/srv/native/.env",
+    "merv-provider-original.env": "/srv/merv/provider-secrets.env",
+    "merv-supabase-original.env": "/srv/merv/supabase-db.env",
+    "merv-compose-original.yml": "/srv/merv/docker-compose.override.yml",
+    "merv-launcher-original.sh": "/srv/merv/control-up.sh",
+    "Caddyfile-original": "/etc/caddy/Caddyfile"
+  }
+}
+```
+
+Custom configuration must name every role and file; missing values never fall
+back to the original host. Files require absolute paths. If production uses
+additional Compose overlays or environment files, include each one in
+`deployment.additional_files`, mapping a unique `extra-` prefixed filename to
+its absolute source path (for example, `extra-native-overlay.json`). These files
+are retained with the same private permissions and checksums as the required
+backups. Inventory the active container's Compose labels and referenced files;
+an old launcher or a release directory alone may omit active configuration.
+Volume archives run in
+a temporary container using the inspected native image, with a read-only source
+mount, no network, and no image pull. The image must contain `tar` and gzip support,
+as the reference control image does. This also works when the Docker volume
+mountpoint is inside Docker Desktop's VM. A missing volume is rejected before
+Docker can create an empty replacement.
+
+Every credential-bearing project needs an explicit mapping. Every existing
+Lambda/Thunder host credential needs an explicit namespace selection; an empty
+selection exposes it to no namespace. The project subjects identify the active
+users whose consumer grants must be verified before activation. They carry no
+budget values. Existing resource namespace names are preserved.
 
 ```sh
-docker exec deploy-supabase-db-1 pg_dump -U postgres -d postgres -Fc > merv.dump
-docker exec sandboxes-postgres-1 pg_dump -U sandboxes -d sandboxes -Fc > sandboxes.dump
-pg_restore --list merv.dump > merv-restore-list.txt
-pg_restore --list sandboxes.dump > sandboxes-restore-list.txt
+python deploy/stage_sandboxes_cutover.py prepare \
+  --plan approved-deployment.json --stage-directory /private/cutover-initial
 ```
 
-These commands must run from the restricted cutover directory. Verify both
-archives with a restore into disposable databases before final cutover.
-For the complete Supabase dump, restore as `supabase_admin`: the ordinary
-`postgres` role cannot restore Supabase's managed `vault.secrets` table.
-Retain Docker volumes, the old images, both dumps, and original object buckets
-through the rollback window. Do not run Compose with `--remove-orphans` during
-cutover; stop retired services explicitly only after verification.
+The new directory is mode 0700 and its files are mode 0600. Preparation produces
+no consumer credential. A completion summary fingerprints the reviewed plan;
+finalization rejects a modified plan or incomplete preparation. The summary also
+records each prepared file's SHA-256 and size. Missing or changed backups,
+configuration, or extracted evidence block finalization before grant requests.
+Stages made before this evidence manifest was added require a new preparation.
+A preparation
+failure can leave useful partial backups; retain them and use a new directory
+after resolving the failure. Restore database archives into disposable databases
+to verify recovery, rather than relying only on archive listings. Full Supabase
+restoration requires its migration administrator for managed objects.
 
-## Configure the external service
+`native-provider-additions.json` contains exact namespace scopes and credential
+references. Merge these additions into the reviewed native provider configuration,
+preserving every unrelated instance and resolving alias collisions explicitly.
+Do not replace the native provider list with this additions file. The accompanying
+`native-provider.env` contains only transferred secrets; its overlay supplies
+them to control and the workflow worker. It does not alter provider selection,
+native storage configuration or budget policies.
 
-Deploy the merv-sandboxes release containing delegated Merv authentication,
-object retention, and operator adoption support. Set the same random secret in
-`SANDBOXES_MERV_JWT_SECRET` and `MERV_SANDBOXES_JWT_SECRET`; never print it or
-place it in source control. Keep exact provider connections and spending limits
-when moving platform and project credentials into the external service.
+`merv-base.env` preserves the established authentication/database settings and
+`MERV_BLOB_*` artifact storage values. Review it against the complete deployed
+application configuration before installation; the helper uses an explicit
+allowlist. Provider credentials are excluded. Artifact storage does not move as
+part of this budget migration.
 
-Production heavy bytes already live in R2 bucket `test1`. The new service uses
-bucket `sandboxes` on the same account with the same credential identity. Set:
+## Freeze, reconcile and import
 
-```dotenv
-SANDBOXES_STORAGE__ADOPTED_BUCKETS=["test1"]
-SANDBOXES_STORAGE__NAMESPACE_MAX_BYTES=5497558138880
-```
+Freeze policy edits and new rentals/renewals; suspend affected native accounts.
+Pause native workflow coordination before upgrading records that lack saved
+grants. Preserve already accepted jobs, resources and cleanup workers. Capture
+final backups and export the final legacy policy/usage state while the stopped
+legacy container and its configuration remain available. Use a new final staging
+directory, such as `/private/cutover-final`, for the final preparation pass.
 
-The allowlisted bucket remains owned by the external service. Public upload
-requests cannot choose an adopted bucket. Native internal catalog locators
-preserve its existing keys, so adopting terabytes does not require copying
-them. The namespace limit must cover existing bytes and incomplete uploads;
-the former 1 TiB native default is smaller than production's largest project.
+Run the exporter and native import preview described in
+[BUDGET_MIGRATION.md](BUDGET_MIGRATION.md). Reconcile every policy, payer, current
+commitment, historical adjustment, provider control and queued workflow against
+the inventories. Apply only the reviewed manifest and retain its receipt. The
+destination remains suspended. New worker startup must follow explicit review
+of `authorize_pending_compute` for unfinished workflows.
 
-Merv heavy objects use namespace `merv-project-<project_id>` and name equal to
-their SHA-256. Submitted blobs use namespace `merv-blobs` and name
-`<original_namespace>/<sha256>`. The Merv ledger's IDs, names, versions and
-research relationships remain intact.
+Distinguish an unapplied rehearsal from an already applied account import. The
+former needs a fresh full export; the latter needs the documented final-delta
+export against its applied receipt and current native inventory. A delta keeps
+existing native policy edits, grants and queued authority. Retain the previous
+snapshot, mapping, manifest and report as its evidence; do not reuse stale source
+policy values as the current native base. Preview, interrupted retry and identical
+replay must succeed in the disposable rehearsal before operational activation.
 
-## Import and verify bytes
-
-Place `migrate_to_sandboxes.py` on the Docker host and in a disposable native
-service worker. Give that worker access to the native database and legacy MinIO
-networks, using the existing native configuration securely. Set `MIGRATION_WORKER`
-to its container name. Export while the old control container still exists:
+After ownership import, transfer namespace-owned credentials using the native
+operator CLI, in the native environment with its existing vault key:
 
 ```sh
-python3 migrate_to_sandboxes.py --blob-endpoint http://deploy-minio-1:9000 --export legacy-source.json
-docker exec -i "$MIGRATION_WORKER" python /tmp/migrate_to_sandboxes.py \
-  --trust-legacy-multipart --report /tmp/merv-storage-audit.json < legacy-source.json
+sbx providers import /private/cutover-final/native-own-provider-import.json \
+  --config service.toml
+sbx providers import /private/cutover-final/native-own-provider-import.json \
+  --config service.toml --apply
 ```
 
-The export is created exclusively with mode 0600 and contains source S3
-credentials. It must stay in the restricted operator directory. The worker
-defaults to an audit: it reads and verifies source bytes without creating
-native objects. Its output/report contains no credentials.
+The default previews and rolls back. Apply inserts the entire batch atomically;
+replay accepts identical connections and refuses to overwrite different keys.
+Each namespace must belong to the declared suspended account. Disabled provider
+entries require the corresponding imported native spending control. No provider
+network calls occur; imported keys remain unverified until checked through normal
+provider administration. The previous Merv-specific provider importer is retired.
 
-Existing single-PUT objects are checked against provider SHA-256 and size.
-Legacy Merv multipart uploads verified size only; their historical digest
-cannot be reconstructed cheaply from a multipart ETag. The explicit
-`--trust-legacy-multipart` flag preserves that digest and records
-`legacy_manifest_sha256_size_verified` separately from provider-verified
-checksums. It never silently calls those hashes newly verified.
+## Create grants and finalize the connection
 
-The worker copies and hashes all submitted MinIO blobs. It also recovers
-available heavy objects missing from R2 from the retained MinIO bucket
-`research-plugin-storage`; this recovers the older project's 26 objects that
-otherwise already appeared missing in the old deployment. Copied objects go
-into the native bucket. Replays fully hash each source blob and verify the native copy again, but reuse matching published receipts without uploading the bytes again. Blob MIME types and absolute expiration timestamps are preserved. Already
-expired source blobs are counted separately and need not be revived. Heavy
-objects remain pinned until the Merv ledger applies retention or deletion.
+In merv-sandboxes, the account owner creates the application grant and external
+subject bindings from the reviewed plan. Consumer credentials cannot change
+budgets or provider configuration. Save the issued credentials privately:
 
-After the audit has no failures, import:
+```json
+{
+  "proj_existing": {
+    "namespace": "existing-resource-namespace",
+    "token": "sbxt_REPLACE_WITH_ISSUED_CREDENTIAL"
+  }
+}
+```
 
 ```sh
-docker exec -i "$MIGRATION_WORKER" python /tmp/migrate_to_sandboxes.py \
-  --apply --trust-legacy-multipart --report /tmp/merv-storage-import.json < legacy-source.json
-docker exec "$MIGRATION_WORKER" cat /tmp/merv-storage-import.json > ./merv-storage-import.json
-chmod 0600 ./merv-storage-import.json
+python deploy/stage_sandboxes_cutover.py finalize \
+  --stage-directory /private/cutover-final --connections issued-connections.json
 ```
 
-The import is restartable. It preserves source bytes, uses deterministic names
-and idempotency keys, and reports every failure. Retry transient failures until
-the final report has none. Do not proceed with missing available bytes.
+Finalization calls only `GET /v1/auth/me` for every reviewed project/subject. It
+requires the exact account, member, application, namespace and consumer role.
+Only after all checks pass does it publish the private `activation` directory
+containing the connection JSON, Merv env, Compose overlay and sanitized receipt.
+This verifies connection ownership, not accounting reconciliation or available
+budget. It neither issues grants nor restarts services. It refuses to overwrite
+an existing activation directory. An interrupted `activation.pending` directory
+requires operator inspection before removal/retry.
 
-For old uploading rows, complete matching bytes are adopted as available
-native objects. Missing or incomplete bytes get fresh native upload sessions;
-these uploads can restart through Merv. Old partial multipart uploads and
-sidecar metadata remain in the original bucket for operator recovery. Their
-existing multipart parts cannot be resumed through a different service's
-upload protocol.
-
-## Freeze and switch Merv
-
-Stop old Merv writers and confirm zero active legacy sandboxes. Take final
-dumps, regenerate the source export and rerun the import so no last-minute
-writes are missed. Keep the stopped old control container until its final
-export completes. Use the successful final report to update upload IDs and
-completion-token references in one guarded database transaction:
+Install the activation files using the reviewed release Compose configuration.
+Pass the activation env file to Compose's interpolation step as well as using
+the overlay. An `env_file` service entry alone does not override the base file's
+explicit environment values:
 
 ```sh
-python3 migrate_to_sandboxes.py --source-user supabase_admin \
-  --apply-upload-mapping merv-storage-import.json
+docker compose --env-file /private/cutover-final/activation/merv.env \
+  -f deploy/docker-compose.yml \
+  -f /private/cutover-final/activation/merv-connection-overlay.json config
 ```
 
-Supabase's ordinary `postgres` role can read these tables but cannot update
-them. The explicit `--source-user supabase_admin` uses the existing migration
-administrator; it does not broaden table grants.
+This command prints resolved secrets; inspect its output privately and never
+attach it to a public report. Include the deployment's reviewed database and
+other necessary overlays before activation.
 
-The mapping requires the old uploading rows still match the exported state.
-It preserves all ledger IDs and translates them into resumable native targets.
-The encoded migration handle contains the project, native object ID, and legacy
-ledger row ID. The row ID keeps completion handles distinct when several pending
-ledger rows share the same immutable native bytes. Three production pending rows
-had declared sizes inconsistent with a matching available SHA; the report records
-the fully verified canonical available row and size. The mapping transaction
-repairs only those pending sizes, checks exact old-or-new handle/size pairs, and
-rechecks the canonical row's project, SHA, available status, and size. Completion
-tokens carry no size payload and keep their original row IDs.
+The overlay mounts only the connection file at
+`/run/secrets/merv_sandbox_connections`. Local Compose preserves host ownership:
+make that file readable by Merv's container UID 10001 while retaining mode 0600
+and keeping the containing operator directory private. Check the rendered Compose
+configuration privately before restarting; inherited environment/volume entries
+must not retain old provider credentials or retired signing keys. Keep native
+administrator credentials out of Merv.
 
-For this production host, run the disposable operator worker on both
-`sandboxes_default` and `deploy_default`. Use `sandboxes-postgres-1` for the native
-DB hostname and `http://deploy-minio-1:9000` for the source blob endpoint. The
-public Caddy object routes do not proxy bucket-root listing requests. Do not attach
-production application containers to extra networks. The staged operator wrapper
-supports `--apply-only --source <frozen-export> --report-prefix native-storage-final`
-for the final pass and removes its temporary container afterward.
-Repeated application accepts already-translated rows.
+Start the new Merv release against the existing research database. Verify reads,
+authentication and connection ownership, then reopen admission under native
+budgets and perform the reviewed bounded checks in
+[SANDBOXES_SMOKE.md](SANDBOXES_SMOKE.md). Retain old data, configurations and
+images for the agreed recovery window. Do not remove unrelated containers or
+volumes as part of a Compose restart.
 
-Start the new Merv image against the same research database, using the external
-service URL and delegated secret. Remove its provider credentials, S3
-credentials and management-key mount. Verify authenticated project access,
-historical blob reads, heavy downloads (including recovered MinIO objects),
-new storage upload/complete/download, provider listing, and a bounded sandbox
-lifecycle. Compare research-table counts against the frozen snapshot.
+## Recovery boundary
 
-Only after these checks pass, stop the retired MinIO and old PostgreSQL
-containers. Keep their volumes and source buckets as rollback backups. Update
-Caddy to remove obsolete MinIO proxy routes, and verify public Merv and
-merv-sandboxes health. Update the production launcher to use the new release
-and external-infrastructure env file so a later restart preserves the cutover.
+Before any new-engine writes, restoring the frozen databases and old deployment
+may be possible after verifying intervening resource state. Once new accounting,
+resource or research writes occur, preserve fresh dumps and prefer forward repair.
+Returning to an old engine requires explicit delta replay and reconciliation;
+restoring an old snapshot or toggling a compatibility flag would lose commitments.
+Final-delta and interrupted-recovery rehearsal remain mandatory release gates.
 
-## Rollback
+## Disposable rehearsal
 
-Before new production writes, stop the new Merv control, restore the final
-research dump (which restores old upload IDs), and restart the recorded old
-image with its saved env files, management volume, and MinIO. Restore the old
-Caddyfile if its routes changed. The source buckets were never deleted.
+The opt-in rehearsal uses uniquely named containers, databases, networks and
+volumes. It requires cached PostgreSQL and application images and the native
+Python package in the test environment:
 
-After new writes, preserve a fresh dump of both databases before rolling back.
-New native uploads are not automatically present in old storage, and the old
-Merv build cannot read native upload IDs. Export/copy those new bytes and
-translate their ledger rows before returning to the old build; restoring an
-older dump would discard those research writes. Do not merge divergent
-databases or delete the native data to force a rollback.
+```sh
+MERV_CUTOVER_DOCKER_REHEARSAL=1 \
+  pytest tests/infrastructure/test_cutover_docker_rehearsal.py -q
+```
+
+Defaults are `postgres:17-alpine`, `deploy-control:latest`, and
+`sandboxes-smoke-control:latest`. `MERV_CUTOVER_LEGACY_IMAGE` and
+`MERV_CUTOVER_NATIVE_IMAGE` can select other cached images containing the required
+Python/psycopg and archive utilities. The test never pulls an image or uses an
+existing application container. Its uniquely named resources and rollback tags
+are removed after success or failure, and absence of its containers/volumes is
+checked.
+
+It executes real PostgreSQL dumps/restores and volume archives, verifies restored
+native vault decryption, grants, resource/job records and output bytes, then runs
+legacy conversion, native account/provider preview/apply/replay and fresh owner
+grant issuance. It checks missing/changed preparation evidence, an interrupted
+activation write, and subsequent finalization over verified local HTTPS. Merv's
+actual client loads the resulting connection file, reads retained outputs, and
+obeys the same owner-edited native budget as an independent application. Source
+containers remain running throughout preparation.
+
+This uses projected legacy research fixtures, synthetic job state/output, a fake
+compute provider and unverified fixture provider keys. The current native API runs
+locally against the restored database; source application containers supply
+inspection/extraction environments. It does not establish managed Supabase restore
+permissions, a full packaged Merv server restart against migrated research data,
+real cloud credential validity or operational cutover readiness. These remain
+explicit release checks on reviewed deployment inputs.
+
+### Current release image checks
+
+Build from the reviewed working trees using each project's actual Dockerfile,
+then run the isolated packaging checks from Merv's Python project directory:
+
+```sh
+# From Merv/merv:
+docker build -f deploy/Dockerfile -t merv-budget-cutover:reviewed .
+# From the merv-sandboxes repository:
+docker build -f deploy/control.Dockerfile -t sandboxes-budget-cutover:reviewed .
+# From Merv/merv, using the test environment:
+MERV_CUTOVER_IMAGE_REHEARSAL=1 \
+MERV_CUTOVER_CURRENT_MERV_IMAGE=merv-budget-cutover:reviewed \
+MERV_CUTOVER_CURRENT_NATIVE_IMAGE=sandboxes-budget-cutover:reviewed \
+  pytest tests/infrastructure/test_cutover_images.py -q
+```
+
+The checks use disposable fixture credentials and no network. They verify that
+Merv's default UID 10001 reads a mode-0600, correctly owned, read-only bind-mounted
+consumer file and constructs its client without the native SDK or the removed
+local budget module. The native image imports its registry and generic importer
+without the Merv package. This is packaging and file-access evidence; it does not
+start either full service or validate a real grant. Record immutable image IDs
+alongside the test result and repeat the relevant check if runtime code changes.
+
+### Packaged service restore and independence
+
+The additional check starts the actual release entrypoints and native lifecycle
+worker on an internal Docker network, with no published host ports:
+
+```sh
+MERV_CUTOVER_IMAGE_REHEARSAL=1 \
+MERV_CUTOVER_CURRENT_MERV_IMAGE=merv-budget-cutover:reviewed \
+MERV_CUTOVER_CURRENT_NATIVE_IMAGE=sandboxes-budget-cutover:reviewed \
+MERV_CUTOVER_LEGACY_IMAGE=deploy-control:latest \
+  pytest tests/infrastructure/test_packaged_cutover.py -q
+```
+
+The cached legacy image must expose the old project-key ceiling fields. It
+creates the complete legacy research schema, project/experiment rows and an
+existing project key. The check dumps/restores that database and a native
+database/data volume under dedicated application owners without superuser,
+role-creation or database-creation privileges. Merv's actual startup performs its
+pending research migrations, authenticates the retained key and serves the
+retained research records. Native startup migrates its restored database and
+retains the owner and consumer credentials.
+
+A native grant covering two members requires Merv to forward its authenticated
+subject. An actual `sandbox.request` through Merv rents fake compute even though
+the retained historical Merv cap is zero and the old key lease ceiling is lower
+than the requested lease. Changing the native allowance to zero denies an
+independent client's new request and Merv's renewal. With Merv stopped, native
+deletion proceeds to confirmed stop. Merv restarts with the same connection file
+and key, then a native grant revocation denies its infrastructure reads.
+
+The test saves a private `packaged-release-evidence.json` in its pytest temporary
+directory with image IDs, source/restored research schema versions and checked
+outcomes; it contains no credential values. Retain this evidence with the test
+log for the reviewed images. All test-owned containers, volumes and networks are
+removed, including on failure. Runtime images and unrelated resources remain.
+
+This verifies ordinary PostgreSQL restore and both packaged services with a fake
+provider. It does not contact managed Supabase authentication, access research R2
+bytes, validate cloud credentials, or reconcile deployment-specific data. Those
+checks still use the reviewed operational deployment and mappings.

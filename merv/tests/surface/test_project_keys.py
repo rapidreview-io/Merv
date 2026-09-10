@@ -92,11 +92,7 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         self.jwt_b = _token(USER_B)
         self.project_a = self._create_project("Key Project A", self.jwt_a)
         self.project_b = self._create_project("Key Project B", self.jwt_a)
-        minted = self._mint(
-            project_id=self.project_a,
-            sandbox_seconds_ceiling=3600,
-            blob_bytes_ceiling=8,
-        )
+        minted = self._mint(project_id=self.project_a)
         self.key = minted["secret"]
         self.key_id = minted["key"]["id"]
 
@@ -160,8 +156,6 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         principal = self.verifier.verify_bearer(f"Bearer {self.key}")
         self.assertEqual(principal.key_id, self.key_id)
         self.assertEqual(principal.key_project_id, self.project_a)
-        self.assertEqual(principal.key_sandbox_seconds_ceiling, 3600)
-        self.assertEqual(principal.key_blob_bytes_ceiling, 8)
 
         with self.app.store.connect() as conn:
             row = conn.execute(
@@ -275,6 +269,69 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         self.assertTrue(revoked.json()["key"]["revoked_at"])
         with self.assertRaises(UnauthorizedError):
             self.verifier.verify_bearer(f"Bearer {self.key}")
+
+    def test_infrastructure_limits_are_rejected_without_minting_a_key(self) -> None:
+        before = self.keys.list(project_id=self.project_a, owner_user_id=USER_A)
+        for field in ("sandbox_seconds_ceiling", "blob_bytes_ceiling"):
+            for value in (None, 0, 3600):
+                with self.subTest(field=field, value=value):
+                    response = self.client.post(
+                        f"/api/projects/{self.project_a}/keys",
+                        json={field: value},
+                        headers=_bearer(self.jwt_a),
+                    )
+                    self.assertEqual(response.status_code, 400, response.text)
+                    self.assertEqual(response.json()["fields"], [field])
+                    self.assertIn("merv-sandboxes", response.text)
+                    with self.assertRaises(TypeError):
+                        self.keys.create(
+                            project_id=self.project_a,
+                            owner_user_id=USER_A,
+                            **{field: value},
+                        )
+        self.assertEqual(
+            self.keys.list(project_id=self.project_a, owner_user_id=USER_A), before
+        )
+
+    def test_legacy_key_limits_are_retained_only_in_historical_columns(self) -> None:
+        # A pre-migration key still authenticates and rotates. Its dormant
+        # values never become current policy or advertised key capabilities.
+        with self.app.store.transaction() as conn:
+            conn.execute(
+                "UPDATE project_api_keys SET sandbox_seconds_ceiling = 3600, "
+                "blob_bytes_ceiling = 8 WHERE id = ?",
+                (self.key_id,),
+            )
+        principal = self.verifier.verify_bearer(f"Bearer {self.key}")
+        self.assertEqual(principal.user_id, USER_A)
+        record = self.keys.active_record(key_id=self.key_id)
+        listed = self.client.get(
+            f"/api/projects/{self.project_a}/keys", headers=_bearer(self.jwt_a)
+        )
+        self.assertEqual(listed.status_code, 200, listed.text)
+        for field in ("sandbox_seconds_ceiling", "blob_bytes_ceiling"):
+            self.assertFalse(hasattr(principal, f"key_{field}"))
+            self.assertFalse(hasattr(record, field))
+            self.assertNotIn(field, listed.json()["keys"][0])
+        rotated = self.keys.rotate(
+            project_id=self.project_a, owner_user_id=USER_A,
+            parent_key_id=self.key_id,
+        )
+        self.assertEqual(
+            self.verifier.verify_bearer(f"Bearer {rotated['secret']}").user_id,
+            USER_A,
+        )
+        with self.app.store.connect() as conn:
+            legacy = conn.execute(
+                "SELECT sandbox_seconds_ceiling, blob_bytes_ceiling "
+                "FROM project_api_keys WHERE id = ?", (self.key_id,),
+            ).fetchone()
+            replacement = conn.execute(
+                "SELECT sandbox_seconds_ceiling, blob_bytes_ceiling "
+                "FROM project_api_keys WHERE id = ?", (rotated["key"]["id"],),
+            ).fetchone()
+        self.assertEqual(tuple(legacy), (3600, 8))
+        self.assertEqual(tuple(replacement), (None, None))
 
     def test_key_management_requires_a_supabase_session(self) -> None:
         self._add_member(self.project_a, USER_B)

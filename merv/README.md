@@ -229,7 +229,9 @@ bin/merv-client configure --control-url http://127.0.0.1:8787
 ```
 
 For ML workload transfers or compute, configure `MERV_SANDBOXES_URL` and
-`MERV_SANDBOXES_JWT_SECRET` against a separate merv-sandboxes deployment.
+`MERV_SANDBOXES_CONNECTIONS_FILE` against a separate merv-sandboxes deployment.
+The private connection file maps projects to namespaces and scoped consumer
+credentials; [deployment instructions](deploy/README.md) describe owner setup.
 Cloud-provider credentials, datasets, and models belong to that service.
 Research artifacts, figures, feed media, and audit payloads use Merv's own R2
 bucket, configured with `MERV_BLOB_BUCKET`, `MERV_BLOB_ENDPOINT_URL`,

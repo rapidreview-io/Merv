@@ -20,7 +20,7 @@ PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZmZmZmZmZmZmZmZmZmZmZmZmZmZm
 class RemoteClient:
     def __init__(self):
         self.calls = []
-        self.records = {"merv-project-p1": [], "merv-project-p2": []}
+        self.records = {"p1": [], "p2": []}
         self.jobs = {}
         self.providers = {"cloud": {"name": "cloud", "plugin": "cloud", "source": "host", "health": {"status": "ok"}}}
         self.fail = False
@@ -29,11 +29,13 @@ class RemoteClient:
                       "region": "us", "resources": {"cpu": 2, "memory_mb": 8192, "gpu": None},
                       "hourly_price": {"currency": "USD", "amount": "1.25"}, "available": True}
 
-    def request(self, method, path, *, namespace, json=None, params=None, budget=None):
+    def request(self, method, path, *, namespace, json=None, params=None):
         self.calls.append((method, path, namespace, copy.deepcopy(json), params))
         if self.fail:
             raise InfrastructureUnavailableError("service down")
         rows = self.records[namespace]
+        if path == "/spend/report":
+            return copy.deepcopy(self.report)
         if path == "/options":
             return {"offers": [copy.deepcopy(self.offer)]}
         if path == "/sandboxes" and method == "GET":
@@ -41,7 +43,7 @@ class RemoteClient:
         if path == "/sandboxes" and method == "POST":
             now = datetime.now(UTC)
             row = {"id": "sbx_" + str(len(rows) + 1), "namespace": namespace, "name": json.get("name", ""),
-                   "state": "ready", "provider": "cloud", "plugin": "cloud", "request": {**json, "merv_budget": budget},
+                   "state": "ready", "provider": "cloud", "plugin": "cloud", "request": dict(json),
                    "offer": copy.deepcopy(self.offer), "created_at": now.isoformat(),
                    "ready_at": now.isoformat(), "updated_at": now.isoformat(),
                    "lease_expires_at": (now + timedelta(seconds=json["lease_seconds"])).isoformat(),
@@ -137,7 +139,7 @@ class RemoteSandboxesTest(unittest.TestCase):
 
     def test_unknown_liveness_reuses_instead_of_double_provisioning(self):
         first = self.create()
-        self.client.records["merv-project-p1"][0]["state"] = "unknown"
+        self.client.records["p1"][0]["state"] = "unknown"
         second = self.create()
         self.assertEqual(first["sandbox_uid"], second["sandbox_uid"])
         self.assertTrue(second["reused"])
@@ -149,7 +151,7 @@ class RemoteSandboxesTest(unittest.TestCase):
             self.create()
         facts = self.create()
         self.assertTrue(facts["reused"])
-        self.assertEqual(len(self.client.records["merv-project-p1"]), 1)
+        self.assertEqual(len(self.client.records["p1"]), 1)
 
     def test_release_requires_retention_then_waits_for_confirmed_deletion(self):
         facts = self.create()
@@ -171,7 +173,7 @@ class RemoteSandboxesTest(unittest.TestCase):
 
     def test_association_restricts_job_cancel_and_output(self):
         facts = self.create()
-        self.client.jobs["job_1"] = {"id": "job_1", "name": "train", "namespace": "merv-project-p1",
+        self.client.jobs["job_1"] = {"id": "job_1", "name": "train", "namespace": "p1",
                                        "sandbox_id": facts["sandbox_uid"], "state": "running"}
         before = len(self.client.calls)
         with self.assertRaises(NotFoundError):
@@ -189,7 +191,7 @@ class RemoteSandboxesTest(unittest.TestCase):
 
     def test_terminal_projects_bounded_job_streams_as_replacement(self):
         facts = self.create()
-        self.client.jobs["job_1"] = {"id": "job_1", "name": "train", "namespace": "merv-project-p1",
+        self.client.jobs["job_1"] = {"id": "job_1", "name": "train", "namespace": "p1",
                                        "sandbox_id": facts["sandbox_uid"], "state": "running", "command": "python train.py",
                                        "outputs": [{"stream": "stdout", "total_length": 100000, "available_start": 0},
                                                    {"stream": "stderr", "total_length": 200, "available_start": 0}]}
@@ -216,26 +218,48 @@ class RemoteSandboxesTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self.engine.pull_outputs_command(project_id="p1", sandbox_uid=facts["sandbox_uid"], paths=["../secret"])
 
-    def test_closed_legacy_spend_is_preserved_without_provider_calls(self):
+    def test_spend_uses_service_totals_and_never_reprices_legacy_rows(self):
+        facts = self.create()
         with self.store.transaction() as conn:
             conn.execute("INSERT INTO sandbox_generations (id,experiment_id,project_id,started_at,ended_at,price_usd_per_hour) VALUES (?,?,?,?,?,?)",
-                         ("legacy_gen", "e1", "p1", "2026-09-07T10:00:00Z", "2026-09-07T12:00:00Z", 2))
-        disabled = RemoteSandboxes(client=None, store=self.store)
-        costs = disabled.project_spend(project_id="p1")
-        self.assertEqual(costs["total_usd"], 4)
+                         ("legacy_gen", "e1", "p1", "2026-09-07T10:00:00Z", "2026-09-07T12:00:00Z", 999))
+        self.client.report = {
+            "namespace": "explicit-remote", "member_id": "member-one", "as_of": "2026-09-09T00:00:00Z",
+            "accrued": [{"currency": "USD", "amount": "4.25"}], "reserved": [], "hourly_rate": [],
+            "hours": "2", "unpriced_hours": "0", "resource_count": 1, "active_resource_count": 0,
+            "resources": [{"id": facts["sandbox_uid"], "accrued": {"currency": "USD", "amount": "3"}, "hours": "2"}],
+            "adjustments": [{"id": "imported", "accrued": {"currency": "USD", "amount": "1.25"}}],
+            "daily": [{"date": "2026-09-07", "totals": [{"currency": "USD", "amount": "4.25"}], "hours": "2"}],
+        }
+        costs = self.engine.project_spend(project_id="p1")
+        self.assertEqual(costs["total_usd"], 4.25)
         self.assertEqual(costs["total_hours"], 2)
-        self.assertEqual(costs["by_experiment"][0]["experiment_id"], "e1")
+        self.assertEqual(costs["by_experiment"][0]["usd"], 3)
+        self.assertEqual(costs["daily"][0]["usd"], 4.25)
+        self.assertEqual(costs["scope"]["namespace"], "explicit-remote")
+        self.assertEqual(self.client.calls[-1][1], "/spend/report")
+        self.client.fail = True
+        with self.assertRaises(InfrastructureUnavailableError):
+            self.engine.project_spend(project_id="p1")
+        with self.assertRaises(ValidationError):
+            RemoteSandboxes(client=None, store=self.store).project_spend(project_id="p1")
 
-    def test_provider_credentials_are_remote_only_and_policy_remains_editable(self):
+    def test_provider_overview_is_read_only(self):
         providers = RemoteProviders(client=self.client, store=self.store)
-        entry = providers.set_credentials(project_id="p1", provider="cloud-own", values={"api_key": "secret-value"})
-        self.assertTrue(entry["setup_complete"])
-        self.assertNotIn("secret-value", str(providers.overview(project_id="p1")))
-        self.assertTrue(providers.verify(project_id="p1", provider="cloud-own")["ok"])
-        self.assertEqual(providers.set_daily_limit(project_id="p1", provider="cloud", daily_usd_limit=10)["daily_usd_limit"], 10)
-        self.assertFalse(providers.set_enabled(project_id="p1", provider="cloud", enabled=False)["enabled"])
+        self.assertEqual(providers.overview(project_id="p1")["providers"][0]["provider"], "cloud")
+        self.assertTrue(all(call[0] == "GET" for call in self.client.calls))
+
+    def test_obsolete_local_limits_do_not_authorize_or_deny_compute(self):
+        with self.store.transaction() as conn:
+            conn.execute("INSERT INTO sandbox_provider_settings (project_id,provider,enabled,daily_usd_limit,updated_at) VALUES ('p1','cloud',0,0,'2026-09-09')")
+        first = self.create()
+        self.engine.extend(project_id="p1", sandbox_uid=first["sandbox_uid"], seconds=60)
+        for method, path, namespace, body, params in self.client.calls:
+            if body:
+                self.assertNotIn("merv_budget", body)
+                self.assertNotIn("payer_id", body)
         with self.store.connect() as conn:
-            self.assertEqual(conn.execute("SELECT credentials FROM sandbox_provider_settings").fetchone()[0], "{}")
+            self.assertEqual(conn.execute("SELECT daily_usd_limit FROM sandbox_provider_settings WHERE provider='cloud'").fetchone()[0], 0)
 
 
 if __name__ == "__main__":

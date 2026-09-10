@@ -48,6 +48,16 @@ SECRET = b"wait-secret-for-tests-0123456789abcdef"
 
 
 class WaitSignatureTest(unittest.TestCase):
+    def test_subject_cannot_be_changed_or_removed_from_a_signed_capability(self) -> None:
+        signed = wait_signature(key=SECRET, sandbox_uid="sbx-1", label="seed0", subject="user-a")
+        self.assertTrue(wait_signature_matches(
+            key=SECRET, sandbox_uid="sbx-1", label="seed0", subject="user-a", presented=signed,
+        ))
+        for subject in (None, "", "user-b"):
+            self.assertFalse(wait_signature_matches(
+                key=SECRET, sandbox_uid="sbx-1", label="seed0", subject=subject, presented=signed,
+            ))
+
     def test_golden_vector_pins_the_wire_encoding(self) -> None:
         # Any drift in the domain string, the length prefixes, or the
         # truncation silently invalidates every URL already in an agent's
@@ -203,6 +213,31 @@ class WaitEndpointTest(unittest.TestCase):
         return [line for line in text.splitlines() if line.startswith("MERV_RUNS_WAIT ")]
 
     # ---------- resolution ----------
+
+    def test_subject_is_restored_in_the_worker_and_forgery_never_reaches_service(self) -> None:
+        from merv.brain.infrastructure.ports import _subject
+        from merv.brain.kernel.secret_tokens import wait_url
+
+        self._mirror({"label": "seed0", "exit_code": 0})
+        url = wait_url(base_url="", key=SECRET, sandbox_uid=self.sandbox_uid,
+                       label="seed0", subject="user-a")
+        seen = []
+        original = self.fake.request
+
+        def observed(*args, **kwargs):
+            seen.append(_subject.get())
+            return original(*args, **kwargs)
+
+        with patch.object(self.fake, "request", side_effect=observed):
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(seen and all(value == "user-a" for value in seen))
+            seen.clear()
+            self.assertEqual(self.client.get(url.replace("user-a", "user-b")).status_code, 410)
+            self.assertEqual(self.client.get(url.split("?")[0]).status_code, 410)
+            self.assertEqual(seen, [])
+            self.assertEqual(self.client.get(self._url(label="seed0")).status_code, 200)
+            self.assertTrue(seen and all(value is None for value in seen))
 
     def test_a_finished_run_resolves_immediately_with_status_and_exit_code(self) -> None:
         self._mirror({"label": "seed0", "exit_code": 0, "finished_at": "2026-07-27T10:05:00Z"})

@@ -5,7 +5,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from merv.brain.infrastructure.budget import daily_budget
 from merv.brain.infrastructure.providers import RemoteProviders
 from merv.brain.kernel.state import StateStore
 from merv.brain.kernel.utils import ValidationError
@@ -53,62 +52,22 @@ class RemoteProvidersTest(unittest.TestCase):
     def entries(self, project_id="p1"):
         return {row["provider"]: row for row in self.providers.overview(project_id=project_id)["providers"]}
 
-    def test_personal_lambda_connect_and_disconnect_preserve_host_and_project_scope(self):
-        entries = self.entries()
-        self.assertFalse(entries["lambda"]["can_edit_connection"])
-        self.assertFalse(entries["lambda"]["can_disconnect"])
-        self.assertEqual(entries["lambda"]["credential_mode"], "platform")
-        self.assertFalse(entries["lambda-own"]["setup_complete"])
-        self.assertEqual(entries["lambda-own"]["credential_mode"], "own")
-        self.assertFalse(entries["lambda-own"]["platform_available"])
-        self.assertEqual(entries["lambda-own"]["fields"][0]["key"], "api_key")
+    def test_overview_reads_native_instances_without_editable_policy(self):
+        result = self.providers.overview(project_id="p1")
+        self.assertEqual([row["provider"] for row in result["providers"]], ["lambda"])
+        self.assertEqual(self.client.calls, [("GET", "/providers", "p1", None)])
+        self.assertNotIn("daily_usd_limit", result["providers"][0])
+        self.assertNotIn("fields", result["providers"][0])
 
-        with self.assertRaises(ValidationError):
-            self.providers.set_credentials(project_id="p1", provider="lambda", mode="own",
-                                           values={"api_key": "personal-secret"})
-        with self.assertRaises(ValidationError):
-            self.providers.disconnect(project_id="p1", provider="lambda")
-        connected = self.providers.set_credentials(project_id="p1", provider="lambda-own", mode="own",
-                                                    values={"api_key": "personal-secret"})
-        self.assertTrue(connected["setup_complete"])
-        self.assertTrue(connected["can_edit_connection"])
-        self.assertTrue(connected["can_disconnect"])
-        self.assertEqual([call for call in self.client.calls if call[0] == "PUT"], [
-            ("PUT", "/providers/lambda-own", "merv-project-p1",
-             {"plugin": "lambda", "fields": {"api_key": "personal-secret"}})])
-        self.assertTrue(self.entries()["lambda"]["setup_complete"])
-        self.assertFalse(self.entries("p2")["lambda-own"]["setup_complete"])
-        self.assertNotIn("personal-secret", str(self.entries()))
+    def test_project_connections_stay_isolated(self):
+        self.client.own["p1"] = {"own": {"name": "own", "plugin": "lambda", "source": "user", "health": {"status": "ok"}}}
+        self.assertEqual(set(self.entries("p1")), {"lambda", "own"})
+        self.assertEqual(set(self.entries("p2")), {"lambda"})
 
-        self.providers.disconnect(project_id="p1", provider="lambda-own")
-        self.assertFalse(self.entries()["lambda-own"]["setup_complete"])
-        self.assertTrue(self.entries()["lambda"]["setup_complete"])
-
-    def test_shared_and_personal_connections_use_the_same_saved_lambda_policy(self):
-        self.providers.set_credentials(project_id="p1", provider="lambda-own", mode="own",
-                                       values={"api_key": "personal-secret"})
-        self.providers.set_daily_limit(project_id="p1", provider="lambda-own", daily_usd_limit=17)
-        self.assertEqual({row["daily_usd_limit"] for row in self.entries().values()}, {17})
-        for mode in ("own", "platform"):
-            budget = daily_budget(store=self.store, project_id="p1", provider="lambda",
-                                  payer_id="user1", billing_mode=mode)
-            self.assertEqual(float(budget["project_daily_usd_limit"]), 17)
-            if mode == "own":
-                self.assertIsNone(budget["provider_daily_usd_limit"])
-        self.providers.set_enabled(project_id="p1", provider="lambda", enabled=False)
-        self.assertFalse(any(row["enabled"] for row in self.entries().values()))
-        self.providers.set_enabled(project_id="p1", provider="lambda-own", enabled=True)
-        self.assertTrue(all(row["enabled"] for row in self.entries().values()))
-        with self.store.connect() as conn:
-            rows = conn.execute("SELECT provider,credentials FROM sandbox_provider_settings").fetchall()
-            self.assertEqual([(row["provider"], row["credentials"]) for row in rows], [("lambda_labs", "{}")])
-
-    def test_existing_personal_alias_does_not_create_an_extra_setup_slot(self):
-        self.client.own["merv-project-p1"] = {
-            "team-lambda": {"name": "team-lambda", "plugin": "lambda", "source": "namespace",
-                            "health": {"status": "ok"}}}
-        self.assertEqual(set(self.entries()), {"lambda", "team-lambda"})
-        self.assertTrue(self.entries()["team-lambda"]["can_edit_connection"])
+    def test_disconnected_client_does_not_invent_provider_settings(self):
+        result = RemoteProviders(client=None, store=self.store).overview(project_id="p1")
+        self.assertFalse(result["configured"])
+        self.assertEqual(result["providers"], [])
 
 
 if __name__ == "__main__":

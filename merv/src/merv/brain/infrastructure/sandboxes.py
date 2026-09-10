@@ -13,7 +13,8 @@ import re
 import shlex
 import uuid
 from contextlib import closing
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any, Protocol
 from urllib.parse import quote
 
@@ -21,8 +22,7 @@ from ...shared.tool_validation import validate_openssh_public_key
 from ..kernel.utils import NotFoundError, ValidationError, now_iso, parse_iso
 from ..kernel.state import BaseStateStore
 from ..kernel.secret_tokens import MIN_WAIT_SECRET_BYTES, wait_url
-from .ports import InfrastructureTransport, project_namespace
-from .budget import daily_budget
+from .ports import InfrastructureTransport, _subject, project_namespace
 
 
 _ACTIVE = frozenset({"requested", "provisioning", "bootstrapping", "ready", "unknown", "failed"})
@@ -238,7 +238,7 @@ class RemoteSandboxes:
                 region: str | None = None, provider: str | None = None,
                 public_key: str | None = None, public_key_override: str | None = None,
                 additional: bool = False, sandbox_uid: str | None = None,
-                provisioning_user_id: str = "", **_: Any) -> dict[str, Any]:
+                **_: Any) -> dict[str, Any]:
         if sandbox_uid:
             raise ValidationError("sandbox.request does not accept sandbox_uid; use sandbox.get or sandbox.attach")
         pid = self._project(project_id)
@@ -285,16 +285,7 @@ class RemoteSandboxes:
                 "lease_seconds": lease, "idempotency_key": idempotency_key}
         if name:
             body["name"] = name if not additional else name + "-" + uuid.uuid4().hex[:8]
-        providers = self._call("GET", "/providers", project_id=pid)["providers"]
-        connection = next((entry for entry in providers if entry["name"] == offer["provider"]), None)
-        if connection is None:
-            raise ValidationError("selected provider is no longer connected")
-        budget = daily_budget(
-            store=self._store, project_id=pid, provider=connection["plugin"],
-            payer_id=provisioning_user_id,
-            billing_mode="platform" if connection["source"] == "host" else "own",
-        )
-        record = self._call("POST", "/sandboxes", project_id=pid, json=body, budget=budget)
+        record = self._call("POST", "/sandboxes", project_id=pid, json=body)
         self._link(pid, record["id"], experiment_id or "", key)
         return {**self._facts(pid, record, public_key=key), "reused": False}
 
@@ -402,15 +393,8 @@ class RemoteSandboxes:
         if expires is None:
             raise ValidationError("sandbox has no renewable lease expiry")
         remaining = max(0, math.ceil((expires - datetime.now(UTC)).total_seconds()))
-        original = (record.get("request") or {}).get("merv_budget")
-        if not original:
-            raise ValidationError("sandbox has no preserved billing owner; cannot safely renew its lease")
-        budget = daily_budget(
-            store=self._store, project_id=pid, provider=original["provider"],
-            payer_id=original["payer_id"], billing_mode=original["billing_mode"],
-        )
         renewed = self._call("POST", "/sandboxes/" + _path(record["id"]) + "/renew",
-                             project_id=pid, json={"lease_seconds": max(60, remaining + seconds)}, budget=budget)
+                             project_id=pid, json={"lease_seconds": max(60, remaining + seconds)})
         return self._facts(pid, renewed)
 
     def pull_outputs_command(self, *, project_id: str | None = None,
@@ -523,7 +507,8 @@ class RemoteSandboxes:
         if base_url and wait_secret is not None and len(wait_secret) >= MIN_WAIT_SECRET_BYTES:
             for row in rows:
                 row["wait_url"] = wait_url(base_url=base_url, key=wait_secret,
-                                           sandbox_uid=row["sandbox_uid"], label=row["label"])
+                                           sandbox_uid=row["sandbox_uid"], label=row["label"],
+                                           subject=_subject.get())
         return {"project_id": pid, "experiment_id": experiment_id or "", "sandbox_uid": sandbox_uid or "",
                 "runs": rows + legacy_runs, "jobs": jobs, "hint": "These are durable merv-sandboxes jobs started with sandbox.run. SSH commands are not automatically recorded as jobs."}
 
@@ -603,73 +588,65 @@ class RemoteSandboxes:
         return value, bool(value and value["status"] in {"running", "provisioning"})
 
     def project_spend(self, *, project_id: str) -> dict[str, Any]:
+        """Present service totals, joining resource amounts to research associations."""
         pid = self._project(project_id)
-        rows = [row for row in self.for_project(project_id=pid) if not row.get("archived")]
-        with closing(self._store.connect()) as conn:
-            legacy = [dict(row) for row in conn.execute(
-                "SELECT * FROM sandbox_generations WHERE project_id = ? AND ended_at IS NOT NULL",
-                (pid,),
-            ).fetchall()]
-        now = datetime.now(UTC)
-        usages = []
-        for row in rows:
-            start = parse_iso(row.get("billing_started_at"))
-            end = parse_iso(row.get("terminated_at")) or now
-            if start is None:
-                continue
-            usages.append({**row, "start": start, "end": end,
-                           "open": row["status"] != "terminated", "usd": row["cost_usd"]})
-        for row in legacy:
-            start, end = parse_iso(row["started_at"]), parse_iso(row["ended_at"])
-            if start is None or end is None:
-                continue
-            hours = max(0, (end - start).total_seconds()) / 3600
-            usages.append({**row, "start": start, "end": end, "open": False,
-                           "usd": float(row["price_usd_per_hour"]) * hours})
-        totals = {"total_usd": 0.0, "total_hours": 0.0, "unpriced_hours": 0.0,
-                  "generations": len(usages), "open_generations": 0, "burn_usd_per_hour": 0.0}
-        experiments: dict[str, dict[str, Any]] = {}
-        hardware: dict[tuple[str, str, float | None], dict[str, Any]] = {}
-        daily: dict[str, dict[str, Any]] = {}
-        for row in usages:
-            start, end = row["start"], row["end"]
-            hours = max(0.0, (end - start).total_seconds()) / 3600
-            usd = row["usd"] or 0.0
-            price = row.get("price_usd_per_hour")
-            totals["total_usd"] += usd
-            totals["total_hours"] += hours
-            if price is None or (row.get("infrastructure") != "merv-sandboxes" and not row.get("price_known") and not price):
-                totals["unpriced_hours"] += hours
-            if row["open"]:
-                totals["open_generations"] += 1
-                totals["burn_usd_per_hour"] += price or 0.0
-            eid = row.get("experiment_id") or ""
-            group = experiments.setdefault(eid, {"experiment_id": eid, "usd": 0.0, "hours": 0.0, "generations": 0})
-            group["usd"] += usd
-            group["hours"] += hours
-            group["generations"] += 1
-            key = (row.get("instance_type") or "", row.get("gpu") or "", price)
-            hw = hardware.setdefault(key, {"instance_type": key[0], "gpu": key[1], "price_usd_per_hour": price,
-                                          "usd": 0.0, "hours": 0.0, "generations": 0})
-            hw["usd"] += usd
-            hw["hours"] += hours
-            hw["generations"] += 1
-            cursor = start.astimezone(UTC)
-            while cursor < end:
-                next_day = cursor.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-                stop = min(next_day, end)
-                fraction = (stop - cursor).total_seconds() / 3600
-                day = cursor.date().isoformat()
-                bucket = daily.setdefault(day, {"date": day, "usd": 0.0, "hours": 0.0})
-                bucket["hours"] += fraction
-                bucket["usd"] += usd * fraction / hours if hours else 0.0
-                cursor = stop
-        return {**totals, "by_experiment": list(experiments.values()), "by_hardware": list(hardware.values()),
-                "daily": sorted(daily.values(), key=lambda row: row["date"]), "source": "merv-sandboxes",
-                "note": "Current service-reported costs plus retained closed legacy generations."}
+        report = self._call("GET", "/spend/report", project_id=pid)
+        links = {row["sandbox_uid"]: row.get("experiment_id") or "" for row in self._links(pid)}
 
-    def user_budget_view(self, **_: Any) -> None:
-        return None
+        def usd(amounts: list[dict[str, Any]]) -> float:
+            return next((_usd(row) for row in amounts if row.get("currency") == "USD"), 0.0)
+
+        experiments: dict[str, dict[str, Any]] = {}
+        for resource in report["resources"]:
+            eid = links.get(resource["id"], "")
+            group = experiments.setdefault(eid, {"experiment_id": eid, "usd": Decimal(0),
+                                                  "hours": Decimal(0), "generations": 0})
+            amount = resource.get("accrued")
+            if amount and amount["currency"] == "USD":
+                group["usd"] += Decimal(amount["amount"])
+            group["hours"] += Decimal(resource["hours"])
+            group["generations"] += 1
+        for adjustment in report.get("adjustments", []):
+            reference = adjustment.get("reference")
+            eid = ""
+            if (isinstance(reference, dict) and reference.get("application") == "merv"
+                    and reference.get("project_id") == pid
+                    and isinstance(reference.get("experiment_id"), str)):
+                eid = reference.get("experiment_id") or ""
+            group = experiments.setdefault(eid, {"experiment_id": eid, "usd": Decimal(0),
+                                                  "hours": Decimal(0), "generations": 0})
+            amount = adjustment.get("accrued")
+            if amount and amount["currency"] == "USD":
+                group["usd"] += Decimal(amount["amount"])
+            if adjustment.get("compute_hours") is not None:
+                group["hours"] += Decimal(adjustment["compute_hours"])
+            group["historical_adjustment_count"] = group.get("historical_adjustment_count", 0) + 1
+        return {
+            "total_usd": usd(report["accrued"]), "total_hours": float(report["hours"]),
+            "unpriced_hours": float(report["unpriced_hours"]),
+            "generations": report["resource_count"], "open_generations": report["active_resource_count"],
+            "burn_usd_per_hour": usd(report["hourly_rate"]), "reserved_usd": usd(report["reserved"]),
+            "by_experiment": [{**row, "usd": float(row["usd"]), "hours": float(row["hours"])}
+                              for row in experiments.values()],
+            "by_hardware": [{"instance_type": row["instance_type"], "gpu": row.get("gpu") or "",
+                             "price_usd_per_hour": _usd(row.get("hourly_price")),
+                             "usd": usd(row["accrued"]), "hours": float(row["hours"]),
+                             "generations": row["resource_count"]} for row in report.get("by_hardware", [])],
+            "daily": [{"date": row["date"], "usd": usd(row["totals"]), "hours": float(row["hours"])}
+                      for row in report["daily"]],
+            "source": "merv-sandboxes", "as_of": report["as_of"],
+            "scope": {"namespace": report["namespace"], "member_id": report.get("member_id")},
+            "currencies": report["accrued"],
+            "hours_coverage": report.get("hours_coverage", "native_resources_only"),
+            "accounting_complete": report.get("accounting_complete"),
+            "unresolved_history_count": report.get("unresolved_history_count", 0),
+            "unmeasured_adjustment_count": report.get("unmeasured_adjustment_count", 0),
+            "reserved_hours": float(report["reserved_hours"]) if report.get("reserved_hours") is not None else None,
+            "unbounded_lease_count": report.get("unbounded_lease_count", 0),
+            "note": "Service-reported conservative compute estimates for the authorized scope. "
+                    "Historical charges and measured hours are included; hours_coverage identifies incomplete history. "
+                    "Saved resource and import references group experiments.",
+        }
 
     def tenant_generation_counters(self, *, tenant_id: str) -> dict[str, Any]:
         return {"sandbox_generations": None, "sandbox_hours": None,

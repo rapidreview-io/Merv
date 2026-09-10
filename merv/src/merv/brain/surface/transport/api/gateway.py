@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from ....infrastructure import infrastructure_actor
 
 import re
 from dataclasses import dataclass
@@ -189,12 +190,6 @@ class RequestAuthenticator:
                     (_session_assignment(record).get("execution") or {}).get("read_only", record["kind"] == "review")
                 ),
                 source_key_id=source_key_id or None,
-                key_sandbox_seconds_ceiling=(
-                    None if source_key is None else source_key.sandbox_seconds_ceiling
-                ),
-                key_blob_bytes_ceiling=(
-                    None if source_key is None else source_key.blob_bytes_ceiling
-                ),
             )
             request.state.principal = principal
             denied = oauth.credential_audience_denial(
@@ -410,13 +405,14 @@ class ToolInvocationGateway:
                 exc=exc,
             )
             raise
-        result = self._dispatch(
-            name=name,
-            arguments=arguments,
-            plan=plan,
-            activity_source=activity_source,
-            project_id=scope,
-        )
+        with infrastructure_actor(str(getattr(principal, "user_id", "") or "")):
+            result = self._dispatch(
+                name=name,
+                arguments=arguments,
+                plan=plan,
+                activity_source=activity_source,
+                project_id=scope,
+            )
         if self.agent_sessions is not None and getattr(
             principal, "agent_session_id", None
         ):
@@ -562,27 +558,8 @@ class ToolInvocationGateway:
             internal_kwargs = {"base_url": base_url}
             if name == "sandbox.runs":
                 internal_kwargs["wait_secret"] = self.wait_secret
-        if name == "sandbox.options":
-            # Same payer resolution as sandbox.request, so the options view
-            # can show remaining daily budget when a user cap applies.
-            internal_kwargs = {
-                **(internal_kwargs or {}),
-                "requesting_user_id": user_id,
-                "requesting_key_id": str(
-                    getattr(principal, "key_id", "")
-                    or getattr(principal, "source_key_id", "")
-                    or ""
-                ),
-            }
         if name == "sandbox.request":
-            internal_kwargs = {
-                "provisioning_user_id": user_id,
-                "provisioning_key_id": str(
-                    getattr(principal, "key_id", "")
-                    or getattr(principal, "source_key_id", "")
-                    or ""
-                ),
-            }
+            internal_kwargs = {}
             agent_experiment_id = str(
                 getattr(principal, "agent_experiment_id", "") or ""
             )
@@ -947,7 +924,9 @@ def install_request_middleware(
             denied = open_hosted_operator_denial(request)
         bind_request_principal(request, denied=denied, open_mode=open_mode)
         if denied is None:
-            return await call_next(request)
+            subject = str(getattr(getattr(request.state, "principal", None), "user_id", "") or "")
+            with infrastructure_actor(subject):
+                return await call_next(request)
         # Off the event loop: a 401 storm against a stalled database must not
         # queue every unrelated request behind the durable row it is writing.
         await run_in_threadpool(ledger_refusal, request, denied=denied, ledger=ledger)

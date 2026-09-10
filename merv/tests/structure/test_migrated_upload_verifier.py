@@ -34,6 +34,10 @@ class Client:
         self.records = records
         self.calls = []
 
+    def namespace_for_project(self, project_id):
+        assert project_id == "proj_smoke"
+        return "merv-project-proj_smoke"
+
     def request(self, method, path, *, namespace, **kwargs):
         assert method == 'GET'
         self.calls.append((method, path, namespace))

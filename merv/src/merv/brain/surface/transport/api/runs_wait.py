@@ -30,6 +30,8 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter
 from fastapi.responses import Response, StreamingResponse
 
+from ....infrastructure import RemoteSandboxes as SandboxEngine
+from ....infrastructure import infrastructure_actor
 from ....kernel.env import env_int
 from ....kernel.secret_tokens import (
     MIN_WAIT_SECRET_BYTES,
@@ -37,8 +39,6 @@ from ....kernel.secret_tokens import (
     wait_signature_matches,
 )
 from ....kernel.utils import parse_iso
-from ....infrastructure import RemoteSandboxes as SandboxEngine
-
 
 MAX_STREAMS_ENV_VAR = "MERV_WAIT_MAX_STREAMS"
 # How many waits this process will hold at once. Each is an idle async task
@@ -250,7 +250,7 @@ def _verdict(*, facts: dict | None, now: datetime) -> _Verdict:
 
 
 async def _facts(
-    *, sandboxes: SandboxEngine, sandbox_uid: str, label: str
+    *, sandboxes: SandboxEngine, sandbox_uid: str, label: str, subject: str | None = None
 ) -> dict | None:
     """The namespace-scoped service read every wait makes, off the loop and time-bounded.
 
@@ -258,12 +258,16 @@ async def _facts(
     the caller decides whether that is one lost cycle or the end of the hold.
     """
     loop = asyncio.get_running_loop()
+    def observe():
+        # Executor threads do not inherit request ContextVars. Restore only the
+        # subject authenticated by the wait capability, then reset on all exits.
+        with infrastructure_actor(subject):
+            return sandboxes.run_wait_facts(sandbox_uid=sandbox_uid, label=label)
+
     return await asyncio.wait_for(
         loop.run_in_executor(
             _WAIT_POOL,
-            lambda: sandboxes.run_wait_facts(
-                sandbox_uid=sandbox_uid, label=label
-            ),
+            observe,
         ),
         timeout=WAIT_FACTS_TIMEOUT_SECONDS,
     )
@@ -290,14 +294,15 @@ def build_router(
         )
 
     @api_router.get(WAIT_ROUTE_PREFIX + "{sandbox_uid}/{label}/{sig}")
-    async def wait_for_run(sandbox_uid: str, label: str, sig: str) -> Response:
+    async def wait_for_run(sandbox_uid: str, label: str, sig: str,
+                           subject: str | None = None) -> Response:
         echo = _echo(label)
         if not _BUCKET.take():
             return _plain(_line("poll_error", echo, "rate_limited"), status_code=429)
         # The MAC decides before anything is looked up: a forged tag costs one
         # HMAC and touches no row, so this endpoint is not a sandbox probe.
         if not wait_signature_matches(
-            key=secret, sandbox_uid=sandbox_uid, label=label, presented=sig
+            key=secret, sandbox_uid=sandbox_uid, label=label, presented=sig, subject=subject
         ):
             return _plain(_line("no_such_run", echo), status_code=410)
         if not _ADMISSION.acquire(signature=sig):
@@ -305,7 +310,7 @@ def build_router(
         slot = _Slot(signature=sig)
         try:
             facts = await _facts(
-                sandboxes=sandboxes, sandbox_uid=sandbox_uid, label=label
+                sandboxes=sandboxes, sandbox_uid=sandbox_uid, label=label, subject=subject
             )
             opening = _verdict(facts=facts, now=datetime.now(tz=UTC))
         except Exception:  # noqa: BLE001 — the slot must not leak on a bad read
@@ -353,7 +358,7 @@ def build_router(
                     await asyncio.sleep(WAIT_POLL_SECONDS)
                     try:
                         facts = await _facts(
-                            sandboxes=sandboxes, sandbox_uid=sandbox_uid, label=label
+                            sandboxes=sandboxes, sandbox_uid=sandbox_uid, label=label, subject=subject
                         )
                         timeouts = 0
                     except asyncio.TimeoutError:

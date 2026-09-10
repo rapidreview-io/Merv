@@ -45,12 +45,16 @@ def _request(path: str, *, query: str = "", principal=USER) -> Request:
     return request
 
 
+from merv.brain.infrastructure.client import _subject
+
+
 class _Backend:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
     def call_tool(self, **kwargs):
         self.calls.append(kwargs)
+        self.subject = _subject.get()
         return {"ok": True}
 
 
@@ -183,11 +187,11 @@ class HttpGatewayTest(unittest.TestCase):
         self.assertEqual(backend.calls[1]["name"], "sandbox.request")
         self.assertEqual(
             backend.calls[1]["internal_kwargs"],
-            {
-                "provisioning_user_id": "user-a",
-                "provisioning_key_id": "",
-            },
+            {},
         )
+
+        self.assertEqual(backend.subject, "user-a")
+        self.assertIsNone(_subject.get())
 
 
 class _Sandboxes:
@@ -201,6 +205,7 @@ class _Sandboxes:
         return {"ok": True}
 
     def request(self, **kwargs):
+        self.subject = _subject.get()
         self.calls.append(("request", kwargs))
         return {"status": "running"}
 
@@ -271,8 +276,10 @@ class KeySandboxControlPathTest(unittest.TestCase):
         name, kwargs = self.sandboxes.calls[-1]
         self.assertEqual(name, "request")
         self.assertNotIn("include_data_plane_enrichment", kwargs)
-        self.assertEqual(kwargs["provisioning_key_id"], "k1")
-        self.assertEqual(kwargs["provisioning_user_id"], "user-a")
+        self.assertNotIn("provisioning_key_id", kwargs)
+        self.assertNotIn("provisioning_user_id", kwargs)
+        self.assertEqual(self.sandboxes.subject, "user-a")
+        self.assertIsNone(_subject.get())
         self.assertEqual(kwargs["project_id"], "proj-a")
 
     def test_key_principal_attach_and_pull_outputs_are_served(self) -> None:
@@ -337,8 +344,10 @@ class KeySandboxControlPathTest(unittest.TestCase):
         self.assertEqual(result, {"status": "running"})
         name, kwargs = self.sandboxes.calls[-1]
         self.assertEqual(name, "request")
-        self.assertEqual(kwargs["provisioning_user_id"], "user-a")
-        self.assertEqual(kwargs["provisioning_key_id"], "")
+        self.assertNotIn("provisioning_key_id", kwargs)
+        self.assertNotIn("provisioning_user_id", kwargs)
+        self.assertEqual(self.sandboxes.subject, "user-a")
+        self.assertIsNone(_subject.get())
         self.assertNotIn("include_data_plane_enrichment", kwargs)
 
 

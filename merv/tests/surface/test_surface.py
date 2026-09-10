@@ -369,7 +369,7 @@ class SurfaceTest(unittest.TestCase):
 
         self.assertIn(DB_URL_ENV_VAR, ctx.exception.message)
         self.assertIn("MERV_SANDBOXES_URL", ctx.exception.message)
-        self.assertIn("MERV_SANDBOXES_JWT_SECRET", ctx.exception.message)
+        self.assertIn("MERV_SANDBOXES_CONNECTIONS_FILE", ctx.exception.message)
 
     def test_surface_without_repo_root_uses_non_created_compat_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -381,7 +381,7 @@ class SurfaceTest(unittest.TestCase):
                 **mounted_env,
                 DB_URL_ENV_VAR: "postgresql://user:pass@db/research_plugin",
                 "MERV_SANDBOXES_URL": "https://sandboxes.test",
-                "MERV_SANDBOXES_JWT_SECRET": "x" * 40,
+                "MERV_SANDBOXES_CONNECTIONS_FILE": str(root / "connections.json"),
             }
             with (
                 patch(

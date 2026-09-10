@@ -83,7 +83,7 @@ class DeployArtifactsTest(unittest.TestCase):
         self.assertIn("control:", text)
         for retired in ("minio:", "mgmtkey:", "ssh-keygen", "MERV_EXECUTION_BACKEND"):
             self.assertNotIn(retired, text)
-        for setting in ("MERV_DB_URL", "MERV_SANDBOXES_URL", "MERV_SANDBOXES_JWT_SECRET", "MERV_REQUIRE_SANDBOX_BACKEND"):
+        for setting in ("MERV_DB_URL", "MERV_SANDBOXES_URL", "MERV_SANDBOXES_CONNECTIONS_FILE", "MERV_REQUIRE_SANDBOX_BACKEND"):
             self.assertIn(setting, text)
         for setting in ("MERV_BLOB_BUCKET", "MERV_BLOB_ENDPOINT_URL", "MERV_BLOB_ACCESS_KEY_ID", "MERV_BLOB_SECRET_ACCESS_KEY"):
             self.assertIn(setting, text)
@@ -143,7 +143,7 @@ class DeployArtifactsTest(unittest.TestCase):
             "MERV_MODE",
             "MERV_DB_URL",
             "MERV_SANDBOXES_URL",
-            "MERV_SANDBOXES_JWT_SECRET",
+            "MERV_SANDBOXES_CONNECTIONS_FILE",
             "MERV_ALLOWED_ORIGINS",
             "MERV_REQUIRE_SANDBOX_BACKEND",
             "MERV_WAIT_SECRET",

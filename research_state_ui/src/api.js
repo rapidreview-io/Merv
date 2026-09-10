@@ -381,31 +381,6 @@ export const api = {
   // browser session — machine keys get a 403.
   listSandboxProviders: (pid) =>
     request(`/api/projects/${encodeURIComponent(pid)}/sandbox-providers`),
-  // body: { values?: {field: value}, mode?: 'own'|'platform' }
-  saveSandboxProvider: (pid, provider, body) =>
-    request(
-      `/api/projects/${encodeURIComponent(pid)}/sandbox-providers/${encodeURIComponent(provider)}`,
-      { method: 'PUT', body },
-    ),
-  disconnectSandboxProvider: (pid, provider) =>
-    request(`/api/projects/${encodeURIComponent(pid)}/sandbox-providers/${encodeURIComponent(provider)}`, { method: 'DELETE' }),
-
-  setSandboxProviderEnabled: (pid, provider, enabled) =>
-    request(
-      `/api/projects/${encodeURIComponent(pid)}/sandbox-providers/${encodeURIComponent(provider)}/enabled`,
-      { method: 'POST', body: { enabled } },
-    ),
-  setSandboxProviderDailyLimit: (pid, provider, dailyUsdLimit) =>
-    request(
-      `/api/projects/${encodeURIComponent(pid)}/sandbox-providers/${encodeURIComponent(provider)}/daily-limit`,
-      { method: 'POST', body: { daily_usd_limit: dailyUsdLimit } },
-    ),
-  // Saves nothing; probes the provider with the stored/platform credentials.
-  verifySandboxProvider: (pid, provider) =>
-    request(
-      `/api/projects/${encodeURIComponent(pid)}/sandbox-providers/${encodeURIComponent(provider)}/verify`,
-      { method: 'POST', body: {} },
-    ),
   getSandbox: (pid, eid, { sandboxUid = null } = {}) =>
     request(sandboxPath(pid, eid, sandboxUid)),
   // Terminal transcript. Pass { since: cursor } (from the previous response's

@@ -1,44 +1,107 @@
 # Cutover smoke verification
 
-The storage verifier runs **inside the new Merv image** after migration and service health succeed. It uses the image's native JWT signer, PostgreSQL URL, and explicit `MERV_BLOB_*` credentials for Merv's own artifact R2 bucket. It does not create research projects or post research events.
+Run release verifiers with sandbox-issued consumer connections and the configured
+Merv artifact `MERV_BLOB_*` storage. Budget editing, grant issuance and provider
+administration happen in merv-sandboxes. These checks do not sign policy claims.
 
-Copy `verify_sandboxes_cutover.py` into the new container, then run:
+## Read and storage checks
+
+Run inside the new Merv image after the reviewed imports and service health checks:
 
 ```sh
-python /tmp/verify_sandboxes_cutover.py
-python /tmp/verify_sandboxes_cutover.py --write-storage
+python /tmp/verify_sandboxes_cutover.py --project-id proj_existing --subject merv-user-id
+python /tmp/verify_sandboxes_cutover.py --project-id proj_existing \
+  --other-project-id proj_isolation --subject merv-user-id --write-storage
 ```
 
-The first invocation reads only. The second repeats the reads, then writes unique smoke objects, verifies them, and deletes those exact objects. Defaults verify old and recent artifact hashes, heavy content across up to five projects, and all 26 recovered objects in `proj_d0b83f01b61a` (4,057,894 bytes total). Defaults also add the largest available heavy object so its 1 MiB range read exercises migrated large-object access. Historical transfers are capped at 256 MiB; objects larger than 32 MiB receive a 1 MiB range read with exact total-size verification. The new multipart payload is 65 MiB, so the normal 64 MiB part size yields two parts. Its first part is uploaded before obtaining fresh resume targets; only the missing part is then uploaded. The complete file is read and hashed afterward.
+Both project IDs must be in `MERV_SANDBOXES_CONNECTIONS_FILE`, mapped to distinct
+existing native namespaces. The subject must have an approved binding for each
+grant. The verifier checks consumer role and actual namespace before writing.
+Omit the subject only for a connection that does not require a subject selector.
+Do not invent a project/namespace name to bypass grant setup.
 
-New evidence exercises Merv's `R2BlobStore` under a unique `smoke_<time>_<random>` namespace. Its content key is known before the upload, so cleanup removes and verifies that exact key even if an accepted upload's response is lost. The heavy adapter uses a unique `merv-project-smoke_<time>_<random>` namespace without a Merv project row. Artifact reads verify namespace isolation; native heavy reads additionally check foreign metadata and transfer-target denial. Heavy cleanup waits up to 90 seconds for worker-confirmed deletion; any pending exact IDs are printed for operator recovery. Reports contain hashes and IDs, never signed URLs, secret keys, or file contents. A failed check exits nonzero.
+The default run reads research data and existing artifact/workload bytes. Research
+queries use database-enforced read-only transactions. Historical transfer bounds,
+sample selection and schema compatibility are explicit in the verifier's CLI;
+use `--help` to review them against the release. `--pre-cutover` permits its
+documented earlier research schemas and is not a waiver of accounting migration.
+Merv artifact history must already exist in the configured Merv-owned R2 bucket.
 
-Before switching production Merv, pass `--pre-cutover` to permit schema57 or schema58. Every research query runs under PostgreSQL `default_transaction_read_only=on`; `remote_sandbox_links` is checked when schema58 or newer is present. Omit this flag after the artifact redesign so the final check requires schema59. Artifact history must already be copied into the configured Merv R2 bucket before running its read checks.
+The storage write check uses unique object identities under the selected configured
+namespace. It verifies upload, resumed multipart transfer, download and namespace
+isolation, then deletes those exact objects. Artifact content keys are known
+before upload so a lost response can still be cleaned up. Workload cleanup waits
+for confirmed deletion; unresolved IDs require recovery and make the check fail.
+Reports contain IDs, hashes and assertions, not signed URLs or credentials.
 
-`verify_merv_composition.py` separately validates the release image without using production research data. It clears both database URL variables before importing Merv, builds hosted composition against temporary SQLite, verifies schema59, creates a synthetic project and key solely in that temporary database, and checks owner-scoped HTTP/MCP authentication plus configured native health and delegated authentication. Run it in a disposable `--rm --read-only` container with `/tmp` on tmpfs and no published ports. Reuse the existing deployment environment through Compose parsing or an in-memory dotenv parser; Docker `--env-file` does not remove Compose's single quotes. Never create a new credential file or database clone for this check.
+`verify_merv_composition.py` uses `MERV_VERIFY_PROJECT_ID` and optional
+`MERV_VERIFY_SUBJECT`. It clears production database URLs before importing Merv
+and creates synthetic research records and an agent key only in temporary SQLite.
+It checks hosted HTTP/MCP authentication and the configured native connection.
+Run it in a disposable container with no published ports and a temporary `/tmp`.
 
-After the final upload mapping and production switch, run `verify_migrated_uploads.py --report -` inside the new control container beside `verify_sandboxes_cutover.py`, passing the successful final import report on stdin. It requires schema58 and checks only the120 research receipts identified in that reviewed report with database-enforced read-only queries: every handle must uniquely contain its own row ID and project, and every referenced native object's namespace, digest, and size must match. Receipts that have since completed remain verifiable; unrelated new uploads are excluded. Native metadata reads are cached by object. It refreshes targets for only one available receipt and the smallest still-uploading receipt, verifies that their exact completion handles survive, and transfers no bytes. Existing migration sessions are never completed or deleted by this check; reports exclude handles and signed URLs.
+If translating legacy upload handles, run `verify_migrated_uploads.py --report -`
+inside the new control container, passing the successful reviewed import receipt
+on stdin. It checks only the selected migrated receipts and native object metadata,
+preserves completion handles, and does not complete or delete migration sessions.
+See [the historical storage record](SANDBOXES_STORAGE_MIGRATION_HISTORY.md) only
+to interpret old receipts; its retired authentication instructions do not apply.
 
 ## Bounded compute check
 
-Run only after the coordinator reviews the live offer and authorizes its exact cost and lease. Use native service namespace `merv-project-smoke-<random>` so the explicitly scoped shared providers are visible. No Merv project, feed post, task, or experiment is needed.
+Before any rental, the operator configures an explicit compute allowance in
+merv-sandboxes and selects the provider, offer, lease and maximum extension.
+Provision two distinct smoke namespaces and their consumer grants in advance.
+Provider visibility uses exact namespace configuration; names grant no authority.
 
-1. Read `GET /v1/auth/me`, `GET /v1/providers` and `GET /v1/options?provider=<shared-thunder-name>&sort=price&all_options=true`. Select the cheapest **available, USD-priced CPU offer** from the configured Thunder provider. Record provider, plugin, offer ID, hourly amount and minimum billable interval. If none is offered, inspect shared Lambda options and ask the coordinator to choose the smallest suitable offer within the same explicit spend bound. Never substitute a GPU or more expensive provider silently.
-2. Generate an ephemeral Ed25519 caller key on the Docker host using `ssh-keygen`. Keep its directory mode0700, private key mode0600. The Merv production image intentionally contains no SSH client. Only the public key goes to the service.
-3. Before creating compute, require hourly price ×300/3600 plus any known minimum charge to fit the coordinator's bound. POST `/v1/sandboxes` with the selected provider/offer ID, `lease_seconds:300`, a unique smoke name, and stable idempotency key. Sign a `merv_budget` claim with unique smoke payer, that provider, `billing_mode:"platform"`, current UTC source day, zero legacy spends, and an explicit project/provider daily limit equal to the approved smoke bound. Never put the budget claim in request JSON. Record the returned sandbox ID immediately and use it for cleanup even if later assertions fail.
-4. Poll only that sandbox using `GET /v1/sandboxes/{id}?wait=20`. Budget at most180 seconds for readiness. On failed/unknown provisioning or timeout, issue DELETE and continue checking until stopped; do not create a replacement automatically.
-5. Request a60-second caller certificate via POST `/v1/access/certificates` with that sandbox ID and public key. Save the certificate and returned gateway host key; build a dedicated known_hosts entry (`[host]:port` for nonstandard ports). Run host SSH with BatchMode, ConnectTimeout10, StrictHostKeyChecking=yes, IdentitiesOnly=yes, explicit private key/certificate/known_hosts paths and returned sandbox ID as user. Require `printf merv-ssh-smoke` to return exactly that marker. Never disable host-key checking.
-6. Start one durable job with POST `/v1/sandboxes/{id}/jobs`, a stable retry key, timeout30, working directory `/workspace`, and output directory `/workspace/merv-smoke-output`:
+1. Authenticate both smoke connections with `GET /v1/auth/me` and verify their
+   account, member and namespace mappings. Read available provider offers and
+   confirm the reviewed currency, current price and lease fit the approved bound.
+2. Generate a temporary Ed25519 caller key outside the Merv container. Submit one
+   sandbox create with a unique smoke name and stable idempotency key, recording
+   both before the request. The native service checks current budgets and reserves
+   the lease. Persist the returned resource ID immediately. Do not create a
+   replacement automatically after a lost response or provisioning failure.
+3. Poll the exact resource to readiness within the reviewed deadline. A timeout
+   enters cleanup. Request a short-lived caller certificate and check SSH using
+   the returned gateway host key with strict host-key checking.
+4. Run one short durable job with stable idempotency and tiny retained output.
+   Check exit code, stdout/stderr and its exact output snapshot. Through the
+   second namespace, require denial for this sandbox, job, output and snapshot.
+5. If the approved scenario includes renewal, request it once after the job
+   succeeds and verify the deadline change. Native accounting retains the original
+   payer and checks the requesting grant and current budget again. Never send an
+   allowance, historical usage or signed budget claim from Merv.
+6. In cleanup, delete only the recorded sandbox and associated smoke output IDs.
+   Recover a lost create by its exact idempotency key. Wait for provider-confirmed
+   stop, then verify the durable job remains readable. Delete the exact output
+   snapshot, revoke the temporary certificate, and remove the temporary SSH key.
+   Report unresolved IDs and fail if cleanup does not finish.
 
-   ```sh
-   mkdir -p /workspace/merv-smoke-output
-   printf 'merv-job-smoke\n' > /workspace/merv-smoke-output/result.txt
-   printf 'merv-job-smoke\n'
-   printf 'merv-job-stderr\n' >&2
-   ```
+`verify_merv_compute.py` implements the fixed Lambda A10 smoke scenario with a
+600-second initial lease, one 300-second extension, a USD 1.29/hour offer ceiling,
+and a USD 1 service-reported resource-cost bound. These are verifier constraints,
+not live price claims or policy settings. Review that exact offer and configure
+the allowance in the native service before running it; its offline tests do not
+authorize a cloud rental. Set `MERV_SMOKE_PROJECT_ID`,
+`MERV_SMOKE_OTHER_PROJECT_ID`, `MERV_SMOKE_PUBLIC_KEY`, and optional
+`MERV_SMOKE_SUBJECT`, together with the normal service URL and connection file.
 
-   Poll the returned job ID using its cursor and wait20 until succeeded. Require exit_code0, bounded stdout/stderr matching both markers, and a retained artifact/snapshot ID. Request the same sandbox/job/output from a second smoke namespace and require404. Read the retained snapshot manifest and verify the result file's small SHA-256 if the snapshot exposes storage object references.
-7. Once ready and the job succeeds, renew exactly once with `lease_seconds:300` and the same signed smoke budget. Verify the returned lease deadline advanced relative to the old deadline; total actual lifetime remains bounded by immediate release afterward. Do not renew on failures. The maximum authorized extension is one additional300-second reservation; enforce the coordinator's cap against the total reservation before requesting it.
-8. In a `finally` cleanup, DELETE the exact sandbox ID. Poll until `state:"stopped"`; a DELETE acknowledgment or deleting state is insufficient. Then confirm the durable job remains readable after release, delete the smoke output snapshot and any exact associated storage objects, and remove the ephemeral host key directory. Retain only sanitized IDs, timestamps, measured cost, and assertions in the smoke report. A deletion timeout is a failed smoke with an explicit cleanup obligation, never a passing result.
+Both consumer connections and their distinct actual namespaces are checked
+before provisioning. The script prints the create idempotency key before
+submission and records a unique job/workflow name before requesting output
+capture. It waits at most 60 seconds for the host SSH bridge to return
+`{"ssh_ok": true}` on stdin. Cleanup recovers the exact create key, cancels only
+the matching output workflow, confirms resource stop and workflow completion,
+then deletes snapshots attributed to that job on that machine. Unresolved or
+conflicting receipts fail cleanup and retain the keys/IDs in its sanitized report.
+Other resources in the same namespace are excluded. Lease expiry remains a
+backstop; it is not proof of cleanup. The cloud provider's invoice can differ
+from the native compute estimate and needs its own reconciliation.
 
-The machine's300-second lease is an independent expiry backstop. The service must confirm provider deletion before the coordinator declares this check complete.
+## Release evidence
+
+Retain read/connection reports, scoped storage results, the reviewed compute
+intent and lifecycle/cleanup evidence alongside accounting reconciliation and
+the recovery rehearsal. Passing a smoke test cannot substitute for unresolved
+legacy quotas, final usage deltas, ownership conflicts or recovery requirements.

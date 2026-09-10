@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from tests.support.brain import TestBrain
 from tests.support.infrastructure import FakeInfrastructureClient, project_namespace, seed_sandbox
+from merv.brain.infrastructure.ports import _subject
 from merv.brain.surface.auth import SupabaseVerifier
 from merv.brain.surface.project_keys import ProjectKeys
 from merv.brain.surface.transport.api import create_fastapi_app
@@ -625,8 +626,6 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         minted = keys.create(
             project_id=self.project_id,
             owner_user_id=user_id,
-            sandbox_seconds_ceiling=3600,
-            blob_bytes_ceiling=1024,
         )
         verifier = SupabaseVerifier(
             supabase_url="https://example.supabase.co",
@@ -670,11 +669,63 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         )
         self.assertEqual(first.status_code, 200, first.text)
 
+        # Later infrastructure requests recover the payer from persisted session
+        # authority, after the claim's HTTP context has ended. A fresh gateway
+        # and key lookup must produce the same subject without any quota copy.
+        hosted.close()
+        hosted = TestClient(
+            create_fastapi_app(
+                self.brain.server.app,
+                surface_policy=HttpSurfacePolicy.for_surface(
+                    restrict_cors=True, hosted_control=True
+                ),
+                auth=SupabaseVerifier(
+                    supabase_url="https://example.supabase.co",
+                    jwt_secret="unused-in-this-test",
+                    project_keys=ProjectKeys(store=self.brain.store),
+                ),
+            ),
+            raise_server_exceptions=False,
+        )
+        fake = self.brain.infrastructure_client
+        seed_sandbox(
+            self.brain.sandboxes, project_id=self.project_id,
+            experiment_id=self.experiment_id, sandbox_uid="sbx_delayed", status="running",
+        )
+        fake.seed_jobs(project_namespace(self.project_id), "sbx_delayed", {"label": "job_delayed"})
+        original_request = fake.request
+        subjects = []
+
+        def observed_request(*args, **kwargs):
+            subjects.append(_subject.get())
+            return original_request(*args, **kwargs)
+
+        job_call = {
+            "name": "sandbox.job",
+            "arguments": {"project_id": self.project_id, "job_id": "job_delayed"},
+        }
+        with patch.object(fake, "request", side_effect=observed_request):
+            delayed = hosted.post(
+                "/mcp/call", headers={"Authorization": f"Bearer {session_secret}"},
+                json=job_call,
+            )
+        self.assertEqual(delayed.status_code, 200, delayed.text)
+        self.assertTrue(subjects)
+        self.assertEqual(set(subjects), {user_id})
+        self.assertIsNone(_subject.get())
+
         keys.revoke(
             project_id=self.project_id,
             key_id=str(minted["key"]["id"]),
             owner_user_id=user_id,
         )
+        with patch.object(fake, "request") as native_request:
+            denied = hosted.post(
+                "/mcp/call", headers={"Authorization": f"Bearer {session_secret}"},
+                json=job_call,
+            )
+            self.assertEqual(denied.status_code, 401, denied.text)
+            native_request.assert_not_called()
         revoked = hosted.post(
             "/mcp/call",
             headers={"Authorization": f"Bearer {session_secret}"},
@@ -706,8 +757,6 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         minted = keys.create(
             project_id=self.project_id,
             owner_user_id=user_id,
-            sandbox_seconds_ceiling=3600,
-            blob_bytes_ceiling=1024,
         )
         hosted = TestClient(
             create_fastapi_app(

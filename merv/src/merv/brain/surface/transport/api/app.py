@@ -153,7 +153,6 @@ def create_fastapi_app(
             runs_wait.build_router(sandboxes=api.sandboxes, secret=wait_secret),
             sandbox_providers.build_router(
                 providers=api.sandbox_providers,
-                budget_view=api.sandboxes.user_budget_view,
             ),
         )
         if api.sandbox_enabled

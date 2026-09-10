@@ -16,7 +16,7 @@ SHA = hashlib.sha256(b"abc").hexdigest()
 
 
 def record(**overrides):
-    return {"id": "obj_test", "namespace": "merv-project-proj_a", "name": SHA,
+    return {"id": "obj_test", "namespace": "proj_a", "name": SHA,
             "sha256": SHA, "size_bytes": 3, "content_type": "application/octet-stream",
             "state": "available", **overrides}
 
@@ -46,7 +46,7 @@ def test_resume_keeps_noncontiguous_missing_parts_and_follows_all_pages():
     assert len(target["parts"]) == 100
     assert target["parts"][-1]["part_number"] == 101
     assert target["completed_parts"] == [2]
-    assert all(call[2]["namespace"] == "merv-project-proj_a" for call in client.calls)
+    assert all(call[2]["namespace"] == "proj_a" for call in client.calls)
 
 
 def test_completion_uses_service_verified_object_identity():
@@ -54,7 +54,7 @@ def test_completion_uses_service_verified_object_identity():
     result = RemoteObjectProvider(client=client).complete_upload(
         upload_id=_encode_upload("proj_a", "obj_test"), parts=[{"part_number": 1, "etag": "untrusted"}])
     assert (result.namespace, result.sha256, result.size_bytes) == ("proj_a", SHA, 3)
-    assert client.calls == [("POST", "/storage/objects/obj_test/complete", {"namespace": "merv-project-proj_a"})]
+    assert client.calls == [("POST", "/storage/objects/obj_test/complete", {"namespace": "proj_a"})]
 
 
 def test_stat_and_download_resolve_existing_names_without_cross_project_lookup():
@@ -63,7 +63,7 @@ def test_stat_and_download_resolve_existing_names_without_cross_project_lookup()
     provider = RemoteObjectProvider(client=client)
     assert provider.stat(namespace="proj_a", sha256=SHA).size_bytes == 3
     assert provider.presign_download(namespace="proj_a", sha256=SHA, expires_in=60)["url"].startswith("https://")
-    assert all(call[2]["namespace"] == "merv-project-proj_a" for call in client.calls)
+    assert all(call[2]["namespace"] == "proj_a" for call in client.calls)
     assert client.calls[0][2]["params"]["name"] == SHA
 
 
@@ -112,7 +112,7 @@ def test_duplicate_migrated_rows_resume_and_complete_independently(tmp_path):
         project_id = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()["id"]
 
     def handler(method, path, **kwargs):
-        assert kwargs["namespace"] == "merv-project-" + project_id
+        assert kwargs["namespace"] == project_id
         if method == "GET" and path == "/storage/objects":
             return {"objects": []}
         if path.endswith("/complete"):

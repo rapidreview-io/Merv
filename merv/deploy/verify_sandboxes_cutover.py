@@ -26,7 +26,7 @@ from psycopg.rows import dict_row
 
 from merv.brain.infrastructure.client import InfrastructureClient, build_infrastructure_client
 from merv.brain.infrastructure.storage import RemoteObjectProvider, _decode_upload
-from merv.brain.infrastructure.ports import project_namespace
+from merv.brain.infrastructure.ports import infrastructure_actor, project_namespace
 from merv.brain.kernel.state.store import MIGRATIONS
 from merv.brain.kernel.utils import NotFoundError
 from merv.brain.surface.config import build_blob_store
@@ -253,10 +253,22 @@ def verify_artifact_write(run_id: str) -> None:
             raise CheckFailed("artifact smoke bytes need exact-key operator cleanup")
 
 
+def verify_connection(client: InfrastructureClient, project_id: str) -> dict[str, Any]:
+    require(bool(project_id), "an explicit configured verification project is required")
+    namespace = client.namespace_for_project(project_namespace(project_id))
+    identity = client.request("GET", "/auth/me", namespace=project_id)
+    require(identity.get("role") == "consumer" and identity.get("namespace") == namespace,
+            "verification requires a consumer grant for the configured namespace")
+    return identity
+
+
 def verify_writes(args: argparse.Namespace, client: InfrastructureClient) -> None:
     run_id = "smoke_" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "_" + secrets.token_hex(4)
-    namespace = project_namespace(run_id)
-    wrong_namespace = "merv-smoke-denied-" + secrets.token_hex(4)
+    namespace = project_namespace(args.project_id)
+    wrong_namespace = project_namespace(args.other_project_id)
+    primary = verify_connection(client, namespace)
+    other = verify_connection(client, wrong_namespace)
+    require(primary["namespace"] != other["namespace"], "isolation verification requires different namespaces")
     owned: list[tuple[str, str]] = []
     cleanup_ok = False
     try:
@@ -274,10 +286,10 @@ def verify_writes(args: argparse.Namespace, client: InfrastructureClient) -> Non
             sha = digesting.hexdigest()
             emit("new_heavy_intent", namespace=namespace, sha256=sha, bytes=length)
             try:
-                target = provider.presign_upload(namespace=run_id, sha256=sha, size_bytes=length, expires_in=300)
+                target = provider.presign_upload(namespace=namespace, sha256=sha, size_bytes=length, expires_in=300)
             finally:
                 # Recover an accepted create whose HTTP response was lost.
-                owned.extend((namespace, row["id"]) for row in provider._find(namespace=run_id, sha256=sha))
+                owned.extend((namespace, row["id"]) for row in provider._find(namespace=namespace, sha256=sha))
             _, oid = _decode_upload(target["upload_id"])
             owned.append((namespace, oid))
             emit("new_heavy_created", object_id=oid, namespace=namespace, bytes=length, parts=target["part_count"])
@@ -293,15 +305,15 @@ def verify_writes(args: argparse.Namespace, client: InfrastructureClient) -> Non
             require(stat.sha256 == sha and stat.size_bytes == length, "completed smoke upload metadata differs")
             # Heavy adapter uploads default to pinned. Cleanup tracks exact
             # IDs and requires worker-confirmed deletion before reporting pass.
-            require(provider.stat(namespace=run_id, sha256=sha) == stat, "heavy facade stat disagrees after completion")
-            download = provider.presign_download(namespace=run_id, sha256=sha, expires_in=300)
+            require(provider.stat(namespace=namespace, sha256=sha) == stat, "heavy facade stat disagrees after completion")
+            download = provider.presign_download(namespace=namespace, sha256=sha, expires_in=300)
             checked = bounded_download(download["url"], size=length, expected_sha=sha, full_limit=length)
             missing_in_namespace(client, oid, wrong_namespace)
-            require(provider.stat(namespace=run_id + "_other", sha256=sha) is None, "another project found smoke content")
+            require(provider.stat(namespace=wrong_namespace, sha256=sha) is None, "another project found smoke content")
             emit("new_heavy", ok=True, object_id=oid, namespace=namespace, resume_verified=True, **checked)
         # Exercise the public adapter deletion path; final cleanup verifies
         # physical deletion after the service worker acknowledges it.
-        require(provider.delete(namespace=run_id, sha256=sha), "heavy deletion did not find smoke object")
+        require(provider.delete(namespace=namespace, sha256=sha), "heavy deletion did not find smoke object")
     finally:
         cleanup_ok = clean_owned(client, list(dict.fromkeys(owned)))
     require(cleanup_ok, "smoke objects need operator cleanup using the reported exact IDs")
@@ -309,6 +321,12 @@ def verify_writes(args: argparse.Namespace, client: InfrastructureClient) -> Non
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--project-id", default=os.environ.get("MERV_VERIFY_PROJECT_ID"),
+                        help="configured project reference for the consumer connection")
+    parser.add_argument("--other-project-id", default=os.environ.get("MERV_VERIFY_OTHER_PROJECT_ID"),
+                        help="independently configured namespace for storage isolation checks")
+    parser.add_argument("--subject", default=os.environ.get("MERV_VERIFY_SUBJECT"),
+                        help="mapped external subject for multi-member application grants")
     parser.add_argument("--pre-cutover", action="store_true", help="allow schema57 for strictly read-only research checks before the production switch")
     parser.add_argument("--write-storage", action="store_true", help="also create and delete uniquely named smoke bytes")
     parser.add_argument("--artifact-samples", type=int, default=5, help="old project samples plus this many recent artifacts")
@@ -319,6 +337,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--history-budget-mib", type=int, default=256)
     parser.add_argument("--multipart-mib", type=int, default=65)
     args = parser.parse_args()
+    require(bool(args.project_id), "--project-id or MERV_VERIFY_PROJECT_ID is required")
+    require(not args.write_storage or bool(args.other_project_id),
+            "--write-storage also requires --other-project-id")
     require(1 <= args.artifact_samples <= 20 and 1 <= args.heavy_samples <= 20, "sample counts must be1–20")
     require(1 <= args.full_limit_mib <= 64 and 1 <= args.history_budget_mib <= 512, "historical byte limits outside bound")
     require(6 <= args.multipart_mib <= 128, "multipart payload must be6–128MiB")
@@ -331,12 +352,12 @@ def main() -> int:
         args = parse_args()
         client = build_infrastructure_client()
         require(client is not None, "new infrastructure configuration is missing")
-        whoami = client.request("GET", "/auth/me", namespace="merv-control")
-        require(whoami["namespace"] == "merv-control" and whoami["token_id"].startswith("svc_"), "delegated JWT authentication failed")
-        emit("delegated_auth", ok=True, namespace=whoami["namespace"])
-        verify_history(args, client)
-        if args.write_storage:
-            verify_writes(args, client)
+        with infrastructure_actor(args.subject):
+            whoami = verify_connection(client, args.project_id)
+            emit("consumer_auth", ok=True, namespace=whoami["namespace"])
+            verify_history(args, client)
+            if args.write_storage:
+                verify_writes(args, client)
         emit("complete", ok=True, writes_enabled=args.write_storage)
         return 0
     except Exception as exc:

@@ -44,7 +44,8 @@ so a new release reuses them exactly like prod's release clones.
    point `/etc/apt/sources.list.d/ubuntu.sources` at `archive.ubuntu.com`.
 3. Create the env files in `~/research-suite-vm/` (mode 0600):
    - `dev.env` — `MERV_DEV_HOST`, `MERV_WAIT_SECRET`,
-     `MERV_SANDBOXES_URL`, and a dev-only `MERV_SANDBOXES_JWT_SECRET`.
+     `MERV_SANDBOXES_URL`, and `MERV_SANDBOXES_CONNECTIONS_FILE` pointing to
+     private, development-only consumer grants as described in the deploy README.
    - `supabase-db.env` — database settings from `deploy/supabase.env.example`.
    - `provider-secrets.env` — retained launcher filename for Supabase auth
      settings and `MERV_REQUIRE_AUTH=1`; cloud provider credentials belong only

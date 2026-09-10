@@ -3,8 +3,10 @@
 Two shapes live here. A minted secret is stored by digest and compared against
 what a caller presents. A DERIVED secret — the run-wait tag — is stored
 nowhere at all: one process key plus the (sandbox_uid, label) it names
-reproduces the tag on every request, so an auth-exempt wait URL needs no row,
-no migration, and no revocation path beyond the state it already reads.
+reproduces the tag on every request. Subject-bound v2 tags also authenticate the
+original infrastructure subject, so a later worker can restore its identity
+without retaining the original HTTP context. An auth-exempt wait URL needs no row
+or migration; resource access still depends on the service's current grant.
 """
 
 from __future__ import annotations
@@ -15,11 +17,11 @@ import os
 import secrets
 from collections.abc import Mapping
 from pathlib import Path
+from urllib.parse import urlencode
 
 from merv.shared.errors import ValidationError
 
 from .env import env_value
-
 
 WAIT_SECRET_ENV_VAR = "MERV_WAIT_SECRET"
 WAIT_SECRET_FILENAME = "wait_secret"
@@ -118,36 +120,41 @@ def _stored_wait_secret(*, state_root: Path) -> bytes:
     return minted
 
 
-def wait_signature(*, key: bytes, sandbox_uid: str, label: str) -> str:
+def wait_signature(*, key: bytes, sandbox_uid: str, label: str, subject: str | None = None) -> str:
     """The tag that makes a run-wait URL a capability.
 
     Length-prefixed under a versioned domain: without it, one (uid, label) pair
     could be re-cut into another that signs identically.
     """
-    message = _WAIT_DOMAIN + _length_prefixed(sandbox_uid) + _length_prefixed(label)
+    domain = _WAIT_DOMAIN if subject is None else b"merv-wait-v2\0"
+    message = domain + _length_prefixed(sandbox_uid) + _length_prefixed(label)
+    if subject is not None:
+        message += _length_prefixed(subject)
     digest = hmac.new(key, message, hashlib.sha256).hexdigest()
     return digest[:WAIT_SIGNATURE_CHARS]
 
 
-def wait_url(*, base_url: str, key: bytes, sandbox_uid: str, label: str) -> str:
+def wait_url(*, base_url: str, key: bytes, sandbox_uid: str, label: str,
+             subject: str | None = None) -> str:
     """The absolute capability URL for one run, ready to hand to an agent.
 
     The prefix carries its own slashes, and labels are already restricted to
     merv_run's charset at registration, so nothing here is escaped or joined
     twice — a URL this returns resolves to the mounted route verbatim.
     """
-    signature = wait_signature(key=key, sandbox_uid=sandbox_uid, label=label)
+    signature = wait_signature(key=key, sandbox_uid=sandbox_uid, label=label, subject=subject)
+    query = "?" + urlencode({"subject": subject}) if subject is not None else ""
     return (
         f"{base_url.rstrip('/')}{WAIT_ROUTE_PREFIX}"
-        f"{sandbox_uid}/{label}/{signature}"
+        f"{sandbox_uid}/{label}/{signature}{query}"
     )
 
 
 def wait_signature_matches(
-    *, key: bytes, sandbox_uid: str, label: str, presented: str
+    *, key: bytes, sandbox_uid: str, label: str, presented: str, subject: str | None = None
 ) -> bool:
     """Constant-time check of a presented run-wait tag."""
-    expected = wait_signature(key=key, sandbox_uid=sandbox_uid, label=label)
+    expected = wait_signature(key=key, sandbox_uid=sandbox_uid, label=label, subject=subject)
     return hmac.compare_digest(
         expected.encode("ascii"), presented.encode("utf-8", errors="replace")
     )

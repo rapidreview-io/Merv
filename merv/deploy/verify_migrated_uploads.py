@@ -79,7 +79,7 @@ def verify_pending(client: Any, rows: list[dict[str, Any]], *, expected: int = 1
             metadata[key] = client.request('GET', '/storage/objects/' + object_id, namespace=namespace)
             representatives[key] = row
         native = metadata[key]
-        require(native['id'] == object_id and native['namespace'] == namespace, 'native receipt identity or namespace mismatch')
+        require(native['id'] == object_id and native['namespace'] == client.namespace_for_project(namespace), 'native receipt identity or namespace mismatch')
         require(native['sha256'] == row['content_sha256'] and native['size_bytes'] == row['size_bytes'], 'pending receipt metadata differs from its canonical native object')
         require(native['name'] == row['content_sha256'], 'native content name differs from the receipt digest')
         require(native['state'] in {'available', 'uploading', 'completing'}, 'migrated receipt target is no longer usable')
