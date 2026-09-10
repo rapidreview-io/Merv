@@ -190,14 +190,6 @@ class BaseStateStore:
         return project_id
 
 
-    def events_since(
-        self, *, project_id: str | None, after_id: int, limit: int = 500
-    ) -> dict[str, Any]:
-        """Ascending tail of the append-only events table — the SSE cursor read."""
-        return self.recent_events(
-            project_id=project_id, limit=limit, after_id=after_id
-        )
-
     def add_project_member(self, *, project_id: str, user_id: str) -> None:
         with self.transaction() as conn:
             conn.execute(

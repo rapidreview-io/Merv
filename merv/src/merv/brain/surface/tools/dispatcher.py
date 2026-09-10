@@ -83,7 +83,6 @@ class ToolDispatcher:
         *,
         handlers: dict[str, ToolHandler],
         activity: ToolActivity,
-        tool_calls: ToolCallRecorder,
         ledger: ToolCallRecorder | None = None,
         tool_names: Iterable[str] | None = None,
     ) -> None:
@@ -95,9 +94,8 @@ class ToolDispatcher:
             tool_names=selected_tool_names,
         )
         self.activity = activity
-        self.tool_calls = tool_calls
-        # Durable sibling of the in-memory ring: sizes, digests, and outcomes
-        # that survive a restart. Absent in narrow test compositions.
+        # Durable record of every call: sizes, digests, and outcomes that
+        # survive a restart. Absent in narrow test compositions.
         self.ledger = ledger
         self._tool_names = frozenset(selected_tool_names)
         self._tools = {
@@ -204,12 +202,11 @@ class ToolDispatcher:
             raise
 
     def _log(self, call: ToolCallRecord) -> None:
-        """One shaped record, three sinks: the ring, the debug rows, the ledger.
+        """One shaped record, two sinks: the activity ring and the ledger.
 
         Shaping it here rather than inside each sink is what keeps them
         agreeing about the call's target, scope, and I/O sizes.
         """
         self.activity.tool_call(call)
-        self.tool_calls.record(call)
         if self.ledger is not None:
             self.ledger.record(call)

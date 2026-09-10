@@ -71,7 +71,7 @@ from .oauth import OAuthService
 from .oauth_store import OAUTH_SCHEMA, SqlOAuthRepository
 from .project_keys import PROJECT_KEY_SCHEMA, ProjectKeys
 from .runner_pairing import RunnerPairings
-from .telemetry import ControlActivitySink, ControlToolCallSink, StructuredLogger
+from .telemetry import ControlActivitySink, StructuredLogger
 from .tools.contracts import TOOL_MANIFEST, available_tool_names
 from .tools.dispatcher import ToolDispatcher
 from .transport.api import create_fastapi_app
@@ -110,7 +110,6 @@ class Surface:
         # kernel shapes them without knowing what any of them mean.
         register_activity_vocabulary(**ACTIVITY_VOCABULARY)
         self.activity = ControlActivitySink()
-        self.tool_calls = ControlToolCallSink()
         # Agent-attributed request/response records ride the same blob store
         # as Artifacts and Feed bytes (disk or bucket, never RAM), and expire on
         # the ledger's horizon.
@@ -205,7 +204,6 @@ class Surface:
                 for root, method in (tool.handler_identity.split(".", 1),)
             },
             activity=self.activity,
-            tool_calls=self.tool_calls,
             ledger=self.tool_ledger,
             tool_names=tool_names,
         )

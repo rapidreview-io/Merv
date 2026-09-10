@@ -423,27 +423,24 @@ Agent posts and image/embed capture use MCP tools that return a bounded
 token-upload command. Browser mutations are limited to researcher reactions,
 replies, and UI telemetry.
 
-## Activity and tool-I/O diagnostics
+## Activity diagnostics
 
 ```http
 GET  /api/activity?limit=100&source={mcp|http|app}&project_id={project_id}
-GET  /api/debug/tool-calls?minutes=&source=&status=&tool=&project_id=&limit=&sort=&order=
-GET  /api/debug/tool-calls/{call_id}
-POST /api/debug/tool-calls/clear
 ```
 
-These are diagnostic rings, not durable research records:
+This is a diagnostic ring, not a durable research record:
 
 - activity keeps up to 5,000 summarized events in process memory;
-- tool-I/O keeps up to 1,500 full request/response records in process memory;
-- both reset on brain restart;
+- it resets on brain restart;
 - capability fields are redacted before they are exposed.
 
 The durable research timeline is `GET /api/projects/{project_id}/events`, whose
-rows are committed with accepted state changes.
+rows are committed with accepted state changes. Every tool call is also written
+to the durable `tool_calls` ledger.
 
 In auth-off deployments there is no authentication boundary, so the diagnostic
-and clear routes are private-operator surfaces and are not tenant-isolated.
+route is a private-operator surface and is not tenant-isolated.
 
 ## Errors
 

@@ -119,15 +119,13 @@ brain on port 8787. Point at another local port with `RSUI_API`.
 ## Observe the system
 
 - `GET /api/activity?limit=100` returns the bounded in-memory activity ring.
-- `GET /api/debug/tool-calls` returns the bounded in-memory full-payload
-  diagnostic ring.
 - `GET /api/projects/{project_id}/events` returns durable accepted research
   events.
 - `GET /api/projects/{project_id}/events/stream` is the UI's server-sent-event
   notification stream.
 
-The activity and tool-call diagnostic rings are process-local and reset when the
-brain restarts. They are not repo-local JSONL or SQLite files.
+The activity ring is process-local and resets when the brain restarts. It is
+not a repo-local JSONL or SQLite file.
 
 ## State placement
 

@@ -316,10 +316,13 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
                 "caller_session_id": "rev",
             },
         )
-        recorded = self.app.tool_calls.stats(tool="review.start")
-        self.assertEqual(recorded["totals"]["calls"], 1)
-        self.assertEqual(recorded["calls"][0]["tool"], "review.start")
-        self.assertEqual(recorded["calls"][0]["project_id"], pid)
+        recorded = [
+            event
+            for event in self.app.activity.recent(limit=1000)["events"]
+            if event.get("tool") == "review.start"
+        ]
+        self.assertEqual(len(recorded), 1)
+        self.assertEqual(recorded[0]["args"]["project_id"], pid)
 
         wrong_submit = self.client.request(
             "POST",
@@ -816,14 +819,8 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.assertNotIn("MLFLOW_TRACKING_PASSWORD", ui_state["mlflow"]["env"])
 
         activity_text = json.dumps(self.app.activity.recent(limit=100), sort_keys=True)
-        tool_calls = self.app.tool_calls.stats(tool="experiment.transition")
-        tool_call_details = [
-            self.app.tool_calls.get(call_id=call["id"]) for call in tool_calls["calls"]
-        ]
         self.assertNotIn("rr_sk_agent", activity_text)
-        self.assertNotIn("rr_sk_agent", json.dumps(tool_call_details, sort_keys=True))
         self.assertIn("[redacted]", activity_text)
-        self.assertIn("[redacted]", json.dumps(tool_call_details, sort_keys=True))
 
     def test_application_components_share_the_composed_service_instances(self) -> None:
         self.assertIs(self.app.research._experiments, self.app.experiments)

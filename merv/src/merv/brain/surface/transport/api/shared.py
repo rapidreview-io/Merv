@@ -237,7 +237,7 @@ def ledger_tool_refusal(
 
 
 # Global mutators/aggregates gated behind the operator token in hosted mode.
-GLOBAL_MUTATOR_PREFIXES = ("/api/admin", "/api/debug/tool-calls/clear")
+GLOBAL_MUTATOR_PREFIXES = ("/api/admin",)
 
 
 def _operator_token_ok(request: Request) -> bool:

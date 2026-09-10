@@ -35,7 +35,7 @@ from merv.brain.kernel.state.activity import redact_sensitive, scrub_secret_text
 from merv.brain.kernel.utils import ValidationError
 from tests.support.infrastructure import FakeInfrastructureClient, project_namespace
 from merv.brain.kernel.state.activity import ToolCallRecord
-from merv.brain.surface.telemetry import ControlToolCallSink
+from merv.brain.surface.telemetry import ControlActivitySink
 from merv.brain.surface.transport.api import runs_wait
 from merv.brain.surface.transport.api.shared import redact_upload_tokens
 from merv.brain.surface.transport.api import create_fastapi_app
@@ -882,15 +882,15 @@ class RunsWaitUrlTest(unittest.TestCase):
             json.dumps(redact_sensitive(value={"runs": list(runs.values())})),
         )
         self.assertTrue(scrub_secret_text(url).endswith("/seed0/<redacted>"))
-        # And through a real sink, not just the helper: the stored row itself
+        # And through a real sink, not just the helper: the stored event itself
         # must come back masked, or a sink that skips the scrubber hides here.
-        sink = ControlToolCallSink()
-        sink.record(ToolCallRecord(
+        sink = ControlActivitySink()
+        sink.tool_call(ToolCallRecord(
             tool="sandbox.runs", source="http", status="ok", duration_ms=1,
             arguments={"project_id": self.project_id},
             result={"runs": list(runs.values())},
         ))
-        stored = json.dumps(sink.get(call_id=1))
+        stored = json.dumps(sink.recent(limit=1)["events"])
         self.assertIn("seed0", stored)
         self.assertNotIn(tag, stored)
 

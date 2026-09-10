@@ -166,7 +166,6 @@ def create_fastapi_app(
         meta.build_router(
             gateway,
             activity_log=api.activity,
-            tool_calls=api.tool_calls,
             research=api.research,
             project_member_directory=user_directory is not None,
             storage_enabled=api.storage is not None,

@@ -605,7 +605,6 @@ class ToolDispatcherTest(unittest.TestCase):
         dispatcher = ToolDispatcher(
             handlers=handlers,
             activity=object(),
-            tool_calls=object(),
             tool_names=tool_names,
         )
 
@@ -616,7 +615,6 @@ class ToolDispatcherTest(unittest.TestCase):
         dispatcher = ToolDispatcher(
             handlers={"claim.create": lambda **_: {}},
             activity=Mock(),
-            tool_calls=Mock(),
             tool_names={"claim.create"},
         )
 

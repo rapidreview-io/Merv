@@ -305,7 +305,7 @@ class McpStreamableHttp:
         # tool but agent.hello, required or not accordingly.
         self._agent_identity = agent_identity
 
-    async def _protocol_error(
+    def _protocol_error(
         self,
         *,
         request_id: RequestId | None,
@@ -317,24 +317,20 @@ class McpStreamableHttp:
     ) -> JSONResponse:
         """One refusal issued before dispatch: the ledger row and the JSON-RPC
         response are minted together, so neither can be forgotten."""
-        await self._ledger_reject(
+        self._ledger_reject(
             tool=tool,
             error_code=_PROTOCOL_ERROR_CODES.get(code, "protocol_error"),
             message=message,
         )
         return _json_response(_error(request_id, code, message, data), status_code=status_code)
 
-    async def _ledger_reject(self, *, tool: str, error_code: str, message: str) -> None:
-        """Durable refusal row, written OFF the event loop.
-
-        A stalled database on a malformed-request storm would otherwise block
-        every unrelated request behind these inserts.
-        """
+    def _ledger_reject(self, *, tool: str, error_code: str, message: str) -> None:
+        """Durable refusal row. The ledger's writer owns the database thread,
+        so this is a queue put and never blocks the event loop."""
         if self._ledger is None:
             return
         with suppress(Exception):  # telemetry never breaks the transport
-            await run_in_threadpool(
-                self._ledger.reject,
+            self._ledger.reject(
                 tool=tool, source="mcp", error_code=error_code, error=message,
             )
 
@@ -349,7 +345,7 @@ class McpStreamableHttp:
                 self._authorize(authorization)
             version_denial = _protocol_version_denial(mcp_protocol_version)
             if version_denial is not None:
-                await self._ledger_reject(
+                self._ledger_reject(
                     tool="",
                     error_code="unsupported_protocol_version",
                     message=f"Unsupported MCP-Protocol-Version: {mcp_protocol_version}",
@@ -358,7 +354,7 @@ class McpStreamableHttp:
             try:
                 raw_body = await read_limited_mcp_body(request)
             except RequestBodyTooLarge as exc:
-                return await self._protocol_error(
+                return self._protocol_error(
                     request_id=None,
                     code=-32004,
                     message=str(exc),
@@ -368,11 +364,11 @@ class McpStreamableHttp:
             try:
                 payload = json.loads(raw_body)
             except (UnicodeDecodeError, ValueError):
-                return await self._protocol_error(
+                return self._protocol_error(
                     request_id=None, code=-32700, message="Parse error", status_code=400
                 )
             if not isinstance(payload, dict):
-                return await self._protocol_error(
+                return self._protocol_error(
                     request_id=None,
                     code=-32600,
                     message="Invalid Request",
@@ -382,14 +378,14 @@ class McpStreamableHttp:
 
     async def _handle(self, *, request: Request, payload: JsonObject) -> Response:
         if payload.get("jsonrpc") != "2.0":
-            return await self._protocol_error(
+            return self._protocol_error(
                 request_id=None, code=-32600, message="Invalid Request", status_code=400
             )
 
         has_id = "id" in payload
         request_id = _request_id(payload)
         if has_id and request_id is None:
-            return await self._protocol_error(
+            return self._protocol_error(
                 request_id=None, code=-32600, message="Invalid Request", status_code=400
             )
 
@@ -400,13 +396,13 @@ class McpStreamableHttp:
         if method is None and has_id and ("result" in payload or "error" in payload):
             return Response(status_code=202)
         if not isinstance(method, str) or not method:
-            return await self._protocol_error(
+            return self._protocol_error(
                 request_id=None, code=-32600, message="Invalid Request", status_code=400
             )
         params = payload.get("params", {})
         if not isinstance(params, dict):
             response_id = request_id if has_id else None
-            return await self._protocol_error(
+            return self._protocol_error(
                 request_id=response_id,
                 code=-32602,
                 message="Invalid params",
@@ -416,7 +412,7 @@ class McpStreamableHttp:
 
         if method == "initialize":
             if not has_id or request_id is None:
-                return await self._protocol_error(
+                return self._protocol_error(
                     request_id=None,
                     code=-32600,
                     message="Initialize must be a request",
@@ -430,7 +426,7 @@ class McpStreamableHttp:
         if method == "notifications/initialized":
             # Stateless: accept the handshake completion without tracking it.
             if has_id:
-                return await self._protocol_error(
+                return self._protocol_error(
                     request_id=request_id,
                     code=-32600,
                     message="Initialized must be a notification",
@@ -452,7 +448,7 @@ class McpStreamableHttp:
             return await self._tools_call(
                 request=request, request_id=request_id, params=params
             )
-        return await self._protocol_error(
+        return self._protocol_error(
             request_id=request_id,
             code=-32601,
             message=f"Method not found: {method}",
@@ -476,7 +472,7 @@ class McpStreamableHttp:
             # Through _protocol_error like every other refusal: a handshake the
             # server rejected is exactly the kind of thing that must leave a
             # trace, and its 200 JSON-RPC shape is unchanged.
-            return await self._protocol_error(
+            return self._protocol_error(
                 request_id=request_id,
                 code=-32602,
                 message="Invalid initialize params",
@@ -532,7 +528,7 @@ class McpStreamableHttp:
     ) -> JSONResponse:
         cursor = params.get("cursor")
         if cursor is not None:
-            return await self._protocol_error(
+            return self._protocol_error(
                 request_id=request_id,
                 code=-32602,
                 message="Invalid cursor",
@@ -546,11 +542,11 @@ class McpStreamableHttp:
         name = params.get("name")
         arguments = params.get("arguments", {})
         if not isinstance(name, str) or not name:
-            return await self._protocol_error(
+            return self._protocol_error(
                 request_id=request_id, code=-32602, message="Tool name is required"
             )
         if not isinstance(arguments, dict):
-            return await self._protocol_error(
+            return self._protocol_error(
                 request_id=request_id,
                 code=-32602,
                 message="Tool arguments must be an object",
@@ -558,10 +554,10 @@ class McpStreamableHttp:
             )
         progress_token, token_error = self._progress_token(params)
         if token_error is not None:
-            return await self._protocol_error(
+            return self._protocol_error(
                 request_id=request_id, code=-32602, message=token_error, tool=name
             )
-        denied = await self._preauthorize(
+        denied = self._preauthorize(
             name=name, arguments=arguments, request=request, request_id=request_id
         )
         if denied is not None:
@@ -586,14 +582,13 @@ class McpStreamableHttp:
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    async def _preauthorize(
+    def _preauthorize(
         self, *, name: str, arguments: JsonObject, request: Request, request_id: RequestId
     ) -> JSONResponse | None:
         """INV-5/INV-11 (FIX 6): resolve project scope and the internal-tool block
         BEFORE the SSE stream can commit a 200 — so a slow scope or visibility
         denial is always a transport 403 (404 for membership misses), never a
-        mid-stream error. Tool execution alone runs behind the stream; only the
-        denial's ledger row is awaited, off the loop."""
+        mid-stream error. Tool execution alone runs behind the stream."""
         principal = getattr(request.state, "principal", LOCAL_PRINCIPAL)
         try:
             if self._authorize_scope is not None:
@@ -612,7 +607,7 @@ class McpStreamableHttp:
             # Preflight denials are always transport-visible: membership misses
             # are 404 here even though a tool-raised NotFoundError stays 200.
             status = 404 if isinstance(exc, NotFoundError) else _error_status(exc)
-            await self._ledger_reject(
+            self._ledger_reject(
                 tool=name, error_code=exc.error_code, message=exc.message
             )
             return _json_response(_dispatcher_error(request_id, exc), status_code=status)
