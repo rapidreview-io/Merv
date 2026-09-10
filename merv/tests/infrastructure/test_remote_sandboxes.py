@@ -218,11 +218,8 @@ class RemoteSandboxesTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self.engine.pull_outputs_command(project_id="p1", sandbox_uid=facts["sandbox_uid"], paths=["../secret"])
 
-    def test_spend_uses_service_totals_and_never_reprices_legacy_rows(self):
+    def test_spend_reports_service_totals_only(self):
         facts = self.create()
-        with self.store.transaction() as conn:
-            conn.execute("INSERT INTO sandbox_generations (id,experiment_id,project_id,started_at,ended_at,price_usd_per_hour) VALUES (?,?,?,?,?,?)",
-                         ("legacy_gen", "e1", "p1", "2026-09-07T10:00:00Z", "2026-09-07T12:00:00Z", 999))
         self.client.report = {
             "namespace": "explicit-remote", "member_id": "member-one", "as_of": "2026-09-09T00:00:00Z",
             "accrued": [{"currency": "USD", "amount": "4.25"}], "reserved": [], "hourly_rate": [],
@@ -248,19 +245,6 @@ class RemoteSandboxesTest(unittest.TestCase):
         providers = RemoteProviders(client=self.client, store=self.store)
         self.assertEqual(providers.overview(project_id="p1")["providers"][0]["provider"], "cloud")
         self.assertTrue(all(call[0] == "GET" for call in self.client.calls))
-
-    def test_obsolete_local_limits_do_not_authorize_or_deny_compute(self):
-        with self.store.transaction() as conn:
-            conn.execute("INSERT INTO sandbox_provider_settings (project_id,provider,enabled,daily_usd_limit,updated_at) VALUES ('p1','cloud',0,0,'2026-09-09')")
-        first = self.create()
-        self.engine.extend(project_id="p1", sandbox_uid=first["sandbox_uid"], seconds=60)
-        for method, path, namespace, body, params in self.client.calls:
-            if body:
-                self.assertNotIn("merv_budget", body)
-                self.assertNotIn("payer_id", body)
-        with self.store.connect() as conn:
-            self.assertEqual(conn.execute("SELECT daily_usd_limit FROM sandbox_provider_settings WHERE provider='cloud'").fetchone()[0], 0)
-
 
 if __name__ == "__main__":
     unittest.main()

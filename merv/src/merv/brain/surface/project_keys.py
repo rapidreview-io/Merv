@@ -17,13 +17,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from ..kernel.secret_tokens import hash_secret, mint_secret, secret_digest_matches
-from ..kernel.state.schema import (
-    Migration,
-    SchemaModule,
-    ensure_columns,
-    has_table,
-    table_ddl,
-)
+from ..kernel.state.schema import SchemaModule
 from ..kernel.state.store import BaseStateStore, Connection, row_to_dict
 from ..kernel.utils import NotFoundError, ValidationError, new_id, now_iso, parse_iso
 
@@ -554,14 +548,6 @@ __all__ = [
 
 # -- schema ----------------------------------------------------------------
 
-# Credential tables that carry a scope discriminator (migration 34). The
-# OAuth two live next door; the column is the same on all three.
-GRANT_SCOPE_TABLES = (
-    "project_api_keys",
-    "oauth_authorization_codes",
-    "oauth_refresh_tokens",
-)
-
 PROJECT_KEY_DDL = """\
 -- Surface-owned project credentials (agent-anywhere). The presented mk_ secret
 -- is returned once at mint; only its SHA-256 digest is authoritative here. Key
@@ -600,41 +586,6 @@ CREATE TABLE IF NOT EXISTS project_api_keys (
 """
 
 
-def _add_project_api_keys(conn: Connection) -> None:
-    """Migration 26: the authoritative, project-scoped credential table.
-
-    audience and oauth_family_id are folded into the initial DDL (no separate
-    ALTER migrations) and stay NULL for direct project keys.
-    """
-    if not has_table(conn, "project_api_keys"):
-        conn.execute(table_ddl(table="project_api_keys"))
-
-
-def _add_grant_scope(conn: Connection) -> None:
-    """Migration 34: a credential may be scoped to its owner's whole membership.
-
-    `grant_scope` is the discriminator on all three credential tables.
-    `project_id` stays NOT NULL — for an account grant it is the home project
-    the credential is administered from — so every existing key route,
-    revocation predicate, and foreign key keeps working untouched. Existing
-    rows are all project-scoped, which is exactly what the default states.
-    """
-    for table in GRANT_SCOPE_TABLES:
-        ensure_columns(
-            conn,
-            table,
-            {
-                "grant_scope": "TEXT NOT NULL DEFAULT 'project' "
-                "CHECK (grant_scope IN ('project', 'account'))"
-            },
-        )
-
-
 PROJECT_KEY_SCHEMA = SchemaModule(
-    name="surface.project_keys",
-    ddl=PROJECT_KEY_DDL,
-    migrations=(
-        Migration(26, "add_project_api_keys", _add_project_api_keys),
-        Migration(34, "add_grant_scope", _add_grant_scope),
-    ),
+    name="surface.project_keys", ddl=PROJECT_KEY_DDL
 )

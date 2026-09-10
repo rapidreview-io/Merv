@@ -41,22 +41,6 @@ class ProjectToolTest(unittest.TestCase):
         self.assertNotIn("hard_stop_rationale", fetched)
         self.assertNotIn("stopped_at", fetched)
 
-    def test_legacy_stopped_project_reactivates_on_migration(self) -> None:
-        project = self.call("project", action="create", name="Alpha")
-        # Simulate a database stopped under the removed hard-stop contract,
-        # before the reactivation migration existed.
-        with self.app.store.transaction() as conn:
-            conn.execute(
-                "UPDATE projects SET status = 'stopped' WHERE id = ?",
-                (project["id"],),
-            )
-            conn.execute(
-                "DELETE FROM schema_migrations WHERE name = 'reactivate_hard_stopped_projects'"
-            )
-        self.app.store._initialize()
-        fetched = self.call("project.get", project_id=project["id"])
-        self.assertEqual(fetched["status"], "active")
-
     def test_project_name_must_be_at_least_three_chars_on_create_and_update(self) -> None:
         with self.assertRaises(ValidationError) as ctx:
             self.call("project", action="create", name="ab")

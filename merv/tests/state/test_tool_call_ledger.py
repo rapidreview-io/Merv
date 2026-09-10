@@ -29,10 +29,8 @@ from merv.brain.research_core import ACTIVITY_VOCABULARY
 # builds anything that can log. A ledger built without composition, as these
 # tests do, has to say so itself.
 register_activity_vocabulary(**ACTIVITY_VOCABULARY)
-from merv.brain.kernel.state.persistence import TOOL_CALL_LEDGER_INDEXES
-from merv.brain.kernel.state.schema import statements
 from merv.brain.kernel.state.store import StateStore
-from tests.support.schema import ALL_DDL, LADDER, booted_store
+from tests.support.schema import booted_store
 from merv.brain.kernel.state.tool_call_ledger import (
     DEFAULT_RETENTION_DAYS,
     LEDGER_BUSY_TIMEOUT_MS,
@@ -128,32 +126,23 @@ class StubPostgresStore:
     def live(self) -> list[StubPostgresConnection]:
         return [conn for conn in self.connections if not conn.closed]
 
+# The read-path indexes the kernel DDL declares over the ledger and the event
+# log beside it. Losing one is a silent full scan, not a failure, so the names
+# are asserted rather than inferred.
 LEDGER_INDEX_NAMES = frozenset(
-    statement.split("IF NOT EXISTS ")[1].split()[0]
-    for statement in TOOL_CALL_LEDGER_INDEXES
+    {
+        "idx_tool_calls_project",
+        "idx_tool_calls_status",
+        "idx_tool_calls_tool",
+        "idx_tool_calls_agent",
+        "idx_events_project",
+        "idx_events_target",
+    }
 )
 
 
-def _schema_without_tool_calls() -> str:
-    """The installed schema as it stood before migration 37: no tool_calls."""
-    return ";\n".join(
-        statement
-        for statement in statements(ALL_DDL)
-        if "CREATE TABLE IF NOT EXISTS tool_calls" not in statement
-    ) + ";"
-
-
-def _indexes(conn: sqlite3.Connection) -> set[str]:
-    return {
-        str(row[0])
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'index'"
-        ).fetchall()
-    }
-
-
-class Migration37Test(unittest.TestCase):
-    def test_fresh_database_gets_the_table_and_every_index(self) -> None:
+class ToolCallLedgerSchemaTest(unittest.TestCase):
+    def test_a_fresh_database_gets_the_ledger_and_every_read_path_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = booted_store(db_path=Path(tmp) / "state.sqlite")
             with store.transaction() as conn:
@@ -161,78 +150,24 @@ class Migration37Test(unittest.TestCase):
                     str(row["name"])
                     for row in conn.execute("PRAGMA table_info(tool_calls)").fetchall()
                 }
-                self.assertEqual(
-                    columns,
-                    {
-                        "id", "ts", "request_id", "principal_id", "tool", "source",
-                        "project_id", "target_type", "target_id", "status",
-                        "error_code", "error_head", "duration_ms", "sent_chars",
-                        "received_chars", "args_digest",
-                        # Migration 50: agent attribution + payload key.
-                        "agent_id", "mcp_session_id", "payload_ref",
-                    },
-                )
-                self.assertLessEqual(LEDGER_INDEX_NAMES, _indexes(conn))
-                applied = {
-                    int(row["version"])
+                indexes = {
+                    str(row["name"])
                     for row in conn.execute(
-                        "SELECT version FROM schema_migrations"
+                        "SELECT name FROM sqlite_master WHERE type = 'index'"
                     ).fetchall()
                 }
-                self.assertIn(37, applied)
-
-    def test_database_that_predates_the_ledger_converges(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "legacy.sqlite"
-            conn = sqlite3.connect(db_path)
-            conn.executescript(_schema_without_tool_calls())
-            for version, name in LADDER:
-                if version < 37:
-                    conn.execute(
-                        "INSERT OR IGNORE INTO schema_migrations "
-                        "(version, name, applied_at) VALUES (?, ?, '2026-01-01T00:00:00Z')",
-                        (version, name),
-                    )
-            conn.commit()
-            tables = {
-                str(row[0])
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                ).fetchall()
-            }
-            self.assertNotIn("tool_calls", tables, "fixture must start without it")
-            self.assertFalse(LEDGER_INDEX_NAMES & _indexes(conn))
-            conn.close()
-
-            booted_store(db_path=db_path)
-
-            conn = sqlite3.connect(db_path)
-            try:
-                tables = {
-                    str(row[0])
-                    for row in conn.execute(
-                        "SELECT name FROM sqlite_master WHERE type = 'table'"
-                    ).fetchall()
-                }
-                self.assertIn("tool_calls", tables)
-                # Every index, including the ones on the pre-existing tables.
-                self.assertLessEqual(LEDGER_INDEX_NAMES, _indexes(conn))
-            finally:
-                conn.close()
-
-    def test_schema_declares_no_index_at_all(self) -> None:
-        """The migration-36 outage in general form: a module's DDL runs before
-        its ladder, so migration 37's indexes may only live in the migration."""
-        for name in LEDGER_INDEX_NAMES:
-            self.assertNotIn(name, ALL_DDL)
-
-    def test_reapplying_the_migration_is_a_no_op(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "state.sqlite"
-            store = booted_store(db_path=db_path)
-            with store.transaction() as conn:
-                conn.execute("DELETE FROM schema_migrations WHERE version = 37")
-            booted_store(db_path=db_path)  # boots without raising
+        self.assertEqual(
+            columns,
+            {
+                "id", "ts", "request_id", "principal_id", "tool", "source",
+                "project_id", "target_type", "target_id", "status",
+                "error_code", "error_head", "duration_ms", "sent_chars",
+                "received_chars", "args_digest",
+                # Agent attribution + payload key.
+                "agent_id", "mcp_session_id", "payload_ref",
+            },
+        )
+        self.assertLessEqual(LEDGER_INDEX_NAMES, indexes)
 
 
 class ToolCallLedgerTest(unittest.TestCase):

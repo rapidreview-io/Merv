@@ -1,7 +1,9 @@
 """Research projections over the independent merv-sandboxes HTTP service.
 
 Only experiment associations and caller public keys are stored here. Rental,
-credentials, access certificates, jobs, spend and cleanup belong to the service.
+credentials, access certificates, jobs, spend and cleanup belong to the
+service, and so does the register of what machines ever existed: nothing here
+reads a local mirror of the fleet.
 """
 
 from __future__ import annotations
@@ -102,42 +104,6 @@ class RemoteSandboxes:
             return []
         return self._call("GET", "/sandboxes", project_id=project_id,
                           params={"include_stopped": "true"}).get("sandboxes", [])
-
-    def _archives(self, project_id: str) -> list[dict[str, Any]]:
-        """Released legacy rows remain research history, with no infrastructure behavior."""
-        with closing(self._store.connect()) as conn:
-            rows = conn.execute(
-                "SELECT * FROM sandboxes WHERE project_id = ? AND status IN ('terminated','expired','failed') ORDER BY created_at DESC",
-                (project_id,),
-            ).fetchall()
-            attachments = conn.execute(
-                "SELECT a.sandbox_uid,a.experiment_id FROM sandbox_attachments a "
-                "JOIN sandboxes s ON s.sandbox_uid = a.sandbox_uid WHERE s.project_id = ?",
-                (project_id,),
-            ).fetchall()
-        by_uid: dict[str, list[str]] = {}
-        for link in attachments:
-            by_uid.setdefault(link["sandbox_uid"], []).append(link["experiment_id"])
-        result = []
-        keys = ("sandbox_uid", "sandbox_id", "project_id", "experiment_id", "status", "phase", "detail",
-                "error", "gpu", "cpu", "memory", "provider", "instance_type", "region", "public_key_source",
-                "time_limit", "workdir", "sync_dir", "sandbox_data_dir", "volume_name", "requested_at",
-                "expires_at", "last_seen_at", "terminated_at", "created_at", "updated_at")
-        for stored in rows:
-            data = dict(stored)
-            row = {key: data.get(key) for key in keys}
-            row.update(active_experiment_ids=by_uid.get(data["sandbox_uid"], []),
-                       ssh_host=None, ssh_port=None, ssh_user=None, archived=True,
-                       infrastructure="legacy", price_usd_per_hour=None, cost_usd=None)
-            if not row["experiment_id"] and row["active_experiment_ids"]:
-                row["experiment_id"] = row["active_experiment_ids"][0]
-            result.append(row)
-        return result
-
-    def _archive(self, project_id: str, sandbox_uid: str | None, experiment_id: str | None) -> dict[str, Any] | None:
-        return next((row for row in self._archives(project_id)
-                     if (sandbox_uid and row["sandbox_uid"] == sandbox_uid)
-                     or (not sandbox_uid and experiment_id and experiment_id in row["active_experiment_ids"])), None)
 
     def _record(self, project_id: str, sandbox_uid: str | None, experiment_id: str | None) -> dict[str, Any]:
         self._check_experiment(project_id, experiment_id)
@@ -295,18 +261,11 @@ class RemoteSandboxes:
             sandbox_uid: str | None = None, **_: Any) -> dict[str, Any]:
         pid = self._project(project_id)
         self._check_experiment(pid, experiment_id)
-        archive = self._archive(pid, sandbox_uid, experiment_id)
-        if archive and sandbox_uid:
-            if experiment_id and experiment_id not in archive["active_experiment_ids"]:
-                raise NotFoundError("sandbox is not attached to this experiment")
-            return {**archive, "hint": "Archived sandbox from the previous infrastructure. Its retained research records remain available."}
         try:
             record = self._record(pid, sandbox_uid, experiment_id)
         except NotFoundError:
             if sandbox_uid:
                 raise
-            if archive:
-                return {**archive, "hint": "Archived sandbox from the previous infrastructure."}
             return {"project_id": pid, "experiment_id": experiment_id or "", "status": "none",
                     "hint": "No sandbox for this experiment; call sandbox.request."}
         return self._facts(pid, record)
@@ -325,19 +284,14 @@ class RemoteSandboxes:
                  sandbox_uid: str | None = None) -> dict[str, Any] | None:
         pid = self._project(project_id)
         self._check_experiment(pid, experiment_id)
-        archive = self._archive(pid, sandbox_uid, experiment_id)
-        if archive and sandbox_uid:
-            if experiment_id and experiment_id not in archive["active_experiment_ids"]:
-                raise NotFoundError("sandbox is not attached to this experiment")
-            return archive
         try:
             return self._snapshot(pid, self._record(pid, sandbox_uid, experiment_id))
         except NotFoundError:
-            return archive
+            return None
 
     def for_project(self, *, project_id: str) -> list[dict[str, Any]]:
         pid = self._project(project_id)
-        return [self._snapshot(pid, record) for record in self._records(pid)] + self._archives(pid)
+        return [self._snapshot(pid, record) for record in self._records(pid)]
 
     def for_experiment(self, *, project_id: str, experiment_id: str) -> list[dict[str, Any]]:
         self._check_experiment(project_id, experiment_id)
@@ -350,15 +304,10 @@ class RemoteSandboxes:
     def project_signal(self, *, project_id: str) -> str:
         pid = self._project(project_id)
         # Read freshness without constructing the response projection or issuing
-        # access certificates. Legacy terminal records are immutable history.
+        # access certificates.
         remote = sorted((row["id"], row.get("updated_at"), row.get("state"),
                          row.get("lease_expires_at")) for row in self._records(pid))
-        with closing(self._store.connect()) as conn:
-            legacy = conn.execute(
-                "SELECT COUNT(*) AS n, MAX(updated_at) AS latest FROM sandboxes WHERE project_id = ?",
-                (pid,),
-            ).fetchone()
-        signal = [remote, self._links(pid), dict(legacy)]
+        signal = [remote, self._links(pid)]
         return hashlib.sha256(json.dumps(signal, sort_keys=True).encode()).hexdigest()
 
     def release(self, *, project_id: str | None = None, experiment_id: str | None = None,
@@ -468,22 +417,7 @@ class RemoteSandboxes:
         self._check_experiment(pid, experiment_id)
         if not experiment_id and not sandbox_uid:
             raise ValidationError("sandbox.runs requires experiment_id or sandbox_uid")
-        legacy_runs: list[dict[str, Any]] = []
-        with closing(self._store.connect()) as conn:
-            historical = conn.execute(
-                "SELECT r.* FROM sandbox_runs r JOIN sandboxes s ON s.sandbox_uid = r.sandbox_uid "
-                "WHERE s.project_id = ? AND s.status IN ('terminated','expired','failed') "
-                + ("AND s.sandbox_uid = ? " if sandbox_uid else "")
-                + ("AND EXISTS (SELECT 1 FROM sandbox_attachments a WHERE a.sandbox_uid = s.sandbox_uid AND a.experiment_id = ?) " if experiment_id else ""),
-                (pid,) + ((sandbox_uid,) if sandbox_uid else ()) + ((experiment_id,) if experiment_id else ()),
-            ).fetchall()
-        for stored in historical:
-            row = dict(stored)
-            row.update(status="finished" if row.get("exit_code") is not None or row.get("finished_at") else "unknown",
-                       archived=True, infrastructure="legacy", log_path=None)
-            legacy_runs.append(row)
-        archived = self._archive(pid, sandbox_uid, experiment_id) if sandbox_uid else None
-        ids = [] if archived else [self._record(pid, sandbox_uid, experiment_id)["id"]] if sandbox_uid else [
+        ids = [self._record(pid, sandbox_uid, experiment_id)["id"]] if sandbox_uid else [
             row["sandbox_uid"] for row in self._links(pid) if row["experiment_id"] == experiment_id]
         jobs: list[dict[str, Any]] = []
         for uid in dict.fromkeys(ids):
@@ -512,7 +446,7 @@ class RemoteSandboxes:
                                            sandbox_uid=row["sandbox_uid"], label=row["label"],
                                            subject=_subject.get())
         return {"project_id": pid, "experiment_id": experiment_id or "", "sandbox_uid": sandbox_uid or "",
-                "runs": rows + legacy_runs, "jobs": jobs, "hint": "These are durable merv-sandboxes jobs started with sandbox.run. SSH commands are not automatically recorded as jobs."}
+                "runs": rows, "jobs": jobs, "hint": "These are durable merv-sandboxes jobs started with sandbox.run. SSH commands are not automatically recorded as jobs."}
 
     def terminal(self, *, project_id: str | None = None, experiment_id: str | None = None,
                  sandbox_uid: str | None = None, tail: int | None = None,
@@ -572,13 +506,6 @@ class RemoteSandboxes:
                                  "started_at": job.get("started_at"), "finished_at": job.get("finished_at"),
                                  "exit_code": job.get("exit_code")},
                 "hint": "Latest durable job output. This bounded snapshot replaces the previous view; use sandbox.job for exact byte ranges or older jobs."}
-
-    def sample_metrics(self, *, project_id: str | None = None, experiment_id: str | None = None,
-                       sandbox_uid: str | None = None) -> dict[str, Any]:
-        pid = self._project(project_id)
-        record = self._record(pid, sandbox_uid, experiment_id)
-        return {"available": False, "sandbox_uid": record["id"],
-                "reason": "merv-sandboxes does not publish resource utilization samples"}
 
     def health(self, *, details: bool = False) -> dict[str, Any]:
         if self.client is None:
@@ -649,10 +576,6 @@ class RemoteSandboxes:
                     "Historical charges and measured hours are included; hours_coverage identifies incomplete history. "
                     "Saved resource and import references group experiments.",
         }
-
-    def tenant_generation_counters(self, *, tenant_id: str) -> dict[str, Any]:
-        return {"sandbox_generations": None, "sandbox_hours": None,
-                "sandbox_accounting_source": "merv-sandboxes"}
 
     def run_wait_facts(self, *, sandbox_uid: str, label: str) -> dict[str, Any] | None:
         """Resolve an already-verified wait capability against its linked namespace.

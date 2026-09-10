@@ -1,23 +1,21 @@
-"""Component-owned schema: DDL modules, the numbered ladder, dialect probes.
+"""Component-owned schema: DDL modules and the ladder above the baseline.
 
 Every component declares one ``SchemaModule``: the idempotent DDL for the
-tables it owns plus the numbered ``Migration`` steps that carry an existing
-database to that shape. ``BaseStateStore.install`` executes the DDL and drives
-the ladder; the numbering is global because one ``schema_migrations`` ledger
-records it, which is why kernel owns ``MIGRATION_ORDER`` and nothing else about
-a component's tables.
+tables it owns, plus any numbered ``Migration`` steps that carry an existing
+database past that shape. ``BaseStateStore.install`` executes the DDL and
+drives the ladder; the numbering is global because one ``schema_migrations``
+ledger records it, which is why kernel owns ``MIGRATION_ORDER`` and nothing
+else about a component's tables.
 
-A migration handler receives only a connection, so the probes and column
-helpers it needs live here as functions rather than store methods. They pick
-the dialect from the connection, which is also why the Postgres dialect no
-longer needs its own copies: a failed ``PRAGMA`` inside an open Postgres
-transaction aborts it, and none of these ever issues one.
+The ladder has a floor. Versions 1..``BASELINE_VERSION`` were squashed into
+the DDL once every live database had reached that head: the DDL alone now
+states the shape, a fresh install stamps the baseline row, and a database
+already at it applies only what came after.
 """
 
 from __future__ import annotations
 
 import re
-import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
@@ -84,48 +82,18 @@ class SchemaModule:
     ddl: str
     migrations: tuple[Migration, ...] = ()
 
-    def __post_init__(self) -> None:
-        _DECLARED[self.name] = self
 
+# The squashed ladder's floor: the head every live database had reached when
+# versions 1..64 collapsed into the DDL above. A fresh install records it once
+# as the ``baseline`` row so later steps apply relative to it; a database that
+# already carries it is left alone.
+BASELINE_VERSION = 64
 
-# Declared modules, by name. Declaration is import time and installation is
-# composition time: a migration that has to rebuild another component's table
-# reads its shape from here (``table_ddl``) without importing it.
-_DECLARED: dict[str, SchemaModule] = {}
-
-
-# The global ladder order. Versions 55 and 56 were never released. A component
-# that adds a migration appends its version here and the handler to its own
-# module. A version whose owner has not installed is skipped, not refused:
-# every handler is guarded on the tables it touches, so the next install
-# converges it.
-MIGRATION_ORDER: tuple[int, ...] = (
-    *range(1, 55),
-    *range(57, 65),
-)
-
-
-def table_ddl(*, table: str, name: str | None = None) -> str:
-    """The CREATE TABLE block for ``table``, from whichever module declares it.
-
-    ``name`` renames the created table, which is how the SQLite rebuilds copy
-    into a twin before swapping it in.
-    """
-    for module in _DECLARED.values():
-        match = re.search(
-            rf"^CREATE TABLE IF NOT EXISTS {table} \((?:.*?)\n\);",
-            module.ddl,
-            re.DOTALL | re.MULTILINE,
-        )
-        if match is None:
-            continue
-        ddl = match.group(0)
-        if name is not None:
-            ddl = ddl.replace(
-                f"CREATE TABLE IF NOT EXISTS {table}", f"CREATE TABLE {name}", 1
-            )
-        return ddl
-    raise RuntimeError(f"no schema module declares table: {table}")
+# The ladder above the baseline. A component that adds a migration appends its
+# version here and the handler to its own module. A version whose owner has
+# not installed is skipped, not refused: every handler is guarded on the
+# tables it touches, so the next install converges it.
+MIGRATION_ORDER: tuple[int, ...] = (65,)
 
 
 def declared_tables(ddl: str) -> tuple[str, ...]:
@@ -165,94 +133,17 @@ def statements(sql: str) -> tuple[str, ...]:
     return tuple(chunk for chunk in chunks if chunk)
 
 
-def is_sqlite(conn: Connection) -> bool:
-    """Which dialect this connection speaks.
-
-    The Postgres connection facade says so on itself, and test wrappers
-    delegate attribute access, so a wrapped connection answers correctly
-    either way. Probing the database instead would mean issuing a statement
-    that fails on one of them, and a failed statement aborts an open Postgres
-    transaction — which is exactly what a migration pass runs inside.
-    """
-    return isinstance(conn, sqlite3.Connection) or (
-        getattr(conn, "dialect", "sqlite") != "postgres"
-    )
-
-
 def has_table(conn: Connection, table: str) -> bool:
-    if is_sqlite(conn):
+    """Whether ``table`` exists — the guard every install pass runs first."""
+    if getattr(conn, "dialect", "sqlite") == "postgres":
         row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_name = ?",
             (table,),
         ).fetchone()
         return row is not None
     row = conn.execute(
-        "SELECT 1 FROM information_schema.tables "
-        "WHERE table_schema = 'public' AND table_name = ?",
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
         (table,),
     ).fetchone()
     return row is not None
-
-
-def has_column(conn: Connection, table: str, column: str) -> bool:
-    """False when the column is absent — and when the table itself is.
-
-    A migration may run before the module that owns a table it touches has
-    installed; the table then arrives in its final shape, so "not there yet"
-    and "already right" both mean the same thing to the caller: do nothing.
-    """
-    if not has_table(conn, table):
-        return False
-    if is_sqlite(conn):
-        return any(
-            str(row["name"]) == column
-            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
-        )
-    row = conn.execute(
-        "SELECT 1 FROM information_schema.columns "
-        "WHERE table_schema = 'public' AND table_name = ? AND column_name = ?",
-        (table, column),
-    ).fetchone()
-    return row is not None
-
-
-def columns_of(conn: Connection, table: str) -> list[str]:
-    if is_sqlite(conn):
-        return [
-            str(row["name"])
-            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
-        ]
-    return [
-        str(row["column_name"])
-        for row in conn.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = 'public' AND table_name = ? "
-            "ORDER BY ordinal_position",
-            (table,),
-        ).fetchall()
-    ]
-
-
-def ensure_columns(
-    conn: Connection, table: str, columns: Mapping[str, str]
-) -> set[str]:
-    """Add the missing columns; returns the names actually added."""
-    if not has_table(conn, table):
-        return set()
-    existing = set(columns_of(conn, table))
-    added = set()
-    for column, definition in columns.items():
-        if column not in existing:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-            added.add(column)
-    return added
-
-
-def drop_columns(conn: Connection, table: str, columns: Iterable[str]) -> None:
-    """Drop columns that no longer appear in the live schema, if present."""
-    if not has_table(conn, table):
-        return
-    existing = set(columns_of(conn, table))
-    for column in columns:
-        if column in existing:
-            conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")

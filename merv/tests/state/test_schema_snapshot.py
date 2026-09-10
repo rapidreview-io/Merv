@@ -1,8 +1,9 @@
 """A fresh install must reproduce the schema, whoever owns the DDL.
 
-`fixtures/fresh_schema.json` is the table-and-column set a fresh database had
-when one kernel constant declared every table. Component-owned DDL is a move,
-not a change: installing every component on an empty database — SQLite here,
+`fixtures/fresh_schema.json` is the table-and-column set a fresh database
+reached by replaying the whole 1..64 ladder, minus the eight sandbox-fleet
+tables migration 65 drops. Squashing that ladder into the DDL is a move, not
+a change: installing every component on an empty database — SQLite here,
 Postgres in ``test_postgres_dialect`` — must land on exactly this shape.
 """
 
@@ -50,7 +51,7 @@ def sqlite_schema(db_path: Path) -> dict[str, Any]:
 
 
 class FreshSchemaSnapshotTest(unittest.TestCase):
-    def test_fresh_sqlite_install_matches_the_pre_move_snapshot(self) -> None:
+    def test_fresh_sqlite_install_matches_the_pre_squash_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             store = StateStore(db_path=Path(root) / "state.sqlite")
             install_all_schemas(store)

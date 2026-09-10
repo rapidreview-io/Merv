@@ -939,13 +939,7 @@ class ServiceLayoutTest(unittest.TestCase):
                 "urllib.parse",
             },
         )
-        sensitive_paths = (
-            RESEARCH_CORE / "reviews.py",
-            # The capability rehash and the workflow adoption fingerprint are
-            # the two schema steps that touch opaque secrets.
-            RESEARCH_CORE / "persistence.py",
-            BACKEND_ROOT / "workflows" / "persistence.py",
-        )
+        sensitive_paths = (RESEARCH_CORE / "reviews.py",)
         for path in sensitive_paths:
             with self.subTest(module=path.relative_to(BACKEND_ROOT).as_posix()):
                 modules = _import_module_names(path)

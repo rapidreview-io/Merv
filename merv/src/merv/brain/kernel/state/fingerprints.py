@@ -1,10 +1,9 @@
 """Content-identity digests for schema columns the database keys on.
 
-A row whose identity IS its content needs one definition of that content, used
-by both the migration that backfills the column and the adapter that writes new
-rows — otherwise a UNIQUE index enforces two subtly different notions of "the
-same thing". This module is that single definition, and it lives beside the
-schema rather than beside either caller.
+A row whose identity IS its content needs one definition of that content —
+otherwise a UNIQUE index and the adapter that writes new rows enforce two
+subtly different notions of "the same thing". This module is that single
+definition, and it lives beside the schema rather than beside its caller.
 
 Not secret material: these digests are computed over public metadata, so they
 deliberately do not go through ``kernel/secret_tokens.py``, whose helpers are
@@ -20,7 +19,7 @@ import json
 def oauth_client_fingerprint(
     *, client_name: str, redirect_uris_json: str, grant_types_json: str
 ) -> str:
-    """The identity of one OAuth DCR registration's metadata (migration 38).
+    """The identity of one OAuth DCR registration's metadata.
 
     Both arrays are sorted: their order carries no meaning to either side, so a
     client that merely shuffles its own list is the same client and must not

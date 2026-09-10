@@ -104,23 +104,7 @@ class TenantCountersTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_counts_are_tenant_scoped(self) -> None:
-        # Seed two closed generations (3h total) + a couple of events.
         with self.store.transaction() as conn:
-            for i, (start, end) in enumerate(
-                [
-                    ("2026-01-01T00:00:00Z", "2026-01-01T01:00:00Z"),
-                    ("2026-01-01T02:00:00Z", "2026-01-01T04:00:00Z"),
-                ]
-            ):
-                conn.execute(
-                    """
-                    INSERT INTO sandbox_generations
-                      (id, experiment_id, project_id, tenant_id, price_usd_per_hour,
-                       started_at, ended_at, created_seq)
-                    VALUES (?, 'exp', ?, 'tenant_x', 1.0, ?, ?, ?)
-                    """,
-                    (f"sbg_{i}", self.project_id, start, end, i),
-                )
             self.store.record_event(
                 conn=conn,
                 project_id=self.project_id,
@@ -131,16 +115,11 @@ class TenantCountersTest(unittest.TestCase):
             )
         counts = self.app.application.tenant_counters(tenant_id="tenant_x")
         self.assertEqual(counts["tenant_id"], "tenant_x")
-        self.assertIsNone(counts["sandbox_generations"])
-        self.assertEqual(counts["sandbox_accounting_source"], "merv-sandboxes")
-        self.assertIsNone(counts["sandbox_hours"])
         self.assertGreaterEqual(counts["tool_calls"], 1)
 
     def test_other_tenant_sees_nothing(self) -> None:
         counts = self.app.application.tenant_counters(tenant_id="tenant_none")
-        self.assertIsNone(counts["sandbox_generations"])
         self.assertEqual(counts["tool_calls"], 0)
-        self.assertIsNone(counts["sandbox_hours"])
 
 
 if __name__ == "__main__":

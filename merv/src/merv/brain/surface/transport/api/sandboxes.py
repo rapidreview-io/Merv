@@ -64,22 +64,6 @@ def build_router(
         return sandbox_view(sandboxes, project_id=project_id, sandbox_uid=sandbox_uid)
 
     @api_router.get(
-        "/api/projects/{project_id}/experiments/{experiment_id}/sandbox/metrics"
-    )
-    def sandbox_metrics(
-        project_id: str, experiment_id: str, sandbox_uid: str | None = None
-    ) -> dict[str, Any]:
-        return sandboxes.sample_metrics(
-            project_id=project_id, experiment_id=experiment_id, sandbox_uid=sandbox_uid
-        )
-
-    @api_router.get("/api/projects/{project_id}/sandboxes/{sandbox_uid}/metrics")
-    def sandbox_metrics_by_uid(project_id: str, sandbox_uid: str) -> dict[str, Any]:
-        return sandboxes.sample_metrics(
-            project_id=project_id, experiment_id="", sandbox_uid=sandbox_uid
-        )
-
-    @api_router.get(
         "/api/projects/{project_id}/experiments/{experiment_id}/sandbox/terminal"
     )
     def sandbox_terminal(

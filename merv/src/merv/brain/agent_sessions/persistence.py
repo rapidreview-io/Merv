@@ -3,16 +3,7 @@
 
 from __future__ import annotations
 
-from ..kernel.state.schema import (
-    Connection,
-    Migration,
-    SchemaModule,
-    drop_columns,
-    ensure_columns,
-    has_column,
-    has_table,
-    table_ddl,
-)
+from ..kernel.state.schema import SchemaModule
 
 
 AGENT_SESSION_DDL = """\
@@ -148,152 +139,29 @@ CREATE TABLE IF NOT EXISTS agent_workspaces (
   PRIMARY KEY (project_id, instance_id),
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
+
+-- One live lease per workflow instance revision, and one lease per runner
+-- retry key: the concurrency laws the offer path relies on the database to
+-- hold, not only its own check.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_one_live_workflow
+  ON agent_sessions(project_id, workflow_instance_id, workflow_revision)
+  WHERE workflow_instance_id <> '' AND status IN ('offered', 'active');
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_runner_retry
+  ON agent_sessions(runner_id, idempotency_key);
+
+-- The list reads: leases and traces per project newest-first, the pairing
+-- expiry sweep, and the per-principal rate windows.
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_project
+  ON agent_sessions(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_session_traces_project
+  ON agent_session_traces(project_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_agent_runner_pairings_expiry
+  ON agent_runner_pairings(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_agent_runner_pairings_ip
+  ON agent_runner_pairings(client_ip, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_runner_pairing_attempts_principal
+  ON agent_runner_pairing_attempts(principal, attempted_at);
 """
 
 
-def _add_agent_sessions(conn: Connection) -> None:
-    """Migration 41: coding-agent leases and their concurrency keys.
-
-    The indexes live here and never in the DDL: an existing store reaches the
-    table only when this step creates it.
-    """
-    if not has_table(conn, "agent_sessions"):
-        conn.execute(table_ddl(table="agent_sessions"))
-    conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_runner_retry"
-        "  ON agent_sessions(runner_id, idempotency_key)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_agent_sessions_project"
-        "  ON agent_sessions(project_id, created_at)"
-    )
-    # One live lease per instance revision. Migration 60 adds the columns to a
-    # table that predates them and creates this there; a table created here
-    # already has them, and this is then the only step that reaches it.
-    if has_column(conn, "agent_sessions", "workflow_instance_id"):
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_one_live_workflow "
-            "ON agent_sessions(project_id, workflow_instance_id, workflow_revision) "
-            "WHERE workflow_instance_id <> '' AND status IN ('offered', 'active')"
-        )
-
-
-def _add_agent_session_observability(conn: Connection) -> None:
-    """Migration 46: bounded assignment/setup/telemetry session state."""
-    ensure_columns(
-        conn,
-        "agent_sessions",
-        {
-            "assignment_json": "TEXT NOT NULL DEFAULT '{}'",
-            "agent_setup_json": "TEXT NOT NULL DEFAULT '{}'",
-            "telemetry_json": "TEXT NOT NULL DEFAULT '{}'",
-            "telemetry_at": "TEXT",
-        },
-    )
-
-
-def _add_agent_runners(conn: Connection) -> None:
-    """Migration 47: one non-secret machine heartbeat per project runner."""
-    if not has_table(conn, "agent_runners"):
-        conn.execute(table_ddl(table="agent_runners"))
-
-
-def _add_agent_runner_pairing(conn: Connection) -> None:
-    """Migration 48: device-code pairing, brain-held runner tuning, key label."""
-    for table in ("agent_runner_pairings", "agent_runner_pairing_attempts"):
-        if not has_table(conn, table):
-            conn.execute(table_ddl(table=table))
-    ensure_columns(
-        conn,
-        "agent_runners",
-        {
-            "desired_settings_json": "TEXT NOT NULL DEFAULT '{}'",
-            "desired_version": "INTEGER NOT NULL DEFAULT 0",
-            "applied_version": "INTEGER NOT NULL DEFAULT 0",
-            "inventory_json": "TEXT NOT NULL DEFAULT '{}'",
-        },
-    )
-    # An owner needs to see which credential belongs to which paired machine.
-    ensure_columns(conn, "project_api_keys", {"label": "TEXT"})
-    for statement in (
-        "CREATE INDEX IF NOT EXISTS idx_agent_runner_pairings_expiry"
-        "  ON agent_runner_pairings(status, expires_at)",
-        "CREATE INDEX IF NOT EXISTS idx_agent_runner_pairings_ip"
-        "  ON agent_runner_pairings(client_ip, created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_agent_runner_pairing_attempts_principal"
-        "  ON agent_runner_pairing_attempts(principal, attempted_at)",
-    ):
-        conn.execute(statement)
-
-
-def _add_agent_session_traces(conn: Connection) -> None:
-    """Migration 49: one bounded, redacted excerpt row per session."""
-    if not has_table(conn, "agent_session_traces"):
-        conn.execute(table_ddl(table="agent_session_traces"))
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_agent_session_traces_project"
-        "  ON agent_session_traces(project_id, updated_at)"
-    )
-
-
-def _add_agent_workspaces(conn: Connection) -> None:
-    """Migration 61: lease policy columns and instance-keyed workspace facts."""
-    ensure_columns(
-        conn,
-        "agent_sessions",
-        {
-            "role": "TEXT NOT NULL DEFAULT ''",
-            "label": "TEXT NOT NULL DEFAULT ''",
-            "execution_json": "TEXT NOT NULL DEFAULT '{}'",
-            "references_json": "TEXT NOT NULL DEFAULT '[]'",
-        },
-    )
-    if not has_table(conn, "agent_workspaces"):
-        conn.execute(table_ddl(table="agent_workspaces"))
-    if has_table(conn, "experiment_workspaces"):
-        # Native ids are the workflow instance ids, so the key carries over.
-        conn.execute(
-            """
-            INSERT INTO agent_workspaces (
-              instance_id, project_id, branch, base_sha, head_sha,
-              commit_count, files_changed, insertions, deletions, updated_at
-            )
-            SELECT experiment_id, project_id, branch, base_sha, head_sha,
-                   commit_count, files_changed, insertions, deletions, updated_at
-            FROM experiment_workspaces
-            ON CONFLICT (project_id, instance_id) DO NOTHING
-            """
-        )
-        conn.execute("DROP TABLE experiment_workspaces")
-
-
-def _drop_legacy_lease_columns(conn: Connection) -> None:
-    """Migration 63: the lease stops carrying what the packet already says.
-
-    A node declares what its session may do and the packet's reference list
-    carries the request and base-commit ids, so `kind`, `review_request_id`
-    and `source_sha` have had no reader since the workflow runtime landed.
-    The three partial unique indexes keyed on `kind` were superseded by the
-    instance-keyed one migration 60 created, and SQLite refuses to drop a
-    column an index still names, so they go first.
-    """
-    for name in ("experiment", "review", "consolidation"):
-        conn.execute(f"DROP INDEX IF EXISTS idx_agent_sessions_one_live_{name}")
-    drop_columns(
-        conn, "agent_sessions", ("kind", "review_request_id", "source_sha")
-    )
-
-
-AGENT_SESSION_SCHEMA = SchemaModule(
-    name="agent_sessions",
-    ddl=AGENT_SESSION_DDL,
-    migrations=(
-        Migration(41, "add_agent_sessions", _add_agent_sessions),
-        Migration(46, "add_agent_session_observability", _add_agent_session_observability),
-        Migration(47, "add_agent_runners", _add_agent_runners),
-        Migration(48, "add_agent_runner_pairing", _add_agent_runner_pairing),
-        Migration(49, "add_agent_session_traces", _add_agent_session_traces),
-        Migration(61, "add_agent_workspaces", _add_agent_workspaces),
-        Migration(63, "drop_legacy_lease_columns", _drop_legacy_lease_columns),
-    ),
-)
+AGENT_SESSION_SCHEMA = SchemaModule(name="agent_sessions", ddl=AGENT_SESSION_DDL)

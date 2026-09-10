@@ -13,14 +13,7 @@ from typing import Any
 
 from ..events import StoredEvent, freeze_json_object
 from ..utils import now_iso
-from .schema import (
-    Connection,
-    Migration,
-    SchemaModule,
-    ensure_columns,
-    has_table,
-    table_ddl,
-)
+from .schema import Connection, SchemaModule
 
 
 KERNEL_DDL = """\
@@ -83,8 +76,7 @@ CREATE TABLE IF NOT EXISTS tenants (
 -- serving the debug UI's raw request/response view, and this table must never
 -- become a second payload store. No foreign key to projects: project_id is
 -- empty for global and rejected calls, and a telemetry insert may not fail on
--- a missing parent. Indexes are migration 37's, never SCHEMA's (see the
--- submissions block above). Retention is a bounded prune, not a row cap.
+-- a missing parent. Retention is a bounded prune, not a row cap.
 CREATE TABLE IF NOT EXISTS tool_calls (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT NOT NULL,
@@ -108,7 +100,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   received_chars INTEGER NOT NULL DEFAULT 0,
   -- sha256 prefix of the redacted arguments: a retry loop repeats one digest.
   args_digest TEXT NOT NULL DEFAULT '',
-  -- Agent attribution (August 2026, migration 50). agent_id is the short id
+  -- Agent attribution (August 2026). agent_id is the short id
   -- of the agent context window (one model conversation) that made the call,
   -- minted by agent.hello. mcp_session_id is the transport session header it
   -- arrived under. payload_ref names the redacted request/response record in
@@ -118,100 +110,25 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   mcp_session_id TEXT NOT NULL DEFAULT '',
   payload_ref TEXT NOT NULL DEFAULT ''
 );
+
+-- The mining reads over this ledger: per-project timeline, error hunt,
+-- per-tool rollup, and the calls of one agent context window. Each pairs its
+-- filter with the append order it is scanned in.
+CREATE INDEX IF NOT EXISTS idx_tool_calls_project ON tool_calls(project_id, id);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_status ON tool_calls(status, id);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool, id);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_agent ON tool_calls(agent_id, id);
+
+-- The event reads: the append-order tail of one project, and the history of
+-- one work node (equality columns first, then `id`, so a newest-first window
+-- comes straight off the index instead of being sorted).
+CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id, id);
+CREATE INDEX IF NOT EXISTS idx_events_target
+  ON events(project_id, target_type, target_id, id);
 """
 
 
-# Migration 37's indexes. They live in a migration and never in the DDL:
-# installed DDL runs before this component's ladder steps and its CREATE TABLE
-# IF NOT EXISTS is a no-op on a database that already has the table — so an
-# index in DDL can name a column the ladder has not added yet and crash-loop
-# the container (the migration-36 outage, commit d4b766c). The pass runs on
-# fresh databases too, so both paths get every index.
-TOOL_CALL_LEDGER_INDEXES = (
-    # The ledger's own mining reads: per-project timeline, error hunt, per-tool
-    # rollup. Each pairs its filter with the append order it is scanned in.
-    "CREATE INDEX IF NOT EXISTS idx_tool_calls_project ON tool_calls(project_id, id)",
-    "CREATE INDEX IF NOT EXISTS idx_tool_calls_status ON tool_calls(status, id)",
-    "CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool, id)",
-    # Audit §5.3 minimum plan for the existing hot reads.
-    "CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id, id)",
-)
-
-# Migration 39's index: the equality columns first, then `id` so a newest-first
-# window is read straight off the index instead of sorted. Every per-target
-# event read (one work node's own history) rides it.
-EVENT_TARGET_INDEX = (
-    "CREATE INDEX IF NOT EXISTS idx_events_target"
-    "  ON events(project_id, target_type, target_id, id)"
-)
-
-
-def _drop_legacy_jobs_table(conn: Connection) -> None:
-    """Migration 1: the defunct `jobs` table, plus the pre-ledger project columns.
-
-    Tenancy and the project status column reached fresh schemas without a
-    ladder step, so a database old enough to predate the ledger entirely gets
-    them here — before migration 2 reads ``projects.tenant_id``.
-    """
-    conn.execute("DROP TABLE IF EXISTS jobs")
-    ensure_columns(
-        conn,
-        "projects",
-        {
-            "tenant_id": "TEXT NOT NULL DEFAULT 'local'",
-            "status": "TEXT NOT NULL DEFAULT 'active'",
-        },
-    )
-
-
-def _add_project_settings_json(conn: Connection) -> None:
-    """Migration 11: per-project policy knobs (require_verified_reviews, ...)."""
-    ensure_columns(
-        conn, "projects", {"settings_json": "TEXT NOT NULL DEFAULT '{}'"}
-    )
-
-
-def _reactivate_hard_stopped_projects(conn: Connection) -> None:
-    """Migration 17: winding a project down is the researcher's call, made
-    outside the workflow, so no published document can stop one any more."""
-    conn.execute("UPDATE projects SET status = 'active' WHERE status = 'stopped'")
-
-
-def _add_tool_call_ledger(conn: Connection) -> None:
-    """Migration 37: the durable tool-call ledger plus the read-path indexes.
-
-    Additive and idempotent. The table guards are belt-and-braces — the DDL
-    creates both on either dialect before the ladder runs, except on a
-    database old enough that this step is what reaches it first — but the
-    indexes genuinely need to be here, where they execute after every table
-    and column they name exists."""
-    for table in ("tool_calls", "events"):
-        if not has_table(conn, table):
-            conn.execute(table_ddl(table=table))
-    for statement in TOOL_CALL_LEDGER_INDEXES:
-        conn.execute(statement)
-
-
-def _add_events_target_index(conn: Connection) -> None:
-    """Migration 39: the per-target events index. Additive and idempotent."""
-    if not has_table(conn, "events"):
-        conn.execute(table_ddl(table="events"))
-    conn.execute(EVENT_TARGET_INDEX)
-
-
-KERNEL_SCHEMA = SchemaModule(
-    name="kernel",
-    ddl=KERNEL_DDL,
-    migrations=(
-        Migration(1, "drop_legacy_jobs_table", _drop_legacy_jobs_table),
-        Migration(11, "add_project_settings_json", _add_project_settings_json),
-        Migration(
-            17, "reactivate_hard_stopped_projects", _reactivate_hard_stopped_projects
-        ),
-        Migration(37, "add_tool_call_ledger", _add_tool_call_ledger),
-        Migration(39, "add_events_target_index", _add_events_target_index),
-    ),
-)
+KERNEL_SCHEMA = SchemaModule(name="kernel", ddl=KERNEL_DDL)
 
 
 def record_event(

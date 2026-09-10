@@ -51,7 +51,6 @@ FROZEN_DURABLE_EVENT_TYPES = frozenset(
         "task.transitioned",
         "telemetry.dropped",
         "tool.call",
-        "workflow.migrated",
     "workflow.work_started",
     }
 )

@@ -1281,7 +1281,6 @@ class Application:
         return {
             "tenant_id": tenant_id,
             "tool_calls": self.research.tenant_event_count(tenant_id=tenant_id),
-            **self.sandboxes.tenant_generation_counters(tenant_id=tenant_id),
         }
 
     def timeline_signal(self, *, project_id: str) -> str:
