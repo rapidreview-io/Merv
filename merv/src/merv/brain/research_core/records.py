@@ -9,7 +9,7 @@ the declaration beside its graph plus the hooks in ``RecordHooks``.
 
 from __future__ import annotations
 
-from contextlib import closing, nullcontext
+from contextlib import closing
 import json
 from typing import Any
 
@@ -67,13 +67,6 @@ class Records:
         self.hooks[kind.name] = hooks
 
     # ---- create ----
-
-    def create(self, kind: RecordKind, *, project_id: str | None = None, values: dict[str, Any],
-               event: dict[str, Any], depends_on=(), read: dict[str, Any] | None = None) -> dict[str, Any]:
-        with self.store.transaction() as conn:
-            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            return self.create_in_transaction(kind, conn=conn, project_id=project_id, values=values,
-                                              event=event, depends_on=depends_on, read=read)
 
     def create_in_transaction(
         self, kind: RecordKind, *, conn, project_id: str, values: dict[str, Any], event: dict[str, Any],
@@ -256,10 +249,9 @@ class Records:
         return RecordKnowledge(self, kind, conn, record, snapshot)
 
     def transition(self, kind: RecordKind, *, record_id: str, transition: str, evidence=None,
-                   project_id: str | None = None, expected_revision: int | None = None, conn=None,
-                   read: dict[str, Any] | None = None):
+                   project_id: str | None = None, expected_revision: int | None = None):
         """Apply one graph action and return the state and event it committed."""
-        with (self.store.transaction() if conn is None else nullcontext(conn)) as conn:
+        with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             record = self.get_state(kind, record_id=record_id, project_id=project_id, conn=conn)
             current = self.runtime.adopt(conn=conn, project_id=project_id, instance_id=record_id,
@@ -270,7 +262,7 @@ class Records:
                 expected_revision=current.revision if expected_revision is None else expected_revision,
                 request_id=new_id(prefix=f"{kind.name}_action"), payload=evidence or {},
             )
-            return (self.get_state(kind, record_id=record_id, project_id=project_id, conn=conn, **(read or {})),
+            return (self.get_state(kind, record_id=record_id, project_id=project_id, conn=conn),
                     self.runtime.event(conn=conn, snapshot=after))
 
     def commit_change(self, kind: RecordKind, conn, before: Snapshot, after: Snapshot, action: str, payload) -> None:

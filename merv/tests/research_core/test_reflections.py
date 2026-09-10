@@ -581,7 +581,7 @@ class ReflectionWorkflowTest(ResearchCase):
         self.assertEqual(published["status"], "published")
         service = self.app.reflection_waves
         with mock.patch.object(
-            service, "get_state_with_gate", side_effect=RuntimeError("ack lost")
+            service, "get_state", side_effect=RuntimeError("ack lost")
         ):
             with self.assertRaisesRegex(RuntimeError, "ack lost"):
                 service._publish_bound_advance(

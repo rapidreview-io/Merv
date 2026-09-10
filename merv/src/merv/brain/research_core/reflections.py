@@ -1597,24 +1597,11 @@ class ReflectionService(RecordHooks):
                     "UPDATE reflection_advances SET error = '' WHERE id = ?",
                     (advance_id,),
                 )
-                reflection, gate = self.get_state_with_gate(
-                    reflection_id=reflection_id,
-                    project_id=project_id,
-                    conn=conn,
-                )
+                reflection = self.get_state(reflection_id=reflection_id, project_id=project_id,
+                                            conn=conn, include_content=True)
                 if str(reflection.get("status")) == REFLECTION_WORKFLOW.success_status:
-                    # A retried settle after a completed publish is idempotent.
-                    return self.get_state(
-                        reflection_id=reflection_id,
-                        conn=conn,
-                        include_content=True,
-                    )
-                return self._transition_in_tx(
-                    conn=conn,
-                    reflection=reflection,
-                    gate=gate,
-                    transition="publish",
-                )
+                    return reflection  # A retried settle after a publish is idempotent.
+                return self._transition_in_tx(conn=conn, reflection=reflection, transition="publish")
         except Exception as exc:
             with suppress(Exception):
                 with self.store.transaction() as conn:
@@ -1646,24 +1633,12 @@ class ReflectionService(RecordHooks):
     ) -> dict[str, Any]:
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            reflection, gate = self.get_state_with_gate(
-                reflection_id=reflection_id, project_id=project_id, conn=conn
-            )
             return self._transition_in_tx(
-                conn=conn,
-                reflection=reflection,
-                gate=gate,
-                transition=transition,
+                conn=conn, transition=transition,
+                reflection=self.get_state(reflection_id=reflection_id, project_id=project_id, conn=conn),
             )
 
-    def _transition_in_tx(
-        self,
-        *,
-        conn,
-        reflection: dict[str, Any],
-        gate: GateEvaluation,
-        transition: str,
-    ) -> dict[str, Any]:
+    def _transition_in_tx(self, *, conn, reflection: dict[str, Any], transition: str) -> dict[str, Any]:
         reflection_id = str(reflection["id"])
         current = self.runtime.adopt(conn=conn, project_id=reflection["project_id"], instance_id=reflection_id,
                                      workflow="reflection", state=reflection["status"],
