@@ -41,9 +41,6 @@ class GraphResearch:
     def reflection_state(self, **_kwargs):
         return {"id": "syn_1", "attempt_index": 1, "artifacts": []}
 
-    def reflection_overview(self, **_kwargs):
-        return {"reflections": [{"id": "syn_1"}]}
-
     def project_logic_graph_selection(self, **_kwargs):
         return {"reflection": None, "graph_artifact": None, "signal": "stale"}
 
