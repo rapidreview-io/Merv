@@ -44,7 +44,6 @@ SUPPORT_ROOTS = (
 # reaching HTTP, classified as Research in test_module_boundaries.
 RESEARCH_FILES = frozenset(
     {
-        "brain/surface/experiment_figure.py",
         "brain/surface/workflow_knowledge.py",
         *(f"brain/surface/transport/api/{name}.py" for name in RESEARCH_ROUTERS),
     }

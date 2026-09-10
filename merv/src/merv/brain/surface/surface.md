@@ -62,10 +62,10 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
   structured logs.
 - `config.py`, `brain_dirs.py`, `transport/http_server.py`: environment parsing
   and local/hosted server construction.
-- `experiment_figure.py`, `transport/api/views.py`: UI-only derived projections.
+- `transport/api/views.py`: UI-only derived projections.
 - `workflow_knowledge.py`: binds project and immutable artifact readers to the
   workflow transaction; workflows receive a read-only, project-scoped capability.
-- Those two, and the experiment, task, claim, review, reflection, sandbox and
+- That file, and the experiment, task, claim, review, reflection, sandbox and
   view routers, are research files hosted in this delivery tree. Everything
   else here is support, and the support-vocabulary law reads it.
 - `feed_http.py`, storage routes, and user settings: protocols whose byte

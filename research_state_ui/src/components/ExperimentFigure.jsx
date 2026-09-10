@@ -304,7 +304,7 @@ function FigurePanel({ projectId, node, onClose }) {
 }
 
 /**
- * ExperimentFigure — the derived figure canvas (Phase 0).
+ * ExperimentFigure — the derived figure canvas.
  *
  * Renders the attempt spine, inputs, review verdicts (with revision loops),
  * sandbox liveness, conclusion, and tested claims, all derived from the
