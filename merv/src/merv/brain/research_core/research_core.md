@@ -97,5 +97,4 @@ sealing uses explicit association IDs while generic content stays immutable and 
 
 ## Maintenance
 
-Keep this note under 100 lines. Named actions, roles, tools and skills use qualified inline
-references as above; the documentation ratchet resolves them against their declarations.
+Keep this note under 100 lines; qualified inline references are checked by the documentation ratchet.
