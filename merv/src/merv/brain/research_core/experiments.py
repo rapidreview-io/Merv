@@ -21,7 +21,7 @@ from .policy import (
 )
 from .artifact_models import ArtifactTarget
 from .records import RecordHooks, Records
-from ..kernel.state.store import BaseStateStore, row_to_dict, rows_to_dicts
+from ..kernel.state.store import BaseStateStore, Connection, row_to_dict, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
 from .models import CommittedExperimentUpdate, ExperimentState
 
@@ -50,7 +50,7 @@ class ExperimentService(RecordHooks):
                                 tested_claim_ids=tested_claim_ids, depends_on=depends_on)
 
     def create_from_reflection(
-        self, *, conn, project_id: str, reflection_id: str, name: str, intent: str, details: str = "",
+        self, *, conn: Connection, project_id: str, reflection_id: str, name: str, intent: str, details: str = "",
         tested_claim_ids: list[str] | str | None = None, proposal_key: str = "",
         parallelism: str = "", depends_on: list[str] | str | None = None,
     ) -> ExperimentState:
@@ -69,14 +69,14 @@ class ExperimentService(RecordHooks):
                             source={"source_reflection_id": reflection_id, "proposal_key": proposal_key.strip(),
                                     "parallelism": parallelism.strip()})
 
-    def initialize_workflow(self, conn, snapshot: Snapshot) -> None:
+    def initialize_workflow(self, conn: Connection, snapshot: Snapshot) -> None:
         self._create(conn=conn, project_id=snapshot.project_id, instance=snapshot,
                      name=str(snapshot.data.get("name") or ""), intent=str(snapshot.data.get("intent") or ""),
                      details=str(snapshot.data.get("details") or ""),
                      tested_claim_ids=snapshot.data.get("tested_claim_ids"),
                      depends_on=snapshot.data.get("depends_on"))
 
-    def _create(self, *, conn, project_id, name, intent, details="", tested_claim_ids=None,
+    def _create(self, *, conn: Connection, project_id, name, intent, details="", tested_claim_ids=None,
                 depends_on=None, guard=True, source=None, instance=None) -> ExperimentState:
         # Order-preserving dedupe: distinct refs (a create key and a literal
         # claim id) can resolve to one claim, and experiment_claims has a
@@ -96,12 +96,12 @@ class ExperimentService(RecordHooks):
 
     # ---- declared hooks ----
 
-    def before_create(self, *, conn, project_id: str, values: dict[str, Any]) -> None:
+    def before_create(self, *, conn: Connection, project_id: str, values: dict[str, Any]) -> None:
         self._reject_active_experiment_cap(conn=conn, project_id=project_id)
         self._reject_reflection_blocked_experiment_create(conn=conn, project_id=project_id)
         self._reject_reserved_wave_name(conn=conn, project_id=project_id, name=str(values["name"]))
 
-    def after_create(self, *, conn, project_id: str, record_id: str, values: dict[str, Any]) -> None:
+    def after_create(self, *, conn: Connection, project_id: str, record_id: str, values: dict[str, Any]) -> None:
         for claim_id in values.get("tested_claim_ids") or []:
             if conn.execute("SELECT id FROM claims WHERE id = ? AND project_id = ?",
                             (claim_id, project_id)).fetchone() is None:
@@ -109,7 +109,7 @@ class ExperimentService(RecordHooks):
             conn.execute("INSERT INTO experiment_claims (experiment_id, claim_id) VALUES (?, ?)",
                          (record_id, claim_id))
 
-    def hydrate(self, *, conn, project_id: str, records: list[dict[str, Any]], detail_ids=()) -> None:
+    def hydrate(self, *, conn: Connection, project_id: str, records: list[dict[str, Any]], detail_ids=()) -> None:
         claims: dict[str, list[dict[str, Any]]] = {}
         for claim in rows_to_dicts(rows=conn.execute(
             """SELECT ec.experiment_id AS _experiment_id, c.* FROM experiment_claims ec
@@ -122,7 +122,7 @@ class ExperimentService(RecordHooks):
 
     # ---- create blocks ----
 
-    def _reject_active_experiment_cap(self, *, conn, project_id: str) -> None:
+    def _reject_active_experiment_cap(self, *, conn: Connection, project_id: str) -> None:
         # Reserved wave names hold their cap slots: the wave passed the cap
         # check when its spec was validated, so tool creates must not consume
         # the slots its publish will materialize into.
@@ -137,7 +137,7 @@ class ExperimentService(RecordHooks):
             raise WorkflowError(active_experiment_cap_reached_message(
                 active_count=active_count, reserved_count=reserved_count))
 
-    def _reject_reserved_wave_name(self, *, conn, project_id: str, name: str) -> None:
+    def _reject_reserved_wave_name(self, *, conn: Connection, project_id: str, name: str) -> None:
         """Refuse names an in-flight wave's validated spec will materialize.
 
         Taking one mid-wave would block the wave's already-bound publish at
@@ -153,7 +153,7 @@ class ExperimentService(RecordHooks):
                 f"{row['reflection_id']} — it will be created when the wave "
                 "publishes; choose a different name")
 
-    def _reject_reflection_blocked_experiment_create(self, *, conn, project_id: str) -> None:
+    def _reject_reflection_blocked_experiment_create(self, *, conn: Connection, project_id: str) -> None:
         debt, published_id = self._terminal_experiments_since_last_reflection(conn=conn, project_id=project_id)
         terminal = tuple(sorted(REFLECTION.terminal_statuses))
         open_wave = conn.execute(
@@ -165,7 +165,7 @@ class ExperimentService(RecordHooks):
         if message:
             raise WorkflowError(message)
 
-    def _terminal_experiments_since_last_reflection(self, *, conn, project_id: str) -> tuple[int, str | None]:
+    def _terminal_experiments_since_last_reflection(self, *, conn: Connection, project_id: str) -> tuple[int, str | None]:
         terminal = ", ".join(f"'{status}'" for status in sorted(EXPERIMENT.terminal_statuses))
         current_terminal = {
             str(row["id"]) for row in conn.execute(
@@ -185,10 +185,10 @@ class ExperimentService(RecordHooks):
 
     # ---- reads and transitions ----
 
-    def get_state(self, *, experiment_id: str, project_id: str | None = None, conn=None) -> ExperimentState:
+    def get_state(self, *, experiment_id: str, project_id: str | None = None, conn: Connection | None=None) -> ExperimentState:
         return self.records.get_state(EXPERIMENT, record_id=experiment_id, project_id=project_id, conn=conn)
 
-    def list_states_with_gates(self, *, conn, project_id: str) -> list[tuple[ExperimentState, GateEvaluation]]:
+    def list_states_with_gates(self, *, conn: Connection, project_id: str) -> list[tuple[ExperimentState, GateEvaluation]]:
         return self.records.list_states_with_gates(EXPERIMENT, conn=conn, project_id=project_id)
 
     def assert_in_project(self, *, experiment_id: str, project_id: str) -> None:
@@ -238,7 +238,7 @@ class ExperimentService(RecordHooks):
         self, *, experiment_id: str, verdict: dict[str, Any], project_id: str | None = None,
         expected_revision: int | None = None, expected_attempt_index: int | None = None,
         expected_artifact_ids: tuple[str, ...] | None = None, artifact_path: str = "",
-        artifact_data: bytes | None = None, conn=None,
+        artifact_data: bytes | None = None, conn: Connection | None=None,
     ) -> None:
         """Atomically retain an exhibit and verdict for the unchanged source snapshot."""
         if artifact_data is not None and expected_revision is None:

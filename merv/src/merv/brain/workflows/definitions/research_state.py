@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, StrEnum
-from typing import TypeAlias
+from typing import Literal, Self, TypeAlias, TYPE_CHECKING
+from collections.abc import Mapping
+
+if TYPE_CHECKING:
+    from ..graph import Snapshot
 
 JSON: TypeAlias = str | int | float | bool | None | list["JSON"] | dict[str, "JSON"]
 
@@ -89,7 +93,7 @@ class GateChecklist:
     items: list[ChecklistItem]
 
     @classmethod
-    def construct(cls, row, snapshot=None):
+    def construct(cls, row: Mapping[str, JSON], snapshot: Snapshot | None = None) -> Self:
         return cls(**{**row, "items": [ChecklistItem(**{**item, "kind": GateKind(item["kind"]),
                                                       "status": GateStatus(item["status"])}) for item in row["items"]]})
 
@@ -152,7 +156,7 @@ class ExperimentState:
     gate_checklist: GateChecklist
 
     @classmethod
-    def construct(cls, row, snapshot=None):
+    def construct(cls, row: Mapping[str, JSON], snapshot: Snapshot | None = None) -> Self:
         return cls(**{**row, "reviews": [ReviewReference(**{**item, "verdict": ReviewVerdict(item["verdict"])}) for item in row["reviews"]],
                       "status": ExperimentStatus(row["status"]),
                       "dependencies": [Dependency(**item) for item in row["dependencies"]],
@@ -204,7 +208,7 @@ class TaskState:
     gate_checklist: GateChecklist
 
     @classmethod
-    def construct(cls, row, snapshot=None):
+    def construct(cls, row: Mapping[str, JSON], snapshot: Snapshot | None = None) -> Self:
         return cls(**{**row, "reviews": [ReviewReference(**{**item, "verdict": ReviewVerdict(item["verdict"])}) for item in row["reviews"]],
                       "status": TaskStatus(row["status"]),
                       "dependencies": [Dependency(**item) for item in row["dependencies"]],
@@ -265,9 +269,34 @@ class ReflectionState:
     workflow_state: ReflectionWorkflowState
 
     @classmethod
-    def construct(cls, row, snapshot):
+    def construct(cls, row: Mapping[str, JSON], snapshot: Snapshot) -> Self:
         return cls(**{**row, "reviews": [ReviewReference(**{**item, "verdict": ReviewVerdict(item["verdict"])}) for item in row["reviews"]],
                       "status": ReflectionStatus(row["status"]),
                       "workflow_state": ReflectionWorkflowState(snapshot.state),
                       "allowed_transitions": [Transition(**item) for item in row["allowed_transitions"]],
                       "gate_checklist": GateChecklist.construct(row["gate_checklist"])})
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewRequestCreated:
+    review_request_id: str
+    reviewer_capability: str
+    role: str
+    target_snapshot_id: str
+    target_snapshot: dict[str, JSON]
+    expires_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewRequestReused:
+    review_request_id: str
+    reused: Literal[True] = True
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewRequestSkipped:
+    skipped: Literal[True] = True
+    reason: str | Missing = MISSING
+
+
+ReviewRequestOutcome: TypeAlias = ReviewRequestCreated | ReviewRequestReused | ReviewRequestSkipped

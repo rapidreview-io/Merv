@@ -9,6 +9,8 @@ the composition-wide bag of one-use Application objects.
 
 from __future__ import annotations
 
+from ..workflows import Connection
+
 import json
 from typing import Any, Mapping
 
@@ -195,7 +197,7 @@ class Application:
         return {"session": present_session(session)}
 
     def _workflow_assignment(
-        self, tx: Any, project_id: str, instance_id: str, revision: int,
+        self, tx: Connection, project_id: str, instance_id: str, revision: int,
     ) -> dict[str, Any]:
         runtime = self.research.workflows.runtime
         runtime.require_assignment(conn=tx, project_id=project_id, instance_id=instance_id, revision=revision)
@@ -224,7 +226,7 @@ class Application:
             "navigation": {"type": packet["workflow"], "target_id": instance_id},
         }
 
-    def _activate_workflow_session(self, tx: Any, row: Mapping[str, Any]) -> None:
+    def _activate_workflow_session(self, tx: Connection, row: Mapping[str, Any]) -> None:
         self.research.workflows.activate(
             conn=tx, project_id=str(row["project_id"]), instance_id=str(row["workflow_instance_id"]),
             revision=int(row["workflow_revision"]), session_id=str(row["id"]),

@@ -10,7 +10,7 @@ from typing import Any, TypedDict
 
 from ..kernel.events import StoredEvent
 from ..workflows import Public
-from ..workflows.definitions.research_state import ExperimentState, TaskState, ReflectionState, Missing, MISSING
+from ..workflows.definitions.research_state import ExperimentState, TaskState, ReflectionState, MISSING
 from .policy import GateEvaluation
 
 
@@ -26,7 +26,7 @@ def _public_value(value):
     return value
 
 
-def public_record(public: Public, record, **computed: Any) -> dict[str, Any]:
+def public_record(public: Public, record: object, **computed: Any) -> dict[str, Any]:
     """Serialize declared fields; hidden names cannot be restored by computations."""
     names = (item.name for item in fields(record)) if is_dataclass(record) else record
     result = {}
@@ -46,12 +46,12 @@ def public_record(public: Public, record, **computed: Any) -> dict[str, Any]:
     return result
 
 
-def project_fields(record: Mapping[str, Any], fields: Iterable[str]) -> dict[str, Any]:
+def project_fields(record: object, fields: Iterable[str]) -> dict[str, Any]:
     """Narrow one record to the columns a reader needs."""
     return {name: _public_value(getattr(record, name, None) if is_dataclass(record) else record.get(name)) for name in fields}
 
 
-def project_rows(rows: Iterable[Mapping[str, Any]], fields: Iterable[str]) -> list[dict[str, Any]]:
+def project_rows(rows: Iterable[object], fields: Iterable[str]) -> list[dict[str, Any]]:
     fields = tuple(fields)
     return [project_fields(row, fields) for row in rows]
 

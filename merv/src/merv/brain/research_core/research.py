@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from ..kernel.state.store import Connection
+
 from contextlib import closing
 from functools import partial
 import hashlib
@@ -833,7 +835,7 @@ class Research:
             return self._write_claim(conn=conn, project_id=project_id, claim_id=claim_id,
                                      changes={"status": status, "confidence": confidence})
 
-    def _write_claim(self, *, conn, project_id: str, changes: dict[str, Any], claim_id: str = "",
+    def _write_claim(self, *, conn: Connection, project_id: str, changes: dict[str, Any], claim_id: str = "",
                      provenance: dict[str, Any] | None = None) -> dict[str, Any]:
         """Write a claim and its event on the caller's transaction, preserving omitted fields."""
         creating = not claim_id
@@ -1214,7 +1216,7 @@ class Research:
     # Read helpers ---------------------------------------------------------
 
     def _reflection(
-        self, *, conn: Any, project_id: str, terminal: bool
+        self, *, conn: Connection, project_id: str, terminal: bool
     ) -> tuple[dict[str, Any] | None, GateEvaluation | None]:
         terminal_statuses = tuple(sorted(REFLECTION.terminal_statuses))
         placeholders = ", ".join("?" for _ in terminal_statuses)
@@ -1240,7 +1242,7 @@ class Research:
             return None, None
         return self.reflections.get_state_with_gate(reflection_id=row["id"], conn=conn)
 
-    def _literature_signal(self, *, conn: Any, project_id: str) -> LiteratureSignal:
+    def _literature_signal(self, *, conn: Connection, project_id: str) -> LiteratureSignal:
         total = conn.execute(
             "SELECT COUNT(*) AS n FROM papers WHERE project_id = ?",
             (project_id,),

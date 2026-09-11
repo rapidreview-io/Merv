@@ -35,7 +35,7 @@ from merv.brain.research_core.models import (
 from tests.paths import BACKEND_ROOT
 from tests.support.research_state import task_state, reflection_state, review_reference
 from merv.brain.workflows.definitions.research_state import (
-    ReflectionState, ReviewReference, TaskResult, ChecklistItem, Dependency, ExperimentStatus, GateChecklist, GateKind, GateStatus, MISSING, Transition,
+    ReviewRequestCreated, ReviewRequestReused, ReviewRequestSkipped, ReflectionState, ReviewReference, TaskResult, ChecklistItem, Dependency, ExperimentStatus, GateChecklist, GateKind, GateStatus, MISSING, Transition,
 )
 
 EXPERIMENT = ExperimentState.construct(dict(
@@ -125,6 +125,9 @@ SAMPLES: dict[type, object] = {
     TaskState: task_state(),
     ReflectionState: reflection_state(),
     ReviewReference: review_reference(),
+    ReviewRequestCreated: ReviewRequestCreated("rr_1", "capability", "reviewer", "snapshot", {"id": "exp_1"}, "now"),
+    ReviewRequestReused: ReviewRequestReused("rr_1"),
+    ReviewRequestSkipped: ReviewRequestSkipped(),
     Transition: EXPERIMENT.allowed_transitions[0],
     Dependency: Dependency("exp_2", "experiment", "Example", "running", False, False),
     GateChecklist: EXPERIMENT.gate_checklist,

@@ -8,6 +8,8 @@ tools write them. Pure SQL helpers — no lifecycle rules here.
 
 from __future__ import annotations
 
+from ..kernel.state.store import Connection
+
 from typing import Any
 
 from ..kernel.utils import NotFoundError, ValidationError, now_iso
@@ -32,7 +34,7 @@ def node_type_of(node_id: str) -> str:
     )
 
 
-def _node_row(*, conn, project_id: str, node_id: str) -> dict[str, Any] | None:
+def _node_row(*, conn: Connection, project_id: str, node_id: str) -> dict[str, Any] | None:
     table = "experiments" if node_type_of(node_id) == "experiment" else "tasks"
     row = conn.execute(
         f"SELECT id, name, status FROM {table} WHERE id = ? AND project_id = ?",
@@ -54,7 +56,7 @@ def _failed(node_type: str, status: str) -> bool:
 
 
 def dependency_rows(
-    *, conn, project_id: str, node_ids: tuple[str, ...]
+    *, conn: Connection, project_id: str, node_ids: tuple[str, ...]
 ) -> dict[str, list[dict[str, Any]]]:
     """Per node: its dependencies with current status and settled/failed flags.
 
@@ -100,7 +102,7 @@ def dependency_rows(
 
 
 def dependent_rows(
-    *, conn, project_id: str, node_ids: tuple[str, ...]
+    *, conn: Connection, project_id: str, node_ids: tuple[str, ...]
 ) -> dict[str, list[dict[str, Any]]]:
     """Per node: the nodes that wait on it (the reverse of ``dependency_rows``),
     in the same row shape, so a page can show "unblocks" beside "waits on"."""
@@ -140,7 +142,7 @@ def dependent_rows(
     return result
 
 
-def dependents_of(*, conn, project_id: str, node_id: str) -> list[str]:
+def dependents_of(*, conn: Connection, project_id: str, node_id: str) -> list[str]:
     rows = conn.execute(
         """
         SELECT node_id FROM node_dependencies
@@ -152,7 +154,7 @@ def dependents_of(*, conn, project_id: str, node_id: str) -> list[str]:
     return [str(row["node_id"]) for row in rows]
 
 
-def _reaches(*, conn, project_id: str, start: str, goal: str) -> bool:
+def _reaches(*, conn: Connection, project_id: str, start: str, goal: str) -> bool:
     """Whether ``goal`` is reachable from ``start`` along depends_on edges."""
     frontier = [start]
     seen: set[str] = set()
@@ -174,7 +176,7 @@ def _reaches(*, conn, project_id: str, start: str, goal: str) -> bool:
 
 def record_dependencies(
     *,
-    conn,
+    conn: Connection,
     project_id: str,
     node_id: str,
     depends_on_ids: list[str],

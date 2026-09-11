@@ -72,7 +72,7 @@ class GenericReviewTest(ResearchCase):
                 conn.execute("UPDATE review_requests SET status = ?, expires_at = '2000-01-01' WHERE id = ?", (status, second["review_request_id"]))
                 self.assertEqual(self.app.reviews.read_fact(snapshot=current, reference=Reference("review_snapshot", current.id), conn=conn), {})
         third = self.app.reviews.request(project_id=self.project_id, target_type=PLUGIN.name, target_id=current.id, role=ROLE, if_current=True)
-        self.assertNotIn(third["review_request_id"], {first["review_request_id"], second["review_request_id"]})
+        self.assertNotIn(third.review_request_id, {first["review_request_id"], second["review_request_id"]})
 
     def test_custom_role_pass_and_repair_follow_ordinary_edges_with_exact_context(self):
         first = self.request()

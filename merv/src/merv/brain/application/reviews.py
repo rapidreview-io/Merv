@@ -5,16 +5,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from dataclasses import replace
-from ..workflows.definitions.research_state import ExperimentStatus
+from ..workflows.definitions.research_state import ExperimentStatus, ReviewRequestCreated
 from typing import Any
 
-from ..workflows import EXHIBIT_ROLE, GATED_ROLES, RecordKind
+from ..workflows import EXHIBIT_ROLE, GATED_ROLES, RecordKind, Public
 
 from ..feed import FeedAdvisory
 from ..kernel.utils import parse_iso
 from ..research_core import (
     Research,
     project_fields,
+    public_record,
 )
 from ..research_core import ResearchArtifacts as Artifacts
 from .experiments.context import ExperimentContextQuery
@@ -29,17 +30,15 @@ _SUBMITTED_FIELDS = ("role", "lens_id", "path", "submission_id")
 def request_review(research: Research, **kwargs: Any) -> dict[str, Any]:
     """Add delivery instructions to a Research-owned review capability."""
     result = research.reviews.request(**kwargs)
-    return {
-        **result,
-        "reviewer_handoff": reviewer_handoff_payload(
-            kind=research.kinds.get(str(kwargs["target_type"])),
-            role=str(kwargs["role"]),
-            target_type=str(kwargs["target_type"]),
-            target_id=str(kwargs["target_id"]),
-            review_request_id=str(result["review_request_id"]),
-            reviewer_capability=str(result["reviewer_capability"]),
-        ),
-    }
+    computed = {}
+    if isinstance(result, ReviewRequestCreated):
+        computed["reviewer_handoff"] = reviewer_handoff_payload(
+            kind=research.kinds.get(str(kwargs["target_type"])), role=result.role,
+            target_type=str(kwargs["target_type"]), target_id=str(kwargs["target_id"]),
+            review_request_id=result.review_request_id, reviewer_capability=result.reviewer_capability,
+        )
+    return public_record(Public(), result, **computed)
+
 
 
 def reviewer_handoff_payload(
