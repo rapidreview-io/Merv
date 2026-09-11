@@ -39,8 +39,7 @@ keywords.
 `definitions/execution.py` holds the shared vocabularies.
 
 `persistence.py` declares the three tables this package owns: instances,
-history, and the action outbox.
-`runtime.py` stores version-pinned instances, immutable history and requested actions. It
+history, and the action outbox. `runtime.py` stores version-pinned instances, immutable history and requested actions. It
 enforces revision checks and idempotent request keys, records actual work activation
 separately from state transitions, and calls transactional native record bindings. It
 provides a final revision/prerequisite fence for the assignment lease transaction, and
@@ -80,10 +79,11 @@ native record writes. Common project and immutable artifact readers are composed
 Application delivers review and child-start actions through support-system public roots. Merv
 artifacts remain in Merv-owned R2; the sandbox service owns ML compute and workload storage
 only.
-
-Generic MCP tools expose catalog/start/status/assignment/begin/transition/history;
+Generic tools include `tool:workflow.catalog`, `tool:workflow.start`,
+`tool:workflow.status_and_next`, `tool:workflow.assignment`, `tool:workflow.begin`,
+`tool:workflow.transition` and `tool:workflow.history`;
 `tools.py` owns their contracts and a program carries that table into the registry. Auto-run
-activation and interactive `workflow.begin` start clocks/actions only when work starts;
+activation and interactive `tool:workflow.begin` start clocks/actions only when work starts;
 merely approving a plan or reading a context does not. Dispatch owns identities and leases,
 then supplies the node's frozen brief, references and execution policy to the runner. The
 consolidating node references the retained proposal's base as `code`, which its workspace
@@ -93,6 +93,6 @@ completed lenses and reviews and attaches the published wave. A registered defin
 change requires explicit instance migration; duplicate registrations fail and requirements
 may gate only outgoing actions of their declaring node. Review facts are scoped to project, snapshot
 and role; Research reviews reads SQL/settings and pure policy formats the same fact
-for checklists and runtime, including request expiry and independence.See `docs/WORKFLOW_IMPLEMENTATION.md` for composition, persistence and upgrade
-behavior. Permanent effect failures wait for project-scoped `Deliveries.retry`. Keep decisions here,
-not in support systems or presentation adapters.
+for checklists and runtime, including request expiry and independence. Permanent effect
+failures wait for project-scoped `Deliveries.retry`; transient failures retain backoff.
+Keep this note under 100 lines; qualify named actions, roles, tools and skills inline.

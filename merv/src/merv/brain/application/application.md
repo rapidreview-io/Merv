@@ -1,7 +1,6 @@
 # Application
 
 ## Purpose
-
 Application coordinates product operations that cross module boundaries. It
 does not own research state, artifact bytes, sandboxes, feed posts, heavy
 objects, authentication, or transport. Those remain with their module roots.
@@ -14,7 +13,8 @@ method that belongs here.
 
 `application.py` is the readable root. It composes Research facts with
 Artifacts, Feed, and the merv-sandboxes facades only when an operation genuinely
-spans them. Research remains the public owner of its event ledger reads.
+spans them. Research owns event ledger reads. Keep this note under 100 lines;
+qualify named action, role, tool and skill references inline.
 
 - `status` and `status_for_agent` preserve rich UI and slim agent views, in
   project, experiment, or task scope. `instance_id` selects any registered
@@ -29,7 +29,7 @@ spans them. Research remains the public owner of its event ledger reads.
 - Experiment preparation reads metrics outside the transaction; Research locks
   and rechecks its workflow revision, attempt and source evidence before pinning
   the exhibit and its verdict atomically. The final graph gate runs afterward.
-- Review start returns the workflow's brief and immutable snapshot for any role;
+- `tool:review.start` returns the workflow's brief and immutable snapshot for any role;
   native views also hydrate pinned research artifacts and bounded context.
 - Reflection commands use the same graph/runtime and present either
   compact agent documents or the richer UI overview.

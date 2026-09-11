@@ -1,13 +1,13 @@
 # Surface
 
 ## Purpose
-
 `surface` is the product boundary. It turns HTTP and MCP requests into calls on
 Application or a module-owned public root, and turns their results into stable
 wire responses. It owns authentication, authorization at the delivery edge,
 the tool registry, upload/download protocols, OAuth/project keys, telemetry,
 and deployment composition. It does not own research workflow decisions,
-artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
+artifact/feed/storage lifecycles, sandbox lifecycle, or database schema. Keep this note
+under 100 lines; qualify named action, role, tool and skill references inline.
 
 ## Main flow
 
@@ -45,7 +45,7 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
   default-deny authority for local agent workers enforced from the
   node-declared execution policy each lease carries
   (`http_policy.SessionExecution`); no tool, id field, or workflow name is
-  hardcoded beyond `workflow.transition` and the baselines.
+  hardcoded beyond `tool:workflow.transition` and the baselines.
 - `runner_pairing.py` plus `transport/api/runner_pairing.py`: device-code
   pairing of an auto-run machine — the runner presents only its key digest, an
   owner approves the printed code, and the digest is registered as a labelled
@@ -61,8 +61,8 @@ artifact/feed/storage lifecycles, sandbox lifecycle, or database schema.
 - `artifacts.py` plus `transport/api/artifacts.py`: stable artifact wire shapes
   and token-authenticated uploads. Project-authenticated content/file/figure
   reads accept generic content IDs or research association handles. The three
-  tools are `artifact.upload` (optional `attach_to`), `artifact.read` (ID, batch,
-  or research filters), and `artifact.attach` (reuse existing content). ID reads
+  tools are `tool:artifact.upload` (optional `attach_to`), `tool:artifact.read` (ID, batch,
+  or research filters), and `tool:artifact.attach` (reuse existing content). ID reads
   include authenticated download URLs, including for unattached binary files.
   Raw file/figure responses isolate active content with CSP sandbox and nosniff.
 - `telemetry.py`: in-memory activity, durable tool-call recording, and optional

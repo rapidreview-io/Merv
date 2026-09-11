@@ -1,99 +1,87 @@
 # Research Core
 
 ## Purpose and boundary
-`research_core` owns projects, claims, native research records, reviews, artifact
-associations and candidate lineage. It supplies project-scoped verified facts and
-transactional record bindings to Workflows, which owns graph decisions and agent briefs.
-Application composes modules; Surface owns auth and transport. Generic Artifacts owns
-immutable content, Feed publishes observations, merv-sandboxes runs workloads and stores
-ML objects; Research records their producer. `Research` is the public root, built
-from `BaseStateStore`, `ResearchArtifacts` and its `Program`; Surface injects `Workflows`. Every
-native record pins its kind's workflow version; mismatched instances fail before gates or writes.
 
-## Files- `records.py`: the engine every native record runs on. Workflows declares a `RecordKind`
-  beside each graph — table, id prefix, insert and JSON columns, which UPDATE each action
-  writes, whether dependency rows apply, any status projection — and this is the runtime
-  that interprets it: one create (also on a caller's connection), one hydration, one gate
-  evaluation, one `RecordKnowledge`, one commit. `RecordHooks` carries the per-kind steps
-  `before_write`/`after_write` both run inside the caller's transaction; `read_fact` answers
-  a reference only that kind knows, and
-  `bindings` the graphs its owner runs without a row; registration installs a kind.
-- `artifacts.py`: research-owned associations, role/target policy, accepted evidence,
-  replacement visibility, immutable submission members. `artifact_models.py`: association
-  projections and snapshot references.
-- `research.py`: public root; only what crosses the kinds — project, claim and candidate
-  writes (one transactional claim writer also serves reflection), snapshots, membership,
-  events, graph refs, and the one loop that
-  binds `program.kinds`. One kind is reached at `experiments`/`tasks`/`reflections`/`reviews`.
-- `experiments.py`: what is true of experiments alone — the create blocks (active cap,
-  reserved wave name, reflection debt), claim links, the attempt clock, the metrics exhibit.
-  `tasks.py`: the immutable goal, its pinned brief, and delivery parsing.
-- `dependencies.py`: the wave DAG (`node_dependencies`): edges with cycle checks, and the
-  per-node dependency and dependent rows the shared gate and UI read.
-- `reflections.py`: the wave's own machinery — single-open-wave guard, the rows behind its
-  fixed corpus, lens pinning, reserved names, change-spec materialization, drift facts, and
-  the lens and wave bindings; publication reads the pinned spec before releasing names.
-  Only experiment names reserve cap slots; migration 71 defaults unknown names to one
-  slot, then initialization classifies task-only names from pinned artifact bytes.
-- `reviews.py`: review requests, one-time capabilities, isolated sessions, pinned snapshots,
-  verdicts, return routing, and scoped review facts shared by enforcement and checklists. `association_targets.py`: target resolution. `objects.py`: the
-  object facade's lifecycle hook and its `ProducedObject` snapshot.
-- `policy.py`: the record kinds and their status vocabulary read off the graphs, plus
-  validation, snapshot identity, review-return routing, reflection signal, limits, and one
-  `RESOLVERS`, one per requirement class — artifact, record, dependencies, review — each
-  returning one checklist item keyed `artifact:`/`record:`/`review:` plus the role; all
-  resolvers are pure: review facts include request expiry and verified/attested independence. `models.py`:
-  typed state shapes and `public_record`, the one projection every presenter applies to a
-  `Public` declaration. `__init__.py`: narrow imports.
-- `content_summaries.py`: deterministic TLDRs of submitted documents. `paths.py`: safe experiment folder names. `tools.py`: the experiment/task/reflection/consolidation/review/claim/candidate/litreview MCP contracts, their enums and prose read off the graphs above; the research program carries the table into the registry. `persistence.py`: every research table, its read-path indexes, and the `research_artifacts` view that joins a link row to the immutable content it names.
+`research_core` owns projects, claims, native records, reviews, artifact associations
+and candidate lineage. It supplies project-scoped facts and transactional bindings to
+Workflows, which owns graph decisions and agent briefs. Application composes modules;
+Surface owns auth and transport. Artifacts owns immutable content, Feed observations,
+and merv-sandboxes workloads and ML objects. Research records their producer.
+`Research` is the public root, built from `BaseStateStore`, `ResearchArtifacts`, its
+`Program` and injected `Workflows`. Native records pin their kind's workflow version;
+instance/kind mismatches fail before checklist evaluation or native writes.
 
-## Experiment lifecycle
-The graph uses `planned -> design_review -> running -> experiment_review -> complete`;
-failure and abandonment are terminal outcomes. Passing design review immediately enters
-execution. Dependencies gate dispatch; actual activation starts the attempt clock. Graph
-decisions, native state, and evidence sealing commit together. Rejected design work returns
-to `planned` and increments the attempt; a rejected execution review returns to `planned`
-(new attempt) or `running` (keep the approved plan).
+## Files
 
-A task is scoped non-experiment work with no claim: `in_progress -> in_review -> done`,
-`failed` the only other ending. Goal prose + deliverables (each verifiable as written) are
-IMMUTABLE structure at create, rendered and pinned as brief.md; brief submissions are
-refused. The delivery answers one confirmation per deliverable ("not delivered — why" is
-legal) plus Notes; resubmissions are complete versions, one review per version:
-`needs_changes` returns, `fail` or `mark_failed` ends. State parses the delivery (entry →
-state/evidence/how); `dependents` sits beside `dependencies`. Both node kinds share
-`node_dependencies`: an experiment enters `running` after approval and waits for
-dependencies before dispatch; tasks also wait before dispatch and `submit_delivery`.
+- `records.py`: one engine interprets each graph's `RecordKind`: creation, hydration,
+  gates, `RecordKnowledge`, column writes and sealing. `RecordHooks.before_write` and
+  `RecordHooks.after_write` both run inside the caller's transaction. `read_fact` supplies
+  kind-specific facts; `bindings` supplies graphs without native rows. Duplicate kinds fail.
+- `artifacts.py`: research associations, role/target policy, accepted evidence, replacement
+  visibility and submission members. `artifact_models.py`: association projections.
+- `research.py`: projects, claims, candidates, snapshots, membership and events; one loop
+  binds `program.kinds`. Its transactional claim writer also serves reflection, preserving
+  omitted fields and writing identical claim events plus explicit reflection provenance.
+- `experiments.py`: active cap, reserved names, reflection debt, claim links, attempt clock
+  and metrics exhibit. `tasks.py`: immutable goals, pinned briefs and parsed deliveries.
+- `dependencies.py`: wave DAG edges, cycle checks, dependency and dependent rows.
+- `reflections.py`: fixed corpus, lens pinning, reserved names, materialization, drift facts,
+  and lens/wave bindings. It alone writes reflection-to-claim associations.
+- `reviews.py`: capabilities, sessions, snapshots, verdicts and return routing. It reads
+  SQL and project settings into one scoped review fact shared within an evaluation.
+  The fact includes latest verdict, independence, request status, validity and expiry.
+- `policy.py`: pure validation, snapshot identity, review decisions, reflection signals,
+  limits and `RESOLVERS`. Each requirement class formats one checklist item from the
+  same verified facts and graph issues enforcement uses; policy contains no persistence.
+- `association_targets.py`: target resolution. `objects.py`: completion lifecycle and
+  `ProducedObject` snapshots. `models.py`: typed state and `public_record` projection.
+- `content_summaries.py`: document TLDRs. `paths.py`: safe experiment folder names.
+  `tools.py`: research tool contracts, read from graph declarations where applicable.
+  `persistence.py`: research tables, migrations, indexes and the `research_artifacts` view.
 
-## Reflection and review lifecycle
-A reflection moves `reflecting -> synthesizing -> reflection_review -> consolidating ->
-consolidation_review -> published`; the row has no column for the last review state, so a
-declared projection keeps every reader on `consolidating`; review makes its research
-artifacts authoritative. A separate consolidator covers every experiment, a separate
-reviewer approves the exact code proposal, and the runner binds it to the Merv-owned
-central Git ref through Agent Sessions' receipt; only then does publication atomically materialize the change spec and pin
-the graph. Code review returns only to consolidation.
+## Lifecycles
 
-A review capability is random, expiring, returned once, and stored only as a hash; a new
-request supersedes older open requests for the same gate. Review start enforces tenant
-scope, producer/reviewer separation, an unchanged target snapshot, and the one-time
-capability or an exact assigned reviewer session; submission rechecks that snapshot before
-a verdict can route a workflow.
+Experiments follow `planned -> design_review -> running -> experiment_review -> complete`;
+failure and abandonment are terminal. `action:experiment.approve_design` enters execution;
+dependencies gate dispatch and activation starts the attempt clock. A rejected design
+returns to planned with a new attempt. Execution review can return to planned with a new
+attempt or running with its approved plan. Native state, graph history and sealing commit
+atomically. `role:experiment.design_reviewer` follows `skill:experiment-design-review`.
+
+Tasks follow `in_progress -> in_review -> done`, with failed as the other ending.
+Goal and deliverables are immutable; creation renders and pins the brief, and manual brief
+submissions are refused. Delivery answers each deliverable with evidence or an explicit
+non-delivery reason, plus notes. `action:task.submit_delivery` waits for dependencies;
+needs_changes returns to work, while fail or `action:task.mark_failed` ends the task.
+Both node kinds share the dependency DAG; completed tasks supply context, not experiment debt.
+
+Reflection follows `reflecting -> synthesizing -> reflection_review -> consolidating ->
+consolidation_review -> published`; both consolidation states project to consolidating in
+the native row. Independent reviewers approve research and then the exact code proposal;
+code review returns only to consolidation. The runner binds the central Git advance through
+Agent Sessions before `action:reflection.publish` atomically materializes the approved spec.
+Reservations share one namespace, but only experiment names consume active-cap slots.
+Migration 71 defaults existing names to one slot; initialization reads their pinned spec
+bytes to classify task-only names as zero. Unreadable or unknown names remain one.
+Publication materializes from the pin before releasing reservations, on the same transaction;
+its already-reserved creates bypass mutable capacity checks. Failure restores every write.
 
 ## Read model and invariants
 
-`Research.snapshot` is the canonical transaction-consistent project read: it hydrates
-experiment, task, and reflection state in batches and returns gate evaluations with the records
-they govern. Focused reads may be smaller but keep the same project scope, attempt rules, and
-snapshot identity. Candidates point to an Artifact, a merv-sandboxes object, or a pathless
-experiment workspace awaiting evaluator staging; staging and promotions are append-only, and
-promotion needs durable bytes, a reason, and compare-and-swap against the observed champion.
-All writes resolve a project through `BaseStateStore`; lookups include project ownership. Events
-commit with their state mutations. Review snapshots are byte-stable identities of the target
-state and submitted evidence. Research seals explicit association IDs on its own transaction;
-generic content stays immutable and reusable. Reflection publication materializes its reviewed
-change spec; its experiments and tasks pass through the same creation invariants as direct ones,
-a proposed task's brief is pinned from the spec, and `depends_on` becomes DAG edges.
-## Maintenance rule
+`Research.snapshot` hydrates native records and gates in one transaction-consistent project
+read. Focused reads preserve project scope, attempt rules and byte-stable snapshot identity.
+Capabilities expire, are returned once and stored as hashes. A fresh request supersedes
+open requests for the same gate. `tool:review.start` verifies tenant, producer separation,
+snapshot and capability or assigned session; submission rechecks the immutable snapshot.
+Expired requests are pending, never reusable runtime capabilities. Attested passes satisfy
+non-strict policy; strict policy requires verified independence in both runtime and checklist.
+Claims change via `tool:claim.update` or approved reflection edits, never prose heuristics.
+Candidates reference durable artifacts, service objects or workspaces awaiting staging;
+staging and promotion are append-only, with reasons and compare-and-swap at promotion.
+All writes and lookups enforce project ownership. Events commit with their mutations;
+sealing uses explicit association IDs while generic content stays immutable and reusable.
 
-Keep record invariants here, workflow decisions in Workflows; at most 100 lines.
+## Maintenance
+
+Keep this note under 100 lines. Named actions, roles, tools and skills use qualified inline
+references as above; the documentation ratchet resolves them against their declarations.
