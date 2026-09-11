@@ -7,6 +7,8 @@ class ResearchPluginError(Exception):
     """Base class for domain and tool errors."""
 
     error_code = "research_plugin_error"
+    # The HTTP status a transport answers with; subclasses override.
+    http_status = 400
 
     def __init__(self, message: str, *, details: dict | None = None) -> None:
         super().__init__(message)
@@ -16,6 +18,7 @@ class ResearchPluginError(Exception):
 
 class NotFoundError(ResearchPluginError):
     error_code = "not_found"
+    http_status = 404
 
 
 class PermissionDeniedError(ResearchPluginError):
@@ -34,18 +37,21 @@ class ContentUnavailableError(ResearchPluginError):
     """A file's bytes are not available from the current deployment."""
 
     error_code = "content_unavailable"
+    http_status = 404
 
 
 class GoneError(ResearchPluginError):
     """A short-lived resource existed but can no longer be used (HTTP 410)."""
 
     error_code = "gone"
+    http_status = 410
 
 
 class ThrottledError(ResearchPluginError):
     """The caller exceeded a rate limit and must back off (HTTP 429)."""
 
     error_code = "throttled"
+    http_status = 429
 
 
 class TrackingPersistenceError(ResearchPluginError):
@@ -57,3 +63,4 @@ class TrackingPersistenceError(ResearchPluginError):
     """
 
     error_code = "tracking_persistence_failed"
+    http_status = 500

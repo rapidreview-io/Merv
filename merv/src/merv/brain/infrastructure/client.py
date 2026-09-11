@@ -23,6 +23,7 @@ from merv.shared.errors import PermissionDeniedError, ResearchPluginError, Throt
 
 class InfrastructureUnavailableError(ResearchPluginError):
     error_code = "infrastructure_unavailable"
+    http_status = 503
 
 
 

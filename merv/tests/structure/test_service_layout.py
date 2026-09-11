@@ -602,7 +602,7 @@ class ServiceLayoutTest(unittest.TestCase):
     def test_sandbox_lifecycle_uses_the_standard_dispatcher(self) -> None:
         source = _http_gateway_source()
         self.assertNotIn("hosted_control_sandbox_lookup", source)
-        self.assertIn("return self.tools.call_tool(", source)
+        self.assertIn("result = self.tools.call_tool(", source)
         self.assertNotIn("run=lambda: self.sandboxes.get(", source)
 
     def test_http_surface_policy_keeps_mode_decisions_named(self) -> None:

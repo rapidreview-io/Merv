@@ -9,7 +9,7 @@ from urllib.parse import parse_qsl
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from ...identity import is_human_session
+from ...identity import Principal, is_human_session
 from ...oauth import OAuthControl, OAuthError, oauth_error_redirect
 from ...project_keys import PROJECT_GRANT
 from ..request_body import RequestBodyTooLarge, read_limited_body
@@ -80,10 +80,10 @@ def bearer_denial(
 
 
 def credential_audience_denial(
-    *, request: Request, principal: object, canonical_mcp_resource: str
+    *, request: Request, principal: Principal, canonical_mcp_resource: str
 ) -> JSONResponse | None:
     """Require an audience-bound bearer on exactly its configured resource."""
-    audience = str(getattr(principal, "audience", "") or "")
+    audience = principal.audience
     if not audience:
         return None
     path = request.url.path
@@ -329,7 +329,7 @@ def _unique_query(request: Request) -> dict[str, str]:
 
 
 def _session_owner(request: Request) -> str:
-    return str(getattr(request.state.principal, "user_id", "") or "")
+    return request.state.principal.user_id
 
 
 def _public_client_denial(request: Request) -> JSONResponse | None:

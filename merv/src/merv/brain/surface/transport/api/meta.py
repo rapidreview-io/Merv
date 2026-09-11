@@ -20,7 +20,7 @@ def _caller_project_ids(
     """The authenticated caller's project memberships, or None for the local
     principal (unscoped/global — unchanged local behavior). Diagnostics scope to
     this set so a member cannot read another project's calls (INV-11 FIX 1)."""
-    user_id = str(getattr(getattr(request.state, "principal", None), "user_id", "") or "")
+    user_id = request.state.principal.user_id
     if not user_id:
         return None
     return research.project_ids_for_user(user_id=user_id)

@@ -50,6 +50,7 @@ from .shared import (
     open_hosted_operator_denial,
     operator_denial,
     operator_membership_recovery,
+    refusal,
 )
 from . import oauth, project_keys, runner_pairing
 from ...runner_pairing import RunnerPairings
@@ -145,45 +146,19 @@ class RequestAuthenticator:
                     enabled=self.oauth_enabled,
                     session_denial=None,
                 )
-            source_key_id = str(record.get("source_key_id") or "")
-            principal = Principal(
-                tenant_id=str(record["tenant_id"]),
-                client_id=f"agent-session:{record['id']}",
-                user_id=str(record.get("source_user_id") or ""),
-                key_project_id=str(record["project_id"]),
-                agent_session_id=str(record["id"]),
-                agent_workflow=str(record.get("target_type") or ""),
-                agent_workflow_instance_id=str(record.get("workflow_instance_id") or ""),
-                agent_workflow_revision=int(record.get("workflow_revision") or 0),
-                agent_execution=SessionExecution.from_packet(record.get("execution")),
-                agent_references=tuple(
-                    (str(item.get("kind") or ""), str(item.get("id") or ""))
-                    for item in (record.get("references") or ())
-                    if isinstance(item, dict)
-                ),
-                source_key_id=source_key_id or None,
-            )
-            request.state.principal = principal
-            denied = oauth.credential_audience_denial(
-                request=request, principal=principal,
-                canonical_mcp_resource=self.canonical_mcp_resource,
-            )
-            if denied is not None:
-                return denied
-            request.state.principal = principal
-            request.state.authenticated = True
+            principal = _session_principal(record)
+        elif self.verifier is None:
             return None
-        if self.verifier is None:
-            return None
-        try:
-            principal = self.verifier.verify_bearer(authorization)
-        except UnauthorizedError as exc:
-            return oauth.bearer_denial(
-                request,
-                message=exc.message,
-                enabled=self.oauth_enabled,
-                session_denial=None,
-            )
+        else:
+            try:
+                principal = self.verifier.verify_bearer(authorization)
+            except UnauthorizedError as exc:
+                return oauth.bearer_denial(
+                    request,
+                    message=exc.message,
+                    enabled=self.oauth_enabled,
+                    session_denial=None,
+                )
         request.state.principal = principal
         request.state.authenticated = True
         # INV-7: audience-bound bearers are valid ONLY on the canonical /mcp path.
@@ -211,17 +186,9 @@ class ProjectAuthorizer:
         "POST": re.compile(r"^/api/projects/[^/]+/keys/[^/]+/revoke$"),
     }
 
-    @staticmethod
-    def user_id(principal: Any) -> str:
-        return str(getattr(principal, "user_id", "") or "")
-
-    @staticmethod
-    def key_project_id(principal: Any) -> str:
-        return str(getattr(principal, "key_project_id", "") or "")
-
-    def require_key_scope(self, *, project_id: str | None, principal: Any) -> None:
+    def require_key_scope(self, *, project_id: str | None, principal: Principal) -> None:
         """Exact key-project equality, BEFORE any membership check (INV-11)."""
-        key_project_id = self.key_project_id(principal)
+        key_project_id = principal.key_project_id
         if key_project_id and project_id and project_id != key_project_id:
             raise ProjectKeyScopeError(
                 "project API key cannot access a different project",
@@ -231,32 +198,24 @@ class ProjectAuthorizer:
                 },
             )
 
-    def require_member(self, *, project_id: str | None, principal: Any) -> None:
+    def require_member(self, *, project_id: str | None, principal: Principal) -> None:
         self.require_key_scope(project_id=project_id, principal=principal)
-        user_id = self.user_id(principal)
         if (
-            user_id
+            principal.user_id
             and project_id
             and not self.research.is_project_member(
-                project_id=project_id, user_id=user_id
+                project_id=project_id, user_id=principal.user_id
             )
         ):
             raise NotFoundError(f"project not found: {project_id}")
 
     def http_denial(self, request: Request) -> JSONResponse | None:
         path = request.url.path
+        principal: Principal = request.state.principal
         # Credential SHAPE, not binding: an account key has no
         # key_project_id, so a binding test fails open here (INV-11).
-        if is_external_key(request.state.principal) and path.startswith(
-            self._operator_diagnostic_prefixes
-        ):
-            return JSONResponse(
-                {
-                    "detail": "project API keys cannot access operator diagnostics",
-                    "error_code": "project_scope_forbidden",
-                },
-                status_code=403,
-            )
+        if is_external_key(principal) and path.startswith(self._operator_diagnostic_prefixes):
+            return refusal(ProjectKeyScopeError("project API keys cannot access operator diagnostics"))
         if path.startswith(GLOBAL_MUTATOR_PREFIXES):
             # Operator token replaces membership scoping here (local keeps access).
             return operator_denial(request)
@@ -265,49 +224,35 @@ class ProjectAuthorizer:
         if not project_id and path.startswith(self._query_scoped_prefixes):
             project_id = request.query_params.get("project_id") or ""
             if not project_id:
-                return JSONResponse(
-                    {
-                        "detail": "project_id is required on this endpoint when authenticated",
-                        "error_code": "validation_error",
-                    },
-                    status_code=400,
-                )
+                return refusal(ValidationError("project_id is required on this endpoint when authenticated"))
         try:
-            self.require_key_scope(
-                project_id=project_id, principal=request.state.principal
-            )
+            self.require_key_scope(project_id=project_id, principal=principal)
         except ProjectKeyScopeError as exc:
-            return JSONResponse(
-                {"detail": exc.message, "error_code": exc.error_code, **exc.details},
-                status_code=403,
-            )
+            return refusal(exc)
         owner_key = self._owner_key_routes.get(request.method)
         gated = project_id and not (owner_key and owner_key.match(path))
         if gated and operator_membership_recovery(request):
             gated = False  # operator re-staffing an orphaned project
         if gated and not self.research.is_project_member(
-            project_id=project_id, user_id=self.user_id(request.state.principal)
+            project_id=project_id, user_id=principal.user_id
         ):
-            return JSONResponse(
-                {"detail": "project not found", "error_code": "not_found"},
-                status_code=404,
-            )
+            return refusal(NotFoundError("project not found"))
         return None
 
 
-def caller_facts(principal: Any, *, mcp_session_id: str = "") -> CallerFacts:
+def caller_facts(principal: Principal, *, mcp_session_id: str = "") -> CallerFacts:
     """The non-secret caller facts an agent identity is bound to and stored with.
 
     Lives here, beside the principal vocabulary, so the identity service never
     has to know what a principal is.
     """
     return CallerFacts(
-        tenant_id=str(getattr(principal, "tenant_id", "") or ""),
-        user_id=str(getattr(principal, "user_id", "") or ""),
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
         principal_id=principal_label(principal),
-        oauth_family_id=str(getattr(principal, "oauth_family_id", "") or ""),
-        agent_session_id=str(getattr(principal, "agent_session_id", "") or ""),
-        mcp_session_id=str(mcp_session_id or ""),
+        oauth_family_id=principal.oauth_family_id or "",
+        agent_session_id=principal.agent_session_id or "",
+        mcp_session_id=mcp_session_id,
     )
 
 
@@ -336,7 +281,7 @@ class ToolInvocationGateway:
         context: dict[str, Any] | None = None,
         project_scope: str | None = None,
         activity_source: str = "http",
-        principal: Any | None = None,
+        principal: Principal = LOCAL_PRINCIPAL,
         base_url: str = "",  # renders upload one-liners
         mcp_session_id: str = "",  # the transport session header, if any
     ) -> dict[str, Any]:
@@ -354,7 +299,7 @@ class ToolInvocationGateway:
         context: dict[str, Any] | None = None,
         project_scope: str | None = None,
         activity_source: str = "http",
-        principal: Any | None = None,
+        principal: Principal = LOCAL_PRINCIPAL,
         base_url: str = "",
         mcp_session_id: str = "",
     ) -> Callable[[], dict[str, Any]]:
@@ -364,7 +309,7 @@ class ToolInvocationGateway:
         arguments = dict(arguments or {})
         scope = str(arguments.get("project_id") or project_scope or "")
         try:
-            plan = self._preflight(
+            _contract, internal_kwargs, call_kwargs = self._preflight(
                 name=name,
                 arguments=arguments,
                 context=dict(context or {}),
@@ -393,18 +338,16 @@ class ToolInvocationGateway:
 
         def run() -> dict[str, Any]:
             bind_agent(agent_id=bound.agent_id, mcp_session_id=bound.mcp_session_id)
-            with infrastructure_actor(str(getattr(principal, "user_id", "") or "")):
-                result = self._dispatch(
+            with infrastructure_actor(principal.user_id):
+                result = self.tools.call_tool(
                     name=name,
                     arguments=arguments,
-                    plan=plan,
                     activity_source=activity_source,
-                    project_id=scope,
+                    internal_kwargs=internal_kwargs or None,
+                    **call_kwargs,
                 )
-            if self.agent_sessions is not None and getattr(
-                principal, "agent_session_id", None
-            ):
-                self.agent_sessions.reconcile(project_id=self.projects.key_project_id(principal) or None)
+            if self.agent_sessions is not None and principal.agent_session_id:
+                self.agent_sessions.reconcile(project_id=principal.key_project_id or None)
             return result
 
         return run
@@ -417,10 +360,10 @@ class ToolInvocationGateway:
         context: dict[str, Any],
         project_scope: str | None,
         activity_source: str,
-        principal: Any | None,
+        principal: Principal,
         base_url: str,
         mcp_session_id: str = "",
-    ) -> tuple[Any, dict[str, Any] | None, dict[str, Any]]:
+    ) -> tuple[Any, dict[str, Any], dict[str, Any]]:
         """Every denial a call can earn before dispatch, plus the kwargs it needs.
 
         Split from dispatch so one ``except`` owns the durable refusal row: past
@@ -463,7 +406,7 @@ class ToolInvocationGateway:
             return contract, internal_kwargs, call_kwargs
         if name == HELLO_TOOL:
             # The tool sees who is calling from the credential, never the model.
-            internal_kwargs = {**(internal_kwargs or {}), "caller": caller.as_dict()}
+            internal_kwargs["caller"] = caller.as_dict()
             return contract, internal_kwargs, call_kwargs
         agent_id = identities.resolve(
             agent_id=supplied_agent_id, caller=caller, tool=name
@@ -474,10 +417,7 @@ class ToolInvocationGateway:
             # sessions carry a session id and these contracts accept none from
             # the model. The verified context-window id is the paired
             # credential's provenance equivalent.
-            internal_kwargs = {
-                **(internal_kwargs or {}),
-                "producer_session_id": agent_id,
-            }
+            internal_kwargs["producer_session_id"] = agent_id
         return contract, internal_kwargs, call_kwargs
 
     def _preflight_scope(
@@ -488,9 +428,9 @@ class ToolInvocationGateway:
         context: dict[str, Any],
         project_scope: str | None,
         activity_source: str,
-        principal: Any | None,
+        principal: Principal,
         base_url: str,
-    ) -> tuple[Any, dict[str, Any] | None, dict[str, Any]]:
+    ) -> tuple[Any, dict[str, Any], dict[str, Any]]:
         """The scope/visibility/membership half of pre-flight (see _preflight)."""
         contract = TOOL_MANIFEST.get(name)
         # INV-5: an MCP call from any non-local principal (mk_ key or JWT) is
@@ -507,8 +447,8 @@ class ToolInvocationGateway:
                     "reason": "repo_root_not_supported",
                 },
             )
-        user_id = self.projects.user_id(principal)
-        key_project_id = self.projects.key_project_id(principal)
+        user_id = principal.user_id
+        key_project_id = principal.key_project_id or ""
         bound = self.authorize_agent_session(
             name=name, arguments=arguments, principal=principal
         )
@@ -524,38 +464,32 @@ class ToolInvocationGateway:
                 f"project API keys cannot {denied} projects",
                 details={"key_project_id": key_project_id},
             )
-        internal_kwargs = None
+        internal_kwargs: dict[str, Any] = {}
         caller_project_field = getattr(contract, "binds_caller_project", "")
         if user_id and caller_project_field:
-            internal_kwargs = {"user_id": user_id}
+            internal_kwargs["user_id"] = user_id
             if key_project_id:  # the bound project, under the name this tool takes
                 internal_kwargs[caller_project_field] = key_project_id
         if base_url and getattr(contract, "needs_base_url", False):
             # The reply renders an absolute URL against the caller-reachable
             # base: an upload token-curl one-liner.
-            internal_kwargs = {"base_url": base_url}
-        if bound:
-            # The node's scope rules bind these arguments to the leased
-            # instance; the handler receives the resolved values, never the
-            # model's.
-            internal_kwargs = {**(internal_kwargs or {}), **bound}
-        agent_session_id = str(getattr(principal, "agent_session_id", "") or "")
+            internal_kwargs["base_url"] = base_url
+        # The node's scope rules bind these arguments to the leased instance;
+        # the handler receives the resolved values, never the model's.
+        internal_kwargs.update(bound)
+        agent_session_id = principal.agent_session_id or ""
         if agent_session_id and getattr(contract, "binds_producer_session", ""):
-            internal_kwargs = {
-                **(internal_kwargs or {}),
-                "producer_session_id": agent_session_id,
-            }
+            internal_kwargs["producer_session_id"] = agent_session_id
         capability_field = getattr(contract, "binds_capability", "")
         if agent_session_id and capability_field:
             # The assigned id is whatever scope rule the node declared for this
             # argument resolved to; without one the capability handoff has
             # nothing to bind and the tool refuses "assigned".
-            internal_kwargs = {
-                **(internal_kwargs or {}),
+            internal_kwargs.update({
                 "caller_session_id": agent_session_id,
                 "assigned_agent_session_id": agent_session_id,
                 f"assigned_{capability_field}": str(bound.get(capability_field) or ""),
-            }
+            })
         scope_field = getattr(contract, "telemetry_scope_field", "") if self.surface.hosted_control else ""
         call_kwargs: dict[str, Any] = {"caller_is_external_mcp": caller_is_external_mcp}
         if project_scope:
@@ -582,7 +516,7 @@ class ToolInvocationGateway:
         return contract, internal_kwargs, call_kwargs
 
     def authorize_agent_session(
-        self, *, name: str, arguments: dict[str, Any], principal: Any | None
+        self, *, name: str, arguments: dict[str, Any], principal: Principal
     ) -> dict[str, Any]:
         """Enforce the leased node's declared policy; return the bound scope values.
 
@@ -591,13 +525,10 @@ class ToolInvocationGateway:
         the session was leased with. ``workflow.transition`` is the one
         generic exit and must name the leased instance and revision.
         """
-        session_id = str(getattr(principal, "agent_session_id", "") or "")
-        if not session_id:
+        if not principal.agent_session_id:
             return {}
-        policy = getattr(principal, "agent_execution", None)
-        if not isinstance(policy, SessionExecution):
-            policy = SessionExecution()
-        instance_id = str(getattr(principal, "agent_workflow_instance_id", "") or "")
+        policy = principal.agent_execution or SessionExecution()
+        instance_id = principal.agent_workflow_instance_id or ""
         if name not in policy.allowed_tools:
             raise AgentSessionScopeError(f"agent session cannot call {name}", details={"tool": name})
         if name.startswith("sandbox.") and not policy.sandbox:
@@ -605,7 +536,7 @@ class ToolInvocationGateway:
         if name == "workflow.transition":
             if str(arguments.get("instance_id") or "") != instance_id:
                 raise AgentSessionScopeError("workflow tool must target the assigned instance")
-            if arguments.get("expected_revision") != getattr(principal, "agent_workflow_revision", None):
+            if arguments.get("expected_revision") != principal.agent_workflow_revision:
                 raise AgentSessionScopeError("workflow transition must use the leased revision")
         bound: dict[str, Any] = {}
         for rule in policy.scope:
@@ -626,25 +557,6 @@ class ToolInvocationGateway:
             if "." not in rule.field and (name in policy.mutating or _declares_field(name, rule.field)):
                 bound[rule.field] = expected
         return bound
-
-    def _dispatch(
-        self,
-        *,
-        name: str,
-        arguments: dict[str, Any],
-        plan: tuple[Any, dict[str, Any] | None, dict[str, Any]],
-        activity_source: str,
-        project_id: str,
-    ) -> dict[str, Any]:
-        """Run the pre-flighted call through the standard dispatcher and ledger."""
-        _contract, internal_kwargs, call_kwargs = plan
-        return self.tools.call_tool(
-            name=name,
-            arguments=arguments,
-            activity_source=activity_source,
-            internal_kwargs=internal_kwargs,
-            **call_kwargs,
-        )
 
     def call_mcp(
         self,
@@ -743,8 +655,8 @@ def install_request_middleware(
             denied = await run_in_threadpool(deny, request)
         bind_request_principal(request, denied=denied, open_mode=open_mode)
         if denied is None:
-            subject = str(getattr(getattr(request.state, "principal", None), "user_id", "") or "")
-            with infrastructure_actor(subject):
+            principal = getattr(request.state, "principal", None)  # unset on OPTIONS
+            with infrastructure_actor(principal.user_id if principal else ""):
                 return await call_next(request)
         # Off the event loop: a 401 storm against a stalled database must not
         # queue every unrelated request behind the durable row it is writing.
@@ -775,15 +687,15 @@ def install_auth_routes(
             )
 
 
-def _resolve_scope_source(source: str, *, principal: Any, instance_id: str) -> str | None:
+def _resolve_scope_source(source: str, *, principal: Principal, instance_id: str) -> str | None:
     """The one value a scoped argument may carry, from the lease alone."""
     if source == "instance":
         return instance_id or None
     if source == "workflow":
-        return str(getattr(principal, "agent_workflow", "") or "") or None
+        return principal.agent_workflow or None
     if source.startswith("reference:"):
         kind = source[len("reference:"):]
-        for reference_kind, reference_id in getattr(principal, "agent_references", ()) or ():
+        for reference_kind, reference_id in principal.agent_references:
             if reference_kind == kind and reference_id:
                 return str(reference_id)
     return None
@@ -803,6 +715,27 @@ def _declares_field(tool: str, field: str) -> bool:
     contract = TOOL_MANIFEST.get(tool)
     model = getattr(contract, "input_model", None)
     return bool(model is not None and field in getattr(model, "model_fields", {}))
+
+
+def _session_principal(record: Mapping[str, Any]) -> Principal:
+    """The lease a ``mas_`` credential carries, verbatim from its row."""
+    return Principal(
+        tenant_id=str(record["tenant_id"]),
+        client_id=f"agent-session:{record['id']}",
+        user_id=str(record.get("source_user_id") or ""),
+        key_project_id=str(record["project_id"]),
+        agent_session_id=str(record["id"]),
+        agent_workflow=str(record.get("target_type") or ""),
+        agent_workflow_instance_id=str(record.get("workflow_instance_id") or ""),
+        agent_workflow_revision=int(record.get("workflow_revision") or 0),
+        agent_execution=SessionExecution.from_packet(record.get("execution")),
+        agent_references=tuple(
+            (str(item.get("kind") or ""), str(item.get("id") or ""))
+            for item in (record.get("references") or ())
+            if isinstance(item, dict)
+        ),
+        source_key_id=str(record.get("source_key_id") or "") or None,
+    )
 
 
 def _agent_session_http_denial(path: str) -> JSONResponse | None:

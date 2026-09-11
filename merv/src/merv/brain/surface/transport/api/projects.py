@@ -50,7 +50,7 @@ def build_router(
                 )
             except Exception:
                 profiles = {}
-        self_id = gateway.projects.user_id(request.state.principal)
+        self_id = request.state.principal.user_id
         return {
             "members": [
                 {
@@ -117,7 +117,7 @@ def build_router(
                 raise HTTPException(
                     status_code=503, detail="email sharing is not configured"
                 )
-            limit_email_lookup(gateway.projects.user_id(request.state.principal))
+            limit_email_lookup(request.state.principal.user_id)
             try:
                 target = user_directory.find_user_by_email(email)
             except Exception as exc:

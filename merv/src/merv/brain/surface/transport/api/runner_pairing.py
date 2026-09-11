@@ -70,7 +70,7 @@ def build_router(*, pairings: RunnerPairings, gateway: ProjectGate) -> APIRouter
         return pairings.approve(
             project_id=project_id,
             user_code=user_code,
-            owner_user_id=str(getattr(principal, "user_id", "") or ""),
+            owner_user_id=principal.user_id,
             principal_label=principal_label(principal),
         )
 
