@@ -49,17 +49,24 @@ def validate_synopsis(value: str) -> str:
 
 
 def resolve_review_return(
-    *, kind: RecordKind, role: str, verdict: str, return_to: str
+    *, kind: RecordKind | None, role: str, verdict: str, return_to: str,
+    definition: Workflow | None = None, state: str = "",
 ) -> ReviewReturn | None:
     """Validate a submitted review's routing input against the target's gates.
 
     The target's graph decides which edge the verdict eventually takes; this
-    only refuses an input the gate's declared returns cannot honour.
+    only refuses an input its declared returns cannot honour. A target with no
+    record kind — or one pinned past version 1 — declares no returns, so all
+    that is asked of it is a destination its current node actually has.
     """
     value = (return_to or "").strip()
     if verdict == "pass":
         if value:
             raise ValidationError("return_to only applies when the verdict is needs_changes or fail")
+        return None
+    if kind is None:
+        if value and value not in {edge.target for edge in definition.edges if edge.source == state}:
+            raise ValidationError("return_to must name a destination of the current workflow node")
         return None
     gate = kind.review_gate(role)
     subject = kind.metadata.subject or kind.name

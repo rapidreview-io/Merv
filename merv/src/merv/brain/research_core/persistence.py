@@ -100,9 +100,8 @@ CREATE TABLE IF NOT EXISTS review_requests (
   producer_session_id TEXT NOT NULL DEFAULT '',
   expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  -- The record spine every graph-bound row carries. A review never retries,
-  -- so its attempt stays 1 and its revision context stays empty; the engine
-  -- writes them because the shape is the engine's, not the review's.
+  -- The record spine every graph-bound row carries. A review never retries, so
+  -- its attempt stays 1 and its revision context empty; the shape belongs to the engine.
   attempt_index INTEGER NOT NULL DEFAULT 1,
   revision_context TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL DEFAULT '',

@@ -129,12 +129,7 @@ class Research:
         workflows.register_transactional_effect("reflection.materialize_change_spec", publication_effect(
             write_claim=self._write_claim, create_experiment=self.experiments.create_from_reflection,
             create_task=self.tasks.create_from_reflection))
-        self.reviews = ReviewService(
-            store=store,
-            records=self.records,
-            reflections=self.reflections,
-            artifacts=artifacts,
-        )
+        self.reviews = ReviewService(records=self.records, reflections=self.reflections)
         # A review request is a native record whose graph reads nothing, so it
         # needs no hook of its own beyond the engine's own writes.
         self.records.register(REVIEW_KIND, RecordHooks())

@@ -16,7 +16,6 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any, TYPE_CHECKING
 
-from .artifacts import ResearchArtifacts as Artifacts
 from ..kernel.secret_tokens import hash_secret, mint_secret, secret_digest_matches
 from ..kernel.events import StoredEvent, freeze_json_object
 from ..kernel.identity import LOCAL_TENANT_ID
@@ -38,7 +37,7 @@ from .policy import (
     validate_review_role,
     resolve_review_return,
 )
-from ..kernel.state.store import BaseStateStore, Connection, next_created_seq, row_to_dict
+from ..kernel.state.store import Connection, next_created_seq, row_to_dict
 if TYPE_CHECKING:
     from .records import Records
     from .reflections import ReflectionService
@@ -69,7 +68,7 @@ def verdict_effect(*, records: Records):
              request["target_snapshot_id"], request["target_type"], request["target_id"],
              request["role"], data["verdict"], data["return_to"], data["notes"], data["synopsis"],
              dump(data["findings"]), dump(data["evidence"]), now_iso(),
-             next_created_seq(conn=conn, table="reviews"), data["submission_id"]),
+             next_created_seq(conn=conn, table="reviews"), _graded_round(records, conn, request)),
         )
         conn.execute("UPDATE review_sessions SET status = 'submitted' WHERE id = ?", (data["session_id"],))
         target_id = str(request["target_id"])
@@ -86,6 +85,18 @@ def verdict_effect(*, records: Records):
             )
 
     return record
+
+
+def _graded_round(records: Records, conn: Connection, request) -> str:
+    """The sealed submission this verdict graded. The seal ran on the forward
+    transition that put the target under review, so the newest submission for
+    the pinned attempt is that round."""
+    attempt = int(snapshot_from_id(snapshot_id=str(request["target_snapshot_id"])).get("attempt_index") or 0)
+    history = records.artifacts.history(tx=conn, target_type=str(request["target_type"]),
+                                        target_ids=(str(request["target_id"]),))[str(request["target_id"])]
+    latest = max((item for item in history.submissions if item.attempt_index == attempt),
+                 key=lambda item: item.order, default=None)
+    return "" if latest is None else latest.id
 
 
 def project_settings(*, conn: Connection, project_id: str) -> dict[str, Any]:
@@ -126,18 +137,10 @@ class ReviewService:
     provide the procedural read-only boundary.
     """
 
-    def __init__(
-        self,
-        *,
-        store: BaseStateStore,
-        records: Records,
-        reflections: ReflectionService,
-        artifacts: Artifacts,
-    ) -> None:
-        self.store = store
+    def __init__(self, *, records: Records, reflections: ReflectionService) -> None:
         self.records = records
         self.reflections = reflections
-        self.artifacts = artifacts
+        self.store = records.store
         self.runtime = records.runtime
 
     def request(
@@ -270,15 +273,11 @@ class ReviewService:
                     raise NotFoundError(
                         f"review request not found: {review_request_id}"
                     )
-            assigned = (
-                bool(assigned_agent_session_id)
-                and assigned_review_request_id == review_request_id
-                and caller_session_id == assigned_agent_session_id
-            )
-            if assigned:
-                self._validate_assigned_request_open(req=req)
-            else:
-                self._validate_request_open(req=req, capability=reviewer_capability)
+            # A bound mas_ credential replaces the one-time handoff secret.
+            capability = None if (bool(assigned_agent_session_id)
+                                  and assigned_review_request_id == review_request_id
+                                  and caller_session_id == assigned_agent_session_id) else reviewer_capability
+            self._validate_request_open(req=req, capability=capability)
             if caller_session_id == req["producer_session_id"]:
                 raise PermissionDeniedError(
                     "reviewer session must differ from producer session"
@@ -289,10 +288,7 @@ class ReviewService:
             # The workflow lock may have waited behind a capability refresh.
             # Recheck the row after acquiring it so a revoked request cannot reopen.
             req = conn.execute("SELECT * FROM review_requests WHERE id = ?", (review_request_id,)).fetchone()
-            if assigned:
-                self._validate_assigned_request_open(req=req)
-            else:
-                self._validate_request_open(req=req, capability=reviewer_capability)
+            self._validate_request_open(req=req, capability=capability)
             if snapshot_now != req["target_snapshot_id"]:
                 raise PermissionDeniedError(
                     "target changed after review capability was issued"
@@ -384,35 +380,12 @@ class ReviewService:
                     "target changed after this review started; the verdict no "
                     "longer applies — request a fresh review"
                 )
-            kind = self.records.kinds.get(str(req["target_type"]))
             current = self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
-            route = None
-            if kind is not None and current.version == 1:
-                route = resolve_review_return(kind=kind, role=req["role"], verdict=verdict, return_to=return_to)
-                return_to = "" if route is None else route.to_status
-            else:
-                if verdict == "pass" and return_to:
-                    raise ValidationError("return_to only applies when the verdict is needs_changes or fail")
-                destinations = {edge.target for edge in self.runtime.registry.get(current.workflow, current.version).edges
-                                if edge.source == current.state}
-                if return_to and return_to not in destinations:
-                    raise ValidationError("return_to must name a destination of the current workflow node")
-            snapshot = snapshot_from_id(snapshot_id=str(req["target_snapshot_id"]))
-            attempt_index = int(snapshot.get("attempt_index") or 0)
-            target_history = self.artifacts.history(
-                tx=conn,
-                target_type=str(req["target_type"]),
-                target_ids=(str(req["target_id"]),),
-            )[str(req["target_id"])].submissions if kind is not None else ()
-            latest_submission = max(
-                (
-                    submission
-                    for submission in target_history
-                    if submission.attempt_index == attempt_index
-                ),
-                key=lambda submission: submission.order,
-                default=None,
-            )
+            route = resolve_review_return(
+                kind=self.records.kinds.get(str(req["target_type"])) if current.version == 1 else None,
+                role=req["role"], verdict=verdict, return_to=return_to, state=current.state,
+                definition=self.runtime.registry.get(current.workflow, current.version))
+            return_to = return_to if route is None else route.to_status
             review_id = new_id(prefix="rev")
             self._apply(conn=conn, request_id=str(req["id"]), action="submit", payload={
                 "review_id": review_id, "session_id": review_session_id, "verdict": verdict,
@@ -421,10 +394,6 @@ class ReviewService:
                 "revision_context": "" if route is None else revision_context_for_review_return(
                     target_type=req["target_type"], role=req["role"], verdict=verdict,
                     notes=notes, findings=findings or [], route=route),
-                # The round this verdict graded. The seal ran on the forward
-                # transition that put the target under review, so the newest
-                # submission for this attempt is that round.
-                "submission_id": "" if latest_submission is None else latest_submission.id,
             })
             review = conn.execute(
                 "SELECT * FROM reviews WHERE id = ?", (review_id,)
@@ -656,22 +625,14 @@ class ReviewService:
         )
         return data
 
-    def _validate_request_open(self, *, req, capability: str) -> None:
+    @staticmethod
+    def _validate_request_open(*, req, capability: str | None) -> None:
+        """``None`` is an assigned session, whose lease already proved itself."""
         # Compare digests in constant time; plaintext capabilities never rest.
-        presented = hash_secret(capability)
-        if not secret_digest_matches(
-            stored_digest=req["capability_hash"], presented_digest=presented
+        if capability is not None and not secret_digest_matches(
+            stored_digest=req["capability_hash"], presented_digest=hash_secret(capability)
         ):
             raise PermissionDeniedError("invalid reviewer capability")
-        if req["status"] not in {"requested", "started"}:
-            raise PermissionDeniedError("review request is no longer open")
-        expires = parse_iso(req["expires_at"])
-        if expires is None or datetime.now(UTC) > expires:
-            raise PermissionDeniedError("reviewer capability expired")
-
-    @staticmethod
-    def _validate_assigned_request_open(*, req: Any) -> None:
-        """The bound mas_ credential replaces the one-time handoff secret."""
         if req["status"] not in {"requested", "started"}:
             raise PermissionDeniedError("review request is no longer open")
         expires = parse_iso(req["expires_at"])
@@ -735,16 +696,13 @@ class ReviewService:
         if not isinstance(selected, Mapping) or any(not isinstance(label, str) or not isinstance(value, str) for label, value in selected.items()):
             raise ValidationError("workflow artifacts must map labels to immutable content IDs")
         if selected:
-            self.artifacts.contents.assert_complete(artifact_ids=tuple(selected.values()), project_id=project_id, tx=conn)
+            self.records.artifacts.contents.assert_complete(artifact_ids=tuple(selected.values()), project_id=project_id, tx=conn)
         return {"id": snapshot.id, "project_id": snapshot.project_id, "status": snapshot.state,
                 "attempt_index": int(snapshot.data.get("attempt_index") or 1),
                 "current_attempt_artifacts": [{"id": value, "role": label} for label, value in selected.items()]}, None
 
     def _hydrate_review(self, *, row) -> dict[str, Any]:
-        data = row_to_dict(row=row) or {}
+        data = self._with_snapshot(row=row)
         data["findings"] = json.loads(data.pop("findings_json", "[]"))
         data["evidence"] = json.loads(data.pop("evidence_json", "{}"))
-        data["target_snapshot"] = snapshot_from_id(
-            snapshot_id=data.get("target_snapshot_id", "")
-        )
         return data
