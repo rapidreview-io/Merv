@@ -138,9 +138,13 @@ class Surface:
             ref_vocabulary=ENTITY_REF_VOCABULARY,
             author_roles=FEED_AUTHOR_ROLES,
             adoptable_roles=FEED_ADOPTABLE_ROLES,
-            figure_lookup=lambda project_id, artifact_id, path: self.artifacts.figure(
+            # A research-visible artifact whose attachment is recorded: two row
+            # reads, never the bytes.
+            figure_lookup=lambda project_id, artifact_id, path: bool(
+                self.artifacts.get(artifact_ids=(artifact_id,), project_id=project_id)
+            ) and self.artifact_store.has_figure(
                 project_id=project_id, artifact_id=artifact_id, link_path=path
-            ) is not None,
+            ),
         )
         self.literature = Literature(store=store, unfurl=AllowlistedPaperPreview())
         # The logic-graph read the experiment and reflection routes both

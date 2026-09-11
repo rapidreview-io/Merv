@@ -43,6 +43,9 @@ services:
       MERV_REQUIRE_SANDBOX_BACKEND: ${MERV_REQUIRE_SANDBOX_BACKEND:-1}
       MERV_STORAGE_MAX_UPLOAD_BYTES: ${MERV_STORAGE_MAX_UPLOAD_BYTES:-53687091200}
       MERV_OAUTH_RESOURCE_URI: ${MERV_OAUTH_RESOURCE_URI:-}
+      # Peers whose X-Forwarded-* headers the brain believes: the host's Caddy
+      # reaches the container from the docker bridge, never from the internet.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1,172.16.0.0/12}
     ports:
       - "8787:8787"
     secrets:

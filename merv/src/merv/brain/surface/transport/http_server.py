@@ -205,10 +205,14 @@ def _run_server(
         log_level="warning",
         access_log=False,
         lifespan="on",
-        # Honor X-Forwarded-Proto/-For from the fronting proxy: the artifact
-        # upload curls are minted from request.base_url and must say https.
+        # Honor X-Forwarded-Proto/-For from the fronting proxy only: the
+        # artifact upload curls are minted from request.base_url and must say
+        # https, and the pairing route's per-IP budget is keyed on the client
+        # address, which any peer could otherwise forge. uvicorn reads the
+        # trusted addresses from FORWARDED_ALLOW_IPS (default 127.0.0.1); the
+        # deployment sets it to the proxy's network.
         proxy_headers=True,
-        forwarded_allow_ips="*",
+        forwarded_allow_ips=None,
     )
     uv = uvicorn.Server(config)
     print(f"merv {label} listening on http://{bind_host}:{selected_port}", flush=True)

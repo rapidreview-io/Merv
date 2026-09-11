@@ -240,6 +240,21 @@ class Artifacts:
         self, *, artifact_id: str, link_path: str, project_id: str | None = None,
     ) -> bytes | None:
         """Read one immutable attachment within its project's scope."""
+        row = self._figure_row(artifact_id=artifact_id, link_path=link_path, project_id=project_id)
+        if row is None:
+            return None
+        try:
+            return self._blobs.get(namespace=str(row["project_id"]), sha256=str(row["content_sha256"]))
+        except NotFoundError:
+            return None
+
+    def has_figure(
+        self, *, artifact_id: str, link_path: str, project_id: str | None = None,
+    ) -> bool:
+        """Whether the attachment is recorded complete; no bytes are read."""
+        return self._figure_row(artifact_id=artifact_id, link_path=link_path, project_id=project_id) is not None
+
+    def _figure_row(self, *, artifact_id: str, link_path: str, project_id: str | None) -> Row | None:
         with closing(self._store.connect()) as tx:
             where = ["f.artifact_id = ?", "f.link_path = ?", "f.status = 'complete'"]
             params: list[Any] = [artifact_id, link_path]
@@ -254,12 +269,7 @@ class Artifacts:
                 WHERE {' AND '.join(where)}
                 """, params,
             ).fetchone()
-        if row is None:
-            return None
-        try:
-            return self._blobs.get(namespace=str(row["project_id"]), sha256=str(row["content_sha256"]))
-        except NotFoundError:
-            return None
+        return row
 
     def assert_complete(
         self, *, artifact_ids: tuple[str, ...], project_id: str, tx: Connection,
