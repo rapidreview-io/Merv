@@ -140,7 +140,7 @@ class AgentSessions:
 
         with self.store.transaction() as tx:
             self.store.require_project_id(conn=tx, project_id=project_id)
-            self._close_invalid_targets(tx=tx, now=now)
+            self._close_invalid_targets(tx=tx, now=now, project_id=project_id)
             self._expire_due(tx=tx, now=now)
             retry = tx.execute(
                 """
@@ -236,7 +236,7 @@ class AgentSessions:
         ).fetchone()
         return self._find(tx=tx, session_id=session_id) if inserted is not None else None
 
-    def authenticate(self, *, session_secret: str, activate: bool = True) -> dict[str, Any] | None:
+    def authenticate(self, *, session_secret: str) -> dict[str, Any] | None:
         """Validate, activate, and touch a session credential in one write."""
         digest = hash_secret(session_secret)
         now = datetime.now(UTC)
@@ -258,8 +258,6 @@ class AgentSessions:
                 self._close(tx=tx, row=row, now=now, reason=invalid_reason)
                 return None
             authenticated = _lease_view(row)
-            if not activate:
-                return authenticated
             if self._workflow_activation is not None:
                 # The workflow's start marker deduplicates this, including
                 # preserved active leases from before the workflow migration.
@@ -304,7 +302,7 @@ class AgentSessions:
         now = datetime.now(UTC)
         with self.store.transaction() as tx:
             self._expire_due(tx=tx, now=now)
-            self._close_invalid_targets(tx=tx, now=now)
+            self._close_invalid_targets(tx=tx, now=now, project_id=self._project_of(tx=tx, session_id=session_id))
             row = self._owned_live(tx=tx, session_id=session_id, runner_id=runner_id)
             existing = str(row["host_session_ref"] or "")
             existing_workspace = str(row["workspace_ref"] or "")
@@ -367,7 +365,7 @@ class AgentSessions:
         head_sha = _sha(head_sha, allow_empty=True)
         with self.store.transaction() as tx:
             self._expire_due(tx=tx, now=now)
-            self._close_invalid_targets(tx=tx, now=now)
+            self._close_invalid_targets(tx=tx, now=now, project_id=self._project_of(tx=tx, session_id=session_id))
             row = self._owned_live(tx=tx, session_id=session_id, runner_id=runner_id)
             if str(row["status"]) != "active":
                 raise ValidationError("agent session is offered, not active")
@@ -627,7 +625,7 @@ class AgentSessions:
         with self.store.transaction() as tx:
             self.store.require_project_id(conn=tx, project_id=project_id)
             now = datetime.now(UTC)
-            self._close_invalid_targets(tx=tx, now=now)
+            self._close_invalid_targets(tx=tx, now=now, project_id=project_id)
             self._expire_due(tx=tx, now=now)
             rows = tx.execute(
                 f"""
@@ -783,13 +781,13 @@ class AgentSessions:
             "source_user_id": str(row["source_user_id"] or ""),
         }
 
-    def reconcile(self, *, now: datetime | None = None) -> int:
-        """Close sessions whose lease or absolute deadline has passed."""
+    def reconcile(self, *, project_id: str | None = None, now: datetime | None = None) -> int:
+        """Close sessions whose instance ended, or whose lease or deadline passed."""
         with self.store.transaction() as tx:
             current = now or datetime.now(UTC)
-            return self._close_invalid_targets(tx=tx, now=current) + self._expire_due(
-                tx=tx, now=current
-            )
+            return self._close_invalid_targets(
+                tx=tx, now=current, project_id=project_id
+            ) + self._expire_due(tx=tx, now=current)
 
     def halt(self, *, project_id: str, reason: str = "dispatch_halted") -> int:
         """Close every live session in a project so runners stop their children.
@@ -973,9 +971,16 @@ class AgentSessions:
             ),
         )
 
-    def _close_invalid_targets(self, *, tx: Any, now: datetime) -> int:
+    def _close_invalid_targets(
+        self, *, tx: Any, now: datetime, project_id: str | None = None
+    ) -> int:
+        """Close live leases whose instance no longer stands. One instance read
+        per live lease, so the scope is the caller's project whenever it has one."""
+        scope = "" if project_id is None else " AND project_id = ?"
         rows = tx.execute(
-            "SELECT * FROM agent_sessions WHERE status IN ('offered', 'active')"
+            "SELECT id, project_id, workflow_instance_id, workflow_revision "
+            f"FROM agent_sessions WHERE status IN ('offered', 'active'){scope}",
+            () if project_id is None else (project_id,),
         ).fetchall()
         invalid = [(row, self._invalid_target_reason(row=row)) for row in rows]
         invalid = [(row, reason) for row, reason in invalid if reason]
@@ -1038,6 +1043,13 @@ class AgentSessions:
             """,
             ("expired", format_iso(now), reason, row["id"]),
         )
+
+    @staticmethod
+    def _project_of(*, tx: Any, session_id: str) -> str:
+        row = tx.execute(
+            "SELECT project_id FROM agent_sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        return str(row["project_id"]) if row is not None else ""
 
     def _owned_live(self, *, tx: Any, session_id: str, runner_id: str) -> Any:
         row = tx.execute(

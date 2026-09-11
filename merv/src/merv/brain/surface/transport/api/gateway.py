@@ -120,7 +120,7 @@ class RequestAuthenticator:
             record = (
                 None
                 if self.agent_sessions is None
-                else self.agent_sessions.authenticate(session_secret=token, activate=False)
+                else self.agent_sessions.authenticate(session_secret=token)
             )
             if record is None:
                 return oauth.bearer_denial(
@@ -183,11 +183,6 @@ class RequestAuthenticator:
             )
             if denied is not None:
                 return denied
-            if self.agent_sessions.authenticate(session_secret=token) is None:
-                return oauth.bearer_denial(
-                    request, message="unknown, expired, or released agent session",
-                    enabled=self.oauth_enabled, session_denial=None,
-                )
             request.state.principal = principal
             request.state.authenticated = True
             return None
@@ -426,7 +421,9 @@ class ToolInvocationGateway:
             if self.agent_sessions is not None and getattr(
                 principal, "agent_session_id", None
             ):
-                self.agent_sessions.reconcile()
+                self.agent_sessions.reconcile(
+                    project_id=str(getattr(principal, "key_project_id", "") or "") or None
+                )
             return result
 
         return run
