@@ -235,6 +235,50 @@ class ResearchArtifacts:
             }
             return tuple(by_id[i] for i in ids if i in by_id)
 
+    def resolve(
+        self,
+        *,
+        artifact_ids: tuple[str, ...],
+        project_id: str,
+        include: str = "metadata",
+    ) -> tuple[Artifact, ...]:
+        """Every requested id as one Artifact, in the order it was asked for.
+
+        An id naming a research association resolves to that association; an id
+        naming immutable content nothing associated resolves to the content
+        lifted into the same dataclass. This is the door: a caller holding an
+        artifact id never has to know which of the two it holds, and an id that
+        is neither is an error here rather than a silent gap downstream.
+        """
+        ids = tuple(dict.fromkeys(str(item) for item in artifact_ids if item))
+        if not ids:
+            return ()
+        found = {
+            item.id: item
+            for item in self.get(
+                artifact_ids=ids, project_id=project_id, include=include
+            )
+        }
+        found.update(
+            (content.id, Artifact.from_content(content))
+            for content in self.contents.get(
+                artifact_ids=tuple(i for i in ids if i not in found),
+                project_id=project_id,
+                include=include,
+            )
+        )
+        missing = [item for item in ids if item not in found]
+        if missing:
+            raise NotFoundError(
+                f"artifacts not found in project {project_id}: {', '.join(missing)}",
+                details={
+                    "field": "artifact_ids",
+                    "artifact_ids": list(ids),
+                    "missing_artifact_ids": missing,
+                },
+            )
+        return tuple(found[item] for item in ids)
+
     def scan(
         self, *, project_id=None, target_type="", target_ids=(), roles=()
     ) -> tuple[Artifact, ...]:
@@ -259,12 +303,8 @@ class ResearchArtifacts:
             ).fetchall()
             return tuple(Artifact.from_row(r) for r in rows)
 
-    def figure(
-        self, *, artifact_id: str, link_path: str, project_id: str | None = None
-    ):
-        found = self.get(artifact_ids=(artifact_id,), project_id=project_id)
-        if not found:
-            return None
+    def figure(self, *, artifact_id: str, link_path: str, project_id: str):
+        found = self.resolve(artifact_ids=(artifact_id,), project_id=project_id)
         return self.contents.figure(
             artifact_id=found[0].artifact_id,
             link_path=link_path,
