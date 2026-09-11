@@ -209,7 +209,12 @@ def _tool_result(result: JsonObject) -> JsonObject:
     # Only the inner text gains newlines; the envelope escapes them, so SSE
     # framing is untouched.
     text = json.dumps(result, sort_keys=True)
-    if len(text) > PRETTY_RESULT_THRESHOLD_BYTES:
+    if isinstance(result.get("review_session_id"), str):
+        # Required follow-up capability precedes potentially truncated evidence.
+        # Keep the existing recursive key ordering everywhere else.
+        ordered = {"review_session_id": result["review_session_id"], **json.loads(text)}
+        text = json.dumps(ordered, indent=1 if len(text) > PRETTY_RESULT_THRESHOLD_BYTES else None)
+    elif len(text) > PRETTY_RESULT_THRESHOLD_BYTES:
         text = json.dumps(result, sort_keys=True, indent=1)
     return {
         "content": [{"type": "text", "text": text}],

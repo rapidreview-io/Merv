@@ -95,6 +95,44 @@ class AgentSessionsTest(unittest.TestCase):
             session_secret=self.secret(runner),
         )
 
+    def test_successor_permission_requires_exact_live_assignment_and_closed_matching_predecessors(self) -> None:
+        self.packets[("wf_1", 0)] = self.packet("wf_1", 0, execution=EPHEMERAL,
+                                              references=[{"kind": "review_request", "id": "rr_1"}])
+        previous = self.claim(runner="previous")
+        self.sessions.release(session_id=previous["id"], runner_id="previous")
+        current = self.claim(runner="current")
+        args = {"project_id": "proj_1", "instance_id": "wf_1", "revision": 0, "role": "widget_owner",
+                "reference_kind": "review_request", "reference_id": "rr_1", "caller_id": current["id"],
+                "predecessor_ids": (previous["id"],)}
+        with self.store.transaction() as conn:
+            self.assertTrue(self.sessions.permits_successor(conn=conn, **args))
+            for changes in ({"project_id": "wrong"}, {"instance_id": "wrong"}, {"revision": 1},
+                            {"role": "other"}, {"reference_id": "wrong"}, {"caller_id": "missing"},
+                            {"predecessor_ids": ("missing",)}):
+                with self.subTest(changes=changes):
+                    self.assertFalse(self.sessions.permits_successor(conn=conn, **{**args, **changes}))
+            for session_id, column, value in (
+                (current["id"], "lease_expires_at", "2000-01-01T00:00:00+00:00"),
+                (current["id"], "hard_deadline_at", "2000-01-01T00:00:00+00:00"),
+                (current["id"], "status", "expired"),
+                (previous["id"], "references_json", '[]'),
+                (previous["id"], "role", "other"),
+                (previous["id"], "workflow_instance_id", "other"),
+                (previous["id"], "workflow_revision", 1),
+            ):
+                old = conn.execute(f"SELECT {column} FROM agent_sessions WHERE id = ?", (session_id,)).fetchone()[column]
+                conn.execute(f"UPDATE agent_sessions SET {column} = ? WHERE id = ?", (value, session_id))
+                with self.subTest(session=session_id, column=column):
+                    self.assertFalse(self.sessions.permits_successor(conn=conn, **args))
+                conn.execute(f"UPDATE agent_sessions SET {column} = ? WHERE id = ?", (old, session_id))
+            # A still-live predecessor on another revision also prevents taking over.
+            conn.execute("UPDATE agent_sessions SET workflow_revision = 1, status = 'active' WHERE id = ?",
+                         (previous["id"],))
+            self.assertFalse(self.sessions.permits_successor(conn=conn, **args))
+            conn.execute("UPDATE agent_sessions SET workflow_revision = 0, status = 'expired' WHERE id = ?",
+                         (previous["id"],))
+            self.assertTrue(self.sessions.permits_successor(conn=conn, **args))
+
     def test_claim_freezes_the_packet_and_one_live_lease_is_database_enforced(self) -> None:
         first = self.claim()
         repeated = self.claim()

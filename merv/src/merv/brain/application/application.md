@@ -29,8 +29,8 @@ qualify named action, role, tool and skill references inline.
 - Experiment preparation reads metrics outside the transaction; Research locks
   and rechecks its workflow revision, attempt and source evidence before pinning
   the exhibit and its verdict atomically. The final graph gate runs afterward.
-- `tool:review.start` returns the workflow's brief and immutable snapshot for any role;
-  native views also hydrate pinned research artifacts and bounded context.
+- `tool:review.start` first returns the brief and pinned evidence; exact-caller retries return a compact handle.
+  Application joins Reviews with Agent Sessions to fence succession and native verdict authority on the same transaction.
 - Reflection commands use the same graph/runtime and present either
   compact agent documents or the richer UI overview.
 - Dashboard and cost join facts without exposing module internals to Surface;

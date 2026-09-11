@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from dataclasses import replace
 from ..workflows.definitions.research_state import ExperimentStatus, ReviewRequestCreated
 from typing import Any
+from collections.abc import Callable
 
 from ..workflows import EXHIBIT_ROLE, GATED_ROLES, RecordKind, Public
 
@@ -85,6 +86,7 @@ def start_review(
     caller_session_id: str = "",
     assigned_agent_session_id: str = "",
     assigned_review_request_id: str = "",
+    permits_successor: Callable[..., bool] | None = None,
     task_context: TaskContextQuery | None = None,
 ) -> dict[str, Any]:
     """Start a pinned review, then attach bounded orientation for its target."""
@@ -95,7 +97,12 @@ def start_review(
         caller_session_id=caller_session_id,
         assigned_agent_session_id=assigned_agent_session_id,
         assigned_review_request_id=assigned_review_request_id,
+        permits_successor=permits_successor,
     )
+    if result.get("recovered"):
+        # The review is already started. Keep its recovered
+        # handle visible instead of burying it beneath another full evidence packet.
+        return result
     project_id = str(result.get("project_id") or "")
     target_type = str(result.get("target_type") or "")
     target_id = str(result.get("target_id") or "")

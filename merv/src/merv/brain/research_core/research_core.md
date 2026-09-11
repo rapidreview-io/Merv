@@ -88,9 +88,9 @@ State values live beside their graphs in `definitions/research_state.py`; reflec
 status separate from workflow state. Focused reads preserve snapshot identity. Capabilities expire,
 are returned once and stored as hashes; a fresh request supersedes open requests for the same gate,
 one graph edge each. `tool:review.start` verifies tenant, producer separation, snapshot and
-capability or assigned session; submission rechecks the immutable snapshot.
-Expired requests are pending, never reusable runtime capabilities. Attested passes satisfy
-non-strict policy; strict policy requires verified independence in both runtime and checklist.
+capability or current assigned lease; exact-caller retries return the same handle. A terminal native predecessor
+may be superseded by its current assigned successor, preserving request expiry/snapshot/start history; submission accepts only the active handle and binds native caller ownership.
+Expired requests are pending, never reusable runtime capabilities. Attested passes satisfy non-strict policy; strict policy requires verified independence in both runtime and checklist.
 Claims change via `tool:claim.update` or approved reflection edits, never prose heuristics.
 Candidates reference durable artifacts, service objects or workspaces awaiting staging;
 staging and promotion are append-only, with reasons and compare-and-swap at promotion.

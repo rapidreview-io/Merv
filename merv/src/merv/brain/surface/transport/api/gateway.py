@@ -475,6 +475,8 @@ class ToolInvocationGateway:
         # the handler receives the resolved values, never the model's.
         internal_kwargs.update(bound)
         agent_session_id = principal.agent_session_id or ""
+        if agent_session_id and getattr(contract, "binds_caller_session", False):
+            internal_kwargs["caller_session_id"] = agent_session_id
         if agent_session_id and getattr(contract, "binds_producer_session", ""):
             internal_kwargs["producer_session_id"] = agent_session_id
         capability_field = getattr(contract, "binds_capability", "")

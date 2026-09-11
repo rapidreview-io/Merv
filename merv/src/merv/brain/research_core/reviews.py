@@ -10,7 +10,7 @@ from ..workflows.definitions.research_state import (
 from ..workflows import REVIEW_KIND as KIND, Public
 
 from contextlib import closing
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from functools import partial
 import json
 from datetime import UTC, datetime, timedelta
@@ -232,6 +232,7 @@ class ReviewService:
         tenant_id: str | None = None,
         assigned_agent_session_id: str = "",
         assigned_review_request_id: str = "",
+        permits_successor: Callable[..., bool] | None = None,
     ) -> dict[str, Any]:
         # A supplied tenant scopes the capability; None preserves local mode.
         caller_session_id = caller_session_id.strip()
@@ -279,12 +280,48 @@ class ReviewService:
                 raise PermissionDeniedError(
                     "target changed after review capability was issued"
                 )
+            current = self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
+            assigned = capability is None
+            existing = conn.execute(
+                "SELECT id, caller_session_id, independence, status FROM review_sessions "
+                "WHERE request_id = ?", (review_request_id,),
+            ).fetchall()
+            own = [row for row in existing if row["caller_session_id"] == caller_session_id]
+            active = [row for row in existing if row["status"] == "started"]
+            if assigned and (permits_successor is None or not permits_successor(
+                conn=conn, project_id=req["project_id"], instance_id=req["target_id"],
+                revision=current.revision, role=req["role"], reference_kind="review_request",
+                reference_id=review_request_id, caller_id=caller_session_id,
+                predecessor_ids=tuple(str(row["caller_session_id"]) for row in existing
+                                      if row["caller_session_id"] != caller_session_id),
+            )):
+                raise PermissionDeniedError("reviewer assignment is not current or its predecessor is not terminal")
+            if req["status"] == "started":
+                if len(active) != 1 or len(own) > 1 or (own and own[0]["status"] != "started"):
+                    raise PermissionDeniedError("the started review has no unambiguous active reviewer session")
+                if own:
+                    return {
+                        "review_session_id": str(own[0]["id"]),
+                        "project_id": req["project_id"], "role": req["role"],
+                        "target_type": req["target_type"], "target_id": req["target_id"],
+                        "target_snapshot_id": req["target_snapshot_id"],
+                        "independence": own[0]["independence"], "recovered": True,
+                    }
+                if not assigned:
+                    raise PermissionDeniedError("the started review belongs to another reviewer session")
+                # Retain original attribution and request history; only the current
+                # native assignee gets a fresh handle after every predecessor closed.
+                conn.execute("UPDATE review_sessions SET status = 'superseded' WHERE id = ?",
+                             (active[0]["id"],))
+            elif existing:
+                raise PermissionDeniedError("review request has inconsistent session history")
             session_id = new_id(prefix="rvs")
             # caller_session_id is mandatory, so every new session is verified;
             # 'attested_agent_review' survives only on legacy rows.
             independence = "verified_agent_review"
-            self._apply(conn=conn, request_id=review_request_id, action="start",
-                        payload={"role": req["role"], "session_id": session_id})
+            if req["status"] == "requested":
+                self._apply(conn=conn, request_id=review_request_id, action="start",
+                            payload={"role": req["role"], "session_id": session_id})
             conn.execute(
                 """
                 INSERT INTO review_sessions (
@@ -324,6 +361,8 @@ class ReviewService:
         self,
         *,
         review_session_id: str,
+        caller_session_id: str = "",
+        permits_successor: Callable[..., bool] | None = None,
         verdict: str,
         synopsis: str,
         notes: str = "",
@@ -337,8 +376,10 @@ class ReviewService:
             ).fetchone()
             if session is None:
                 raise NotFoundError(f"review session not found: {review_session_id}")
-            if session["status"] == "submitted":
-                raise PermissionDeniedError("review session already submitted")
+            if session["status"] != "started":
+                raise PermissionDeniedError("review session is no longer started (submitted or superseded)")
+            if caller_session_id and session["caller_session_id"] != caller_session_id:
+                raise PermissionDeniedError("review session belongs to another reviewer")
             req = conn.execute(
                 "SELECT * FROM review_requests WHERE id = ?", (session["request_id"],)
             ).fetchone()
@@ -359,7 +400,7 @@ class ReviewService:
             )
             req = conn.execute("SELECT * FROM review_requests WHERE id = ?", (req["id"],)).fetchone()
             session = conn.execute("SELECT * FROM review_sessions WHERE id = ?", (review_session_id,)).fetchone()
-            if req["status"] != "started" or session["status"] == "submitted":
+            if req["status"] != "started" or session["status"] != "started":
                 raise PermissionDeniedError("review request is no longer open or its session already submitted")
             if snapshot_now != req["target_snapshot_id"]:
                 raise PermissionDeniedError(
@@ -367,6 +408,12 @@ class ReviewService:
                     "longer applies — request a fresh review"
                 )
             current = self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
+            if caller_session_id and (permits_successor is None or not permits_successor(
+                conn=conn, project_id=req["project_id"], instance_id=req["target_id"],
+                revision=current.revision, role=req["role"], reference_kind="review_request",
+                reference_id=req["id"], caller_id=caller_session_id, predecessor_ids=(),
+            )):
+                raise PermissionDeniedError("reviewer assignment is no longer current")
             route = resolve_review_return(
                 kind=self.records.kinds.get(str(req["target_type"])) if current.version == 1 else None,
                 role=req["role"], verdict=verdict, return_to=return_to, state=current.state,

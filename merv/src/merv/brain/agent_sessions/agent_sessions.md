@@ -54,6 +54,7 @@ stored policy is read-only with no node tools.
 
 ## Security and workspaces
 
+`permits_successor` checks a live exact assignment and terminal matching predecessors on the caller transaction.
 Session credentials are MCP-only and default-deny. The gateway allows the
 support baseline for the policy's read/write mode plus the node's declared
 tools, binds `workflow.transition` to the leased instance and revision, permits

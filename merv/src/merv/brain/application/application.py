@@ -593,6 +593,13 @@ class Application:
             caller_session_id=caller_session_id,
             assigned_agent_session_id=assigned_agent_session_id,
             assigned_review_request_id=assigned_review_request_id,
+            permits_successor=self.agent_sessions.permits_successor,
+        )
+
+    def submit_review(self, **kwargs: Any) -> dict[str, Any]:
+        """Keep native reviewer authority live through the verdict transaction."""
+        return self.research.reviews.submit(
+            **kwargs, permits_successor=self.agent_sessions.permits_successor,
         )
 
     def review_status(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -540,6 +541,116 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.assertEqual(body["presence"]["runner_ref"], runner["runner_ref"])
         self.assertEqual(body["desired_version"], 0)
         self.assertEqual(body["desired_settings"], {})
+
+    def _review_recovery_fixture(self):
+        owner = self.claim(secret=self.secret(), runner_id="recovery-producer")
+        self.brain.submit_artifact(project_id=self.project_id, target_type="experiment",
+                                   target_id=self.experiment_id, role="plan", path="plan.md", body=VALID_PLAN)
+        self.brain.call_tool("experiment.transition", {"project_id": self.project_id,
+            "experiment_id": self.experiment_id, "transition": "submit_design"})
+        request = self.brain.application.request_review(project_id=self.project_id, target_type="experiment",
+            target_id=self.experiment_id, role="design_reviewer", producer_session_id=owner["id"])
+        secret = self.secret()
+        reviewer = self.claim(secret=secret, runner_id="recovery-reviewer")
+        args = {"review_request_id": request["review_request_id"], "reviewer_capability": "assigned",
+                "caller_session_id": "assigned", "declared_agent": "original"}
+        return request, secret, reviewer, args
+
+    def test_review_handle_is_visible_in_truncated_actual_mcp_text_and_retry_is_compact(self) -> None:
+        from tests.surface.test_mcp_streamable_http import _envelope
+        _request, secret, _reviewer, args = self._review_recovery_fixture()
+        def wire():
+            response = self.client.post("/mcp", headers={"Authorization": f"Bearer {secret}",
+                "Accept": "application/json, text/event-stream"}, json={"jsonrpc": "2.0", "id": 1,
+                "method": "tools/call", "params": {"name": "review.start", "arguments": args}})
+            self.assertEqual(response.status_code, 200, response.text)
+            return _envelope(response)[0]["result"]
+        with patch.object(self.brain.application._experiment_context, "build", return_value={"evidence": "x" * 40000}):
+            first = wire()
+        text = first["content"][0]["text"]
+        handle = first["structuredContent"]["review_session_id"]
+        self.assertGreater(len(text), 34000)
+        self.assertIn(handle, text[:128])
+        self.assertEqual(json.loads(text), first["structuredContent"])
+        with patch.object(self.brain.application._experiment_context, "build") as hydrate:
+            retry = wire()
+            hydrate.assert_not_called()
+        self.assertEqual(retry["structuredContent"]["review_session_id"], handle)
+        self.assertTrue(retry["structuredContent"]["recovered"])
+        self.assertIn(handle, retry["content"][0]["text"][:128])
+        self.assertNotIn("context", retry["structuredContent"])
+
+    def test_terminal_reviewer_cannot_submit_after_authentication_before_handler(self) -> None:
+        request, secret, reviewer, args = self._review_recovery_fixture()
+        started = self.mcp(secret=secret, name="review.start", arguments=args)
+        handle = started.json()["result"]["review_session_id"]
+        submit = self.brain.research.reviews.submit
+        successor = []
+        def close_after_authentication(**kwargs):
+            self.assertEqual(kwargs["caller_session_id"], reviewer["id"])
+            self.brain.agent_sessions.invalidate(session_id=reviewer["id"], reason="lease_expired")
+            successor.append(self.claim(secret=self.secret(), runner_id="racing-successor"))
+            return submit(**kwargs)
+        with patch.object(self.brain.research.reviews, "submit", side_effect=close_after_authentication):
+            denied = self.mcp(secret=secret, name="review.submit", arguments={
+                "review_session_id": handle, "verdict": "pass", "synopsis": REVIEW_SYNOPSIS})
+        self.assertEqual(denied.status_code, 400, denied.text)
+        self.assertIn("no longer current", denied.text)
+        self.assertEqual(successor[0]["role"], "design_reviewer")
+        with self.brain.store.transaction() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM review_sessions WHERE id = ?", (handle,)).fetchone()["status"], "started")
+            self.assertEqual(conn.execute("SELECT COUNT(*) AS n FROM reviews WHERE request_id = ?",
+                                          (request["review_request_id"],)).fetchone()["n"], 0)
+
+    def test_terminal_native_reviewer_successor_gets_own_handle_preserving_request_history(self) -> None:
+        request, secret, reviewer, args = self._review_recovery_fixture()
+        started = self.mcp(secret=secret, name="review.start", arguments=args)
+        self.assertEqual(started.status_code, 200, started.text)
+        original_id = started.json()["result"]["review_session_id"]
+        with self.brain.store.transaction() as conn:
+            original = dict(conn.execute("SELECT * FROM review_sessions WHERE id = ?", (original_id,)).fetchone())
+            request_before = dict(conn.execute("SELECT * FROM review_requests WHERE id = ?", (request["review_request_id"],)).fetchone())
+        graph_before = self.brain.workflows.runtime.get(project_id=self.project_id, instance_id=request["review_request_id"])
+        self.brain.agent_sessions.invalidate(session_id=reviewer["id"], reason="lease_expired")
+        successor_secret = self.secret()
+        successor = self.claim(secret=successor_secret, runner_id="successor-reviewer")
+        self.assertIsNotNone(successor)
+        # The predecessor's handle is still started here: ownership, rather than
+        # superseded status, must reject this authenticated different caller.
+        submission = {"review_session_id": original_id, "verdict": "pass", "synopsis": REVIEW_SYNOPSIS}
+        denied = self.mcp(secret=successor_secret, name="review.submit", arguments=submission)
+        self.assertEqual(denied.status_code, 400, denied.text)
+        self.assertIn("another reviewer", denied.text)
+        spoof = self.mcp(secret=successor_secret, name="review.submit",
+                         arguments={**submission, "caller_session_id": reviewer["id"]})
+        self.assertEqual(spoof.status_code, 400, spoof.text)
+        with self.brain.store.transaction() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM review_sessions WHERE id = ?",
+                                          (original_id,)).fetchone()["status"], "started")
+        recovered = self.mcp(secret=successor_secret, name="review.start", arguments={**args, "declared_agent": "successor"})
+        self.assertEqual(recovered.status_code, 200, recovered.text)
+        new_id = recovered.json()["result"]["review_session_id"]
+        self.assertNotEqual(new_id, original_id)
+        retry = self.mcp(secret=successor_secret, name="review.start", arguments=args)
+        self.assertEqual(retry.json()["result"]["review_session_id"], new_id)
+        with self.brain.store.transaction() as conn:
+            old = dict(conn.execute("SELECT * FROM review_sessions WHERE id = ?", (original_id,)).fetchone())
+            new = dict(conn.execute("SELECT * FROM review_sessions WHERE id = ?", (new_id,)).fetchone())
+            request_after = dict(conn.execute("SELECT * FROM review_requests WHERE id = ?", (request["review_request_id"],)).fetchone())
+        self.assertEqual(old, {**original, "status": "superseded"})
+        self.assertEqual(new["caller_session_id"], successor["id"])
+        self.assertEqual(request_after, request_before)
+        self.assertEqual(self.brain.workflows.runtime.get(project_id=self.project_id, instance_id=request["review_request_id"]), graph_before)
+        submission = {"review_session_id": original_id, "verdict": "pass", "synopsis": REVIEW_SYNOPSIS}
+        for credential in (secret, successor_secret):
+            denied = self.mcp(secret=credential, name="review.submit", arguments=submission)
+            self.assertNotEqual(denied.status_code, 200, denied.text)
+        with self.assertRaisesRegex(Exception, "superseded"):
+            self.brain.research.reviews.submit(**submission)
+        denied = self.mcp(secret=secret, name="review.start", arguments=args)
+        self.assertNotEqual(denied.status_code, 200, denied.text)
+        passed = self.mcp(secret=successor_secret, name="review.submit", arguments={**submission, "review_session_id": new_id})
+        self.assertEqual(passed.status_code, 200, passed.text)
 
     def test_merv_dispatches_a_separate_reviewer_session(self) -> None:
         owner_secret = self.secret()

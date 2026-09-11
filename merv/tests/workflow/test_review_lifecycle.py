@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 from unittest.mock import patch
+from concurrent.futures import ThreadPoolExecutor
 
 from merv.brain.kernel.utils import PermissionDeniedError, ValidationError, WorkflowError
 from merv.brain.workflows import REVIEW_KIND
@@ -72,6 +73,71 @@ class ReviewLifecycleCase(ResearchCase):
         with self.app.store.transaction() as conn:
             return str(conn.execute("SELECT status FROM review_requests WHERE id = ?",
                                     (request_id,)).fetchone()["status"])
+
+
+class RecoveryTest(ReviewLifecycleCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.requested = self.request()
+        self.args = {"review_request_id": self.requested["review_request_id"],
+                     "reviewer_capability": self.requested["reviewer_capability"],
+                     "caller_session_id": "independent-reviewer"}
+        self.started = self.call("review.start", **self.args)
+
+    def test_retry_returns_same_handle_without_new_history_or_context(self) -> None:
+        before = self.instance(self.args["review_request_id"])
+        with patch.object(self.app.application._experiment_context, "build", side_effect=AssertionError("hydration")):
+            recovered = self.call("review.start", **self.args)
+        self.assertEqual(recovered["review_session_id"], self.started["review_session_id"])
+        self.assertTrue(recovered["recovered"])
+        self.assertNotIn("context", recovered)
+        self.assertNotIn("target_snapshot", recovered)
+        self.assertEqual(self.instance(self.args["review_request_id"]), before)
+        with self.app.store.transaction() as conn:
+            rows = conn.execute("SELECT * FROM review_sessions WHERE request_id = ?",
+                                (self.args["review_request_id"],)).fetchall()
+        self.assertEqual(len(rows), 1)
+
+    def test_concurrent_retries_recover_one_handle(self) -> None:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: self.call("review.start", **self.args), range(2)))
+        self.assertEqual([r["review_session_id"] for r in results], [self.started["review_session_id"]] * 2)
+
+    def test_retry_rechecks_capability_caller_and_producer(self) -> None:
+        for changes in ({"reviewer_capability": "wrong"}, {"caller_session_id": "other"},
+                        {"caller_session_id": "producer"}):
+            with self.subTest(changes=changes), self.assertRaises(PermissionDeniedError):
+                self.call("review.start", **{**self.args, **changes})
+
+    def test_retry_refuses_expired_stale_and_closed_requests(self) -> None:
+        for column, value in (("expires_at", "2000-01-01T00:00:00+00:00"),
+                              ("target_snapshot_id", "stale"), ("status", "submitted"),
+                              ("status", "superseded")):
+            with self.app.store.transaction() as conn:
+                old = conn.execute(f"SELECT {column} FROM review_requests WHERE id = ?",
+                                   (self.args["review_request_id"],)).fetchone()[column]
+                conn.execute(f"UPDATE review_requests SET {column} = ? WHERE id = ?",
+                             (value, self.args["review_request_id"]))
+            with self.subTest(column=column, value=value), self.assertRaises(PermissionDeniedError):
+                self.call("review.start", **self.args)
+            with self.app.store.transaction() as conn:
+                conn.execute(f"UPDATE review_requests SET {column} = ? WHERE id = ?",
+                             (old, self.args["review_request_id"]))
+
+    def test_retry_refuses_missing_or_ambiguous_active_sessions(self) -> None:
+        with self.app.store.transaction() as conn:
+            row = dict(conn.execute("SELECT * FROM review_sessions WHERE id = ?",
+                                   (self.started["review_session_id"],)).fetchone())
+            conn.execute("UPDATE review_sessions SET status = 'superseded' WHERE id = ?", (row["id"],))
+        with self.assertRaises(PermissionDeniedError):
+            self.call("review.start", **self.args)
+        with self.app.store.transaction() as conn:
+            conn.execute("UPDATE review_sessions SET status = 'started' WHERE id = ?", (row["id"],))
+            duplicate = {**row, "id": "rvs_duplicate"}
+            conn.execute(f"INSERT INTO review_sessions ({', '.join(duplicate)}) VALUES ({', '.join('?' for _ in duplicate)})",
+                         tuple(duplicate.values()))
+        with self.assertRaises(PermissionDeniedError):
+            self.call("review.start", **self.args)
 
 
 class RequestTest(ReviewLifecycleCase):

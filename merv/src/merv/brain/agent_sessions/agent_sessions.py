@@ -781,6 +781,37 @@ class AgentSessions:
                 for row in rows
             }
 
+    def permits_successor(
+        self, *, conn: Connection, project_id: str, instance_id: str, revision: int,
+        role: str, reference_kind: str, reference_id: str, caller_id: str,
+        predecessor_ids: tuple[str, ...],
+    ) -> bool:
+        """Check a current assignment and closed predecessors on the caller's transaction."""
+        current = conn.execute("SELECT * FROM agent_sessions WHERE id = ?", (caller_id,)).fetchone()
+        now = datetime.now(UTC)
+        def matches(row: Any) -> bool:
+            return (row is not None and row["project_id"] == project_id
+                    and row["workflow_instance_id"] == instance_id
+                    and int(row["workflow_revision"]) == revision and row["role"] == role
+                    and [item.get("id") for item in json.loads(row["references_json"])
+                         if item.get("kind") == reference_kind] == [reference_id])
+        if not matches(current) or current["status"] not in LIVE_STATUSES:
+            return False
+        if any((parse_iso(current[field]) or now) <= now
+               for field in ("lease_expires_at", "hard_deadline_at")):
+            return False
+        live = conn.execute(
+            "SELECT id FROM agent_sessions WHERE project_id = ? AND workflow_instance_id = ? "
+            "AND status IN ('offered', 'active')", (project_id, instance_id),
+        ).fetchall()
+        if len(live) != 1 or live[0]["id"] != caller_id:
+            return False
+        for previous_id in predecessor_ids:
+            previous = conn.execute("SELECT * FROM agent_sessions WHERE id = ?", (previous_id,)).fetchone()
+            if not matches(previous) or previous["status"] not in {"released", "expired"}:
+                return False
+        return True
+
     def authority(self, *, session_id: str) -> dict[str, str]:
         """Return the immutable parent authority for runner control."""
         with closing(self.store.connect()) as conn:

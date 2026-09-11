@@ -42,6 +42,8 @@ class ToolContract:
     # A reviewer handoff: the caller's session id and the id its lease scoped
     # this argument to arrive as caller_session_id and assigned_*.
     binds_capability: str = ""
+    # Pass the authenticated native lease identity without accepting a model override.
+    binds_caller_session: bool = False
     # The reply renders absolute URLs against the caller-reachable base.
     needs_base_url: bool = False
     # The caller's verified user id, and their key's bound project under this
