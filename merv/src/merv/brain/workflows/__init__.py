@@ -4,7 +4,7 @@ from .definitions import artifact_roles, documents, research_contracts
 # The record kinds Research speaks about by name. Which of them a brain
 # installs is its program's business; this only publishes the declarations.
 from .definitions.experiment import KIND as EXPERIMENT_KIND
-from .definitions.reflection import KIND as REFLECTION_KIND, present_reflection_signal
+from .definitions.reflection import KIND as REFLECTION_KIND, present_reflection_signal, published_followups
 from .definitions.task import KIND as TASK_KIND
 from .definitions.artifact_roles import (
     ARTIFACT_TARGET_TYPES, ARTIFACT_TOOL_VOCABULARY, EXHIBIT_ROLE, GATED_ROLES,
@@ -34,7 +34,7 @@ from .workflows import Binding, Connection, Workflows
 __all__ = [
     "Connection",
     "artifact_roles", "documents", "research_contracts",
-    "EXPERIMENT_KIND", "REFLECTION_KIND", "TASK_KIND", "present_reflection_signal",
+    "EXPERIMENT_KIND", "REFLECTION_KIND", "TASK_KIND", "present_reflection_signal", "published_followups",
     "ARTIFACT_TARGET_TYPES", "ARTIFACT_TOOL_VOCABULARY", "EXHIBIT_ROLE", "GATED_ROLES",
     "METRIC_RESULT_MAX_BYTES", "PROJECT_GRAPH_ROLE", "REFLECTION_LENS_DOC_ROLE",
     "SUBMITTABLE_ROLES", "TASK_BRIEF_ROLE", "TASK_DELIVERY_ROLE",

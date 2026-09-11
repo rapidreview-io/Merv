@@ -96,7 +96,6 @@ class ExperimentService(RecordHooks):
     # ---- declared hooks ----
 
     def before_create(self, *, conn: Connection, project_id: str, values: dict[str, Any]) -> None:
-        self._reject_active_experiment_cap(conn=conn, project_id=project_id)
         self._reject_reserved_wave_name(conn=conn, project_id=project_id, name=str(values["name"]))
 
     def after_create(self, *, conn: Connection, project_id: str, record_id: str, values: dict[str, Any]) -> None:
@@ -152,6 +151,7 @@ class ExperimentService(RecordHooks):
                 "publishes; choose a different name")
 
     def creation_facts(self, *, conn: Connection, project_id: str) -> dict[str, Any]:
+        self._reject_active_experiment_cap(conn=conn, project_id=project_id)
         debt, published_id = self._terminal_experiments_since_last_reflection(conn=conn, project_id=project_id)
         terminal = tuple(sorted(REFLECTION.terminal_statuses))
         open_wave = conn.execute(

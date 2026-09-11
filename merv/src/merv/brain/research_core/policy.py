@@ -608,30 +608,6 @@ def revision_context_for_review_return(
         pieces.append(notes)
     if finding_text:
         pieces.append(f"Findings: {finding_text}")
-    if role == "consolidation_reviewer":
-        pieces.append(
-            "Revise only the code proposal, validation, or per-experiment "
-            "integration decisions. The approved reflection is authoritative "
-            "and cannot be reopened here"
-        )
-    elif target_type == "task":
-        pieces.append(
-            "Revise the delivery against the brief's Done-when checks: give the "
-            "evidence the reviewer could not verify, or state plainly which "
-            "checks are unmet and why; the brief itself stands"
-        )
-    elif target_type == "reflection":
-        pieces.append(
-            "Consider revising the project graph, reflection doc, and/or "
-            "change spec where this review changes the project's story; the "
-            "16-node graph budget still applies"
-        )
-    else:
-        pieces.append(
-            "Consider updating the experiment's logic graph (role 'graph') "
-            "if this review changes the experiment's story; the 16-node graph "
-            "budget still applies"
-        )
     return " | ".join(pieces)
 
 

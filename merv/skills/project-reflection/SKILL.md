@@ -15,8 +15,8 @@ description: >-
 Use reflection to update the project's distilled memory and choose the next
 experiment wave. Each assignment owns one node: a lens investigates its charter,
 a synthesizer reconciles the lens contributions, and independent reviewers and
-consolidators handle later nodes. Follow the assigned brief and exact references;
-hand off after submitting this node's evidence.
+consolidators handle later nodes. Use only the procedure for your assigned node.
+Follow its brief and exact references; hand off after submitting its evidence.
 
 ## Follow the reflection state machine
 
@@ -100,8 +100,11 @@ Reconcile them against the snapshotted records:
 - Preserve negative knowledge and eliminated avenues, not only wins.
 - Resolve disagreements where the evidence permits; otherwise make the
   uncertainty explicit.
-- Make the new terminal experiments materially affect the result when their
-  evidence warrants it.
+- Make new terminal experiments materially affect the result when warranted;
+  tasks inform the work without becoming experimental confirmation of a claim.
+- Compare the new graph with the previous one and explain changed beliefs.
+  On a synthesis return, revise affected graph, reflection and change-spec
+  artifacts within the 16-node graph budget; keep the completed lenses.
 - Select a coherent next wave rather than concatenating every suggested idea.
 
 Produce the three artifacts defined in the template:
@@ -142,6 +145,23 @@ After review:
 - On return to `reflecting`, Merv creates five new lens assignments for the
   new attempt, each carrying the review's criticism.
 
-The reflection is authoritative once its review passes. Consolidation may
-select, adapt, supersede, or omit experiment code, but it cannot return to this
-wave or revise its graph, reflection document, or change spec.
+## Consolidate approved code (assigned consolidator only)
+
+The reviewed reflection is authoritative. Read its pinned artifacts, experiment
+workspaces and retained proposal before editing. Establish the approved base SHA
+and each source SHA. Reuse completed integration and address the current findings.
+Account for every experiment as used_as_is, adapted, reviewed_not_used or superseded,
+with a concrete reason, actual integration kind and any covering experiment.
+Keep reproducibility and useful tests; leave discarded approaches in research history.
+Make the smallest coherent change, run meaningful checks, and use
+`consolidation.submit` to pin the proposal SHA, validation and every decision.
+The independent reviewer grades that exact proposal. Returns repair only code,
+validation or decisions; they cannot reopen research or restart the lenses.
+Only the runner advances central and publishes after approval.
+
+## Start materialized work after publication
+
+Publication creates the reviewed experiments and tasks. Create each experiment's
+returned local folder before editing and refresh `workflow.status_and_next` for
+chosen work. The first new experiment is an advisory starting point: its dependency
+gate still decides when it may execute. A task-only wave has no experiment advice.

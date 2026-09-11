@@ -460,13 +460,14 @@ class Runtime:
             "references": [asdict(reference) for reference in brief.references],
             "handoff": node.guidance.handoff,
             "skill": node.guidance.skill,
+            **({"messages": dict(node.guidance.messages)} if node.guidance.messages else {}),
         }
 
     def describe(self, *, project_id: str, instance_id: str) -> dict[str, Any]:
         with self.store.transaction() as conn:
             evaluation = self.evaluate(project_id=project_id, instance_id=instance_id, conn=conn)
             packet = self._assignment(evaluation, conn) if evaluation.dispatchable else {}
-            context = {key: packet[key] for key in ("role", "label", "brief", "references", "handoff", "skill") if key in packet}
+            context = {key: packet[key] for key in ("role", "label", "brief", "references", "handoff", "skill", "messages") if key in packet}
             guidance = self.registry.get(evaluation.snapshot.workflow, evaluation.snapshot.version).outcome_guidance.get(evaluation.snapshot.outcome)
             if guidance is not None:
                 context = {"skill": guidance.skill, "handoff": guidance.handoff, "messages": dict(guidance.messages)}

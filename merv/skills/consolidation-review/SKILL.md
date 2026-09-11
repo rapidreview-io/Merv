@@ -48,7 +48,8 @@ Verify:
   implementations, unresolved conflicts, stray generated files, credentials,
   or experiment-only scaffolding.
 - The submitted validation is credible. Rerun the smallest checks needed to
-  verify risky or load-bearing changes.
+  verify risky or load-bearing changes. Separate observed checks from claims
+  you could not verify, and inspect failure paths and unintended changes.
 
 Prefer a smaller coherent integration over mechanically merging every branch.
 “Reviewed, nothing carried over” is a valid result when its rationale is real.

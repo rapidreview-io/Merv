@@ -559,49 +559,27 @@ TOOLS: dict[str, ToolContract] = {
     "candidate.submit": ToolContract(
         handler_identity="application.submit_candidate",
         input_model=CandidateSubmitInput,
-        description=(
-            "Register an immutable project candidate that already exists as "
-            "one complete Artifact/available Object Storage object, or nominate "
-            "an experiment_workspace for evaluator staging without exposing a "
-            "filesystem path. Use Object Storage for large checkpoints; never "
-            "put model bytes in Git. Safe retries reuse the same idempotency_key."
-        ),
+        description="Register an existing complete artifact/object or nominate an experiment workspace for evaluator staging. Retries reuse idempotency_key.",
     ),
     "candidate.stage": ToolContract(
         handler_identity="application.stage_candidate",
         input_model=CandidateStageInput,
-        description=(
-            "Attach one verified durable Artifact/Object Storage receipt to a "
-            "pending experiment_workspace candidate, or an evaluator-owned "
-            "receipt id plus immutable content/manifest hashes when heavy "
-            "Object Storage is disabled. No filesystem path or URI is accepted."
-        ),
+        description="Attach a verified durable receipt to a pending workspace candidate; no filesystem path or URI is accepted.",
     ),
     "candidate.list": ToolContract(
         handler_identity="research.list_candidates",
         input_model=ProjectScopedInput,
-        description=(
-            "List immutable project candidates, append-only promotion history, "
-            "and the current champion."
-        ),
+        description="List project candidates, promotion history and the current champion.",
     ),
     "candidate.promote": ToolContract(
         handler_identity="research.promote_candidate",
         input_model=CandidatePromoteInput,
-        description=(
-            "Promote an already-submitted candidate to current project "
-            "champion after comparing it with the existing best-known result. "
-            "Pending workspace candidates cannot be promoted; pass the "
-            "champion id you observed so stale managers cannot overwrite it."
-        ),
+        description="Promote a staged candidate using the observed champion id; pending workspace candidates cannot be promoted.",
     ),
     "claim.create": ToolContract(
         handler_identity="research.create_claim",
         input_model=ClaimCreateInput,
-        description=(
-            'Create a claim. Check the project tool with action="overview" '
-            "first so you do not recreate a settled or abandoned claim."
-        ),
+        description="Create a claim. Check project overview for settled or duplicate work first.",
     ),
     "claim.list": ToolContract(
         handler_identity="research.list_claims",
@@ -612,24 +590,12 @@ TOOLS: dict[str, ToolContract] = {
     "claim.update": ToolContract(
         handler_identity="research.update_claim",
         input_model=ClaimUpdateInput,
-        description=(
-            "Update a claim's status or confidence. The statement and scope "
-            "are immutable — experiments and reviews reference the claim by "
-            "id assuming stable meaning. To revise the text, propose a claim "
-            "change in a reflection change spec (reviewed), or abandon this "
-            "claim and create a corrected one."
-        ),
+        description="Update status or confidence; statement and scope are immutable. Propose text changes through a reviewed reflection change spec.",
     ),
     "experiment.create": ToolContract(
         handler_identity="application.create_experiment",
         input_model=ExperimentCreateInput,
-        description=(
-            f"Create a {EXPERIMENT.workflow.initial} experiment. Requires an intent (the "
-            "ask, one standalone line: what this tests and why, standalone) and a "
-            "short folder-safe 'name' unique within the project; the name becomes "
-            "the experiment folder experiments/<name>/. Optional 'details' carries "
-            "everything else the planner should have."
-        ),
+        description=f"Create a {EXPERIMENT.workflow.initial} experiment with a unique folder-safe name, standalone intent and optional planner details. See research-workflow.",
     ),
     "experiment.list": ToolContract(
         handler_identity="application.experiments",
@@ -641,59 +607,23 @@ TOOLS: dict[str, ToolContract] = {
         handler_identity="application.experiment",
         visibility="internal",
         input_model=ExperimentGetStateInput,
-        description=(
-            "Compatibility-only singular internal experiment state projection. "
-            "Agents use workflow.status_and_next for context and artifact.read "
-            "for focused singular or batch document retrieval."
-        ),
+        description="Internal experiment state. Agents use workflow.status_and_next for context and artifact.read for documents.",
     ),
     "experiment.transition": ToolContract(
         handler_identity="application.transition_experiment",
         input_model=ExperimentTransitionInput,
-        description=(
-            "Apply a transition allowed by workflow.status_and_next. Returns "
-            "only a compact acknowledgement (from/to status, attempt, event "
-            "id, and timestamp), plus any operation-specific side-effect receipt; it "
-            "does not return experiment context. Call "
-            "workflow.status_and_next afterward to continue. "
-            "Passing reviews apply their forward transition automatically; "
-            "an assigned worker stops after handing off its node. "
-            f" Use {_EXPERIMENT_RETRY_TRANSITION} only for "
-            "infrastructure/interruption reruns where the experiment should "
-            f"stay {_EXPERIMENT_EXECUTION_STATUS} on the same attempt. At "
-            f"{_EXPERIMENT_RESULT_TRANSITION} the system evaluates the attempt's metrics "
-            "exhibit from eligible pinned result JSON with provenance; when an "
-            "exhibit is pinned, report.md must reference it."
-        ),
+        description=("Apply a transition allowed by workflow.status_and_next; return status, attempt, event and operation receipts. "
+            f"{_EXPERIMENT_RETRY_TRANSITION} retains the approved plan and attempt; follow research-workflow for recovery and evidence."),
     ),
     "experiment.exhibit": ToolContract(
         handler_identity="application.exhibit",
         input_model=ExperimentExhibitInput,
-        description=(
-            "Read-only preview of the system-generated metrics exhibit for a "
-            f"{_EXPERIMENT_EXECUTION_STATUS} experiment from eligible pinned result-file sources "
-            "(metrics.json, results.json, and "
-            "results/*.json associated with role 'result'). Call it before "
-            "writing report.md. When pinned, the report must "
-            "reference and interpret it rather than hand-copy numbers."
-        ),
+        description=f"Preview the metrics exhibit for a {_EXPERIMENT_EXECUTION_STATUS} experiment from eligible pinned result JSON. See research-workflow for interpretation.",
     ),
     "task.create": ToolContract(
         handler_identity="application.create_task",
         input_model=TaskCreateInput,
-        description=(
-            f"Create a {TASK.workflow.initial} task: scoped non-experiment work "
-            "with a verifiable finish line and no claim (lit review, data "
-            "preparation, harness building, memos). Requires a goal (short "
-            "standalone prose), deliverables (the things that must exist, each "
-            "verifiable as written), and a short folder-safe 'name' unique "
-            "among the project's tasks; the name becomes the task folder "
-            "tasks/<name>/. Goal and deliverables are IMMUTABLE — Merv renders "
-            "and pins brief.md from them. When the work is done, submit the "
-            "delivery (role 'delivery': one confirmation per deliverable, "
-            "then Notes prose). Has a claim to test? Create an experiment "
-            "instead."
-        ),
+        description=f"Create an {TASK.workflow.initial} task with a unique folder-safe name, immutable goal and verifiable deliverables; pins brief.md. See research-workflow.",
     ),
     "task.list": ToolContract(
         handler_identity="application.tasks",
@@ -705,54 +635,23 @@ TOOLS: dict[str, ToolContract] = {
         handler_identity="application.task",
         visibility="internal",
         input_model=TaskGetStateInput,
-        description=(
-            "Compatibility-only singular internal task state projection. "
-            "Agents use workflow.status_and_next(task_id=...) for context."
-        ),
+        description="Internal task state. Agents use workflow.status_and_next(task_id=...) for context.",
     ),
     "task.transition": ToolContract(
         handler_identity="application.transition_task",
         input_model=TaskTransitionInput,
-        description=(
-            "Apply a task transition allowed by workflow.status_and_next: "
-            "submit_delivery (in_progress → in_review, needs a valid brief and "
-            "delivery and every dependency done), or mark_failed (the owner ends the "
-            "task with evidence={'reason': ...}). Returns a compact "
-            "acknowledgement. A passing task_reviewer review completes the task "
-            "automatically. An assigned worker stops after submission; interactive "
-            "agents refresh workflow.status_and_next(task_id=...)."
-        ),
+        description=("Apply an allowed task transition (" + ", ".join(TASK.actions) + "); return a compact acknowledgement. See research-workflow."),
     ),
     "reflection.create": ToolContract(
         handler_identity="application.create_reflection",
         input_model=ReflectionCreateInput,
-        description=(
-            "Open a project reflection wave. "
-            "Declares the 5-lens reflection roster (3 core: amplify, "
-            "avoid, entropy; plus 2 you design with charter + "
-            "why_distinct) and snapshots the corpus of finished experiments "
-            "the wave covers — including new_terminal_experiments (the new "
-            "signal since the last published wave) and each lens's previous "
-            "reflection artifact id and bounded submitted content. One wave "
-            "may be open at a time. See the "
-            "project-reflection skill."
-        ),
+        description="Open one reflection wave with three core and two authored lenses; snapshot its fixed corpus. See project-reflection.",
     ),
     "reflection.get": ToolContract(
         handler_identity="application.reflection",
         input_model=ReflectionGetInput,
-        description=(
-            "Get one reflection wave state: roster, per-lens "
-            "reflection coverage, TLDRs for current-attempt reflection "
-            "artifacts, prior published graph/reflection documents, and "
-            "snapshotted terminal-experiment reports/graphs; pass "
-            "include_content=true only for a focused deep dive that needs "
-            "their exact bounded text. Also returns reviews and "
-            "allowed_transitions with preconditions. Includes gate_checklist "
-            "for missing lenses/artifacts/review state, and project_graph_diff "
-            "when a submitted project graph can be compared with the previous "
-            "published graph."
-        ),
+        description=("Read a wave, its coverage, artifact TLDRs, reviews, gate checklist and project graph diff. "
+            "include_content=true includes exact bounded snapshotted documents."),
     ),
     "reflection.list": ToolContract(
         handler_identity="application.reflections",
@@ -763,54 +662,26 @@ TOOLS: dict[str, ToolContract] = {
     "reflection.transition": ToolContract(
         handler_identity="application.transition_reflection",
         input_model=ReflectionTransitionInput,
-        description=(
-            "Apply an allowed reflection transition ("
-            + ", ".join(REFLECTION.actions)
-            + "). See "
-            "reflection.get.allowed_transitions for preconditions from the "
-            f"current status. {_REFLECTION_PUBLISH_TRANSITION} is internal: "
-            "a passing reflection review automatically hands code to a "
-            "separate consolidator and reviewer; only the runner's central "
-            "advance may publish and materialize the approved change spec."
-        ),
+        description=("Apply an allowed reflection transition (" + ", ".join(REFLECTION.actions) + "). "
+            f"{_REFLECTION_PUBLISH_TRANSITION} is internal to the runner after reviewed central advance. See project-reflection."),
     ),
     "consolidation.get": ToolContract(
         handler_identity="application.consolidation",
         input_model=ConsolidationGetInput,
-        description=(
-            "Read the authoritative reflection and slim immutable experiment "
-            "packet for code consolidation: exact experiment branches/base/head "
-            "SHAs, concise result summaries, current proposal coverage, and "
-            "prior consolidation-review feedback."
-        ),
+        description="Read the approved reflection, immutable experiment SHA/summary packet, proposal coverage and review feedback.",
     ),
     "consolidation.submit": ToolContract(
         handler_identity="application.submit_consolidation",
         binds_producer_session="agent",
         input_model=ConsolidationSubmitInput,
-        description=(
-            "Submit one immutable consolidation proposal. The proposal must "
-            "name exact base/proposal SHAs and account for every experiment as "
-            "used as-is, adapted, reviewed but not used, or superseded. This "
-            "records the actual Git integration kind while Merv supplies each "
-            "experiment branch head and the runner independently verifies "
-            "ancestry. It cannot reopen or alter the authoritative reflection."
-        ),
+        description="Submit an immutable base/proposal SHA, validation and every experiment integration decision. The approved reflection remains fixed. See project-reflection.",
     ),
     "review.request": ToolContract(
         handler_identity="application.request_review",
         binds_producer_session="session",
         input_model=ReviewRequestInput,
-        description=(
-            "Create a review request and request-scoped reviewer capability; "
-            "the plaintext is returned only in this response. The "
-            "response's reviewer_handoff.spawn_prompt is a ready-to-use prompt "
-            "for the reviewer subagent. The reviewer presents the capability "
-            "via review.start with its own caller_session_id. Starting does "
-            "not consume it; the first accepted submission closes the request. "
-            "Auto-run opens and dispatches reviews when a workflow enters a "
-            "review node; its producer stops after that handoff."
-        ),
+        description=("Create a request and one-time plaintext capability response with reviewer_handoff.spawn_prompt. "
+            "The capability remains valid until accepted submission or expiry; follow the returned review skill."),
     ),
     "review.start": ToolContract(
         handler_identity="application.start_review",
@@ -818,87 +689,36 @@ TOOLS: dict[str, ToolContract] = {
         telemetry_scope_field="review_request_id",
         binds_capability="review_request_id",
         input_model=ReviewStartInput,
-        description=(
-            "Start a reviewer session for the pinned request snapshot. The "
-            "response includes bounded project orientation and, for an "
-            "experiment target, the same canonical four-section context used "
-            "by workflow.status_and_next, built only from artifact versions "
-            "pinned to the request. Plan/report bodies needed for that review "
-            "are included; use artifact.read for deeper reads of the listed "
-            "artifact ids. Assigned auto-run reviewers use 'assigned' for both "
-            "reviewer_capability and caller_session_id; their scoped credential "
-            "enforces the read-only boundary. Interactive reviewers follow the "
-            "same skill using the handoff capability."
-        ),
+        description=("Start a session for the pinned request and return its immutable evidence context. "
+            "Assigned reviewers pass assigned for both capability and caller session; manual reviewers use their own identity. Follow the returned review skill."),
     ),
     "review.submit": ToolContract(
         handler_identity="reviews.submit",
         scope_strategy="capability",
         telemetry_scope_field="review_session_id",
         input_model=ReviewSubmitInput,
-        description=(
-            "Submit a review from a reviewer session. Accepts ONLY: "
-            "review_session_id, verdict (pass|needs_changes|fail), synopsis "
-            "(REQUIRED: 1-3 plain sentences, 40-420 chars, the researcher's "
-            "TLDR — no entity ids, markdown, or backticks), return_to, "
-            "notes, findings (list of {issue, severity?}), and evidence "
-            "(free-form dict). On experiment-attempt-review rejections "
-            f"return_to is REQUIRED: {_EXPERIMENT_PLAN_RETURN.to_status!r} if "
-            "the results show the plan itself is flawed, "
-            f"{_EXPERIMENT_EXECUTION_RETURN.to_status!r} if the plan stands "
-            "but execution or the conclusion is flawed (the experiment "
-            "resumes running with its approved plan intact). Put structured "
-            "rationale inside "
-            "'evidence' — unknown top-level fields are rejected. The verdict and "
-            "its graph transition commit together: design pass enters execution, "
-            "attempt/task pass completes work, and reflection pass enters "
-            "consolidation. Consolidation pass waits for the runner to publish."
-        ),
+        description=("Submit the verdict, synopsis, notes, findings and evidence atomically with its graph route. "
+            "Use the declared review return path when required; unknown top-level fields are rejected. Follow the assigned review skill."),
     ),
     "review.status": ToolContract(
         handler_identity="application.review_status",
         visibility="internal",
         input_model=ReviewStatusInput,
-        description=(
-            "Inspect review requests and submissions for a target, including "
-            "recovery guidance for lost or expired reviewer capabilities."
-        ),
+        description="Inspect a target's review requests, submissions and expired-capability recovery guidance.",
     ),
     "litreview.view": ToolContract(
         handler_identity="litreview.view",
         input_model=LitreviewViewInput,
-        description=(
-            "Read the project's living literature review. No args = the "
-            "overview (General Summary + every section's TLDR + paper count) — "
-            "read this before editing so you know the document's shape. "
-            "section=<id or title> = one full section with its cited papers. "
-            "papers=true = the papers ledger with links to the sections, "
-            "experiments, and claims that cite each paper."
-        ),
+        description="Read the outline by default, one full section by id/title, or the papers ledger with papers=true.",
     ),
     "litreview.edit": ToolContract(
         handler_identity="litreview.edit",
         input_model=LitreviewEditInput,
-        description=(
-            "Make a TARGETED change to the literature review: add, edit, "
-            "delete, or reorder one thing per call — never rewrite the whole "
-            "document. Every section keeps a TLDR (required on writes) so the "
-            "overview stays glanceable. edit/delete require expected_revision "
-            "(the revision you last read); a conflict means someone changed it "
-            "— re-read and retry. Update the review whenever a new paper "
-            "informs the project."
-        ),
+        description="Add, edit, delete or reorder sections with revision checks; writes keep their TLDR current. See research-workflow for targeted editing.",
     ),
     "litreview.cite": ToolContract(
         handler_identity="litreview.cite",
         input_model=LitreviewCiteInput,
-        description=(
-            "Register a paper in the project's papers ledger and link it to "
-            "the sections, experiments, or claims that use it. Papers are "
-            "deduplicated (arXiv/DOI/URL forms of the same paper converge); "
-            "metadata is fetched from known paper hosts, otherwise pass title. "
-            "After citing, make a targeted litreview.edit so the review stays "
-            "current."
-        ),
+        description="Register one paper identity and link its targets. See research-workflow for citation and literature procedure.",
     ),
 }

@@ -8,7 +8,7 @@ Branches, loops and review rejection use the same transition model. Agent nodes
 provide `build_context(snapshot, knowledge) -> Brief`, with a concise assignment
 and exact references. `Node.guidance` declares `Guidance` (skill, handoff, named messages);
 `Workflow.outcome_guidance` is keyed by outcome. The runtime projects this presentation
-for every program. Wait and terminal states dispatch no agent.
+for every program; role skills own procedures. Wait and terminal states dispatch no agent.
 
 A node also declares what its state needs, as `requires`: `ArtifactNeed` (a submitted
 document, selected and validated), `RecordNeed` (a fact its own graph function verifies),

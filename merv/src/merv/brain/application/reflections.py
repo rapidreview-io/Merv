@@ -14,7 +14,7 @@ from ..research_core import (
 )
 from ..workflows.definitions.research_state import ReflectionState
 from .experiments.presentation import slim_review_rows
-from ..workflows import present_reflection_signal
+from ..workflows import present_reflection_signal, published_followups
 
 Record = dict[str, Any]
 
@@ -63,13 +63,7 @@ def post_publish_guidance(
     return {
         "summary": guidance.messages["summary"].format(count=count, noun=noun),
         "experiments": experiments,
-        "recommended_actions": [
-            {
-                "tool": "workflow.status_and_next",
-                "arguments": {"experiment_id": experiments[0]["experiment_id"]},
-                "why": guidance.messages["first_experiment"],
-            },
-        ],
+        "recommended_actions": published_followups(experiments),
     }
 
 

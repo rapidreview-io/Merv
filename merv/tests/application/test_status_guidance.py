@@ -43,12 +43,6 @@ class StatusGuidanceContractTest(unittest.TestCase):
         self.assertEqual(result["blocked_actions"], gate.decision.public()["blocked_actions"])
         self.assertEqual(result["suggested_action"], gate.decision.public()["suggested_action"])
 
-    def test_infrastructure_facts_cannot_change_a_workflow_decision(self):
-        gate = evaluation(blockers=(Issue("result_missing", "Retain results.", "run_experiment", ("artifact.upload",)),))
-        idle = present_workflow(revision_context=self.target["revision_context"], evaluation=gate)
-        live = present_workflow(revision_context=self.target["revision_context"], evaluation=gate)
-        self.assertEqual(live, idle)
-
     def test_dispatch_prerequisites_and_transition_blockers_remain_visible(self):
         gate = evaluation(blockers=(Issue("result_missing", "Retain results."),),
                           dispatch_blockers=(Issue("dependencies_pending", "Dataset task is unfinished.", "wait_for_dependencies", ("workflow.status_and_next",)),))

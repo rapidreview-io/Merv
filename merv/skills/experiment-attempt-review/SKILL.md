@@ -23,7 +23,8 @@ For an interactive handoff, require its exact capability and use your own stable
 `caller_session_id`, distinct from the producer, with optional `declared_agent`. Begin
 with its pinned project context, plan, report, and artifact references. Batch
 the listed result, graph, and exhibit ids through `artifact.read` only when
-their full submitted evidence is needed.
+their full submitted evidence is needed. Inspect retained outputs and durable run
+receipts before reproducing work; a fresh review is not a reason to rerun completed jobs.
 
 Operate read-only. Auto-run credentials enforce this boundary; interactive
 reviewers must follow it when using a general project key. Do not mutate the
@@ -89,6 +90,4 @@ Submit only the fields accepted by `review.submit`:
 `evidence`. Use evidence to state what a next attempt should reuse and change.
 
 Each finding should name the concrete issue, cite the submitted file, metric,
-command, or observed fact, and recommend the smallest correction. After
-submission, return a brief summary to the producing agent. Do not perform any
-other mutation.
+command, or observed fact, and recommend the smallest correction. Return a brief verdict summary after submission.

@@ -73,12 +73,7 @@ def build_work_context(snapshot, knowledge):
         f"Project purpose: {_short(project.get('summary') or 'No project summary supplied.', 35)}\n\n"
         f"Goal: {_short(task.get('goal'), 50)}\nDeliverables (read the pinned brief for the full contract):\n{checks}\n\n"
         f"Why this assignment is active: {revision}\n\n"
-        "The goal and deliverables are the fixed contract. Read the pinned brief and existing delivery first; "
-        "reuse retained work and address the remaining checks. Supply a verifiable confirmation for each "
-        "deliverable, or explain explicitly why it could not be delivered. Keep supporting evidence available "
-        "through artifact tools, and record caveats. Submit one complete delivery version before requesting "
-        "independent review. A fresh agent will handle the next node; make the submitted evidence sufficient "
-        "for that handoff without relying on this conversation.",
+        "Reuse retained work to complete the fixed brief and submit a verifiable delivery. Follow research-workflow.",
         (Reference("task", snapshot.id, "Task and durable progress"),
          *_references(task.get("current_attempt_artifacts") or ())),
     )
@@ -90,16 +85,7 @@ def build_review_context(snapshot, knowledge):
     return Brief(
         f"Independently review the delivery for task {task.get('name', snapshot.id)}. "
         f"Goal: {_short(task.get('goal'), 65)}\n\n"
-        "Use the exact brief and delivery references in this submitted review snapshot. Verify every "
-        "deliverable using its evidence and stated check, then judge whether the checks together achieve "
-        "the goal. Read surrounding project context through existing tools where needed. Treat the "
-        "producer's claims as things to verify; the submitted snapshot fixes what this review grades. "
-        "Record concrete findings and the evidence you checked.\n\n"
-        "Submit pass when the goal is achieved, needs_changes for specific repairable omissions, or fail "
-        "when the task's goal cannot be achieved within its scope. Needs_changes returns to work; fail "
-        "ends the task. Follow the task-review skill and use review.start and review.submit with your "
-        "own reviewer identity. Your assignment is read-only apart from submitting that verdict. "
-        "Hand off after the verdict; the next node receives the findings in its own context.",
+        "Verify the pinned brief's checks and whether they achieve the goal. Follow task-review; submit only the verdict.",
         (Reference("task", snapshot.id, "Task goal"),
          Reference("review_request", str(pinned.get("request_id") or "")),
          *_references(pinned.get("artifacts") or ())),
@@ -111,7 +97,7 @@ TASK = Workflow(
     nodes=(
         Node("in_progress", "Complete task", "task_owner", build_work_context, guidance=Guidance("research-workflow", RESEARCH_HANDOFF), execution=TASK_EXECUTION,
              requires=(ARTIFACTS["brief"], DEPENDENCIES, ARTIFACTS["delivery"])),
-        Node("in_review", "Review task delivery", "task_reviewer", build_review_context, guidance=Guidance("task-review", RESEARCH_HANDOFF), execution=REVIEW_EXECUTION,
+        Node("in_review", "Review task delivery", "task_reviewer", build_review_context, guidance=Guidance(DELIVERY_REVIEW.skill, RESEARCH_HANDOFF), execution=REVIEW_EXECUTION,
              requires=(DELIVERY_REVIEW,)),
     ),
     edges=(

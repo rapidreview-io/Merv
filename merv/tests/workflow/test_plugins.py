@@ -47,7 +47,7 @@ CALIBRATION = Program(
     name="calibration", version=1,
     workflows=(Workflow(
         name="calibration", version=1, initial="calibrate",
-        nodes=(Node("calibrate", role="technician", guidance=Guidance("instrument-operation", "Leave the reading for the operator."), requires=(Calibrated(),),
+        nodes=(Node("calibrate", role="technician", guidance=Guidance("instrument-operation", "Leave the reading for the operator.", messages={"setup": "Zero the sensor."}), requires=(Calibrated(),),
                     build_context=lambda snapshot, knowledge: Brief("Calibrate the instrument.")),),
         edges=(Edge("calibrate", "record", "calibrate",
                     change=lambda snapshot, payload, knowledge: Change(data={"reading": payload.get("reading")})),
@@ -66,11 +66,10 @@ CALIBRATION = Program(
 class WorkflowPluginTest(ResearchCase):
     def test_program_orientation_is_optional_and_application_projects_its_result(self):
         from dataclasses import replace
-        program = self.app.research.program
-        self.app.research.program = replace(program, orientation=None)
+        self.app.research.program = CALIBRATION
         status = self.call("workflow.status_and_next", project_id=self.project_id)
         self.assertEqual(status["workflow"], {})
-        self.app.research.program = replace(program, orientation=lambda snapshot, **facts:
+        self.app.research.program = replace(CALIBRATION, orientation=lambda snapshot, **facts:
             {"workflow": {"current_gate": "instrument_setup", "next_action": "calibrate", "hint": "Any prose."}})
         status = self.call("workflow.status_and_next", project_id=self.project_id)
         self.assertEqual(status["workflow"], {"current_gate": "instrument_setup", "next_action": "calibrate", "hint": "Any prose."})
@@ -264,6 +263,7 @@ class ProgramInstallationTest(unittest.TestCase):
         self.assertEqual(context["brief"], "Calibrate the instrument.")
         self.assertEqual(context["skill"], "instrument-operation")
         self.assertEqual(context["handoff"], "Leave the reading for the operator.")
+        self.assertEqual(context["messages"], {"setup": "Zero the sensor."})
         self.workflows.transition(**arguments, action="record", expected_revision=0, request_id="reading", payload={"reading": 7})
         self.workflows.transition(**arguments, action="publish", expected_revision=1, request_id="publish")
         described = self.workflows.describe(**arguments)

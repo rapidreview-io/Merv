@@ -38,7 +38,7 @@ instance/kind mismatches fail before checklist evaluation or native writes.
 - `association_targets.py`: target resolution. `objects.py`: completion lifecycle and
   `ProducedObject` snapshots. `models.py`: research snapshots and `public_record` serialization.
 - `content_summaries.py`: document TLDRs. `paths.py`: safe experiment folder names.
-  `tools.py`: research tool contracts, read from graph declarations where applicable.
+  `tools.py`: concise operation/parameter contracts; role skills own procedural detail.
   `persistence.py`: research tables, migrations, indexes and the `research_artifacts` view.
 
 ## Lifecycles

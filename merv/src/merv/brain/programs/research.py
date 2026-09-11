@@ -4,24 +4,29 @@ from __future__ import annotations
 
 from ..research_core import TOOLS as RESEARCH_TOOLS, project_rows
 from ..workflows import (
-    TOOLS as WORKFLOW_TOOLS, ArtifactNeed, DependenciesDone, Program, RecordNeed, ReviewGate,
+    TOOLS as WORKFLOW_TOOLS, ArtifactNeed, DependenciesDone, Guidance, Program, RecordNeed, ReviewGate,
 )
 from ..workflows.definitions.experiment import EXPERIMENT, KIND as EXPERIMENT_KIND
 from ..workflows.definitions.reflection import LENS, REFLECTION, KIND as REFLECTION_KIND, present_reflection_signal
 from ..workflows.definitions.research_wave import RESEARCH_WAVE
 from ..workflows.definitions.task import TASK, KIND as TASK_KIND
 
+# These are advisory choices; neither alters dependency or transition permissions.
+LITERATURE_NUDGE_PAPERS = 3
+ORIENTATION_GUIDANCE = Guidance("research-workflow", messages={
+    "literature": ("{unreviewed} cited papers are not yet worked into the literature "
+        "review — consider a targeted litreview.edit (add or amend the one relevant section)."),
+    "idle": ("No experiments are active and {drift} — a good moment for a "
+        "project reflection (reflection.create, project-reflection skill), or "
+        "start the next experiment if the logic state is current."),
+})
+
+
 def literature_hint(*, signal: dict) -> str | None:
-    """Soft lit-review nudge (never blocks): fires iff >=3 cited papers have
-    no section in the literature review yet."""
     unreviewed = int(signal.get("papers_unreviewed") or 0)
-    if unreviewed < 3:
-        return None
-    return (
-        f"{unreviewed} cited papers are not yet worked into the literature "
-        "review — consider a targeted litreview.edit (add or amend the one "
-        "relevant section)."
-    )
+    return (ORIENTATION_GUIDANCE.messages["literature"].format(unreviewed=unreviewed)
+            if unreviewed >= LITERATURE_NUDGE_PAPERS else None)
+
 
 def idle_reflection_hint(*, signal: dict) -> str:
     new = signal["new_terminal_since_publish"]
@@ -34,11 +39,7 @@ def idle_reflection_hint(*, signal: dict) -> str:
             )
     else:
         drift = f"{finished} and no project reflection exists yet"
-    return (
-        f"No experiments are active and {drift} — a good moment for a "
-        "project reflection (reflection.create, project-reflection skill), or "
-        "start the next experiment if the logic state is current."
-    )
+    return ORIENTATION_GUIDANCE.messages["idle"].format(drift=drift)
 
 
 def _next(*, gate, action, allowed, blocked=None, missing=None, **details):

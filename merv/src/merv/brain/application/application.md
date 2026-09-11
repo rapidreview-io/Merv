@@ -62,7 +62,7 @@ qualify named action, role, tool and skill references inline.
 - `experiments/presentation.py` and `create.py`: the experiment's
   declared public shape and create inputs; claim suggestions are deliberately absent.
 - `reviews.py` and `reflections.py`: review handoff and reflection presentation;
-  node/outcome declarations own wording, and the research program owns advisory choices.
+  declarations own wording and advisory choices; consumer tests gate prose reduction.
 - `queries.py`: logic-graph composition, built once and shared by its routes.
 - `maintenance.py`: token/log retention and lease cleanup; merv-sandboxes owns machine
   and object expiry.

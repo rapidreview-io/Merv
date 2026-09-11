@@ -48,7 +48,8 @@ Read:
 4. The submitted project graph, reflection document, and change spec.
 
 Treat lens documents as unverified arguments. Check important assertions
-against the underlying snapshot.
+against the underlying snapshot, distinguishing experimental confirmation from
+useful task output. Verify that the next tests could distinguish the stated explanations.
 
 ## Judge the reflection
 
@@ -105,5 +106,4 @@ Submit only the fields accepted by `review.submit`:
 
 Each finding should identify the specific graph node, claim, lens document, or
 record that demonstrates the issue and recommend the smallest correction.
-After submission, return a brief summary to the orchestrator. Do not perform
-any other mutation.
+Return a brief verdict summary after submission.

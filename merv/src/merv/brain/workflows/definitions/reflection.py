@@ -189,21 +189,10 @@ def build_synthesis_context(snapshot, knowledge):
     return Brief(
         f"Reconcile reflection wave {wave.get('title') or snapshot.id}, attempt {wave['attempt_index']}. "
         f"The fixed corpus contains {len(corpus.get('terminal_experiments') or ())} completed experiments and "
-        f"{len(corpus.get('terminal_tasks') or ())} completed tasks. Read the five independent lens reflections "
-        "and their evidence, then resolve disagreements into the project's current research position.\n\n"
+        f"{len(corpus.get('terminal_tasks') or ())} completed tasks.\n"
         f"Revision request: {wave.get('revision_context') or 'First synthesis of this lens set.'}\n\n"
-        "The completed lens contributions stand unless the review explicitly sends the whole wave back to "
-        "reflecting. Reuse their submitted work and the previous project graph; do not repeat their jobs. "
-        "Produce the updated project logic graph, a concise reflection document that explains the scientific "
-        "argument, and one machine-actionable change spec. Distinguish supported conclusions, failures, "
-        "uncertainty, and the next falsifiable bets. Compare the new graph with the previous published graph "
-        "and explain each changed belief. Task deliveries can inform the work without counting as scientific "
-        "evidence for a claim. Retain negative results and counterexamples that constrain the next wave. "
-        "Existing tools supply the detailed corpus and evidence.\n\n"
-        "Submit complete artifact versions and request independent reflection review. The next agent gets "
-        "this immutable evidence set, so attach the exact references behind each decision. Keep code "
-        "consolidation for its later assignment; publication applies the approved change spec only after "
-        "the reviewed code proposal has a central-advance receipt.",
+        "Reconcile the five lens contributions into the project graph, reflection and change spec; do not repeat their jobs. "
+        "Follow project-reflection and submit the synthesis for independent review.",
         (Reference("reflection", snapshot.id, "Fixed reflection corpus and revision history"),
          *_refs(wave.get("current_attempt_artifacts") or ())),
     )
@@ -214,20 +203,8 @@ def build_review_context(snapshot, knowledge):
     pinned = knowledge.read(Reference("review_snapshot", snapshot.id))
     return Brief(
         f"Independently review reflection wave {wave.get('title') or snapshot.id}, attempt {wave['attempt_index']}. "
-        "Grade the exact submitted graph, reflection document, change spec, and five lens reflections named "
-        "in this immutable review snapshot against the fixed experiment/task corpus and previous graph.\n\n"
-        "Trace conclusions to evidence, investigate disagreement across lenses, and check the change spec "
-        "is the scientific update the evidence warrants. Compare claim changes and proposed experiments "
-        "with the previous published graph. Test whether the next wave could distinguish the stated "
-        "explanations, whether important failures were omitted, and whether task deliveries have been "
-        "mistaken for experimental confirmation. Use existing tools for the detailed documents and "
-        "history. Your role is read-only except for review.start and review.submit with your own reviewer "
-        "identity; follow the project-reflection-review skill.\n\n"
-        "Pass hands the approved research to code consolidation. A rejection must choose its ordinary "
-        "return edge: reflecting when coverage or lens reasoning requires a fresh five-lens attempt; "
-        "synthesizing when those contributions stand and only the reconciled artifacts need repair. "
-        "Name the missing evidence and exact repair, so the next independent agent can start from the "
-        "findings without this conversation. Do not rewrite the submitted evidence during the review.",
+        "Grade the pinned graph, reflection, change spec and five lenses against the fixed corpus and previous graph. "
+        "Follow project-reflection-review; submit only the verdict and its return path.",
         (Reference("reflection", snapshot.id, "Fixed corpus and previous graph"), *_review_refs(pinned)),
     )
 
@@ -237,21 +214,10 @@ def build_consolidation_context(snapshot, knowledge):
     consolidation = wave.get("consolidation") or {}
     return Brief(
         f"Consolidate code for approved reflection wave {wave.get('title') or snapshot.id}. "
-        "Its reviewed research conclusion is authoritative. Read that artifact snapshot, the per-experiment "
-        "workspaces, and any retained proposal before changing code. Account for every experiment in the "
-        "fixed corpus with a concrete integrate, retain, or discard decision and an evidence-backed reason.\n\n"
         f"Revision request: {wave.get('revision_context') or 'Initial code consolidation.'}\n"
         f"Retained proposal: {(consolidation.get('proposal') or {}).get('id') or 'None submitted.'}\n\n"
-        "Reuse completed work and the recorded proposal; inspect whether it already satisfies the current "
-        "findings before repeating anything. Identify the approved base SHA and the source SHA of each "
-        "experiment branch before integration. Preserve reproducibility and the useful test coverage of "
-        "retained changes, and make discarded or superseded approaches explicit so they remain available "
-        "as research history. Make the smallest coherent code change, run the checks "
-        "needed to prove it, and submit the immutable proposal SHA, validation, and per-experiment "
-        "decisions through consolidation.submit. An independent consolidator reviewer will inspect that "
-        "exact proposal. Rejection returns only to this code assignment; it cannot reopen the approved "
-        "reflection or rerun its lenses. The runner performs the central advance and publication after "
-        "approval. Finish with precise references that let the reviewer reproduce the checks.",
+        "Implement the approved research and account for every experiment. Follow project-reflection's consolidation "
+        "procedure; submit the immutable proposal, validation and integration decisions for independent review.",
         (Reference("reflection", snapshot.id, "Approved reflection and consolidation progress"),
          *((Reference("code", str(proposal["base_sha"]), "Declared base of the retained proposal"),)
            if (proposal := consolidation.get("proposal") or {}).get("base_sha") else ()),
@@ -264,21 +230,8 @@ def build_consolidation_review_context(snapshot, knowledge):
     return Brief(
         f"Independently review code consolidation for reflection wave {snapshot.id}. "
         f"The exact proposal is {pinned.get('snapshot_token') or 'in the review packet'} at Git SHA "
-        f"{pinned.get('code_sha') or 'recorded in the pinned proposal'}. Inspect that proposal, its tests, "
-        "and the integrate/retain/discard decision for every experiment in the fixed reflection corpus.\n\n"
-        "The reflection's scientific conclusion has already passed review and remains authoritative. "
-        "Judge whether the proposed code faithfully implements it, whether discarded changes are "
-        "accounted for, and whether the submitted validation demonstrates the result. Read the exact "
-        "artifact versions in this request rather than later replacements. Investigate failure paths "
-        "and unintended changes, then record the evidence you checked and concrete findings. Confirm the "
-        "proposal starts from its declared base and that its actual diff matches the integration decisions. "
-        "Reproduce the meaningful validation where feasible and distinguish observed checks from any "
-        "claims you could not verify.\n\n"
-        "Follow consolidation-review, use your own reviewer identity, and keep the assignment read-only "
-        "except for review.start/review.submit. Pass permits the runner to bind this exact proposal to "
-        "central and publish the wave. Needs_changes or fail must return_to='consolidating'; the next "
-        "agent repairs only code, validation, or per-experiment integration decisions. Do not return to "
-        "reflecting or synthesizing. Hand off after the verdict.",
+        f"{pinned.get('code_sha') or 'recorded in the pinned proposal'}. "
+        "Verify the code, tests and every integration decision against the approved research. Follow consolidation-review.",
         (Reference("reflection", snapshot.id, "Consolidation receipt and fixed corpus"), *_review_refs(pinned)),
     )
 
@@ -333,11 +286,11 @@ REFLECTION = Workflow(
              requires=(ARTIFACTS["reflection_lens_doc"],)),
         Node("synthesizing", "Reconcile reflection", "reflection_owner", build_synthesis_context, guidance=Guidance("project-reflection", RESEARCH_HANDOFF), execution=REFLECTION_EXECUTION,
              requires=tuple(ARTIFACTS[role] for role in ("project_graph", "reflection_doc", "change_spec"))),
-        Node("reflection_review", "Review reflection", "reflection_reviewer", build_review_context, guidance=Guidance("project-reflection-review", RESEARCH_HANDOFF),
+        Node("reflection_review", "Review reflection", "reflection_reviewer", build_review_context, guidance=Guidance(REFLECTION_REVIEW.skill, RESEARCH_HANDOFF),
              execution=REVIEW_EXECUTION, requires=(REFLECTION_REVIEW,)),
         Node("consolidating", "Consolidate reviewed code", "consolidation", build_consolidation_context, guidance=Guidance("project-reflection", RESEARCH_HANDOFF),
              execution=CONSOLIDATION_EXECUTION, requires=(PROPOSAL_NEED,)),
-        Node("consolidation_review", "Review consolidated code", "consolidation_reviewer", build_consolidation_review_context, guidance=Guidance("consolidation-review", RESEARCH_HANDOFF),
+        Node("consolidation_review", "Review consolidated code", "consolidation_reviewer", build_consolidation_review_context, guidance=Guidance(CONSOLIDATION_REVIEW.skill, RESEARCH_HANDOFF),
              execution=REVIEW_EXECUTION, requires=(PUBLISH_PROPOSAL, CONSOLIDATION_REVIEW, PUBLISH_ADVANCE)),
     ),
     edges=(
@@ -370,6 +323,13 @@ REFLECTION = Workflow(
     })},
     outcomes={"published": "published", "abandoned": "abandoned"},
 )
+
+
+def published_followups(experiments):
+    """Suggest the first planned experiment; status still evaluates its dependencies."""
+    return [{"tool": "workflow.status_and_next", "arguments": {"experiment_id": experiments[0]["experiment_id"]},
+             "why": REFLECTION.outcome_guidance["published"].messages["first_experiment"]}] if experiments else []
+
 
 METADATA = Metadata(effects={"publish": ("materialize_change_spec", "pin_project_graph")},
                     subject="reflection wave", success_outcome="published")
@@ -419,18 +379,8 @@ def build_lens_context(snapshot, knowledge):
         f"Work independently as the {lens.get('title') or lens['id']} lens for reflection wave {wave.get('title') or wave['id']}, "
         f"attempt {snapshot.data['attempt_index']}. Your charter: {lens.get('charter') or lens.get('prompt') or ''}\n\n"
         f"Revision request: {wave.get('revision_context') or 'First pass over this fixed corpus.'}\n\n"
-        "Read the wave's snapshotted experiment and task corpus, the previous project graph, and the "
-        "relevant submitted artifacts. Use existing tools to inspect the details behind any conclusion. "
-        "Do not edit the experiments, project graph, other lenses, or the change spec. Your independent "
-        "view is an input to a later synthesis assignment. Investigate promising findings and failed "
-        "directions through this lens's charter, name uncertainty, and propose concrete next tests.\n\n"
-        "Resume from any retained contribution before repeating investigation. Submit one complete "
-        "document with artifact.upload and a non-empty Summary section. Cite exact evidence references "
-        "so the synthesizer can verify your claims quickly. Then commit the submit action for this lens "
-        "workflow with payload={artifact_id: the uploaded content ID}. The workflow associates it with "
-        "this fixed lens and wave; its submitted artifact ID is frozen in workflow "
-        "history; after every lens finishes, the parent automatically hands their fixed contributions "
-        "to the synthesis node. Hand off and exit after your own lens is submitted.",
+        "Investigate this charter against the fixed corpus; resume retained work. Follow project-reflection's lens procedure. "
+        "Upload one complete contribution, then submit this lens with payload={artifact_id: the uploaded content ID}.",
         (Reference("reflection", wave["id"], "Fixed corpus and prior lens progress"),
          *_refs([item for item in wave.get("current_attempt_artifacts") or () if item.get("lens_id") == lens["id"]])),
     )
