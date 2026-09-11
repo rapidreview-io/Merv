@@ -284,14 +284,20 @@ class WorkflowDispatchTest(ResearchCase):
         self.call("experiment.transition", project_id=self.project_id, experiment_id=experiment["id"], transition="abandon")
         # The author can predate the lenses across a second boundary. Queue
         # priority is not part of the lens identity/authority contract.
+        # setUp created this singleton before the method's clock patch began.
+        with self.app.store.transaction() as conn:
+            conn.execute("UPDATE workflow_instances SET created_at = ? WHERE project_id = ? AND workflow = 'project_synthesis'",
+                         ("2026-09-11T18:00:00Z", self.project_id))
         clock.return_value = "2026-09-11T18:00:01Z"
         reflection = self.call("reflection.create", project_id=self.project_id, lenses=[dict(lens) for lens in LENSES])
         reflection_id = reflection["id"]
         expected_lenses = {child.id for child in self.runtime.get(project_id=self.project_id, instance_id=reflection_id).children}
         retained, seen_lenses = set(), set()
+        author_leases = 0
         for index in range(5):
             worker, secret = self.claim(f"lens-{index}")
             if worker["assignment"]["role"] == "project_author":
+                author_leases += 1
                 worker, secret = self.claim(f"lens-{index}-after-author")
             self.assertEqual(worker["assignment"]["role"], "reflection_lens")
             self.assertIn(worker["workflow_instance_id"], expected_lenses)
@@ -316,6 +322,7 @@ class WorkflowDispatchTest(ResearchCase):
             self.assertIsNone(self.app.agent_sessions.authenticate(session_secret=secret))
         parent = self.runtime.get(project_id=self.project_id, instance_id=reflection_id)
         self.assertEqual(seen_lenses, expected_lenses)
+        self.assertEqual(author_leases, 1)
         self.assertEqual(parent.state, "synthesizing")
         self.assertEqual(set(parent.data["lens_artifacts"].values()), retained)
         synthesizer, _ = self.claim("synthesis")
