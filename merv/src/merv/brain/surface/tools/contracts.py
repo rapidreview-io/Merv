@@ -9,6 +9,7 @@ and the MCP transport.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -17,11 +18,12 @@ from ...artifacts import artifact_tools
 from ...feed import feed_tools
 from ...infrastructure import TOOLS as INFRASTRUCTURE_TOOLS
 from ...kernel.tools import ContractModel, ProjectScopedInput, ToolContract
+from ...programs import INSTALLED
 from ...research_core import (
     ENTITY_REF_VOCABULARY, FEED_ADOPTABLE_ROLES, FEED_AUTHOR_ROLES,
-    PROJECT_OVERVIEW_CONTENTS, TOOLS as RESEARCH_TOOLS,
+    PROJECT_OVERVIEW_CONTENTS,
 )
-from ...workflows import ARTIFACT_TOOL_VOCABULARY, TOOLS as WORKFLOW_TOOLS
+from ...workflows import ARTIFACT_TOOL_VOCABULARY, Program
 
 
 class AgentHelloInput(ContractModel):
@@ -222,14 +224,23 @@ SURFACE_TOOLS: dict[str, ToolContract] = {
 }
 
 # Fixed merge order, unique names: the registry is a view of the owners'
-# tables, never a second place a contract can be defined or overridden.
+# tables, never a second place a contract can be defined or overridden. A
+# research program brings its own table, so installing one adds its tools.
 ARTIFACT_TOOLS = artifact_tools(**ARTIFACT_TOOL_VOCABULARY)
 FEED_TOOLS = feed_tools(vocabulary=ENTITY_REF_VOCABULARY, author_roles=FEED_AUTHOR_ROLES, adoptable_roles=FEED_ADOPTABLE_ROLES)
-TOOL_MANIFEST: dict[str, ToolContract] = {}
-for _table in (SURFACE_TOOLS, WORKFLOW_TOOLS, RESEARCH_TOOLS, ARTIFACT_TOOLS, FEED_TOOLS, INFRASTRUCTURE_TOOLS):
-    if not TOOL_MANIFEST.keys().isdisjoint(_table):
-        raise RuntimeError(f"tool names claimed twice: {sorted(TOOL_MANIFEST.keys() & _table.keys())}")
-    TOOL_MANIFEST.update(_table)
+
+
+def build_manifest(programs: Iterable[Program]) -> dict[str, ToolContract]:
+    manifest: dict[str, ToolContract] = {}
+    for table in (SURFACE_TOOLS, *(program.tools for program in programs),
+                  ARTIFACT_TOOLS, FEED_TOOLS, INFRASTRUCTURE_TOOLS):
+        if not manifest.keys().isdisjoint(table):
+            raise RuntimeError(f"tool names claimed twice: {sorted(manifest.keys() & table.keys())}")
+        manifest.update(table)
+    return manifest
+
+
+TOOL_MANIFEST = build_manifest(INSTALLED)
 
 # Compatibility name for callers that describe the manifest as contracts.
 TOOL_CONTRACTS = TOOL_MANIFEST

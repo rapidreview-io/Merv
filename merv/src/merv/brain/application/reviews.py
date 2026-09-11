@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from ..workflows import EXHIBIT_ROLE, GATED_ROLES, KINDS
+from ..workflows import EXHIBIT_ROLE, GATED_ROLES, RecordKind
 
 from ..feed import FeedAdvisory
 from ..kernel.utils import parse_iso
@@ -30,6 +30,7 @@ def request_review(research: Research, **kwargs: Any) -> dict[str, Any]:
     return {
         **result,
         "reviewer_handoff": reviewer_handoff_payload(
+            kind=research.kinds.get(str(kwargs["target_type"])),
             role=str(kwargs["role"]),
             target_type=str(kwargs["target_type"]),
             target_id=str(kwargs["target_id"]),
@@ -41,13 +42,13 @@ def request_review(research: Research, **kwargs: Any) -> dict[str, Any]:
 
 def reviewer_handoff_payload(
     *,
+    kind: RecordKind | None = None,
     role: str,
     target_type: str,
     target_id: str,
     review_request_id: str = "",
     reviewer_capability: str = "",
 ) -> dict[str, Any]:
-    kind = KINDS.get(target_type)
     gate = None if kind is None else kind.review_gate(role)
     skill = "" if gate is None else gate.skill
     handoff: dict[str, Any] = {

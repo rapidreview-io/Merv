@@ -9,13 +9,14 @@ the declaration beside its graph plus the hooks in ``RecordHooks``.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import closing
 import json
 from typing import Any
 
 from ..kernel.state.store import BaseStateStore, next_created_seq, row_to_dict, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError, new_id, now_iso
-from ..workflows import RecordKind, Reference, ReviewGate, Runtime, Snapshot, documents
+from ..workflows import Binding, RecordKind, Reference, ReviewGate, Runtime, Snapshot, documents
 from .artifacts import ResearchArtifacts as Artifacts
 from .artifact_models import ArtifactTarget
 from .dependencies import dependency_rows, dependent_rows, record_dependencies
@@ -53,6 +54,14 @@ class RecordHooks:
         """Answer a graph reference only this kind knows about."""
         return None
 
+    def initialize_workflow(self, conn, snapshot: Snapshot) -> None:
+        """Create the kind's row for an instance the runtime just started."""
+
+    def bindings(self) -> Mapping[str, Binding]:
+        """The table-less graphs this owner runs: knowledge and commit for a graph
+        with no row, returned here instead of reached for from composition."""
+        return {}
+
 
 class Records:
     """Create, read, gate, and transition every declared record kind."""
@@ -61,9 +70,12 @@ class Records:
         self.store = store
         self.artifacts = artifacts
         self.runtime = runtime
+        # What this brain installed: the kinds their services registered.
+        self.kinds: dict[str, RecordKind] = {}
         self.hooks: dict[str, RecordHooks] = {}
 
     def register(self, kind: RecordKind, hooks: RecordHooks) -> None:
+        self.kinds[kind.name] = kind
         self.hooks[kind.name] = hooks
 
     # ---- create ----

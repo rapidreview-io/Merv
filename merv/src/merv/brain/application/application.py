@@ -53,7 +53,7 @@ from .tasks import (
     slim_task_state,
 )
 from .workflow import StatusAndNextQuery, artifact_list_record
-from .workflow_actions import WorkflowDeliveries
+from .workflow_actions import Handler, WorkflowDeliveries
 
 
 class Application:
@@ -69,6 +69,7 @@ class Application:
         objects: RemoteObjects,
         produced_objects: ProducedObjectCatalog,
         agent_sessions: AgentSessions,
+        effects: Mapping[str, Handler],
     ) -> None:
         self.research = research
         self.artifacts = artifacts
@@ -83,8 +84,8 @@ class Application:
             assignment=self._workflow_assignment,
             activate=self._activate_workflow_session,
         )
-        self.workflow_deliveries = WorkflowDeliveries(workflows=research.workflows, research=research,
-                                                     sessions=agent_sessions)
+        # Which effect name each installed program emits is the root's to say.
+        self.workflow_deliveries = WorkflowDeliveries(workflows=research.workflows, handlers=effects)
 
         self._project_context = ProjectContextQuery(
             research=research,

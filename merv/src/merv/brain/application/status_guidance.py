@@ -3,8 +3,7 @@
 
 from __future__ import annotations
 
-from ..research_core import GateEvaluation, project_fields, project_rows
-from ..workflows import WORKFLOWS
+from ..research_core import EXPERIMENT, TASK, GateEvaluation, project_fields, project_rows
 from .reflection_guidance import idle_reflection_hint, present_reflection_signal, reflection_create_block_reason
 
 
@@ -98,9 +97,9 @@ class StatusGuidancePolicy:
         return None
 
     def live_experiments_takeover(self, *, exp_rows, reflection, task_rows=None):
-        live = project_rows([row for row in exp_rows if row["status"] not in WORKFLOWS["experiment"].outcomes],
+        live = project_rows([row for row in exp_rows if row["status"] not in EXPERIMENT.workflow.outcomes],
                             ("id", "name", "status", "attempt_index", "intent"))
-        tasks = project_rows([row for row in task_rows or [] if row["status"] not in WORKFLOWS["task"].outcomes],
+        tasks = project_rows([row for row in task_rows or [] if row["status"] not in TASK.workflow.outcomes],
                              ("id", "name", "status", "goal"))
         signal = (reflection or {}).get("signal") or {}
         allowed, blocked = ["workflow.status_and_next", "task.create"], []

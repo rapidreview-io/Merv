@@ -16,7 +16,7 @@ active_experiment_cap_would_exceed_message = research_contracts.active_experimen
 validate_experiment_name = research_contracts.validate_experiment_name
 validate_task_name = research_contracts.validate_task_name
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import json
 import re
@@ -25,13 +25,13 @@ from typing import Any, Literal, TypeAlias
 from ..kernel.state.store import Connection
 from ..kernel.utils import ValidationError, now_iso
 from ..workflows import (
-    KINDS, ArtifactNeed, DependenciesDone, Evaluation, Issue, RecordKind, Requirement,
+    EXPERIMENT_KIND as EXPERIMENT, REFLECTION_KIND as REFLECTION, TASK_KIND as TASK,
+    ArtifactNeed, DependenciesDone, Evaluation, Issue, RecordKind, RecordNeed, Requirement,
     ReviewGate, ReviewReturn, Snapshot,
 )
 
-# The record kinds research policy speaks about, and the vocabulary their own
-# graphs already declare. Nothing here restates a state machine.
-EXPERIMENT, TASK, REFLECTION = KINDS["experiment"], KINDS["task"], KINDS["reflection"]
+# The record kinds research policy speaks about declare their own vocabulary;
+# nothing here restates a state machine.
 EXPERIMENT_TERMINAL_STATUSES = EXPERIMENT.terminal_statuses
 TASK_TERMINAL_STATUSES = TASK.terminal_statuses
 REFLECTION_TERMINAL_STATUSES = REFLECTION.terminal_statuses
@@ -325,35 +325,45 @@ class GateContext:
 
 
 def resolve_requirement(need: Requirement, context: GateContext) -> RequirementEvaluation:
-    """One item per declared need, read off the evaluation the graph already ran.
+    """One checklist item per declared need, from the resolver its class registered."""
+    return RESOLVERS[type(need)](need, context)
 
-    An artifact need distinguishes missing from invalid by which code its own
-    issue carried; a record need is satisfied or not. ``DependenciesDone`` adds
-    the wave rows behind it (``node_dependencies``), including a dependency whose
-    row is gone, which reads as unsettled so no gate opens on a dangling edge.
-    """
-    if isinstance(need, ReviewGate):
-        return evaluate_review_gate(need, context)
+
+def resolve_record_need(need, context: GateContext, extra: GateItem | None = None) -> RequirementEvaluation:
+    """A fact the graph verified: satisfied, or missing with the reason it gave."""
     issue = context.issue_for(need.codes)
-    extra: GateItem = {"missing": "" if issue is None else (need.missing or issue.message)}
-    if isinstance(need, ArtifactNeed):
-        status: EvaluationStatus = ("missing" if issue is not None and issue.code == need.gate
-                                    else "invalid" if issue is not None
-                                    else "valid" if need.validator else "present")
-        artifact = context.artifact(need.role) or {}
-        extra = {"validator": need.validator or None,
-                 "missing": (need.missing or f"{need.role} artifact") if status == "missing" else None,
-                 "artifact_id": artifact.get("id"), "path": artifact.get("path")}
-    else:
-        status = "valid" if issue is None else "missing"
-        if isinstance(need, DependenciesDone):
-            extra["dependencies"] = [
-                {"id": row.get("id"), "node_type": row.get("node_type"), "name": row.get("name"),
-                 "status": row.get("status"), "settled": bool(row.get("settled"))}
-                for row in context.record.get("dependencies") or ()]
+    return _requirement_item(need, context, kind="record", status="valid" if issue is None else "missing",
+                             extra={"missing": "" if issue is None else (need.missing or issue.message),
+                                    **(extra or {})})
+
+
+def resolve_dependencies_done(need: DependenciesDone, context: GateContext) -> RequirementEvaluation:
+    """The wave rows behind the gate; a dependency whose row is gone reads as
+    unsettled, so no gate opens on a dangling edge."""
+    return resolve_record_need(need, context, {"dependencies": [
+        {"id": row.get("id"), "node_type": row.get("node_type"), "name": row.get("name"),
+         "status": row.get("status"), "settled": bool(row.get("settled"))}
+        for row in context.record.get("dependencies") or ()]})
+
+
+def resolve_artifact_need(need: ArtifactNeed, context: GateContext) -> RequirementEvaluation:
+    """A submitted document, missing or invalid by which code its own issue carried."""
+    issue = context.issue_for(need.codes)
+    status: EvaluationStatus = ("missing" if issue is not None and issue.code == need.gate
+                                else "invalid" if issue is not None
+                                else "valid" if need.validator else "present")
+    artifact = context.artifact(need.role) or {}
+    return _requirement_item(need, context, kind="artifact", status=status, extra={
+        "validator": need.validator or None,
+        "missing": (need.missing or f"{need.role} artifact") if status == "missing" else None,
+        "artifact_id": artifact.get("id"), "path": artifact.get("path")})
+
+
+def _requirement_item(need, context: GateContext, *, kind: str, status: EvaluationStatus,
+                      extra: GateItem) -> RequirementEvaluation:
+    issue = context.issue_for(need.codes)
     item: GateItem = {
-        "id": f"{'artifact' if isinstance(need, ArtifactNeed) else 'record'}:{need.key}",
-        "kind": "artifact" if isinstance(need, ArtifactNeed) else "record", "role": need.key,
+        "id": f"{kind}:{need.key}", "kind": kind, "role": need.key,
         "label": need.label, "satisfied": issue is None, "status": status,
         "gate": need.gate, "action": need.action,
         **{name: value for name, value in extra.items() if value is not None},
@@ -454,6 +464,14 @@ def evaluate_review_gate(review: ReviewGate, context: GateContext) -> Requiremen
         problems=(blocked_reason,) if blocked_reason else (),
         items=(item,),
     )
+
+
+# One resolver per requirement class; bootstrap refuses a program whose need
+# class is not here, so a new kind of need is a class and an entry.
+Resolver: TypeAlias = "Callable[[Any, GateContext], RequirementEvaluation]"
+RESOLVERS: dict[type, Resolver] = {
+    ArtifactNeed: resolve_artifact_need, RecordNeed: resolve_record_need,
+    DependenciesDone: resolve_dependencies_done, ReviewGate: evaluate_review_gate}
 
 
 def is_review_gate_exempt(*, role: str) -> bool:

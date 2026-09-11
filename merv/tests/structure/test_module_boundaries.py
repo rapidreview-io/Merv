@@ -15,7 +15,17 @@ import unittest
 from collections import Counter
 from pathlib import Path
 
+from merv.brain.programs import INSTALLED
 from tests.paths import BACKEND_ROOT
+
+# Which graphs a brain runs is the installed programs' business. Only
+# brain/programs/** may name the module a workflow or record kind is written
+# in; the workflows package root publishes the declarations everyone else
+# reads, and tests may name whatever they exercise.
+GRAPH_DEFINITIONS = frozenset(
+    f"workflows/definitions/{name}.py"
+    for name in ("experiment", "reflection", "research_wave", "task")
+)
 
 # Three layers, one component each side of the line: Research is the science,
 # the support components carry it, ML Infrastructure adapts merv-sandboxes,
@@ -44,6 +54,7 @@ PACKAGE_COMPONENTS = {
     "kernel": KERNEL,
     "research_core": RESEARCH,
     "workflows": RESEARCH,
+    "programs": RESEARCH,
     "literature": RESEARCH,
     "application": RESEARCH,
     "artifacts": ARTIFACTS,
@@ -117,6 +128,8 @@ PACKAGE_LAYERS = {
     "research_core": APPLICATION_LAYER,
     "workflows": APPLICATION_LAYER,
     "workflows/definitions": DOMAIN,
+    # Composition, not behaviour: a program names the parts a brain installs.
+    "programs": APPLICATION_LAYER,
     "literature": APPLICATION_LAYER,
     "artifacts": APPLICATION_LAYER,
     "feed": APPLICATION_LAYER,
@@ -130,7 +143,6 @@ FILE_LAYERS = {
     "__init__.py": FOUNDATION,
     "workflows/graph.py": DOMAIN,
     "workflows/composition.py": DOMAIN,
-    "workflows/registry.py": DOMAIN,
     "kernel/state/dialects.py": ADAPTER,
     "artifacts/r2.py": ADAPTER,
     "surface/web_preview.py": ADAPTER,
@@ -840,6 +852,41 @@ class ModuleBoundaryTest(unittest.TestCase):
             if "tracking_credentials_allowed" in path.read_text(encoding="utf-8")
         ]
         self.assertEqual(offenders, [])
+
+    def test_only_a_program_installs_a_workflow_definition(self) -> None:
+        dotted = _dotted_index()
+        violations = sorted(
+            (rel, target)
+            for path in _backend_files()
+            for rel in (path.relative_to(BACKEND_ROOT).as_posix(),)
+            if not rel.startswith("programs/") and rel != "workflows/__init__.py"
+            for target in _import_targets(path, dotted)
+            if target in GRAPH_DEFINITIONS
+        )
+        self.assertFalse(
+            violations,
+            "a workflow definition is installed by a program, not imported by "
+            "name: " + ", ".join(f"{rel} -> {target}" for rel, target in violations),
+        )
+
+    def test_every_effect_a_definition_emits_is_declared_by_a_program(self) -> None:
+        declared = {name for program in INSTALLED for name in program.effects}
+        emitted = {
+            node.args[0].value
+            for path in (BACKEND_ROOT / "workflows/definitions").glob("*.py")
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Action"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+        }
+        self.assertTrue(emitted)
+        self.assertFalse(
+            emitted - declared,
+            "an edge emits an effect kind no installed program declares: "
+            + ", ".join(sorted(emitted - declared)),
+        )
 
     def test_tool_dispatcher_is_delivery(self) -> None:
         self.assertEqual(_layer("surface/tools/dispatcher.py"), DELIVERY)

@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
 from ..kernel.state.store import BaseStateStore, Connection
 from ..kernel.utils import NotFoundError
-from .graph import Data, Knowledge, Registry, Snapshot, Workflow
+from .graph import Data, Knowledge, Program, Registry, Snapshot
 from .delivery import Deliveries
-from .registry import WORKFLOWS
 from .runtime import CommitRecord, CreateRecord, EmptyKnowledge, KnowledgeFactory, Runtime, snapshot_view
 from .persistence import WORKFLOW_SCHEMA
 
@@ -39,8 +38,8 @@ class CombinedKnowledge:
 
 class Workflows:
     def __init__(
-        self, *, store: BaseStateStore, bindings: Mapping[str, Binding] | None = None,
-        definitions: Mapping[str, Workflow] | None = None,
+        self, *, store: BaseStateStore, programs: Iterable[Program],
+        bindings: Mapping[str, Binding] | None = None,
         knowledge: KnowledgeFactory | None = None,
     ) -> None:
         store.install(WORKFLOW_SCHEMA)
@@ -49,7 +48,7 @@ class Workflows:
         self.deliveries = Deliveries(store=store)
         self._knowledge = knowledge or (lambda snapshot, conn: EmptyKnowledge())
         self.runtime = Runtime(
-            store=store, registry=Registry((WORKFLOWS if definitions is None else definitions).values()),
+            store=store, registry=Registry(workflow for program in programs for workflow in program.workflows),
             knowledge=self._read, commit=self._commit, create=self._create,
         )
 

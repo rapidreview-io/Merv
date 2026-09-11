@@ -1,9 +1,65 @@
 """Plugins run through the released tool dispatcher, including native task children."""
 
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+import tempfile
+import unittest
+
+from merv.brain.application.workflow_actions import WorkflowDeliveries
+from merv.brain.kernel.state.store import StateStore
+from merv.brain.kernel.tools import ProjectScopedInput, ToolContract
 from merv.brain.kernel.utils import WorkflowError
-from merv.brain.workflows import Brief, Child, Edge, Issue, Node, Workflow, join_guard
+from merv.brain.programs import PROGRAM
+from merv.brain.research_core.policy import (
+    RESOLVERS, GateContext, RequirementEvaluation, resolve_requirement,
+)
+from merv.brain.surface.tools.contracts import build_manifest
+from merv.brain.workflows import (
+    Action, Brief, Change, Child, Edge, Issue, Node, Program, Snapshot, Workflow, Workflows, join_guard,
+)
 from tests.research_core.scenarios import ResearchCase
 from tests.research_core.test_tasks import DELIVERABLES, VALID_DELIVERY
+
+
+@dataclass(frozen=True, slots=True)
+class Calibrated:
+    """A requirement class the graph has never heard of, brought by its program."""
+
+    actions: tuple[str, ...] = ("publish",)
+    dispatch: bool = False
+    key: str = "calibrated"
+
+    def check(self, snapshot, knowledge):
+        if snapshot.data.get("reading") is None:
+            return Issue("uncalibrated", "Record a reading before publishing.", "record", ("workflow.transition",))
+        return None
+
+    dispatch_check = check
+
+
+def _notify(snapshot, payload, knowledge):
+    return Change(actions=(Action("calibration.notify", {"instance_id": snapshot.id}),))
+
+
+CALIBRATION = Program(
+    name="calibration", version=1,
+    workflows=(Workflow(
+        name="calibration", version=1, initial="calibrate",
+        nodes=(Node("calibrate", role="technician", requires=(Calibrated(),),
+                    build_context=lambda snapshot, knowledge: Brief("Calibrate the instrument.")),),
+        edges=(Edge("calibrate", "record", "calibrate",
+                    change=lambda snapshot, payload, knowledge: Change(data={"reading": payload.get("reading")})),
+               Edge("calibrate", "publish", "published", change=_notify)),
+        outcomes={"published": "calibrated"},
+    ),),
+    effects=("calibration.notify",),
+    requirements=(Calibrated,),
+    tools={"calibration.status": ToolContract(
+        input_model=ProjectScopedInput, handler_identity="calibration.status",
+        description="Read the instrument's last calibration.")},
+)
 
 
 class WorkflowPluginTest(ResearchCase):
@@ -128,3 +184,52 @@ class WorkflowArtifactPluginTest(ResearchCase):
         current = self.app.workflows.runtime.get(project_id=self.project_id, instance_id=self.instance["id"])
         self.assertEqual(current.revision, 0)
         self.assertFalse(current.data)
+
+
+class ProgramInstallationTest(unittest.TestCase):
+    """A second program installs beside Merv's own, with no registration edit.
+
+    Everything this exercises -- the runtime, the gate, the effect worker and
+    the tool manifest -- is composed exactly the way bootstrap composes the
+    real one: from the tuple of installed programs and nothing else.
+    """
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.store = StateStore(db_path=Path(directory.name) / "state.sqlite")
+        with self.store.transaction() as conn:
+            self.project_id = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()["id"]
+        RESOLVERS[Calibrated] = lambda need, context: RequirementEvaluation(
+            need.key, "valid", "", "", (), ({"id": f"record:{need.key}", "kind": "record"},))
+        self.addCleanup(RESOLVERS.pop, Calibrated)
+        self.programs = (PROGRAM, CALIBRATION)
+        self.workflows = Workflows(store=self.store, programs=self.programs)
+        self.delivered: list[str] = []
+        self.deliveries = WorkflowDeliveries(workflows=self.workflows, handlers={
+            "calibration.notify": lambda delivery: self.delivered.append(str(delivery.data["instance_id"]))})
+
+    def test_an_installed_program_runs_gates_delivers_and_lists_its_tool(self) -> None:
+        started = self.workflows.start(project_id=self.project_id, workflow="calibration", request_id="cal")
+        instance_id = started["id"]
+        blocked = self.workflows.status(project_id=self.project_id, instance_id=instance_id)["blocked_actions"]
+        self.assertEqual([issue["code"] for action in blocked for issue in action["blockers"]], ["uncalibrated"])
+        with self.assertRaisesRegex(WorkflowError, "Record a reading"):
+            self.workflows.transition(project_id=self.project_id, instance_id=instance_id, action="publish",
+                                      expected_revision=0, request_id="early")
+        self.workflows.transition(project_id=self.project_id, instance_id=instance_id, action="record",
+                                  expected_revision=0, request_id="reading", payload={"reading": 7})
+        published = self.workflows.transition(project_id=self.project_id, instance_id=instance_id, action="publish",
+                                              expected_revision=1, request_id="publish")
+        self.assertEqual(published["outcome"], "calibrated")
+        self.assertEqual(self.deliveries.run_once(project_id=self.project_id), {"delivered": 1, "failed": 0})
+        self.assertEqual(self.delivered, [instance_id])
+        self.assertIn("calibration.status", build_manifest(self.programs))
+        self.assertNotIn("calibration.status", build_manifest((PROGRAM,)))
+
+    def test_its_own_requirement_class_resolves_into_the_shared_checklist(self) -> None:
+        need = CALIBRATION.workflows[0].node("calibrate").requires[0]
+        context = GateContext(conn=None, project_id=self.project_id, record={}, issues=(),
+                              snapshot=Snapshot(id="cal_1", project_id=self.project_id, workflow="calibration",
+                                                version=1, state="calibrate", revision=0))
+        self.assertEqual(resolve_requirement(need, context).items[0]["id"], "record:calibrated")

@@ -36,7 +36,7 @@ from .policy import (
 from ..kernel.state.store import BaseStateStore, next_created_seq, row_to_dict
 from .records import Records
 from .reflections import ReflectionService
-from ..workflows import KINDS, Reference, Snapshot
+from ..workflows import Reference, Snapshot
 
 
 class ReviewService:
@@ -356,7 +356,7 @@ class ReviewService:
                     "target changed after this review started; the verdict no "
                     "longer applies — request a fresh review"
                 )
-            kind = KINDS.get(str(req["target_type"]))
+            kind = self.records.kinds.get(str(req["target_type"]))
             current = self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
             route = None
             if kind is not None and current.version == 1:
@@ -749,7 +749,7 @@ class ReviewService:
         target_id: str,
         project_id: str | None = None,
     ):
-        kind = KINDS.get(target_type)
+        kind = self.records.kinds.get(target_type)
         if kind is not None:
             return self.records.get_state_with_gate(kind, record_id=target_id, project_id=project_id, conn=conn)
         snapshot = self.runtime.get(conn=conn, project_id=project_id, instance_id=target_id)

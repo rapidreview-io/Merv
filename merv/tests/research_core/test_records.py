@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from merv.brain.kernel.utils import NotFoundError, ValidationError, WorkflowError
-from merv.brain.workflows import ArtifactNeed, KINDS, RecordKind, Reference, ReviewGate
+from merv.brain.research_core import EXPERIMENT, REFLECTION, TASK
+from merv.brain.workflows import ArtifactNeed, RecordKind, Reference, ReviewGate
 
 from .scenarios import VALID_PLAN, ResearchCase
 
@@ -69,11 +70,11 @@ def _submit(role: str, path: str, body: str):
 
 
 CASES = (
-    Case(KINDS["experiment"], _create_experiment, "name", ("plan", "plan.md", VALID_PLAN), "abandon",
+    Case(EXPERIMENT, _create_experiment, "name", ("plan", "plan.md", VALID_PLAN), "abandon",
          _submit("plan", "plan.md", VALID_PLAN), "submit_design", "design_review"),
-    Case(KINDS["task"], _create_task, "name", None, "mark_failed",
+    Case(TASK, _create_task, "name", None, "mark_failed",
          _submit("delivery", "tasks/delivery.md", DELIVERY), "submit_delivery", "in_review"),
-    Case(KINDS["reflection"], _create_reflection, "title", None, "abandon",
+    Case(REFLECTION, _create_reflection, "title", None, "abandon",
          lambda case, record_id: case.submit_lenses(record_id), "submit_reflections", "synthesizing"),
 )
 
@@ -192,7 +193,7 @@ class RecordEngineTest(ResearchCase):
     def test_a_declared_status_projection_is_applied_before_the_guard(self) -> None:
         # A reflection under code review has no row status of its own; every
         # reader still sees the wave as `consolidating`.
-        kind = KINDS["reflection"]
+        kind = REFLECTION
         self.assertEqual(kind.status_of("consolidation_review"), "consolidating")
         self.assertEqual(kind.status_of("synthesizing"), "synthesizing")
         self.assertNotIn("consolidation_review", kind.terminal_statuses)
@@ -210,7 +211,7 @@ class RecordEngineTest(ResearchCase):
     def test_create_in_transaction_shares_the_callers_connection(self) -> None:
         # The reflection wave materializes every node on one transaction; a
         # failure after a create must leave no row behind.
-        kind = KINDS["experiment"]
+        kind = EXPERIMENT
         with self.assertRaises(RuntimeError):
             with self.app.store.transaction() as conn:
                 self.app.experiments._create(conn=conn, project_id=self.project_id, name="rolled-back",

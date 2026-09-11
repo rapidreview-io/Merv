@@ -4,5 +4,6 @@
 
 from .application import Application, present_session
 from .queries import LogicGraphQuery
+from .workflow_actions import research_effects
 
-__all__ = ["Application", "LogicGraphQuery", "present_session"]
+__all__ = ["Application", "LogicGraphQuery", "present_session", "research_effects"]

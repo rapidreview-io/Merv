@@ -35,7 +35,7 @@ from .records import Records
 from .reviews import ReviewService
 from .tasks import TaskService
 from ..agent_sessions import WorkspaceAdvances
-from ..workflows import Binding, KINDS, Public, Workflows
+from ..workflows import Binding, Program, Public, RecordKind, Workflows
 from .artifacts import ResearchArtifacts as Artifacts
 from ..kernel.state.store import (
     BaseStateStore,
@@ -106,7 +106,8 @@ class Research:
         "workflows",
     )
 
-    def __init__(self, *, store: BaseStateStore, artifacts: Artifacts, workflows: Workflows, advances: WorkspaceAdvances) -> None:
+    def __init__(self, *, store: BaseStateStore, artifacts: Artifacts, workflows: Workflows,
+                 advances: WorkspaceAdvances, program: Program) -> None:
         self.store = store
         self.artifacts = artifacts
         self.workflows = workflows
@@ -128,22 +129,21 @@ class Research:
             reflections=self.reflections,
             artifacts=artifacts,
         )
-        # Every native record binds through the one engine; the lens and the
-        # published wave have no row of their own and stay hand-written.
-        for name, service in (("experiment", self.experiments), ("task", self.tasks),
-                              ("reflection", self.reflections)):
-            kind = KINDS[name]
-            self.workflows.bind(name, Binding(
-                partial(self.records.knowledge, kind),
-                partial(self.records.commit_change, kind),
-                service.initialize_workflow,
-            ))
-        self.workflows.bind("reflection_lens", Binding(self.reflections._lens_knowledge,
-                                                      self.reflections._commit_lens_change,
-                                                      self.reflections.initialize_lens))
-        self.workflows.bind("research_wave", Binding(self.reflections._wave_knowledge,
-                                                    self.reflections._commit_wave_change,
-                                                    self.reflections.initialize_wave))
+        # Every native record binds through the one engine; a graph with no row
+        # of its own is bound by the service that owns it.
+        for kind in program.kinds:
+            hooks = self.records.hooks[kind.name]
+            self.workflows.bind(kind.name, Binding(partial(self.records.knowledge, kind),
+                                                  partial(self.records.commit_change, kind),
+                                                  hooks.initialize_workflow))
+        for hooks in self.records.hooks.values():
+            for name, binding in hooks.bindings().items():
+                self.workflows.bind(name, binding)
+
+    @property
+    def kinds(self) -> dict[str, RecordKind]:
+        """The native record kinds this brain installed, by name."""
+        return self.records.kinds
 
     def initialize_workflows(self) -> None:
         """Explicit bootstrap of version-pinned legacy compositions after binding."""

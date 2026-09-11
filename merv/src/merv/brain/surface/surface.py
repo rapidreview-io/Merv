@@ -19,7 +19,8 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from ..application import Application, LogicGraphQuery
+from ..application import Application, LogicGraphQuery, research_effects
+from ..programs import INSTALLED, PROGRAM
 from ..application.maintenance import CleanupService
 from .workflow_knowledge import WorkflowKnowledge
 from ..agent_sessions import WorkspaceAdvances, AgentSessions
@@ -29,6 +30,7 @@ from ..literature import Literature
 from ..research_core import (
     ACTIVITY_VOCABULARY,
     ENTITY_REF_VOCABULARY,
+    RESOLVERS,
     FEED_ADOPTABLE_ROLES,
     FEED_AUTHOR_ROLES,
     Research,
@@ -124,10 +126,11 @@ class Surface:
 
         self.artifact_store = Artifacts(store=store, blobs=blobs)
         self.artifacts = ResearchArtifacts(store=store, artifacts=self.artifact_store)
-        self.workflows = Workflows(store=store, knowledge=lambda snapshot, conn: WorkflowKnowledge(
+        self.workflows = Workflows(store=store, programs=INSTALLED, knowledge=lambda snapshot, conn: WorkflowKnowledge(
             snapshot=snapshot, conn=conn, artifacts=self.artifact_store, project=self.research.get_project,
             review=self.research.reviews.read_fact))
-        self.research = Research(store=store, advances=WorkspaceAdvances(store=store), artifacts=self.artifacts, workflows=self.workflows)
+        self.research = Research(store=store, advances=WorkspaceAdvances(store=store), artifacts=self.artifacts,
+                                 workflows=self.workflows, program=PROGRAM)
         self.research.initialize_workflows()
         self.feed = FeedService(
             store=store,
@@ -169,7 +172,16 @@ class Surface:
             max_upload_bytes=storage_max_upload_bytes,
         )
         self.storage = objects if objects.enabled else None
+        # Installing a program means serving every effect it emits and resolving
+        # every requirement class it declares; a half-installed one starts nothing.
+        effects = research_effects(research=self.research, sessions=self.agent_sessions)
+        for program in INSTALLED:
+            missing = ([name for name in program.effects if name not in effects]
+                       + [need.__name__ for need in program.requirements if need not in RESOLVERS])
+            if missing:
+                raise ValidationError(f"program {program.name!r} is not installable: {missing}")
         self.application = Application(
+            effects=effects,
             research=self.research,
             sandboxes=self.sandboxes,
             objects=objects,

@@ -25,6 +25,7 @@ a control plane actually serves them.
 
 from __future__ import annotations
 
+from merv.brain.programs import INSTALLED, PROGRAM
 from merv.brain.workflows import Workflows
 from merv.brain.agent_sessions import WorkspaceAdvances
 
@@ -326,7 +327,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         artifacts = ResearchArtifacts(
             store=self.store, artifacts=Artifacts(store=self.store, blobs=FakeBlobStore())
         )
-        research = Research(store=self.store, advances=WorkspaceAdvances(store=self.store), artifacts=artifacts, workflows=Workflows(store=self.store))
+        research = Research(store=self.store, advances=WorkspaceAdvances(store=self.store), artifacts=artifacts, workflows=Workflows(store=self.store, programs=INSTALLED), program=PROGRAM)
         experiments = research.experiments
         created = experiments.create(
             project_id=project_id, name="rollback-event", intent="postgres"

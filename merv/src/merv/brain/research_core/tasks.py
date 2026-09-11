@@ -7,7 +7,7 @@ from contextlib import closing
 import json
 from typing import Any
 
-from ..workflows import KINDS, TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE, Snapshot
+from ..workflows import TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE, Snapshot
 from ..workflows import (
     ArtifactDocument,
     brief_checks,
@@ -18,14 +18,13 @@ from ..workflows import (
     require_artifact_document,
     task_deliverables,
 )
-from .policy import validate_task_name
+from .policy import TASK, validate_task_name
 from .artifact_models import ArtifactTarget
 from .records import RecordHooks, Records
 from ..kernel.state.store import BaseStateStore, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
 from .models import CommittedTaskUpdate
 
-TASK = KINDS["task"]
 
 
 class TaskService(RecordHooks):

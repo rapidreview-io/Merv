@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any, Iterable, Protocol, cast
 
 from ...research_core import (
+    EXPERIMENT,
     SYNOPSIS_MAX_LEN,
     ExperimentState,
     ProducedObject,
@@ -13,10 +14,9 @@ from ...research_core import (
     project_rows,
     public_record,
 )
-from ...workflows import KINDS, Public
+from ...workflows import Public
 from .claim_guidance import claim_update_suggestions
 
-EXPERIMENT = KINDS["experiment"]
 # What an agent reading an experiment does not need: the project it named to
 # ask, the whole artifact history, and the sealed submission rounds.
 AGENT = Public(hidden=("project_id", "artifacts", "submissions", "dependents"),

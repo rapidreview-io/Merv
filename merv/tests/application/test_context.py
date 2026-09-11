@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from merv.brain.programs import INSTALLED, PROGRAM
 from merv.brain.workflows import Workflows
 from merv.brain.agent_sessions import WorkspaceAdvances
 
@@ -284,7 +285,7 @@ class ProjectContextFactsTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.store = StateStore(db_path=Path(self.tmp.name) / "state.sqlite")
-        self.research = Research(store=self.store, advances=WorkspaceAdvances(store=self.store), artifacts=Mock(), workflows=Workflows(store=self.store))
+        self.research = Research(store=self.store, advances=WorkspaceAdvances(store=self.store), artifacts=Mock(), workflows=Workflows(store=self.store, programs=INSTALLED), program=PROGRAM)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
