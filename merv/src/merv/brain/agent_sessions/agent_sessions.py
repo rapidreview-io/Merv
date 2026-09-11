@@ -44,6 +44,9 @@ ACTIVE_LEASE_SECONDS = 4 * 60 * 60
 DEFAULT_HARD_DEADLINE_SECONDS = 24 * 60 * 60
 MAX_HARD_DEADLINE_SECONDS = 7 * 24 * 60 * 60
 FAILURE_BACKOFF_SECONDS = 5 * 60
+# How long a closed lease is kept. Long enough to explain a machine's recent
+# week to whoever asks, short enough that a busy project's history is bounded.
+CLOSED_LEASE_RETENTION_DAYS = 30
 # Runners from this build understand the one-shot ``probe`` (test call).
 PROBE_MIN_RUNNER_VERSION = "2026.08.16"
 FAILURE_REASONS = (
@@ -799,6 +802,27 @@ class AgentSessions:
             return self._close_invalid_targets(
                 tx=tx, now=current, project_id=project_id
             ) + self._expire_due(tx=tx, now=current)
+
+    def prune(self, *, now: datetime | None = None) -> int:
+        """Delete leases closed longer ago than the horizon, with their traces.
+
+        A closed lease renews nothing and offers nothing: its runner is gone,
+        its packet was frozen where it was used, and what the work produced
+        lives in the records it wrote. The excerpt goes first because it names
+        the row it belongs to.
+        """
+        cutoff = format_iso(
+            (now or datetime.now(UTC)) - timedelta(days=CLOSED_LEASE_RETENTION_DAYS)
+        )
+        closed = "status NOT IN ('offered', 'active') AND closed_at < ?"
+        with self.store.transaction() as tx:
+            tx.execute(
+                "DELETE FROM agent_session_traces WHERE session_id IN "
+                f"(SELECT id FROM agent_sessions WHERE {closed})",
+                (cutoff,),
+            )
+            cursor = tx.execute(f"DELETE FROM agent_sessions WHERE {closed}", (cutoff,))
+            return max(0, int(getattr(cursor, "rowcount", 0) or 0))
 
     def halt(self, *, project_id: str, reason: str = "dispatch_halted") -> int:
         """Close every live session in a project so runners stop their children.

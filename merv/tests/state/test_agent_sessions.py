@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from merv.brain.agent_sessions import AgentSessions
@@ -495,6 +496,43 @@ class AgentSessionsTest(unittest.TestCase):
                 other_platform = self.claim(runner=f"other-{index}", key=f"other-{index}", candidates=[bad], platform="claude")
                 self.assertEqual(other_platform["workflow_instance_id"], bad["instance_id"])
                 self.sessions.release(session_id=other_platform["id"], runner_id=f"other-{index}")
+
+    def test_old_closed_leases_and_their_traces_are_swept(self) -> None:
+        """A live lease and a recently closed one are not history yet."""
+        old = self.claim()
+        self.sessions.record_trace(
+            session_id=old["id"], runner_id="runner", events=[{"i": 1}], stderr_tail=""
+        )
+        self.sessions.release(session_id=old["id"], runner_id="runner")
+        self.facts.rows["wf_2"] = Fact("wf_2", 0)
+        self.packets[("wf_2", 0)] = self.packet("wf_2", 0)
+        recent = self.claim(runner="runner-2", key="second",
+                            candidates=[{"instance_id": "wf_2", "revision": 0}])
+        self.facts.rows["wf_3"] = Fact("wf_3", 0)
+        self.packets[("wf_3", 0)] = self.packet("wf_3", 0)
+        live = self.claim(runner="runner-3", key="third",
+                          candidates=[{"instance_id": "wf_3", "revision": 0}])
+        self.sessions.release(session_id=recent["id"], runner_id="runner-2")
+
+        month = datetime.now(UTC) + timedelta(days=31)
+        with self.store.transaction() as tx:
+            tx.execute(
+                "UPDATE agent_sessions SET closed_at = ? WHERE id = ?",
+                ("2000-01-01T00:00:00Z", old["id"]),
+            )
+        self.assertEqual(self.sessions.prune(now=datetime.now(UTC)), 1)
+        self.assertIsNone(self.sessions.trace(project_id="proj_1", session_id=old["id"]))
+        self.assertEqual(
+            {item["id"] for item in self.sessions.list(project_id="proj_1")["sessions"]},
+            {recent["id"], live["id"]},
+        )
+
+        # A month on, the released lease is history too and the live one stands.
+        self.assertEqual(self.sessions.prune(now=month), 1)
+        self.assertEqual(
+            [item["id"] for item in self.sessions.list(project_id="proj_1")["sessions"]],
+            [live["id"]],
+        )
 
     def test_normal_agent_exit_can_resume_the_same_instance_immediately(self) -> None:
         first = self.claim()

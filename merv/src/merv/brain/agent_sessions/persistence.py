@@ -176,7 +176,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_runner_retry
 -- expiry sweep, and the per-principal rate windows.
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_project
   ON agent_sessions(project_id, created_at);
--- The sweeps read only live leases, and the table is never pruned.
+-- The lease sweeps read only live rows; retention reads only closed ones.
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_live
   ON agent_sessions(status, lease_expires_at);
 CREATE INDEX IF NOT EXISTS idx_agent_session_traces_project
