@@ -2,7 +2,6 @@ import { Navigate, useSearchParams } from 'react-router-dom';
 import { projectPath, useProjectStore } from '../store/useProjectStore';
 import { isAuthEnabled } from '../auth';
 import { ConnectAgentSettings } from '../components/ConnectAgentPanel';
-import HuggingFaceToken from '../components/HuggingFaceToken';
 import McpKeys from '../components/McpKeys';
 import ProjectPeople from '../components/ProjectPeople';
 import ProviderConfig from '../components/ProviderConfig';
@@ -15,7 +14,6 @@ const TABS = [
   { id: 'people', label: 'People', scope: 'This project', needsDirectory: true },
   { id: 'keys', label: 'MCP keys', scope: 'This project' },
   { id: 'compute', label: 'Compute', scope: 'This project' },
-  { id: 'huggingface', label: 'Hugging Face', scope: 'Your account' },
 ];
 
 /**
@@ -84,7 +82,6 @@ export default function Settings() {
         {active === 'people' && <ProjectPeople projectId={projectId} />}
         {active === 'keys' && <McpKeys projectId={projectId} hosted={hosted} />}
         {active === 'compute' && <ProviderConfig projectId={projectId} />}
-        {active === 'huggingface' && <HuggingFaceToken hosted={hosted} />}
       </div>
     </div>
   );

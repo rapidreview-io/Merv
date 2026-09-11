@@ -31,7 +31,6 @@ from . import (
     sandboxes,
     storage,
     tasks,
-    user_settings,
 )
 from .gateway import (
     ProjectAuthorizer,
@@ -181,7 +180,6 @@ def create_fastapi_app(
         reviews.build_router(gateway, research=api.research),
         *sandbox_routers,
         events.build_router(research=api.research),
-        user_settings.build_router(user_settings=api.user_settings),
     )
     for router in routers:
         http.include_router(router)

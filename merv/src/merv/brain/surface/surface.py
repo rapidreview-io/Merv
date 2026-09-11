@@ -77,7 +77,6 @@ from .tools.contracts import TOOL_MANIFEST, available_tool_names
 from .tools.dispatcher import ToolDispatcher
 from .transport.api import create_fastapi_app
 from .transport.http_policy import HttpSurfacePolicy
-from .user_settings import UserHfTokenSettings
 from .web_preview import AllowlistedPaperPreview, NetworkWebPreview
 
 
@@ -193,7 +192,6 @@ class Surface:
         # The runner's central-advance routes call this Protocol; Application
         # keeps the research meaning of an advance behind these method names.
         self.agent_advances = self.application
-        self.user_settings = UserHfTokenSettings(store=store)
 
         tool_names = available_tool_names(
             storage_enabled=objects.enabled,

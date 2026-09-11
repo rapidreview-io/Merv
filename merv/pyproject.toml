@@ -25,7 +25,7 @@ dependencies = [
 # Compute and large-object transfers belong to merv-sandboxes; Merv uses R2
 # directly for its own artifacts, figures, feed bytes, and diagnostic payloads.
 local = []
-control = ["psycopg[binary]>=3.1,<4"]
+control = ["psycopg[binary]>=3.1,<4", "psycopg-pool>=3.1,<4"]
 [project.scripts]
 merv-http = "merv.brain.surface.transport.http_server:main"
 merv-control = "merv.brain.surface.transport.http_server:control_main"

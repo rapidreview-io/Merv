@@ -55,9 +55,9 @@ class CountingStore:
         self.connects = 0
         self.handles: list = []
 
-    def connect(self):
+    def dial(self):
         self.connects += 1
-        conn = self._store.connect()
+        conn = self._store.dial()
         self.handles.append(conn)
         return conn
 
@@ -98,7 +98,7 @@ class StubPostgresStore:
         self.connections: list[StubPostgresConnection] = []
         self._fail_write = fail_write
 
-    def connect(self) -> StubPostgresConnection:
+    def dial(self) -> StubPostgresConnection:
         conn = StubPostgresConnection(fail_write=self._fail_write)
         self.connections.append(conn)
         return conn
@@ -360,7 +360,7 @@ class ToolCallLedgerTest(unittest.TestCase):
             def __init__(self) -> None:
                 self.connections: list[DeadlinelessConnection] = []
 
-            def connect(self) -> DeadlinelessConnection:
+            def dial(self) -> DeadlinelessConnection:
                 conn = DeadlinelessConnection()
                 self.connections.append(conn)
                 return conn
@@ -401,7 +401,7 @@ class ToolCallLedgerTest(unittest.TestCase):
         release = threading.Event()
 
         class WedgedStore:
-            def connect(self):
+            def dial(self):
                 wedged.set()
                 release.wait(timeout=5)
                 raise sqlite3.OperationalError("database is locked")
@@ -435,7 +435,7 @@ class ToolCallLedgerTest(unittest.TestCase):
         dropped: list[str] = []
 
         class BrokenStore:
-            def connect(self):
+            def dial(self):
                 raise sqlite3.OperationalError("database is locked")
 
         ledger = ToolCallLedger(
@@ -467,7 +467,7 @@ class ToolCallLedgerTest(unittest.TestCase):
 
     def test_a_failed_prune_reports_not_ok_rather_than_zero(self) -> None:
         class BrokenStore:
-            def connect(self):
+            def dial(self):
                 raise sqlite3.OperationalError("no such table: tool_calls")
 
         outcome = ToolCallLedger(store=BrokenStore(), env={}).prune()

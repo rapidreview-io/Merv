@@ -165,9 +165,6 @@ FILE_LAYERS = {
     # trace reads): the analog of project_keys.py — surface-owned rows, one
     # writer, injected into the gateway and the operator router.
     "surface/agent_identity.py": APPLICATION_LAYER,
-    # Write-only per-user HF-token facade over the KERNEL-owned user_hf_tokens
-    # store methods (no-dataplane Phase C); the analog of project_keys.py.
-    "surface/user_settings.py": APPLICATION_LAYER,
 }
 
 ALLOWED_LAYER_EDGES = (
@@ -268,7 +265,6 @@ TABLE_OWNERS = {
     "oauth_clients": SURFACE,
     "oauth_authorization_codes": SURFACE,
     "oauth_refresh_tokens": SURFACE,
-    "user_hf_tokens": SURFACE,
     "agent_identities": SURFACE,
     "mcp_sessions": SURFACE,
     # Feed.
@@ -291,7 +287,6 @@ SCHEMA_MODULES = {
     SURFACE: (
         "surface/project_keys.py",
         "surface/oauth_store.py",
-        "surface/user_settings.py",
         "surface/agent_identity.py",
     ),
 }

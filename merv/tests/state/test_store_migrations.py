@@ -9,12 +9,12 @@ baseline (production, at head 64 when the squash landed) applies only that.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
 
 from merv.brain.kernel.state.schema import BASELINE_VERSION, has_column, has_table
-from merv.brain.surface.user_settings import UserHfTokenSettings
 from tests.support.schema import LADDER, booted_store
 
 # What migration 65 drops: the fleet the brain used to mirror locally.
@@ -154,42 +154,24 @@ class BaselineLadderTest(unittest.TestCase):
             conn.close()
 
 
-class UserHfTokenStoreTest(unittest.TestCase):
-    """no-dataplane Phase C: write-only per-user Hugging Face token store."""
+class DroppedUserHfTokensTest(unittest.TestCase):
+    """Migration 80: a database that still carries the write-only token table
+    loses it, so the one plaintext credential the brain stored is gone."""
 
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.db = Path(self.tmp.name) / ".research_plugin" / "state.sqlite"
-        self.db.parent.mkdir(parents=True, exist_ok=True)
-        self.store = booted_store(db_path=self.db)
-
-    def tearDown(self) -> None:
-        self.tmp.cleanup()
-
-    def test_set_resolve_upsert_and_clear(self) -> None:
-        settings = UserHfTokenSettings(store=self.store)
-        self.assertEqual(settings.resolve(user_id="u1"), "")
-        settings.set_token(user_id="u1", token="hf_first")
-        self.assertEqual(settings.resolve(user_id="u1"), "hf_first")
-        # Upsert (one row per user) — the second set replaces, not appends.
-        settings.set_token(user_id="u1", token="hf_second")
-        self.assertEqual(settings.resolve(user_id="u1"), "hf_second")
-        conn = self.store.connect()
-        try:
-            count = conn.execute(
-                "SELECT COUNT(*) AS n FROM user_hf_tokens WHERE user_id = ?", ("u1",)
-            ).fetchone()
-            self.assertEqual(int(count["n"]), 1)
-        finally:
-            conn.close()
-        settings.clear_token(user_id="u1")
-        self.assertEqual(settings.resolve(user_id="u1"), "")
-
-    def test_resolve_is_scoped_per_user_and_empty_for_unknown(self) -> None:
-        settings = UserHfTokenSettings(store=self.store)
-        settings.set_token(user_id="a", token="hf_a")
-        self.assertEqual(settings.resolve(user_id="b"), "")
-        self.assertEqual(settings.resolve(user_id=""), "")
+    def test_the_table_is_dropped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.sqlite"
+            with closing(sqlite3.connect(db)) as conn:
+                conn.execute("CREATE TABLE user_hf_tokens (user_id TEXT PRIMARY KEY, token TEXT)")
+                conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT, applied_at TEXT)")
+                conn.execute("INSERT INTO schema_migrations VALUES (71, 'x', 'now')")
+                conn.commit()
+            store = booted_store(db_path=db)
+            conn = store.connect()
+            try:
+                self.assertFalse(has_table(conn, "user_hf_tokens"))
+            finally:
+                conn.close()
 
 
 if __name__ == "__main__":
