@@ -751,7 +751,6 @@ class ServiceLayoutTest(unittest.TestCase):
         self.assertEqual(
             _import_module_names(SURFACE_ROOT / "transport" / "mcp_http.py"),
             {
-                "collections.abc",
                 "json",
                 "typing",
                 "fastapi",

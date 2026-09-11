@@ -14,6 +14,7 @@ from ..workflows import Workflows
 import logging
 from collections.abc import Mapping
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -263,26 +264,14 @@ LOCAL_BRAIN_STATE_DIR_ENV_VAR = "MERV_LOCAL_STATE_DIR"
 LOGGER = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
 class ControlPlaneServer:
-    """A running brain app plus its FastAPI surface.
+    """A running brain app plus the FastAPI app uvicorn serves; ``cleanup`` is
+    the operator-triggered research sweep behind ``/api/admin/cleanup``."""
 
-    Holds the record/policy app, cleanup service, and FastAPI app that serves
-    ``/mcp/*`` and ``/api/*``. Both deployment presets use it. ``fastapi_app``
-    is what uvicorn serves.
-    """
-
-    def __init__(
-        self,
-        *,
-        app: Surface,
-        cleanup: CleanupService,
-        fastapi_app: FastAPI,
-    ) -> None:
-        self.app = app
-        # Research metadata cleanup is operator-triggered. The infrastructure
-        # service independently schedules sandbox and physical object cleanup.
-        self.cleanup = cleanup
-        self.fastapi_app = fastapi_app
+    app: Surface
+    cleanup: CleanupService
+    fastapi_app: FastAPI
 
     def shutdown(self) -> None:
         self.app.shutdown()
@@ -393,7 +382,7 @@ def build_control_server(
         if auth is not None and oauth_resource_uri
         else None
     )
-    fastapi_app = create_fastapi_app(
+    return ControlPlaneServer(app, cleanup, create_fastapi_app(
         app=app,
         allowed_origins=origins,
         cleanup=cleanup,
@@ -405,12 +394,7 @@ def build_control_server(
         oauth_resource_uri=oauth_resource_uri,
         env=env,
         runner_pairings=runner_pairings,
-    )
-    return ControlPlaneServer(
-        app=app,
-        cleanup=cleanup,
-        fastapi_app=fastapi_app,
-    )
+    ))
 
 
 def build_local_server(
@@ -438,17 +422,12 @@ def build_local_server(
         tool_call_ledger=app.tool_ledger,
         agent_sessions=app.agent_sessions,
     )
-    fastapi_app = create_fastapi_app(
+    return ControlPlaneServer(app, cleanup, create_fastapi_app(
         app=app,
         allowed_origins=allowed_origins or [],
         cleanup=cleanup,
-        surface_policy=_local_http_surface(),
-    )
-    return ControlPlaneServer(
-        app=app,
-        cleanup=cleanup,
-        fastapi_app=fastapi_app,
-    )
+        surface_policy=HttpSurfacePolicy(restrict_cors=False, hosted_control=False),
+    ))
 
 
 def _control_repo_root(
@@ -491,11 +470,4 @@ def _control_http_surface(*, env: Mapping[str, str] | None = None) -> HttpSurfac
     return HttpSurfacePolicy(
         restrict_cors=env_bool(CONTROL_RESTRICT_CORS_ENV_VAR, True, env=env),
         hosted_control=True,
-    )
-
-
-def _local_http_surface() -> HttpSurfacePolicy:
-    return HttpSurfacePolicy(
-        restrict_cors=False,
-        hosted_control=False,
     )

@@ -315,6 +315,11 @@ class McpStreamableHttp:
         )
         return _json_response(_error(request_id, code, message, data), status_code=status_code)
 
+    def _invalid_request(self) -> JSONResponse:
+        return self._protocol_error(
+            request_id=None, code=-32600, message="Invalid Request", status_code=400
+        )
+
     def _ledger_reject(self, *, tool: str, error_code: str, message: str) -> None:
         """Durable refusal row. The ledger's writer owns the database thread,
         so this is a queue put and never blocks the event loop."""
@@ -356,26 +361,17 @@ class McpStreamableHttp:
                     request_id=None, code=-32700, message="Parse error", status_code=400
                 )
             if not isinstance(payload, dict):
-                return self._protocol_error(
-                    request_id=None,
-                    code=-32600,
-                    message="Invalid Request",
-                    status_code=400,
-                )
+                return self._invalid_request()
             return await self._handle(request=request, payload=payload)
 
     async def _handle(self, *, request: Request, payload: JsonObject) -> Response:
         if payload.get("jsonrpc") != "2.0":
-            return self._protocol_error(
-                request_id=None, code=-32600, message="Invalid Request", status_code=400
-            )
+            return self._invalid_request()
 
         has_id = "id" in payload
         request_id = _request_id(payload)
         if has_id and request_id is None:
-            return self._protocol_error(
-                request_id=None, code=-32600, message="Invalid Request", status_code=400
-            )
+            return self._invalid_request()
 
         method = payload.get("method")
         # A JSON-RPC response echoed back (no method, carries result/error) is
@@ -384,9 +380,7 @@ class McpStreamableHttp:
         if method is None and has_id and ("result" in payload or "error" in payload):
             return Response(status_code=202)
         if not isinstance(method, str) or not method:
-            return self._protocol_error(
-                request_id=None, code=-32600, message="Invalid Request", status_code=400
-            )
+            return self._invalid_request()
         params = payload.get("params", {})
         if not isinstance(params, dict):
             response_id = request_id if has_id else None
@@ -550,11 +544,7 @@ class McpStreamableHttp:
 
         task = asyncio.create_task(run_in_threadpool(execute))
         done, _pending = await asyncio.wait((task,), timeout=_FAST_CALL_SECONDS)
-        if done:
-            payload = await self._completed_call(task, request_id)
-            return _json_response(payload, status_code=_error_status(task.exception()))
-
-        if "text/event-stream" not in request.headers.get("accept", "").lower():
+        if done or "text/event-stream" not in request.headers.get("accept", "").lower():
             payload = await self._completed_call(task, request_id)
             return _json_response(payload, status_code=_error_status(task.exception()))
         return StreamingResponse(

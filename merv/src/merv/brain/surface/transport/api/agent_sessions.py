@@ -34,6 +34,17 @@ class AgentAdvances(Protocol):
     ) -> dict[str, Any]: ...
 
 
+def _dict(payload: dict[str, Any], key: str, default: Any = None) -> Any:
+    """The body's object under ``key``, or ``default`` when it is not one."""
+    value = payload.get(key)
+    return value if isinstance(value, dict) else default
+
+
+def _list(payload: dict[str, Any], key: str) -> list[Any]:
+    value = payload.get(key)
+    return value if isinstance(value, list) else []
+
+
 def build_router(
     gateway: ToolInvocationGateway, *, application: Application,
     sessions: AgentSessions, advances: AgentAdvances,
@@ -103,21 +114,9 @@ def build_router(
             workspace_ref=str(payload.get("workspace_ref") or ""),
             base_sha=str(payload.get("base_sha") or ""),
             head_sha=str(payload.get("head_sha") or ""),
-            workspace_stats=(
-                payload.get("workspace_stats")
-                if isinstance(payload.get("workspace_stats"), dict)
-                else {}
-            ),
-            agent_setup=(
-                payload.get("agent_setup")
-                if isinstance(payload.get("agent_setup"), dict)
-                else None
-            ),
-            telemetry=(
-                payload.get("telemetry")
-                if isinstance(payload.get("telemetry"), dict)
-                else None
-            ),
+            workspace_stats=_dict(payload, "workspace_stats", {}),
+            agent_setup=_dict(payload, "agent_setup"),
+            telemetry=_dict(payload, "telemetry"),
         ))}
 
     @router.post("/api/agent-sessions/{session_id}/release")
@@ -131,16 +130,8 @@ def build_router(
             runner_id=owner(request, payload),
             reason=str(payload.get("reason") or "runner_released"),
             head_sha=str(payload.get("head_sha") or ""),
-            workspace_stats=(
-                payload.get("workspace_stats")
-                if isinstance(payload.get("workspace_stats"), dict)
-                else {}
-            ),
-            telemetry=(
-                payload.get("telemetry")
-                if isinstance(payload.get("telemetry"), dict)
-                else None
-            ),
+            workspace_stats=_dict(payload, "workspace_stats", {}),
+            telemetry=_dict(payload, "telemetry"),
         ))}
 
     @router.post("/api/agent-sessions/{session_id}/heartbeat")
@@ -153,16 +144,8 @@ def build_router(
             session_id=session_id,
             runner_id=owner(request, payload),
             head_sha=str(payload.get("head_sha") or ""),
-            workspace_stats=(
-                payload.get("workspace_stats")
-                if isinstance(payload.get("workspace_stats"), dict)
-                else {}
-            ),
-            telemetry=(
-                payload.get("telemetry")
-                if isinstance(payload.get("telemetry"), dict)
-                else None
-            ),
+            workspace_stats=_dict(payload, "workspace_stats", {}),
+            telemetry=_dict(payload, "telemetry"),
         ))}
 
     @router.post("/api/projects/{project_id}/workspace-advances/prepare")
@@ -196,24 +179,9 @@ def build_router(
                 advance_id=str(payload.get("advance_id") or ""),
                 runner_id=owner(request, payload),
                 observed_sha=str(payload.get("observed_sha") or ""),
-                proposal_parents=(
-                    [str(value) for value in payload.get("proposal_parents", [])]
-                    if isinstance(payload.get("proposal_parents"), list)
-                    else []
-                ),
-                diffstat=(
-                    payload.get("diffstat")
-                    if isinstance(payload.get("diffstat"), dict)
-                    else {}
-                ),
-                ancestry=(
-                    {
-                        str(key): value
-                        for key, value in payload.get("ancestry", {}).items()
-                    }
-                    if isinstance(payload.get("ancestry"), dict)
-                    else {}
-                ),
+                proposal_parents=[str(value) for value in _list(payload, "proposal_parents")],
+                diffstat=_dict(payload, "diffstat", {}),
+                ancestry={str(key): value for key, value in _dict(payload, "ancestry", {}).items()},
                 error=str(payload.get("error") or ""),
             )
         }
@@ -249,22 +217,10 @@ def build_router(
         response = sessions.heartbeat_runner(
             project_id=project_id,
             runner_id=owner(request, payload),
-            machine=(
-                payload.get("machine")
-                if isinstance(payload.get("machine"), dict)
-                else {}
-            ),
-            platforms=(
-                [item for item in payload.get("platforms", []) if isinstance(item, dict)]
-                if isinstance(payload.get("platforms"), list)
-                else []
-            ),
+            machine=_dict(payload, "machine", {}),
+            platforms=[item for item in _list(payload, "platforms") if isinstance(item, dict)],
             capacity=capacity,
-            inventory=(
-                payload.get("inventory")
-                if isinstance(payload.get("inventory"), dict)
-                else None
-            ),
+            inventory=_dict(payload, "inventory"),
             applied_version=applied_version,
         )
         # ``runner`` keeps the pre-existing key for one release; the caller's

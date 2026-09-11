@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import Request
+from fastapi.responses import JSONResponse
 
 
 class RequestBodyTooLarge(Exception):
@@ -41,4 +42,16 @@ async def read_capped_body(request: Request, *, cap: int) -> bytes | None:
         return None
 
 
-__all__ = ["RequestBodyTooLarge", "read_capped_body", "read_limited_body"]
+def payload_too_large(cap: int, *, hint: str) -> JSONResponse:
+    """The 413 a token-bearer upload earns; ``hint`` says what to slim."""
+    return JSONResponse(
+        {
+            "detail": f"upload exceeds the maximum of {cap} bytes {hint} and re-run the upload command",
+            "error_code": "payload_too_large",
+            "max_bytes": cap,
+        },
+        status_code=413,
+    )
+
+
+__all__ = ["RequestBodyTooLarge", "payload_too_large", "read_capped_body", "read_limited_body"]

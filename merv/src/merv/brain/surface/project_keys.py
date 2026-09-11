@@ -60,8 +60,6 @@ class ProjectKeyRecord:
 # dead one is kept a month, then goes once nothing can still reach it.
 OAUTH_KEY_RETENTION_DAYS = 30
 
-# A presented digest must be exactly the stored form ``hash_secret`` produces.
-_DIGEST_HEX_LENGTH = 64
 MAX_LABEL_CHARS = 120
 
 
@@ -123,7 +121,7 @@ class ProjectKeys:
             project_id=project_id,
             owner_user_id=owner_user_id,
             expires_at=expires_at,
-            parent_key_id=_required(parent_key_id, field="parent_key_id"),
+            parent_key_id=required_text(parent_key_id, field="parent_key_id"),
             audience=audience,
             oauth_family_id=oauth_family_id,
             grant_scope=grant_scope,
@@ -150,16 +148,9 @@ class ProjectKeys:
         ``BEGIN IMMEDIATE``. Only the sha256 digest is ever received or stored,
         exactly like a minted key; the plaintext never touches the brain.
         """
-        project_id = _required(project_id, field="project_id")
-        owner_user_id = _required(owner_user_id, field="owner_user_id")
-        digest = str(secret_digest or "").strip().lower()
-        if len(digest) != _DIGEST_HEX_LENGTH or any(
-            character not in "0123456789abcdef" for character in digest
-        ):
-            raise ValidationError(
-                "secret_digest must be a sha256 hex digest",
-                details={"field": "secret_digest"},
-            )
+        project_id = required_text(project_id, field="project_id")
+        owner_user_id = required_text(owner_user_id, field="owner_user_id")
+        digest = sha256_digest(secret_digest, field="secret_digest")
         tenant_row = conn.execute(
             "SELECT tenant_id FROM projects WHERE id = ?", (project_id,)
         ).fetchone()
@@ -194,8 +185,8 @@ class ProjectKeys:
         oauth_family_id: str | None,
         grant_scope: str,
     ) -> tuple[ProjectKeyRecord, str]:
-        project_id = _required(project_id, field="project_id")
-        owner_user_id = _required(owner_user_id, field="owner_user_id")
+        project_id = required_text(project_id, field="project_id")
+        owner_user_id = required_text(owner_user_id, field="owner_user_id")
         grant_scope = _grant_scope(grant_scope)
         expires_at = _expiry(expires_at)
         parent_key_id = str(parent_key_id or "").strip() or None
@@ -231,8 +222,8 @@ class ProjectKeys:
             "keys": [
                 public_key_record(record)
                 for record in self._records_for_owner(
-                    _required(project_id, field="project_id"),
-                    _required(owner_user_id, field="owner_user_id"),
+                    required_text(project_id, field="project_id"),
+                    required_text(owner_user_id, field="owner_user_id"),
                 )
             ]
         }
@@ -247,9 +238,9 @@ class ProjectKeys:
         superseded, and the live successor would survive. Killing the lineage
         also stops refresh, because rotation requires an unrevoked parent.
         """
-        project_id = _required(project_id, field="project_id")
-        key_id = _required(key_id, field="key_id")
-        owner_user_id = _required(owner_user_id, field="owner_user_id")
+        project_id = required_text(project_id, field="project_id")
+        key_id = required_text(key_id, field="key_id")
+        owner_user_id = required_text(owner_user_id, field="owner_user_id")
         with self._store.transaction() as conn:
             revoked = revoke_key_lineage(
                 conn, project_id=project_id, key_id=key_id,
@@ -300,17 +291,20 @@ class ProjectKeys:
 
     def verify_secret(self, *, secret: str) -> ProjectKeyRecord | None:
         """Resolve one bearer with a fresh database read on every call."""
-        return _live(self._record_by_digest(hash_secret(secret)))
+        return _live(_record(self._one(
+            "SELECT * FROM project_api_keys WHERE secret_digest = ?", (hash_secret(secret),)
+        )))
 
     def active_record(self, *, key_id: str) -> ProjectKeyRecord | None:
         """Resolve delegated authority by id with the same fresh checks."""
         return _live(self._record_by_id(key_id))
 
-    def _project_tenant(self, project_id: str) -> str:
+    def _one(self, sql: str, params: tuple[str, ...]) -> Any:
         with closing(self._store.connect()) as conn:
-            row = conn.execute(
-                "SELECT tenant_id FROM projects WHERE id = ?", (project_id,)
-            ).fetchone()
+            return conn.execute(sql, params).fetchone()
+
+    def _project_tenant(self, project_id: str) -> str:
+        row = self._one("SELECT tenant_id FROM projects WHERE id = ?", (project_id,))
         if row is None:
             raise NotFoundError(f"project not found: {project_id}")
         return str(row["tenant_id"])
@@ -338,19 +332,8 @@ class ProjectKeys:
             )
         return True
 
-    def _record_by_digest(self, digest: str) -> ProjectKeyRecord | None:
-        with closing(self._store.connect()) as conn:
-            row = conn.execute(
-                "SELECT * FROM project_api_keys WHERE secret_digest = ?", (digest,)
-            ).fetchone()
-        return _record(row)
-
     def _record_by_id(self, key_id: str) -> ProjectKeyRecord | None:
-        with closing(self._store.connect()) as conn:
-            row = conn.execute(
-                "SELECT * FROM project_api_keys WHERE id = ?", (key_id,)
-            ).fetchone()
-        return _record(row)
+        return _record(self._one("SELECT * FROM project_api_keys WHERE id = ?", (key_id,)))
 
     def _records_for_owner(
         self, project_id: str, owner_user_id: str
@@ -466,10 +449,20 @@ def _grant_scope(value: object) -> str:
     return text
 
 
-def _required(value: object, *, field: str) -> str:
+def required_text(value: object, *, field: str, limit: int | None = None) -> str:
     text = str(value or "").strip()
     if not text:
         raise ValidationError(f"{field} is required", details={"field": field})
+    if limit is not None and len(text) > limit:
+        raise ValidationError(f"{field} is too long", details={"field": field})
+    return text
+
+
+def sha256_digest(value: object, *, field: str) -> str:
+    """A presented digest must be exactly the stored form ``hash_secret`` produces."""
+    text = str(value or "").strip().lower()
+    if len(text) != 64 or any(c not in "0123456789abcdef" for c in text):
+        raise ValidationError(f"{field} must be a sha256 hex digest", details={"field": field})
     return text
 
 
@@ -498,7 +491,9 @@ __all__ = [
     "ProjectKeyLookup",
     "ProjectKeyRecord",
     "ProjectKeys",
+    "required_text",
     "revoke_key_lineage",
+    "sha256_digest",
 ]
 
 

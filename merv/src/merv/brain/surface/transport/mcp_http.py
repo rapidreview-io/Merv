@@ -10,7 +10,6 @@ request gateway); these routes only add the shared body cap and the
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from typing import Any
 
 from fastapi import Request, Response
@@ -21,18 +20,13 @@ from .mcp_streamable_http import (
     McpStreamableHttp,
     RefusalLedger,
     RequestBodyTooLarge,
-    ToolPlanner,
     SessionRecorder,
+    ToolCaller,
+    ToolCatalog,
+    ToolPlanner,
     read_limited_mcp_body,
     with_agent_id_argument,
 )
-
-ToolCatalog = Callable[[], list[dict[str, Any]]]
-ToolCaller = Callable[
-    [str, dict[str, Any], dict[str, Any], Request],
-    dict[str, Any],
-]
-
 
 def register_mcp_routes(
     http: Any,
