@@ -110,7 +110,7 @@ class CleanupService:
         return self._prune(ledger=self.tool_call_ledger, now=now)
 
     def prune_oauth_clients(self, *, now: datetime | None = None) -> dict[str, Any]:
-        """Expire OAuth registrations that never authorized anything."""
+        """Sweep OAuth state: expired codes, refresh-token families past their grace, then registrations that never authorized anything."""
         return self._prune(ledger=self.oauth_clients, now=now)
 
     def reconcile_agent_sessions(self, *, now: datetime | None = None) -> int:
