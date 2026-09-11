@@ -94,6 +94,68 @@ class RecordEngineTest(ResearchCase):
     def state(self, case: Case, record_id: str) -> dict[str, Any]:
         return self.records().get_state(case.kind, record_id=record_id, project_id=self.project_id)
 
+    def test_failed_after_write_rolls_back_native_history_sealing_and_child_writes(self):
+        from unittest.mock import patch
+        case = CASES[0]
+        record_id = self.create(case, "atomic-hook")
+        case.prepare(self, record_id)
+        def rows():
+            with self.app.store.transaction() as conn:
+                return {table: [dict(row) for row in conn.execute(f"SELECT * FROM {table}").fetchall()]
+                        for table in ("experiments", "claims", "events", "workflow_instances", "workflow_history",
+                                      "workflow_actions", "submissions", "research_artifact_links")}
+        before = rows()
+        def fail(**kwargs):
+            conn = kwargs["conn"]
+            self.assertEqual(conn.execute("SELECT status FROM experiments WHERE id = ?", (record_id,)).fetchone()["status"], "design_review")
+            self.assertTrue(conn.execute("SELECT id FROM research_artifact_links WHERE target_id = ? AND submission_id <> ''", (record_id,)).fetchone())
+            self.app.research._write_claim(conn=conn, project_id=self.project_id, changes={"statement": "Child write."})
+            raise RuntimeError("after-write failed")
+        with patch.object(self.records().hooks[case.name], "after_write", side_effect=fail), self.assertRaisesRegex(RuntimeError, "after-write failed"):
+            self.records().transition(case.kind, record_id=record_id, project_id=self.project_id, transition=case.advance)
+        self.assertEqual(rows(), before)
+
+    def test_direct_create_pins_the_kind_version_below_registry_default(self):
+        from dataclasses import replace
+        from merv.brain.research_core.records import Records, RecordHooks
+        from merv.brain.workflows import Registry, Runtime
+        kind = replace(EXPERIMENT, workflow=replace(EXPERIMENT.workflow, version=2))
+        runtime = Runtime(store=self.app.store, registry=Registry((kind.workflow, replace(kind.workflow, version=3))))
+        records = Records(store=self.app.store, artifacts=self.app.research.artifacts, runtime=runtime)
+        records.register(kind, RecordHooks())
+        with self.app.store.transaction() as conn:
+            created = records.create_in_transaction(kind, conn=conn, project_id=self.project_id,
+                values={"name": "pinned-kind", "intent": "Keep the native contract.", "details": ""}, event={})
+            current = runtime.get(conn=conn, project_id=self.project_id, instance_id=created["id"])
+            self.assertEqual(current.version, 2)
+            self.assertEqual(runtime.registry.get(kind.name).version, 3)
+
+    def test_native_version_mismatch_fails_before_evaluation_or_writes(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+        records, runtime = self.records(), self.app.workflows.runtime
+        record_id = self.create(CASES[0], "mismatched-native")
+        runtime.registry.register(replace(EXPERIMENT.workflow, version=2))
+        with self.app.store.transaction() as conn:
+            current = runtime.get(conn=conn, project_id=self.project_id, instance_id=record_id)
+            wrong = replace(current, version=2)
+            with patch.object(records.hooks["experiment"], "before_create") as hook:
+                with self.assertRaisesRegex(WorkflowError, "workflow version"):
+                    records.create_in_transaction(EXPERIMENT, conn=conn, project_id=self.project_id, values={}, event={}, instance=wrong)
+                hook.assert_not_called()
+            with self.assertRaisesRegex(WorkflowError, "workflow version"):
+                records.commit_change(EXPERIMENT, conn, current, wrong, "migrate", {})
+            conn.execute("UPDATE workflow_instances SET version = 2 WHERE id = ?", (record_id,))
+            with patch.object(records.artifacts.contents, "get", side_effect=AssertionError("evaluated before version check")):
+                with self.assertRaisesRegex(WorkflowError, "workflow version"):
+                    records.get_state(EXPERIMENT, conn=conn, record_id=record_id)
+            self.assertEqual(conn.execute("SELECT status FROM experiments WHERE id = ?", (record_id,)).fetchone()["status"], "planned")
+
+    def test_duplicate_native_hooks_are_rejected_even_for_the_same_object(self):
+        records = self.records()
+        with self.assertRaisesRegex(ValueError, "already registered"):
+            records.register(EXPERIMENT, records.hooks["experiment"])
+
     def test_create_writes_the_declared_spine_and_its_declared_event(self) -> None:
         for case in CASES:
             with self.subTest(kind=case.name):

@@ -8,8 +8,12 @@ from dataclasses import dataclass
 
 from ..kernel.events import freeze_json_object
 from ..kernel.state.store import BaseStateStore
-from ..kernel.utils import iso_after, new_id, now_iso
+from ..kernel.utils import NotFoundError, PermissionDeniedError, ValidationError, iso_after, new_id, now_iso
 from .graph import Data
+
+
+def permanent_failure(error: Exception | str) -> bool:
+    return isinstance(error, (ValidationError, PermissionDeniedError, NotFoundError))
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,14 +84,23 @@ class Deliveries:
                 (project_id, instance_id),
             ).fetchall()]
 
-    def settle(self, delivery: Delivery, *, error: str = "") -> bool:
+    def retry(self, *, project_id: str, delivery_id: str) -> bool:
+        """Deliberately requeue a failed delivery, preserving its identity and attempts."""
+        with self.store.transaction() as conn:
+            return conn.execute("UPDATE workflow_actions SET status = 'pending', next_attempt_at = '' "
+                                "WHERE project_id = ? AND id = ? AND status = 'failed' RETURNING id",
+                                (project_id, delivery_id)).fetchone() is not None
+
+    def settle(self, delivery: Delivery, *, error: Exception | str = "") -> bool:
+        status = "failed" if permanent_failure(error) else "pending" if error else "delivered"
+        message = (str(error) or type(error).__name__) if error else ""
         with self.store.transaction() as conn:
             row = conn.execute(
                 "UPDATE workflow_actions SET status = ?, lease_token = '', lease_until = '', "
                 "last_error = ?, next_attempt_at = ?, delivered_at = ? "
                 "WHERE id = ? AND status = 'delivering' AND lease_token = ? RETURNING id",
-                ("pending" if error else "delivered", error[:2000],
-                 iso_after(seconds=min(3600, 2 ** min(delivery.attempts, 12))) if error else "",
+                (status, message[:2000],
+                 iso_after(seconds=min(3600, 2 ** min(delivery.attempts, 12))) if status == "pending" else "",
                  None if error else now_iso(), delivery.id, delivery.lease_token),
             ).fetchone()
             return row is not None
@@ -102,9 +115,11 @@ class Deliveries:
             if delivery is None:
                 break
             try:
+                if delivery.kind not in handlers:
+                    raise ValidationError(f"unknown workflow effect handler: {delivery.kind}")
                 handlers[delivery.kind](delivery)
             except Exception as exc:
-                if self.settle(delivery, error=str(exc) or type(exc).__name__):
+                if self.settle(delivery, error=exc):
                     counts["failed"] += 1
             else:
                 if self.settle(delivery):

@@ -7,8 +7,8 @@ from .artifact_roles import EXHIBIT_ROLE
 from merv.shared.markdown_images import markdown_image_links
 
 from ..graph import (
-    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Issue, Node, Public, RecordKind,
-    Metadata, Reference, Metadata, ReviewGate, ReviewReturn, Workflow,
+    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Issue, Node, RecordKind,
+    Metadata, Reference, ReviewGate, ReviewReturn, Workflow,
 )
 from .execution import EXPERIMENT_EXECUTION, REVIEW_EXECUTION
 from .documents import (REQUIRED_PLAN_SECTIONS, graph_problems, markdown_section_body, preferred_artifact,
@@ -298,5 +298,4 @@ KIND = RecordKind(
                     "revise_execution": ("revision_context",), "retry_running": ("revision_context",),
                     "complete": ("conclusion",)},
     # An agent reads the claim follow-ups as the answer to the gate it just saw.
-    public=Public(after={"claim_update_suggestions": "gate_checklist"}),
 )

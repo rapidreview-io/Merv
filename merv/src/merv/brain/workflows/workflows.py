@@ -93,6 +93,8 @@ class Workflows:
 
     def register_preparation(self, workflow: str, preparation: PrepareTransition) -> None:
         self.runtime.registry.get(workflow)
+        if workflow in self.preparations:
+            raise ValueError(f"workflow {workflow!r} already has a preparation")
         self.preparations[workflow] = preparation
 
     def status(self, *, project_id: str, instance_id: str):

@@ -15,7 +15,6 @@ from ...research_core import (
     public_record,
 )
 from ...workflows import Public
-from .claim_guidance import claim_update_suggestions
 
 # What an agent reading an experiment does not need: the project it named to
 # ask, the whole artifact history, and the sealed submission rounds.
@@ -113,7 +112,6 @@ def rich_experiment_state(
     return cast(ExperimentState, public_record(
         EXPERIMENT.public,
         full,
-        claim_update_suggestions=claim_update_suggestions(full),
         storage_objects=list(storage_objects),
     ))
 
@@ -148,7 +146,6 @@ def slim_experiment_state(
 __all__ = [
     "ProducedObjectCatalog",
     "SlimExperimentState",
-    "claim_update_suggestions",
     "review_body",
     "review_synopsis",
     "rich_experiment_state",

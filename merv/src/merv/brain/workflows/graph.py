@@ -441,7 +441,8 @@ class Evaluation:
             ending = "terminal state " if self.snapshot.outcome else ""
             raise WorkflowError(f"action {name!r} is not allowed from {ending}{self.snapshot.state!r}")
         if action.issues:
-            raise WorkflowError("; ".join(issue.message for issue in action.issues))
+            raise WorkflowError("; ".join(issue.message for issue in action.issues),
+                                details={"issues": [issue_view(issue) for issue in action.issues]})
         return action.edge
 
     def public(self) -> dict[str, Any]:
@@ -508,6 +509,11 @@ class Workflow:
             if edge.source not in names or edge.target not in known or not edge.name:
                 raise ValueError(f"invalid edge {edge.source}/{edge.name}/{edge.target}")
         for node in self.nodes:
+            outgoing = {edge.name for edge in self.edges if edge.source == node.name}
+            for need in node.requires:
+                unknown = set(need.actions) - outgoing
+                if unknown:
+                    raise ValueError(f"requirement {need.key!r} on {node.name!r} names non-outgoing actions: {sorted(unknown)}")
             problems = node.execution.problems()
             if not node.role and node.execution != Execution():
                 problems.append("only an agent node declares an execution policy")
@@ -717,7 +723,7 @@ class Registry:
 
     def register(self, workflow: Workflow) -> None:
         key = (workflow.name, workflow.version)
-        if key in self._versions and self._versions[key] is not workflow:
+        if key in self._versions:
             raise ValueError(f"definition {key} already registered; publish a new version")
         self._versions[key] = workflow
 

@@ -117,6 +117,7 @@ class Research:
         self.tasks = TaskService(store=store, records=self.records)
         self.reflections = ReflectionService(
             advances=advances,
+            write_claim=self._write_claim,
             store=store,
             artifacts=artifacts,
             experiments=self.experiments,
@@ -818,97 +819,48 @@ class Research:
         confidence: str = "medium",
         project_id: str | None = None,
     ) -> dict[str, Any]:
-        if not statement.strip():
-            raise ValidationError("statement is required")
-        if confidence not in CLAIM_CONFIDENCES:
-            raise ValidationError(f"unknown claim confidence: {confidence}")
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            claim_id = new_id(prefix="claim")
-            conn.execute(
-                """
-                INSERT INTO claims
-                  (id, project_id, statement, scope, status, confidence, created_at)
-                VALUES (?, ?, ?, ?, 'active', ?, ?)
-                """,
-                (
-                    claim_id,
-                    project_id,
-                    statement.strip(),
-                    scope.strip(),
-                    confidence,
-                    now_iso(),
-                ),
-            )
-            self.store.record_event(
-                conn=conn,
-                project_id=project_id,
-                event_type="claim.created",
-                target_type="claim",
-                target_id=claim_id,
-                payload={
-                    "statement": statement.strip(),
-                    "scope": scope.strip(),
-                    "status": "active",
-                    "confidence": confidence,
-                },
-            )
-            return dict(
-                conn.execute(
-                    "SELECT * FROM claims WHERE id = ?", (claim_id,)
-                ).fetchone()
-            )
+            return self._write_claim(conn=conn, project_id=project_id,
+                                     changes={"statement": statement, "scope": scope, "confidence": confidence})
 
-    def update_claim(
-        self,
-        *,
-        claim_id: str,
-        status: str | None = None,
-        confidence: str | None = None,
-        project_id: str | None = None,
-    ) -> dict[str, Any]:
+    def update_claim(self, *, claim_id: str, status: str | None = None, confidence: str | None = None,
+                     project_id: str | None = None) -> dict[str, Any]:
         if status is None and confidence is None:
             raise ValidationError("nothing to update: provide status and/or confidence")
-        if status is not None and status not in CLAIM_STATUSES:
-            raise ValidationError(f"unknown claim status: {status}")
-        if confidence is not None and confidence not in CLAIM_CONFIDENCES:
-            raise ValidationError(f"unknown claim confidence: {confidence}")
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            row = conn.execute(
-                "SELECT * FROM claims WHERE id = ?", (claim_id,)
-            ).fetchone()
-            if row is None or row["project_id"] != project_id:
-                raise NotFoundError(
-                    f"claim not found in project {project_id}: {claim_id}"
-                )
-            next_status = str(row["status"]) if status is None else status
-            next_confidence = (
-                str(row["confidence"]) if confidence is None else confidence
-            )
-            conn.execute(
-                """
-                UPDATE claims SET status = ?, confidence = ? WHERE id = ?
-                """,
-                (next_status, next_confidence, claim_id),
-            )
-            self.store.record_event(
-                conn=conn,
-                project_id=project_id,
-                event_type="claim.updated",
-                target_type="claim",
-                target_id=claim_id,
-                payload={
-                    "statement": row["statement"],
-                    "scope": row["scope"],
-                    "status": next_status,
-                    "confidence": next_confidence,
-                },
-            )
-            updated = conn.execute(
-                "SELECT * FROM claims WHERE id = ?", (claim_id,)
-            ).fetchone()
-            return row_to_dict(row=updated) or {}
+            return self._write_claim(conn=conn, project_id=project_id, claim_id=claim_id,
+                                     changes={"status": status, "confidence": confidence})
+
+    def _write_claim(self, *, conn, project_id: str, changes: dict[str, Any], claim_id: str = "",
+                     provenance: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Write a claim and its event on the caller's transaction, preserving omitted fields."""
+        creating = not claim_id
+        fields = {"statement": "", "scope": "", "status": "active", "confidence": "medium"}
+        if not creating:
+            row = conn.execute("SELECT * FROM claims WHERE id = ? AND project_id = ?", (claim_id, project_id)).fetchone()
+            if row is None:
+                raise NotFoundError(f"claim not found in project {project_id}: {claim_id}")
+            fields.update({name: row[name] for name in fields})
+        fields.update({name: changes[name] for name in fields if changes.get(name) is not None})
+        for name in ("statement", "scope"):
+            fields[name] = fields[name].strip()
+        if not fields["statement"]:
+            raise ValidationError("statement is required")
+        for name, allowed in (("status", CLAIM_STATUSES), ("confidence", CLAIM_CONFIDENCES)):
+            if fields[name] not in allowed:
+                raise ValidationError(f"unknown claim {name}: {fields[name]}")
+        if creating:
+            claim_id = new_id(prefix="claim")
+            conn.execute("INSERT INTO claims (id, project_id, statement, scope, status, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (claim_id, project_id, *fields.values(), now_iso()))
+        else:
+            conn.execute("UPDATE claims SET statement = ?, scope = ?, status = ?, confidence = ? WHERE id = ? AND project_id = ?",
+                         (*fields.values(), claim_id, project_id))
+        self.store.record_event(conn=conn, project_id=project_id, event_type="claim.created" if creating else "claim.updated",
+                                target_type="claim", target_id=claim_id, payload={**fields, **(provenance or {})})
+        return dict(conn.execute("SELECT * FROM claims WHERE id = ? AND project_id = ?", (claim_id, project_id)).fetchone())
 
     def list_claims(self, *, project_id: str | None = None) -> dict[str, Any]:
         with closing(self.store.connect()) as conn:

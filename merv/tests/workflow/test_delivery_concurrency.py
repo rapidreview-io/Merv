@@ -104,3 +104,47 @@ class DeliveryConcurrencyTest(unittest.TestCase):
         assert retry.attempts == 2
         assert deliveries.settle(retry)
         assert deliveries.history(project_id=project_id, instance_id=retry.instance_id)[0]["status"] == "delivered"
+
+    def test_permanent_failures_stop_polling_until_scoped_retry(self):
+        from merv.brain.kernel.utils import NotFoundError, PermissionDeniedError, ValidationError
+        for error in (NotFoundError, PermissionDeniedError, ValidationError):
+            with self.subTest(error=error.__name__):
+                store, deliveries, project_id = pending_action(self.tmp_path / error.__name__)
+                first = deliveries.claim(project_id=project_id)
+                self.assertTrue(deliveries.settle(first, error=error("permanent failure")))
+                self.assertIsNone(deliveries.claim(project_id=project_id))
+                self.assertFalse(deliveries.settle(first))
+                self.assertFalse(deliveries.retry(project_id="foreign", delivery_id=first.id))
+                self.assertTrue(deliveries.retry(project_id=project_id, delivery_id=first.id))
+                self.assertFalse(deliveries.retry(project_id=project_id, delivery_id=first.id))
+                retried = deliveries.claim(project_id=project_id)
+                self.assertEqual((retried.id, retried.attempts), (first.id, 2))
+                self.assertFalse(deliveries.settle(first, error=error("stale failure")))
+                self.assertTrue(deliveries.settle(retried))
+                self.assertFalse(deliveries.retry(project_id=project_id, delivery_id=first.id))
+
+    def test_unknown_handler_is_a_failed_delivery(self):
+        store, deliveries, project_id = pending_action(self.tmp_path)
+        self.assertEqual(deliveries.drain({}, project_id=project_id), {"delivered": 0, "failed": 1})
+        self.assertIsNone(deliveries.claim(project_id=project_id))
+        with store.transaction() as conn:
+            row = conn.execute("SELECT * FROM workflow_actions").fetchone()
+        self.assertEqual(row["status"], "failed")
+        self.assertIn("unknown workflow effect handler", row["last_error"])
+        self.assertTrue(deliveries.retry(project_id=project_id, delivery_id=row["id"]))
+        self.assertEqual(deliveries.drain({"save": lambda delivery: None}, project_id=project_id), {"delivered": 1, "failed": 0})
+
+    def test_revision_races_and_transient_errors_remain_retryable(self):
+        from merv.brain.kernel.utils import WorkflowError
+        for error in (WorkflowError("revision changed"), RuntimeError("network failed")):
+            with self.subTest(error=str(error)):
+                store, deliveries, project_id = pending_action(self.tmp_path / type(error).__name__)
+                def fail(delivery):
+                    raise error
+                self.assertEqual(deliveries.drain({"save": fail}, project_id=project_id), {"delivered": 0, "failed": 1})
+                with store.transaction() as conn:
+                    row = conn.execute("SELECT * FROM workflow_actions").fetchone()
+                    self.assertEqual(row["status"], "pending")
+                    self.assertTrue(row["next_attempt_at"])
+                    conn.execute("UPDATE workflow_actions SET next_attempt_at = ''")
+                self.assertEqual(deliveries.drain({"save": lambda delivery: None}, project_id=project_id), {"delivered": 1, "failed": 0})

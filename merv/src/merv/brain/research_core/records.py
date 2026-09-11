@@ -20,7 +20,8 @@ from ..workflows import Binding, RecordKind, Reference, ReviewGate, Runtime, Sna
 from .artifacts import ResearchArtifacts as Artifacts
 from .artifact_models import ArtifactTarget
 from .dependencies import dependency_rows, dependent_rows, record_dependencies
-from .policy import GateContext, GateEvaluation, read_review_fact, resolve_requirement, review_snapshot_id, snapshot_from_id
+from .reviews import read_review_fact
+from .policy import GateContext, GateEvaluation, resolve_requirement, review_snapshot_id, snapshot_from_id
 
 
 def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
@@ -44,11 +45,11 @@ class RecordHooks:
     def hydrate(self, *, conn, project_id: str, records: list[dict[str, Any]], detail_ids: tuple[str, ...]) -> None:
         """Add the kind's own read state to every record in one batch."""
 
-    def before_commit(self, *, conn, before: Snapshot, after: Snapshot, action: str) -> None:
-        """Refuse a transition the kind's own record state forbids."""
+    def before_write(self, *, conn, before: Snapshot, after: Snapshot, action: str) -> None:
+        """Refuse a transition before native writes, inside the caller's transaction."""
 
-    def after_commit(self, *, conn, before: Snapshot, after: Snapshot, action: str, payload) -> None:
-        """React to a committed transition beyond its declared column writes."""
+    def after_write(self, *, conn, before: Snapshot, after: Snapshot, action: str, payload) -> None:
+        """React after native writes, still inside the caller's uncommitted transaction."""
 
     def read_fact(self, *, conn, record: dict[str, Any], reference: Reference) -> dict[str, Any] | None:
         """Answer a graph reference only this kind knows about."""
@@ -75,6 +76,8 @@ class Records:
         self.hooks: dict[str, RecordHooks] = {}
 
     def register(self, kind: RecordKind, hooks: RecordHooks) -> None:
+        if kind.name in self.kinds:
+            raise ValueError(f"record kind {kind.name!r} already registered")
         self.kinds[kind.name] = kind
         self.hooks[kind.name] = hooks
 
@@ -91,6 +94,8 @@ class Records:
         engine never opens one here: every node of a materialized wave is
         created before any dependency edge between them.
         """
+        if instance is not None:
+            self._require_version(kind, instance)
         hooks = self.hooks[kind.name]
         if guard:
             hooks.before_create(conn=conn, project_id=project_id, values=values)
@@ -131,7 +136,7 @@ class Records:
                                 target_type=kind.name, target_id=record_id, payload=event)
         if instance is None:
             self.runtime.adopt(conn=conn, project_id=project_id, instance_id=record_id,
-                               workflow=kind.name, state=kind.workflow.initial, data={"attempt_index": 1})
+                               workflow=kind.name, version=kind.workflow.version, state=kind.workflow.initial, data={"attempt_index": 1})
         return self.get_state(kind, record_id=record_id, conn=conn, **(read or {}))
 
     # ---- read ----
@@ -230,17 +235,26 @@ class Records:
             except NotFoundError:
                 snapshot = None
         if snapshot is not None:
+            self._require_version(kind, snapshot)
             return snapshot
-        return Snapshot(id=record_id, project_id=record["project_id"], workflow=kind.name, version=1,
+        return Snapshot(id=record_id, project_id=record["project_id"], workflow=kind.name, version=kind.workflow.version,
                         state=status, revision=0, data={"attempt_index": record.get("attempt_index") or 1},
                         outcome=kind.workflow.outcomes.get(status, ""))
+
+    @staticmethod
+    def _require_version(kind: RecordKind, snapshot: Snapshot) -> None:
+        if (snapshot.workflow, snapshot.version) != (kind.workflow.name, kind.workflow.version):
+            raise WorkflowError(f"{kind.name} instance differs from its record kind's workflow version; an explicit migration is required")
 
     def evaluate_gate(self, kind: RecordKind, *, conn, record: dict[str, Any], snapshots=None) -> GateEvaluation:
         """Evaluate the registered graph once; the checklist reads that evaluation."""
         snapshot = self.snapshot_for(kind, conn=conn, record=record, snapshots=snapshots)
         definition = self.runtime.registry.get(kind.name, snapshot.version)
-        decision = definition.evaluate(snapshot, RecordKnowledge(self, kind, conn, record, snapshot))
-        context = GateContext(conn=conn, project_id=str(record["project_id"]), record=record, snapshot=snapshot,
+        knowledge = RecordKnowledge(self, kind, conn, record, snapshot)
+        decision = definition.evaluate(snapshot, knowledge)
+        context = GateContext(record=record, snapshot=snapshot,
+                              reviews={need.role: knowledge.review_fact(need.role) for need in kind.requirements(snapshot.state)
+                                       if isinstance(need, ReviewGate)},
                               issues=(*(issue for action in decision.actions for issue in action.issues),
                                       *decision.dispatch_issues))
         resolved = [(need, resolve_requirement(need, context)) for need in kind.requirements(snapshot.state)]
@@ -267,7 +281,7 @@ class Records:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             record = self.get_state(kind, record_id=record_id, project_id=project_id, conn=conn)
             current = self.runtime.adopt(conn=conn, project_id=project_id, instance_id=record_id,
-                                         workflow=kind.name, state=record["status"],
+                                         workflow=kind.name, version=kind.workflow.version, state=record["status"],
                                          data={"attempt_index": record["attempt_index"]})
             after = self.runtime.apply_in_transaction(
                 conn=conn, project_id=project_id, instance_id=record_id, action=transition,
@@ -285,10 +299,12 @@ class Records:
         round, and ``commit_columns`` says which of the transition's data fields
         each action writes back beside the projected status.
         """
+        self._require_version(kind, before)
+        self._require_version(kind, after)
         if action in {"start_work", "adopt_children"}:
             return  # The runtime's idempotent work_started event owns the clock.
         hooks = self.hooks[kind.name]
-        hooks.before_commit(conn=conn, before=before, after=after, action=action)
+        hooks.before_write(conn=conn, before=before, after=after, action=action)
         if action not in kind.seal_exempt_actions:
             self.artifacts.seal(tx=conn, target=ArtifactTarget(kind.name, before.id, before.project_id),
                                 transition=action)
@@ -297,7 +313,7 @@ class Records:
         values = [kind.status_of(after.state), *(after.data[column] for column in written), now_iso()]
         conn.execute(f"UPDATE {kind.table} SET {', '.join(f'{name} = ?' for name in columns)} "
                      "WHERE id = ? AND project_id = ?", (*values, before.id, before.project_id))
-        hooks.after_commit(conn=conn, before=before, after=after, action=action, payload=payload)
+        hooks.after_write(conn=conn, before=before, after=after, action=action, payload=payload)
 
 
 class RecordKnowledge:
@@ -306,6 +322,7 @@ class RecordKnowledge:
     def __init__(self, records: Records, kind: RecordKind, conn, record: dict[str, Any], snapshot: Snapshot) -> None:
         self.records, self.kind, self.conn, self.record, self.snapshot = records, kind, conn, record, snapshot
         self._documents: dict[str, dict[str, Any]] = {}
+        self._reviews = {}
 
     def read(self, reference: Reference) -> dict[str, Any]:
         record, conn, kind = self.record, self.conn, self.kind
@@ -321,9 +338,7 @@ class RecordKnowledge:
                 raise NotFoundError("review snapshot belongs to another workflow instance")
             node = self.records.runtime.registry.get(self.snapshot.workflow, self.snapshot.version).node(self.snapshot.state)
             role = reference.id if reference.kind == "review" else (node.role if node is not None else "")
-            return read_review_fact(conn=conn, project_id=record["project_id"], target_type=kind.name,
-                                    target_id=record["id"], role=role, request=reference.kind == "review_snapshot",
-                                    snapshot_id=self._snapshot_id())
+            return self.review_fact(role).reference(request=reference.kind == "review_snapshot")
         if reference.kind == "review_history":
             rows = conn.execute(
                 "SELECT r.target_snapshot_id, r.verdict, r.return_to, r.notes, s.independence FROM reviews r "
@@ -336,6 +351,13 @@ class RecordKnowledge:
         if fact is None:
             raise NotFoundError(f"{kind.name} fact not available: {reference.kind}/{reference.id}")
         return fact
+
+    def review_fact(self, role: str):
+        if role not in self._reviews:
+            self._reviews[role] = read_review_fact(conn=self.conn, project_id=self.record["project_id"],
+                                                  target_type=self.kind.name, target_id=self.record["id"],
+                                                  role=role, snapshot_id=self._snapshot_id())
+        return self._reviews[role]
 
     def _snapshot_id(self) -> str:
         return review_snapshot_id(target_type=self.kind.name, target=self.record, snapshot=self.snapshot)

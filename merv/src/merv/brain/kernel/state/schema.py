@@ -93,7 +93,7 @@ BASELINE_VERSION = 64
 # version here and the handler to its own module. A version whose owner has
 # not installed is skipped, not refused: every handler is guarded on the
 # tables it touches, so the next install converges it.
-MIGRATION_ORDER: tuple[int, ...] = (65, 66, 67, 68, 69, 70)
+MIGRATION_ORDER: tuple[int, ...] = (65, 66, 67, 68, 69, 70, 71)
 
 
 def declared_tables(ddl: str) -> tuple[str, ...]:
