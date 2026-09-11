@@ -59,8 +59,8 @@ spans them. Research remains the public owner of its event ledger reads.
 - `tasks.py`: task presentation, transition receipts, and the bounded task context
   (brief, delivery, deliverables, dependencies) for status and review start.
 - `experiments/exhibits.py`/`metrics_exhibit.py`: deterministic exhibits.
-- `experiments/presentation.py`, `create.py`, and `claim_guidance.py`: the experiment's
-  declared public shape, its create inputs, and claim follow-ups.
+- `experiments/presentation.py` and `create.py`: the experiment's
+  declared public shape and create inputs; claim suggestions are deliberately absent.
 - `reviews.py`, `reflections.py`, and `reflection_guidance.py`: review handoff,
   reflection presentation, and guidance.
 - `queries.py`: logic-graph composition, built once and shared by its routes.

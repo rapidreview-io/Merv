@@ -13,11 +13,8 @@ import unittest
 
 from tests.support.wire_shapes import FIXTURE, capture
 
-# Two readers depend on where a key sits, not only on its presence: the agent
-# reads the claim suggestions right after the gate they answer, and the
-# post-publish guidance right after the experiments it talks about.
-ADJACENT = (("gate_checklist", "claim_update_suggestions"),
-            ("materialized_experiments", "post_publish_guidance"))
+# Post-publish guidance remains adjacent to the experiments it describes.
+ADJACENT = (("materialized_experiments", "post_publish_guidance"),)
 
 
 def _pairs(node, path="", found=None):
@@ -49,7 +46,13 @@ class WireShapeTest(unittest.TestCase):
             with self.subTest(shape=name):
                 self.assertEqual(self.actual[name], self.expected[name])
 
-    def test_the_two_order_sensitive_keys_keep_their_predecessor(self) -> None:
+    def test_claim_suggestions_disappear_while_evidence_and_conclusions_remain(self):
+        self.assertNotIn('"claim_update_suggestions"', json.dumps(self.actual))
+        completed = next(item for item in self.actual["http:home"]["experiments"] if item["status"] == "complete")
+        self.assertTrue(completed["tested_claims"])
+        self.assertTrue(completed["conclusion"])
+
+    def test_post_publish_guidance_keeps_its_predecessor(self) -> None:
         pairs = _pairs(self.actual)
         self.assertTrue(pairs)
         for where, predecessor, expected in pairs:
