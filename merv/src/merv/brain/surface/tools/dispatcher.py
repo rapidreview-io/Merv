@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError as PydanticValidationError
 
-from .contracts import TOOL_CONTRACTS
+from .contracts import TOOL_MANIFEST
 from ..identity import ToolVisibilityError
 from ...kernel.state.activity import ToolCallRecord, monotonic_ms
 from ...kernel.utils import PermissionDeniedError, ResearchPluginError
@@ -61,7 +61,7 @@ def _assert_tool_contracts_match_handlers(
     tool_names: set[str],
 ) -> None:
     handler_names = set(handlers)
-    unknown_tools = sorted(tool_names - set(TOOL_CONTRACTS))
+    unknown_tools = sorted(tool_names - set(TOOL_MANIFEST))
     if unknown_tools:
         raise AssertionError(f"unknown tool contracts: {', '.join(unknown_tools)}")
     if handler_names == tool_names:
@@ -87,7 +87,7 @@ class ToolDispatcher:
         tool_names: Iterable[str] | None = None,
     ) -> None:
         selected_tool_names = (
-            set(TOOL_CONTRACTS) if tool_names is None else set(tool_names)
+            set(TOOL_MANIFEST) if tool_names is None else set(tool_names)
         )
         _assert_tool_contracts_match_handlers(
             handlers=handlers,
@@ -100,13 +100,13 @@ class ToolDispatcher:
         self._tool_names = frozenset(selected_tool_names)
         self._tools = {
             name: (contract.input_model, handlers[name])
-            for name, contract in TOOL_CONTRACTS.items()
+            for name, contract in TOOL_MANIFEST.items()
             if name in self._tool_names
         }
 
     def list_tools(self) -> list[dict[str, Any]]:
         tools: list[dict[str, Any]] = []
-        for name, contract in TOOL_CONTRACTS.items():
+        for name, contract in TOOL_MANIFEST.items():
             if name not in self._tool_names:
                 continue
             schema = contract.input_model.model_json_schema()
@@ -147,7 +147,7 @@ class ToolDispatcher:
             # reachable over MCP by any non-local caller (mk_ key or raw JWT).
             # Only LOCAL_PRINCIPAL composition — which never sets this
             # flag — keeps internal access over the same dispatch path.
-            if caller_is_external_mcp and TOOL_CONTRACTS[name].visibility == "internal":
+            if caller_is_external_mcp and TOOL_MANIFEST[name].visibility == "internal":
                 raise ToolVisibilityError(
                     f"tool {name} is internal and cannot be invoked over MCP",
                     details={"tool": name, "visibility": "internal"},

@@ -26,9 +26,7 @@ from merv.brain.infrastructure.tools import (
 from merv.brain.research_core import ENTITY_REF_VOCABULARY, FEED_AUTHOR_ROLES
 from merv.brain.research_core.tools import ReflectionGetInput
 from merv.brain.surface.tools.contracts import (
-    MCP_HIDDEN_TOOL_NAMES,
     STORAGE_TOOL_NAMES,
-    TOOL_CONTRACTS,
     TOOL_MANIFEST,
     available_tool_names,
 )
@@ -38,8 +36,11 @@ from merv.brain.surface.tools.dispatcher import ToolDispatcher
 
 # Artifacts renders the association vocabulary the composition injects, so the
 # models exist only inside the built table.
-ArtifactReadInput = TOOL_CONTRACTS["artifact.read"].input_model
-ArtifactUploadInput = TOOL_CONTRACTS["artifact.upload"].input_model
+HIDDEN_TOOL_NAMES = frozenset(
+    name for name, tool in TOOL_MANIFEST.items() if tool.visibility == "internal"
+)
+ArtifactReadInput = TOOL_MANIFEST["artifact.read"].input_model
+ArtifactUploadInput = TOOL_MANIFEST["artifact.upload"].input_model
 
 
 BASE_PUBLIC_TOOLS = frozenset(
@@ -236,7 +237,7 @@ class ToolContractRegistryTest(unittest.TestCase):
 
         self.assertEqual(set(tools), available_tool_names(storage_enabled=False))
         self.assertFalse(set(tools) & STORAGE_TOOL_NAMES)
-        for name, contract in TOOL_CONTRACTS.items():
+        for name, contract in TOOL_MANIFEST.items():
             if name not in tools:
                 continue
             self.assertTrue(contract.description.strip(), name)
@@ -322,7 +323,6 @@ class ToolContractRegistryTest(unittest.TestCase):
                     self.assertNotIn("", node["enum"], tool["name"])
 
     def test_manifest_owns_all_routing_and_handler_metadata(self) -> None:
-        self.assertIs(TOOL_CONTRACTS, TOOL_MANIFEST)
         for name, tool in TOOL_MANIFEST.items():
             self.assertIn(tool.visibility, {"public", "internal"}, name)
             self.assertIn(
@@ -336,17 +336,17 @@ class ToolContractRegistryTest(unittest.TestCase):
     def test_hidden_tools_stay_in_catalog_with_hidden_flag(self) -> None:
         # Internal tools remain dispatchable for trusted in-process callers,
         # while the HTTP MCP catalog hides them from agents.
-        self.assertLessEqual(MCP_HIDDEN_TOOL_NAMES, set(TOOL_CONTRACTS))
-        self.assertIn("project.get", MCP_HIDDEN_TOOL_NAMES)
-        self.assertIn("project.update", MCP_HIDDEN_TOOL_NAMES)
+        self.assertLessEqual(HIDDEN_TOOL_NAMES, set(TOOL_MANIFEST))
+        self.assertIn("project.get", HIDDEN_TOOL_NAMES)
+        self.assertIn("project.update", HIDDEN_TOOL_NAMES)
         # review.status is served for REST/UI reads and internal dispatch, but
         # agents poll workflow.status_and_next (its review_gate re-reports state).
-        self.assertIn("review.status", MCP_HIDDEN_TOOL_NAMES)
+        self.assertIn("review.status", HIDDEN_TOOL_NAMES)
         # Experiment orientation is consolidated in workflow.status_and_next;
         # the old state reader remains internal for REST/UI compatibility.
-        self.assertIn("experiment.get_state", MCP_HIDDEN_TOOL_NAMES)
+        self.assertIn("experiment.get_state", HIDDEN_TOOL_NAMES)
         # The exhibit preview is intentionally unchanged and remains public.
-        self.assertNotIn("experiment.exhibit", MCP_HIDDEN_TOOL_NAMES)
+        self.assertNotIn("experiment.exhibit", HIDDEN_TOOL_NAMES)
         # Enumeration readers embedded in other responses stay REST/UI-only.
         # sandbox.list is NO LONGER hidden: a project-scoped mk_ key needs it to
         # enumerate the project's (shared) sandboxes over MCP (no-dataplane
@@ -357,12 +357,12 @@ class ToolContractRegistryTest(unittest.TestCase):
             "reflection.list",
             "sandbox.health",
         ):
-            self.assertIn(reader, MCP_HIDDEN_TOOL_NAMES, reader)
-        self.assertNotIn("sandbox.list", MCP_HIDDEN_TOOL_NAMES)
-        for name in MCP_HIDDEN_TOOL_NAMES:
-            self.assertEqual(TOOL_CONTRACTS[name].visibility, "internal", name)
-        for name, tool in TOOL_CONTRACTS.items():
-            if name not in MCP_HIDDEN_TOOL_NAMES:
+            self.assertIn(reader, HIDDEN_TOOL_NAMES, reader)
+        self.assertNotIn("sandbox.list", HIDDEN_TOOL_NAMES)
+        for name in HIDDEN_TOOL_NAMES:
+            self.assertEqual(TOOL_MANIFEST[name].visibility, "internal", name)
+        for name, tool in TOOL_MANIFEST.items():
+            if name not in HIDDEN_TOOL_NAMES:
                 self.assertEqual(tool.visibility, "public", name)
 
     def test_sandbox_tool_descriptions_carry_lifecycle_guidance(self) -> None:
@@ -393,12 +393,12 @@ class ToolContractRegistryTest(unittest.TestCase):
             "storage surface must be exactly these 6 tools",
         )
         for name, model in expected.items():
-            self.assertIs(TOOL_CONTRACTS[name].input_model, model)
+            self.assertIs(TOOL_MANIFEST[name].input_model, model)
         self.assertIn(
-            "checkpoints/models", TOOL_CONTRACTS["storage.put_object"].description
+            "checkpoints/models", TOOL_MANIFEST["storage.put_object"].description
         )
         self.assertIn(
-            "logs/traces over about 10 MB", TOOL_CONTRACTS["storage.submit"].description
+            "logs/traces over about 10 MB", TOOL_MANIFEST["storage.submit"].description
         )
 
     def test_storage_find_enforces_resolve_vs_list_mode(self) -> None:
@@ -439,10 +439,10 @@ class ToolContractRegistryTest(unittest.TestCase):
 
     def test_artifact_tools_are_manifested(self) -> None:
         self.assertEqual(
-            {name for name in TOOL_CONTRACTS if name.startswith("artifact.")},
+            {name for name in TOOL_MANIFEST if name.startswith("artifact.")},
             {"artifact.upload", "artifact.read", "artifact.attach"},
         )
-        association = TOOL_CONTRACTS["artifact.attach"].input_model.model_json_schema()
+        association = TOOL_MANIFEST["artifact.attach"].input_model.model_json_schema()
         self.assertEqual(
             association["properties"]["target_type"]["enum"],
             sorted(ARTIFACT_TARGET_TYPES),
@@ -452,21 +452,21 @@ class ToolContractRegistryTest(unittest.TestCase):
         )
         # The whole resource-tracking tool family died with the resource cut.
         for removed in ("resource.register", "resource.find", "resource.delete"):
-            self.assertNotIn(removed, TOOL_CONTRACTS)
+            self.assertNotIn(removed, TOOL_MANIFEST)
 
     def test_feed_schema_renders_the_injected_vocabulary(self) -> None:
         # The feed owns its contracts but not the ids or roles in them: the
         # composition hands it the same vocabulary FeedService receives.
-        role = TOOL_CONTRACTS["feed.register"].input_model.model_fields["role"]
+        role = TOOL_MANIFEST["feed.register"].input_model.model_fields["role"]
         self.assertEqual(sorted(role.annotation.__args__), sorted(FEED_AUTHOR_ROLES))
-        ref = TOOL_CONTRACTS["feed.post"].input_model.model_fields["ref"].description
+        ref = TOOL_MANIFEST["feed.post"].input_model.model_fields["ref"].description
         for prefix, _ in ENTITY_REF_VOCABULARY:
             self.assertIn(prefix, ref)
 
     def test_removed_artifact_names_are_unknown(self) -> None:
         for name in ("artifact.store", "artifact.submit", "artifact.find"):
             with self.subTest(tool=name):
-                self.assertNotIn(name, TOOL_CONTRACTS)
+                self.assertNotIn(name, TOOL_MANIFEST)
                 with self.assertRaisesRegex(ResearchPluginError, "unknown tool:"):
                     self.app.call_tool(name, {"project_id": "p"})
 
@@ -511,13 +511,13 @@ class ToolContractRegistryTest(unittest.TestCase):
 
         self.assertFalse(default.include_content)
         self.assertTrue(deep_dive.include_content)
-        description = TOOL_CONTRACTS["reflection.get"].description
+        description = TOOL_MANIFEST["reflection.get"].description
         self.assertIn("TLDRs", description)
         self.assertIn("include_content=true", description)
 
     def test_sandbox_pull_outputs_contract(self) -> None:
         self.assertIs(
-            TOOL_CONTRACTS["sandbox.pull_outputs"].input_model,
+            TOOL_MANIFEST["sandbox.pull_outputs"].input_model,
             SandboxPullOutputsInput,
         )
         schema = SandboxPullOutputsInput.model_json_schema()
@@ -549,19 +549,19 @@ class ToolContractRegistryTest(unittest.TestCase):
 
     def test_sandbox_extend_contract(self) -> None:
         self.assertIs(
-            TOOL_CONTRACTS["sandbox.extend"].input_model,
+            TOOL_MANIFEST["sandbox.extend"].input_model,
             SandboxExtendInput,
         )
 
     def test_experiment_materialize_folders_is_deleted(self) -> None:
         # D6: folder layout is now a skill instruction, not a tool.
-        self.assertNotIn("experiment.materialize_folders", TOOL_CONTRACTS)
+        self.assertNotIn("experiment.materialize_folders", TOOL_MANIFEST)
 
     def test_review_request_and_start_is_removed(self) -> None:
         # Removed: it started the reviewer session server-side, letting the
         # producer submit against its own gate. review.request's spawn-ready
         # handoff is the sanctioned one-call path.
-        self.assertNotIn("review.request_and_start", TOOL_CONTRACTS)
+        self.assertNotIn("review.request_and_start", TOOL_MANIFEST)
 
 
 class ToolDispatcherTest(unittest.TestCase):
