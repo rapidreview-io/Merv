@@ -60,6 +60,14 @@ class AuthenticationContentionTest(ResearchCase):
         with patch.object(self.app.store, "transaction", side_effect=AssertionError("candidate scan took writer lock")):
             self.assertEqual(self.runtime.candidates(project_id=self.project_id), expected)
 
+    def test_standalone_workflow_reads_do_not_take_the_writer_transaction(self):
+        for name in ("evaluate", "assignment", "describe"):
+            with self.subTest(name=name):
+                read = getattr(self.runtime, name)
+                expected = read(project_id=self.project_id, instance_id=self.experiment_id)
+                with patch.object(self.app.store, "transaction", side_effect=AssertionError("read took writer lock")):
+                    self.assertEqual(read(project_id=self.project_id, instance_id=self.experiment_id), expected)
+
     def test_disabled_dispatch_does_not_prepare_or_hydrate_candidates(self):
         with patch.object(self.app.application, "_dispatch_plan", side_effect=AssertionError("dispatch was disabled")):
             result = self.app.application.lease_agent_session(

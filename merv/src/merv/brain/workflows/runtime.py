@@ -160,7 +160,7 @@ class Runtime:
 
     def evaluate(self, *, project_id: str, instance_id: str, conn: Connection | None = None) -> Evaluation:
         if conn is None:
-            with self.store.transaction() as tx:
+            with closing(self.store.connect()) as tx:
                 return self.evaluate(project_id=project_id, instance_id=instance_id, conn=tx)
         snapshot = self.get(project_id=project_id, instance_id=instance_id, conn=conn)
         return self.registry.get(snapshot.workflow, snapshot.version).evaluate(snapshot, self.knowledge(snapshot, conn))
@@ -450,7 +450,7 @@ class Runtime:
 
     def assignment(self, *, project_id: str, instance_id: str, conn: Connection | None = None) -> dict[str, Any]:
         if conn is None:
-            with self.store.transaction() as tx:
+            with closing(self.store.connect()) as tx:
                 return self.assignment(project_id=project_id, instance_id=instance_id, conn=tx)
         return self._assignment(self.evaluate(project_id=project_id, instance_id=instance_id, conn=conn), conn)
 
@@ -475,7 +475,7 @@ class Runtime:
         }
 
     def describe(self, *, project_id: str, instance_id: str) -> dict[str, Any]:
-        with self.store.transaction() as conn:
+        with closing(self.store.connect()) as conn:
             evaluation = self.evaluate(project_id=project_id, instance_id=instance_id, conn=conn)
             packet = self._assignment(evaluation, conn) if evaluation.dispatchable else {}
             context = {key: packet[key] for key in ("role", "label", "brief", "references", "handoff", "skill", "messages") if key in packet}
