@@ -345,14 +345,14 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
         ):
             experiments.transition_with_event(
                 project_id=project_id,
-                experiment_id=created["id"],
+                experiment_id=created.id,
                 transition="mark_failed",
             )
 
         state = experiments.get_state(
-            project_id=project_id, experiment_id=created["id"]
+            project_id=project_id, experiment_id=created.id
         )
-        self.assertEqual(state["status"], "planned")
+        self.assertEqual(state.status, "planned")
         conn = self.store.connect()
         try:
             row = conn.execute(
@@ -360,7 +360,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
                 SELECT COUNT(*) AS count FROM events
                 WHERE type = 'experiment.transitioned' AND target_id = ?
                 """,
-                (created["id"],),
+                (created.id,),
             ).fetchone()
         finally:
             conn.close()
