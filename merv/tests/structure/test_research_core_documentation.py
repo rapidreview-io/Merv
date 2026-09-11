@@ -11,7 +11,10 @@ from merv.brain.surface.tools.contracts import TOOL_MANIFEST
 
 
 GUIDE = RESEARCH_CORE_ROOT / "research_core.md"
-GUIDES = tuple(BACKEND_ROOT / name / f"{name}.md" for name in ("research_core", "workflows", "application", "surface"))
+# research.md walks one experiment across all of them, so it is held to the same
+# density and reference rules as the component notes it points into.
+GUIDES = (BACKEND_ROOT / "research.md", *(BACKEND_ROOT / name / f"{name}.md"
+          for name in ("research_core", "workflows", "application", "surface")))
 
 
 def _catalog():

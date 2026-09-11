@@ -15,7 +15,8 @@ from pydantic import Field, field_validator, model_validator
 
 from ..kernel.tools import ContractModel, ProjectScopedInput, ToolContract
 from ..workflows import documents
-from .policy import EXPERIMENT, REFLECTION, REVIEW_VERDICT_VALUES, TASK
+from .policy import (CLAIM_CONFIDENCES, CLAIM_STATUSES, EXPERIMENT, REFLECTION,
+                     REVIEW_VERDICT_VALUES, TASK)
 
 # Every enum and every sentence below is read off the graphs, never restated.
 EXPERIMENT_TRANSITION_VALUES = EXPERIMENT.actions
@@ -121,16 +122,13 @@ class CandidatePromoteInput(ProjectScopedInput):
 class ClaimCreateInput(ProjectScopedInput):
     statement: str
     scope: str = ""
-    confidence: Literal["low", "medium", "high"] = "medium"
+    confidence: Literal[*sorted(CLAIM_CONFIDENCES)] = "medium"
 
 
 class ClaimUpdateInput(ProjectScopedInput):
     claim_id: str
-    status: (
-        Literal["draft", "active", "supported", "weakened", "contradicted", "abandoned"]
-        | None
-    ) = None
-    confidence: Literal["low", "medium", "high"] | None = None
+    status: Literal[*sorted(CLAIM_STATUSES)] | None = None
+    confidence: Literal[*sorted(CLAIM_CONFIDENCES)] | None = None
 
 
 class ExperimentCreateInput(ProjectScopedInput):

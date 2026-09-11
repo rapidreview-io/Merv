@@ -20,7 +20,9 @@ instance/kind mismatches fail before checklist evaluation or native writes.
   `RecordHooks.after_write` both run inside the caller's transaction. `read_fact` supplies
   kind-specific facts; `bindings` supplies graphs without native rows. Duplicate kinds fail.
 - `artifacts.py`: research associations, role/target policy, accepted evidence, replacement
-  visibility and submission members. `artifact_models.py`: association projections.
+  visibility and submission members. `resolve` answers any artifact id with one projection —
+  its association, else the immutable content lifted into the same shape.
+  `artifact_models.py`: association projections.
 - `research.py`: projects, claims, candidates, snapshots, membership and events; one loop
   binds `program.kinds`. Its transactional claim writer also serves reflection, preserving
   omitted fields and writing identical claim events plus explicit reflection provenance.

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
-from ..artifacts import PendingFigure
+from ..artifacts import Artifact as Content, PendingFigure
 from ..kernel.state.store import Row
 
 
@@ -84,6 +84,25 @@ class Artifact:
             data=data,
             figures=figures,
             tldr=tldr,
+        )
+
+    @classmethod
+    def from_content(cls, content: Content) -> Artifact:
+        """Immutable content nothing has associated, in the same shape.
+
+        The association fields are empty because there is no association, not
+        because one is missing — so a caller reads path, sha256, data and the
+        rest off one type and never branches on where the id came from.
+        """
+        return cls(
+            id=content.id, artifact_id=content.id, project_id=content.project_id,
+            target_type="", target_id="", role="", attempt_index=0, lens_id="",
+            path=content.path, title=content.title, sha256=content.sha256,
+            size_bytes=content.size_bytes, content_type=content.content_type,
+            status=content.status, created_by=content.created_by,
+            created_at=content.created_at, updated_at=content.updated_at,
+            order=content.order, expires_at=content.expires_at,
+            data=content.data, figures=content.figures,
         )
 
 

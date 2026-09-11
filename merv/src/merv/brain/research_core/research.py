@@ -501,11 +501,12 @@ class Research:
                     payload={},
                 )
                 idempotent = False
+            candidate, state = self._candidate(
+                conn=conn, project_id=project_id, candidate_id=candidate_id
+            )
             return {
-                "candidate": self._candidate(
-                    conn=conn, project_id=project_id, candidate_id=candidate_id
-                ),
-                "champion_id": self._champion_id(conn=conn, project_id=project_id),
+                "candidate": candidate,
+                "champion_id": state["champion_id"],
                 "idempotent": idempotent,
             }
 
@@ -533,7 +534,7 @@ class Research:
             )
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            candidate = self._candidate(
+            candidate, _ = self._candidate(
                 conn=conn, project_id=project_id, candidate_id=candidate_id
             )
             if candidate["source_kind"] != "experiment_workspace":
@@ -565,7 +566,7 @@ class Research:
                 "manifest_sha256": manifest_sha256,
                 "content_sha256": content_sha256,
             }
-            event = self.store.record_event(
+            self.store.record_event(
                 conn=conn,
                 project_id=project_id,
                 event_type="candidate.staged",
@@ -573,16 +574,10 @@ class Research:
                 target_id=candidate_id,
                 payload=receipt,
             )
-            receipt["staged_at"] = event.created_at
-            return {
-                "candidate": self._candidate(
-                    conn=conn,
-                    project_id=project_id,
-                    candidate_id=candidate_id,
-                    receipt=receipt,
-                ),
-                "idempotent": False,
-            }
+            staged, _ = self._candidate(
+                conn=conn, project_id=project_id, candidate_id=candidate_id
+            )
+            return {"candidate": staged, "idempotent": False}
 
     def list_candidates(self, *, project_id: str | None) -> dict[str, Any]:
         with closing(self.store.connect()) as conn:
@@ -606,14 +601,14 @@ class Research:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             candidate_id = str(candidate_id or "").strip()
             expected_champion_id = str(expected_champion_id or "").strip()
-            candidate = self._candidate(
+            candidate, state = self._candidate(
                 conn=conn, project_id=project_id, candidate_id=candidate_id
             )
             if not candidate["staged"]:
                 raise ValidationError(
                     "candidate is pending evaluator staging and cannot be promoted"
                 )
-            previous_id = self._champion_id(conn=conn, project_id=project_id)
+            previous_id = state["champion_id"]
             if previous_id != expected_champion_id:
                 raise ValidationError(
                     "champion changed; refresh candidate.list before promoting",
@@ -641,95 +636,38 @@ class Research:
 
     @classmethod
     def _candidate(
-        cls,
-        *,
-        conn: Connection,
-        project_id: str,
-        candidate_id: str,
-        receipt: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        row = conn.execute(
-            _CANDIDATE_SELECT + " WHERE id = ? AND project_id = ?",
-            (candidate_id, project_id),
-        ).fetchone()
-        if row is None:
-            raise NotFoundError(
-                f"candidate not found in project {project_id}: {candidate_id}"
-            )
-        if receipt is None and str(row["source_kind"]) == "experiment_workspace":
-            staged = conn.execute(
-                """
-                SELECT payload_json, created_at FROM events
-                WHERE project_id = ? AND type = 'candidate.staged'
-                  AND target_type = 'candidate' AND target_id = ?
-                ORDER BY id DESC LIMIT 1
-                """,
-                (project_id, candidate_id),
-            ).fetchone()
-            if staged is not None:
-                receipt = json.loads(str(staged["payload_json"] or "{}"))
-                receipt["staged_at"] = str(staged["created_at"])
-        view = cls._candidate_view(row, receipt=receipt)
-        promotion = conn.execute(
-            """
-            SELECT EXISTS(
-                     SELECT 1 FROM events WHERE project_id = ?
-                       AND type = 'candidate.promoted' AND target_id = ?
-                   ) AS was_promoted,
-                   COALESCE((SELECT target_id FROM events WHERE project_id = ?
-                     AND type = 'candidate.promoted' ORDER BY id DESC LIMIT 1), '')
-                     AS champion_id
-            """,
-            (project_id, candidate_id, project_id),
-        ).fetchone()
-        was_promoted = bool(promotion["was_promoted"])
-        view.update(
-            validated=was_promoted,
-            was_promoted=was_promoted,
-            is_champion=str(promotion["champion_id"]) == candidate_id,
+        cls, *, conn: Connection, project_id: str, candidate_id: str
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """One candidate, and the state replay `candidate.list` reads it from."""
+        state = cls._candidate_state(conn=conn, project_id=project_id)
+        for candidate in state["candidates"]:
+            if str(candidate["id"]) == candidate_id:
+                return candidate, state
+        raise NotFoundError(
+            f"candidate not found in project {project_id}: {candidate_id}"
         )
-        return view
-
-    @staticmethod
-    def _champion_id(*, conn: Connection, project_id: str) -> str:
-        row = conn.execute(
-            """
-            SELECT target_id AS candidate_id FROM events
-            WHERE project_id = ? AND type = 'candidate.promoted'
-              AND target_type = 'candidate' ORDER BY id DESC LIMIT 1
-            """,
-            (project_id,),
-        ).fetchone()
-        return str(row["candidate_id"]) if row is not None else ""
 
     @classmethod
-    def _candidate_state(
-        cls, *, conn: Connection, project_id: str
-    ) -> dict[str, Any]:
+    def _candidate_state(cls, *, conn: Connection, project_id: str) -> dict[str, Any]:
+        """Every candidate row with the staging and promotion events replayed over it."""
         rows = conn.execute(
-            _CANDIDATE_SELECT
-            + " WHERE project_id = ? ORDER BY created_seq DESC",
+            _CANDIDATE_SELECT + " WHERE project_id = ? ORDER BY created_seq DESC",
             (project_id,),
         ).fetchall()
-        receipts, promotions = cls._candidate_history(
-            conn=conn, project_id=project_id
-        )
+        receipts, promotions = cls._candidate_history(conn=conn, project_id=project_id)
+        champion_id = str(promotions[0]["candidate_id"]) if promotions else ""
+        promoted_ids = {str(item["candidate_id"]) for item in promotions}
         candidates = [
-            cls._candidate_view(row, receipt=receipts.get(str(row["id"])))
+            cls._candidate_view(
+                row,
+                receipt=receipts.get(str(row["id"])),
+                promoted=str(row["id"]) in promoted_ids,
+                is_champion=str(row["id"]) == champion_id,
+            )
             for row in rows
         ]
-        by_id = {str(item["id"]): item for item in candidates}
-        champion_id = (
-            str(promotions[0]["candidate_id"]) if promotions else ""
-        )
-        promoted_ids = {str(item["candidate_id"]) for item in promotions}
-        for candidate in candidates:
-            candidate_id = str(candidate["id"])
-            candidate["is_champion"] = candidate_id == champion_id
-            candidate["was_promoted"] = candidate_id in promoted_ids
-            candidate["validated"] = candidate["was_promoted"]
         return {
-            "champion": by_id.get(champion_id),
+            "champion": next((c for c in candidates if c["is_champion"]), None),
             "champion_id": champion_id,
             "candidates": candidates,
             "promotions": promotions,
@@ -737,7 +675,11 @@ class Research:
 
     @staticmethod
     def _candidate_view(
-        row: Any, *, receipt: dict[str, Any] | None = None
+        row: Any,
+        *,
+        receipt: dict[str, Any] | None,
+        promoted: bool,
+        is_champion: bool,
     ) -> dict[str, Any]:
         """The candidate row, plus what its validation and staging receipt say."""
         data = row_to_dict(row=row) or {}
@@ -757,9 +699,9 @@ class Research:
             primary_metric=validation.get("primary_metric"),
             higher_is_better=bool(validation.get("higher_is_better", True)),
             validation_summary=validation.get("summary", ""),
-            validated=False,
-            was_promoted=False,
-            is_champion=False,
+            validated=promoted,
+            was_promoted=promoted,
+            is_champion=is_champion,
         )
 
     @classmethod

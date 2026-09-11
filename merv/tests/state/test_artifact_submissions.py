@@ -397,6 +397,7 @@ class ArtifactsTest(unittest.TestCase):
             self.artifacts.figure(
                 artifact_id=report.artifact_id,
                 link_path="figures/curve.png",
+                project_id=self.project_id,
             )
         )
 
