@@ -1,10 +1,4 @@
-"""The computed fields of an experiment projection.
-
-Its wire shape is pinned by tests/surface/test_wire_shapes.py against a real
-seeded project; what stays here is what a fixture cannot show: the fallback
-when a caller hands in a state with no current-attempt selection, and the
-synopsis a review row is given when it stored none.
-"""
+"""Computed experiment fields and review summaries; public contracts live in test_public_contracts.py."""
 
 from __future__ import annotations
 
