@@ -98,7 +98,7 @@ class ProjectCreateShapeTest(unittest.TestCase):
         projects = _Projects()
         self.gateway = ToolInvocationGateway(
             tools=None, research=projects, sandboxes=None,
-            surface=HttpSurfacePolicy.for_surface(restrict_cors=True, hosted_control=True),
+            surface=HttpSurfacePolicy(restrict_cors=True, hosted_control=True),
             projects=ProjectAuthorizer(research=projects),
         )
 
@@ -164,7 +164,7 @@ class AccountKeyOverTheWireTest(unittest.TestCase):
         self.client = TestClient(
             create_fastapi_app(
                 self.app,
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=True, hosted_control=True
                 ),
                 auth=self.verifier,

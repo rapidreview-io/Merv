@@ -152,7 +152,7 @@ class AuthedSurfaceTest(unittest.TestCase):
             create_fastapi_app(
                 self.app,
                 allowed_origins=["https://ui.example"],
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=True, hosted_control=True
                 ),
                 auth=self.verifier,
@@ -357,7 +357,7 @@ class AuthedSurfaceTest(unittest.TestCase):
         client = TestClient(
             create_fastapi_app(
                 self.app,
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=False, hosted_control=True
                 ),
                 auth=self.verifier,

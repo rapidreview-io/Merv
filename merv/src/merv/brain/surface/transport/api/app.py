@@ -47,11 +47,10 @@ from .shared import conditional_json
 
 
 def create_fastapi_app(
-    app: Any | None = None,
+    app: Any,
     *,
     allowed_origins: list[str] | None = None,
     cleanup: Any | None = None,
-    tenant_counters: Any | None = None,
     surface_policy: HttpSurfacePolicy | None = None,
     auth: Any | None = None,
     user_directory: Any | None = None,
@@ -62,13 +61,9 @@ def create_fastapi_app(
     runner_pairings: RunnerPairings | None = None,
 ) -> FastAPI:
     """Compose transport adapters around an already-built backend."""
-    if app is None:
-        raise ValueError("provide app")
     if oauth_service is not None and not oauth_resource_uri:
         raise ValueError("oauth_resource_uri is required when OAuth is enabled")
-    surface = surface_policy or HttpSurfacePolicy.for_surface(
-        restrict_cors=False, hosted_control=False
-    )
+    surface = surface_policy or HttpSurfacePolicy(restrict_cors=False, hosted_control=False)
     require_hosted_auth_decision(auth=auth, hosted=surface.hosted_control, env=env)
     api = app
     authorizer = ProjectAuthorizer(research=api.research)
@@ -122,13 +117,13 @@ def create_fastapi_app(
         runner_pairings=runner_pairings,
         gateway=gateway,
     )
-    oauth.install_routes(
-        http,
-        service=oauth_service,
-        allowed_origins=allowed_origins or [],
-        ui_base_url=ui_base_url,
-        canonical_mcp_resource=oauth_resource_uri,
-    )
+    if oauth_service is not None:
+        http.include_router(oauth.build_router(
+            service=oauth_service,
+            allowed_origins=allowed_origins or [],
+            ui_base_url=ui_base_url,
+            canonical_mcp_resource=oauth_resource_uri,
+        ))
 
     sandbox_routers = (
         (
@@ -192,7 +187,6 @@ def create_fastapi_app(
         http,
         list_tools=api.tools.list_tools,
         call_tool=gateway.call_mcp,
-        allow_tool=lambda _tool: True,
         plan_tool=gateway.plan_mcp,
         ledger=api.tool_ledger,
         record_session=(
@@ -216,14 +210,5 @@ def create_fastapi_app(
         @http.post("/api/admin/cleanup")
         def admin_cleanup() -> dict[str, Any]:
             return {"cleaned": cleanup.run_all().as_dict()}
-
-        @http.get("/api/admin/tenants/{tenant_id}/counters")
-        def admin_tenant_counters(tenant_id: str) -> dict[str, Any]:
-            if tenant_counters is not None:
-                return tenant_counters(tenant_id=tenant_id)
-            return {
-                "tenant_id": tenant_id,
-                "tool_calls": api.research.tenant_event_count(tenant_id=tenant_id),
-            }
 
     return http

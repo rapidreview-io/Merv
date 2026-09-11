@@ -74,7 +74,7 @@ class HttpGatewayTest(unittest.TestCase):
         self.projects = ProjectAuthorizer(
             research=SimpleNamespace(is_project_member=member_lookup)
         )
-        self.surface = HttpSurfacePolicy.for_surface(
+        self.surface = HttpSurfacePolicy(
             restrict_cors=True, hosted_control=True
         )
 
@@ -330,7 +330,7 @@ class KeySandboxControlPathTest(unittest.TestCase):
             tools=_sandbox_dispatch(self.sandboxes),
             research=SimpleNamespace(review_project_id=lambda **_k: "proj-a"),
             sandboxes=self.sandboxes,
-            surface=HttpSurfacePolicy.for_surface(
+            surface=HttpSurfacePolicy(
                 restrict_cors=True, hosted_control=True
             ),
             projects=self.projects,

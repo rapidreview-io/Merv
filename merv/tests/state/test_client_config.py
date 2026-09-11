@@ -8,11 +8,11 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from merv.brain.surface.config import resolve_control_url
 from merv.shared.client_config import (
     CLIENT_CONFIG_ENV_VAR,
     CONTROL_URL_ENV_VAR,
     read_client_config,
+    resolve_client_control_url,
 )
 from merv.client.cli import HOSTED_CONTROL_URL, configure_client, main
 
@@ -44,7 +44,7 @@ class ClientConfigTest(unittest.TestCase):
                 CLIENT_CONFIG_ENV_VAR: str(config_path),
                 CONTROL_URL_ENV_VAR: "https://override.example.test",
             }
-            self.assertEqual(resolve_control_url(env), "https://override.example.test")
+            self.assertEqual(resolve_client_control_url(env=env), "https://override.example.test")
 
     def test_configure_defaults_to_hosted_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

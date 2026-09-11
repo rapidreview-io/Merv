@@ -684,7 +684,7 @@ class McpStreamablePreflightTest(unittest.TestCase):
         )
         gateway = ToolInvocationGateway(
             tools=None, research=research, sandboxes=None, projects=_Authorizer(),
-            surface=HttpSurfacePolicy.for_surface(restrict_cors=True, hosted_control=True),
+            surface=HttpSurfacePolicy(restrict_cors=True, hosted_control=True),
         )
 
         app = FastAPI()

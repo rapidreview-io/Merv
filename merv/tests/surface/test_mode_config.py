@@ -30,7 +30,7 @@ def _mounted_mgmt_key_env(root: Path) -> dict[str, str]:
 
 
 def _hosted_surface() -> HttpSurfacePolicy:
-    return HttpSurfacePolicy.for_surface(
+    return HttpSurfacePolicy(
         restrict_cors=True,
         hosted_control=True,
     )
@@ -323,18 +323,12 @@ class HostedControlSurfaceTest(unittest.TestCase):
                 return _Report()
 
         cleanup = _Cleanup()
-        counter_calls = []
-
-        def tenant_counters(*, tenant_id):  # noqa: ANN001
-            counter_calls.append(tenant_id)
-            return {"tenant_id": tenant_id, "tool_calls": 7}
 
         client = TestClient(
             create_fastapi_app(
                 self.app,
                 surface_policy=_hosted_surface(),
                 cleanup=cleanup,
-                tenant_counters=tenant_counters,
                 env=OPEN_HOSTED,
             ),
             raise_server_exceptions=False,
@@ -354,13 +348,6 @@ class HostedControlSurfaceTest(unittest.TestCase):
             self.assertEqual(ok.status_code, 200, ok.text)
             self.assertEqual(ok.json()["cleaned"], {"ok": True})
             self.assertEqual(cleanup.calls, 1)
-            counters = client.get(
-                "/api/admin/tenants/acme/counters",
-                headers={"X-Admin-Token": "op-secret"},
-            )
-            self.assertEqual(counters.status_code, 200, counters.text)
-            self.assertEqual(counters.json(), {"tenant_id": "acme", "tool_calls": 7})
-            self.assertEqual(counter_calls, ["acme"])
 
     def test_data_plane_submission_endpoint_is_deleted(self) -> None:
         client = TestClient(

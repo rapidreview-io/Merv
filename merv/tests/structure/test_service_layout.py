@@ -613,9 +613,7 @@ class ServiceLayoutTest(unittest.TestCase):
 
         self.assertNotIn("class _HttpSurfacePolicy", source)
         self.assertIn("surface_policy: HttpSurfacePolicy | None = None", source)
-        self.assertIn(
-            "surface = surface_policy or HttpSurfacePolicy.for_surface(", source
-        )
+        self.assertIn("surface = surface_policy or HttpSurfacePolicy(", source)
         control_source = (SURFACE_ROOT / "surface.py").read_text(encoding="utf-8")
         self.assertIn("surface_policy=surface", control_source)
         for decision in (
@@ -641,7 +639,6 @@ class ServiceLayoutTest(unittest.TestCase):
         self.assertNotIn("auth is not None", control_builder)
         self.assertNotIn("auth is None", control_builder)
         self.assertIn("class HttpSurfacePolicy", policy_source)
-        self.assertIn("def for_surface(", policy_source)
         self.assertNotIn("for_auth_present", source)
         self.assertNotIn("for_auth_present", policy_source)
         self.assertNotIn("auth_required", source)

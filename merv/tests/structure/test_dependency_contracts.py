@@ -32,9 +32,7 @@ DEPENDENCY_TYPE_DEBT = _debt(
 surface/telemetry.py | StructuredLogger.__init__ | stream | Any | None
 surface/transport/api/gateway.py | RequestAuthenticator | verifier | Any | None
 surface/transport/mcp_http.py | register_mcp_routes | list_tools | ToolCatalog
-surface/transport/mcp_http.py | register_mcp_routes | call_tool | ToolCaller
-surface/transport/mcp_http.py | register_mcp_routes | allow_tool | ToolFilter | None
-surface/transport/mcp_http.py | register_mcp_routes | authorize | Authorizer | None"""
+surface/transport/mcp_http.py | register_mcp_routes | call_tool | ToolCaller"""
 )
 
 
