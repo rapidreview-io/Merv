@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import importlib
 import unittest
 
 from tests.paths import TESTS_ROOT
@@ -20,6 +21,27 @@ def _test_sources() -> list[Path]:
 
 
 class TestLayoutTest(unittest.TestCase):
+    def test_canonical_loader_collects_every_top_level_test(self) -> None:
+        for path in _test_sources():
+            tree = ast.parse(path.read_text())
+            free = {node.name for node in tree.body
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")}
+            if not free:
+                continue
+            with self.subTest(path=str(path)):
+                self.assertTrue(any(isinstance(node, ast.FunctionDef) and node.name == "load_tests"
+                                    for node in tree.body), f"Uncollected free tests: {sorted(free)}")
+                module = importlib.import_module("tests." + ".".join(path.relative_to(TESTS_ROOT).with_suffix("").parts))
+                pending = list(unittest.defaultTestLoader.loadTestsFromModule(module))
+                collected = set()
+                while pending:
+                    case = pending.pop()
+                    if isinstance(case, unittest.TestSuite):
+                        pending.extend(case)
+                    elif isinstance(case, unittest.FunctionTestCase):
+                        collected.add(case._testFunc.__name__)
+                self.assertLessEqual(free, collected)
+
     def test_tests_are_grouped_by_concern_packages(self) -> None:
         self.assertEqual(sorted(path.name for path in TESTS_ROOT.glob("test_*.py")), [])
         for package in CONCERN_PACKAGES:

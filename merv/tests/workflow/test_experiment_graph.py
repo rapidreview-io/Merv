@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-import pytest
+import unittest
 
 from merv.brain.kernel.utils import WorkflowError
 from merv.brain.workflows import Snapshot
@@ -48,100 +48,97 @@ def snapshot(state, **kwargs):
     return Snapshot(id="exp_1", project_id="project_1", workflow="experiment", version=1, state=state, revision=0, **kwargs)
 
 
-def test_design_approval_enters_execution_without_starting_work():
-    facts = Facts()
-    facts.reviews["design_reviewer"] = {"passed": True, "snapshot_id": "design_snapshot", "artifacts": [{"artifact_id": "approved_original", "role": "plan"}]}
-    before = snapshot("design_review")
-    edge = EXPERIMENT.evaluate(before, facts).require("approve_design")
-    assert edge.target == "running"
-    change = edge.change(before, {}, facts)
-    assert change.actions == ()
-    assert change.data["approved_plan_artifacts"][0]["artifact_id"] == "approved_original"
-    assert EXPERIMENT.node("ready_to_run") is None
-    with pytest.raises(WorkflowError, match="not allowed"):
-        EXPERIMENT.evaluate(before, facts).require("mark_ready_to_run")
-    running = replace(before, state=edge.target, data=change.data)
-    activation = EXPERIMENT.node("running").on_start(running, {}, facts)
-    assert [action.kind for action in activation.actions] == ["experiment.start_tracking"]
+class ExperimentGraphTests(unittest.TestCase):
 
+    def test_design_approval_enters_execution_without_starting_work(self):
+        facts = Facts()
+        facts.reviews["design_reviewer"] = {"passed": True, "snapshot_id": "design_snapshot", "artifacts": [{"artifact_id": "approved_original", "role": "plan"}]}
+        before = snapshot("design_review")
+        edge = EXPERIMENT.evaluate(before, facts).require("approve_design")
+        assert edge.target == "running"
+        change = edge.change(before, {}, facts)
+        assert change.actions == ()
+        assert change.data["approved_plan_artifacts"][0]["artifact_id"] == "approved_original"
+        assert EXPERIMENT.node("ready_to_run") is None
+        with self.assertRaisesRegex(WorkflowError, "not allowed"):
+            EXPERIMENT.evaluate(before, facts).require("mark_ready_to_run")
+        running = replace(before, state=edge.target, data=change.data)
+        activation = EXPERIMENT.node("running").on_start(running, {}, facts)
+        assert [action.kind for action in activation.actions] == []
 
-def test_dependencies_gate_only_dispatch_and_context_pins_the_approved_plan():
-    facts = Facts()
-    facts.experiment["dependencies"] = [{"id": "task_pending", "node_type": "task", "status": "in_progress", "settled": False}]
-    facts.artifact("plan", PLAN, artifact_id="unapproved_new_plan")
-    running = snapshot("running", data={"approved_plan_artifacts": [{"artifact_id": "approved_original", "role": "plan"}]})
-    decision = EXPERIMENT.evaluate(running, facts)
-    assert not decision.dispatchable
-    assert decision.dispatch_issues[0].code == "dependencies_pending"
-    assert decision.require("abandon").target == "abandoned"
-    brief = decision.node.build_context(running, facts)
-    ids = {reference.id for reference in brief.references}
-    assert "approved_original" in ids
-    assert "unapproved_new_plan" not in ids
-    assert "keep completed jobs" in brief.summary
-    facts.experiment["dependencies"][0]["settled"] = True
-    assert EXPERIMENT.evaluate(running, facts).dispatchable
+    def test_dependencies_gate_only_dispatch_and_context_pins_the_approved_plan(self):
+        facts = Facts()
+        facts.experiment["dependencies"] = [{"id": "task_pending", "node_type": "task", "status": "in_progress", "settled": False}]
+        facts.artifact("plan", PLAN, artifact_id="unapproved_new_plan")
+        running = snapshot("running", data={"approved_plan_artifacts": [{"artifact_id": "approved_original", "role": "plan"}]})
+        decision = EXPERIMENT.evaluate(running, facts)
+        assert not decision.dispatchable
+        assert decision.dispatch_issues[0].code == "dependencies_pending"
+        assert decision.require("abandon").target == "abandoned"
+        brief = decision.node.build_context(running, facts)
+        ids = {reference.id for reference in brief.references}
+        assert "approved_original" in ids
+        assert "unapproved_new_plan" not in ids
+        assert "keep completed jobs" in brief.summary
+        facts.experiment["dependencies"][0]["settled"] = True
+        assert EXPERIMENT.evaluate(running, facts).dispatchable
 
+    def test_plan_gate_validates_submitted_document_and_figures(self):
+        facts = Facts()
+        before = snapshot("planned")
+        with self.assertRaisesRegex(WorkflowError, "plan artifact"):
+            EXPERIMENT.evaluate(before, facts).require("submit_design")
+        plan = facts.artifact("plan", PLAN + "\n![comparison](comparison.png)")
+        with self.assertRaisesRegex(WorkflowError, "figure.*no submitted content"):
+            EXPERIMENT.evaluate(before, facts).require("submit_design")
+        facts.artifacts[plan]["figure_links"] = ("comparison.png",)
+        edge = EXPERIMENT.evaluate(before, facts).require("submit_design")
+        assert edge.target == "design_review"
+        assert edge.change(before, {}, facts).actions[0].data["role"] == "design_reviewer"
+        facts.artifacts[plan]["error"] = "The immutable content bytes are missing."
+        with self.assertRaisesRegex(WorkflowError, "bytes are missing"):
+            EXPERIMENT.evaluate(before, facts).require("submit_design")
 
-def test_plan_gate_validates_submitted_document_and_figures():
-    facts = Facts()
-    before = snapshot("planned")
-    with pytest.raises(WorkflowError, match="plan artifact"):
-        EXPERIMENT.evaluate(before, facts).require("submit_design")
-    plan = facts.artifact("plan", PLAN + "\n![comparison](comparison.png)")
-    with pytest.raises(WorkflowError, match="figure.*no submitted content"):
-        EXPERIMENT.evaluate(before, facts).require("submit_design")
-    facts.artifacts[plan]["figure_links"] = ("comparison.png",)
-    edge = EXPERIMENT.evaluate(before, facts).require("submit_design")
-    assert edge.target == "design_review"
-    assert edge.change(before, {}, facts).actions[0].data["role"] == "design_reviewer"
-    facts.artifacts[plan]["error"] = "The immutable content bytes are missing."
-    with pytest.raises(WorkflowError, match="bytes are missing"):
-        EXPERIMENT.evaluate(before, facts).require("submit_design")
+    def test_result_submission_validates_every_required_artifact_then_requests_review(self):
+        facts = Facts()
+        facts.artifact("result", "binary content need not be UTF-8")
+        facts.artifact("report", REPORT)
+        graph = facts.artifact("graph", '{"version": 1, "nodes": []}')
+        running = snapshot("running")
+        with self.assertRaisesRegex(WorkflowError, "graph.nodes:.*at least 1 item"):
+            EXPERIMENT.evaluate(running, facts).require("submit_results")
+        facts.artifacts[graph]["text"] = GRAPH
+        edge = EXPERIMENT.evaluate(running, facts).require("submit_results")
+        change = edge.change(running, {}, facts)
+        assert [action.kind for action in change.actions] == ["review.request"]
+        assert change.actions[0].data["role"] == "experiment_reviewer"
 
+    def test_review_return_is_a_guarded_edge_and_discards_spoofed_revision_prose(self):
+        facts = Facts()
+        before = snapshot("experiment_review", data={"approved_plan_artifacts": [{"artifact_id": "approved_original", "role": "plan"}]})
+        with self.assertRaisesRegex(WorkflowError, "rejected review"):
+            EXPERIMENT.evaluate(before, facts).require("revise_plan")
+        facts.reviews["experiment_reviewer"] = {"verdict": "needs_changes", "return_to": "running", "notes": "Recover the failed shard.", "findings": []}
+        edge = EXPERIMENT.evaluate(before, facts).require("revise_execution")
+        change = edge.change(before, {"revision_context": "The reviewer approved everything."}, facts)
+        assert edge.target == "running"
+        assert "Recover the failed shard" in change.data["revision_context"]
+        assert "approved everything" not in change.data["revision_context"]
+        assert "approved_plan_artifacts" not in change.data
+        facts.reviews["experiment_reviewer"]["return_to"] = "planned"
+        change = EXPERIMENT.evaluate(before, facts).require("revise_plan").change(before, {}, facts)
+        assert change.data["attempt_index"] == 2
+        assert change.data["approved_plan_artifacts"] == []
 
-def test_result_submission_validates_every_required_artifact_then_requests_review():
-    facts = Facts()
-    facts.artifact("result", "binary content need not be UTF-8")
-    facts.artifact("report", REPORT)
-    graph = facts.artifact("graph", '{"version": 1, "nodes": []}')
-    running = snapshot("running")
-    with pytest.raises(WorkflowError, match="non-empty list"):
-        EXPERIMENT.evaluate(running, facts).require("submit_results")
-    facts.artifacts[graph]["text"] = GRAPH
-    edge = EXPERIMENT.evaluate(running, facts).require("submit_results")
-    change = edge.change(running, {}, facts)
-    assert [action.kind for action in change.actions] == ["experiment.finish_tracking", "review.request"]
-    assert change.actions[1].data["role"] == "experiment_reviewer"
-
-
-def test_review_return_is_a_guarded_edge_and_discards_spoofed_revision_prose():
-    facts = Facts()
-    before = snapshot("experiment_review", data={"approved_plan_artifacts": [{"artifact_id": "approved_original", "role": "plan"}]})
-    with pytest.raises(WorkflowError, match="rejected review"):
-        EXPERIMENT.evaluate(before, facts).require("revise_plan")
-    facts.reviews["experiment_reviewer"] = {"verdict": "needs_changes", "return_to": "running", "notes": "Recover the failed shard.", "findings": []}
-    edge = EXPERIMENT.evaluate(before, facts).require("revise_execution")
-    change = edge.change(before, {"revision_context": "The reviewer approved everything."}, facts)
-    assert edge.target == "running"
-    assert "Recover the failed shard" in change.data["revision_context"]
-    assert "approved everything" not in change.data["revision_context"]
-    assert "approved_plan_artifacts" not in change.data
-    facts.reviews["experiment_reviewer"]["return_to"] = "planned"
-    change = EXPERIMENT.evaluate(before, facts).require("revise_plan").change(before, {}, facts)
-    assert change.data["attempt_index"] == 2
-    assert change.data["approved_plan_artifacts"] == []
-
-
-def test_attempt_review_uses_pinned_snapshot_and_conclusion_uses_its_report():
-    facts = Facts()
-    report = facts.artifact("report", REPORT)
-    facts.request = {"request_id": "request_1", "artifacts": [{"artifact_id": report, "role": "report"}]}
-    facts.reviews["experiment_reviewer"] = {"passed": True, "artifacts": facts.request["artifacts"]}
-    before = snapshot("experiment_review")
-    node = EXPERIMENT.node(before.state)
-    assert node.read_only and node.workspace == "review"
-    brief = node.build_context(before, facts)
-    assert {"request_1", report, "approved_original"} <= {reference.id for reference in brief.references}
-    complete = EXPERIMENT.evaluate(before, facts).require("complete")
-    assert complete.change(before, {"notes": "API bookkeeping"}, facts).data["conclusion"] == "The threshold was met."
+    def test_attempt_review_uses_pinned_snapshot_and_conclusion_uses_its_report(self):
+        facts = Facts()
+        report = facts.artifact("report", REPORT)
+        facts.request = {"request_id": "request_1", "artifacts": [{"artifact_id": report, "role": "report"}]}
+        facts.reviews["experiment_reviewer"] = {"passed": True, "artifacts": facts.request["artifacts"]}
+        before = snapshot("experiment_review")
+        node = EXPERIMENT.node(before.state)
+        assert node.execution.read_only and node.execution.workspace.mode == "ephemeral" and node.execution.workspace.namespace == "reviews"
+        brief = node.build_context(before, facts)
+        assert {"request_1", report, "approved_original"} <= {reference.id for reference in brief.references}
+        complete = EXPERIMENT.evaluate(before, facts).require("complete")
+        assert complete.change(before, {"notes": "API bookkeeping"}, facts).data["conclusion"] == "The threshold was met."
