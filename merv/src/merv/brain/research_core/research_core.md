@@ -8,7 +8,7 @@ Application composes modules; Surface owns auth and transport. Generic Artifacts
 immutable content, Feed publishes observations, merv-sandboxes runs workloads and stores
 ML objects; Research records their producer. `Research` is the public root, built
 from `BaseStateStore`, `ResearchArtifacts` and its `Program`; Surface injects `Workflows`. Every
-native record runs on one engine; its service keeps only that kind's own rules.
+native record pins its kind's workflow version; mismatched instances fail before gates or writes.
 
 ## Files- `records.py`: the engine every native record runs on. Workflows declares a `RecordKind`
   beside each graph — table, id prefix, insert and JSON columns, which UPDATE each action

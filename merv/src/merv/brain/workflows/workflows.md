@@ -88,12 +88,11 @@ merely approving a plan or reading a context does not. Dispatch owns identities 
 then supplies the node's frozen brief, references and execution policy to the runner. The
 consolidating node references the retained proposal's base as `code`, which its workspace
 builds on.
-
 Schema 60 adopts existing native states, evidence and assignments; bootstrap preserves
 completed lenses and reviews and attaches the published wave. A registered definition
-change requires explicit instance migration. Review facts are scoped to project, snapshot
+change requires explicit instance migration; duplicate registrations fail and requirements
+may gate only outgoing actions of their declaring node. Review facts are scoped to project, snapshot
 and role; Research reviews reads SQL/settings and pure policy formats the same fact
-for checklists and runtime, including request expiry and independence.
-See `docs/WORKFLOW_IMPLEMENTATION.md` for composition, persistence and upgrade
+for checklists and runtime, including request expiry and independence.See `docs/WORKFLOW_IMPLEMENTATION.md` for composition, persistence and upgrade
 behavior. Keep this document under 100 lines and keep workflow decisions here,
 not in support systems or presentation adapters.

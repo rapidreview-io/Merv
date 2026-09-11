@@ -76,6 +76,8 @@ class Records:
         self.hooks: dict[str, RecordHooks] = {}
 
     def register(self, kind: RecordKind, hooks: RecordHooks) -> None:
+        if kind.name in self.kinds:
+            raise ValueError(f"record kind {kind.name!r} already registered")
         self.kinds[kind.name] = kind
         self.hooks[kind.name] = hooks
 
@@ -92,6 +94,8 @@ class Records:
         engine never opens one here: every node of a materialized wave is
         created before any dependency edge between them.
         """
+        if instance is not None:
+            self._require_version(kind, instance)
         hooks = self.hooks[kind.name]
         if guard:
             hooks.before_create(conn=conn, project_id=project_id, values=values)
@@ -132,7 +136,7 @@ class Records:
                                 target_type=kind.name, target_id=record_id, payload=event)
         if instance is None:
             self.runtime.adopt(conn=conn, project_id=project_id, instance_id=record_id,
-                               workflow=kind.name, state=kind.workflow.initial, data={"attempt_index": 1})
+                               workflow=kind.name, version=kind.workflow.version, state=kind.workflow.initial, data={"attempt_index": 1})
         return self.get_state(kind, record_id=record_id, conn=conn, **(read or {}))
 
     # ---- read ----
@@ -231,10 +235,16 @@ class Records:
             except NotFoundError:
                 snapshot = None
         if snapshot is not None:
+            self._require_version(kind, snapshot)
             return snapshot
-        return Snapshot(id=record_id, project_id=record["project_id"], workflow=kind.name, version=1,
+        return Snapshot(id=record_id, project_id=record["project_id"], workflow=kind.name, version=kind.workflow.version,
                         state=status, revision=0, data={"attempt_index": record.get("attempt_index") or 1},
                         outcome=kind.workflow.outcomes.get(status, ""))
+
+    @staticmethod
+    def _require_version(kind: RecordKind, snapshot: Snapshot) -> None:
+        if (snapshot.workflow, snapshot.version) != (kind.workflow.name, kind.workflow.version):
+            raise WorkflowError(f"{kind.name} instance differs from its record kind's workflow version; an explicit migration is required")
 
     def evaluate_gate(self, kind: RecordKind, *, conn, record: dict[str, Any], snapshots=None) -> GateEvaluation:
         """Evaluate the registered graph once; the checklist reads that evaluation."""
@@ -271,7 +281,7 @@ class Records:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             record = self.get_state(kind, record_id=record_id, project_id=project_id, conn=conn)
             current = self.runtime.adopt(conn=conn, project_id=project_id, instance_id=record_id,
-                                         workflow=kind.name, state=record["status"],
+                                         workflow=kind.name, version=kind.workflow.version, state=record["status"],
                                          data={"attempt_index": record["attempt_index"]})
             after = self.runtime.apply_in_transaction(
                 conn=conn, project_id=project_id, instance_id=record_id, action=transition,
@@ -289,6 +299,8 @@ class Records:
         round, and ``commit_columns`` says which of the transition's data fields
         each action writes back beside the projected status.
         """
+        self._require_version(kind, before)
+        self._require_version(kind, after)
         if action in {"start_work", "adopt_children"}:
             return  # The runtime's idempotent work_started event owns the clock.
         hooks = self.hooks[kind.name]

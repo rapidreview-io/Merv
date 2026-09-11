@@ -907,7 +907,7 @@ class ReflectionService(RecordHooks):
                           payload: dict[str, Any] | None = None) -> dict[str, Any]:
         reflection_id = str(reflection["id"])
         current = self.runtime.adopt(conn=conn, project_id=reflection["project_id"], instance_id=reflection_id,
-                                     workflow="reflection", state=reflection["status"],
+                                     workflow="reflection", version=REFLECTION.workflow.version, state=reflection["status"],
                                      data={"attempt_index": reflection["attempt_index"]})
         # Compatibility for the released bulk-submit tool: the child action the
         # parent's edge declares still runs on each open child, so the last one

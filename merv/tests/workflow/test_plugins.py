@@ -227,6 +227,34 @@ class ProgramInstallationTest(unittest.TestCase):
         self.assertIn("calibration.status", build_manifest(self.programs))
         self.assertNotIn("calibration.status", build_manifest((PROGRAM,)))
 
+    def test_requirements_can_only_name_their_own_nodes_outgoing_actions(self):
+        from dataclasses import replace
+        workflow = CALIBRATION.workflows[0]
+        node = workflow.nodes[0]
+        need = node.requires[0]
+        for action in ("publsih", "elsewhere"):
+            edges = (*workflow.edges, Edge("other", "elsewhere", next(iter(workflow.outcomes))))
+            nodes = (replace(node, requires=(replace(need, actions=(action,)),)), Node("other"))
+            with self.assertRaisesRegex(ValueError, "non-outgoing actions"):
+                replace(workflow, nodes=nodes, edges=edges)
+        replace(workflow, nodes=(replace(node, requires=(replace(need, actions=(), dispatch=True),)),))
+
+    def test_duplicate_definitions_and_preparations_are_rejected(self):
+        workflow = CALIBRATION.workflows[0]
+        with self.assertRaisesRegex(ValueError, "already registered"):
+            self.workflows.runtime.registry.register(workflow)
+        prepare = lambda snapshot, action, payload: None
+        self.workflows.register_preparation(workflow.name, prepare)
+        with self.assertRaisesRegex(ValueError, "already has a preparation"):
+            self.workflows.register_preparation(workflow.name, prepare)
+
+    def test_bootstrap_rejects_a_missing_declared_effect_handler(self):
+        from unittest.mock import patch
+        from tests.support.brain import TestBrain
+        from merv.brain.kernel.utils import ValidationError
+        with tempfile.TemporaryDirectory() as root, patch("merv.brain.surface.surface.research_effects", return_value={}), self.assertRaisesRegex(ValidationError, "workflow.start.*review.request"):
+            TestBrain(repo_root=Path(root), db_path=Path(root) / "state.sqlite")
+
     def test_its_own_requirement_class_resolves_into_the_shared_checklist(self) -> None:
         need = CALIBRATION.workflows[0].node("calibrate").requires[0]
         context = GateContext(record={}, issues=(),
