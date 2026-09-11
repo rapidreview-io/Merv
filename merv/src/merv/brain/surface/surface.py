@@ -55,6 +55,7 @@ from .brain_dirs import resolve_brain_state_root, resolve_local_brain_staging
 from ..kernel.env import env_bool, env_value
 from ..kernel.ports.blob_store import BlobStore, EvidenceBlobStore
 from ..kernel.state import BaseStateStore
+from ..kernel.retention import Retention
 from ..kernel.state.activity import register_activity_vocabulary
 from ..kernel.state.tool_call_ledger import (
     ToolCallLedger,
@@ -117,7 +118,12 @@ class Surface:
         self.tool_ledger = ToolCallLedger(
             store=store, on_failure=self._ledger_dropped, payloads=self.tool_payloads
         )
-        self.tool_ledger.start_retention()
+        # One clock for every owner's sweep. Owners register as they are
+        # built, here and in hosted composition; the loop reads the registry
+        # each tick, so a late arrival still gets swept.
+        self.retention = Retention(on_error=self._sink_failed)
+        self.retention.add("tool_calls", self.tool_ledger.prune)
+        self.retention.start()
         self.agent_identities = AgentIdentities(
             store=store, mode=agent_identity_mode, payloads=self.tool_payloads
         )
@@ -229,14 +235,19 @@ class Surface:
         )
 
     def _ledger_dropped(self, error: str) -> None:
+        self._sink_failed("tool_calls", error)
+
+    def _sink_failed(self, name: str, error: object) -> None:
+        """Announce work one sink could not do; never raise into its caller."""
         with suppress(Exception):
             self.activity.emit(
                 event_type="telemetry.dropped",
-                payload={"sink": "tool_calls", "status": "error", "error": error},
+                payload={"sink": name, "status": "error", "error": str(error)[:200]},
             )
 
     def shutdown(self) -> None:
         self.application.workflow_deliveries.stop()
+        self.retention.stop()
         if self.infrastructure_client is not None:
             with suppress(Exception):
                 self.infrastructure_client.close()
