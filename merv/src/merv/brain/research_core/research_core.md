@@ -65,7 +65,12 @@ Agent Sessions before `action:reflection.publish` atomically materializes the ap
 Reservations share one namespace, but only experiment names consume active-cap slots.
 Migration 71 defaults existing names to one slot; initialization reads their pinned spec
 bytes to classify task-only names as zero. Unreadable or unknown names remain one.
-Publication materializes from the pin before releasing reservations, on the same transaction;
+The publish reducer reads the pinned spec through transaction-bound Knowledge and declares
+`TransactionalEffect("reflection.materialize_change_spec", {"spec": parsed_spec})`.
+The publication effect and its helpers live outside `ReflectionService`; `Research` binds
+claim/experiment/task writers explicitly. The service retains corpus, lens, reservation,
+pin/spec/world reads and bound-advance orchestration. Effects run before native commit/hooks
+and reservation release, on the same transaction;
 its already-reserved creates bypass mutable capacity checks. Failure restores every write.
 
 ## Read model and invariants

@@ -68,11 +68,20 @@ class Action:
 
 
 @dataclass(frozen=True, slots=True)
+class TransactionalEffect:
+    """A synchronous write on the transition's connection; failure aborts it."""
+
+    kind: str
+    data: Data = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class Change:
     """A top-level data patch and effects to commit with the transition."""
 
     data: Data = field(default_factory=dict)
     actions: tuple[Action, ...] = ()
+    transactional: tuple[TransactionalEffect, ...] = ()
 
 
 class Check(Protocol):
@@ -713,7 +722,8 @@ class Orientation(Protocol):
 class Program:
     """One research program: every part a brain must install to run it.
 
-    ``effects`` are the action kinds its edges emit and ``requirements`` the need
+    ``effects`` names delivery handlers; ``transactional_effects`` names synchronous
+    writes on the workflow transaction. ``requirements`` declares the need
     classes its nodes use; bootstrap refuses to start unless each has a handler
     and a resolver, so a second program is an entry in ``programs`` and nothing else.
     """
@@ -723,6 +733,7 @@ class Program:
     workflows: tuple[Workflow, ...] = ()
     kinds: tuple[RecordKind, ...] = ()
     effects: tuple[str, ...] = ()
+    transactional_effects: tuple[str, ...] = ()
     requirements: tuple[type, ...] = ()
     tools: Mapping[str, ToolContract] = field(default_factory=dict)
     orientation: Orientation | None = None

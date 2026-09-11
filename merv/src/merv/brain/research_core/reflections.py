@@ -32,8 +32,6 @@ from ..workflows import (
     validate_reflection_roster,
 )
 from .dependencies import record_dependencies
-from .experiments import ExperimentService
-from .tasks import TaskService
 from .artifacts import ResearchArtifacts as Artifacts
 from .artifact_models import ArtifactTarget
 from .policy import (
@@ -91,6 +89,129 @@ class ClaimWriter(Protocol):
                  provenance: dict[str, Any] | None = None) -> dict[str, Any]: ...
 
 
+# ---- Publication effect: claim edits, all nodes and associations, then DAG edges ----
+
+
+def publication_effect(*, write_claim: ClaimWriter, create_experiment, create_task):
+    """Bind transaction-only writers; the reducer supplies the pinned parsed spec."""
+    def materialize(conn: Connection, before: Snapshot, after: Snapshot, data) -> None:
+        spec, project_id, reflection_id = data["spec"], before.project_id, before.id
+        _materialize_wave(
+            conn=conn, project_id=project_id, reflection_id=reflection_id,
+            create_experiment=create_experiment, create_task=create_task,
+            key_to_claim_id=_materialize_claim_changes(
+                conn=conn, project_id=project_id, reflection_id=reflection_id,
+                write_claim=write_claim, changes=spec.get("claim_changes") or []),
+            experiments=spec["decision"].get("experiments") or [],
+            tasks=spec["decision"].get("tasks") or [])
+    return materialize
+
+
+def _materialize_claim_changes(*, write_claim: ClaimWriter, conn: Connection, project_id: str, reflection_id: str,
+                               changes: list[dict[str, Any]]) -> dict[str, str]:
+    """Apply each claim edit and remember the keys its wave refers to."""
+    by_key: dict[str, str] = {}
+    for change in changes:
+        op, key = str(change["op"]), str(change.get("key") or "").strip()
+        claim = write_claim(conn=conn, project_id=project_id, changes=change,
+                            claim_id="" if op == "create" else str(change["claim_id"]).strip(),
+                            provenance={"source_reflection_id": reflection_id,
+                                        "rationale": str(change.get("rationale") or "").strip()})
+        claim_id = str(claim["id"])
+        if op == "create" and key:
+            by_key[key] = claim_id
+        conn.execute("INSERT INTO reflection_claim_changes (reflection_id, claim_id, op, claim_key, created_at) "
+                     "VALUES (?, ?, ?, ?, ?)", (reflection_id, claim_id, op, key, now_iso()))
+    return by_key
+
+
+def _materialize_wave(
+    *,
+    create_experiment, create_task,
+    conn: Connection,
+    project_id: str,
+    reflection_id: str,
+    key_to_claim_id: dict[str, str],
+    experiments: list[dict[str, Any]],
+    tasks: list[dict[str, Any]],
+) -> None:
+    """Create the wave's nodes, then its DAG edges.
+
+    Two passes: every node exists before any edge is recorded, so a task
+    may depend on an experiment proposed later in the spec and vice versa.
+    A task's brief is pinned from the proposal — the reflection authored
+    the finish line, the executor should not have to retype it.
+    """
+    key_to_node_id: dict[str, str] = {}
+    pending_edges: list[tuple[str, list[str]]] = []
+    for proposal in tasks:
+        proposal_key = str(proposal.get("key") or "").strip()
+        task = create_task(
+            conn=conn,
+            project_id=project_id,
+            reflection_id=reflection_id,
+            name=str(proposal.get("name") or ""),
+            goal=str(proposal.get("goal") or ""),
+            deliverables=[
+                str(item)
+                for item in (
+                    proposal.get("deliverables")
+                    if proposal.get("deliverables") is not None
+                    else proposal.get("done_when") or []
+                )
+            ],
+            proposal_key=proposal_key,
+        )
+        task_id = task.id
+        if proposal_key:
+            key_to_node_id[proposal_key] = task_id
+        conn.execute(
+            """
+            INSERT INTO reflection_tasks
+              (reflection_id, task_id, proposal_key, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (reflection_id, task_id, proposal_key, now_iso()),
+        )
+        # create_from_reflection pinned the rendered brief already.
+        pending_edges.append((task_id, depends_on_refs(proposal)))
+    for proposal in experiments:
+        claim_ids = [key_to_claim_id.get(ref, ref) for ref in claim_refs(proposal)]
+        proposal_key = str(proposal.get("key") or "").strip()
+        experiment = create_experiment(
+            conn=conn,
+            project_id=project_id,
+            reflection_id=reflection_id,
+            name=str(proposal.get("name") or ""),
+            intent=str(proposal.get("intent") or ""),
+            details=str(proposal.get("details") or ""),
+            tested_claim_ids=claim_ids,
+            proposal_key=proposal_key,
+            parallelism=str(proposal.get("parallelism") or ""),
+        )
+        experiment_id = experiment.id
+        if proposal_key:
+            key_to_node_id[proposal_key] = experiment_id
+        conn.execute(
+            """
+            INSERT INTO reflection_experiments
+              (reflection_id, experiment_id, proposal_key, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (reflection_id, experiment_id, proposal_key, now_iso()),
+        )
+        pending_edges.append((experiment_id, depends_on_refs(proposal)))
+    for node_id, refs in pending_edges:
+        if not refs:
+            continue
+        record_dependencies(
+            conn=conn,
+            project_id=project_id,
+            node_id=node_id,
+            depends_on_ids=[key_to_node_id.get(ref, ref) for ref in refs],
+        )
+
+
 class ReflectionService(RecordHooks):
     """The reflection wave's own rules; its record runs on ``Records``."""
 
@@ -99,20 +220,14 @@ class ReflectionService(RecordHooks):
         *,
         store: BaseStateStore,
         artifacts: Artifacts,
-        experiments: ExperimentService,
-        tasks: TaskService,
         records: Records,
         advances: WorkspaceAdvances,
-        write_claim: ClaimWriter,
     ) -> None:
         self.store = store
         self.artifacts = artifacts
-        self.experiments = experiments
-        self.tasks = tasks
         self.records = records
         self.runtime = records.runtime
         self.advances = advances
-        self.write_claim = write_claim
         records.register(REFLECTION, self)
         self.classify_reservations()
 
@@ -295,6 +410,9 @@ class ReflectionService(RecordHooks):
 
     def read_fact(self, *, conn: Connection, record: dict[str, Any], reference: Reference):
         """The world a change spec is parsed against."""
+        if reference.kind == "reflection_change_spec" and reference.id == record["id"]:
+            return self._pinned_change_spec(conn=conn, reflection=self.get_state(
+                reflection_id=record["id"], project_id=record["project_id"], conn=conn))
         if reference.kind != "reflection_world" or reference.id != record["project_id"]:
             return None
         claims = conn.execute("SELECT id FROM claims WHERE project_id = ?", (reference.id,)).fetchall()
@@ -947,9 +1065,6 @@ class ReflectionService(RecordHooks):
         if action in PINS_WAVE_NAMES:
             self._reserve_wave_names(conn=conn, reflection=self.get_state(
                 reflection_id=before.id, project_id=before.project_id, conn=conn))
-        if action == "publish":
-            self._materialize_change_spec(conn=conn, reflection=self.get_state(
-                reflection_id=before.id, project_id=before.project_id, conn=conn))
         if action != "migrate" and REFLECTION.status_of(after.state) not in HOLDS_WAVE_NAMES:
             conn.execute("DELETE FROM reflection_reserved_names WHERE reflection_id = ?", (before.id,))
 
@@ -1059,126 +1174,6 @@ class ReflectionService(RecordHooks):
         return parse_change_spec(text=document.text, path=document.path,
                                  claim_exists=lambda value: value in world["claim_ids"],
                                  node_exists=lambda value: value in world["node_ids"])
-
-    def _materialize_change_spec(self, *, conn: Connection, reflection: ReflectionState) -> None:
-        """Apply the reviewer-approved belief-state update.
-
-        This is called only from the publish transition after the review gate
-        passes. Rejected reflections never reach this function, so speculative
-        claim edits or experiment specs do not leak into project state.
-        """
-        project_id, reflection_id = str(reflection.project_id), str(reflection.id)
-        spec = self._pinned_change_spec(conn=conn, reflection=reflection)
-        self._materialize_wave(
-            conn=conn, project_id=project_id, reflection_id=reflection_id,
-            key_to_claim_id=self._materialize_claim_changes(
-                conn=conn, project_id=project_id, reflection_id=reflection_id,
-                changes=spec.get("claim_changes") or []),
-            experiments=spec["decision"].get("experiments") or [],
-            tasks=spec["decision"].get("tasks") or [])
-
-    def _materialize_claim_changes(self, *, conn: Connection, project_id: str, reflection_id: str,
-                                   changes: list[dict[str, Any]]) -> dict[str, str]:
-        """Apply each claim edit and remember the keys its wave refers to."""
-        by_key: dict[str, str] = {}
-        for change in changes:
-            op, key = str(change["op"]), str(change.get("key") or "").strip()
-            claim = self.write_claim(conn=conn, project_id=project_id, changes=change,
-                                     claim_id="" if op == "create" else str(change["claim_id"]).strip(),
-                                     provenance={"source_reflection_id": reflection_id,
-                                                 "rationale": str(change.get("rationale") or "").strip()})
-            claim_id = str(claim["id"])
-            if op == "create" and key:
-                by_key[key] = claim_id
-            conn.execute("INSERT INTO reflection_claim_changes (reflection_id, claim_id, op, claim_key, created_at) "
-                         "VALUES (?, ?, ?, ?, ?)", (reflection_id, claim_id, op, key, now_iso()))
-        return by_key
-
-    def _materialize_wave(
-        self,
-        *,
-        conn: Connection,
-        project_id: str,
-        reflection_id: str,
-        key_to_claim_id: dict[str, str],
-        experiments: list[dict[str, Any]],
-        tasks: list[dict[str, Any]],
-    ) -> None:
-        """Create the wave's nodes, then its DAG edges.
-
-        Two passes: every node exists before any edge is recorded, so a task
-        may depend on an experiment proposed later in the spec and vice versa.
-        A task's brief is pinned from the proposal — the reflection authored
-        the finish line, the executor should not have to retype it.
-        """
-        key_to_node_id: dict[str, str] = {}
-        pending_edges: list[tuple[str, list[str]]] = []
-        for proposal in tasks:
-            proposal_key = str(proposal.get("key") or "").strip()
-            task = self.tasks.create_from_reflection(
-                conn=conn,
-                project_id=project_id,
-                reflection_id=reflection_id,
-                name=str(proposal.get("name") or ""),
-                goal=str(proposal.get("goal") or ""),
-                deliverables=[
-                    str(item)
-                    for item in (
-                        proposal.get("deliverables")
-                        if proposal.get("deliverables") is not None
-                        else proposal.get("done_when") or []
-                    )
-                ],
-                proposal_key=proposal_key,
-            )
-            task_id = task.id
-            if proposal_key:
-                key_to_node_id[proposal_key] = task_id
-            conn.execute(
-                """
-                INSERT INTO reflection_tasks
-                  (reflection_id, task_id, proposal_key, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (reflection_id, task_id, proposal_key, now_iso()),
-            )
-            # create_from_reflection pinned the rendered brief already.
-            pending_edges.append((task_id, depends_on_refs(proposal)))
-        for proposal in experiments:
-            claim_ids = [key_to_claim_id.get(ref, ref) for ref in claim_refs(proposal)]
-            proposal_key = str(proposal.get("key") or "").strip()
-            experiment = self.experiments.create_from_reflection(
-                conn=conn,
-                project_id=project_id,
-                reflection_id=reflection_id,
-                name=str(proposal.get("name") or ""),
-                intent=str(proposal.get("intent") or ""),
-                details=str(proposal.get("details") or ""),
-                tested_claim_ids=claim_ids,
-                proposal_key=proposal_key,
-                parallelism=str(proposal.get("parallelism") or ""),
-            )
-            experiment_id = experiment.id
-            if proposal_key:
-                key_to_node_id[proposal_key] = experiment_id
-            conn.execute(
-                """
-                INSERT INTO reflection_experiments
-                  (reflection_id, experiment_id, proposal_key, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (reflection_id, experiment_id, proposal_key, now_iso()),
-            )
-            pending_edges.append((experiment_id, depends_on_refs(proposal)))
-        for node_id, refs in pending_edges:
-            if not refs:
-                continue
-            record_dependencies(
-                conn=conn,
-                project_id=project_id,
-                node_id=node_id,
-                depends_on_ids=[key_to_node_id.get(ref, ref) for ref in refs],
-            )
 
     def _submitted_role_document(
         self,

@@ -78,6 +78,10 @@ class CommitRecord(Protocol):
     def __call__(self, conn: Connection, before: Snapshot, after: Snapshot, action: str, payload: Data) -> None: ...
 
 
+class TransactionalHandler(Protocol):
+    def __call__(self, conn: Connection, before: Snapshot, after: Snapshot, data: Data) -> None: ...
+
+
 class CreateRecord(Protocol):
     def __call__(self, conn: Connection, snapshot: Snapshot) -> None: ...
 
@@ -96,6 +100,7 @@ class Runtime:
         self.knowledge = knowledge or (lambda snapshot, conn: EmptyKnowledge())
         self.commit = commit
         self.create = create
+        self.transactional_effects: dict[tuple[str, int, str], TransactionalHandler] = {}
 
     def get(self, *, project_id: str, instance_id: str, conn: Connection | None = None) -> Snapshot:
         if conn is None:
@@ -283,10 +288,10 @@ class Runtime:
         replay = self._replay(conn, project_id, instance_id, key, fingerprint)
         if replay is not None:
             return replay, []
-        evaluation = self.evaluate(project_id=project_id, instance_id=instance_id, conn=conn)
-        before = evaluation.snapshot
+        before = self.get(project_id=project_id, instance_id=instance_id, conn=conn)
         if before.revision != expected_revision:
             raise WorkflowError("workflow changed; refresh its state before applying an action")
+        evaluation = self.registry.get(before.workflow, before.version).evaluate(before, self.knowledge(before, conn))
         edge = evaluation.require(action)
         change = edge.change(before, freeze_json_object(payload), self.knowledge(before, conn))
         after = self._save(conn, before, state=edge.target, change=change)
@@ -321,7 +326,13 @@ class Runtime:
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (f"{before.id}:{revision}:{index}", before.id, before.project_id, revision, action.kind, encode(action.data), now),
             )
-        return self.get(project_id=before.project_id, instance_id=before.id, conn=conn)
+        after = self.get(project_id=before.project_id, instance_id=before.id, conn=conn)
+        for effect in change.transactional:
+            handler = self.transactional_effects.get((after.workflow, after.version, effect.kind))
+            if handler is None:
+                raise WorkflowError(f"unregistered transactional effect: {effect.kind!r}")
+            handler(conn, before, after, effect.data)
+        return after
 
     def _record(
         self, conn: Connection, snapshot: Snapshot, *, from_state: str,
@@ -542,8 +553,8 @@ class Runtime:
         assert node is not None
         payload = {"session_id": session_id}
         change = node.on_start(snapshot, freeze_json_object(payload), self.knowledge(snapshot, conn))
-        if change.data:
-            raise WorkflowError("node activation may request actions but cannot edit workflow data")
+        if change.data or change.transactional:
+            raise WorkflowError("node activation may request actions but cannot edit data or emit transactional effects")
         if self.commit is not None:
             self.commit(conn, snapshot, snapshot, "start_work", payload)
         now = now_iso()

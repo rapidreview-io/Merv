@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from merv.brain.research_core.reflections import _materialize_claim_changes
 import unittest
 from unittest import mock
 
@@ -30,7 +31,7 @@ class ReflectionWorkflowTest(ResearchCase):
         reflection = self.create_reflection()
         service = self.app.research.reflections
         with self.app.store.transaction() as conn:
-            ids = service._materialize_claim_changes(conn=conn, project_id=self.project_id, reflection_id=reflection,
+            ids = _materialize_claim_changes(write_claim=self.app.research._write_claim, conn=conn, project_id=self.project_id, reflection_id=reflection,
                 changes=[{"op": "create", "key": "effect", "statement": "  Compare the effect.  ", "scope": " Local ", "rationale": " Evidence "}])
             wave_id = ids["effect"]
             wave = dict(conn.execute("SELECT * FROM claims WHERE id = ?", (wave_id,)).fetchone())
@@ -38,7 +39,7 @@ class ReflectionWorkflowTest(ResearchCase):
                 self.assertEqual(wave[field], direct[field])
             events = [json.loads(row["payload_json"]) for row in conn.execute("SELECT payload_json FROM events WHERE target_type = 'claim' ORDER BY id").fetchall()]
             self.assertEqual(events[-1], {**events[0], "source_reflection_id": reflection, "rationale": "Evidence"})
-            service._materialize_claim_changes(conn=conn, project_id=self.project_id, reflection_id=reflection,
+            _materialize_claim_changes(write_claim=self.app.research._write_claim, conn=conn, project_id=self.project_id, reflection_id=reflection,
                 changes=[{"op": "update", "claim_id": direct["id"], "statement": "Revised claim.", "status": "supported"}])
             updated = dict(conn.execute("SELECT * FROM claims WHERE id = ?", (direct["id"],)).fetchone())
             self.assertEqual((updated["statement"], updated["scope"], updated["confidence"], updated["status"]),
@@ -57,11 +58,11 @@ class ReflectionWorkflowTest(ResearchCase):
                         for table in ("claims", "events", "reflection_claim_changes")]
         before = counts()
         with self.assertRaises(NotFoundError), self.app.store.transaction() as conn:
-            self.app.research.reflections._materialize_claim_changes(conn=conn, project_id=self.project_id,
+            _materialize_claim_changes(write_claim=self.app.research._write_claim, conn=conn, project_id=self.project_id,
                 reflection_id=reflection, changes=changes)
         self.assertEqual(counts(), before)
         with self.assertRaisesRegex(RuntimeError, "abort after association"), self.app.store.transaction() as conn:
-            self.app.research.reflections._materialize_claim_changes(conn=conn, project_id=self.project_id,
+            _materialize_claim_changes(write_claim=self.app.research._write_claim, conn=conn, project_id=self.project_id,
                 reflection_id=reflection, changes=changes[:1])
             raise RuntimeError("abort after association")
         self.assertEqual(counts(), before)
@@ -268,6 +269,126 @@ class ReflectionWorkflowTest(ResearchCase):
         self.assertEqual(len(published.materialized_claims), 2)
         self.assertEqual(len(published.materialized_experiments), 1)
 
+    def _assert_publish_rollback(self, checkpoint):
+        from contextlib import contextmanager
+        existing = self.app.research.create_claim(project_id=self.project_id, statement="Existing belief.", scope="Keep this scope.")
+        spec = json.loads(VALID_CHANGE_SPEC)
+        spec["claim_changes"].append({"op": "update", "claim_id": existing["id"], "status": "supported",
+                                      "confidence": "high", "rationale": "Reviewed evidence."})
+        spec["decision"]["tasks"] = [
+            {"key": "prep", "name": "prep-data", "goal": "Prepare data.", "done_when": ["Count the splits."]},
+            {"key": "follow", "name": "inspect-transfer", "goal": "Inspect transfer.", "done_when": ["Inspect the report."],
+             "depends_on": ["transfer_test"]}]
+        spec["decision"]["experiments"][0]["depends_on"] = ["prep"]
+        reflection = self.create_reflection()
+        self.submit_lenses(reflection)
+        self.call("reflection.transition", project_id=self.project_id, reflection_id=reflection, transition="submit_reflections")
+        self.submit_reflection_bundle(reflection, change_spec=json.dumps(spec))
+        self.call("reflection.transition", project_id=self.project_id, reflection_id=reflection, transition="submit_reflection_artifacts")
+        self.pass_review(target_type="reflection", target_id=reflection, role="reflection_reviewer")
+        advance = self._reviewed_no_code_advance(reflection)
+        for index in range(ACTIVE_EXPERIMENT_CAP - 1):
+            self.call("experiment.create", project_id=self.project_id, name=f"fill-{index}", intent="Use available capacity.")
+        tables = ("reflections", "claims", "experiments", "tasks", "experiment_claims", "reflection_claim_changes",
+                  "reflection_experiments", "reflection_tasks", "node_dependencies", "reflection_reserved_names",
+                  "research_artifact_links", "research_submission_artifacts", "submissions",
+                  "workflow_instances", "workflow_actions", "workflow_history", "events")
+        def rows(conn):
+            return {table: sorted((dict(row) for row in conn.execute(f"SELECT * FROM {table}").fetchall()),
+                                  key=lambda row: json.dumps(row, sort_keys=True)) for table in tables}
+        store, runtime = self.app.store, self.app.workflows.runtime
+        with store.transaction() as conn:
+            before = rows(conn)
+        state = runtime.get(project_id=self.project_id, instance_id=reflection)
+        self.assertEqual(sorted(row["experiment_slots"] for row in before["reflection_reserved_names"]), [0, 0, 1])
+        self.assertEqual(state.state, "consolidation_review")
+        fired = []
+        prefix = {"claim_create": "INSERT INTO claims", "claim_update": "UPDATE claims SET",
+                  "mixed_nodes": "INSERT INTO reflection_experiments", "dependencies": "INSERT INTO node_dependencies",
+                  "history": "INSERT INTO workflow_history"}[checkpoint]
+        case, transaction = self, store.transaction
+        class FaultConnection:
+            def __init__(self, conn):
+                self.conn = conn
+            def __getattr__(self, name):
+                return getattr(self.conn, name)
+            def execute(self, sql, parameters=()):
+                result = self.conn.execute(sql, parameters)  # Fault only AFTER the real SQL write.
+                if " ".join(sql.split()).startswith(prefix) and not fired:
+                    if checkpoint == "history" and parameters[6] != "publish":
+                        return result  # Node creation has its own earlier histories.
+                    during = rows(self.conn)
+                    saved = runtime.get(conn=self.conn, project_id=case.project_id, instance_id=reflection)
+                    case.assertEqual((saved.state, saved.revision), ("published", state.revision + 1))
+                    case.assertTrue(saved.data["published_graph_version_id"])
+                    case.assertEqual(len(during["workflow_actions"]), len(before["workflow_actions"]) + 1)
+                    case.assertEqual(len(during["claims"]), len(before["claims"]) + 1)
+                    if checkpoint != "claim_create":
+                        claim = next(row for row in during["claims"] if row["id"] == existing["id"])
+                        case.assertEqual((claim["status"], claim["confidence"]), ("supported", "high"))
+                    if checkpoint in {"mixed_nodes", "dependencies", "history"}:
+                        for table, added in (("tasks", 2), ("experiments", 1), ("reflection_tasks", 2),
+                                             ("reflection_experiments", 1), ("experiment_claims", 1)):
+                            case.assertEqual(len(during[table]), len(before[table]) + added)
+                    if checkpoint in {"dependencies", "history"}:
+                        case.assertGreater(len(during["node_dependencies"]), len(before["node_dependencies"]))
+                    if checkpoint == "history":
+                        case.assertEqual(during["reflection_reserved_names"], [])
+                        case.assertEqual(during["reflections"][0]["status"], "published")
+                        case.assertEqual(during["reflections"][0]["published_graph_version_id"], saved.data["published_graph_version_id"])
+                    else:
+                        case.assertEqual(during["reflection_reserved_names"], before["reflection_reserved_names"])
+                        case.assertEqual(during["reflections"], before["reflections"])
+                    fired.append(checkpoint)
+                    raise RuntimeError("after publication write")
+                return result
+        @contextmanager
+        def failing_transaction():
+            with transaction() as conn:
+                yield FaultConnection(conn)
+        with mock.patch.object(store, "transaction", failing_transaction):
+            with self.assertRaisesRegex(RuntimeError, "after publication write"):
+                self._settle(advance)
+        self.assertEqual(fired, [checkpoint])
+        with store.transaction() as conn:
+            self.assertEqual(rows(conn), before)  # Includes pin, revision, native rows, slots, seals and every association.
+        self.assertEqual(runtime.get(project_id=self.project_id, instance_id=reflection), state)
+        self.assertEqual(self._advance_row(advance["id"])["status"], "bound")
+        with mock.patch.object(self.app.research.reflections, "_submitted_role_document", side_effect=AssertionError("lost pin")):
+            published = self._settle(advance)
+        self.assertEqual((published.status, len(published.materialized_tasks), len(published.materialized_experiments)), ("published", 2, 1))
+        self.assertEqual(self._advance_row(advance["id"])["error"], "")
+        with store.transaction() as conn:
+            committed = rows(conn)
+            history = conn.execute("SELECT * FROM workflow_history WHERE instance_id = ? AND action = 'publish'", (reflection,)).fetchone()
+            replay = runtime.apply_in_transaction(conn=conn, project_id=self.project_id, instance_id=reflection,
+                action="publish", expected_revision=state.revision, request_id=history["command_key"].removeprefix("domain:"))
+            self.assertEqual((replay.state, replay.revision), ("published", state.revision + 1))
+        self._settle(advance)
+        with store.transaction() as conn:
+            self.assertEqual(rows(conn), committed)  # Both engine replay and bound-receipt retry are no-ops.
+        self.assertEqual(committed["reflection_reserved_names"], [])
+        self.assertEqual(len(committed["node_dependencies"]), 2)
+        nodes = {row["proposal_key"]: row.get("task_id", row.get("experiment_id"))
+                 for table in ("reflection_tasks", "reflection_experiments") for row in committed[table]}
+        self.assertEqual({(row["node_id"], row["depends_on_id"]) for row in committed["node_dependencies"]},
+                         {(nodes["follow"], nodes["transfer_test"]), (nodes["transfer_test"], nodes["prep"])})
+
+    def test_publish_rolls_back_after_claim_creation(self):
+        self._assert_publish_rollback("claim_create")
+
+    def test_publish_rolls_back_after_claim_update(self):
+        self._assert_publish_rollback("claim_update")
+
+    def test_publish_rolls_back_after_mixed_node_creation(self):
+        self._assert_publish_rollback("mixed_nodes")
+
+    def test_publish_rolls_back_after_dependency_insertion(self):
+        self._assert_publish_rollback("dependencies")
+
+    def test_publish_rolls_back_after_reservation_deletion_and_history(self):
+        self._assert_publish_rollback("history")
+
     def _reviewed_no_code_advance(self, reflection_id: str) -> dict:
         """Drive the consolidation gate to a prepared advance without settling."""
         packet = self.app.application.consolidation(
@@ -331,19 +452,18 @@ class ReflectionWorkflowTest(ResearchCase):
 
     def _flaky_materialization(self):
         """Patch context: the first publish attempt fails, later ones succeed."""
-        service = self.app.reflection_waves
-        original = service._materialize_change_spec
+        handlers = self.app.workflows.runtime.transactional_effects
+        key = ("reflection", 1, "reflection.materialize_change_spec")
+        original = handlers[key]
         calls = {"n": 0}
 
-        def flaky(**kwargs):
+        def flaky(*args):
+            original(*args)
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError("transient publish failure")
-            return original(**kwargs)
 
-        return mock.patch.object(
-            service, "_materialize_change_spec", side_effect=flaky
-        )
+        return mock.patch.dict(handlers, {key: flaky})
 
     def test_duplicate_claim_refs_are_rejected_at_the_review_gate(self) -> None:
         # Materialization inserts experiment_claims rows keyed on

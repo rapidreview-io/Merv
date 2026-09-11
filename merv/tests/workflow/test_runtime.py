@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import unittest
+from unittest import mock
 from tempfile import TemporaryDirectory
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from tests.support.schema import booted_store
 from merv.brain.kernel.utils import NotFoundError, WorkflowError
 from merv.brain.workflows import (
     Action, Brief, Change, Child, Deliveries, Edge, Guidance, Issue, Node, Reference,
-    Registry, Runtime, Workflow, wait_for_all, join_guard,
+    Program, Registry, Runtime, TransactionalEffect, Workflow, Workflows, wait_for_all, join_guard,
 )
 
 
@@ -77,6 +78,83 @@ class RuntimeTests(unittest.TestCase):
             project_id = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()["id"]
         runtime = Runtime(store=store, registry=Registry((replication(),)))
         self.system = runtime, project_id
+
+    def test_transactional_effects_validate_order_rollback_retry_replay_and_migration(self):
+        runtime, project_id = self.system
+        change = Change(data={"pin": "approved"}, actions=(Action("later"),),
+                        transactional=(TransactionalEffect("write", {"value": "first"}),
+                                       TransactionalEffect("write", {"value": "second"})))
+        definition = replace(replication(), edges=(Edge("work", "submit", "review", change=lambda *_: change),))
+        workflows = Workflows(store=runtime.store, programs=iter((Program(name="effects", version=1,
+            workflows=(definition, replace(definition, version=2)), transactional_effects=("write",)),)))
+        runtime = workflows.runtime
+        current = runtime.start(project_id=project_id, workflow="replication", version=1, request_id="effects")
+        with self.assertRaisesRegex(WorkflowError, "unregistered transactional effect"):
+            act(runtime, project_id, current, "submit")
+        self.assertEqual(runtime.get(project_id=project_id, instance_id=current.id), current)
+        calls, fail = [], [True]
+        def handler(conn, before, after, data):
+            self.assertEqual(runtime.get(conn=conn, project_id=project_id, instance_id=current.id), after)
+            self.assertEqual(after.revision, before.revision + 1)
+            self.assertEqual(after.data["pin"], "approved")
+            self.assertIsNotNone(conn.execute("SELECT id FROM workflow_actions WHERE revision = ?",
+                                             (after.revision,)).fetchone())
+            calls.append(data["value"])
+            conn.execute("UPDATE projects SET summary = ? WHERE id = ?", (data["value"], project_id))
+            if data["value"] == "second" and fail[0]:
+                raise RuntimeError("after second write")
+        for name, candidate in (("undeclared", handler), ("write", None)):
+            with self.assertRaises(ValueError):
+                workflows.register_transactional_effect(name, candidate)
+        workflows.register_transactional_effect("write", handler)
+        with self.assertRaises(ValueError):
+            workflows.register_transactional_effect("write", handler)
+        def rows():
+            with runtime.store.transaction() as conn:
+                return [[dict(row) for row in conn.execute(f"SELECT * FROM {table}").fetchall()]
+                        for table in ("projects", "workflow_instances", "workflow_actions", "workflow_history", "events")]
+        initial = rows()
+        with self.assertRaisesRegex(RuntimeError, "after second write"):
+            act(runtime, project_id, current, "submit")
+        self.assertEqual(rows(), initial)
+        self.assertEqual(calls, ["first", "second"])
+        def commit(conn, before, after, action, payload):
+            self.assertEqual(conn.execute("SELECT summary FROM projects WHERE id = ?", (project_id,)).fetchone()["summary"], "second")
+            self.assertIsNone(conn.execute("SELECT id FROM workflow_history WHERE instance_id = ? AND revision = ?",
+                                           (after.id, after.revision)).fetchone())
+            calls.append("commit")
+        runtime.commit, fail[0] = commit, False
+        after = act(runtime, project_id, current, "submit")
+        self.assertEqual(calls, ["first", "second", "first", "second", "commit"])
+        committed = rows()
+        self.assertEqual(act(runtime, project_id, current, "submit"), after)
+        self.assertEqual(rows(), committed)
+        with self.assertRaises(WorkflowError):
+            runtime.apply(project_id=project_id, instance_id=current.id, action="submit",
+                          expected_revision=current.revision, request_id="stale")
+        self.assertEqual(len(calls), 5)
+        migration = dict(project_id=project_id, instance_id=current.id, version=2,
+                         expected_revision=after.revision, request_id="upgrade", transform=lambda _: ("review", change))
+        runtime.migrate(**migration)
+        self.assertEqual(calls[-3:], ["first", "second", "commit"])
+        committed = rows()
+        runtime.migrate(**migration)
+        self.assertEqual(rows(), committed)
+        self.assertEqual(len(calls), 8)
+
+    def test_activation_rejects_transactional_effects_without_losing_start(self):
+        runtime, project_id = self.system
+        definition = replace(replication(), name="activation", nodes=(replace(worker("work"),
+            on_start=lambda *_: Change(transactional=(TransactionalEffect("write"),))), worker("review")))
+        runtime.registry.register(definition)
+        current = runtime.start(project_id=project_id, workflow="activation", request_id="activation")
+        with self.assertRaisesRegex(WorkflowError, "transactional effects"), runtime.store.transaction() as conn:
+            runtime.activate(conn=conn, project_id=project_id, instance_id=current.id,
+                             revision=current.revision, session_id="worker")
+        with runtime.store.transaction() as conn:
+            self.assertEqual(conn.execute("SELECT started_revision FROM workflow_instances WHERE id = ?",
+                                           (current.id,)).fetchone()["started_revision"], -1)
+        self.assertEqual(len(runtime.history(project_id=project_id, instance_id=current.id)), 1)
 
     def test_branch_and_revision_loop_have_identical_transition_semantics(self):
         runtime, project_id = self.system
@@ -152,7 +230,7 @@ class RuntimeTests(unittest.TestCase):
         def broken(*args, **kwargs):
             raise RuntimeError("history unavailable")
 
-        self.enterContext(unittest.mock.patch.object(runtime, "_record", broken))
+        self.enterContext(mock.patch.object(runtime, "_record", broken))
         with self.assertRaisesRegex(RuntimeError, "history unavailable"):
             act(runtime, project_id, current, "finish")
         assert runtime.get(project_id=project_id, instance_id=current.id) == current
