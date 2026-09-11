@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import unittest
 
-from merv.brain.kernel.utils import ValidationError
+from merv.brain.kernel.utils import PermissionDeniedError, ValidationError
 from merv.brain.workflows import REVIEW_KIND
 from merv.brain.workflows.definitions.review import REVIEW, record_verdict
 
-from tests.research_core.scenarios import REVIEW_SYNOPSIS, ResearchCase
+from tests.research_core.scenarios import REVIEW_SYNOPSIS, VALID_PLAN, ResearchCase
 
 
 class ReviewGraphTest(unittest.TestCase):
@@ -47,6 +47,46 @@ class ReviewRecordSpineTest(ResearchCase):
             columns = {str(row["name"]) for row in
                        conn.execute("PRAGMA table_info(review_requests)").fetchall()}
         self.assertLessEqual({"attempt_index", "revision_context", "updated_at"}, columns)
+
+
+class ReviewLifecycleCase(ResearchCase):
+    """Requests driven through the graph against a real experiment gate."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.experiment_id = self.create_experiment("reviewed")
+        self.submit(target_type="experiment", target_id=self.experiment_id,
+                    role="plan", path="plan.md", body=VALID_PLAN)
+        self.transition_experiment(self.experiment_id, "submit_design")
+
+    def request(self, role: str = "design_reviewer", **overrides):
+        return self.call("review.request", project_id=self.project_id, target_type="experiment",
+                         target_id=self.experiment_id, role=role,
+                         producer_session_id="producer", **overrides)
+
+    def instance(self, request_id: str):
+        return self.app.workflows.runtime.get(project_id=self.project_id, instance_id=request_id)
+
+    def row_status(self, request_id: str) -> str:
+        with self.app.store.transaction() as conn:
+            return str(conn.execute("SELECT status FROM review_requests WHERE id = ?",
+                                    (request_id,)).fetchone()["status"])
+
+
+class RequestTest(ReviewLifecycleCase):
+    def test_a_fresh_capability_supersedes_every_open_request_through_the_graph(self) -> None:
+        first = self.request()
+        self.assertEqual((self.instance(first["review_request_id"]).state,
+                          self.row_status(first["review_request_id"])), ("requested", "requested"))
+        second = self.request()
+        closed = self.instance(first["review_request_id"])
+        self.assertEqual((closed.state, closed.outcome), ("superseded", "superseded"))
+        self.assertEqual(self.row_status(first["review_request_id"]), "superseded")
+        with self.assertRaisesRegex(PermissionDeniedError, "no longer open"):
+            self.call("review.start", review_request_id=first["review_request_id"],
+                      reviewer_capability=first["reviewer_capability"], caller_session_id="reviewer")
+        self.call("review.start", review_request_id=second["review_request_id"],
+                  reviewer_capability=second["reviewer_capability"], caller_session_id="reviewer")
 
 
 if __name__ == "__main__":

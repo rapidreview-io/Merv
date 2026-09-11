@@ -7,7 +7,7 @@ from .models import public_record
 from ..workflows.definitions.research_state import (
     ReviewRequestCreated, ReviewRequestReused, ReviewRequestSkipped, ReviewRequestOutcome,
 )
-from ..workflows import Public
+from ..workflows import REVIEW_KIND as KIND, Public
 
 from contextlib import closing
 from collections.abc import Mapping
@@ -156,58 +156,40 @@ class ReviewService:
                     (project_id, target_type, target_id, role),
                 ).fetchall()
             ]
-            if superseded:
-                placeholders = ", ".join("?" for _ in superseded)
-                conn.execute(
-                    f"UPDATE review_requests SET status = 'superseded' WHERE id IN ({placeholders})",
-                    (*superseded,),
-                )
-            request_id = new_id(prefix="rr")
+            for revoked in superseded:
+                self._apply(conn=conn, request_id=revoked, action="supersede")
             # The plaintext capability is minted here, returned ONCE to the
             # caller, and never stored; only its SHA-256 digest lands in the row.
             capability = mint_secret(prefix="rp_", nbytes=24)
             expires_at = format_iso(datetime.now(UTC) + timedelta(hours=1))
-            conn.execute(
-                """
-                INSERT INTO review_requests (
-                  id, project_id, target_type, target_id, role, reason, capability_hash,
-                  status, target_snapshot_id, producer_session_id, expires_at, created_at,
-                  created_seq
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?, ?, ?)
-                """,
-                (
-                    request_id,
-                    project_id,
-                    target_type,
-                    target_id,
-                    role,
-                    reason,
-                    hash_secret(capability),
-                    snapshot_id,
-                    producer_session_id,
-                    expires_at,
-                    now_iso(),
-                    next_created_seq(conn=conn, table="review_requests"),
-                ),
-            )
-            self.store.record_event(
-                conn=conn,
-                project_id=project_id,
-                event_type="review.requested",
-                target_type=target_type,
-                target_id=target_id,
-                payload={
-                    "role": role,
-                    "request_id": request_id,
-                    "superseded_request_ids": superseded,
-                },
-            )
+            request_id = str(self.records.create_in_transaction(
+                KIND, conn=conn, project_id=project_id,
+                values={"target_type": target_type, "target_id": target_id, "role": role,
+                        "reason": reason, "capability_hash": hash_secret(capability),
+                        "target_snapshot_id": snapshot_id,
+                        "producer_session_id": producer_session_id, "expires_at": expires_at},
+                event={"role": role, "target_type": target_type, "target_id": target_id,
+                       "superseded_request_ids": superseded},
+            )["id"])
             return ReviewRequestCreated(
                 review_request_id=request_id, reviewer_capability=capability, role=role,
                 target_snapshot_id=snapshot_id, target_snapshot=snapshot_from_id(snapshot_id=snapshot_id),
                 expires_at=expires_at,
             )
+
+    def _apply(self, *, conn: Connection, request_id: str, action: str,
+               payload: dict[str, Any] | None = None) -> Snapshot:
+        """Move one request along the review graph, adopting rows that predate it."""
+        row = conn.execute("SELECT project_id, status FROM review_requests WHERE id = ?",
+                           (request_id,)).fetchone()
+        project_id = str(row["project_id"])
+        current = self.runtime.adopt(conn=conn, project_id=project_id, instance_id=request_id,
+                                     workflow=KIND.name, version=KIND.workflow.version,
+                                     state=str(row["status"]))
+        return self.runtime.apply_in_transaction(
+            conn=conn, project_id=project_id, instance_id=request_id, action=action,
+            expected_revision=current.revision, request_id=f"{action}:{request_id}",
+            payload=payload or {})
 
     def start(
         self,
