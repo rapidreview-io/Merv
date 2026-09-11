@@ -9,7 +9,7 @@ from fastapi import APIRouter, Body, Request
 from ....agent_sessions import AgentSessions
 from ....application import Application, present_session
 from ....kernel.utils import NotFoundError, PermissionDeniedError, ValidationError
-from ...identity import LOCAL_PRINCIPAL, ProjectKeyScopeError, principal_label
+from ...identity import ProjectKeyScopeError, is_external_key, principal_label
 from .gateway import ToolInvocationGateway
 from .shared import JsonBody
 
@@ -41,8 +41,8 @@ def build_router(
     router = APIRouter()
 
     def owner(request: Request, payload: dict[str, Any]) -> str:
-        principal = getattr(request.state, "principal", LOCAL_PRINCIPAL)
-        if getattr(principal, "agent_session_id", None):
+        principal = request.state.principal
+        if principal.agent_session_id:
             raise PermissionDeniedError(
                 "an agent session credential cannot control runner sessions"
             )
@@ -52,11 +52,10 @@ def build_router(
     def authorize_session_control(request: Request, session_id: str) -> None:
         """Re-check the session's immutable parent project before mutation."""
         authority = sessions.authority(session_id=session_id)
-        principal = getattr(request.state, "principal", LOCAL_PRINCIPAL)
-        same_source = str(authority["source_user_id"]) == str(
-            getattr(principal, "user_id", "") or ""
-        ) and str(authority["source_key_id"]) == str(
-            getattr(principal, "key_id", "") or ""
+        principal = request.state.principal
+        same_source = (
+            str(authority["source_user_id"]) == principal.user_id
+            and str(authority["source_key_id"]) == (principal.key_id or "")
         )
         try:
             gateway.authorize_project(request, authority["project_id"])
@@ -73,7 +72,7 @@ def build_router(
         payload = dict(body or {})
         project_id = str(payload.get("project_id") or "")
         gateway.authorize_project(request, project_id)
-        principal = getattr(request.state, "principal", LOCAL_PRINCIPAL)
+        principal = request.state.principal
         deadline = payload.get("hard_deadline_seconds", 24 * 60 * 60)
         if not isinstance(deadline, int) or isinstance(deadline, bool):
             raise ValidationError(
@@ -86,8 +85,8 @@ def build_router(
             platform=str(payload.get("platform") or ""),
             idempotency_key=str(payload.get("idempotency_key") or ""),
             session_secret=str(payload.get("session_secret") or ""),
-            source_key_id=str(getattr(principal, "key_id", "") or ""),
-            source_user_id=str(getattr(principal, "user_id", "") or ""),
+            source_key_id=principal.key_id or "",
+            source_user_id=principal.user_id,
             hard_deadline_seconds=deadline,
         )
 
@@ -230,8 +229,7 @@ def build_router(
     ) -> dict[str, Any]:
         payload = dict(body or {})
         gateway.authorize_project(request, project_id)
-        principal = getattr(request.state, "principal", LOCAL_PRINCIPAL)
-        if getattr(principal, "agent_session_id", None):
+        if request.state.principal.agent_session_id:
             raise PermissionDeniedError(
                 "an agent session credential cannot report runner presence"
             )
@@ -286,10 +284,7 @@ def build_router(
         """
         payload = dict(body or {})
         gateway.authorize_project(request, project_id)
-        principal = getattr(request.state, "principal", LOCAL_PRINCIPAL)
-        if getattr(principal, "agent_session_id", None) or getattr(
-            principal, "key_id", None
-        ):
+        if is_external_key(request.state.principal):
             raise PermissionDeniedError(
                 "runner settings are saved from the browser, not by a runner or agent"
             )

@@ -32,6 +32,7 @@ from merv.brain.surface.transport.mcp_streamable_http import (
     PRETTY_RESULT_THRESHOLD_BYTES,
     SERVER_INSTRUCTIONS,
 )
+from merv.brain.surface.identity import Principal
 from merv.shared.errors import ValidationError
 
 
@@ -690,8 +691,9 @@ class McpStreamablePreflightTest(unittest.TestCase):
         # A real mk_ principal always carries key_id alongside key_project_id
         # (auth.py _verify_project_key); the deny-rules key on that shape.
         holder = {
-            "principal": SimpleNamespace(
-                user_id="u1", key_id="mkey_bound", key_project_id="p_bound"
+            "principal": Principal(
+                tenant_id="t", client_id="project-key:mkey_bound",
+                user_id="u1", key_id="mkey_bound", key_project_id="p_bound",
             )
         }
 
@@ -727,9 +729,7 @@ class McpStreamablePreflightTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 403, response.text)
         # A plain user's foreign review request is a membership miss: 404.
-        holder["principal"] = SimpleNamespace(
-            user_id="u2", key_id=None, key_project_id=""
-        )
+        holder["principal"] = Principal(tenant_id="t", client_id="jwt:s2", user_id="u2")
         response = mcp.request(
             "tools/call",
             {"name": "review.start",
@@ -744,14 +744,13 @@ class McpStreamablePreflightTest(unittest.TestCase):
         """Visibility is decided before any pre-flight work, so an internal tool
         earns its 403 ahead of whatever the plan would have refused first (the
         identity gate, in production's required mode)."""
-        from types import SimpleNamespace
-
         app = FastAPI()
 
         @app.middleware("http")
         async def bind_principal(request, call_next):
-            request.state.principal = SimpleNamespace(
-                user_id="u1", key_id="mkey_bound", key_project_id="p_bound"
+            request.state.principal = Principal(
+                tenant_id="t", client_id="project-key:mkey_bound",
+                user_id="u1", key_id="mkey_bound", key_project_id="p_bound",
             )
             return await call_next(request)
 

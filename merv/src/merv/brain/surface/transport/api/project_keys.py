@@ -79,7 +79,7 @@ def _owner(request: Request) -> str:
         raise HumanSessionRequiredError(
             "project key management requires a Supabase browser session"
         )
-    return str(getattr(principal, "user_id", "") or "")
+    return principal.user_id
 
 
 __all__ = ["build_router"]

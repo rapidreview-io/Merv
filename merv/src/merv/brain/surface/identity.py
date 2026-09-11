@@ -20,18 +20,22 @@ class ProjectKeyScopeError(PermissionDeniedError):
     """A project key was presented outside its immutable project scope."""
 
     error_code = "project_scope_forbidden"
+    http_status = 403
 
 
 class ToolVisibilityError(PermissionDeniedError):
     """A non-local MCP caller attempted an internal-only tool."""
 
     error_code = "tool_visibility_forbidden"
+    http_status = 403
 
 
 class HumanSessionRequiredError(PermissionDeniedError):
     """A machine credential attempted a human-owned control operation."""
 
     error_code = "human_session_required"
+    http_status = 403
+
 
 class AgentSessionScopeError(PermissionDeniedError):
     """A coding-agent session attempted work outside its lease."""
@@ -79,42 +83,34 @@ class Principal:
 LOCAL_PRINCIPAL = Principal(tenant_id=LOCAL_TENANT_ID, client_id=LOCAL_CLIENT_ID)
 
 
-def is_external_key(principal: object | None) -> bool:
-    """Whether this principal is an external machine credential."""
-    return (
-        getattr(principal, "key_id", None) is not None
-        or getattr(principal, "agent_session_id", None) is not None
+def is_external_key(principal: Principal | None) -> bool:
+    """An external machine credential: a key or a leased session."""
+    return principal is not None and (
+        principal.key_id is not None or principal.agent_session_id is not None
     )
 
 
-def is_human_session(principal: object | None) -> bool:
-    """Whether a real person is driving this request (a Supabase browser JWT).
+def is_human_session(principal: Principal | None) -> bool:
+    """A real person is driving this request (a Supabase browser JWT).
 
     Every other verified credential — an ``mk_`` key — is a machine one,
     however wide its reach, so operations that only a human may authorize
     (project-key management, personal tokens, membership) test this.
     """
-    return str(getattr(principal, "client_id", "") or "").startswith("jwt:")
+    return principal is not None and principal.client_id.startswith("jwt:")
 
 
-def is_local_principal(principal: object | None) -> bool:
-    """Whether this is the trusted-local sentinel (internal composition).
-
-    Only ``LOCAL_PRINCIPAL`` is trusted-local; every verifier-minted principal
-    (JWT, mk_) is external. The value-level check keeps the answer
-    stable if the sentinel is ever reconstructed rather than shared by identity.
-    """
-    if principal is LOCAL_PRINCIPAL:
-        return True
+def is_local_principal(principal: Principal | None) -> bool:
+    """The trusted-local sentinel (internal composition), by value."""
     return (
-        getattr(principal, "key_id", None) is None
-        and getattr(principal, "agent_session_id", None) is None
-        and str(getattr(principal, "client_id", "")) == LOCAL_CLIENT_ID
-        and not getattr(principal, "user_id", "")
+        principal is not None
+        and not is_external_key(principal)
+        and principal.client_id == LOCAL_CLIENT_ID
+        and not principal.user_id
     )
 
 
-def principal_label(principal: object | None) -> str:
+def principal_label(principal: Principal | None) -> str:
     """Non-secret caller identity for telemetry attribution.
 
     A project key is named by its ``project_api_keys`` row id — never the
@@ -122,15 +118,14 @@ def principal_label(principal: object | None) -> str:
     Supabase user id; the trusted-local sentinel by ``local``; and an
     unauthenticated request on an open deployment by ``open``.
     """
-    key_id = str(getattr(principal, "key_id", "") or "")
-    if key_id:
-        return f"key:{key_id}"
-    agent_session_id = str(getattr(principal, "agent_session_id", "") or "")
-    if agent_session_id:
-        return f"agent-session:{agent_session_id}"
-    user_id = str(getattr(principal, "user_id", "") or "")
-    if user_id:
-        return f"user:{user_id}"
+    if principal is None:
+        return "open"
+    if principal.key_id:
+        return f"key:{principal.key_id}"
+    if principal.agent_session_id:
+        return f"agent-session:{principal.agent_session_id}"
+    if principal.user_id:
+        return f"user:{principal.user_id}"
     return "local" if is_local_principal(principal) else "open"
 
 

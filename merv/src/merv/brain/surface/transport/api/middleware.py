@@ -1,11 +1,8 @@
 """Generic HTTP telemetry, CORS, and exception adapters.
 
 Split out of gateway.py so the request-aware boundaries (RequestAuthenticator,
-ProjectAuthorizer, ToolInvocationGateway) stay within their line budget. The
-error handler maps the scope/visibility/human-session refusals to 403, the
-not-found family to 404, and a lost tracking write to 500 (a valid request the
-server failed to record is not a client error); everything else in the domain
-error hierarchy is 400.
+ProjectAuthorizer, ToolInvocationGateway) stay within their line budget. Every
+domain error carries its own ``http_status``; the handler renders it.
 """
 
 from __future__ import annotations
@@ -17,25 +14,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from merv.shared.errors import TrackingPersistenceError
-
 from ....kernel.request_context import begin_request, reset_request
 from ....kernel.state import monotonic_ms
-from ....kernel.utils import (
-    ContentUnavailableError,
-    GoneError,
-    NotFoundError,
-    ResearchPluginError,
-    ThrottledError,
-)
-from ...identity import (
-    HumanSessionRequiredError,
-    ProjectKeyScopeError,
-    ToolVisibilityError,
-)
+from ....kernel.utils import ResearchPluginError
 from ...telemetry import StructuredLogger
 from ..http_policy import HttpSurfacePolicy
-from .shared import UI_CORS_EXPOSE_HEADERS, UI_CORS_HEADERS, redact_upload_tokens
+from .shared import UI_CORS_EXPOSE_HEADERS, UI_CORS_HEADERS, redact_upload_tokens, refusal
 
 
 def install_activity_middleware(
@@ -57,11 +41,11 @@ def install_activity_middleware(
             return response
         finally:
             reset_request(scope)
-            principal = getattr(request.state, "principal", None)
+            principal = getattr(request.state, "principal", None)  # unset on OPTIONS
             structured_logger.log(
                 kind="http",
                 request_id=request_id,
-                tenant_id=getattr(principal, "tenant_id", "") or "",
+                tenant_id=principal.tenant_id if principal else "",
                 path=redact_upload_tokens(str(request.url.path)),
                 status=status,
                 duration_ms=monotonic_ms() - started,
@@ -86,31 +70,7 @@ def install_error_handlers(http: FastAPI) -> None:
     async def research_error_handler(
         _request: Request, exc: ResearchPluginError
     ) -> JSONResponse:
-        status = (
-            403
-            if isinstance(
-                exc,
-                (HumanSessionRequiredError, ProjectKeyScopeError, ToolVisibilityError),
-            )
-            else 404
-            if isinstance(exc, (NotFoundError, ContentUnavailableError))
-            else 410
-            if isinstance(exc, GoneError)
-            else 429
-            if isinstance(exc, ThrottledError)
-            # The request was valid and its transition committed; only the
-            # server's own durable record failed. The message and error_code
-            # still carry the do-not-retry instruction verbatim.
-            else 503
-            if exc.error_code == "infrastructure_unavailable"
-            else 500
-            if isinstance(exc, TrackingPersistenceError)
-            else 400
-        )
-        return JSONResponse(
-            {"detail": exc.message, "error_code": exc.error_code, **exc.details},
-            status_code=status,
-        )
+        return refusal(exc)
 
     @http.exception_handler(RequestValidationError)
     async def validation_error_handler(

@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse, Response
 from ....kernel.env import env_value
 from ....kernel.request_context import bind_principal
 from ....kernel.state.activity import UPLOAD_TOKEN_PATH_RE
-from ....kernel.utils import ValidationError
+from ....kernel.utils import ResearchPluginError, ValidationError
 from ...identity import (
     HumanSessionRequiredError, is_human_session, is_local_principal,
     principal_label,
@@ -51,6 +51,14 @@ UI_CORS_HEADERS = [
 ]
 # ETag is not CORS-safelisted; expose it so a cross-origin dev UI can echo it back.
 UI_CORS_EXPOSE_HEADERS = ["ETag"]
+
+
+def refusal(exc: ResearchPluginError) -> JSONResponse:
+    """The one JSON shape a domain error takes on the wire."""
+    return JSONResponse(
+        {"detail": exc.message, "error_code": exc.error_code, **exc.details},
+        status_code=exc.http_status,
+    )
 
 
 def redact_upload_tokens(path: str) -> str:
