@@ -12,11 +12,11 @@ database fresh on every call so a revoke is effective immediately (INV-4).
 from __future__ import annotations
 
 from contextlib import closing
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, astuple, dataclass, fields
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
-from ..kernel.secret_tokens import hash_secret, mint_secret, secret_digest_matches
+from ..kernel.secret_tokens import hash_secret, mint_secret
 from ..kernel.state.schema import SchemaModule
 from ..kernel.retention import RETENTION_BATCH_ROWS, drain
 from ..kernel.state.store import BaseStateStore, Connection, deleted_rows, row_to_dict
@@ -73,7 +73,6 @@ class ProjectKeyLookup(Protocol):
 class ProjectKeyControl(ProjectKeyLookup, Protocol):
     def create(self, **kwargs: object) -> dict[str, object]: ...
     def rotate(self, **kwargs: object) -> dict[str, object]: ...
-    def revoke_lineage(self, **kwargs: object) -> dict[str, object]: ...
     def list(self, **kwargs: object) -> dict[str, object]: ...
     def revoke(self, **kwargs: object) -> dict[str, object]: ...
 
@@ -181,7 +180,7 @@ class ProjectKeys:
             parent_key_id=None,
             label=_label(label),
         )
-        conn.execute(_INSERT_SQL, _insert_params(record))
+        conn.execute(_INSERT_SQL, astuple(record))
         return record
 
     def _new_record(
@@ -251,42 +250,17 @@ class ProjectKeys:
         project_id = _required(project_id, field="project_id")
         key_id = _required(key_id, field="key_id")
         owner_user_id = _required(owner_user_id, field="owner_user_id")
-        record = self._revoke_record(
-            project_id,
-            key_id,
-            owner_user_id,
-            revoked_at=now_iso(),
-        )
-        if record is None:
-            raise NotFoundError(f"project key not found: {key_id}")
-        with self._store.transaction() as conn:
-            revoke_key_lineage(
-                conn,
-                project_id=project_id,
-                key_id=key_id,
-                owner_user_id=owner_user_id,
-                revoked_at=now_iso(),
-            )
-        return {"key": _public_record(record)}
-
-    def revoke_lineage(
-        self, *, project_id: str, key_id: str, owner_user_id: str
-    ) -> dict[str, object]:
-        """Revoke one key and every rotation descendant in its grant lineage."""
-        project_id = _required(project_id, field="project_id")
-        key_id = _required(key_id, field="key_id")
-        owner_user_id = _required(owner_user_id, field="owner_user_id")
         with self._store.transaction() as conn:
             revoked = revoke_key_lineage(
-                conn,
-                project_id=project_id,
-                key_id=key_id,
-                owner_user_id=owner_user_id,
-                revoked_at=now_iso(),
+                conn, project_id=project_id, key_id=key_id,
+                owner_user_id=owner_user_id, revoked_at=now_iso(),
             )
-        if not revoked:
-            raise NotFoundError(f"project key not found: {key_id}")
-        return {"revoked": True, "root_key_id": key_id}
+            if not revoked:
+                raise NotFoundError(f"project key not found: {key_id}")
+            record = _record(conn.execute(
+                "SELECT * FROM project_api_keys WHERE id = ?", (key_id,)
+            ).fetchone())
+        return {"key": _public_record(record)}
 
     def prune(self, *, now: datetime | None = None) -> int:
         """Delete dead OAuth-minted keys nothing can still reach.
@@ -326,33 +300,11 @@ class ProjectKeys:
 
     def verify_secret(self, *, secret: str) -> ProjectKeyRecord | None:
         """Resolve one bearer with a fresh database read on every call."""
-        digest = hash_secret(secret)
-        record = self._record_by_digest(digest)
-        if not secret_digest_matches(
-            stored_digest=record.secret_digest if record is not None else None,
-            presented_digest=digest,
-        ):
-            return None
-        if record is None or record.revoked_at:
-            return None
-        expiry = parse_iso(record.expires_at)
-        if record.expires_at and expiry is None:
-            return None
-        if expiry is not None and expiry <= datetime.now(UTC):
-            return None
-        return record
+        return _live(self._record_by_digest(hash_secret(secret)))
 
     def active_record(self, *, key_id: str) -> ProjectKeyRecord | None:
         """Resolve delegated authority by id with the same fresh checks."""
-        record = self._record_by_id(key_id)
-        if record is None or record.revoked_at:
-            return None
-        expiry = parse_iso(record.expires_at)
-        if record.expires_at and expiry is None:
-            return None
-        if expiry is not None and expiry <= datetime.now(UTC):
-            return None
-        return record
+        return _live(self._record_by_id(key_id))
 
     def _project_tenant(self, project_id: str) -> str:
         with closing(self._store.connect()) as conn:
@@ -365,7 +317,7 @@ class ProjectKeys:
 
     def _insert(self, record: ProjectKeyRecord) -> None:
         with self._store.transaction() as conn:
-            conn.execute(_INSERT_SQL, _insert_params(record))
+            conn.execute(_INSERT_SQL, astuple(record))
 
     def _rotate_record(self, record: ProjectKeyRecord, *, revoked_at: str) -> bool:
         with self._store.transaction() as conn:
@@ -379,7 +331,7 @@ class ProjectKeys:
             ).fetchone()
             if parent is None:
                 return False
-            conn.execute(_INSERT_SQL, _insert_params(record))
+            conn.execute(_INSERT_SQL, astuple(record))
             conn.execute(
                 "UPDATE project_api_keys SET revoked_at = ? WHERE id = ?",
                 (revoked_at, record.parent_key_id),
@@ -414,35 +366,6 @@ class ProjectKeys:
             ).fetchall()
         return [record for row in rows if (record := _record(row)) is not None]
 
-    def _revoke_record(
-        self,
-        project_id: str,
-        key_id: str,
-        owner_user_id: str,
-        *,
-        revoked_at: str,
-    ) -> ProjectKeyRecord | None:
-        with self._store.transaction() as conn:
-            row = conn.execute(
-                """
-                SELECT * FROM project_api_keys
-                WHERE id = ? AND project_id = ? AND owner_user_id = ?
-                """,
-                (key_id, project_id, owner_user_id),
-            ).fetchone()
-            if row is None:
-                return None
-            conn.execute(
-                """
-                UPDATE project_api_keys SET revoked_at = COALESCE(revoked_at, ?)
-                WHERE id = ?
-                """,
-                (revoked_at, key_id),
-            )
-            updated = conn.execute(
-                "SELECT * FROM project_api_keys WHERE id = ?", (key_id,)
-            ).fetchone()
-        return _record(updated)
 
 
 def revoke_key_lineage(
@@ -493,24 +416,6 @@ INSERT INTO project_api_keys (
 """
 
 
-def _insert_params(record: ProjectKeyRecord) -> tuple[Any, ...]:
-    return (
-        record.id,
-        record.secret_digest,
-        record.owner_user_id,
-        record.tenant_id,
-        record.project_id,
-        record.grant_scope,
-        record.audience,
-        record.oauth_family_id,
-        record.created_at,
-        record.expires_at,
-        record.revoked_at,
-        record.parent_key_id,
-        record.label,
-    )
-
-
 def _label(value: object) -> str | None:
     text = " ".join(str(value or "").split())
     if not text:
@@ -523,29 +428,24 @@ def _label(value: object) -> str | None:
     return text
 
 
+_RECORD_FIELDS = tuple(field.name for field in fields(ProjectKeyRecord))
+
+
 def _record(row: Any) -> ProjectKeyRecord | None:
+    """The row as a record; the table carries columns the record does not."""
     data = row_to_dict(row=row)
-    if data is None:
+    return None if data is None else ProjectKeyRecord(**{name: data[name] for name in _RECORD_FIELDS})
+
+
+def _live(record: ProjectKeyRecord | None) -> ProjectKeyRecord | None:
+    """The record if it is neither revoked nor expired (an unreadable expiry counts as expired)."""
+    if record is None or record.revoked_at:
         return None
-    return ProjectKeyRecord(
-        id=str(data["id"]),
-        secret_digest=str(data["secret_digest"]),
-        owner_user_id=str(data["owner_user_id"]),
-        tenant_id=str(data["tenant_id"]),
-        project_id=str(data["project_id"]),
-        grant_scope=str(data.get("grant_scope") or PROJECT_GRANT),
-        audience=str(data["audience"]) if data.get("audience") else None,
-        oauth_family_id=(
-            str(data["oauth_family_id"]) if data.get("oauth_family_id") else None
-        ),
-        created_at=str(data["created_at"]),
-        expires_at=str(data["expires_at"]) if data.get("expires_at") else None,
-        revoked_at=str(data["revoked_at"]) if data.get("revoked_at") else None,
-        parent_key_id=(
-            str(data["parent_key_id"]) if data.get("parent_key_id") else None
-        ),
-        label=str(data["label"]) if data.get("label") else None,
-    )
+    if record.expires_at:
+        expiry = parse_iso(record.expires_at)
+        if expiry is None or expiry <= datetime.now(UTC):
+            return None
+    return record
 
 
 def _public_record(record: ProjectKeyRecord) -> dict[str, object]:

@@ -692,22 +692,11 @@ class SessionLedger:
         return runner_id, sessions, dict(pending)
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(".tmp")
-        payload = {
+        write_private_json(self.path, {
             "runner_id": self.runner_id,
             "pending_leases": self.pending_leases,
             "sessions": [asdict(item) for item in self.sessions.values()],
-        }
-        descriptor = os.open(
-            temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-            0o600,
-        )
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-            output.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-        temporary.replace(self.path)
+        })
 
     def lease_key(self, platform: str) -> str:
         key = self.pending_leases.get(platform)
@@ -991,20 +980,7 @@ class WorkspaceManager:
                 "error": "central moved before compare-and-swap",
             }
         self._rev_parse(bare, target_sha)
-        ancestor = subprocess.run(
-            [
-                "git",
-                "--git-dir",
-                str(bare),
-                "merge-base",
-                "--is-ancestor",
-                expected_sha,
-                target_sha,
-            ],
-            capture_output=True,
-            check=False,
-        )
-        if ancestor.returncode:
+        if not self._is_ancestor(bare, expected_sha, target_sha):
             raise RunnerError("advance target is not a descendant of central")
         self._git(
             bare,
@@ -1067,25 +1043,18 @@ class WorkspaceManager:
             if not source_id or not source_sha:
                 raise RunnerError("central advance is missing source lineage")
             WorkspaceManager._rev_parse(repository, source_sha)
-            check = subprocess.run(
-                [
-                    "git",
-                    "--git-dir",
-                    str(repository),
-                    "merge-base",
-                    "--is-ancestor",
-                    source_sha,
-                    target_sha,
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if check.returncode not in {0, 1}:
-                message = check.stderr.strip() or "git ancestry check failed"
-                raise RunnerError(message)
-            result[source_id] = check.returncode == 0
+            result[source_id] = WorkspaceManager._is_ancestor(repository, source_sha, target_sha)
         return result
+
+    @staticmethod
+    def _is_ancestor(repository: Path, ancestor: str, descendant: str) -> bool:
+        check = subprocess.run(
+            ["git", "--git-dir", str(repository), "merge-base", "--is-ancestor", ancestor, descendant],
+            capture_output=True, text=True, check=False,
+        )
+        if check.returncode not in {0, 1}:
+            raise RunnerError(check.stderr.strip() or "git ancestry check failed")
+        return check.returncode == 0
 
     def _workspace(
         self,
@@ -1521,7 +1490,6 @@ class AgentRunner:
         self._smoke_results: dict[str, dict[str, Any]] = self._load_smoke_results()
         self._smoke_queue: list[tuple[str, str, str]] = []  # (platform, nonce, why)
         self._smoke_active: _ActiveSmoke | None = None
-        self._smoke_auto_done: set[str] = set()
         # Installs the skills and probes each harness once, so a launch that
         # precedes the first heartbeat still has them.
         self.harness_readiness()
@@ -2121,51 +2089,12 @@ class AgentRunner:
         host = HOSTS[adapter]
         if remote_status and remote_status not in {"offered", "active"}:
             host.stop(host_session)
-            self._finalize_trace(session=session, host=host)
-            telemetry = self._observe_telemetry(session)
-            workspace = self._capture_after_stop(session)
-            self.client.report(
-                "release",
-                session_id=session.session_id,
-                runner_id=self.ledger.runner_id,
-                reason=f"remote_{remote_status}",
-                head_sha=workspace.head_sha if workspace else "",
-                workspace_stats=workspace.stats if workspace else None,
-                telemetry=telemetry,
-            )
-            if workspace is not None:
-                self.workspaces.close(workspace)
-            session.status = remote_status
-            self._mirror_trace(session, complete=True)
+            self._release(session, host=host, status=remote_status, reason=f"remote_{remote_status}")
             return
 
         state = host.inspect(host_session)
         if state == "stopped":
-            self._finalize_trace(session=session, host=host)
-            telemetry = self._observe_telemetry(session)
-            workspace = self._capture_after_stop(session)
-            rapid = (
-                session.started_at is not None
-                and time.time() - session.started_at < RAPID_STOP_SECONDS
-            )
-            reason = (
-                "host_process_crash_loop"
-                if self._is_repeated_rapid_stop(session)
-                else self._note_stop_evidence(session, host=host, rapid=rapid)
-            )
-            self.client.report(
-                "release",
-                session_id=session.session_id,
-                runner_id=self.ledger.runner_id,
-                reason=reason,
-                head_sha=workspace.head_sha if workspace else "",
-                workspace_stats=workspace.stats if workspace else None,
-                telemetry=telemetry,
-            )
-            if workspace is not None:
-                self.workspaces.close(workspace)
-            session.status = "stopped"
-            self._mirror_trace(session, complete=True)
+            self._release(session, host=host, status="stopped")
             return
         if state != "running" or not remote_status:
             session.status = "uncertain"
@@ -2200,6 +2129,39 @@ class AgentRunner:
                 telemetry=telemetry,
             )
         self._mirror_trace(session, complete=False)
+
+    def _release(
+        self, session: LocalSession, *, host: CommandHost, status: str, reason: str = ""
+    ) -> None:
+        """Report a stopped child's final state and free what it held. Without a
+        ``reason`` the stop is judged from its evidence, after the capture that
+        evidence depends on."""
+        self._finalize_trace(session=session, host=host)
+        telemetry = self._observe_telemetry(session)
+        workspace = self._capture_after_stop(session)
+        if not reason:
+            rapid = (
+                session.started_at is not None
+                and time.time() - session.started_at < RAPID_STOP_SECONDS
+            )
+            reason = (
+                "host_process_crash_loop"
+                if self._is_repeated_rapid_stop(session)
+                else self._note_stop_evidence(session, host=host, rapid=rapid)
+            )
+        self.client.report(
+            "release",
+            session_id=session.session_id,
+            runner_id=self.ledger.runner_id,
+            reason=reason,
+            head_sha=workspace.head_sha if workspace else "",
+            workspace_stats=workspace.stats if workspace else None,
+            telemetry=telemetry,
+        )
+        if workspace is not None:
+            self.workspaces.close(workspace)
+        session.status = status
+        self._mirror_trace(session, complete=True)
 
     def _is_repeated_rapid_stop(self, session: LocalSession) -> bool:
         """Throttle a broken CLI without delaying an ordinary completed turn."""
@@ -2940,10 +2902,8 @@ def _apply_trace_event(
             "final",
         }
         usage_id = _event_identity(event) or fallback_id
-        seen_usage = set(str(item) for item in state.get("_usage_ids") or [])
-        if usage_id not in seen_usage:
-            seen_usage.add(usage_id)
-            state["_usage_ids"] = sorted(seen_usage)
+        if usage_id not in (state.get("_usage_ids") or ()):
+            _remember(state, "_usage_ids", usage_id)
             for name, amount in usage.items():
                 if final_usage:
                     state[name] = max(int(state.get(name) or 0), amount)
@@ -2952,18 +2912,12 @@ def _apply_trace_event(
         if final_usage:
             state["final"] = True
 
-    seen_tools = set(str(item) for item in state.get("_tool_ids") or [])
-    for tool_id in _tool_call_ids(event, fallback_id=fallback_id):
-        seen_tools.add(tool_id)
-    state["_tool_ids"] = sorted(seen_tools)
-    state["tool_calls"] = len(seen_tools)
-
+    state["tool_calls"] = _remember(
+        state, "_tool_ids", *_tool_call_ids(event, fallback_id=fallback_id)
+    )
     message_id = _assistant_message_id(event)
     if message_id:
-        seen_messages = set(str(item) for item in state.get("_message_ids") or [])
-        seen_messages.add(message_id)
-        state["_message_ids"] = sorted(seen_messages)
-        state["messages"] = len(seen_messages)
+        state["messages"] = _remember(state, "_message_ids", message_id)
 
     provider_session = (
         event.get("session_id")
@@ -2982,6 +2936,14 @@ def _apply_trace_event(
     if event_type in {"result", "turn.completed", "turn_completed", "session_end"}:
         state["final"] = True
     state["adapter"] = adapter
+
+
+def _remember(state: dict[str, Any], key: str, *ids: str) -> int:
+    """Add ids to the sorted list ``state[key]`` keeps; return how many it holds."""
+    seen = {str(item) for item in state.get(key) or ()}
+    seen.update(str(item) for item in ids)
+    state[key] = sorted(seen)
+    return len(seen)
 
 
 def _event_usage(event: Mapping[str, Any]) -> dict[str, int]:

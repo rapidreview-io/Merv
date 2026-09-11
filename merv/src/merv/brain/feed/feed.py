@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from contextlib import closing, suppress
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 import json
 import secrets
 import urllib.parse
@@ -553,12 +554,7 @@ class FeedService:
         """Validate uploaded bytes, then atomically consume the token and post."""
         row = self._pending_upload(token=token)
         media_kind = str(row["media_kind"] or "")
-        try:
-            extra = json.loads(row["extra_json"] or "{}")
-        except (TypeError, ValueError):
-            extra = {}
-        if not isinstance(extra, dict):
-            extra = {}
+        extra = _json_column(row["extra_json"], dict)
         intent = self._resolve_intent(
             PostIntent(
                 project_id=str(row["project_id"]),
@@ -642,14 +638,11 @@ class FeedService:
                 project_id=intent.project_id, url=intent.url
             )
         # Unfurl continuation links before the transaction, like the root's.
-        thread_links: list[tuple[str, dict[str, Any]]] = []
-        for item in intent.thread:
-            if item.get("url"):
-                thread_links.append(
-                    self._build_link_preview(project_id=intent.project_id, url=str(item["url"]))
-                )
-            else:
-                thread_links.append(("", {}))
+        thread_links = [
+            self._build_link_preview(project_id=intent.project_id, url=str(item["url"]))
+            if item.get("url") else ("", {})
+            for item in intent.thread
+        ]
         with self.store.transaction() as conn:
             # Consume the token in the post/event transaction so concurrent or
             # replayed PUTs cannot insert the pre-minted post twice.
@@ -826,18 +819,11 @@ class FeedService:
         """
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            existing = conn.execute(
-                "SELECT 1 FROM feed_authors WHERE project_id = ? AND handle = ?",
-                (project_id, RESEARCHER_HANDLE),
-            ).fetchone()
-            if existing is None:
-                conn.execute(
-                    """
-                    INSERT INTO feed_authors (project_id, handle, role, session_id, registered_at)
-                    VALUES (?, ?, 'researcher', '', ?)
-                    """,
-                    (project_id, RESEARCHER_HANDLE, now_iso()),
-                )
+            conn.execute(
+                "INSERT INTO feed_authors (project_id, handle, role, session_id, registered_at) "
+                "VALUES (?, ?, 'researcher', '', ?) ON CONFLICT (project_id, handle) DO NOTHING",
+                (project_id, RESEARCHER_HANDLE, now_iso()),
+            )
         intent = self._resolve_intent(
             PostIntent(
                 handle=RESEARCHER_HANDLE,
@@ -1112,15 +1098,9 @@ class FeedService:
                 "SELECT link_preview_json FROM posts WHERE id = ? AND project_id = ?",
                 (post_id, project_id),
             ).fetchone()
-        sha = ""
-        ctype = ""
-        if row is not None:
-            try:
-                preview = json.loads(row["link_preview_json"] or "{}")
-                sha = str(preview.get("image_sha256") or "")
-                ctype = str(preview.get("image_content_type") or "")
-            except (TypeError, ValueError):
-                sha = ""
+        preview = _json_column(row["link_preview_json"], dict) if row is not None else {}
+        sha = str(preview.get("image_sha256") or "")
+        ctype = str(preview.get("image_content_type") or "")
         if not sha:
             raise NotFoundError(f"no link image for post: {post_id}")
         # Serve the real sniffed content type captured at unfurl time. Older rows
@@ -1162,10 +1142,6 @@ class FeedService:
                     "DELETE FROM post_reactions WHERE project_id = ? AND post_id = ? AND kind = ?",
                     (project_id, post_id, kind),
                 )
-            row = conn.execute(
-                "SELECT * FROM posts WHERE id = ? AND project_id = ?",
-                (post_id, project_id),
-            ).fetchone()
             reaction_kinds = self._reaction_kinds_for_posts(
                 conn=conn, project_id=project_id, post_ids=[post_id]
             ).get(post_id, set())
@@ -1217,11 +1193,7 @@ class FeedService:
         bios: dict[str, str] | None = None,
         quoted: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        preview_raw = item.get("link_preview_json") or "{}"
-        try:
-            link_preview = json.loads(preview_raw)
-        except (TypeError, ValueError):
-            link_preview = {}
+        link_preview = _json_column(item.get("link_preview_json"), dict)
         clean_preview: dict[str, Any] | None = None
         if link_preview:
             # Blob hashes stay internal; newer fields default for legacy rows.
@@ -1296,18 +1268,11 @@ class FeedService:
         ).fetchone()
         last_post_at = last["created_at"] if last is not None else None
         # Feed events must not create their own posting nudges.
-        if last_post_at:
-            events_since = conn.execute(
-                "SELECT COUNT(*) AS n FROM events "
-                "WHERE project_id = ? AND created_at > ? AND substr(type, 1, 5) <> 'feed.'",
-                (project_id, last_post_at),
-            ).fetchone()["n"]
-        else:
-            events_since = conn.execute(
-                "SELECT COUNT(*) AS n FROM events "
-                "WHERE project_id = ? AND substr(type, 1, 5) <> 'feed.'",
-                (project_id,),
-            ).fetchone()["n"]
+        events_since = conn.execute(
+            "SELECT COUNT(*) AS n FROM events "
+            "WHERE project_id = ? AND created_at > ? AND substr(type, 1, 5) <> 'feed.'",
+            (project_id, last_post_at or ""),
+        ).fetchone()["n"]
         hours_since = _hours_since(last_post_at)
         return {
             "last_post_at": last_post_at,
@@ -1381,13 +1346,18 @@ class FeedService:
         )
 
 
+def _json_column(value: Any, shape: type) -> Any:
+    """A stored JSON column as ``shape`` (dict or list); anything else reads as empty."""
+    try:
+        loaded = json.loads(value) if value else shape()
+    except (TypeError, ValueError):
+        return shape()
+    return loaded if isinstance(loaded, shape) else shape()
+
+
 def _load_attachments(item: dict[str, Any]) -> list[dict[str, Any]]:
     """Native attachments stored on a row; malformed JSON reads as none."""
-    try:
-        loaded = json.loads(item.get("attachments_json") or "[]")
-    except (TypeError, ValueError):
-        return []
-    return [a for a in loaded if isinstance(a, dict)] if isinstance(loaded, list) else []
+    return [a for a in _json_column(item.get("attachments_json"), list) if isinstance(a, dict)]
 
 
 def _escape_like(value: str) -> str:
@@ -1405,7 +1375,4 @@ def _hours_since(iso_ts: str | None) -> float | None:
     parsed = parse_iso(iso_ts)
     if parsed is None:
         return None
-    from datetime import UTC, datetime
-
-    delta = datetime.now(UTC) - parsed
-    return max(0.0, delta.total_seconds() / 3600.0)
+    return max(0.0, (datetime.now(UTC) - parsed).total_seconds() / 3600.0)

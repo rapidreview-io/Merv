@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Mapping
+from dataclasses import astuple
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -27,7 +28,7 @@ from .oauth import (
     OAuthError,
     RefreshToken,
 )
-from .project_keys import PROJECT_GRANT, revoke_key_lineage
+from .project_keys import revoke_key_lineage
 
 LOGGER = logging.getLogger(__name__)
 
@@ -130,16 +131,10 @@ class SqlOAuthRepository:
     def get_or_create_client(self, *, client: OAuthClient) -> OAuthClient:
         """Resolve identical metadata to one row, or insert it.
 
-        Identity is the canonical metadata fingerprint carrying the schema's
-        UNIQUE index, so the DATABASE arbitrates the Cursor double-DCR race —
-        not merely the store's global writer lock, whose Postgres advisory key
-        is a hash of the DSN spelling and therefore does not serialize two
-        replicas that name the same database differently (audit AUTH-03). The
-        insert defers to that index and re-reads the winner.
-
-        An already-registered client is answered from a plain read, never
-        taking the writer lock: the common case must not queue behind the
-        prune/eviction work below.
+        The fingerprint's UNIQUE index lets the database arbitrate two
+        registrations racing with the same metadata: the insert defers to it
+        and re-reads the winner. A known client is answered from a plain read,
+        never queueing behind the prune and eviction below.
         """
         fingerprint = _fingerprint(client)
         with closing(self._store.connect()) as conn:
@@ -175,14 +170,8 @@ class SqlOAuthRepository:
                         client.created_at,
                     ),
                 )
-                # Ours, or the row a concurrent replica landed first. Either way
-                # the caller gets the one client id this metadata now names.
-                #
-                # The conflict target is the FINGERPRINT index alone: an
-                # untargeted clause would also swallow a client_id collision
-                # and leave nothing behind, and a missing re-read is treated as
-                # the server fault it is rather than answered with a client id
-                # this database never stored.
+                # Ours, or the row a concurrent replica landed first; a missing
+                # re-read is a server fault, never a client id nothing stored.
                 stored = _client(
                     conn.execute(_BY_FINGERPRINT, (fingerprint,)).fetchone()
                 )
@@ -214,19 +203,12 @@ class SqlOAuthRepository:
         )
 
     def _make_room(self, *, conn: Any) -> int:
-        """Free a slot at the cap by evicting the oldest never-used rows.
+        """Free a slot at the cap by evicting the oldest never-used rows;
+        returns how many rows the table still holds.
 
-        Returns how many rows the table still holds. Refusing at the cap would
-        make unauthenticated DCR a cheap onboarding denial of service: anyone
-        could fill the table with valid metadata and lock every real client out
-        until the TTL horizon. Eviction inverts that — the attacker's own
-        never-used rows are what gets dropped. It is the scheduled sweep with
-        the age horizon dropped, so the two can never disagree about which rows
-        are expendable. Only a table whose every row is USED (holds a code or a
-        refresh token, so deleting it would revoke someone's live grant) still
-        refuses, and the per-call bound keeps the work under the writer lock
-        predictable: an over-cap table converges across attempts rather than in
-        one long one.
+        Refusing at the cap would let anyone fill the table with valid metadata
+        and lock real clients out; eviction drops the filler's own rows instead,
+        bounded per call so an over-cap table converges across attempts.
         """
         row = row_to_dict(
             row=conn.execute("SELECT COUNT(*) AS total FROM oauth_clients").fetchone()
@@ -250,15 +232,10 @@ class SqlOAuthRepository:
     def prune(self, *, now: datetime | None = None) -> dict[str, Any]:
         """Delete spent credentials, then the registrations left holding none.
 
-        The order is the mechanism. Codes and tokens past their grace go
-        first, so the never-used predicate frees the client they belonged to
-        in the same pass; without that, a registration that ever authorized
-        anything was a lifetime row and the registration cap a lifetime
-        ceiling on how many clients this brain could ever serve.
-
-        Reports its own outcome: a failed sweep says ``ok`` False and names the
-        error rather than returning zero, which would read as a healthy pass
-        that found nothing (audit OPS-03).
+        The order is the mechanism: with its codes and tokens gone, a client
+        that once authorized becomes collectable, so the cap is not a lifetime
+        ceiling. A failed sweep reports ``ok`` False and the error rather than
+        a healthy-looking zero.
         """
         moment = now or datetime.now(tz=UTC)
         cutoff = self._cutoff(moment)
@@ -307,14 +284,8 @@ class SqlOAuthRepository:
     def _delete_never_used(
         *, conn: Any, cutoff: str | None, limit: int | None
     ) -> int:
-        """Delete never-used registrations; the one sweep all three callers run.
-
-        ``cutoff`` None drops the age horizon, which is what the at-cap
-        eviction wants and the scheduled sweep must never do. ``limit`` None is
-        the full sweep; a number keeps the work a registration does on its own
-        behalf bounded and predictable. The subquery form (rather than
-        ``DELETE ... LIMIT``) is the one both dialects accept.
-        """
+        """Delete never-used registrations, older than ``cutoff`` if given,
+        at most ``limit`` if given (the subquery form is what both dialects accept)."""
         if limit is not None and limit <= 0:
             return 0
         aged = "" if cutoff is None else "created_at < ? AND"
@@ -333,52 +304,22 @@ class SqlOAuthRepository:
         return deleted_rows(conn.execute(statement, params))
 
     def insert_code(self, *, code: AuthorizationCode) -> None:
+        # Column order is the dataclass's field order, for both credential tables.
         with self._store.transaction() as conn:
             conn.execute(
-                """
-                INSERT INTO oauth_authorization_codes (
-                  code_digest, client_id, redirect_uri, owner_user_id, project_id,
-                  grant_scope, code_challenge, resource, created_at, expires_at,
-                  consumed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    code.code_digest,
-                    code.client_id,
-                    code.redirect_uri,
-                    code.owner_user_id,
-                    code.project_id,
-                    code.grant_scope,
-                    code.code_challenge,
-                    code.resource,
-                    code.created_at,
-                    code.expires_at,
-                    code.consumed_at,
-                ),
+                "INSERT INTO oauth_authorization_codes ("
+                "  code_digest, client_id, redirect_uri, owner_user_id, project_id,"
+                "  grant_scope, code_challenge, resource, created_at, expires_at, consumed_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                astuple(code),
             )
 
     def code_by_digest(self, *, digest: str) -> AuthorizationCode | None:
         with closing(self._store.connect()) as conn:
-            row = conn.execute(
-                "SELECT * FROM oauth_authorization_codes WHERE code_digest = ?",
-                (digest,),
-            ).fetchone()
-        data = row_to_dict(row=row)
-        if data is None:
-            return None
-        return AuthorizationCode(
-            code_digest=str(data["code_digest"]),
-            client_id=str(data["client_id"]),
-            redirect_uri=str(data["redirect_uri"]),
-            owner_user_id=str(data["owner_user_id"]),
-            project_id=str(data["project_id"]),
-            grant_scope=str(data.get("grant_scope") or PROJECT_GRANT),
-            code_challenge=str(data["code_challenge"]),
-            resource=str(data["resource"]),
-            created_at=str(data["created_at"]),
-            expires_at=str(data["expires_at"]),
-            consumed_at=(str(data["consumed_at"]) if data.get("consumed_at") else None),
-        )
+            data = row_to_dict(row=conn.execute(
+                "SELECT * FROM oauth_authorization_codes WHERE code_digest = ?", (digest,)
+            ).fetchone())
+        return None if data is None else AuthorizationCode(**data)
 
     def consume_code(self, *, digest: str, consumed_at: str) -> bool:
         with self._store.transaction() as conn:
@@ -403,38 +344,20 @@ class SqlOAuthRepository:
     def insert_refresh_token(self, *, token: RefreshToken) -> None:
         with self._store.transaction() as conn:
             conn.execute(
-                """
-                INSERT INTO oauth_refresh_tokens (
-                  id, family_id, secret_digest, client_id, owner_user_id, project_id,
-                  grant_scope, resource, current_key_id, parent_token_id,
-                  created_at, expires_at, consumed_at, revoked_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    token.id,
-                    token.family_id,
-                    token.secret_digest,
-                    token.client_id,
-                    token.owner_user_id,
-                    token.project_id,
-                    token.grant_scope,
-                    token.resource,
-                    token.current_key_id,
-                    token.parent_token_id,
-                    token.created_at,
-                    token.expires_at,
-                    token.consumed_at,
-                    token.revoked_at,
-                ),
+                "INSERT INTO oauth_refresh_tokens ("
+                "  id, family_id, secret_digest, client_id, owner_user_id, project_id,"
+                "  grant_scope, resource, current_key_id, parent_token_id,"
+                "  created_at, expires_at, consumed_at, revoked_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                astuple(token),
             )
 
     def refresh_token_by_digest(self, *, digest: str) -> RefreshToken | None:
         with closing(self._store.connect()) as conn:
-            row = conn.execute(
-                "SELECT * FROM oauth_refresh_tokens WHERE secret_digest = ?",
-                (digest,),
-            ).fetchone()
-        return _refresh_token(row)
+            data = row_to_dict(row=conn.execute(
+                "SELECT * FROM oauth_refresh_tokens WHERE secret_digest = ?", (digest,)
+            ).fetchone())
+        return None if data is None else RefreshToken(**data)
 
     def consume_refresh_token(self, *, token_id: str, consumed_at: str) -> bool:
         with self._store.transaction() as conn:
@@ -503,30 +426,6 @@ def _client(row: Any) -> OAuthClient | None:
         created_at=str(data["created_at"]),
     )
 
-
-
-def _refresh_token(row: Any) -> RefreshToken | None:
-    data = row_to_dict(row=row)
-    if data is None:
-        return None
-    return RefreshToken(
-        id=str(data["id"]),
-        family_id=str(data["family_id"]),
-        secret_digest=str(data["secret_digest"]),
-        client_id=str(data["client_id"]),
-        owner_user_id=str(data["owner_user_id"]),
-        project_id=str(data["project_id"]),
-        grant_scope=str(data.get("grant_scope") or PROJECT_GRANT),
-        resource=str(data["resource"]),
-        current_key_id=str(data["current_key_id"]),
-        parent_token_id=(
-            str(data["parent_token_id"]) if data.get("parent_token_id") else None
-        ),
-        created_at=str(data["created_at"]),
-        expires_at=str(data["expires_at"]),
-        consumed_at=(str(data["consumed_at"]) if data.get("consumed_at") else None),
-        revoked_at=(str(data["revoked_at"]) if data.get("revoked_at") else None),
-    )
 
 
 __all__ = ["SqlOAuthRepository"]
