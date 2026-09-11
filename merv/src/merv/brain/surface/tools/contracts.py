@@ -241,12 +241,8 @@ def build_manifest(programs: Iterable[Program]) -> dict[str, ToolContract]:
 
 
 TOOL_MANIFEST = build_manifest(INSTALLED)
-
-# Compatibility name for callers that describe the manifest as contracts.
-TOOL_CONTRACTS = TOOL_MANIFEST
 STORAGE_TOOL_NAMES = {name for name, tool in TOOL_MANIFEST.items() if "storage" in tool.feature_requirements}
 SANDBOX_TOOL_NAMES = {name for name, tool in TOOL_MANIFEST.items() if tool.handler_identity.startswith("sandboxes.")}
-MCP_HIDDEN_TOOL_NAMES = frozenset(name for name, tool in TOOL_MANIFEST.items() if tool.visibility == "internal")
 
 
 def available_tool_names(

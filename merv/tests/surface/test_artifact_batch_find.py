@@ -11,10 +11,10 @@ from pydantic import ValidationError as PydanticValidationError
 
 from merv.brain.kernel.utils import NotFoundError
 from merv.brain.research_core.tools import ExperimentGetStateInput
-from merv.brain.surface.tools.contracts import TOOL_CONTRACTS
+from merv.brain.surface.tools.contracts import TOOL_MANIFEST
 from tests.support.brain import TestBrain
 
-ArtifactReadInput = TOOL_CONTRACTS["artifact.read"].input_model
+ArtifactReadInput = TOOL_MANIFEST["artifact.read"].input_model
 
 
 class ArtifactBatchReadTest(unittest.TestCase):
