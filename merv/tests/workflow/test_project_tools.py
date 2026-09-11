@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from tests.support.brain import TestBrain
-from merv.brain.surface.tools.contracts import MCP_HIDDEN_TOOL_NAMES
+from merv.brain.surface.tools.contracts import TOOL_MANIFEST
 from merv.brain.kernel.utils import ValidationError
 
 
@@ -142,7 +142,7 @@ class ProjectToolTest(unittest.TestCase):
         self.assertEqual(response.json()["result"]["name"], "Http Made")
 
     def test_project_list_is_hidden_from_agents(self) -> None:
-        self.assertIn("project.list", MCP_HIDDEN_TOOL_NAMES)
+        self.assertEqual(TOOL_MANIFEST["project.list"].visibility, "internal")
 
     def test_update_without_hidden_leaves_hidden_unchanged(self) -> None:
         project = self.call("project", action="create", name="Alpha")

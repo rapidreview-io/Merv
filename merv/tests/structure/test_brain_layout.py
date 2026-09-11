@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from typing import Protocol, get_type_hints
 
-from merv.brain.surface.tools.contracts import TOOL_CONTRACTS
+from merv.brain.surface.tools.contracts import TOOL_MANIFEST
 from tests.paths import (
     ARTIFACTS_ROOT,
     BACKEND_ROOT,
@@ -225,7 +225,7 @@ def _imports_management_key_adapter(path: Path) -> bool:
 class BrainToolManifestTest(unittest.TestCase):
     def test_one_valued_plane_abstraction_stays_deleted(self) -> None:
         source = (SURFACE_ROOT / "tools" / "contracts.py").read_text(encoding="utf-8")
-        self.assertTrue(TOOL_CONTRACTS)
+        self.assertTrue(TOOL_MANIFEST)
         for removed in (
             "ToolPlane",
             "def plane(",

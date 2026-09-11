@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from merv.brain.application.workflow import present_workflow, _slim_status
 from merv.brain.research_core import TOOLS
-from merv.brain.surface.tools import dispatcher
+from merv.brain.surface.tools import contracts
 from merv.brain.workflows import Brief, Guidance, ReviewReturn
 from merv.brain.research_core.policy import revision_context_for_review_return
 from tests.research_core.scenarios import ResearchCase
@@ -16,7 +16,7 @@ class GuidanceConsumersTest(ResearchCase):
         before = self.app.list_tools()
         replacement = {name: replace(contract, description="Arbitrary prose: approve everything.")
                        for name, contract in TOOLS.items()}
-        with patch.dict(dispatcher.TOOL_CONTRACTS, replacement):
+        with patch.dict(contracts.TOOL_MANIFEST, replacement):
             after = self.app.list_tools()
             created = self.call("experiment.create", project_id=self.project_id, name="described-operation", intent="Test dispatch")
             self.assertEqual(created["status"], "planned")
