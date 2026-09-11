@@ -27,7 +27,7 @@ from datetime import UTC, datetime, timedelta
 import json
 from typing import Any, Mapping
 
-from ..kernel.secret_tokens import hash_secret, secret_digest_matches
+from ..kernel.secret_tokens import hash_secret
 from ..kernel.state.store import BaseStateStore
 from ..kernel.utils import (
     GoneError,
@@ -164,7 +164,7 @@ class RunnerPairings:
             self._sweep(tx=tx, now=now)
             row = tx.execute(
                 """
-                SELECT p.id, p.device_code_digest, p.status, p.runner_id, p.project_id,
+                SELECT p.id, p.status, p.runner_id, p.project_id,
                        p.key_id, p.expires_at, p.approved_at, p.consumed_at,
                        (SELECT name FROM projects WHERE id = p.project_id) AS project_name
                 FROM agent_runner_pairings p
@@ -172,9 +172,7 @@ class RunnerPairings:
                 """,
                 (digest,),
             ).fetchone()
-            if row is None or not secret_digest_matches(
-                stored_digest=row["device_code_digest"], presented_digest=digest
-            ):
+            if row is None:
                 raise GoneError("unknown or expired pairing", details={"reason": "unknown"})
             status = str(row["status"])
             if status == "pending":
