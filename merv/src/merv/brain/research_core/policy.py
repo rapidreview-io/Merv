@@ -10,6 +10,7 @@ from ..workflows import research_contracts
 ACTIVE_EXPERIMENT_CAP = research_contracts.ACTIVE_EXPERIMENT_CAP
 CLAIM_CONFIDENCES = research_contracts.CLAIM_CONFIDENCES
 CLAIM_STATUSES = research_contracts.CLAIM_STATUSES
+ENTITY_REF_VOCABULARY = research_contracts.ENTITY_REF_VOCABULARY
 MAX_EXPERIMENT_NAME_LEN = research_contracts.MAX_EXPERIMENT_NAME_LEN
 MAX_TASK_NAME_LEN = research_contracts.MAX_TASK_NAME_LEN
 MIN_EXPERIMENT_NAME_LEN = research_contracts.MIN_EXPERIMENT_NAME_LEN
@@ -21,14 +22,14 @@ validate_task_name = research_contracts.validate_task_name
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 import json
-import re
 from typing import Any, Literal, TypeAlias
 
 from ..kernel.utils import ValidationError
 from ..workflows import (
     EXPERIMENT_KIND as EXPERIMENT, REFLECTION_KIND as REFLECTION, TASK_KIND as TASK,
-    ArtifactNeed, DependenciesDone, Evaluation, Issue, RecordKind, RecordNeed, Requirement,
-    ReviewGate, ReviewReturn, Snapshot,
+    REVIEW_VERDICT_VALUES, SYNOPSIS_MAX_LEN, ArtifactNeed, DependenciesDone, Evaluation, Issue,
+    RecordNeed, Requirement, ReviewGate, Snapshot, resolve_review_return,
+    revision_context_for_review_return, validate_review_verdict, validate_synopsis,
 )
 
 # The record kinds research policy speaks about declare their own vocabulary;
@@ -40,7 +41,6 @@ REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD = research_contracts.REFLECTION_BLOCK_NE
 REFLECTION_IDLE_RECOMMEND_NEW_TERMINAL_THRESHOLD = research_contracts.REFLECTION_IDLE_RECOMMEND_NEW_TERMINAL_THRESHOLD
 REFLECTION_NUDGE_NEW_TERMINAL_THRESHOLD = research_contracts.REFLECTION_NUDGE_NEW_TERMINAL_THRESHOLD
 
-REVIEW_VERDICT_VALUES = ("pass", "needs_changes", "fail")
 REVIEW_VERDICTS = frozenset(REVIEW_VERDICT_VALUES)
 REVIEW_GATE_EXEMPT_ROLE_VALUES = ("human", "automated_check")
 REVIEW_GATE_EXEMPT_ROLES = frozenset(REVIEW_GATE_EXEMPT_ROLE_VALUES)
@@ -52,28 +52,6 @@ REVIEW_ROLES = frozenset(REVIEW_ROLE_VALUES)
 
 
 EXPERIMENT_ACTIVE_PROCESS_STATUSES = frozenset({"provisioning", "running"})
-
-SYNOPSIS_MIN_LEN = 40
-SYNOPSIS_MAX_LEN = 420
-# Entity id prefixes agents may cite from prose, each with the kind it names.
-# Support surfaces (the feed) receive this at composition and match prefixes
-# only; the kinds label validation messages. `res_` and `rver_` predate the
-# current reviews module and stay so older mentions keep parsing.
-ENTITY_REF_VOCABULARY: tuple[tuple[str, str], ...] = (
-    ("exp_", "experiment"),
-    ("task_", "task"),
-    ("claim_", "claim"),
-    ("res_", "result"),
-    ("rver_", "review verdict"),
-    ("syn_", "reflection"),
-    ("rev_", "review"),
-    ("lit_", "literature"),
-    ("paper_", "paper"),
-)
-_ENTITY_ID_RE = re.compile(
-    r"\b(?:%s)[A-Za-z0-9]"
-    % "|".join(prefix for prefix, _ in ENTITY_REF_VOCABULARY)
-)
 
 # What Research's own tool arguments mean to the shared activity log: the
 # capability that must never be persisted, the ids worth keeping in a redacted
@@ -430,70 +408,6 @@ def validate_review_role(*, role: str) -> None:
         raise ValidationError("review role must be a nonempty workflow role of at most 128 characters")
 
 
-def validate_review_verdict(*, verdict: str) -> None:
-    if verdict not in REVIEW_VERDICTS:
-        raise ValidationError(f"unknown review verdict: {verdict}")
-
-
-def resolve_review_return(
-    *, kind: RecordKind, role: str, verdict: str, return_to: str
-) -> ReviewReturn | None:
-    """Validate a submitted review's routing input against the kind's gates.
-
-    The graph decides which edge the verdict eventually takes; this only
-    refuses an input the gate's declared returns cannot honour.
-    """
-    value = (return_to or "").strip()
-    if verdict == "pass":
-        if value:
-            raise ValidationError("return_to only applies when the verdict is needs_changes or fail")
-        return None
-    gate = kind.review_gate(role)
-    subject = kind.metadata.subject or kind.name
-    if verdict == "fail" and gate is not None and gate.fail_route is not None:
-        if value and value != gate.fail_route.to_status:
-            raise ValidationError(
-                f"a fail verdict from {role} ends the {subject}: return_to must be omitted or "
-                f"{gate.fail_route.to_status!r}; use needs_changes to send it back")
-        return gate.fail_route
-    routes = gate.returns if gate is not None and gate.returns else kind.review_returns
-    for destination, message in () if gate is None else gate.forbidden_returns:
-        if value == destination:
-            raise ValidationError(message)
-    if gate is not None and gate.return_choice_required and not value:
-        raise ValidationError(gate.return_required_error)
-    route = next((route for route in routes if route.to_status == value or (not value and route.default)), None)
-    if route is None:
-        raise ValidationError("return_to must be " + " or ".join(repr(route.to_status) for route in routes))
-    return route
-
-
-def validate_synopsis(value: str) -> str:
-    synopsis = value.strip()
-    hint = (
-        "synopsis is the researcher's TLDR: 1-3 plain sentences, 40-420 "
-        "chars, no entity ids or markdown — describe what happened in "
-        "human terms"
-    )
-    if not (SYNOPSIS_MIN_LEN <= len(synopsis) <= SYNOPSIS_MAX_LEN):
-        raise ValueError(hint)
-    if "\n" in synopsis:
-        raise ValueError(f"{hint} (no newlines — keep it to one line)")
-    if "`" in synopsis:
-        raise ValueError(f"{hint} (no backticks — plain prose only)")
-    if synopsis.startswith("#"):
-        raise ValueError(f"{hint} (no markdown headings)")
-    if _ENTITY_ID_RE.search(synopsis):
-        prefixes = "/".join(prefix for prefix, _ in ENTITY_REF_VOCABULARY)
-        raise ValueError(
-            f"{hint} (no entity ids like {prefixes} — name things by their "
-            "human names instead)"
-        )
-    return synopsis
-
-
-
-
 
 
 
@@ -587,28 +501,6 @@ def _int_or_zero(value: str) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
-
-
-def revision_context_for_review_return(
-    *,
-    target_type: str,
-    role: str,
-    verdict: str,
-    notes: str,
-    findings: list[dict[str, object]],
-    route: ReviewReturn,
-) -> str:
-    finding_text = "; ".join(
-        str(item.get("issue", "")) for item in findings if item.get("issue")
-    )
-    pieces = [f"{role} returned {verdict}"]
-    if route.revision:
-        pieces.append(route.revision)
-    if notes:
-        pieces.append(notes)
-    if finding_text:
-        pieces.append(f"Findings: {finding_text}")
-    return " | ".join(pieces)
 
 
 __all__ = [

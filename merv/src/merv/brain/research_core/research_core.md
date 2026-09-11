@@ -2,14 +2,13 @@
 
 ## Purpose and boundary
 
-`research_core` owns projects, claims, native records, reviews, artifact associations
-and candidate lineage. It supplies project-scoped facts and transactional bindings to
-Workflows, which owns graph decisions and agent briefs. Application composes modules;
-Surface owns auth and transport. Artifacts owns immutable content, Feed observations,
-and merv-sandboxes workloads and ML objects. Research records their producer.
-`Research` is the public root, built from `BaseStateStore`, `ResearchArtifacts`, its
-`Program` and injected `Workflows`. Native records pin their kind's workflow version;
-instance/kind mismatches fail before checklist evaluation or native writes.
+`research_core` owns projects, claims, native records, reviews, artifact associations and candidate
+lineage. It supplies project-scoped facts and transactional bindings to Workflows, which owns graph
+decisions and agent briefs. Application composes modules; Surface owns auth and transport. Artifacts
+owns immutable content, Feed observations, and merv-sandboxes workloads and ML objects. Research
+records their producer. `Research` is the public root, built from `BaseStateStore`,
+`ResearchArtifacts`, its `Program` and injected `Workflows`. Native records pin their kind's
+workflow version; instance/kind mismatches fail before checklist evaluation or native writes.
 
 ## Files
 
@@ -31,12 +30,12 @@ instance/kind mismatches fail before checklist evaluation or native writes.
 - `dependencies.py`: wave DAG edges, cycle checks, dependency and dependent rows.
 - `reflections.py`: fixed corpus, lens pinning, reserved names, materialization, drift facts,
   and lens/wave bindings. It alone writes reflection-to-claim associations.
-- `reviews.py`: capabilities, sessions, snapshots, verdicts and return routing. It reads
-  SQL and project settings into one scoped review fact shared within an evaluation.
-  The fact includes latest verdict, independence, request status, validity and expiry.
-- `policy.py`: pure validation, snapshot identity, review decisions, reflection signals,
-  limits and `RESOLVERS`. Each requirement class formats one checklist item from the
-  same verified facts and graph issues enforcement uses; policy contains no persistence.
+- `reviews.py`: capabilities, sessions and snapshots; every lifecycle step applies an edge of
+  the review graph, and `verdict_effect` serves the effect its verdict declares. It reads SQL and
+  settings into one scoped fact: latest verdict, independence, request status, validity, expiry.
+- `policy.py`: pure validation, snapshot identity, reflection signals, limits and `RESOLVERS`;
+  verdict, synopsis and return rules live beside the review graph. Each requirement class formats
+  one checklist item from the facts and graph issues enforcement uses; policy holds no persistence.
 - `association_targets.py`: target resolution. `objects.py`: completion lifecycle and
   `ProducedObject` snapshots. `models.py`: research snapshots and `public_record` serialization.
 - `content_summaries.py`: document TLDRs. `paths.py`: safe experiment folder names.
@@ -45,44 +44,49 @@ instance/kind mismatches fail before checklist evaluation or native writes.
 
 ## Lifecycles
 
-Experiments follow `planned -> design_review -> running -> experiment_review -> complete`;
-failure and abandonment are terminal. `action:experiment.approve_design` enters execution;
-dependencies gate dispatch and activation starts the attempt clock. A rejected design
-returns to planned with a new attempt. Execution review can return to planned with a new
-attempt or running with its approved plan. Native state, graph history and sealing commit
-atomically. `role:experiment.design_reviewer` follows `skill:experiment-design-review`.
+Experiments follow `planned -> design_review -> running -> experiment_review -> complete`; failure
+and abandonment are terminal. `action:experiment.approve_design` enters execution; dependencies gate
+dispatch and activation starts the attempt clock. A rejected design returns to planned with a new
+attempt; execution review can return to planned with a new attempt or to running with its approved
+plan. Native state, graph history and sealing commit atomically.
+`role:experiment.design_reviewer` follows `skill:experiment-design-review`.
 
-Tasks follow `in_progress -> in_review -> done`, with failed as the other ending.
-Goal and deliverables are immutable; creation renders and pins the brief, and manual brief
-submissions are refused. Delivery answers each deliverable with evidence or an explicit
-non-delivery reason, plus notes. `action:task.submit_delivery` waits for dependencies;
-needs_changes returns to work, while fail or `action:task.mark_failed` ends the task.
-Both node kinds share the dependency DAG; completed tasks supply context, not experiment debt.
+Tasks follow `in_progress -> in_review -> done`, with failed as the other ending. Goal and
+deliverables are immutable; creation renders and pins the brief, and manual brief submissions are
+refused. Delivery answers each deliverable with evidence or an explicit non-delivery reason, plus
+notes. `action:task.submit_delivery` waits for dependencies; needs_changes returns to work, while
+fail or `action:task.mark_failed` ends the task. Both node kinds share the dependency DAG;
+completed tasks supply context, not experiment debt.
+
+Reviews follow `requested -> started -> submitted`, with superseded as the other ending. No node
+carries a role: the target's own read-only node dispatches the reviewer, so a review instance is
+never assigned. `action:review.submit` validates the verdict and declares `review.record_verdict`,
+which writes the verdict row and applies the target's suggested edge on the same connection, so
+neither lands without the other. Requests predating the graph are adopted lazily when they move.
 
 Reflection follows `reflecting -> synthesizing -> reflection_review -> consolidating ->
 consolidation_review -> published`; both consolidation states project to consolidating in
 the native row. Independent reviewers approve research and then the exact code proposal;
 code review returns only to consolidation. The runner binds the central Git advance through
 Agent Sessions before `action:reflection.publish` atomically materializes the approved spec.
-Reservations share one namespace, but only experiment names consume active-cap slots.
-Migration 71 defaults existing names to one slot; initialization reads their pinned spec
-bytes to classify task-only names as zero. Unreadable or unknown names remain one.
-The publish reducer reads the pinned spec through transaction-bound Knowledge and declares
-`TransactionalEffect("reflection.materialize_change_spec", {"spec": parsed_spec})`.
-The publication effect and its helpers live outside `ReflectionService`; `Research` binds
-claim/experiment/task writers explicitly. The service retains corpus, lens, reservation,
-pin/spec/world reads and bound-advance orchestration. Effects run before native commit/hooks
-and reservation release, on the same transaction;
-its already-reserved creates bypass mutable capacity checks. Failure restores every write.
+Reservations share one namespace, but only experiment names consume active-cap slots; migration 71
+defaults existing names to one slot, and initialization reads their pinned spec bytes to classify
+task-only names as zero, leaving unreadable or unknown ones at one. The publish reducer reads the
+pinned spec through transaction-bound Knowledge and declares
+`TransactionalEffect("reflection.materialize_change_spec", {"spec": parsed_spec})`; that effect and
+its helpers live outside `ReflectionService`, and `Research` binds the claim/experiment/task
+writers explicitly. The service retains corpus, lens, reservation, pin/spec/world reads and
+bound-advance orchestration. Effects run before native commit/hooks and reservation release, on the
+same transaction, and already-reserved creates bypass capacity checks; failure restores every write.
 
 ## Read model and invariants
 
-`Research.snapshot` hydrates native records and gates in one transaction-consistent project
-read. State values live beside their graphs in `definitions/research_state.py`; reflection
-keeps native status separate from workflow state. Focused reads preserve snapshot identity.
-Capabilities expire, are returned once and stored as hashes. A fresh request supersedes
-open requests for the same gate. `tool:review.start` verifies tenant, producer separation,
-snapshot and capability or assigned session; submission rechecks the immutable snapshot.
+`Research.snapshot` hydrates native records and gates in one transaction-consistent project read.
+State values live beside their graphs in `definitions/research_state.py`; reflection keeps native
+status separate from workflow state. Focused reads preserve snapshot identity. Capabilities expire,
+are returned once and stored as hashes; a fresh request supersedes open requests for the same gate,
+one graph edge each. `tool:review.start` verifies tenant, producer separation, snapshot and
+capability or assigned session; submission rechecks the immutable snapshot.
 Expired requests are pending, never reusable runtime capabilities. Attested passes satisfy
 non-strict policy; strict policy requires verified independence in both runtime and checklist.
 Claims change via `tool:claim.update` or approved reflection edits, never prose heuristics.

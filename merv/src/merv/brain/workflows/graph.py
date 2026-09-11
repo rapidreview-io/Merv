@@ -631,7 +631,9 @@ class RecordKind(Generic[S]):
     empty JSON a row without one decodes to.
     ``commit_columns`` say which of the transition's ``after.data`` fields each
     action writes back, and ``status_projection`` maps a workflow state onto the
-    row status when the record has no column for it.
+    row status when the record has no column for it. ``reads_record`` is False
+    for a kind whose graph decides nothing from its row or its project — every
+    transition is its own payload — so the engine hands it no record knowledge.
     """
 
     name: str
@@ -643,6 +645,7 @@ class RecordKind(Generic[S]):
     created_event: str = ""
     label: str = "name"
     unique_name: bool = True
+    reads_record: bool = True
     columns: tuple[str, ...] = ()
     json_columns: Mapping[str, tuple[str, str]] = field(default_factory=dict)
     dependencies: bool = False

@@ -1,11 +1,10 @@
 # Workflows
-Workflow definitions, durable execution and composition live here; projects, claims,
-artifacts and agent processes stay outside. Python functions own gates and agent context.
-`graph.py` defines immutable nodes, ordinary directed edges and one `Evaluation`
-for command enforcement, available/blocked actions, guidance and dispatch.
-Branches, loops and review rejection use the same transition model. Agent nodes
-provide `build_context(snapshot, knowledge) -> Brief`, with a concise assignment
-and exact references. `Node.guidance` declares `Guidance` (skill, handoff, named messages);
+Workflow definitions, durable execution and composition live here; projects, claims, artifacts and
+agent processes stay outside. Python functions own gates and agent context. `graph.py` defines
+immutable nodes, ordinary directed edges and one `Evaluation` for command enforcement,
+available/blocked actions, guidance and dispatch. Branches, loops and review rejection use the same
+transition model. Agent nodes provide `build_context(snapshot, knowledge) -> Brief`, with a concise
+assignment and exact references. `Node.guidance` declares `Guidance` (skill, handoff, messages);
 `Workflow.outcome_guidance` is keyed by outcome. The runtime projects this presentation
 for every program; role skills own procedures. Wait and terminal states dispatch no agent.
 A node also declares what its state needs, as `requires`: `ArtifactNeed` (a submitted
@@ -14,14 +13,14 @@ document, selected and validated), `RecordNeed` (a fact its own graph function v
 it gates and whether it also blocks dispatch, so the runtime raises its issue there instead
 of a hand-written edge check, and Research reads the same declaration for the gate
 checklist. A check survives only where it says something a requirement cannot — a rejection
-verdict, a lens roster, an abandon guard. `RecordKind` declares the native row a graph is
-bound to: table, id prefix, insert and JSON columns, per-action commit columns, seal
-exemptions, a typed constructor, any status projection, and `Public` — hidden fields and
-public names. The serializer owns computed-field placement. It also answers what its own
-graph already says: the success status, the actions, which action carries an effect, and the
-review gates and returns, so nothing restates a state machine. A plugin workflow declares no
-kind and keeps its record in instance data. `Program` names what a brain installs — graphs,
-kinds, effects, requirements, tools and an optional project orientation callback;
+verdict, a lens roster, an abandon guard. `RecordKind` declares the native row a graph is bound to:
+table, id prefix, insert and JSON columns, per-action commit columns, seal exemptions, a typed
+constructor, any status projection, whether its graph reads that record at all, and `Public` —
+hidden fields and public names. The serializer owns computed-field placement. It also answers what
+its own graph already says: the success status, the actions, which action carries an effect, and the
+review gates and returns, so nothing restates a state machine. A plugin workflow declares no kind
+and keeps its record in instance data. `Program` names what a brain installs — graphs, kinds,
+effects, requirements, tools and an optional project orientation callback;
 `RecordKind.creation_requires` separately gates native creation from declared facts; `requires` is a `Requirement` protocol, so a program
 may bring its own need class. `brain/programs/` holds the programs and `INSTALLED`, the only
 place a definition module is named.
@@ -56,10 +55,12 @@ child generations cannot resume a new wait. Version migration explicitly preserv
 replaces children and never replaces live work.
 
 `definitions/research_state.py` owns research state values beside their graphs.
-`definitions/` contains experiment, task, reflection, independent reflection lens, and
+`definitions/` contains experiment, task, reflection, review, independent reflection lens, and
 published research-wave graphs, each beside its `RecordKind`, plus pure evidence validators,
-context builders, research contracts and the passive legacy `Metadata` (action effects and
-how a subject is named).
+context builders, research contracts and the passive legacy `Metadata` (action effects and how a
+subject is named). `review.py` also owns the verdict, synopsis and return-routing rules its
+`action:review.submit` reducer applies before declaring `review.record_verdict`; a review reads no
+record of its own, so the engine hands its graph no knowledge.
 `reflection_corpus.py` states what a wave reads — its fixed corpus, the content
 hydration behind it, consolidation coverage and the project-graph diff — as pure
 functions over rows and submitted bytes, so the record service asks only the
@@ -80,10 +81,9 @@ native record writes. Common project and immutable artifact readers are composed
 Application delivers review and child-start actions through support-system public roots. Merv
 artifacts remain in Merv-owned R2; the sandbox service owns ML compute and workload storage
 only.
-Generic tools include `tool:workflow.catalog`, `tool:workflow.start`,
-`tool:workflow.status_and_next`, `tool:workflow.assignment`, `tool:workflow.begin`,
-`tool:workflow.transition` and `tool:workflow.history`;
-`tools.py` owns their contracts and a program carries that table into the registry. Auto-run
+Generic tools include `tool:workflow.catalog`, `tool:workflow.start`, `tool:workflow.assignment`,
+`tool:workflow.status_and_next`, `tool:workflow.begin`, `tool:workflow.transition` and
+`tool:workflow.history`; `tools.py` owns their contracts and a program carries that table. Auto-run
 activation and interactive `tool:workflow.begin` start clocks/actions only when work starts;
 merely approving a plan or reading a context does not. Dispatch owns identities and leases,
 then supplies the node's frozen brief, references and execution policy to the runner. The

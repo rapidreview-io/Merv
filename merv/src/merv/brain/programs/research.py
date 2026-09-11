@@ -9,6 +9,7 @@ from ..workflows import (
 from ..workflows.definitions.experiment import EXPERIMENT, KIND as EXPERIMENT_KIND
 from ..workflows.definitions.reflection import LENS, REFLECTION, KIND as REFLECTION_KIND, present_reflection_signal
 from ..workflows.definitions.research_wave import RESEARCH_WAVE
+from ..workflows.definitions.review import REVIEW, KIND as REVIEW_KIND
 from ..workflows.definitions.task import TASK, KIND as TASK_KIND
 
 # These are advisory choices; neither alters dependency or transition permissions.
@@ -100,14 +101,14 @@ def orient_project(snapshot, *, selected, workflow, reflection, reflection_workf
 
 
 # The lens and the published wave keep their whole record in instance data, so
-# they carry no ``RecordKind``; the other three bind to a native row.
+# they carry no ``RecordKind``; the other four bind to a native row.
 PROGRAM = Program(
     name="research", orientation=orient_project,
     version=1,
-    workflows=(EXPERIMENT, TASK, REFLECTION, LENS, RESEARCH_WAVE),
-    kinds=(EXPERIMENT_KIND, TASK_KIND, REFLECTION_KIND),
+    workflows=(EXPERIMENT, TASK, REFLECTION, LENS, RESEARCH_WAVE, REVIEW),
+    kinds=(EXPERIMENT_KIND, TASK_KIND, REFLECTION_KIND, REVIEW_KIND),
     effects=("workflow.start", "review.request"),
-    transactional_effects=("reflection.materialize_change_spec",),
+    transactional_effects=("reflection.materialize_change_spec", "review.record_verdict"),
     requirements=(ArtifactNeed, RecordNeed, DependenciesDone, ReviewGate),
     tools={**WORKFLOW_TOOLS, **RESEARCH_TOOLS},
 )
