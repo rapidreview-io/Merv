@@ -12,25 +12,19 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
-from ..kernel.secret_tokens import hash_secret, mint_secret, secret_digest_matches
+from ..kernel.secret_tokens import hash_secret, mint_secret
 from ..kernel.utils import NotFoundError, iso_after, new_id, now_iso, parse_iso
 from .project_keys import GRANT_SCOPES, PROJECT_GRANT, ProjectKeyControl
 
 AUTHORIZATION_CODE_TTL_SECONDS = 60
 ACCESS_TOKEN_TTL_SECONDS = 3600
 REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
-# Public DCR is unauthenticated, so a client that registered and never came
-# back to authorize is swept (audit AUTH-03). Used clients — anything with a
-# code or refresh token — are kept regardless of age.
+# Public DCR is unauthenticated: a client that registered and never came back
+# is swept after this horizon, and at the cap the oldest never-used rows are
+# evicted rather than the registration refused (refusal would hand anyone an
+# onboarding denial of service for the price of some valid metadata).
 UNUSED_CLIENT_TTL_DAYS_ENV_VAR = "MERV_OAUTH_CLIENT_TTL_DAYS"
 DEFAULT_UNUSED_CLIENT_TTL_DAYS = 30
-# The TTL sweep needs someone to call it, and nothing in the shipped compose
-# file schedules one. These bound the table without any external timer: the
-# registration path prunes a little every time, and at the cap it EVICTS the
-# oldest never-used rows to admit the new client. Eviction rather than refusal,
-# because DCR is unauthenticated: a cap that refuses hands anyone an onboarding
-# denial of service for the price of some valid metadata. Both deletion budgets
-# are per-call so the work under the store's writer lock stays bounded.
 MAX_CLIENTS_ENV_VAR = "MERV_OAUTH_MAX_CLIENTS"
 DEFAULT_MAX_CLIENTS = 500
 OPPORTUNISTIC_PRUNE_LIMIT = 100
@@ -209,14 +203,8 @@ class OAuthService:
             raise OAuthError(
                 "invalid_client_metadata", "registered scopes are not supported"
             )
-        # Identical metadata resolves to the identical client. A public client
-        # id is not a credential, and clients that re-register on every launch
-        # would otherwise grow the table forever (audit AUTH-03). Both arrays
-        # are sorted first so a client that merely shuffles its own list — the
-        # order carries no meaning to either side — is still the same client
-        # and not a fresh row per launch. This canonical form is exactly what
-        # the stored metadata fingerprint (migration 38) hashes, which is why
-        # rows written before canonicalization are still found by this lookup.
+        # Identical metadata is the identical client, arrays sorted, so a
+        # client that re-registers on every launch keeps its one row.
         client = self._repository.get_or_create_client(
             client=OAuthClient(
                 client_id=new_id(prefix="oauthc"),
@@ -265,34 +253,23 @@ class OAuthService:
         request = self._authorization_request(
             params=params, canonical_resource=canonical_resource
         )
+
+        def back(**outcome: str) -> str:
+            return authorization_redirect(
+                redirect_uri=request.redirect_uri, issuer=issuer, state=request.state, **outcome
+            )
+
         if not approved:
-            return authorization_redirect(
-                redirect_uri=request.redirect_uri,
-                issuer=issuer,
-                state=request.state,
-                error="access_denied",
-            )
+            return back(error="access_denied")
         if grant_scope not in GRANT_SCOPES:
-            return authorization_redirect(
-                redirect_uri=request.redirect_uri,
-                issuer=issuer,
-                state=request.state,
-                error="invalid_request",
-            )
-        # An account grant still names a home project, and membership in it is
-        # still proven here: consent can never reach beyond the consenting
-        # user's own membership, whichever scope they picked.
-        if (
-            not project_id
-            or not owner_user_id
-            or not self._is_project_member(project_id=project_id, user_id=owner_user_id)
+            return back(error="invalid_request")
+        # An account grant still names a home project the user must belong to:
+        # consent never reaches beyond the consenting user's own membership.
+        if not (
+            project_id and owner_user_id
+            and self._is_project_member(project_id=project_id, user_id=owner_user_id)
         ):
-            return authorization_redirect(
-                redirect_uri=request.redirect_uri,
-                issuer=issuer,
-                state=request.state,
-                error="access_denied",
-            )
+            return back(error="access_denied")
         secret = mint_secret(prefix="mac_", nbytes=32)
         self._repository.insert_code(
             code=AuthorizationCode(
@@ -309,12 +286,7 @@ class OAuthService:
                 consumed_at=None,
             )
         )
-        return authorization_redirect(
-            redirect_uri=request.redirect_uri,
-            issuer=issuer,
-            state=request.state,
-            code=secret,
-        )
+        return back(code=secret)
 
     def exchange_code(
         self, *, form: dict[str, str], canonical_resource: str
@@ -324,18 +296,12 @@ class OAuthService:
             raise OAuthError(
                 "unauthorized_client", "client cannot use authorization_code"
             )
-        raw_code = _required_form(form, "code")
-        digest = hash_secret(raw_code)
+        digest = hash_secret(_required_form(form, "code"))
         code = self._repository.code_by_digest(digest=digest)
-        if not secret_digest_matches(
-            stored_digest=code.code_digest if code else None,
-            presented_digest=digest,
-        ):
-            raise OAuthError("invalid_grant", "authorization code is invalid")
-        assert code is not None
         verifier = _required_form(form, "code_verifier")
         if (
-            code.client_id != client.client_id
+            code is None
+            or code.client_id != client.client_id
             or code.redirect_uri != _required_form(form, "redirect_uri")
             or code.resource != _required_resource(form, canonical_resource)
             or code.consumed_at is not None
@@ -347,10 +313,10 @@ class OAuthService:
         if not self._repository.consume_code(digest=digest, consumed_at=now_iso()):
             raise OAuthError("invalid_grant", "authorization code is invalid")
         refresh_family_id = new_id(prefix="orf")
-        minted = self._mint_access_token(
+        minted = self._project_keys.create(
             project_id=code.project_id,
             owner_user_id=code.owner_user_id,
-            parent_key_id=None,
+            expires_at=iso_after(seconds=ACCESS_TOKEN_TTL_SECONDS),
             audience=code.resource,
             oauth_family_id=refresh_family_id,
             grant_scope=code.grant_scope,
@@ -372,15 +338,11 @@ class OAuthService:
         client = self._token_client(form)
         if "refresh_token" not in client.grant_types:
             raise OAuthError("unauthorized_client", "client cannot use refresh_token")
-        raw_token = _required_form(form, "refresh_token")
-        digest = hash_secret(raw_token)
-        token = self._repository.refresh_token_by_digest(digest=digest)
-        if not secret_digest_matches(
-            stored_digest=token.secret_digest if token else None,
-            presented_digest=digest,
-        ):
+        token = self._repository.refresh_token_by_digest(
+            digest=hash_secret(_required_form(form, "refresh_token"))
+        )
+        if token is None:
             raise OAuthError("invalid_grant", "refresh token is invalid")
-        assert token is not None
         if token.consumed_at is not None:
             self._revoke_replayed_refresh(token)
             raise OAuthError("invalid_grant", "refresh token is invalid")
@@ -488,26 +450,6 @@ class OAuthService:
             raise OAuthError("invalid_client", "unknown public client")
         return client
 
-    def _mint_access_token(
-        self,
-        *,
-        project_id: str,
-        owner_user_id: str,
-        parent_key_id: str | None,
-        audience: str,
-        oauth_family_id: str,
-        grant_scope: str,
-    ) -> dict[str, Any]:
-        return self._project_keys.create(
-            project_id=project_id,
-            owner_user_id=owner_user_id,
-            expires_at=iso_after(seconds=ACCESS_TOKEN_TTL_SECONDS),
-            parent_key_id=parent_key_id,
-            audience=audience,
-            oauth_family_id=oauth_family_id,
-            grant_scope=grant_scope,
-        )
-
     def _token_response(
         self,
         *,
@@ -518,7 +460,7 @@ class OAuthService:
         project_id: str,
         grant_scope: str,
         parent_refresh_token_id: str | None,
-        refresh_family_id: str | None = None,
+        refresh_family_id: str,
     ) -> dict[str, Any]:
         response: dict[str, Any] = {
             "access_token": str(minted["secret"]),
@@ -531,7 +473,7 @@ class OAuthService:
         key = dict(minted["key"])
         token = RefreshToken(
             id=new_id(prefix="ort"),
-            family_id=refresh_family_id or new_id(prefix="orf"),
+            family_id=refresh_family_id,
             secret_digest=hash_secret(raw_refresh),
             client_id=client.client_id,
             owner_user_id=owner_user_id,
@@ -650,23 +592,11 @@ def authorization_redirect(
 
 
 def oauth_error_redirect(*, exc: OAuthError, issuer: str) -> str | None:
+    """Where a redirectable protocol error sends the client, or None."""
     if exc.redirect_uri is None:
         return None
-    parsed = urlsplit(exc.redirect_uri)
-    query = parsed.query
-    fields: list[tuple[str, str]] = [("error", exc.error)]
-    if exc.state is not None:
-        fields.append(("state", exc.state))
-    fields.append(("iss", issuer))
-    encoded = urlencode(fields)
-    return urlunsplit(
-        (
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path,
-            f"{query}&{encoded}" if query else encoded,
-            "",
-        )
+    return authorization_redirect(
+        redirect_uri=exc.redirect_uri, issuer=issuer, state=exc.state, error=exc.error
     )
 
 

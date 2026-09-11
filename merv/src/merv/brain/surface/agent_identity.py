@@ -35,7 +35,7 @@ import threading
 import time
 from collections.abc import Mapping
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from ..kernel.env import env_value
@@ -106,14 +106,7 @@ class CallerFacts:
     mcp_session_id: str = ""
 
     def as_dict(self) -> dict[str, str]:
-        return {
-            "tenant_id": self.tenant_id,
-            "user_id": self.user_id,
-            "principal_id": self.principal_id,
-            "oauth_family_id": self.oauth_family_id,
-            "agent_session_id": self.agent_session_id,
-            "mcp_session_id": self.mcp_session_id,
-        }
+        return asdict(self)
 
 
 def _clip(value: Any) -> str:
@@ -214,29 +207,19 @@ class AgentIdentities:
         have an id" step, so it says exactly what to do next.
         """
         supplied = str(agent_id or "").strip()
-        if caller.agent_session_id:
-            if supplied:
-                row = self._usable(agent_id=supplied, caller=caller)
-                if row is None:
-                    raise AgentIdentityUnknownError(
-                        f"agent_id {supplied!r} was not issued to this agent "
-                        "session. Use the agent_id agent.hello gave THIS "
-                        "context window, or call agent.hello once to get one.",
-                        details={"agent_id": supplied, "tool": tool},
-                    )
-                return supplied
-            return self._session_default(caller=caller)["agent_id"]
         if supplied:
-            row = self._usable(agent_id=supplied, caller=caller)
-            if row is None:
+            if self._usable(agent_id=supplied, caller=caller) is None:
+                whose = "this agent session" if caller.agent_session_id else "you"
                 raise AgentIdentityUnknownError(
-                    f"agent_id {supplied!r} is not one Merv issued to you. If "
-                    "agent.hello gave this context window an id earlier, resend "
-                    "with exactly that id; otherwise call agent.hello once and "
-                    "carry the id it returns in every call.",
+                    f"agent_id {supplied!r} was not issued to {whose}. If agent.hello "
+                    "gave this context window an id earlier, resend with exactly that "
+                    "id; otherwise call agent.hello once and carry the id it returns "
+                    "in every call.",
                     details={"agent_id": supplied, "tool": tool},
                 )
             return supplied
+        if caller.agent_session_id:
+            return self._session_default(caller=caller)["agent_id"]
         if not self.required:
             return ""
         raise AgentIdentityRequiredError(
@@ -298,12 +281,8 @@ class AgentIdentities:
     ) -> dict[str, Any]:
         """Identities newest first, each with its call count and activity span."""
         bounded = max(1, min(int(limit), 1000))
-        clauses = []
-        params: list[Any] = []
-        if user_id:
-            clauses.append("a.user_id = ?")
-            params.append(str(user_id))
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        where = "WHERE a.user_id = ?" if user_id else ""
+        params = (str(user_id),) if user_id else ()
         with closing(self.store.connect()) as conn:
             rows = conn.execute(
                 f"""

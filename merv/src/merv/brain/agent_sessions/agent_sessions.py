@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import UTC, datetime, timedelta
 import json
 from typing import Any, Iterable, Mapping, Protocol
@@ -319,50 +319,21 @@ class AgentSessions:
             self._expire_due(tx=tx, now=now)
             self._close_invalid_targets(tx=tx, now=now, project_id=self._project_of(tx=tx, session_id=session_id))
             row = self._owned_live(tx=tx, session_id=session_id, runner_id=runner_id)
-            existing = str(row["host_session_ref"] or "")
-            existing_workspace = str(row["workspace_ref"] or "")
-            if existing == host_session_ref and existing_workspace == workspace_ref:
-                self._record_observability(
-                    tx=tx,
-                    row=row,
-                    agent_setup=agent_setup,
-                    telemetry=telemetry,
+            existing = (str(row["host_session_ref"] or ""), str(row["workspace_ref"] or ""))
+            if existing != (host_session_ref, workspace_ref):
+                if any(existing):
+                    raise PermissionDeniedError(
+                        "agent session is already attached to another host process"
+                    )
+                tx.execute(
+                    "UPDATE agent_sessions SET host_session_ref = ?, workspace_ref = ?, "
+                    "base_sha = ?, head_sha = ? WHERE id = ?",
+                    (host_session_ref, workspace_ref, base_sha, head_sha, session_id),
                 )
-                self._record_workspace(
-                    tx=tx,
-                    row=row,
-                    workspace_ref=workspace_ref,
-                    base_sha=base_sha,
-                    head_sha=head_sha,
-                    stats=workspace_stats,
-                )
-                return self._find(tx=tx, session_id=session_id)
-            if existing or existing_workspace:
-                raise PermissionDeniedError(
-                    "agent session is already attached to another host process"
-                )
-            tx.execute(
-                """
-                UPDATE agent_sessions
-                SET host_session_ref = ?, workspace_ref = ?,
-                    base_sha = ?, head_sha = ?
-                WHERE id = ?
-                """,
-                (host_session_ref, workspace_ref, base_sha, head_sha, session_id),
-            )
-            self._record_observability(
-                tx=tx,
-                row=row,
-                agent_setup=agent_setup,
-                telemetry=telemetry,
-            )
+            self._record_observability(tx=tx, row=row, agent_setup=agent_setup, telemetry=telemetry)
             self._record_workspace(
-                tx=tx,
-                row=row,
-                workspace_ref=workspace_ref,
-                base_sha=base_sha,
-                head_sha=head_sha,
-                stats=workspace_stats,
+                tx=tx, row=row, workspace_ref=workspace_ref, base_sha=base_sha,
+                head_sha=head_sha, stats=workspace_stats,
             )
             return self._find(tx=tx, session_id=session_id)
 
@@ -485,20 +456,12 @@ class AgentSessions:
         settings an owner saved. Executable argv never appears in either.
         """
         runner_id = _required(runner_id, "runner_id", limit=240)
-        machine_payload = {
-            name: str(machine.get(name) or "").strip()[:240]
-            for name in ("hostname", "system", "architecture")
-            if str(machine.get(name) or "").strip()
-        }
+        machine_payload = _strings(machine, ("hostname", "system", "architecture"))
         platform_items: list[dict[str, Any]] = []
         for item in platforms:
             if not isinstance(item, Mapping):
                 continue
-            projected: dict[str, Any] = {}
-            for name in ("name", "harness", "model", "effort"):
-                text = str(item.get(name) or "").strip()
-                if text:
-                    projected[name] = text[:240]
+            projected: dict[str, Any] = _strings(item, ("name", "harness", "model", "effort"))
             parallelism = item.get("parallelism")
             if isinstance(parallelism, int) and not isinstance(parallelism, bool):
                 projected["parallelism"] = max(parallelism, 0)
@@ -677,13 +640,10 @@ class AgentSessions:
     def live_leases(self, *, project_id: str) -> set[tuple[str, int]]:
         """``(instance_id, revision)`` of every offered/active session: what the
         dispatch queue subtracts, matching the one-live-lease index."""
-        with self.store.transaction() as tx:
-            rows = tx.execute(
-                """
-                SELECT workflow_instance_id, workflow_revision
-                FROM agent_sessions
-                WHERE project_id = ? AND status IN ('offered', 'active')
-                """,
+        with closing(self.store.connect()) as conn:
+            rows = conn.execute(
+                "SELECT workflow_instance_id, workflow_revision FROM agent_sessions "
+                "WHERE project_id = ? AND status IN ('offered', 'active')",
                 (project_id,),
             ).fetchall()
         return {(str(row["workflow_instance_id"]), int(row["workflow_revision"])) for row in rows}
@@ -697,14 +657,8 @@ class AgentSessions:
         now: datetime | None = None,
     ) -> dict[str, Any] | None:
         """One caller-scoped runner row, or None before its first heartbeat."""
-        if tx is None:
-            with closing(self.store.connect()) as conn:
-                row = conn.execute(
-                    f"{_RUNNER_SELECT} WHERE project_id = ? AND runner_id = ?",
-                    (project_id, runner_id),
-                ).fetchone()
-        else:
-            row = tx.execute(
+        with self._conn(tx) as conn:
+            row = conn.execute(
                 f"{_RUNNER_SELECT} WHERE project_id = ? AND runner_id = ?",
                 (project_id, runner_id),
             ).fetchone()
@@ -713,13 +667,16 @@ class AgentSessions:
     def list_runners(
         self, *, project_id: str, tx: Any | None = None, now: datetime | None = None
     ) -> list[dict[str, Any]]:
-        sql = f"{_RUNNER_SELECT} WHERE project_id = ? ORDER BY last_seen_at DESC, runner_id"
-        if tx is None:
-            with closing(self.store.connect()) as conn:
-                rows = conn.execute(sql, (project_id,)).fetchall()
-        else:
-            rows = tx.execute(sql, (project_id,)).fetchall()
+        with self._conn(tx) as conn:
+            rows = conn.execute(
+                f"{_RUNNER_SELECT} WHERE project_id = ? ORDER BY last_seen_at DESC, runner_id",
+                (project_id,),
+            ).fetchall()
         return [_runner_view(row, now=now) for row in rows]
+
+    def _conn(self, tx: Any | None):
+        """The caller's transaction, or a read connection of our own."""
+        return nullcontext(tx) if tx is not None else closing(self.store.connect())
 
     @staticmethod
     def _record_observability(
@@ -922,13 +879,9 @@ class AgentSessions:
             ).fetchone()
         if row is None:
             return None
-        try:
-            events = json.loads(str(row["events_json"] or "[]"))
-        except ValueError:
-            events = []
         return {
             "session_id": session_id,
-            "events": events if isinstance(events, list) else [],
+            "events": _json_list_column(row["events_json"]),
             "stderr_tail": str(row["stderr_tail"] or ""),
             "complete": bool(row["complete"]),
             "updated_at": str(row["updated_at"]),
@@ -1026,16 +979,12 @@ class AgentSessions:
             f"FROM agent_sessions WHERE status IN ('offered', 'active'){scope}",
             () if project_id is None else (project_id,),
         ).fetchall()
-        invalid = [(row, self._invalid_target_reason(row=row)) for row in rows]
-        invalid = [(row, reason) for row, reason in invalid if reason]
-        for row, reason in invalid:
-            self._close(
-                tx=tx,
-                row=row,
-                now=now,
-                reason=reason,
-            )
-        return len(invalid)
+        closed = 0
+        for row in rows:
+            if reason := self._invalid_target_reason(row=row):
+                self._close(tx=tx, row=row, now=now, reason=reason)
+                closed += 1
+        return closed
 
     def _expire_due(self, *, tx: Any, now: datetime) -> int:
         rows = tx.execute(
@@ -1203,10 +1152,7 @@ def _telemetry_projection(value: Mapping[str, Any]) -> dict[str, Any]:
         raw = value.get(name)
         if isinstance(raw, int) and not isinstance(raw, bool):
             result[name] = max(raw, 0)
-    for name in TELEMETRY_LABELS:
-        raw = value.get(name)
-        if isinstance(raw, str) and raw.strip():
-            result[name] = raw.strip()[:240]
+    result.update(_strings(value, TELEMETRY_LABELS))
     if isinstance(value.get("final"), bool):
         result["final"] = value["final"]
     return result
@@ -1307,11 +1253,7 @@ def _inventory_projection(value: Mapping[str, Any] | None) -> dict[str, Any]:
     result: dict[str, Any] = {}
     workspace = value.get("workspace")
     if isinstance(workspace, Mapping):
-        result["workspace"] = {
-            name: str(workspace.get(name) or "").strip()[:1024]
-            for name in ("repository", "root", "base_ref")
-            if str(workspace.get(name) or "").strip()
-        }
+        result["workspace"] = _strings(workspace, ("repository", "root", "base_ref"), limit=1024)
     commands = value.get("available_commands")
     if isinstance(commands, Mapping):
         result["available_commands"] = {
@@ -1330,10 +1272,7 @@ def _inventory_projection(value: Mapping[str, Any] | None) -> dict[str, Any]:
     pending = value.get("pending")
     if isinstance(pending, Mapping) and str(pending.get("reason") or "").strip():
         result["pending"] = {"reason": str(pending["reason"]).strip()[:240]}
-    for name in ("settings_error", "runner_version"):
-        raw = value.get(name)
-        if isinstance(raw, str) and raw.strip():
-            result[name] = raw.strip()[:240]
+    result.update(_strings(value, ("settings_error", "runner_version")))
     harness = _harness_projection(value.get("harness"))
     if harness:
         result["harness"] = harness
@@ -1348,14 +1287,10 @@ def _harness_projection(value: Any) -> dict[str, Any]:
     result: dict[str, Any] = {}
     skills = value.get("skills")
     if isinstance(skills, Mapping):
-        projected: dict[str, Any] = {}
+        projected: dict[str, Any] = _strings(skills, ("root", "digest", "error"), long=("root",))
         count = skills.get("count")
         if isinstance(count, int) and not isinstance(count, bool):
             projected["count"] = max(count, 0)
-        for name in ("root", "digest", "error"):
-            raw = skills.get(name)
-            if isinstance(raw, str) and raw.strip():
-                projected[name] = raw.strip()[:1024 if name == "root" else 240]
         if projected:
             result["skills"] = projected
     platforms = value.get("platforms")
@@ -1364,11 +1299,10 @@ def _harness_projection(value: Any) -> dict[str, Any]:
         for name, raw in sorted(platforms.items())[:32]:
             if not str(name).strip() or not isinstance(raw, Mapping):
                 continue
-            entry: dict[str, Any] = {"ok": bool(raw.get("ok"))}
-            for field in ("adapter", "executable", "version", "merv_mcp", "skills"):
-                text = raw.get(field)
-                if isinstance(text, str) and text.strip():
-                    entry[field] = text.strip()[:1024 if field == "executable" else 120]
+            entry: dict[str, Any] = {"ok": bool(raw.get("ok")), **_strings(
+                raw, ("adapter", "executable", "version", "merv_mcp", "skills"),
+                limit=120, long=("executable",),
+            )}
             if isinstance(raw.get("enabled"), bool):
                 entry["enabled"] = raw["enabled"]
             problems = raw.get("problems")
@@ -1386,11 +1320,7 @@ def _harness_projection(value: Any) -> dict[str, Any]:
                 raw_block = raw.get(block)
                 if not isinstance(raw_block, Mapping):
                     continue
-                projected: dict[str, Any] = {}
-                for field in fields:
-                    text = raw_block.get(field)
-                    if isinstance(text, str) and text.strip():
-                        projected[field] = text.strip()[:240]
+                projected = _strings(raw_block, fields)
                 if block == "smoke":
                     duration = raw_block.get("duration_ms")
                     if isinstance(duration, int) and not isinstance(duration, bool):
@@ -1400,10 +1330,19 @@ def _harness_projection(value: Any) -> dict[str, Any]:
             entries[str(name)[:80]] = entry
         if entries:
             result["platforms"] = entries
-    error = value.get("error")
-    if isinstance(error, str) and error.strip():
-        result["error"] = error.strip()[:240]
+    result.update(_strings(value, ("error",)))
     return result
+
+
+def _strings(
+    value: Mapping[str, Any], names: Iterable[str], *, limit: int = 240, long: Iterable[str] = (),
+) -> dict[str, Any]:
+    """The named string fields, stripped and capped; blanks and non-strings dropped."""
+    return {
+        name: str(value[name]).strip()[:1024 if name in long else limit]
+        for name in names
+        if isinstance(value.get(name), str) and value[name].strip()
+    }
 
 
 def _lease_view(row: Any) -> dict[str, Any]:

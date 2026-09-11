@@ -245,10 +245,6 @@ class ProjectAuthorizer:
 
     def http_denial(self, request: Request) -> JSONResponse | None:
         path = request.url.path
-        if getattr(request.state.principal, "agent_session_id", None):
-            denied = _agent_session_http_denial(path)
-            if denied is not None:
-                return denied
         # Credential SHAPE, not binding: an account key has no
         # key_project_id, so a binding test fails open here (INV-11).
         if is_external_key(request.state.principal) and path.startswith(
