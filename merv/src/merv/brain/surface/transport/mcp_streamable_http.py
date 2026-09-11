@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from typing import Any, Protocol
 
@@ -165,13 +165,16 @@ class RefusalLedger(Protocol):
     def reject(self, **kwargs: Any) -> None: ...
 
 
-class ScopeAuthorizer(Protocol):
-    """Resolves every pre-flight denial for a tool call (key-project equality,
-    membership, key create block, review-derived scope), raising
-    ProjectKeyScopeError / NotFoundError. Runs synchronously so a slow denial
-    is a transport 403/404, never a mid-stream error."""
+class ToolPlanner(Protocol):
+    """Raises every pre-dispatch denial for a tool call (key-project equality,
+    membership, the key create block, review-derived scope) as
+    ProjectKeyScopeError / NotFoundError and returns the call to run past them.
+    Planned before the stream commits, so a slow denial is a transport
+    403/404, never a mid-stream error."""
 
-    def __call__(self, request: Request, name: str, arguments: dict[str, Any]) -> None: ...
+    def __call__(
+        self, name: str, arguments: JsonObject, context: JsonObject, request: Request
+    ) -> Callable[[], JsonObject]: ...
 
 
 def _is_request_id(value: object) -> bool:
@@ -288,7 +291,7 @@ class McpStreamableHttp:
         call_tool: ToolCaller,
         allow_tool: ToolFilter | None,
         authorize: Authorizer | None,
-        authorize_scope: ScopeAuthorizer | None = None,
+        plan_tool: ToolPlanner | None = None,
         ledger: RefusalLedger | None = None,
         record_session: SessionRecorder | None = None,
         agent_identity: str | None = None,
@@ -297,7 +300,7 @@ class McpStreamableHttp:
         self._call_tool = call_tool
         self._allow_tool = allow_tool
         self._authorize = authorize
-        self._authorize_scope = authorize_scope
+        self._plan_tool = plan_tool
         self._ledger = ledger
         self._record_session = record_session
         # None: no agent identity wired (narrow compositions), catalog untouched.
@@ -557,15 +560,13 @@ class McpStreamableHttp:
             return self._protocol_error(
                 request_id=request_id, code=-32602, message=token_error, tool=name
             )
-        denied = self._preauthorize(
+        execute, denied = await self._plan(
             name=name, arguments=arguments, request=request, request_id=request_id
         )
         if denied is not None:
             return denied
 
-        task = asyncio.create_task(
-            run_in_threadpool(self._call_tool, name, arguments, {}, request)
-        )
+        task = asyncio.create_task(run_in_threadpool(execute))
         done, _pending = await asyncio.wait((task,), timeout=_FAST_CALL_SECONDS)
         if done:
             payload = await self._completed_call(task, request_id)
@@ -582,36 +583,38 @@ class McpStreamableHttp:
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    def _preauthorize(
+    async def _plan(
         self, *, name: str, arguments: JsonObject, request: Request, request_id: RequestId
-    ) -> JSONResponse | None:
-        """INV-5/INV-11 (FIX 6): resolve project scope and the internal-tool block
-        BEFORE the SSE stream can commit a 200 — so a slow scope or visibility
-        denial is always a transport 403 (404 for membership misses), never a
-        mid-stream error. Tool execution alone runs behind the stream."""
+    ) -> tuple[Callable[[], JsonObject], JSONResponse | None]:
+        """INV-5/INV-11: resolve project scope and the internal-tool block BEFORE
+        the SSE stream can commit a 200 — so a slow scope or visibility denial
+        is always a transport 403 (404 for membership misses), never a
+        mid-stream error. The plan is the gateway's own pre-flight, run off
+        the event loop and owning the durable row for what it refuses; only
+        the planned call runs behind the stream."""
         principal = getattr(request.state, "principal", LOCAL_PRINCIPAL)
-        try:
-            if self._authorize_scope is not None:
-                self._authorize_scope(request, name, arguments)
-            contract = TOOL_MANIFEST.get(name)
-            if (
-                contract is not None
-                and contract.visibility == "internal"
-                and not is_local_principal(principal)
-            ):
-                raise ToolVisibilityError(
-                    f"tool {name} is internal and cannot be invoked over MCP",
-                    details={"tool": name, "visibility": "internal"},
-                )
-        except ResearchPluginError as exc:
-            # Preflight denials are always transport-visible: membership misses
-            # are 404 here even though a tool-raised NotFoundError stays 200.
-            status = 404 if isinstance(exc, NotFoundError) else _error_status(exc)
-            self._ledger_reject(
-                tool=name, error_code=exc.error_code, message=exc.message
+        execute: Callable[[], JsonObject] = lambda: self._call_tool(name, arguments, {}, request)
+        contract = TOOL_MANIFEST.get(name)
+        if (
+            contract is not None
+            and contract.visibility == "internal"
+            and not is_local_principal(principal)
+        ):
+            # Decided before any pre-flight work: an internal tool earns this
+            # refusal ahead of the identity gate, and no identity row is minted.
+            exc = ToolVisibilityError(
+                f"tool {name} is internal and cannot be invoked over MCP",
+                details={"tool": name, "visibility": "internal"},
             )
-            return _json_response(_dispatcher_error(request_id, exc), status_code=status)
-        return None
+            self._ledger_reject(tool=name, error_code=exc.error_code, message=exc.message)
+            return execute, _json_response(_dispatcher_error(request_id, exc), status_code=403)
+        try:
+            if self._plan_tool is not None:
+                execute = await run_in_threadpool(self._plan_tool, name, arguments, {}, request)
+        except Exception as exc:  # noqa: BLE001 -- rendered as the JSON-RPC error it always was
+            status = 404 if isinstance(exc, NotFoundError) else _error_status(exc)
+            return execute, _json_response(_dispatcher_error(request_id, exc), status_code=status)
+        return execute, None
 
     @staticmethod
     def _progress_token(

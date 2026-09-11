@@ -19,8 +19,11 @@ from merv.brain.surface.identity import (
     Principal,
     ProjectKeyScopeError,
 )
-from merv.brain.surface.transport.api.gateway import ProjectAuthorizer
-from merv.brain.surface.transport.api.mcp_preauth import build_mcp_preauthorizer
+from merv.brain.surface.transport.api.gateway import (
+    ProjectAuthorizer,
+    ToolInvocationGateway,
+)
+from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
 
 PROJECT_A = "proj-a"
 USER_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -93,17 +96,16 @@ class ProjectCreateShapeTest(unittest.TestCase):
 
     def setUp(self) -> None:
         projects = _Projects()
-        self.preauthorize = build_mcp_preauthorizer(
-            authorizer=ProjectAuthorizer(research=projects),
-            research=projects,
-            hosted=True,
+        self.gateway = ToolInvocationGateway(
+            tools=None, research=projects, sandboxes=None,
+            surface=HttpSurfacePolicy.for_surface(restrict_cors=True, hosted_control=True),
+            projects=ProjectAuthorizer(research=projects),
         )
 
     def _create(self, principal: Principal) -> None:
-        self.preauthorize(
-            _request("/mcp", principal),
-            "project",
-            {"action": "create", "name": "New Project"},
+        self.gateway.plan(
+            name="project", arguments={"action": "create", "name": "New Project"},
+            activity_source="mcp", principal=principal,
         )
 
     def test_every_external_key_shape_is_barred_from_project_create(self) -> None:

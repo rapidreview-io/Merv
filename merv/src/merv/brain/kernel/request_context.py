@@ -58,7 +58,7 @@ def bind_agent(*, agent_id: str = "", mcp_session_id: str = "") -> None:
     """Name the agent context window (and transport session) behind this call.
 
     Bound by the tool gateway once the call's ``agent_id`` has been resolved,
-    on the same thread that goes on to dispatch it, so the ledger writing the
+    and again on the thread that dispatches it, so the ledger writing the
     call's row — and the payload record beside it — sees the attribution.
     Empty values leave the current binding untouched.
     """

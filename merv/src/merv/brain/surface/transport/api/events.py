@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import Response, StreamingResponse
 
@@ -73,10 +74,9 @@ def build_router(*, research: Research) -> APIRouter:
             idle_ms = 0
             elapsed_ms = 0
             while True:
-                batch = research.events_since(
-                    project_id=project_id,
-                    after_id=cursor,
-                )["events"]
+                batch = (await run_in_threadpool(
+                    research.events_since, project_id=project_id, after_id=cursor,
+                ))["events"]
                 for row in batch:
                     cursor = int(row["id"])
                     yield f"id: {cursor}\n{sse('append', row)}"
