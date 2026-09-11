@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from typing import Any
+from collections.abc import Mapping
 
 from ..research_core import (
     REFLECTION,
@@ -13,7 +14,7 @@ from ..research_core import (
 )
 from ..workflows.definitions.research_state import ReflectionState
 from .experiments.presentation import slim_review_rows
-from .reflection_guidance import post_publish_guidance, present_reflection_signal
+from .reflection_guidance import present_reflection_signal
 
 Record = dict[str, Any]
 
@@ -41,6 +42,35 @@ def _tldr_only(artifact: Record) -> Record:
     return {("tldr" if key == "content" else key):
             (_tldr(artifact) if key == "content" else value)
             for key, value in artifact.items()}
+
+
+def post_publish_guidance(
+    *, materialized_experiments: list[Mapping[str, Any]]
+) -> dict[str, Any]:
+    guidance = REFLECTION.workflow.outcome_guidance["published"]
+    experiments = [
+        {
+            "experiment_id": row.get("experiment_id"),
+            "name": row.get("name"),
+            "status": row.get("status"),
+            "folder": f"experiments/{row.get('name')}/",
+            "intent": row.get("intent"),
+        }
+        for row in materialized_experiments
+    ]
+    count = len(experiments)
+    noun = "experiment" if count == 1 else "experiments"
+    return {
+        "summary": guidance.messages["summary"].format(count=count, noun=noun),
+        "experiments": experiments,
+        "recommended_actions": [
+            {
+                "tool": "workflow.status_and_next",
+                "arguments": {"experiment_id": experiments[0]["experiment_id"]},
+                "why": guidance.messages["first_experiment"],
+            },
+        ],
+    }
 
 
 def present_reflection_state(state: ReflectionState, **computed: Any) -> Record:

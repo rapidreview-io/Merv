@@ -89,15 +89,7 @@ def create_experiment(
         experiment_id=state.id,
         name=state.name,
     )
-    folder_guidance = (
-        f"Use {folder} as the experiment's one local folder. "
-        "Create it yourself before working in it: plan.md, scripts, configs, "
-        "retained results, report, and graph all live there. This local folder "
-        "is not uploaded to a sandbox automatically: create, fetch, or explicitly "
-        "transfer sandbox inputs after provisioning. Pull selected light outputs "
-        "back with sandbox.pull_outputs, or upload heavy outputs to configured "
-        "object storage, before the sandbox is released."
-    )
+    folder_guidance = EXPERIMENT.workflow.node(initial).guidance.messages["folder"].format(folder=folder)
     return rich_experiment_state(state, storage_objects=(), folder=folder, folder_guidance=folder_guidance)
 
 

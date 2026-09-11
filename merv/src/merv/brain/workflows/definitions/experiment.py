@@ -7,10 +7,10 @@ from .artifact_roles import EXHIBIT_ROLE
 from merv.shared.markdown_images import markdown_image_links
 
 from ..graph import (
-    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Issue, Node, RecordKind,
+    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Guidance, Issue, Node, RecordKind,
     Metadata, Reference, ReviewGate, ReviewReturn, Workflow,
 )
-from .execution import EXPERIMENT_EXECUTION, REVIEW_EXECUTION
+from .execution import RESEARCH_HANDOFF, EXPERIMENT_EXECUTION, REVIEW_EXECUTION
 from .documents import (REQUIRED_PLAN_SECTIONS, graph_problems, markdown_section_body, preferred_artifact,
                         report_problems, required_markdown_sections_missing)
 
@@ -258,13 +258,25 @@ ATTEMPT_REVIEW = ReviewGate("experiment_reviewer", "experiment review must pass 
 EXPERIMENT = Workflow(
     name="experiment", version=1, initial="planned", event_type="experiment.transitioned", id_prefix="exp",
     nodes=(
-        Node("planned", "Design experiment", "experiment_owner", build_plan_context, execution=EXPERIMENT_EXECUTION,
+        Node("planned", "Design experiment", "experiment_owner", build_plan_context, guidance=Guidance("research-workflow", RESEARCH_HANDOFF, messages={"folder": ("Use {folder} as the experiment's one local folder. "
+        "Create it yourself before working in it: plan.md, scripts, configs, "
+        "retained results, report, and graph all live there. This local folder "
+        "is not uploaded to a sandbox automatically: create, fetch, or explicitly "
+        "transfer sandbox inputs after provisioning. Pull selected light outputs "
+        "back with sandbox.pull_outputs, or upload heavy outputs to configured "
+        "object storage, before the sandbox is released."), "feed_update": "{entity} just had a workflow update"}), execution=EXPERIMENT_EXECUTION,
              requires=(ARTIFACTS["plan"],)),
-        Node("design_review", "Review experiment design", "design_reviewer", build_design_review_context,
+        Node("design_review", "Review experiment design", "design_reviewer", build_design_review_context, guidance=Guidance("experiment-design-review", RESEARCH_HANDOFF),
              execution=REVIEW_EXECUTION, requires=(DESIGN_REVIEW,)),
-        Node("running", "Execute approved plan", "experiment_owner", build_execution_context, execution=EXPERIMENT_EXECUTION,
+        Node("running", "Execute approved plan", "experiment_owner", build_execution_context, guidance=Guidance("research-workflow", RESEARCH_HANDOFF, messages={"exhibit": ("Retain every quantitative run as a role-'result' JSON or "
+                "CSV artifact, including failed and aborted runs, plus the "
+                "figures used by the report. At submit_results the system "
+                "evaluates the attempt's submitted result evidence. Preview "
+                "the current exhibit with experiment.exhibit; when one is "
+                "pinned at {path}, report.md must reference and interpret "
+                "{filename}.")}), execution=EXPERIMENT_EXECUTION,
              requires=(ARTIFACTS["result"], ARTIFACTS["report"], ARTIFACTS["graph"], DEPENDENCIES)),
-        Node("experiment_review", "Review completed attempt", "experiment_reviewer", build_attempt_review_context,
+        Node("experiment_review", "Review completed attempt", "experiment_reviewer", build_attempt_review_context, guidance=Guidance("experiment-attempt-review", RESEARCH_HANDOFF, messages={"experiment_review_verdict": "a review verdict just landed on {entity}"}),
              execution=REVIEW_EXECUTION, requires=(ATTEMPT_REVIEW,)),
     ),
     edges=(
@@ -280,6 +292,11 @@ EXPERIMENT = Workflow(
           for state in ("planned", "design_review", "running", "experiment_review")
           for name, target, label in (("abandon", "abandoned", "Abandon experiment"), ("mark_failed", "failed", "End failed experiment"))),
     ),
+    outcome_guidance={
+        "completed": Guidance(messages={"experiment_complete": "{entity} just completed"}),
+        "failed": Guidance(messages={"experiment_failed": "{entity} just failed"}),
+        "abandoned": Guidance(messages={"experiment_abandoned": "{entity} was just abandoned"}),
+    },
     outcomes={"complete": "completed", "abandoned": "abandoned", "failed": "failed"},
 )
 

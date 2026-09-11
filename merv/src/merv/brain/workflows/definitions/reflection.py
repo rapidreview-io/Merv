@@ -4,12 +4,12 @@ from dataclasses import replace
 
 from ..composition import Child, join_guard
 from ..graph import (
-    Action, ArtifactNeed, Brief, Change, Edge, Issue, Metadata, Node, RecordKind, RecordNeed,
+    Action, ArtifactNeed, Brief, Change, Edge, Guidance, Issue, Metadata, Node, RecordKind, RecordNeed,
     Reference, ReviewGate, ReviewReturn, Workflow, all_of,
 )
 from ...kernel.utils import NotFoundError, ValidationError, WorkflowError, now_iso
 from .checks import review_summary
-from .execution import CONSOLIDATION_EXECUTION, LENS_EXECUTION, REFLECTION_EXECUTION, REVIEW_EXECUTION
+from .execution import RESEARCH_HANDOFF, CONSOLIDATION_EXECUTION, LENS_EXECUTION, REFLECTION_EXECUTION, REVIEW_EXECUTION
 from .documents import graph_problems, reflection_doc_review_problems, reflection_lens_doc_problems, parse_change_spec, preferred_artifact
 
 
@@ -329,13 +329,13 @@ REFLECTION = Workflow(
     nodes=(
         Node("reflecting", "Independent reflection lenses", children=_lens_children, join=_join_lenses,
              requires=(ARTIFACTS["reflection_lens_doc"],)),
-        Node("synthesizing", "Reconcile reflection", "reflection_owner", build_synthesis_context, execution=REFLECTION_EXECUTION,
+        Node("synthesizing", "Reconcile reflection", "reflection_owner", build_synthesis_context, guidance=Guidance("project-reflection", RESEARCH_HANDOFF), execution=REFLECTION_EXECUTION,
              requires=tuple(ARTIFACTS[role] for role in ("project_graph", "reflection_doc", "change_spec"))),
-        Node("reflection_review", "Review reflection", "reflection_reviewer", build_review_context,
+        Node("reflection_review", "Review reflection", "reflection_reviewer", build_review_context, guidance=Guidance("project-reflection-review", RESEARCH_HANDOFF),
              execution=REVIEW_EXECUTION, requires=(REFLECTION_REVIEW,)),
-        Node("consolidating", "Consolidate reviewed code", "consolidation", build_consolidation_context,
+        Node("consolidating", "Consolidate reviewed code", "consolidation", build_consolidation_context, guidance=Guidance("project-reflection", RESEARCH_HANDOFF),
              execution=CONSOLIDATION_EXECUTION, requires=(PROPOSAL_NEED,)),
-        Node("consolidation_review", "Review consolidated code", "consolidation_reviewer", build_consolidation_review_context,
+        Node("consolidation_review", "Review consolidated code", "consolidation_reviewer", build_consolidation_review_context, guidance=Guidance("consolidation-review", RESEARCH_HANDOFF),
              execution=REVIEW_EXECUTION, requires=(PUBLISH_PROPOSAL, CONSOLIDATION_REVIEW, PUBLISH_ADVANCE)),
     ),
     edges=(
@@ -359,6 +359,13 @@ REFLECTION = Workflow(
         *(Edge(state, "abandon", "abandoned", check=can_abandon, label="Abandon this reflection wave", suggest=False, tools=("reflection.transition",))
           for state in ("reflecting", "synthesizing", "reflection_review", "consolidating", "consolidation_review")),
     ),
+    outcome_guidance={"published": Guidance("project-reflection", messages={
+        "summary": ("Reflection publish created {count} planned {noun}. Create each "
+            "experiment's working folder yourself (experiments/<name>/) before "
+            "editing files, then call workflow.status_and_next for the one you "
+            "start."),
+        "first_experiment": "Start with the first newly planned experiment.",
+    })},
     outcomes={"published": "published", "abandoned": "abandoned"},
 )
 
@@ -429,7 +436,7 @@ def build_lens_context(snapshot, knowledge):
 
 LENS = Workflow(
     name="reflection_lens", version=1, initial="reflecting", id_prefix="lens",
-    nodes=(Node("reflecting", "Investigate one reflection lens", "reflection_lens", build_lens_context, lens_active,
+    nodes=(Node("reflecting", "Investigate one reflection lens", "reflection_lens", build_lens_context, lens_active, guidance=Guidance("project-reflection", RESEARCH_HANDOFF),
                 execution=LENS_EXECUTION),),
     edges=(Edge("reflecting", "submit", "submitted", check=lens_active, change=submit_lens,
                 label="Submit this lens's completed contribution", tools=("workflow.transition",)),),

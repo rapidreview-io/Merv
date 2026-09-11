@@ -375,11 +375,24 @@ class Requirement(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class Guidance:
+    """Presentation only: no predicates, permissions or transition names to interpret."""
+
+    skill: str = ""
+    handoff: str = ""
+    messages: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "messages", MappingProxyType(dict(self.messages)))
+
+
+@dataclass(frozen=True, slots=True)
 class Node:
     name: str
     label: str = ""
     role: str = ""
     build_context: ContextBuilder | None = None
+    guidance: Guidance = field(default=Guidance(), kw_only=True)
     dispatch_check: Check = ready
     children: ChildrenBuilder | None = None
     join: Join | None = None
@@ -488,12 +501,16 @@ class Workflow:
     entries: Mapping[str, str] = field(default_factory=dict)
     event_type: str = "workflow.transitioned"
     id_prefix: str = "wf"
+    outcome_guidance: Mapping[str, Guidance] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "nodes", tuple(self.nodes))
         object.__setattr__(self, "edges", tuple(self.edges))
         object.__setattr__(self, "outcomes", MappingProxyType(dict(self.outcomes)))
         object.__setattr__(self, "entries", MappingProxyType(dict(self.entries)))
+        object.__setattr__(self, "outcome_guidance", MappingProxyType(dict(self.outcome_guidance)))
+        if set(self.outcome_guidance) - set(self.outcomes.values()):
+            raise ValueError("guidance names an undeclared outcome")
         names = [node.name for node in self.nodes]
         if not self.name or self.version < 1 or len(names) != len(set(names)):
             raise ValueError("workflow needs a name, positive version and unique nodes")

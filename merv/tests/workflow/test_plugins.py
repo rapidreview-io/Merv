@@ -17,7 +17,7 @@ from merv.brain.research_core.policy import (
 )
 from merv.brain.surface.tools.contracts import build_manifest
 from merv.brain.workflows import (
-    Action, Brief, Change, Child, Edge, Issue, Node, Program, Snapshot, Workflow, Workflows, join_guard,
+    Action, Brief, Change, Child, Edge, Guidance, Issue, Node, Program, Snapshot, Workflow, Workflows, join_guard,
 )
 from tests.research_core.scenarios import ResearchCase
 from tests.research_core.test_tasks import DELIVERABLES, VALID_DELIVERY
@@ -47,12 +47,13 @@ CALIBRATION = Program(
     name="calibration", version=1,
     workflows=(Workflow(
         name="calibration", version=1, initial="calibrate",
-        nodes=(Node("calibrate", role="technician", requires=(Calibrated(),),
+        nodes=(Node("calibrate", role="technician", guidance=Guidance("instrument-operation", "Leave the reading for the operator."), requires=(Calibrated(),),
                     build_context=lambda snapshot, knowledge: Brief("Calibrate the instrument.")),),
         edges=(Edge("calibrate", "record", "calibrate",
                     change=lambda snapshot, payload, knowledge: Change(data={"reading": payload.get("reading")})),
                Edge("calibrate", "publish", "published", change=_notify)),
         outcomes={"published": "calibrated"},
+        outcome_guidance={"calibrated": Guidance("instrument-operation", messages={"summary": "Instrument ready."})},
     ),),
     effects=("calibration.notify",),
     requirements=(Calibrated,),
@@ -226,6 +227,31 @@ class ProgramInstallationTest(unittest.TestCase):
         self.assertEqual(self.delivered, [instance_id])
         self.assertIn("calibration.status", build_manifest(self.programs))
         self.assertNotIn("calibration.status", build_manifest((PROGRAM,)))
+
+    def test_second_program_projects_its_own_assignment_and_outcome_guidance(self):
+        started = self.workflows.start(project_id=self.project_id, workflow="calibration", request_id="guidance")
+        arguments = {"project_id": self.project_id, "instance_id": started["id"]}
+        context = self.workflows.describe(**arguments)["context"]
+        self.assertEqual(context["brief"], "Calibrate the instrument.")
+        self.assertEqual(context["skill"], "instrument-operation")
+        self.assertEqual(context["handoff"], "Leave the reading for the operator.")
+        self.workflows.transition(**arguments, action="record", expected_revision=0, request_id="reading", payload={"reading": 7})
+        self.workflows.transition(**arguments, action="publish", expected_revision=1, request_id="publish")
+        described = self.workflows.describe(**arguments)
+        self.assertFalse(described["workflow"]["dispatchable"])
+        self.assertEqual(described["context"]["messages"], {"summary": "Instrument ready."})
+        self.assertIsNone(CALIBRATION.workflows[0].node("published"))
+
+    def test_guidance_is_immutable_and_outcomes_are_declared(self):
+        from dataclasses import replace
+        messages = {"summary": "Original"}
+        guidance = Guidance(messages=messages)
+        messages["summary"] = "Changed"
+        self.assertEqual(guidance.messages["summary"], "Original")
+        with self.assertRaises(TypeError):
+            guidance.messages["summary"] = "Changed"
+        with self.assertRaisesRegex(ValueError, "undeclared outcome"):
+            replace(CALIBRATION.workflows[0], outcome_guidance={"typo": guidance})
 
     def test_requirements_can_only_name_their_own_nodes_outgoing_actions(self):
         from dataclasses import replace

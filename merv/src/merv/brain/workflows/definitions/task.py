@@ -1,11 +1,11 @@
 """Task graph: immutable goal, delivery, and independent review."""
 
 from ..graph import (
-    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Metadata, Node, RecordKind,
+    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Guidance, Metadata, Node, RecordKind,
     Reference, ReviewGate, ReviewReturn, Workflow,
 )
 from .checks import reviewed, review_summary
-from .execution import REVIEW_EXECUTION, TASK_EXECUTION
+from .execution import RESEARCH_HANDOFF, REVIEW_EXECUTION, TASK_EXECUTION
 from .documents import brief_problems, delivery_problems
 
 
@@ -109,9 +109,9 @@ def build_review_context(snapshot, knowledge):
 TASK = Workflow(
     name="task", version=1, initial="in_progress", event_type="task.transitioned", id_prefix="task",
     nodes=(
-        Node("in_progress", "Complete task", "task_owner", build_work_context, execution=TASK_EXECUTION,
+        Node("in_progress", "Complete task", "task_owner", build_work_context, guidance=Guidance("research-workflow", RESEARCH_HANDOFF), execution=TASK_EXECUTION,
              requires=(ARTIFACTS["brief"], DEPENDENCIES, ARTIFACTS["delivery"])),
-        Node("in_review", "Review task delivery", "task_reviewer", build_review_context, execution=REVIEW_EXECUTION,
+        Node("in_review", "Review task delivery", "task_reviewer", build_review_context, guidance=Guidance("task-review", RESEARCH_HANDOFF), execution=REVIEW_EXECUTION,
              requires=(DELIVERY_REVIEW,)),
     ),
     edges=(
@@ -128,6 +128,10 @@ TASK = Workflow(
         *(Edge(state, "mark_failed", "failed", label="Withdraw the task with a reason", tools=("task.transition",), suggest=False)
           for state in ("in_progress", "in_review")),
     ),
+    outcome_guidance={
+        "completed": Guidance(messages={"task_done": "task {entity} was just accepted"}),
+        "failed": Guidance(messages={"task_failed": "task {entity} just failed"}),
+    },
     outcomes={"done": "completed", "failed": "failed"},
 )
 

@@ -1,14 +1,14 @@
 # Workflows
-
-This package separates workflow definitions, durable execution, and composition.
-Projects, claims, artifacts, agent processes, and cloud infrastructure remain
-outside it. Python functions own workflow gates, transitions and agent context.
+Workflow definitions, durable execution and composition live here; projects, claims,
+artifacts and agent processes stay outside. Python functions own gates and agent context.
 
 `graph.py` defines immutable nodes, ordinary directed edges and one `Evaluation`
 for command enforcement, available/blocked actions, guidance and dispatch.
 Branches, loops and review rejection use the same transition model. Agent nodes
 provide `build_context(snapshot, knowledge) -> Brief`, with a concise assignment
-and exact evidence references. Wait and terminal nodes dispatch no agent.
+and exact references. `Node.guidance` declares `Guidance` (skill, handoff, named messages);
+`Workflow.outcome_guidance` is keyed by outcome. The runtime projects this presentation
+for every program. Wait and terminal states dispatch no agent.
 
 A node also declares what its state needs, as `requires`: `ArtifactNeed` (a submitted
 document, selected and validated), `RecordNeed` (a fact its own graph function verifies),

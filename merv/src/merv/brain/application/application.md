@@ -62,7 +62,7 @@ qualify named action, role, tool and skill references inline.
 - `experiments/presentation.py` and `create.py`: the experiment's
   declared public shape and create inputs; claim suggestions are deliberately absent.
 - `reviews.py`, `reflections.py`, and `reflection_guidance.py`: review handoff,
-  reflection presentation, and guidance.
+  reflection presentation, and signal hints. Publication wording comes from outcome guidance.
 - `queries.py`: logic-graph composition, built once and shared by its routes.
 - `maintenance.py`: token/log retention and lease cleanup; merv-sandboxes owns machine
   and object expiry.
@@ -84,7 +84,7 @@ qualify named action, role, tool and skill references inline.
   polling until project-scoped `Deliveries.retry` requeues their existing id and attempts.
 - Artifact sealing and Research mutations retain their existing transaction boundaries.
   Feed effects occur after commit and remain advisory.
-- Feed advisories: `experiments/transition.py` phrases what a committed event is called;
+- Feed advisories: workflow node/outcome guidance names committed events;
   the Feed only decides whether the feed already covers that ref; exceptions are logged.
 - Large candidates stay in merv-sandboxes. Application pins candidate pointers through
   the object facade and reads the producing experiment from Research; it never queries a

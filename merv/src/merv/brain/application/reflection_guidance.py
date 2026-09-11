@@ -116,42 +116,10 @@ def present_reflection_signal(signal: Any) -> Any:
     return result
 
 
-def post_publish_guidance(
-    *, materialized_experiments: list[Mapping[str, Any]]
-) -> dict[str, Any]:
-    experiments = [
-        {
-            "experiment_id": row.get("experiment_id"),
-            "name": row.get("name"),
-            "status": row.get("status"),
-            "folder": f"experiments/{row.get('name')}/",
-            "intent": row.get("intent"),
-        }
-        for row in materialized_experiments
-    ]
-    count = len(experiments)
-    noun = "experiment" if count == 1 else "experiments"
-    return {
-        "summary": (
-            f"Reflection publish created {count} planned {noun}. Create each "
-            "experiment's working folder yourself (experiments/<name>/) before "
-            "editing files, then call workflow.status_and_next for the one you "
-            "start."
-        ),
-        "experiments": experiments,
-        "recommended_actions": [
-            {
-                "tool": "workflow.status_and_next",
-                "arguments": {"experiment_id": experiments[0]["experiment_id"]},
-                "why": "Start with the first newly planned experiment.",
-            },
-        ],
-    }
 
 
 __all__ = [
     "idle_reflection_hint",
-    "post_publish_guidance",
     "present_reflection_signal",
     "reflection_create_block_reason",
     "reflection_staleness_hint",

@@ -23,7 +23,7 @@ from .definitions.documents import (
 from .composition import Child, ChildResult, join_guard, wait_for_all
 from .delivery import Deliveries, Delivery
 from .graph import (
-    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Evaluation, Execution, Issue,
+    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Evaluation, Execution, Guidance, Issue,
     Knowledge, Metadata, Node, Program, Public, RecordKind, RecordNeed, Reference, Registry, Requirement,
     ReviewGate, ReviewReturn, Scope, Snapshot, Workflow, WorkspacePolicy, all_of,
 )
@@ -46,7 +46,7 @@ __all__ = [
     "reflection_coverage_for", "render_task_brief", "require_artifact_document",
     "task_deliverables", "validate_reflection_roster",
     "Action", "ArtifactNeed", "Brief", "Change", "Child", "ChildResult", "DependenciesDone",
-    "Edge", "Evaluation", "Execution", "InstanceFact", "Issue", "Knowledge", "Metadata", "Node", "Program", "Public", "RecordKind",
+    "Edge", "Evaluation", "Execution", "Guidance", "InstanceFact", "Issue", "Knowledge", "Metadata", "Node", "Program", "Public", "RecordKind",
     "RecordNeed", "Reference", "Registry", "Requirement", "ReviewGate", "ReviewReturn", "Scope",
     "Snapshot", "Workflow", "WorkspacePolicy",
     "Binding", "Deliveries", "Delivery", "Runtime", "TOOLS", "Workflows", "snapshot_view", "all_of", "wait_for_all",
