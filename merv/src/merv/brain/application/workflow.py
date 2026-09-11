@@ -15,6 +15,7 @@ from ..research_core import (
     Research,
     ResearchSnapshot,
     ExperimentState,
+    TaskState,
     TASK_TERMINAL_STATUSES,
     project_fields,
     project_rows,
@@ -99,7 +100,7 @@ class StatusAndNextQuery:
                 snapshot=snapshot,
                 experiment=None,
                 sandboxes=[],
-                task=rich_task_state(task),
+                task=task,
             )
         selected = snapshot.selected_experiment
         sandbox_rows = (
@@ -129,7 +130,7 @@ class StatusAndNextQuery:
             raise NotFoundError(f"task not found: {task_id}")
         sandboxes = self.sandboxes.for_experiment(project_id=snapshot.project_id, experiment_id=experiment.id) if experiment else []
         full = self._status(snapshot=snapshot, experiment=None if task else experiment,
-                            sandboxes=sandboxes, task=task)
+                            sandboxes=sandboxes, task=task, agent=True)
         return _slim_status(
             full,
             experiment_context=self.context.build(state=experiment, project_id=project_id) if experiment_id else None,
@@ -178,12 +179,13 @@ class StatusAndNextQuery:
         snapshot: ResearchSnapshot,
         experiment: ExperimentState | None,
         sandboxes: list[Record],
-        task: Record | None = None,
+        task: TaskState | None = None,
+        agent: bool = False,
     ) -> Record:
         if task is not None:
             workflow = self.policy.task(
                 task=task,
-                evaluation=snapshot.gate_evaluations[str(task["id"])],
+                evaluation=snapshot.gate_evaluations[str(task.id)],
             )
         elif experiment is not None:
             workflow = self.policy.experiment(
@@ -197,12 +199,12 @@ class StatusAndNextQuery:
             row.status in EXPERIMENT_TERMINAL_STATUSES
             for row in snapshot.experiments
         ) and all(
-            str(row["status"]) in TASK_TERMINAL_STATUSES for row in snapshot.tasks
+            row.status in TASK_TERMINAL_STATUSES for row in snapshot.tasks
         )
         live_tasks = [
             row
             for row in snapshot.tasks
-            if str(row["status"]) not in TASK_TERMINAL_STATUSES
+            if row.status not in TASK_TERMINAL_STATUSES
         ]
         reflection = self.policy.project_reflection(
             open_wave=snapshot.open_reflection,
@@ -245,7 +247,7 @@ class StatusAndNextQuery:
                 "active_tasks": project_rows(snapshot.tasks, _STATUS_TASK_FIELDS),
             },
             "experiment": self._enrich(project_id=snapshot.project_id, experiments=[experiment])[0] if experiment else None,
-            "task": task,
+            "task": (slim_task_state if agent else rich_task_state)(task) if task else None,
             "sandboxes": sandboxes,
             "workflow": workflow,
         }
@@ -313,14 +315,14 @@ class StatusAndNextQuery:
             )
         active_tasks = [
             {
-                **dict(task),
+                **rich_task_state(task),
                 "workflow": self.policy.task(
-                    task=dict(task),
-                    evaluation=snapshot.gate_evaluations[str(task["id"])],
+                    task=task,
+                    evaluation=snapshot.gate_evaluations[str(task.id)],
                 ),
             }
             for task in snapshot.tasks
-            if str(task["status"]) not in TASK_TERMINAL_STATUSES
+            if str(task.status) not in TASK_TERMINAL_STATUSES
         ]
         return {
             "active_experiments": _sort_active(active, _EXPERIMENT_PRIORITY),
@@ -389,7 +391,7 @@ def _slim_status(
             raise RuntimeError("task state is required for task scope")
         result: Record = {
             "scope": "task",
-            "task": dict(slim_task_state(task)),
+            "task": task,
             "workflow": workflow,
             "context": task_context or {},
             "project": {"id": project.get("id"), "name": project.get("name")},

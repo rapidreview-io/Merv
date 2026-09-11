@@ -10,7 +10,7 @@ from typing import Any, TypedDict
 
 from ..kernel.events import StoredEvent
 from ..workflows import Public
-from ..workflows.definitions.research_state import ExperimentState, Missing, MISSING
+from ..workflows.definitions.research_state import ExperimentState, TaskState, Missing, MISSING
 
 
 def _public_value(value):
@@ -78,46 +78,6 @@ class CommittedExperimentUpdate:
     event: StoredEvent
 
 
-class TaskResult(TypedDict):
-    """One confirmation: the executor's claim, the pointer, how to check."""
-
-    number: int
-    state: str | None
-    evidence: str | None
-    how: str | None
-    text: str
-
-
-class DependencyNode(TypedDict):
-    """A node on either side of a wave-DAG edge, with its current standing."""
-
-    id: str
-    node_type: str
-    name: str
-    status: str
-    settled: bool
-    failed: bool
-
-
-class TaskState(TypedDict, total=False):
-    id: str
-    project_id: str
-    name: str
-    goal: str
-    status: str
-    attempt_index: int
-    outcome: str
-    failed_by: str
-    # The goal's contract and the delivery parsed to structure;
-    # `dependents` mirrors `dependencies` on the other side of the edge.
-    deliverables: list[str]
-    results: list[TaskResult]
-    report: str | None
-    caveats: str | None
-    dependencies: list[DependencyNode]
-    dependents: list[DependencyNode]
-
-
 class TaskSummary(TypedDict):
     id: str
     project_id: str
@@ -172,7 +132,7 @@ class ResearchSnapshot:
             (
                 task
                 for task in self.tasks
-                if str(task.get("id") or "") == selected_id
+                if task.id == selected_id
             ),
             None,
         )

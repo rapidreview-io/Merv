@@ -570,14 +570,14 @@ class Application:
             depends_on=depends_on,
             project_id=project_id,
         )
-        return dict(slim_task_state(state))
+        return slim_task_state(state)
 
     def tasks(
         self, *, project_id: str | None = None, rich: bool = False
     ) -> dict[str, Any] | list[dict[str, Any]]:
         states = self.research.project_tasks(project_id=project_id)
         presented = [
-            dict((rich_task_state if rich else slim_task_state)(state))
+            (rich_task_state if rich else slim_task_state)(state)
             for state in states
         ]
         return presented if rich else {"tasks": presented}
@@ -592,13 +592,13 @@ class Application:
     ) -> dict[str, Any]:
         state = self.research.tasks.get_state(task_id=task_id, project_id=project_id)
         if rich:
-            return dict(rich_task_state(state))
-        response = dict(slim_task_state(state))
+            return rich_task_state(state)
+        response = slim_task_state(state)
         if review_id:
-            body = review_body(state.get("reviews", []), review_id=review_id)
+            body = review_body(state.reviews, review_id=review_id)
             if body is None:
                 known = [
-                    str(review.get("id") or "") for review in state.get("reviews", [])
+                    str(review.get("id") or "") for review in state.reviews
                 ]
                 raise ValidationError(
                     f"no review {review_id} on this task. Reviews here: "
@@ -953,7 +953,7 @@ class Application:
             "project": status["project"],
             "claims": claims,
             "experiments": experiments,
-            "tasks": [dict(rich_task_state(task)) for task in snapshot.tasks],
+            "tasks": [rich_task_state(task) for task in snapshot.tasks],
             "active_experiments": active_experiments,
             "active_tasks": active_tasks,
             "active_processes": active_processes,

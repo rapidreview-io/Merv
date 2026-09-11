@@ -23,7 +23,7 @@ from .artifact_models import ArtifactTarget
 from .records import RecordHooks, Records
 from ..kernel.state.store import BaseStateStore, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
-from .models import CommittedTaskUpdate
+from .models import CommittedTaskUpdate, TaskState
 
 
 
@@ -42,7 +42,7 @@ class TaskService(RecordHooks):
         self, *, name: str, goal: str,
         deliverables: list[str] | tuple[str, ...] | str | None = None,
         depends_on: list[str] | str | None = None, project_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> TaskState:
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             return self._create(conn=conn, project_id=project_id, name=name, goal=goal,
@@ -52,7 +52,7 @@ class TaskService(RecordHooks):
         self, *, conn, project_id: str, reflection_id: str, name: str, goal: str,
         deliverables: list[str] | tuple[str, ...] | None = None, proposal_key: str = "",
         depends_on: list[str] | str | None = None,
-    ) -> dict[str, Any]:
+    ) -> TaskState:
         """Create one reviewed reflection proposal through normal invariants."""
         reflection_id = str(reflection_id or "").strip()
         if conn.execute("SELECT id FROM reflections WHERE id = ? AND project_id = ?",
@@ -68,7 +68,7 @@ class TaskService(RecordHooks):
                      deliverables=snapshot.data.get("deliverables"), depends_on=snapshot.data.get("depends_on"))
 
     def _create(self, *, conn, project_id, name, goal, deliverables, depends_on=None,
-                guard=True, source=None, instance=None) -> dict[str, Any]:
+                guard=True, source=None, instance=None) -> TaskState:
         name = validate_task_name(name)
         if not (goal or "").strip():
             raise ValidationError(
@@ -150,7 +150,7 @@ class TaskService(RecordHooks):
 
     # ---- reads and transitions ----
 
-    def get_state(self, *, task_id: str, project_id: str | None = None, conn=None) -> dict[str, Any]:
+    def get_state(self, *, task_id: str, project_id: str | None = None, conn=None) -> TaskState:
         return self.records.get_state(TASK, record_id=task_id, project_id=project_id, conn=conn)
 
     def list_states_with_gates(self, *, conn, project_id: str, detail_ids: tuple[str, ...] = ()):

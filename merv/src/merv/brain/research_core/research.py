@@ -891,7 +891,7 @@ class Research:
             evaluated = self.tasks.list_states_with_gates(
                 conn=conn, project_id=project_id
             )
-            return cast(list[TaskState], [state for state, _gate in evaluated])
+            return [state for state, _gate in evaluated]
 
     # Reviews --------------------------------------------------------------
 
@@ -972,9 +972,9 @@ class Research:
                 project_id=project_id,
                 detail_ids=(task_id,) if task_id else (),
             )
-            tasks = cast(list[TaskState], [state for state, _ in evaluated_tasks])
+            tasks = [state for state, _ in evaluated_tasks]
             gates.update(
-                {str(state["id"]): evaluation for state, evaluation in evaluated_tasks}
+                {state.id: evaluation for state, evaluation in evaluated_tasks}
             )
             open_reflection, open_gate = self._reflection(
                 conn=conn, project_id=project_id, terminal=False
@@ -1000,9 +1000,9 @@ class Research:
                 published=published,
                 open_wave=open_reflection,
                 current_terminal_tasks={
-                    str(row["id"]): str(row["status"])
+                    row.id: row.status
                     for row in tasks
-                    if str(row["status"]) in TASK_TERMINAL_STATUSES
+                    if row.status in TASK_TERMINAL_STATUSES
                 },
             )
             return ResearchSnapshot(

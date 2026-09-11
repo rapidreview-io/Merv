@@ -133,9 +133,11 @@ TASK = Workflow(
 
 METADATA = Metadata(effects={"accept": ("record_outcome",), "mark_failed": ("record_failure",)})
 
+from .research_state import TaskState
+
 KIND = RecordKind(
     name="task", table="tasks", id_prefix="task", workflow=TASK,
-    metadata=METADATA, created_event="task.created",
+    construct=TaskState.construct, metadata=METADATA, created_event="task.created",
     columns=("name", "goal", "deliverables_json"), json_columns={"deliverables_json": ("deliverables", "[]")},
     dependencies=True, seal_exempt_actions=frozenset({"revise", "fail_review", "migrate"}),
     commit_columns={"revise": ("revision_context",), "fail_review": ("revision_context",),

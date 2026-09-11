@@ -124,3 +124,55 @@ class ExperimentState:
                       "dependents": [Dependency(**item) for item in row["dependents"]],
                       "allowed_transitions": [Transition(**item) for item in row["allowed_transitions"]],
                       "gate_checklist": GateChecklist.construct(row["gate_checklist"])})
+
+
+class TaskStatus(StrEnum):
+    IN_PROGRESS = "in_progress"
+    IN_REVIEW = "in_review"
+    DONE = "done"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class TaskResult:
+    number: int
+    state: str | None
+    evidence: str | None
+    how: str | None
+    text: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskState:
+    id: str
+    project_id: str
+    name: str
+    goal: str
+    status: TaskStatus
+    attempt_index: int
+    revision_context: str
+    outcome: str
+    failed_by: str
+    created_at: str
+    updated_at: str
+    deliverables: list[str]
+    artifacts: list[dict[str, JSON]]
+    current_attempt_artifacts: list[dict[str, JSON]]
+    submissions: list[dict[str, JSON]]
+    reviews: list[dict[str, JSON]]
+    dependencies: list[Dependency]
+    dependents: list[Dependency]
+    results: list[TaskResult] | Missing = MISSING
+    report: str | None | Missing = MISSING
+    caveats: str | None | Missing = MISSING
+    allowed_transitions: list[Transition]
+    gate_checklist: GateChecklist
+
+    @classmethod
+    def construct(cls, row):
+        return cls(**{**row, "status": TaskStatus(row["status"]),
+                      "dependencies": [Dependency(**item) for item in row["dependencies"]],
+                      "dependents": [Dependency(**item) for item in row["dependents"]],
+                      "allowed_transitions": [Transition(**item) for item in row["allowed_transitions"]],
+                      "gate_checklist": GateChecklist.construct(row["gate_checklist"]),
+                      **({"results": [TaskResult(**item) for item in row["results"]]} if "results" in row else {})})

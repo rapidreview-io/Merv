@@ -136,7 +136,7 @@ def start_review(
         live_task = research.tasks.get_state(task_id=target_id, project_id=project_id)
         if task_context is not None:
             result["context"] = task_context.build(
-                state=dict(live_task), project_id=project_id
+                state=live_task, project_id=project_id
             )
     elif target_type == "reflection":
         result["submitted_artifacts"] = submitted_artifacts

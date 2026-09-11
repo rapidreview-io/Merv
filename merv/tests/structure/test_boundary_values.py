@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, get_args, get_origin, get_type_hints, is_typeddict
 
 from merv.brain.application.experiments.create import ExperimentCreateArgs
-from merv.brain.application.tasks import SlimTaskState, TaskTransitionReceipt
+from merv.brain.application.tasks import TaskTransitionReceipt
 from merv.brain.application.experiments.transition import (
     TransitionReceipt,
 )
@@ -29,14 +29,13 @@ from merv.brain.research_core.models import (
     ExhibitVerdict,
     ExperimentState,
     ExperimentSummary,
-    DependencyNode,
-    TaskResult,
     TaskState,
     TaskSummary,
 )
 from tests.paths import BACKEND_ROOT
+from tests.support.research_state import task_state
 from merv.brain.workflows.definitions.research_state import (
-    ChecklistItem, Dependency, ExperimentStatus, GateChecklist, GateKind, GateStatus, MISSING, Transition,
+    TaskResult, ChecklistItem, Dependency, ExperimentStatus, GateChecklist, GateKind, GateStatus, MISSING, Transition,
 )
 
 EXPERIMENT = ExperimentState.construct(dict(
@@ -123,6 +122,7 @@ EVENT = StoredEvent(
 # at runtime; including every declared field makes their nested shapes visible.
 SAMPLES: dict[type, object] = {
     ExperimentState: EXPERIMENT,
+    TaskState: task_state(),
     Transition: EXPERIMENT.allowed_transitions[0],
     Dependency: Dependency("exp_2", "experiment", "Example", "running", False, False),
     GateChecklist: EXPERIMENT.gate_checklist,
@@ -191,70 +191,16 @@ SAMPLES: dict[type, object] = {
     CommittedExperimentUpdate: CommittedExperimentUpdate(
         state=EXPERIMENT, event=EVENT
     ),
-    TaskResult: {
+    TaskResult: TaskResult(**{
         "number": 1,
         "state": "met",
         "evidence": "out/train.parquet with 41 200 rows",
         "how": "ls out/",
         "text": "[x] out/train.parquet with 41 200 rows — how to check: ls out/",
-    },
-    DependencyNode: {
-        "id": "exp_1",
-        "node_type": "experiment",
-        "name": "distill",
-        "status": "ready_to_run",
-        "settled": False,
-        "failed": False,
-    },
-    TaskState: {
-        "id": "task_1",
-        "project_id": "proj_1",
-        "name": "prep-data",
-        "goal": "Prepare the dataset",
-        "status": "in_progress",
-        "attempt_index": 1,
-        "outcome": "",
-        "failed_by": "",
-        "deliverables": ["clean, deduplicated splits exist under out/"],
-        "results": [
-            {
-                "number": 1,
-                "state": "met",
-                "evidence": "out/train.parquet with 41 200 rows",
-                "how": "ls out/",
-                "text": "[x] out/train.parquet with 41 200 rows — how to check: ls out/",
-            }
-        ],
-        "report": "Generated the splits with a seeded permutation.",
-        "caveats": None,
-        "dependencies": [],
-        "dependents": [
-            {
-                "id": "exp_1",
-                "node_type": "experiment",
-                "name": "distill",
-                "status": "ready_to_run",
-                "settled": False,
-                "failed": False,
-            }
-        ],
-    },
-    SlimTaskState: {
-        "id": "task_1",
-        "project_id": "proj_1",
-        "name": "prep-data",
-        "goal": "Prepare the dataset",
-        "status": "in_progress",
-        "attempt_index": 1,
-        "outcome": "",
-        "failed_by": "",
-        "deliverables": [],
-        "results": [],
-        "report": None,
-        "caveats": None,
-        "dependencies": [],
-        "dependents": [],
-    },
+    }),
+
+
+
     TaskTransitionReceipt: {
         "task_id": "task_1",
         "transition": "submit_delivery",
@@ -291,7 +237,7 @@ SAMPLES: dict[type, object] = {
         latest_published_reflection=None,
         reflection_signal={"needed": False},
         gate_evaluations={"exp_1": {"ready": True}},
-        tasks=[{"id": "task_1", "status": "in_progress"}],
+        tasks=[task_state()],
         requested_task_id="task_1",
         literature_signal=LiteratureSignal(papers_total=1, papers_unreviewed=0),
     ),

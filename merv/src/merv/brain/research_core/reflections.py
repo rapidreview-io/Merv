@@ -1132,7 +1132,7 @@ class ReflectionService(RecordHooks):
                 ],
                 proposal_key=proposal_key,
             )
-            task_id = str(task["id"])
+            task_id = task.id
             if proposal_key:
                 key_to_node_id[proposal_key] = task_id
             conn.execute(

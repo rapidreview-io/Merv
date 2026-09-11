@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict
 
 from ..workflows import TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE
 from ..research_core import TASK, content_tldr
@@ -44,10 +44,6 @@ def task_folder(*, task_id: str, name: str = "") -> str:
     return f"tasks/{slug}/"
 
 
-class SlimTaskState(TaskState, total=False):
-    """Agent-facing task detail: workflow substance without bookkeeping."""
-
-
 class TaskTransitionReceipt(TypedDict, total=False):
     """Minimal agent acknowledgement for one committed task transition."""
 
@@ -62,26 +58,16 @@ class TaskTransitionReceipt(TypedDict, total=False):
     feed_note: str
 
 
-def rich_task_state(full: TaskState) -> TaskState:
-    """The full Research state, unchanged: the UI reads everything."""
-    return cast(TaskState, public_record(TASK.public, full))
+def rich_task_state(full: TaskState) -> Record:
+    return public_record(TASK.public, full)
 
 
-def slim_task_state(full: TaskState) -> SlimTaskState:
-    """Project rich task facts to the exact agent-facing wire shape."""
-    attempt = full.get("attempt_index")
-    history = full.get("artifacts", [])
-    current = full.get("current_attempt_artifacts")
-    if current is None:
-        current = [item for item in history if item.get("attempt_index") == attempt]
-    return cast(SlimTaskState, public_record(
-        AGENT,
-        full,
-        dependencies=project_rows(full.get("dependencies", []), _SLIM_DEPENDENCY_FIELDS),
-        dependents=project_rows(full.get("dependents", []), _SLIM_DEPENDENCY_FIELDS),
-        current_attempt_artifacts=project_rows(current, _SLIM_ARTIFACT_FIELDS),
-        reviews=slim_review_rows(full.get("reviews", [])),
-    ))
+def slim_task_state(full: TaskState) -> Record:
+    return public_record(
+        AGENT, full,
+        current_attempt_artifacts=project_rows(full.current_attempt_artifacts, _SLIM_ARTIFACT_FIELDS),
+        reviews=slim_review_rows(full.reviews),
+    )
 
 
 @dataclass(kw_only=True, eq=False, repr=False)
@@ -109,9 +95,9 @@ class TransitionTask:
             task_id=task_id,
             transition=transition,
             from_status=str(event.payload.get("from") or ""),
-            to_status=str(state.get("status") or ""),
-            status=str(state.get("status") or ""),
-            attempt_index=int(state.get("attempt_index") or 0),
+            to_status=state.status,
+            status=state.status,
+            attempt_index=state.attempt_index,
             event_id=event.id,
             accepted_at=event.created_at,
         )
@@ -134,7 +120,7 @@ class TransitionTask:
             evidence=evidence,
             project_id=project_id,
         )
-        return dict(slim_task_state(state))
+        return slim_task_state(state)
 
     def _execute(
         self,
@@ -153,13 +139,13 @@ class TransitionTask:
         return committed.state, committed.event
 
     def _feed_advisory(self, *, event: StoredEvent, state: TaskState) -> str | None:
-        status = str(state.get("status") or "")
+        status = state.status
         if event.type != TASK.workflow.event_type or status not in TASK_TERMINAL_STATUSES:
             return None
         return feed_transition_note(
             self.feed,
-            project_id=str(state.get("project_id") or ""),
-            ref=str(state.get("id") or ""),
+            project_id=state.project_id,
+            ref=state.id,
             event=f"task_{status}",
         )
 
@@ -170,8 +156,8 @@ class TaskContextQuery:
 
     artifacts: Artifacts
 
-    def build(self, *, state: Record, project_id: str | None = None) -> Record:
-        artifacts = list(state.get("current_attempt_artifacts") or [])
+    def build(self, *, state: TaskState, project_id: str | None = None) -> Record:
+        artifacts = list(state.current_attempt_artifacts or [])
         brief = preferred_artifact(artifacts=artifacts, roles=(TASK_BRIEF_ROLE,))
         delivery = preferred_artifact(artifacts=artifacts, roles=(TASK_DELIVERY_ROLE,))
         documents = self._documents(
@@ -180,23 +166,23 @@ class TaskContextQuery:
             ),
             project_id=project_id,
         )
-        terminal = str(state.get("status") or "") in TASK_TERMINAL_STATUSES
+        terminal = state.status in TASK_TERMINAL_STATUSES
         return {
             "task": project_fields(state, _CONTEXT_TASK_FIELDS),
             "folder": task_folder(
-                task_id=str(state.get("id") or ""), name=str(state.get("name") or "")
+                task_id=state.id, name=state.name
             ),
-            "deliverables": list(state.get("deliverables") or []),
+            "deliverables": list(state.deliverables or []),
             "dependencies": project_rows(
-                state.get("dependencies") or [], _SLIM_DEPENDENCY_FIELDS
+                state.dependencies or [], _SLIM_DEPENDENCY_FIELDS
             ),
             "brief": self._document(brief, documents, full=True),
             "delivery": self._document(delivery, documents, full=not terminal),
             "reviews": [
                 item
                 for item in (
-                    review_body(state.get("reviews", []), review_id=str(review.get("id")))
-                    for review in state.get("reviews", [])[:1]
+                    review_body(state.reviews, review_id=str(review.get("id")))
+                    for review in state.reviews[:1]
                 )
                 if item
             ],
@@ -234,7 +220,6 @@ class TaskContextQuery:
 
 
 __all__ = [
-    "SlimTaskState",
     "TaskContextQuery",
     "TaskTransitionReceipt",
     "TransitionTask",
