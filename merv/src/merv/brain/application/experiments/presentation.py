@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Protocol, cast
+from typing import Any, Iterable, Protocol
 
 from ...research_core import (
     EXPERIMENT,
@@ -22,7 +22,6 @@ AGENT = Public(hidden=("project_id", "artifacts", "submissions", "dependents"),
                after=EXPERIMENT.public.after)
 
 _CLAIM_ROW = ("id", "statement", "confidence", "status", "scope")
-_DEPENDENCY_ROW = ("id", "node_type", "name", "status", "settled", "failed")
 _ARTIFACT_ROW = ("id", "role", "path", "lens_id", "size_bytes", "title", "tldr")
 _PRIOR_ARTIFACT_ROW = ("id", "role", "path", "attempt_index", "tldr")
 _STORAGE_ROW = tuple(
@@ -30,10 +29,6 @@ _STORAGE_ROW = tuple(
 )
 _REVIEW_TLDR = ("id", "role", "verdict", "created_at", "synopsis")
 _REVIEW_BODY = (*_REVIEW_TLDR, "findings", "notes", "evidence")
-
-
-class SlimExperimentState(ExperimentState, total=False):
-    """Agent-facing experiment detail: workflow substance without bookkeeping."""
 
 
 class ProducedObjectCatalog(Protocol):
@@ -104,51 +99,27 @@ def review_body(
 
 
 def rich_experiment_state(
-    full: ExperimentState,
-    *,
-    storage_objects: Iterable[ProducedObject | dict[str, Any]],
-) -> ExperimentState:
-    """Attach Storage facts without mutating Research's authoritative state."""
-    return cast(ExperimentState, public_record(
-        EXPERIMENT.public,
-        full,
-        storage_objects=list(storage_objects),
-    ))
+    full: ExperimentState, *, storage_objects: Iterable[ProducedObject | dict[str, Any]], **computed: Any,
+) -> dict[str, Any]:
+    return public_record(EXPERIMENT.public, full, storage_objects=list(storage_objects), **computed)
 
 
 def slim_experiment_state(
-    full: ExperimentState,
-    *,
-    storage_objects: Iterable[ProducedObject | dict[str, Any]],
-) -> SlimExperimentState:
-    """Project rich experiment facts to the exact agent-facing wire shape."""
-    rich = rich_experiment_state(full, storage_objects=storage_objects)
-    attempt = rich.get("attempt_index")
-    history = rich.get("artifacts", [])
-    current = rich.get("current_attempt_artifacts")
-    if current is None:
-        current = [item for item in history if item.get("attempt_index") == attempt]
-    prior = [item for item in history if item.get("attempt_index") != attempt]
-    slim = public_record(
-        AGENT,
-        rich,
-        tested_claims=project_rows(rich.get("tested_claims", []), _CLAIM_ROW),
-        dependencies=project_rows(rich.get("dependencies", []), _DEPENDENCY_ROW),
-        current_attempt_artifacts=project_rows(current, _ARTIFACT_ROW),
-        storage_objects=project_rows(rich.get("storage_objects", []), _STORAGE_ROW),
-        reviews=slim_review_rows(rich.get("reviews", [])),
+    full: ExperimentState, *, storage_objects: Iterable[ProducedObject | dict[str, Any]], **computed: Any,
+) -> dict[str, Any]:
+    prior = [item for item in full.artifacts if item.get("attempt_index") != full.attempt_index]
+    return public_record(
+        AGENT, full,
+        tested_claims=project_rows(full.tested_claims, _CLAIM_ROW),
+        current_attempt_artifacts=project_rows(full.current_attempt_artifacts, _ARTIFACT_ROW),
+        storage_objects=project_rows(storage_objects, _STORAGE_ROW),
+        reviews=slim_review_rows(full.reviews),
+        **({"prior_attempt_artifacts": project_rows(prior, _PRIOR_ARTIFACT_ROW)} if prior else {}),
+        **computed,
     )
-    if prior:
-        slim["prior_attempt_artifacts"] = project_rows(prior, _PRIOR_ARTIFACT_ROW)
-    return cast(SlimExperimentState, slim)
 
 
 __all__ = [
-    "ProducedObjectCatalog",
-    "SlimExperimentState",
-    "review_body",
-    "review_synopsis",
-    "rich_experiment_state",
-    "slim_experiment_state",
-    "slim_review_rows",
+    "ProducedObjectCatalog", "review_body", "review_synopsis", "rich_experiment_state",
+    "slim_experiment_state", "slim_review_rows",
 ]

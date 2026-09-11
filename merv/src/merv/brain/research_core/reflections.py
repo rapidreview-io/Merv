@@ -1159,7 +1159,7 @@ class ReflectionService(RecordHooks):
                 proposal_key=proposal_key,
                 parallelism=str(proposal.get("parallelism") or ""),
             )
-            experiment_id = str(experiment["id"])
+            experiment_id = experiment.id
             if proposal_key:
                 key_to_node_id[proposal_key] = experiment_id
             conn.execute(

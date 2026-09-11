@@ -23,7 +23,7 @@ from .artifact_models import ArtifactTarget
 from .records import RecordHooks, Records
 from ..kernel.state.store import BaseStateStore, row_to_dict, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
-from .models import CommittedExperimentUpdate
+from .models import CommittedExperimentUpdate, ExperimentState
 
 
 
@@ -43,7 +43,7 @@ class ExperimentService(RecordHooks):
         self, *, name: str, intent: str, details: str = "",
         tested_claim_ids: list[str] | str | None = None,
         depends_on: list[str] | str | None = None, project_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> ExperimentState:
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             return self._create(conn=conn, project_id=project_id, name=name, intent=intent, details=details,
@@ -53,7 +53,7 @@ class ExperimentService(RecordHooks):
         self, *, conn, project_id: str, reflection_id: str, name: str, intent: str, details: str = "",
         tested_claim_ids: list[str] | str | None = None, proposal_key: str = "",
         parallelism: str = "", depends_on: list[str] | str | None = None,
-    ) -> dict[str, Any]:
+    ) -> ExperimentState:
         """Create one reviewed reflection proposal through normal invariants.
 
         The cap, reserved name and reflection-debt blocks were checked when the
@@ -77,7 +77,7 @@ class ExperimentService(RecordHooks):
                      depends_on=snapshot.data.get("depends_on"))
 
     def _create(self, *, conn, project_id, name, intent, details="", tested_claim_ids=None,
-                depends_on=None, guard=True, source=None, instance=None) -> dict[str, Any]:
+                depends_on=None, guard=True, source=None, instance=None) -> ExperimentState:
         # Order-preserving dedupe: distinct refs (a create key and a literal
         # claim id) can resolve to one claim, and experiment_claims has a
         # composite primary key — a duplicate insert would abort the caller's
@@ -185,10 +185,10 @@ class ExperimentService(RecordHooks):
 
     # ---- reads and transitions ----
 
-    def get_state(self, *, experiment_id: str, project_id: str | None = None, conn=None) -> dict[str, Any]:
+    def get_state(self, *, experiment_id: str, project_id: str | None = None, conn=None) -> ExperimentState:
         return self.records.get_state(EXPERIMENT, record_id=experiment_id, project_id=project_id, conn=conn)
 
-    def list_states_with_gates(self, *, conn, project_id: str) -> list[tuple[dict[str, Any], GateEvaluation]]:
+    def list_states_with_gates(self, *, conn, project_id: str) -> list[tuple[ExperimentState, GateEvaluation]]:
         return self.records.list_states_with_gates(EXPERIMENT, conn=conn, project_id=project_id)
 
     def assert_in_project(self, *, experiment_id: str, project_id: str) -> None:
@@ -249,9 +249,9 @@ class ExperimentService(RecordHooks):
                 snapshot = self.runtime.lock(conn=conn, project_id=project_id, instance_id=experiment_id,
                                              revision=expected_revision)
                 state = self.get_state(experiment_id=experiment_id, project_id=project_id, conn=conn)
-                if snapshot.state != "running" or state["status"] != "running" or state["attempt_index"] != expected_attempt_index:
+                if snapshot.state != "running" or state.status != "running" or state.attempt_index != expected_attempt_index:
                     raise WorkflowError("experiment changed while its metrics exhibit was prepared; refresh before submitting results")
-                current_ids = {str(item["id"]) for item in state.get("current_attempt_artifacts") or () if item.get("role") != EXHIBIT_ROLE}
+                current_ids = {str(item["id"]) for item in state.current_attempt_artifacts or () if item.get("role") != EXHIBIT_ROLE}
                 if expected_artifact_ids is not None and current_ids != set(expected_artifact_ids):
                     raise WorkflowError("experiment evidence changed while its metrics exhibit was prepared; refresh before submitting results")
             if artifact_data is not None:

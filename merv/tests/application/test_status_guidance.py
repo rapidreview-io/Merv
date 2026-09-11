@@ -26,7 +26,7 @@ class StatusGuidanceContractTest(unittest.TestCase):
     def test_requirement_order_and_every_blocker_come_from_the_canonical_decision(self):
         gate = evaluation(blockers=(Issue("report_invalid", "Report lacks its conclusion.", "fix_report", ("artifact.upload",)),
                                     Issue("graph_missing", "Logic graph missing.", "submit_graph", ("artifact.upload",))))
-        result = self.policy.experiment(experiment=self.target, sandboxes=[], evaluation=gate)
+        result = self.policy.experiment(experiment=SimpleNamespace(**self.target), sandboxes=[], evaluation=gate)
         self.assertEqual(result["current_gate"], "report_invalid")
         self.assertEqual(result["next_action"], "fix_report")
         self.assertEqual(result["missing_evidence"], ["Report lacks its conclusion.", "Logic graph missing."])
@@ -35,14 +35,14 @@ class StatusGuidanceContractTest(unittest.TestCase):
 
     def test_infrastructure_facts_cannot_change_a_workflow_decision(self):
         gate = evaluation(blockers=(Issue("result_missing", "Retain results.", "run_experiment", ("artifact.upload",)),))
-        idle = self.policy.experiment(experiment=self.target, sandboxes=[], evaluation=gate)
-        live = self.policy.experiment(experiment=self.target, sandboxes=[{"status": "running"}], evaluation=gate)
+        idle = self.policy.experiment(experiment=SimpleNamespace(**self.target), sandboxes=[], evaluation=gate)
+        live = self.policy.experiment(experiment=SimpleNamespace(**self.target), sandboxes=[{"status": "running"}], evaluation=gate)
         self.assertEqual(live, idle)
 
     def test_dispatch_prerequisites_and_transition_blockers_remain_visible(self):
         gate = evaluation(blockers=(Issue("result_missing", "Retain results."),),
                           dispatch_blockers=(Issue("dependencies_pending", "Dataset task is unfinished.", "wait_for_dependencies", ("workflow.status_and_next",)),))
-        result = self.policy.experiment(experiment=self.target, sandboxes=[], evaluation=gate)
+        result = self.policy.experiment(experiment=SimpleNamespace(**self.target), sandboxes=[], evaluation=gate)
         self.assertEqual(result["next_action"], "wait_for_dependencies")
         self.assertFalse(result["dispatchable"])
         self.assertEqual(result["missing_evidence"], ["Dataset task is unfinished.", "Retain results."])
@@ -53,7 +53,7 @@ class StatusGuidanceContractTest(unittest.TestCase):
                                        ({"request_id": "request_1", "expires_at": "2026-09-10T00:00:00Z", "skill": "plugin-review"},))
         gate = evaluation(state="audit", read_only=True, review=review,
                           blockers=(Issue("review_required", "Review required.", "request_review", ("review.request",)),))
-        result = self.policy.experiment(experiment=self.target, sandboxes=[], evaluation=gate)
+        result = self.policy.experiment(experiment=SimpleNamespace(**self.target), sandboxes=[], evaluation=gate)
         self.assertEqual(result["review_gate"]["request_id"], "request_1")
         self.assertEqual(result["review_gate"]["target_type"], "custom_plugin")
         self.assertEqual(result["review_gate"]["role"], "independent_reviewer")

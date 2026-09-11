@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal, Protocol, TYPE_CHECKING
+from typing import Any, Generic, Literal, Protocol, TYPE_CHECKING, TypeVar
 
 from merv.shared.workspace_policy import REFERENCE_BASE_PREFIX, WorkspacePolicy
 
@@ -595,8 +595,15 @@ class Public:
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
 
 
+S = TypeVar("S", covariant=True)
+
+
+class StateConstructor(Protocol[S]):
+    def __call__(self, row: Data) -> S: ...
+
+
 @dataclass(frozen=True, slots=True)
-class RecordKind:
+class RecordKind(Generic[S]):
     """One native record bound to a workflow: what differs between kinds is data.
 
     ``columns`` are the kind's own INSERT columns beyond the shared spine
@@ -612,6 +619,7 @@ class RecordKind:
     table: str
     id_prefix: str
     workflow: Workflow
+    construct: StateConstructor[S] = dict
     metadata: Metadata = Metadata()
     created_event: str = ""
     label: str = "name"

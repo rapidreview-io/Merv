@@ -15,11 +15,9 @@ from pathlib import Path
 from typing import Any, get_args, get_origin, get_type_hints, is_typeddict
 
 from merv.brain.application.experiments.create import ExperimentCreateArgs
-from merv.brain.application.experiments.presentation import SlimExperimentState
 from merv.brain.application.tasks import SlimTaskState, TaskTransitionReceipt
 from merv.brain.application.experiments.transition import (
     TransitionReceipt,
-    TransitionResponse,
 )
 from merv.brain.research_core import ProducedObject
 from merv.brain.kernel.events import StoredEvent, freeze_json_object
@@ -37,6 +35,17 @@ from merv.brain.research_core.models import (
     TaskSummary,
 )
 from tests.paths import BACKEND_ROOT
+from merv.brain.workflows.definitions.research_state import (
+    ChecklistItem, Dependency, ExperimentStatus, GateChecklist, GateKind, GateStatus, MISSING, Transition,
+)
+
+EXPERIMENT = ExperimentState.construct(dict(
+    id="exp_1", project_id="proj_1", name="Example", intent="Test one claim", status="running",
+    attempt_index=1, revision_context="", conclusion="", created_at="now", updated_at="now", details="",
+    artifacts=[], current_attempt_artifacts=[], submissions=[], reviews=[], tested_claims=[],
+    dependencies=[], dependents=[], allowed_transitions=[{"transition": "complete", "leads_to": "complete"}],
+    gate_checklist=dict(status="running", transition="complete", leads_to="complete", ready=True, items=[]),
+))
 
 
 APPLICATION_DATACLASS_EXCLUSIONS = frozenset(
@@ -61,6 +70,7 @@ def _boundary_types() -> dict[str, type]:
         "application/experiments/presentation.py",
         "kernel/events.py",
         "research_core/models.py",
+        "workflows/definitions/research_state.py",
         "research_core/objects.py",
     }
     for path in sorted(BACKEND_ROOT.rglob("*.py")):
@@ -112,6 +122,12 @@ EVENT = StoredEvent(
 # One non-empty sample per discovered value type. TypedDicts are ordinary dicts
 # at runtime; including every declared field makes their nested shapes visible.
 SAMPLES: dict[type, object] = {
+    ExperimentState: EXPERIMENT,
+    Transition: EXPERIMENT.allowed_transitions[0],
+    Dependency: Dependency("exp_2", "experiment", "Example", "running", False, False),
+    GateChecklist: EXPERIMENT.gate_checklist,
+    ChecklistItem: ChecklistItem("artifact:plan", GateKind.ARTIFACT, "plan", "Plan", True,
+                                 GateStatus.VALID, "plan_required", "submit"),
     ProducedObject: {
         "id": "obj_1",
         "name": "models/checkpoint.bin",
@@ -125,17 +141,7 @@ SAMPLES: dict[type, object] = {
         "notes": "retained",
         "created_at": "2026-07-21T12:00:00Z",
     },
-    TransitionResponse: {
-        "id": "exp_1",
-        "project_id": "proj_1",
-        "name": "Example",
-        "intent": "Test one claim",
-        "details": "Hold the optimizer fixed; budget one GPU-day.",
-        "status": "running",
-        "attempt_index": 1,
-        "metrics_exhibit": {"pinned": True},
-        "feed_note": "Experiment started.",
-    },
+
     TransitionReceipt: {
         "experiment_id": "exp_1",
         "transition": "start_running",
@@ -165,15 +171,7 @@ SAMPLES: dict[type, object] = {
         "depends_on": ["task_1"],
         "project_id": "proj_1",
     },
-    ExperimentState: {
-        "id": "exp_1",
-        "project_id": "proj_1",
-        "name": "Example",
-        "intent": "Test one claim",
-        "details": "Hold the optimizer fixed; budget one GPU-day.",
-        "status": "running",
-        "attempt_index": 1,
-    },
+
     ExperimentSummary: {
         "id": "exp_1",
         "project_id": "proj_1",
@@ -184,22 +182,14 @@ SAMPLES: dict[type, object] = {
         "created_at": "2026-07-21T12:00:00Z",
         "updated_at": "2026-07-21T12:00:00Z",
     },
-    SlimExperimentState: {
-        "id": "exp_1",
-        "project_id": "proj_1",
-        "name": "Example",
-        "intent": "Test one claim",
-        "details": "Hold the optimizer fixed; budget one GPU-day.",
-        "status": "running",
-        "attempt_index": 1,
-    },
+
     ExhibitVerdict: {
         "result_files": 1,
         "attempt_index": 1,
         "pinned": True,
     },
     CommittedExperimentUpdate: CommittedExperimentUpdate(
-        state={"id": "exp_1", "status": "running"}, event=EVENT
+        state=EXPERIMENT, event=EVENT
     ),
     TaskResult: {
         "number": 1,
@@ -296,7 +286,7 @@ SAMPLES: dict[type, object] = {
         requested_experiment_id="exp_1",
         project={"id": "proj_1"},
         claims=[{"id": "clm_1"}],
-        experiments=[{"id": "exp_1", "status": "running"}],
+        experiments=[EXPERIMENT],
         open_reflection=None,
         latest_published_reflection=None,
         reflection_signal={"needed": False},
@@ -313,10 +303,6 @@ JSON_ROUNDTRIP_DEBT: Counter[tuple[str, str]] = Counter()
 
 ANNOTATION_DEBT = frozenset(
     {
-        (
-            "merv.brain.application.experiments.transition.TransitionResponse.metrics_exhibit",
-            "object",
-        ),
         (
             "merv.brain.application.experiments.transition.TransitionReceipt.metrics_exhibit",
             "object",
@@ -339,6 +325,8 @@ _PERSISTENCE_OR_SERVICE = re.compile(
 
 
 def _to_json_value(value: object, *, boundary_types: set[type]) -> object:
+    if value is MISSING:
+        return "<omitted>"
     value_type = type(value)
     if _PERSISTENCE_OR_SERVICE.search(value_type.__name__):
         raise TypeError(f"boundary contains runtime service: {_qualified(value_type)}")

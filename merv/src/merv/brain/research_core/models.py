@@ -4,56 +4,55 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
+from enum import Enum
 from typing import Any, TypedDict
 
 from ..kernel.events import StoredEvent
 from ..workflows import Public
+from ..workflows.definitions.research_state import ExperimentState, Missing, MISSING
 
 
-def public_record(public: Public, record: Mapping[str, Any], **computed: Any) -> dict[str, Any]:
-    """One record's public shape, and the only place a public shape is built.
+def _public_value(value):
+    if isinstance(value, Enum):
+        return value.value
+    if is_dataclass(value):
+        return public_record(Public(), value)
+    if isinstance(value, Mapping):
+        return {name: _public_value(item) for name, item in value.items() if item is not MISSING}
+    if isinstance(value, (list, tuple)):
+        return [_public_value(item) for item in value]
+    return value
 
-    The row is the shape: a reader sees every field it carries, under the name
-    the declaration gives it, minus what that declaration hides. Fields a
-    presenter computes are passed here — one already in the row keeps its
-    place, and a new one takes the seat the declaration gave it.
-    """
-    result: dict[str, Any] = {
-        public.renames.get(name, name): value
-        for name, value in record.items()
-        if name not in public.hidden
-    }
-    for name, value in computed.items():
-        anchor = public.after.get(name, "")
-        if anchor not in result or name in result:
-            result[name] = value
+
+def public_record(public: Public, record, **computed: Any) -> dict[str, Any]:
+    """Serialize declared fields; hidden names cannot be restored by computations."""
+    names = (item.name for item in fields(record)) if is_dataclass(record) else record
+    result = {}
+    for name in dict.fromkeys((*names, *computed)):
+        if name in public.hidden:
             continue
-        keys = list(result)
-        seat = keys.index(anchor) + 1
-        result = {**{key: result[key] for key in keys[:seat]}, name: value,
-                  **{key: result[key] for key in keys[seat:]}}
+        value = computed.get(name, MISSING)
+        if name not in computed:
+            value = getattr(record, name) if is_dataclass(record) else record[name]
+        if value is not MISSING:
+            result[public.renames.get(name, name)] = _public_value(value)
+    for name, anchor in {**public.after, "post_publish_guidance": "materialized_experiments"}.items():
+        if name in result and anchor in result:
+            value = result.pop(name)
+            result = {key: item for key, item in result.items()
+                      for key, item in ((key, item), *(((name, value),) if key == anchor else ()))}
     return result
 
 
 def project_fields(record: Mapping[str, Any], fields: Iterable[str]) -> dict[str, Any]:
     """Narrow one record to the columns a reader needs."""
-    return {name: record.get(name) for name in fields}
+    return {name: _public_value(getattr(record, name, None) if is_dataclass(record) else record.get(name)) for name in fields}
 
 
 def project_rows(rows: Iterable[Mapping[str, Any]], fields: Iterable[str]) -> list[dict[str, Any]]:
     fields = tuple(fields)
     return [project_fields(row, fields) for row in rows]
-
-
-class ExperimentState(TypedDict, total=False):
-    id: str
-    project_id: str
-    name: str
-    intent: str
-    details: str
-    status: str
-    attempt_index: int
 
 
 class ExperimentSummary(TypedDict):
@@ -182,12 +181,12 @@ class ResearchSnapshot:
     def selected_experiment(self) -> ExperimentState | None:
         selected_id = self.requested_experiment_id
         if selected_id is None and self.experiments:
-            selected_id = str(self.experiments[-1].get("id") or "")
+            selected_id = self.experiments[-1].id
         return next(
             (
                 experiment
                 for experiment in self.experiments
-                if str(experiment.get("id") or "") == selected_id
+                if experiment.id == selected_id
             ),
             None,
         )

@@ -33,18 +33,18 @@ class LogicGraphQuery:
         experiment = self.research.experiments.get_state(
             experiment_id=experiment_id, project_id=project_id
         )
-        attempt = experiment.get("attempt_index")
+        attempt = experiment.attempt_index
         # History, deliberately: the panel labels the graph with the attempt
         # that produced it, so the newest graph the experiment ever submitted
         # is an honest answer even after a rejection bumped the attempt.
         chosen = preferred_artifact(
-            artifacts=latest_per_slot(experiment.get("artifacts", [])),
+            artifacts=latest_per_slot(experiment.artifacts),
             roles=("graph",),
         )
         base = {
             "experiment_id": experiment_id,
             "max_nodes": MAX_GRAPH_NODES,
-            "experiment_status": experiment.get("status"),
+            "experiment_status": experiment.status,
             "attempt_index": attempt,
         }
         if chosen is None:

@@ -188,7 +188,7 @@ class ReviewPolicyTest(unittest.TestCase):
         exp_id = self._drive_to_design_review()
         self._insert_attested_pass(exp_id=exp_id, role="design_reviewer")
         out = self._approve_design(exp_id)
-        self.assertEqual(out["status"], "running")
+        self.assertEqual(out.status, "running")
 
     # ---- knob on ----
 
@@ -223,7 +223,7 @@ class ReviewPolicyTest(unittest.TestCase):
         self._insert_attested_pass(exp_id=exp_id, role="design_reviewer")
         self._pass_verified_review(exp_id=exp_id, role="design_reviewer")
         out = self.app.research.experiments.get_state(project_id=self.project_id, experiment_id=exp_id)
-        self.assertEqual(out["status"], "running")
+        self.assertEqual(out.status, "running")
 
     def test_policy_can_be_switched_back_off(self) -> None:
         self.call("project.update", project_id=self.project_id, require_verified_reviews=True)
@@ -231,7 +231,7 @@ class ReviewPolicyTest(unittest.TestCase):
         exp_id = self._drive_to_design_review()
         self._insert_attested_pass(exp_id=exp_id, role="design_reviewer")
         out = self._approve_design(exp_id)
-        self.assertEqual(out["status"], "running")
+        self.assertEqual(out.status, "running")
 
     # ---- settings surface ----
 

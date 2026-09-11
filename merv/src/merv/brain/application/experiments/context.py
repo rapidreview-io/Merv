@@ -41,34 +41,34 @@ class ExperimentContextQuery:
     def build(
         self,
         *,
-        state: ExperimentState | Record,
+        state: ExperimentState,
         project_id: str | None = None,
         pinned_artifacts: Iterable[Mapping[str, Any]] | None = None,
     ) -> Record:
-        status = str(state.get("status") or "")
-        artifact_project_id = str(state.get("project_id") or project_id or "") or None
+        status = state.status
+        artifact_project_id = str(state.project_id or project_id or "") or None
         rows, pinned_content = self._artifact_rows(
             state=state, pinned_artifacts=pinned_artifacts
         )
         plan = preferred_artifact(artifacts=rows, roles=("plan",))
         report = preferred_artifact(artifacts=rows, roles=("report",))
         experiment: Record = {
-            "id": state.get("id"),
-            "project_id": state.get("project_id") or project_id,
-            "name": state.get("name"),
+            "id": state.id,
+            "project_id": state.project_id or project_id,
+            "name": state.name,
             "status": status,
-            "intent": state.get("intent"),
+            "intent": state.intent,
             "tested_claims": [
                 {
                     "id": claim.get("id"),
                     "statement": claim.get("statement"),
                 }
-                for claim in state.get("tested_claims", [])
+                for claim in state.tested_claims
                 if isinstance(claim, dict)
             ],
         }
         if status == EXPERIMENT.success_status:
-            experiment["conclusion"] = state.get("conclusion") or ""
+            experiment["conclusion"] = state.conclusion or ""
 
         return {
             "experiment": experiment,
@@ -96,12 +96,12 @@ class ExperimentContextQuery:
     def _artifact_rows(
         self,
         *,
-        state: ExperimentState | Record,
+        state: ExperimentState,
         pinned_artifacts: Iterable[Mapping[str, Any]] | None,
     ) -> tuple[list[Record], dict[str, str | None]]:
         current = [
             dict(artifact)
-            for artifact in state.get("current_attempt_artifacts", [])
+            for artifact in state.current_attempt_artifacts
             if isinstance(artifact, dict)
         ]
         if pinned_artifacts is None:
@@ -130,7 +130,7 @@ class ExperimentContextQuery:
                 "attempt_index": (
                     artifact.get("attempt_index")
                     or by_id.get(artifact_id, {}).get("attempt_index")
-                    or state.get("attempt_index")
+                    or state.attempt_index
                 ),
                 "updated_at": (
                     artifact.get("submitted_at")
@@ -152,7 +152,7 @@ class ExperimentContextQuery:
         self,
         *,
         artifact: Record | None,
-        state: ExperimentState | Record,
+        state: ExperimentState,
         status: str,
         pinned_content: Mapping[str, str | None],
         project_id: str | None,
@@ -162,7 +162,7 @@ class ExperimentContextQuery:
         result = {
             **self._document_identity(artifact),
             "attempt_index": artifact.get("attempt_index")
-            or state.get("attempt_index"),
+            or state.attempt_index,
             "status": self._plan_status(
                 state=state, artifact_id=str(artifact.get("id") or "")
             ),
@@ -186,7 +186,7 @@ class ExperimentContextQuery:
         self,
         *,
         artifact: Record | None,
-        state: ExperimentState | Record,
+        state: ExperimentState,
         status: str,
         pinned_content: Mapping[str, str | None],
         project_id: str | None,
@@ -249,8 +249,8 @@ class ExperimentContextQuery:
         }
 
     @staticmethod
-    def _plan_status(*, state: ExperimentState | Record, artifact_id: str) -> str:
-        status = str(state.get("status") or "")
+    def _plan_status(*, state: ExperimentState, artifact_id: str) -> str:
+        status = state.status
         if status == _DESIGN_REVIEW_STATUS:
             return "in_review"
         review = _latest_review(
@@ -265,7 +265,7 @@ class ExperimentContextQuery:
     @staticmethod
     def _report_status(
         *,
-        state: ExperimentState | Record,
+        state: ExperimentState,
         artifact_id: str,
         status: str,
     ) -> str:
@@ -287,11 +287,11 @@ class ExperimentContextQuery:
 
 def _latest_review(
     *,
-    state: ExperimentState | Record,
+    state: ExperimentState,
     role: str,
     artifact_id: str,
 ) -> Record | None:
-    for review in state.get("reviews", []):
+    for review in state.reviews:
         if not isinstance(review, dict) or str(review.get("role") or "") != role:
             continue
         snapshot_id = str(review.get("target_snapshot_id") or "")
@@ -300,10 +300,10 @@ def _latest_review(
     return None
 
 
-def _reviews_for_role(*, state: ExperimentState | Record, role: str) -> list[Record]:
+def _reviews_for_role(*, state: ExperimentState, role: str) -> list[Record]:
     return [
         review
-        for review in state.get("reviews", [])
+        for review in state.reviews
         if isinstance(review, dict) and str(review.get("role") or "") == role
     ]
 

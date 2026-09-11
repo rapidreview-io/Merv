@@ -12,7 +12,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextlib import closing
 import json
-from typing import Any
+from typing import Any, TypeVar
+from .models import public_record
+from ..workflows import Public
+
+S = TypeVar("S")
 
 from ..kernel.state.store import BaseStateStore, next_created_seq, row_to_dict, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError, new_id, now_iso
@@ -84,10 +88,10 @@ class Records:
     # ---- create ----
 
     def create_in_transaction(
-        self, kind: RecordKind, *, conn, project_id: str, values: dict[str, Any], event: dict[str, Any],
+        self, kind: RecordKind[S], *, conn, project_id: str, values: dict[str, Any], event: dict[str, Any],
         depends_on=(), instance: Snapshot | None = None, guard: bool = True,
         read: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> S:
         """Insert one record on the caller's transaction, then read its state back.
 
         The reflection wave calls this on its own connection, which is why the
@@ -149,12 +153,12 @@ class Records:
         if row is None:
             raise NotFoundError(f"{kind.name} not found in project {project_id}: {record_id}")
 
-    def get_state(self, kind: RecordKind, *, record_id: str, project_id: str | None = None,
-                  conn=None, **extra) -> dict[str, Any]:
+    def get_state(self, kind: RecordKind[S], *, record_id: str, project_id: str | None = None,
+                  conn=None, **extra) -> S:
         return self.get_state_with_gate(kind, record_id=record_id, project_id=project_id, conn=conn, **extra)[0]
 
-    def get_state_with_gate(self, kind: RecordKind, *, record_id: str, project_id: str | None = None,
-                            conn=None, **extra) -> tuple[dict[str, Any], GateEvaluation]:
+    def get_state_with_gate(self, kind: RecordKind[S], *, record_id: str, project_id: str | None = None,
+                            conn=None, **extra) -> tuple[S, GateEvaluation]:
         owns_conn = conn is None
         if conn is None:
             conn = self.store.connect()
@@ -219,7 +223,7 @@ class Records:
             evaluation = self.evaluate_gate(kind, conn=conn, record=record, snapshots=snapshots)
             record["allowed_transitions"] = [dict(item) for item in evaluation.legal_transitions]
             record["gate_checklist"] = evaluation.checklist()
-            assembled.append((record, evaluation))
+            assembled.append((kind.construct(record), evaluation))
         return assembled
 
     # ---- gates ----
@@ -268,10 +272,12 @@ class Records:
     # ---- workflow binding ----
 
     def knowledge(self, kind: RecordKind, snapshot: Snapshot, conn) -> RecordKnowledge:
-        record = self.get_state(kind, record_id=snapshot.id, project_id=snapshot.project_id, conn=conn)
-        if record["status"] != kind.status_of(snapshot.state):
+        row = conn.execute(f"SELECT status FROM {kind.table} WHERE id = ? AND project_id = ?",
+                           (snapshot.id, snapshot.project_id)).fetchone()
+        if row is not None and row["status"] != kind.status_of(snapshot.state):
             raise WorkflowError(f"{kind.name} state differs from its workflow instance; "
                                 "an explicit migration is required")
+        record = public_record(Public(), self.get_state(kind, record_id=snapshot.id, project_id=snapshot.project_id, conn=conn))
         return RecordKnowledge(self, kind, conn, record, snapshot)
 
     def transition(self, kind: RecordKind, *, record_id: str, transition: str, evidence=None,
@@ -279,7 +285,7 @@ class Records:
         """Apply one graph action and return the state and event it committed."""
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            record = self.get_state(kind, record_id=record_id, project_id=project_id, conn=conn)
+            record = public_record(Public(), self.get_state(kind, record_id=record_id, project_id=project_id, conn=conn))
             current = self.runtime.adopt(conn=conn, project_id=project_id, instance_id=record_id,
                                          workflow=kind.name, version=kind.workflow.version, state=record["status"],
                                          data={"attempt_index": record["attempt_index"]})

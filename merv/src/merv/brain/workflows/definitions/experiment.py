@@ -289,9 +289,11 @@ METADATA = Metadata(
              "complete": ("record_conclusion",)},
 )
 
+from .research_state import ExperimentState
+
 KIND = RecordKind(
     name="experiment", table="experiments", id_prefix="exp", workflow=EXPERIMENT,
-    metadata=METADATA, created_event="experiment.created",
+    construct=ExperimentState.construct, metadata=METADATA, created_event="experiment.created",
     columns=("name", "intent", "details"), dependencies=True,
     seal_exempt_actions=frozenset({"revise_plan", "revise_execution", "migrate"}),
     commit_columns={"revise_plan": ("attempt_index", "revision_context"),

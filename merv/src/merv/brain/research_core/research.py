@@ -883,10 +883,7 @@ class Research:
             evaluated = self.experiments.list_states_with_gates(
                 conn=conn, project_id=project_id
             )
-            return cast(
-                list[ExperimentState],
-                [state for state, _gate in evaluated],
-            )
+            return [state for state, _gate in evaluated]
 
     def project_tasks(self, *, project_id: str | None) -> list[TaskState]:
         with closing(self.store.connect()) as conn:
@@ -968,8 +965,8 @@ class Research:
             evaluated = self.experiments.list_states_with_gates(
                 conn=conn, project_id=project_id
             )
-            experiments = cast(list[ExperimentState], [state for state, _ in evaluated])
-            gates = {str(state["id"]): evaluation for state, evaluation in evaluated}
+            experiments = [state for state, _ in evaluated]
+            gates = {state.id: evaluation for state, evaluation in evaluated}
             evaluated_tasks = self.tasks.list_states_with_gates(
                 conn=conn,
                 project_id=project_id,
@@ -993,9 +990,9 @@ class Research:
                     gates[str(reflection["id"])] = evaluation
             signal = reflection_signal_state(
                 current_terminal={
-                    str(row["id"]): str(row["status"])
+                    row.id: row.status
                     for row in experiments
-                    if str(row["status"]) in EXPERIMENT_TERMINAL_STATUSES
+                    if row.status in EXPERIMENT_TERMINAL_STATUSES
                 },
                 current_claims={
                     str(claim["id"]): str(claim["status"]) for claim in claims

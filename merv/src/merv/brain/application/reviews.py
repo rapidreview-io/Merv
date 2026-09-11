@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from dataclasses import replace
+from ..workflows.definitions.research_state import ExperimentStatus
 from typing import Any
 
 from ..workflows import EXHIBIT_ROLE, GATED_ROLES, RecordKind
@@ -121,12 +123,9 @@ def start_review(
             experiment_id=target_id,
             project_id=project_id,
         )
-        state = {
-            **live_state,
-            "status": target_snapshot.get("status") or live_state.get("status"),
-            "attempt_index": target_snapshot.get("attempt_index")
-            or live_state.get("attempt_index"),
-        }
+        state = replace(live_state,
+                        status=ExperimentStatus(target_snapshot.get("status") or live_state.status),
+                        attempt_index=target_snapshot.get("attempt_index") or live_state.attempt_index)
         result["context"] = experiment_context.build(
             state=state,
             project_id=project_id,
@@ -182,7 +181,7 @@ def read_review_status(
         event = research.reviews.latest_submitted_event(
             target_type=target_type,
             target_id=target_id,
-            project_id=str(state.get("project_id") or project_id or ""),
+            project_id=str(state.project_id or project_id or ""),
         )
     except Exception:
         return result
@@ -190,8 +189,8 @@ def read_review_status(
         return result
     note = feed_transition_note(
         feed,
-        project_id=str(state.get("project_id") or ""),
-        ref=str(state.get("id") or ""),
+        project_id=state.project_id,
+        ref=state.id,
         event="experiment_review_verdict",
     )
     if note:

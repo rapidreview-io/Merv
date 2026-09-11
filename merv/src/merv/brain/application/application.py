@@ -454,9 +454,9 @@ class Application:
         self, *, project_id: str | None = None, rich: bool = False
     ) -> dict[str, Any] | list[dict[str, Any]]:
         states = self.research.project_experiments(project_id=project_id)
-        ids = tuple(str(state.get("id") or "") for state in states if state.get("id"))
+        ids = tuple(state.id for state in states if state.id)
         resolved = (
-            str(states[0].get("project_id") or project_id or "") if states else ""
+            str(states[0].project_id or project_id or "") if states else ""
         )
         objects = (
             self.produced_objects.by_experiment(project_id=resolved, experiment_ids=ids)
@@ -480,16 +480,12 @@ class Application:
             else {}
         )
         presented = [
-            {
-                **(rich_experiment_state if rich else slim_experiment_state)(
-                    state,
-                    storage_objects=objects.get(str(state.get("id") or ""), []),
-                ),
-                "code_workspace": workspaces.get(str(state.get("id") or "")),
-                "consolidation_history": consolidations.get(
-                    str(state.get("id") or ""), []
-                ),
-            }
+            (rich_experiment_state if rich else slim_experiment_state)(
+                state,
+                storage_objects=objects.get(state.id, []),
+                code_workspace=workspaces.get(state.id),
+                consolidation_history=consolidations.get(state.id, []),
+            )
             for state in states
         ]
         return presented if rich else {"experiments": presented}
@@ -502,53 +498,28 @@ class Application:
         review_id: str = "",
         rich: bool = False,
     ) -> dict[str, Any]:
-        if rich:
-            state = self.research.experiments.get_state(
-                experiment_id=experiment_id,
-                project_id=project_id,
-            )
-            resolved_project_id = str(state.get("project_id") or project_id or "")
-            response = rich_experiment_state(
-                state,
-                storage_objects=self.produced_objects.by_experiment(
-                    project_id=resolved_project_id,
-                    experiment_ids=(experiment_id,),
-                )[experiment_id],
-            )
-            response["code_workspace"] = self.agent_sessions.workspaces(
-                project_id=resolved_project_id,
-                instance_ids=(experiment_id,),
-            ).get(experiment_id)
-            response["consolidation_history"] = self.research.reflections.experiment_consolidations(
-                project_id=resolved_project_id,
-                experiment_ids=(experiment_id,),
-            ).get(experiment_id, [])
-            return response
         state = self.research.experiments.get_state(
             experiment_id=experiment_id,
             project_id=project_id,
         )
-        resolved_project_id = str(state.get("project_id") or project_id or "")
-        response = slim_experiment_state(
+        resolved_project_id = str(state.project_id or project_id or "")
+        response = (rich_experiment_state if rich else slim_experiment_state)(
             state,
             storage_objects=self.produced_objects.by_experiment(
-                project_id=resolved_project_id,
-                experiment_ids=(experiment_id,),
+                project_id=resolved_project_id, experiment_ids=(experiment_id,),
             )[experiment_id],
+            code_workspace=self.agent_sessions.workspaces(
+                project_id=resolved_project_id, instance_ids=(experiment_id,),
+            ).get(experiment_id),
+            consolidation_history=self.research.reflections.experiment_consolidations(
+                project_id=resolved_project_id, experiment_ids=(experiment_id,),
+            ).get(experiment_id, []),
         )
-        response["code_workspace"] = self.agent_sessions.workspaces(
-            project_id=resolved_project_id,
-            instance_ids=(experiment_id,),
-        ).get(experiment_id)
-        response["consolidation_history"] = self.research.reflections.experiment_consolidations(
-            project_id=resolved_project_id,
-            experiment_ids=(experiment_id,),
-        ).get(experiment_id, [])
-        if review_id:
-            body = review_body(state.get("reviews", []), review_id=review_id)
+        if review_id and not rich:
+            body = review_body(state.reviews, review_id=review_id)
             if body is None:
                 known = [
-                    str(review.get("id") or "") for review in state.get("reviews", [])
+                    str(review.get("id") or "") for review in state.reviews
                 ]
                 raise ValidationError(
                     f"no review {review_id} on this experiment. Reviews here: "

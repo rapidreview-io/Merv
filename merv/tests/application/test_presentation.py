@@ -9,6 +9,7 @@ synopsis a review row is given when it stored none.
 from __future__ import annotations
 
 import unittest
+from tests.support.research_state import experiment_state
 
 from merv.brain.application.experiments.presentation import (
     review_body,
@@ -37,7 +38,7 @@ def _review(review_id: str, *, created_at: str, **overrides) -> dict:
 
 class ExperimentPresentationTest(unittest.TestCase):
     def test_explicit_empty_current_resources_does_not_fall_back(self) -> None:
-        state = {
+        state = experiment_state(**{
             "id": "exp_1",
             "attempt_index": 1,
             "artifacts": [
@@ -48,7 +49,7 @@ class ExperimentPresentationTest(unittest.TestCase):
                 }
             ],
             "current_attempt_artifacts": [],
-        }
+        })
 
         result = slim_experiment_state(state, storage_objects=[])
 

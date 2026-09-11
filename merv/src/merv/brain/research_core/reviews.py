@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+from .models import public_record
+from ..workflows import Public
+
 from contextlib import closing
 from collections.abc import Mapping
 import json
@@ -774,7 +777,8 @@ class ReviewService:
     ):
         kind = self.records.kinds.get(target_type)
         if kind is not None:
-            return self.records.get_state_with_gate(kind, record_id=target_id, project_id=project_id, conn=conn)
+            state, gate = self.records.get_state_with_gate(kind, record_id=target_id, project_id=project_id, conn=conn)
+            return public_record(Public(), state), gate
         snapshot = self.runtime.get(conn=conn, project_id=project_id, instance_id=target_id)
         if snapshot.workflow != target_type:
             raise NotFoundError(f"workflow {target_type!r} not found in this project: {target_id}")
