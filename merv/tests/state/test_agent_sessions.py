@@ -210,6 +210,124 @@ class AgentSessionsTest(unittest.TestCase):
         self.assertEqual(self.sessions.live_leases(project_id="proj_1"), {("wf_1", 1)})
         self.assertEqual(self.sessions.workflow_producer(project_id="proj_1", instance_id="wf_1", revision=0), owner["id"])
 
+    def _closed_persistent_workspace(self):
+        owner = self.claim()
+        self.sessions.authenticate(session_secret=self.secret("runner"))
+        self.sessions.attach(
+            session_id=owner["id"], runner_id="runner", host_session_ref="pid:1:birth",
+            workspace_ref="merv/widgets/proj_1/wf_1", base_sha="1" * 40, head_sha="2" * 40,
+            workspace_stats={"commit_count": 5},
+        )
+        self.facts.rows["wf_1"] = Fact("wf_1", 1)
+        closed = self.sessions.list(project_id="proj_1")["sessions"][0]
+        self.assertEqual(closed["status"], "expired")
+        self.assertEqual(closed["close_reason"], "workflow_assignment_changed")
+        return closed
+
+    def test_late_capture_finalizes_workspace_without_reopening_session(self) -> None:
+        closed = self._closed_persistent_workspace()
+        result = self.sessions.release(
+            session_id=closed["id"], runner_id="runner", head_sha="3" * 40,
+            workspace_stats={"commit_count": 6},
+        )
+        for key in ("status", "closed_at", "close_reason", "head_sha"):
+            self.assertEqual(result[key], closed[key])
+        workspace = self.sessions.workspaces(project_id="proj_1", instance_ids=("wf_1",))["wf_1"]
+        self.assertEqual((workspace["head_sha"], workspace["commit_count"]), ("3" * 40, 6))
+        self.sessions.release(
+            session_id=closed["id"], runner_id="runner", head_sha="3" * 40,
+            workspace_stats={"commit_count": 999},
+        )
+        self.assertEqual(self.sessions.workspaces(project_id="proj_1", instance_ids=("wf_1",))["wf_1"], workspace)
+        with self.assertRaises(WorkflowError):
+            self.sessions.release(session_id=closed["id"], runner_id="runner", head_sha="4" * 40)
+        with self.assertRaises(PermissionDeniedError):
+            self.sessions.release(session_id=closed["id"], runner_id="wrong", head_sha="3" * 40)
+
+    def test_late_capture_is_fenced_by_successor_even_before_attach_or_after_close(self) -> None:
+        closed = self._closed_persistent_workspace()
+        self.packets[("wf_1", 1)] = self.packet("wf_1", 1)
+        successor = self.claim(runner="successor", key="next", candidates=[{"instance_id": "wf_1", "revision": 1}])
+        for successor_closed in (False, True):
+            with self.subTest(successor_closed=successor_closed):
+                if successor_closed:
+                    self.sessions.release(session_id=successor["id"], runner_id="successor")
+                with self.assertRaises(WorkflowError):
+                    self.sessions.release(session_id=closed["id"], runner_id="runner", head_sha="3" * 40)
+        self.assertEqual(self.sessions.workspaces(project_id="proj_1", instance_ids=("wf_1",))["wf_1"]["head_sha"], "2" * 40)
+
+    def test_late_capture_checks_workspace_branch_base_head_and_update_time(self) -> None:
+        closed = self._closed_persistent_workspace()
+        for field, value in (("branch", "different"), ("base_sha", "5" * 40),
+                             ("head_sha", "6" * 40), ("updated_at", "9999-01-01T00:00:00Z")):
+            with self.subTest(field=field):
+                with self.store.transaction() as tx:
+                    original = tx.execute(f"SELECT {field} FROM agent_workspaces WHERE instance_id = 'wf_1'").fetchone()[0]
+                    tx.execute(f"UPDATE agent_workspaces SET {field} = ? WHERE instance_id = 'wf_1'", (value,))
+                with self.assertRaises(WorkflowError):
+                    self.sessions.release(session_id=closed["id"], runner_id="runner", head_sha="3" * 40)
+                with self.store.transaction() as tx:
+                    tx.execute(f"UPDATE agent_workspaces SET {field} = ? WHERE instance_id = 'wf_1'", (original,))
+
+    def test_unrelated_workspace_does_not_fence_but_shared_branch_does(self) -> None:
+        closed = self._closed_persistent_workspace()
+        self.facts.rows["wf_other"] = Fact("wf_other", 0)
+        self.packets[("wf_other", 0)] = self.packet("wf_other", 0)
+        other = self.claim(runner="other", key="other", candidates=[{"instance_id": "wf_other", "revision": 0}])
+        self.sessions.attach(session_id=other["id"], runner_id="other", host_session_ref="pid:2:birth",
+                             workspace_ref=closed["workspace_ref"], base_sha="1" * 40, head_sha="2" * 40)
+        with self.assertRaises(WorkflowError):
+            self.sessions.release(session_id=closed["id"], runner_id="runner", head_sha="3" * 40)
+        with self.store.transaction() as tx:
+            tx.execute("UPDATE agent_sessions SET workspace_ref = 'unrelated' WHERE id = ?", (other["id"],))
+        self.sessions.release(session_id=closed["id"], runner_id="runner", head_sha="3" * 40)
+        self.assertEqual(self.sessions.workspaces(project_id="proj_1", instance_ids=("wf_1",))["wf_1"]["head_sha"], "3" * 40)
+
+    def test_ephemeral_successor_does_not_own_final_workspace(self) -> None:
+        closed = self._closed_persistent_workspace()
+        self.packets[("wf_1", 1)] = self.packet("wf_1", 1, execution=EPHEMERAL)
+        self.claim(runner="reviewer", key="review", candidates=[{"instance_id": "wf_1", "revision": 1}])
+        self.sessions.release(session_id=closed["id"], runner_id="runner", head_sha="3" * 40)
+        self.assertEqual(self.sessions.workspaces(project_id="proj_1", instance_ids=("wf_1",))["wf_1"]["head_sha"], "3" * 40)
+
+    def test_lease_expired_successor_still_fences_late_capture(self) -> None:
+        closed = self._closed_persistent_workspace()
+        self.packets[("wf_1", 1)] = self.packet("wf_1", 1)
+        successor = self.claim(runner="successor", key="next", candidates=[{"instance_id": "wf_1", "revision": 1}])
+        with self.store.transaction() as tx:
+            tx.execute("UPDATE agent_sessions SET lease_expires_at = '2000-01-01T00:00:00Z' WHERE id = ?", (successor["id"],))
+        expired = {row["id"]: row for row in self.sessions.list(project_id="proj_1")["sessions"]}[successor["id"]]
+        self.assertEqual((expired["status"], expired["close_reason"]), ("expired", "lease_expired"))
+        with self.assertRaises(WorkflowError):
+            self.sessions.release(session_id=closed["id"], runner_id="runner", head_sha="3" * 40)
+
+    def test_ambiguous_same_time_persistent_owner_fences_late_capture(self) -> None:
+        closed = self._closed_persistent_workspace()
+        self.packets[("wf_1", 1)] = self.packet("wf_1", 1)
+        successor = self.claim(runner="successor", key="next", candidates=[{"instance_id": "wf_1", "revision": 1}])
+        self.sessions.release(session_id=successor["id"], runner_id="successor")
+        with self.store.transaction() as tx:
+            tx.execute("UPDATE agent_sessions SET workflow_revision = ?, created_at = ? WHERE id = ?",
+                       (closed["workflow_revision"], closed["created_at"], successor["id"]))
+        with self.assertRaises(WorkflowError):
+            self.sessions.release(session_id=closed["id"], runner_id="runner", head_sha="3" * 40)
+
+    def test_racing_final_reports_cannot_replace_each_other(self) -> None:
+        closed = self._closed_persistent_workspace()
+
+        def finalize(head):
+            try:
+                self.sessions.release(session_id=closed["id"], runner_id="runner", head_sha=head)
+            except WorkflowError:
+                return False
+            return True
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            accepted = list(pool.map(finalize, ("3" * 40, "4" * 40)))
+        self.assertEqual(sum(accepted), 1)
+        winner = ("3" * 40, "4" * 40)[accepted.index(True)]
+        self.assertEqual(self.sessions.workspaces(project_id="proj_1", instance_ids=("wf_1",))["wf_1"]["head_sha"], winner)
+
     def test_attach_is_one_time_and_heartbeat_keeps_the_same_host(self) -> None:
         session = self.claim()
         attached = self.sessions.attach(

@@ -480,6 +480,28 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self.assertEqual((workspace["commit_count"], workspace["files_changed"]), (3, 5))
         self.assertNotIn("project_id", workspace)
 
+    def test_runner_release_reports_final_workspace_after_session_is_closed(self) -> None:
+        session = self.claim(secret=self.secret(), runner_id="owner")
+        response = self.client.post(f"/api/agent-sessions/{session['id']}/attach", json={
+            "runner_id": "owner", "host_session_ref": "pid:1:abc",
+            "workspace_ref": f"merv/experiments/{self.project_id}/{self.experiment_id}",
+            "base_sha": "1" * 40, "head_sha": "2" * 40,
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.brain.agent_sessions.invalidate(session_id=session["id"], reason="workflow_assignment_changed")
+        response = self.client.post(f"/api/agent-sessions/{session['id']}/release", json={
+            "runner_id": "owner", "head_sha": "3" * 40, "workspace_stats": {"commit_count": 6},
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["session"]["status"], "expired")
+        listing = self.client.get(f"/api/projects/{self.project_id}/agent-sessions").json()
+        self.assertEqual(listing["workspaces"][self.experiment_id]["head_sha"], "3" * 40)
+        denied = self.client.post(f"/api/agent-sessions/{session['id']}/release", json={
+            "runner_id": "another", "head_sha": "3" * 40,
+        })
+        self.assertEqual(denied.status_code, 400, denied.text)
+        self.assertEqual(denied.json()["error_code"], "permission_denied")
+
     def test_idle_runner_presence_is_visible_without_exposing_runner_identity(self) -> None:
         reported = self.client.post(
             f"/api/projects/{self.project_id}/agent-runners/heartbeat",

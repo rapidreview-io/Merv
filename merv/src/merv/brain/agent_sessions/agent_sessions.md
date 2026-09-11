@@ -64,18 +64,17 @@ fields are supplied to the handler from the lease. Parent key revocation and
 project membership remain authoritative; secrets never appear in argv, prompts,
 logs, or responses.
 
-The runner records launch intent before spawning, verifies process identity on
-restart, and holds uncertain pre-PID leases until expiry to avoid duplicates.
-`execution.workspace` alone drives its layout: `none` is a scratch directory,
-`ephemeral` a detached worktree at the referenced base, `persistent` a branch
-per instance (per base sha when `per_base`) under the declared namespace. Only
-persistent workspaces record branch facts, keyed by instance, for later
-sessions and the UI. The runner alone compare-and-swaps accepted work into
-`refs/merv/central` through the generic `workspace-advances` routes, whose
-`sources[].id` are opaque lineage ids; its bare repository has no remotes.
-`advances.py` owns that swap and its opaque `workspace_advances` receipt:
-intent is durable first and leased to one runner, the target sha binds it,
-anything else is a stand, a failure or a moved head.
+The runner records launch intent before spawning, verifies process identity on restart, and holds uncertain pre-PID
+leases until expiry to avoid duplicates. `execution.workspace` alone drives its layout: `none` is a scratch
+directory, `ephemeral` a detached worktree at the referenced base, `persistent` a branch per instance (per base sha
+when `per_base`) under the declared namespace. Only persistent workspaces record branch facts, keyed by instance,
+for later sessions and the UI. A closed session keeps its historical head and closure. Its owning runner may
+finalize the canonical workspace once, fenced by that historical head and newer owners or workspace changes;
+identical reports are no-ops. Consolidation reads the workspace head. The runner alone compare-and-swaps accepted
+work into `refs/merv/central` through the generic `workspace-advances` routes, whose `sources[].id` are opaque
+lineage ids; its bare repository has no remotes. `advances.py` owns that swap and its opaque `workspace_advances`
+receipt: intent is durable first and leased to one runner, the target sha binds it, anything else is a stand, a
+failure or a moved head.
 
 ## Pairing and observability
 
