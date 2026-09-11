@@ -5,6 +5,7 @@ from __future__ import annotations
 from ....infrastructure import infrastructure_actor
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response
 
-from ....kernel.request_context import bind_agent
+from ....kernel.request_context import bind_agent, current_request_context
 from ....agent_sessions import AGENT_SESSION_SECRET_PREFIX, AgentSessions
 from ....kernel.utils import (
     NotFoundError,
@@ -361,6 +362,27 @@ class ToolInvocationGateway:
         base_url: str = "",  # renders upload one-liners
         mcp_session_id: str = "",  # the transport session header, if any
     ) -> dict[str, Any]:
+        return self.plan(
+            name=name, arguments=arguments, context=context, project_scope=project_scope,
+            activity_source=activity_source, principal=principal, base_url=base_url,
+            mcp_session_id=mcp_session_id,
+        )()
+
+    def plan(
+        self,
+        *,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
+        project_scope: str | None = None,
+        activity_source: str = "http",
+        principal: Any | None = None,
+        base_url: str = "",
+        mcp_session_id: str = "",
+    ) -> Callable[[], dict[str, Any]]:
+        """Every denial a call can earn, raised now; the returned call runs the
+        pre-flighted tool. A transport that must refuse before it commits a
+        stream plans first and runs later."""
         arguments = dict(arguments or {})
         scope = str(arguments.get("project_id") or project_scope or "")
         try:
@@ -386,19 +408,28 @@ class ToolInvocationGateway:
                 exc=exc,
             )
             raise
-        with infrastructure_actor(str(getattr(principal, "user_id", "") or "")):
-            result = self._dispatch(
-                name=name,
-                arguments=arguments,
-                plan=plan,
-                activity_source=activity_source,
-                project_id=scope,
-            )
-        if self.agent_sessions is not None and getattr(
-            principal, "agent_session_id", None
-        ):
-            self.agent_sessions.reconcile()
-        return result
+        # Pre-flight bound the agent behind this call on its own thread; the
+        # planned call may run on another, so it re-binds before dispatch and
+        # the ledger row still names the caller.
+        bound = current_request_context()
+
+        def run() -> dict[str, Any]:
+            bind_agent(agent_id=bound.agent_id, mcp_session_id=bound.mcp_session_id)
+            with infrastructure_actor(str(getattr(principal, "user_id", "") or "")):
+                result = self._dispatch(
+                    name=name,
+                    arguments=arguments,
+                    plan=plan,
+                    activity_source=activity_source,
+                    project_id=scope,
+                )
+            if self.agent_sessions is not None and getattr(
+                principal, "agent_session_id", None
+            ):
+                self.agent_sessions.reconcile()
+            return result
+
+        return run
 
     def _preflight(
         self,
@@ -644,7 +675,16 @@ class ToolInvocationGateway:
         context: dict[str, Any],
         request: Request,
     ) -> dict[str, Any]:
-        return self.call(
+        return self.plan_mcp(name, arguments, context, request)()
+
+    def plan_mcp(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+        request: Request,
+    ) -> Callable[[], dict[str, Any]]:
+        return self.plan(
             name=name,
             arguments=arguments,
             context=context,
@@ -707,14 +747,22 @@ def install_request_middleware(
             )
         return await call_next(request)
 
-    @http.middleware("http")
-    async def attach_principal(request: Request, call_next):
+    def deny(request: Request) -> JSONResponse | None:
+        """Credential and membership reads, so they run off the event loop."""
         denied = authenticator.authenticate(request)
         if denied is None and getattr(request.state, "authenticated", False):
-            denied = authorizer.http_denial(request)
-        elif denied is None and authenticator.surface.hosted_control:
+            return authorizer.http_denial(request)
+        if denied is None and authenticator.surface.hosted_control:
             # OPEN hosted mode (no verifier): still operator-gate global mutators.
-            denied = open_hosted_operator_denial(request)
+            return open_hosted_operator_denial(request)
+        return denied
+
+    @http.middleware("http")
+    async def attach_principal(request: Request, call_next):
+        if request.method == "OPTIONS" or request.url.path == "/health":
+            denied = deny(request)  # no reads; the liveness probe never queues
+        else:
+            denied = await run_in_threadpool(deny, request)
         bind_request_principal(request, denied=denied, open_mode=open_mode)
         if denied is None:
             subject = str(getattr(getattr(request.state, "principal", None), "user_id", "") or "")

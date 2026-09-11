@@ -595,9 +595,9 @@ class McpStreamableResultSerializationTest(unittest.TestCase):
 
 
 class McpStreamablePreflightTest(unittest.TestCase):
-    """FIX 6: a scope/visibility denial resolves SYNCHRONOUSLY, before the SSE
-    stream can commit a 200, so it is always a transport 403 — even when the
-    tool executor is slow enough that the fast-call window would have elapsed."""
+    """A scope/visibility denial resolves before the SSE stream can commit a
+    200, so it is always a transport 403 — even when the tool executor is slow
+    enough that the fast-call window would have elapsed."""
 
     def test_scope_denial_is_http_403_even_when_execution_is_slow(self) -> None:
         from merv.brain.surface.identity import ProjectKeyScopeError
@@ -608,7 +608,7 @@ class McpStreamablePreflightTest(unittest.TestCase):
             time.sleep(0.3)  # far past the 50ms fast-call window
             return {"ok": True, "name": name}
 
-        def authorize_scope(request, name, arguments):
+        def plan_tool(name, arguments, context, request):
             raise ProjectKeyScopeError(
                 "project API key cannot access a different project",
                 details={"requested_project_id": arguments.get("project_id")},
@@ -618,7 +618,7 @@ class McpStreamablePreflightTest(unittest.TestCase):
             app,
             list_tools=lambda: [{"name": "slow.tool"}],
             call_tool=call_tool,
-            authorize_scope=authorize_scope,
+            plan_tool=plan_tool,
         )
         mcp = _McpClient(TestClient(app))
         mcp.initialize()  # Accept carries text/event-stream (would stream)
@@ -635,21 +635,24 @@ class McpStreamablePreflightTest(unittest.TestCase):
         )
 
     def test_key_create_and_review_scope_deny_before_the_stream(self) -> None:
-        """The BUILT preauthorizer (not a fake) must deny a key principal's
+        """The gateway's own pre-flight (not a fake) must deny a key principal's
         project-create, a key's foreign review session (403: key equality
         first, like production), and a plain user's foreign review request
-        (404: membership miss) — all synchronously, so the denial is a
+        (404: membership miss) — all before the stream, so the denial is a
         transport error even with a slow executor."""
         from types import SimpleNamespace
 
         from merv.brain.surface.identity import ProjectKeyScopeError
-        from merv.brain.surface.transport.api.mcp_preauth import (
-            build_mcp_preauthorizer,
-        )
+        from merv.brain.surface.transport.api.gateway import ToolInvocationGateway
+        from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
         from merv.shared.errors import NotFoundError
 
         class _Authorizer:
             """Mirrors production ordering: key equality BEFORE membership."""
+
+            @staticmethod
+            def user_id(principal):
+                return getattr(principal, "user_id", "")
 
             @staticmethod
             def key_project_id(principal):
@@ -667,8 +670,9 @@ class McpStreamablePreflightTest(unittest.TestCase):
         research = SimpleNamespace(
             review_project_id=lambda **_kwargs: "p_foreign",
         )
-        preauthorize = build_mcp_preauthorizer(
-            authorizer=_Authorizer(), research=research, hosted=True
+        gateway = ToolInvocationGateway(
+            tools=None, research=research, sandboxes=None, projects=_Authorizer(),
+            surface=HttpSurfacePolicy.for_surface(restrict_cors=True, hosted_control=True),
         )
 
         app = FastAPI()
@@ -695,7 +699,7 @@ class McpStreamablePreflightTest(unittest.TestCase):
                 {"name": "project"}, {"name": "review.start"}, {"name": "review.submit"},
             ],
             call_tool=call_tool,
-            authorize_scope=preauthorize,
+            plan_tool=gateway.plan_mcp,
         )
         mcp = _McpClient(TestClient(app))
         mcp.initialize()
@@ -723,6 +727,40 @@ class McpStreamablePreflightTest(unittest.TestCase):
         self.assertEqual(response.status_code, 404, response.text)
         self.assertTrue(
             response.headers["content-type"].startswith("application/json")
+        )
+
+    def test_internal_tool_is_refused_before_the_plan(self) -> None:
+        """Visibility is decided before any pre-flight work, so an internal tool
+        earns its 403 ahead of whatever the plan would have refused first (the
+        identity gate, in production's required mode)."""
+        from types import SimpleNamespace
+
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def bind_principal(request, call_next):
+            request.state.principal = SimpleNamespace(
+                user_id="u1", key_id="mkey_bound", key_project_id="p_bound"
+            )
+            return await call_next(request)
+
+        def plan_tool(name, arguments, context, request):
+            raise AssertionError("the plan must not run for an internal tool")
+
+        register_mcp_routes(
+            app,
+            list_tools=lambda: [{"name": "claim.list"}],
+            call_tool=lambda *_args: {"ok": True},
+            plan_tool=plan_tool,
+        )
+        mcp = _McpClient(TestClient(app))
+        mcp.initialize()
+        response = mcp.request(
+            "tools/call", {"name": "claim.list", "arguments": {"project_id": "p_bound"}}
+        )
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(
+            response.json()["error"]["data"]["error_code"], "tool_visibility_forbidden"
         )
 
 

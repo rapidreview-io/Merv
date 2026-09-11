@@ -21,7 +21,6 @@ from . import (
     claims,
     events,
     experiments,
-    mcp_preauth,
     meta,
     oauth,
     projects,
@@ -194,12 +193,7 @@ def create_fastapi_app(
         list_tools=api.tools.list_tools,
         call_tool=gateway.call_mcp,
         allow_tool=lambda _tool: True,
-        authorize_scope=mcp_preauth.build_mcp_preauthorizer(
-            authorizer=authorizer,
-            research=api.research,
-            hosted=surface.hosted_control,
-            authorize_agent_session=gateway.authorize_agent_session,
-        ),
+        plan_tool=gateway.plan_mcp,
         ledger=api.tool_ledger,
         record_session=(
             agent_identities.record_mcp_session if agent_identities is not None else None
