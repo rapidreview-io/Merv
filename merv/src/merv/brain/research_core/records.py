@@ -208,11 +208,11 @@ class Records:
         self._evidence(kind, conn=conn, records=records)
         return records[0]
 
-    def _evidence(self, kind: RecordKind, *, conn: Connection, records: list[dict[str, Any]]) -> None:
-        """Shared database-only evidence hydration for source snapshots and full record reads."""
+    def _evidence(self, kind: RecordKind, *, conn: Connection, records: list[dict[str, Any]], summarize=False) -> None:
+        """Hydrate associations and reviews; full record views may request artifact summaries."""
         project_id = str(records[0]["project_id"])
         record_ids = tuple(str(record["id"]) for record in records)
-        history = self.artifacts.history(tx=conn, target_type=kind.name, target_ids=record_ids, summarize=True)
+        history = self.artifacts.history(tx=conn, target_type=kind.name, target_ids=record_ids, summarize=summarize)
         reviews: dict[str, list[dict[str, Any]]] = {}
         # A focused read pays for one record's reviews; a project read joins once.
         focused = " AND r.target_id = ?" if len(record_ids) == 1 else ""
@@ -236,7 +236,7 @@ class Records:
 
     def _assemble(self, kind: RecordKind[S], *, conn: Connection, records: list[dict[str, Any]],
                   detail_ids: tuple[str, ...], snapshots=None, **extra) -> list[tuple[S, GateEvaluation]]:
-        self._evidence(kind, conn=conn, records=records)
+        self._evidence(kind, conn=conn, records=records, summarize=True)
         project_id = str(records[0]["project_id"])
         record_ids = tuple(str(record["id"]) for record in records)
         dependencies = dependency_rows(conn=conn, project_id=project_id, node_ids=record_ids) if kind.dependencies else {}
