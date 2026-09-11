@@ -94,7 +94,7 @@ class OAuthSurfaceTest(unittest.TestCase):
         self.client = TestClient(
             create_fastapi_app(
                 self.app,
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=True, hosted_control=True
                 ),
                 auth=self.verifier,
@@ -523,7 +523,7 @@ class OAuthSurfaceTest(unittest.TestCase):
         capped = TestClient(
             create_fastapi_app(
                 self.app,
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=True, hosted_control=True
                 ),
                 auth=self.verifier,

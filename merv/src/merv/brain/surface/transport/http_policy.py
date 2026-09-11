@@ -10,15 +10,6 @@ class HttpSurfacePolicy:
     restrict_cors: bool
     hosted_control: bool
 
-    @classmethod
-    def for_surface(
-        cls,
-        *,
-        restrict_cors: bool,
-        hosted_control: bool,
-    ) -> "HttpSurfacePolicy":
-        return cls(restrict_cors=restrict_cors, hosted_control=hosted_control)
-
 
 # Session credentials fail closed. Every leased session may reach these support
 # tools; the node it works declares everything else in its execution policy,

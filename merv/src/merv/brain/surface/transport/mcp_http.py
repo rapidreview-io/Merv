@@ -13,7 +13,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import Header, Request, Response
+from fastapi import Request, Response
 from fastapi.concurrency import run_in_threadpool
 
 from ...kernel.utils import ValidationError
@@ -28,12 +28,10 @@ from .mcp_streamable_http import (
 )
 
 ToolCatalog = Callable[[], list[dict[str, Any]]]
-ToolFilter = Callable[[dict[str, Any]], bool]
 ToolCaller = Callable[
     [str, dict[str, Any], dict[str, Any], Request],
     dict[str, Any],
 ]
-Authorizer = Callable[[str | None], None]
 
 
 def register_mcp_routes(
@@ -41,39 +39,23 @@ def register_mcp_routes(
     *,
     list_tools: ToolCatalog,
     call_tool: ToolCaller,
-    allow_tool: ToolFilter | None = None,
-    authorize: Authorizer | None = None,
     plan_tool: ToolPlanner | None = None,
     ledger: RefusalLedger | None = None,
     record_session: SessionRecorder | None = None,
     agent_identity: str | None = None,
 ) -> None:
-    def check_authorized(authorization: str | None) -> None:
-        if authorize is not None:
-            authorize(authorization)
-
     def catalog() -> list[dict[str, Any]]:
-        tools = list_tools()
-        if allow_tool is not None:
-            tools = [tool for tool in tools if allow_tool(tool)]
-        visible = [tool for tool in tools if not tool.get("hidden")]
+        visible = [tool for tool in list_tools() if not tool.get("hidden")]
         if agent_identity is None:
             return visible
         return with_agent_id_argument(visible, required=agent_identity == "required")
 
     @http.get("/mcp/tools")
-    def mcp_tools_list(
-        authorization: str | None = Header(default=None),
-    ) -> dict[str, Any]:
-        check_authorized(authorization)
+    def mcp_tools_list() -> dict[str, Any]:
         return {"tools": catalog()}
 
     @http.post("/mcp/call")
-    async def mcp_call(
-        request: Request,
-        authorization: str | None = Header(default=None),
-    ) -> Any:
-        check_authorized(authorization)
+    async def mcp_call(request: Request) -> Any:
         try:
             raw_body = await read_limited_mcp_body(request)
         except RequestBodyTooLarge as exc:
@@ -124,8 +106,6 @@ def register_mcp_routes(
     McpStreamableHttp(
         list_tools=list_tools,
         call_tool=call_tool,
-        allow_tool=allow_tool,
-        authorize=authorize,
         plan_tool=plan_tool,
         ledger=ledger,
         record_session=record_session,

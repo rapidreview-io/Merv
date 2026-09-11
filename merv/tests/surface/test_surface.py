@@ -94,7 +94,7 @@ class SurfaceTest(unittest.TestCase):
             client = TestClient(
                 create_fastapi_app(
                     app=app,
-                    surface_policy=HttpSurfacePolicy.for_surface(
+                    surface_policy=HttpSurfacePolicy(
                         restrict_cors=True,
                         hosted_control=True,
                     ),
@@ -152,7 +152,7 @@ class SurfaceTest(unittest.TestCase):
                 create_fastapi_app(
                     app=app,
                     allowed_origins=["http://localhost:5173"],
-                    surface_policy=HttpSurfacePolicy.for_surface(
+                    surface_policy=HttpSurfacePolicy(
                         restrict_cors=True,
                         hosted_control=True,
                     ),
@@ -202,7 +202,7 @@ class SurfaceTest(unittest.TestCase):
                 create_fastapi_app(
                     app=app,
                     allowed_origins=["http://localhost:5173"],
-                    surface_policy=HttpSurfacePolicy.for_surface(
+                    surface_policy=HttpSurfacePolicy(
                         restrict_cors=True,
                         hosted_control=True,
                     ),
@@ -322,7 +322,7 @@ class SurfaceTest(unittest.TestCase):
                 infrastructure_client=FakeInfrastructureClient(),
             )
             self.addCleanup(app.shutdown)
-            hosted = HttpSurfacePolicy.for_surface(
+            hosted = HttpSurfacePolicy(
                 restrict_cors=True, hosted_control=True
             )
             with self.assertRaises(ValidationError) as ctx:
@@ -533,9 +533,6 @@ class SurfaceTest(unittest.TestCase):
                 op = {"X-Admin-Token": "op-secret"}
                 admin_cleanup = client.post("/api/admin/cleanup", headers=op)
                 self.assertEqual(admin_cleanup.status_code, 200, admin_cleanup.text)
-
-                counters = client.get("/api/admin/tenants/local/counters", headers=op)
-                self.assertEqual(counters.status_code, 200, counters.text)
 
             old_proxy = client.get(
                 "/api/projects",

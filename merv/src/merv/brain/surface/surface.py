@@ -488,14 +488,14 @@ def _local_brain_root(
 
 
 def _control_http_surface(*, env: Mapping[str, str] | None = None) -> HttpSurfacePolicy:
-    return HttpSurfacePolicy.for_surface(
+    return HttpSurfacePolicy(
         restrict_cors=env_bool(CONTROL_RESTRICT_CORS_ENV_VAR, True, env=env),
         hosted_control=True,
     )
 
 
 def _local_http_surface() -> HttpSurfacePolicy:
-    return HttpSurfacePolicy.for_surface(
+    return HttpSurfacePolicy(
         restrict_cors=False,
         hosted_control=False,
     )

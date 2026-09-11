@@ -6,7 +6,7 @@ import json
 from typing import Any
 from urllib.parse import parse_qsl
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from ...identity import Principal, is_human_session
@@ -17,25 +17,6 @@ from ..request_body import RequestBodyTooLarge, read_limited_body
 _NO_STORE = {"Cache-Control": "no-store"}
 _MAX_DCR_BODY_BYTES = 32 * 1024
 _MAX_TOKEN_BODY_BYTES = 8 * 1024
-
-
-def install_routes(
-    http: FastAPI,
-    *,
-    service: OAuthControl | None,
-    allowed_origins: list[str],
-    ui_base_url: str,
-    canonical_mcp_resource: str,
-) -> None:
-    if service is not None:
-        http.include_router(
-            build_router(
-                service=service,
-                allowed_origins=allowed_origins,
-                ui_base_url=ui_base_url,
-                canonical_mcp_resource=canonical_mcp_resource,
-            )
-        )
 
 
 def public_request(request: Request, *, enabled: bool) -> bool:
@@ -61,14 +42,8 @@ def challenge_denial(
     return response
 
 
-def bearer_denial(
-    request: Request,
-    *,
-    message: str,
-    enabled: bool,
-    session_denial: JSONResponse | None,
-) -> JSONResponse:
-    response = session_denial or JSONResponse(
+def bearer_denial(request: Request, *, message: str, enabled: bool) -> JSONResponse:
+    response = JSONResponse(
         {
             "detail": f"{message}; sign in on the web UI or authenticate with "
             "an mk_ project key",
@@ -415,7 +390,6 @@ __all__ = [
     "bearer_denial",
     "challenge_denial",
     "credential_audience_denial",
-    "install_routes",
     "protected_resource_metadata_url",
     "public_request",
 ]

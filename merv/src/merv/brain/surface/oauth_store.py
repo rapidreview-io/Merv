@@ -281,27 +281,23 @@ class SqlOAuthRepository:
         )
 
     @staticmethod
-    def _delete_never_used(
-        *, conn: Any, cutoff: str | None, limit: int | None
-    ) -> int:
-        """Delete never-used registrations, older than ``cutoff`` if given,
-        at most ``limit`` if given (the subquery form is what both dialects accept)."""
-        if limit is not None and limit <= 0:
+    def _delete_never_used(*, conn: Any, cutoff: str | None, limit: int) -> int:
+        """Delete up to ``limit`` never-used registrations, older than
+        ``cutoff`` if given (the subquery form is what both dialects accept)."""
+        if limit <= 0:
             return 0
         aged = "" if cutoff is None else "created_at < ? AND"
         params = () if cutoff is None else (cutoff,)
-        if limit is None:
-            statement = f"DELETE FROM oauth_clients WHERE {aged} {_NEVER_USED_PREDICATE}"
-        else:
-            statement = f"""
-                DELETE FROM oauth_clients WHERE client_id IN (
-                  SELECT client_id FROM oauth_clients
-                  WHERE {aged} {_NEVER_USED_PREDICATE}
-                  ORDER BY created_at, client_id LIMIT ?
-                )
-                """
-            params = (*params, limit)
-        return deleted_rows(conn.execute(statement, params))
+        return deleted_rows(conn.execute(
+            f"""
+            DELETE FROM oauth_clients WHERE client_id IN (
+              SELECT client_id FROM oauth_clients
+              WHERE {aged} {_NEVER_USED_PREDICATE}
+              ORDER BY created_at, client_id LIMIT ?
+            )
+            """,
+            (*params, limit),
+        ))
 
     def insert_code(self, *, code: AuthorizationCode) -> None:
         # Column order is the dataclass's field order, for both credential tables.
