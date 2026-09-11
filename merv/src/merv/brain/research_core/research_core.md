@@ -94,7 +94,4 @@ Candidates reference durable artifacts, service objects or workspaces awaiting s
 staging and promotion are append-only, with reasons and compare-and-swap at promotion.
 All writes and lookups enforce project ownership. Events commit with their mutations;
 sealing uses explicit association IDs while generic content stays immutable and reusable.
-
-## Maintenance
-
 Keep this note under 100 lines; qualified inline references are checked by the documentation ratchet.
