@@ -1,7 +1,9 @@
 """Repeated node authentication must not reopen artifact-dependent work start."""
 
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 import secrets
+from threading import Event
 from unittest.mock import patch
 
 from merv.shared.errors import WorkflowError
@@ -46,6 +48,36 @@ class AuthenticationContentionTest(ResearchCase):
                 patch.object(self.app.blobs, "get", tracked_get):
             self.assertIsNotNone(self.app.agent_sessions.authenticate(session_secret=self.secret))
         self.assertEqual(reads, [], "repeated authentication fetched blobs; True means writer lock was held")
+
+    def test_blob_outage_does_not_break_repeated_authentication(self):
+        self.assertIsNotNone(self.app.agent_sessions.authenticate(session_secret=self.secret))
+        with patch.object(self.app.blobs, "get", side_effect=OSError("blob service unavailable")) as get:
+            self.assertIsNotNone(self.app.agent_sessions.authenticate(session_secret=self.secret))
+        get.assert_not_called()
+
+    def test_slow_blob_reader_does_not_hold_up_an_independent_writer(self):
+        self.assertIsNotNone(self.app.agent_sessions.authenticate(session_secret=self.secret))
+        entered, release = Event(), Event()
+        get = self.app.blobs.get
+
+        def slow_get(**kwargs):
+            entered.set()
+            release.wait(5)
+            return get(**kwargs)
+
+        def independent_writer():
+            with self.app.store.transaction() as conn:
+                conn.execute("UPDATE projects SET summary = summary WHERE id = ?", (self.project_id,))
+
+        with ThreadPoolExecutor(max_workers=2) as pool, patch.object(self.app.blobs, "get", slow_get):
+            authentication = pool.submit(self.app.agent_sessions.authenticate, session_secret=self.secret)
+            try:
+                entered.wait(0.1)
+                pool.submit(independent_writer).result(timeout=2)
+                self.assertIsNotNone(authentication.result(timeout=2))
+                self.assertFalse(entered.is_set())
+            finally:
+                release.set()
 
     def test_invalid_exit_artifact_does_not_block_work_but_still_blocks_transition(self):
         self.submit(target_type="experiment", target_id=self.experiment_id,
