@@ -79,7 +79,7 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         self.client = TestClient(
             create_fastapi_app(
                 self.app,
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=True, hosted_control=True
                 ),
                 auth=self.verifier,
@@ -206,7 +206,7 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         client = TestClient(
             create_fastapi_app(
                 self.app,
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=True, hosted_control=True
                 ),
                 auth=self.verifier,
@@ -654,12 +654,11 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         admin_client = TestClient(
             create_fastapi_app(
                 self.app,
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=True, hosted_control=True
                 ),
                 auth=self.verifier,
                 cleanup=_Cleanup(),
-                tenant_counters=lambda *, tenant_id: {"tenant_id": tenant_id},
             ),
             raise_server_exceptions=False,
         )
@@ -670,7 +669,6 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         # A JWT owner needs MERV_ADMIN_TOKEN on every global admin route.
         for path, method in (
             ("/api/admin/cleanup", admin_client.post),
-            ("/api/admin/tenants/local/counters", admin_client.get),
         ):
             denied = method(path, headers=_bearer(self.jwt_a))
             self.assertEqual(denied.status_code, 403, path)
@@ -698,12 +696,11 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         open_client = TestClient(
             create_fastapi_app(
                 self.app,
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=True, hosted_control=True
                 ),
                 auth=None,
                 cleanup=_Cleanup(),
-                tenant_counters=lambda *, tenant_id: {"tenant_id": tenant_id},
                 # An open hosted surface is only composable when named (SEC-02).
                 env={ALLOW_OPEN_CONTROL_ENV_VAR: "1"},
             ),
@@ -711,7 +708,6 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         )
         for path, method in (
             ("/api/admin/cleanup", open_client.post),
-            ("/api/admin/tenants/local/counters", open_client.get),
         ):
             denied = method(path)
             self.assertEqual(denied.status_code, 403, path)

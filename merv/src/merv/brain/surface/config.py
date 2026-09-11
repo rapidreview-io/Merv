@@ -13,10 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from merv.shared.client_config import (
-    CONTROL_URL_ENV_VAR,
-    read_client_config,
-)
+from merv.shared.client_config import read_client_config
 
 from ..kernel.env import env_int, env_value
 from ..kernel.ports.blob_store import BlobStore
@@ -104,15 +101,6 @@ def resolve_mode(env: Mapping[str, str] | None = None) -> Mode:
 def resolve_db_url(env: Mapping[str, str] | None = None) -> str | None:
     """The configured record-store URL, or None for the SQLite path default."""
     return env_value(DB_URL_ENV_VAR, env=env)
-
-
-def resolve_control_url(env: Mapping[str, str] | None = None) -> str | None:
-    """The configured brain URL (hosted or localhost), or None."""
-    raw = env_value(CONTROL_URL_ENV_VAR, env=env) or ""
-    if not raw:
-        configured = read_client_config(env).get("control_url", "")
-        raw = configured if isinstance(configured, str) else ""
-    return raw.rstrip("/") or None
 
 
 def resolve_storage_max_upload_bytes(env: Mapping[str, str] | None = None) -> int:

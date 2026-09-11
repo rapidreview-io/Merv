@@ -126,10 +126,6 @@ class ToolCatalog(Protocol):
     def __call__(self) -> list[JsonObject]: ...
 
 
-class ToolFilter(Protocol):
-    def __call__(self, tool: JsonObject) -> bool: ...
-
-
 class ToolCaller(Protocol):
     def __call__(
         self,
@@ -153,10 +149,6 @@ class SessionRecorder(Protocol):
         client_version: str,
         protocol_version: str,
     ) -> None: ...
-
-
-class Authorizer(Protocol):
-    def __call__(self, authorization: str | None) -> None: ...
 
 
 class RefusalLedger(Protocol):
@@ -289,8 +281,6 @@ class McpStreamableHttp:
         *,
         list_tools: ToolCatalog,
         call_tool: ToolCaller,
-        allow_tool: ToolFilter | None,
-        authorize: Authorizer | None,
         plan_tool: ToolPlanner | None = None,
         ledger: RefusalLedger | None = None,
         record_session: SessionRecorder | None = None,
@@ -298,8 +288,6 @@ class McpStreamableHttp:
     ) -> None:
         self._list_tools = list_tools
         self._call_tool = call_tool
-        self._allow_tool = allow_tool
-        self._authorize = authorize
         self._plan_tool = plan_tool
         self._ledger = ledger
         self._record_session = record_session
@@ -341,11 +329,8 @@ class McpStreamableHttp:
         @http.post("/mcp")
         async def mcp_streamable_http(
             request: Request,
-            authorization: str | None = Header(default=None),
             mcp_protocol_version: str | None = Header(default=None),
         ) -> Response:
-            if self._authorize is not None:
-                self._authorize(authorization)
             version_denial = _protocol_version_denial(mcp_protocol_version)
             if version_denial is not None:
                 self._ledger_reject(
@@ -511,12 +496,9 @@ class McpStreamableHttp:
         )
 
     def _catalog(self) -> list[JsonObject]:
-        tools = self._list_tools()
-        if self._allow_tool is not None:
-            tools = [tool for tool in tools if self._allow_tool(tool)]
         visible = [
             tool
-            for tool in tools
+            for tool in self._list_tools()
             if tool_visible_over_mcp(name=str(tool.get("name") or ""))
             and not tool.get("hidden")
         ]

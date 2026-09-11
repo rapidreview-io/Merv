@@ -35,9 +35,9 @@ from merv.brain.surface.transport.http_server import (
 from merv.shared.errors import ValidationError
 from tests.support.brain import TestBrain
 
-HOSTED = HttpSurfacePolicy.for_surface(restrict_cors=True, hosted_control=True)
+HOSTED = HttpSurfacePolicy(restrict_cors=True, hosted_control=True)
 # The same unauthenticated surface the omitted argument composes, spelled out.
-LOCAL = HttpSurfacePolicy.for_surface(restrict_cors=False, hosted_control=False)
+LOCAL = HttpSurfacePolicy(restrict_cors=False, hosted_control=False)
 
 # Every spelling that must NOT reach a bind under the local policy: the two
 # wildcards, an IPv6 wildcard in brackets, a routable LAN address, IPv4-mapped

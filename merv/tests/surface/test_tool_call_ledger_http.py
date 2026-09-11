@@ -184,7 +184,7 @@ class AuthDenialLedgerTest(unittest.TestCase):
             create_fastapi_app(
                 self.brain,
                 allowed_origins=["https://ui.example"],
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=True, hosted_control=True
                 ),
                 auth=SupabaseVerifier(
@@ -243,7 +243,7 @@ class HostedSandboxLookupLedgerTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.ledger = RecordingLedger()
-        self.surface = HttpSurfacePolicy.for_surface(
+        self.surface = HttpSurfacePolicy(
             restrict_cors=True, hosted_control=True
         )
 
@@ -308,7 +308,7 @@ class OpenHostedLabelTest(unittest.TestCase):
             create_fastapi_app(
                 self.brain,
                 allowed_origins=["https://ui.example"],
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=True, hosted_control=True
                 ),
                 auth=None,

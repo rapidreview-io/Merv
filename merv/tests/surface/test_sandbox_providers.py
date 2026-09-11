@@ -99,7 +99,7 @@ class SandboxProviderHttpBoundaryTest(unittest.TestCase):
         self.client = TestClient(
             create_fastapi_app(
                 self.brain,
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=True, hosted_control=True
                 ),
                 auth=self.verifier,

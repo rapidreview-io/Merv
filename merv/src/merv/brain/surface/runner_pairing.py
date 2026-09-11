@@ -261,9 +261,7 @@ class RunnerPairings:
                     "VALUES (?, ?)",
                     (principal_label, format_iso(now)),
                 )
-            if throttled or missed:
-                row = None
-            else:
+            if not (throttled or missed):
                 approved = self._approve_row(
                     tx=tx,
                     row=row,

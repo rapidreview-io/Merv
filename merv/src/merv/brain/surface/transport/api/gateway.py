@@ -144,7 +144,6 @@ class RequestAuthenticator:
                     request,
                     message="unknown, expired, or released agent session",
                     enabled=self.oauth_enabled,
-                    session_denial=None,
                 )
             principal = _session_principal(record)
         elif self.verifier is None:
@@ -157,7 +156,6 @@ class RequestAuthenticator:
                     request,
                     message=exc.message,
                     enabled=self.oauth_enabled,
-                    session_denial=None,
                 )
         request.state.principal = principal
         request.state.authenticated = True

@@ -105,7 +105,7 @@ class ProjectKeys:
             grant_scope=grant_scope,
         )
         self._insert(record)
-        return {"key": _public_record(record), "secret": secret}
+        return {"key": public_key_record(record), "secret": secret}
 
     def rotate(
         self,
@@ -130,7 +130,7 @@ class ProjectKeys:
         )
         if not self._rotate_record(record, revoked_at=now_iso()):
             raise NotFoundError(f"project key not found: {parent_key_id}")
-        return {"key": _public_record(record), "secret": secret}
+        return {"key": public_key_record(record), "secret": secret}
 
     def register_digest(
         self,
@@ -229,7 +229,7 @@ class ProjectKeys:
     def list(self, *, project_id: str, owner_user_id: str) -> dict[str, object]:
         return {
             "keys": [
-                _public_record(record)
+                public_key_record(record)
                 for record in self._records_for_owner(
                     _required(project_id, field="project_id"),
                     _required(owner_user_id, field="owner_user_id"),
@@ -260,7 +260,7 @@ class ProjectKeys:
             record = _record(conn.execute(
                 "SELECT * FROM project_api_keys WHERE id = ?", (key_id,)
             ).fetchone())
-        return {"key": _public_record(record)}
+        return {"key": public_key_record(record)}
 
     def prune(self, *, now: datetime | None = None) -> int:
         """Delete dead OAuth-minted keys nothing can still reach.
@@ -448,17 +448,12 @@ def _live(record: ProjectKeyRecord | None) -> ProjectKeyRecord | None:
     return record
 
 
-def _public_record(record: ProjectKeyRecord) -> dict[str, object]:
-    result = asdict(record)
-    result.pop("secret_digest")
-    result.pop("audience")
-    result.pop("oauth_family_id")
-    return result
-
-
 def public_key_record(record: ProjectKeyRecord) -> dict[str, object]:
-    """The non-secret projection other surface components may return."""
-    return _public_record(record)
+    """The non-secret projection: never the digest, audience, or family."""
+    result = asdict(record)
+    for secret in ("secret_digest", "audience", "oauth_family_id"):
+        del result[secret]
+    return result
 
 
 def _grant_scope(value: object) -> str:

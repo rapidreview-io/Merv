@@ -694,7 +694,7 @@ class UploadRouteAuthExemptionTest(unittest.TestCase):
                 raise AssertionError("upload routes must never reach the verifier")
 
         authenticator = RequestAuthenticator(
-            surface=HttpSurfacePolicy.for_surface(
+            surface=HttpSurfacePolicy(
                 restrict_cors=True, hosted_control=True
             ),
             verifier=RejectingVerifier(),

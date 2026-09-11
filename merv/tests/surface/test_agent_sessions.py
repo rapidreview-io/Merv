@@ -637,7 +637,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         hosted = TestClient(
             create_fastapi_app(
                 self.brain.server.app,
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=True, hosted_control=True
                 ),
                 auth=verifier,
@@ -678,7 +678,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         hosted = TestClient(
             create_fastapi_app(
                 self.brain.server.app,
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=True, hosted_control=True
                 ),
                 auth=SupabaseVerifier(
@@ -763,7 +763,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         hosted = TestClient(
             create_fastapi_app(
                 self.brain.server.app,
-                surface_policy=HttpSurfacePolicy.for_surface(
+                surface_policy=HttpSurfacePolicy(
                     restrict_cors=True, hosted_control=True
                 ),
                 auth=SupabaseVerifier(

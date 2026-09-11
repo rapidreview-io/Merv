@@ -114,7 +114,7 @@ class UvicornHttpServer:
 
     The refusal keys on the EFFECTIVE policy, not on whether one was named: a
     local policy is the unauthenticated surface whether it arrives by omission
-    or by ``for_surface(hosted_control=False)``, and it is only honest on a
+    or by ``HttpSurfacePolicy(hosted_control=False)``, and it is only honest on a
     loopback bind. Only ``hosted_control`` — which has already made the auth
     decision at the gate — may bind off-machine.
 
