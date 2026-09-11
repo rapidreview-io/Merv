@@ -125,6 +125,8 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_agent ON tool_calls(agent_id, id);
 CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id, id);
 CREATE INDEX IF NOT EXISTS idx_events_target
   ON events(project_id, target_type, target_id, id);
+-- A work node's own history is read by its id alone.
+CREATE INDEX IF NOT EXISTS idx_events_target_id ON events(target_id, id);
 """
 
 
