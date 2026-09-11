@@ -49,16 +49,9 @@ def build_router(*, artifacts: Artifacts) -> APIRouter:
     api_router = APIRouter()
 
     def read_artifact(project_id: str, artifact_id: str):
-        found = artifacts.get(
+        return artifacts.resolve(
             project_id=project_id, artifact_ids=(artifact_id,), include="document"
-        ) or artifacts.contents.get(
-            project_id=project_id, artifact_ids=(artifact_id,), include="document"
-        )
-        if not found:
-            raise NotFoundError(
-                f"artifact not found in project {project_id}: {artifact_id}"
-            )
-        return found[0]
+        )[0]
 
     async def upload(token: str, request: Request, *, kind: str) -> Any:
         # Token first: an unknown token 404s before any body byte is buffered,
@@ -131,10 +124,6 @@ def build_router(*, artifacts: Artifacts) -> APIRouter:
             artifact_id=artifact_id,
             link_path=rel,
         )
-        if data is None:
-            data = artifacts.contents.figure(
-                project_id=project_id, artifact_id=artifact_id, link_path=rel
-            )
         if data is None:
             return JSONResponse(
                 {"detail": f"figure not found: {rel}", "error_code": "not_found"},

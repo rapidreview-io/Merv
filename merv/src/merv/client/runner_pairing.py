@@ -23,7 +23,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from merv.shared.client_config import ClientError, read_client_document
+from merv.shared.client_config import ClientError, NoRedirect, read_client_document
 from merv.shared.user_codes import format_user_code
 from .private_files import (
     replace_json_document,
@@ -145,7 +145,7 @@ class PairingClient:
             headers={"Content-Type": "application/json", "Accept": "application/json"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.build_opener(NoRedirect()).open(request, timeout=self.timeout) as response:
                 return response.status, _json_or_none(response.read())
         except urllib.error.HTTPError as exc:
             return exc.code, _json_or_none(exc.read())

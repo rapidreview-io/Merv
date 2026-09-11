@@ -1123,14 +1123,19 @@ class WorkspaceManager:
         if not bare.exists():
             source = self.settings.repository.expanduser().resolve()
             source_base = self._rev_parse(source, self.settings.base_ref)
-            result = subprocess.run(
-                ["git", "clone", "--bare", str(source), str(bare)],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=60,
-            )
+            # A clone that fails or times out must leave nothing behind, or
+            # every later cycle would find the half-made repository and stop
+            # here for good; the error is the daemon's retryable kind.
+            try:
+                result = subprocess.run(
+                    ["git", "clone", "--bare", str(source), str(bare)],
+                    capture_output=True, text=True, check=False, timeout=600,
+                )
+            except subprocess.TimeoutExpired as exc:
+                shutil.rmtree(bare, ignore_errors=True)
+                raise RunnerError("could not create Merv repository: git clone timed out") from exc
             if result.returncode:
+                shutil.rmtree(bare, ignore_errors=True)
                 message = result.stderr.strip() or result.stdout.strip() or "git failed"
                 raise RunnerError(f"could not create Merv repository: {message}")
             self._git(bare, "update-ref", "refs/merv/central", source_base)

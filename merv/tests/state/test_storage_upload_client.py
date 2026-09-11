@@ -63,7 +63,7 @@ class StorageUploadClientTest(unittest.TestCase):
             path = Path(tmp) / "archive.bin"
             path.write_bytes(data)
             with patch(
-                "merv.client.storage_upload.urllib.request.urlopen",
+                "merv.client.storage_upload._open",
                 side_effect=open_url,
             ):
                 result = upload_storage_file(
@@ -104,7 +104,7 @@ class StorageUploadClientTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "file"
             path.write_bytes(data)
-            with patch("merv.client.storage_upload.urllib.request.urlopen", side_effect=open_url):
+            with patch("merv.client.storage_upload._open", side_effect=open_url):
                 upload_storage_file(path=path, target_url="https://merv.test/u")
         self.assertEqual(writes, [("https://store.test/2", b"efgh", "signed-checksum")])
         self.assertEqual(completion["parts"], [{"part_number": 2, "etag": '"second"'}])
@@ -130,7 +130,7 @@ class StorageUploadClientTest(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as tmp:
                     path = Path(tmp) / "empty"
                     path.write_bytes(b"")
-                    with patch("merv.client.storage_upload.urllib.request.urlopen", side_effect=open_url):
+                    with patch("merv.client.storage_upload._open", side_effect=open_url):
                         upload_storage_file(path=path, target_url="https://merv.test/u")
                 self.assertEqual(writes, [] if already_uploaded else [b""])
 
@@ -149,7 +149,7 @@ class StorageUploadClientTest(unittest.TestCase):
             path = Path(tmp) / "archive.bin"
             path.write_bytes(b"nope")
             with patch(
-                "merv.client.storage_upload.urllib.request.urlopen",
+                "merv.client.storage_upload._open",
                 return_value=_Response(json.dumps(target).encode()),
             ):
                 with self.assertRaises(StorageUploadError) as ctx:

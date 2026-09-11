@@ -8,6 +8,8 @@ import json
 import time
 import urllib.error
 import urllib.request
+
+from merv.shared.client_config import NoRedirect
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Iterable
@@ -109,7 +111,7 @@ def _upload_part(
                 method="PUT",
                 headers={**(headers or {}), "Content-Length": str(length)},
             )
-            with urllib.request.urlopen(request, timeout=3600) as response:  # noqa: S310
+            with _open(request, timeout=3600) as response:
                 etag = str(response.headers.get("ETag") or "").strip()
             if not etag:
                 raise StorageUploadError(
@@ -137,6 +139,12 @@ def _file_slice(*, path: Path, offset: int, length: int) -> Iterable[bytes]:
             yield chunk
 
 
+def _open(request: urllib.request.Request, *, timeout: float):
+    """Open a request that follows no redirect: neither the bearer nor a
+    presigned part may travel to a host nobody verified."""
+    return urllib.request.build_opener(NoRedirect()).open(request, timeout=timeout)
+
+
 def _request_json(
     url: str, *, method: str = "GET", payload: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -146,7 +154,7 @@ def _request_json(
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
+        with _open(request, timeout=60) as response:
             body = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")

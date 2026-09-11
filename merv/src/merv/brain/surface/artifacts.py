@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 from merv.shared.shell_commands import api_base, curl_upload_command
 
-from ..artifacts import Artifact as Content, CompletedFigure, PendingUpload
+from ..artifacts import CompletedFigure, PendingUpload
 from ..research_core import (
     Artifact,
     ArtifactTarget,
@@ -66,9 +66,13 @@ def pending_upload_v1(pending: PendingUpload, *, base_url: str = "") -> dict[str
     }
 
 
-def artifact_meta_v1(artifact: Artifact | Content) -> dict[str, Any]:
-    """Serialize metadata without ever exposing the bearer upload token."""
-    if isinstance(artifact, Content):
+def artifact_meta_v1(artifact: Artifact) -> dict[str, Any]:
+    """Serialize metadata without ever exposing the bearer upload token.
+
+    Content nothing associated keeps its own, slimmer shape: no association
+    fields, and the digest under the name the content routes use.
+    """
+    if not artifact.target_type:
         return {
             field: getattr(artifact, field)
             for field in (
@@ -132,7 +136,7 @@ def _is_textual_type(content_type: str) -> bool:
     )
 
 
-def content_envelope_v1(artifact: Artifact | Content) -> dict[str, Any]:
+def content_envelope_v1(artifact: Artifact) -> dict[str, Any]:
     content_type = artifact.content_type
     data = artifact.data
     text: str | None = None
@@ -264,31 +268,14 @@ class ArtifactTools:
         ids = (artifact_id,) if artifact_id else requested_ids
         if ids:
             include = "document" if include_content else "metadata"
-            found = {
-                a.id: a
-                for a in self.artifacts.get(
-                    artifact_ids=ids,
-                    project_id=project_id,
-                    include=include,
-                )
-            }
-            missing = tuple(i for i in ids if i not in found)
-            found.update(
-                (a.id, a)
-                for a in self.artifacts.contents.get(
-                    artifact_ids=missing,
-                    project_id=project_id,
-                    include=include,
-                )
-            )
-            _require_all(ids, tuple(found.values()), project_id=project_id)
             rows = []
-            for item in ids:
-                artifact = found[item]
+            for artifact in self.artifacts.resolve(
+                artifact_ids=ids, project_id=project_id, include=include
+            ):
                 row = artifact_meta_v1(artifact)
                 row["download_url"] = (
                     f"{api_base(base_url)}"
-                    f"/api/projects/{quote(project_id, safe='')}/artifacts/{quote(item, safe='')}/file"
+                    f"/api/projects/{quote(project_id, safe='')}/artifacts/{quote(artifact.id, safe='')}/file"
                 )
                 if include_content:
                     row["figures"] = list(artifact.figures)
@@ -309,26 +296,3 @@ class ArtifactTools:
                 roles=(role,) if role else (),
             )
         )
-
-
-def _require_all(
-    requested: tuple[str, ...],
-    found: tuple[Artifact | Content, ...],
-    *,
-    project_id: str | None,
-) -> None:
-    found_ids = {artifact.id for artifact in found}
-    missing = [artifact_id for artifact_id in requested if artifact_id not in found_ids]
-    if not missing:
-        return
-    scope = f" in project {project_id}" if project_id is not None else ""
-    if len(requested) == 1:
-        raise NotFoundError(f"artifact not found{scope}: {missing[0]}")
-    raise NotFoundError(
-        f"artifacts not found{scope}: {', '.join(missing)}",
-        details={
-            "field": "artifact_ids",
-            "artifact_ids": list(requested),
-            "missing_artifact_ids": missing,
-        },
-    )
