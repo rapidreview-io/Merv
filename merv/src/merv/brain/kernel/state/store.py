@@ -404,6 +404,11 @@ def next_created_seq(*, conn: Connection, table: str) -> int:
     return int(row["next_seq"])
 
 
+def deleted_rows(cursor: Any) -> int:
+    """How many rows one DELETE removed, on either dialect."""
+    return max(0, int(getattr(cursor, "rowcount", 0) or 0))
+
+
 def row_to_dict(*, row: Row | Mapping[str, Any] | None) -> dict[str, Any] | None:
     """Plain dict from a row of either dialect (sqlite3.Row or mapping)."""
     if row is None:

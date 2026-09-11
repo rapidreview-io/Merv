@@ -55,7 +55,8 @@ from .brain_dirs import resolve_brain_state_root, resolve_local_brain_staging
 from ..kernel.env import env_bool, env_value
 from ..kernel.ports.blob_store import BlobStore, EvidenceBlobStore
 from ..kernel.state import BaseStateStore
-from ..kernel.state.activity import register_activity_vocabulary
+from ..kernel.retention import Retention
+from ..kernel.state.activity import error_head, register_activity_vocabulary
 from ..kernel.state.tool_call_ledger import (
     ToolCallLedger,
     configured_retention_days,
@@ -117,7 +118,12 @@ class Surface:
         self.tool_ledger = ToolCallLedger(
             store=store, on_failure=self._ledger_dropped, payloads=self.tool_payloads
         )
-        self.tool_ledger.start_retention()
+        # One clock for every owner's sweep. Owners register as they are
+        # built, here and in hosted composition; the loop reads the registry
+        # each tick, so a late arrival still gets swept.
+        self.retention = Retention(on_error=self._sink_failed)
+        self.retention.add("tool_calls", self.tool_ledger.prune)
+        self.retention.start()
         self.agent_identities = AgentIdentities(
             store=store, mode=agent_identity_mode, payloads=self.tool_payloads
         )
@@ -148,6 +154,9 @@ class Surface:
         # Leases learn whether their instance still stands from the workflow
         # runtime's facts; Agent Sessions never reads a research record.
         self.agent_sessions = AgentSessions(store=store, facts=self.workflows.runtime)
+        self.retention.add("agent_sessions", self.agent_sessions.prune)
+        self.retention.add("feed", self.feed.prune)
+        self.retention.add("artifacts", self.artifact_store.prune)
         self.artifact_tools = ArtifactTools(artifacts=self.artifacts)
         self.infrastructure_client = infrastructure_client
         self.sandbox_providers = RemoteProviders(store=store, client=infrastructure_client)
@@ -229,14 +238,19 @@ class Surface:
         )
 
     def _ledger_dropped(self, error: str) -> None:
+        self._sink_failed("tool_calls", error)
+
+    def _sink_failed(self, name: str, error: object) -> None:
+        """Announce work one sink could not do; never raise into its caller."""
         with suppress(Exception):
             self.activity.emit(
                 event_type="telemetry.dropped",
-                payload={"sink": "tool_calls", "status": "error", "error": error},
+                payload={"sink": name, "status": "error", "error": error_head(error=str(error))},
             )
 
     def shutdown(self) -> None:
         self.application.workflow_deliveries.stop()
+        self.retention.stop()
         if self.infrastructure_client is not None:
             with suppress(Exception):
                 self.infrastructure_client.close()
@@ -353,6 +367,10 @@ def build_control_server(
         agent_sessions=app.agent_sessions,
     )
     project_keys = ProjectKeys(store=app._store)
+    # The two credential tables only exist in hosted composition, so they join
+    # the clock here rather than in __init__; it has been running since then.
+    app.retention.add("oauth", oauth_repository.prune)
+    app.retention.add("project_keys", project_keys.prune)
     # Device-code pairing registers runner-generated key digests; it exists
     # exactly where owner key management exists (hosted auth), so the loopback
     # brain, which needs no runner credential, never mounts it.

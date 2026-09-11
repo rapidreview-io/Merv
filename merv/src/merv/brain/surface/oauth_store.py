@@ -12,7 +12,8 @@ from typing import Any
 
 from ..kernel.env import env_int
 from ..kernel.state.schema import Connection, Migration, SchemaModule
-from ..kernel.state.store import BaseStateStore, row_to_dict
+from ..kernel.retention import RETENTION_BATCH_ROWS, drain
+from ..kernel.state.store import BaseStateStore, deleted_rows, row_to_dict
 from ..kernel.utils import format_iso
 from .oauth import (
     CAP_EVICTION_LIMIT,
@@ -78,8 +79,15 @@ def _fingerprint(client: OAuthClient) -> str:
     )
 
 
-# A registration nobody ever authorized: it holds no credential, so deleting it
-# revokes nothing.
+# A spent refresh token is kept a week past its expiry, so no sweep can race a
+# request still holding one. A spent code is kept for the client's whole
+# unused horizon: it is the evidence the never-used predicate reads, and a
+# client that only ever authorizes (no refresh grant) has no other.
+EXPIRED_REFRESH_GRACE_DAYS = 7
+
+# A registration holding no credential: it authorizes nothing, so deleting it
+# revokes nothing. Expired codes and tokens are deleted before this runs, which
+# is how a client that once authorized something becomes collectable at all.
 _NEVER_USED_PREDICATE = """
   client_id NOT IN (SELECT client_id FROM oauth_authorization_codes)
   AND client_id NOT IN (SELECT client_id FROM oauth_refresh_tokens)
@@ -240,26 +248,59 @@ class SqlOAuthRepository:
         return _client(row)
 
     def prune(self, *, now: datetime | None = None) -> dict[str, Any]:
-        """Delete registrations past the horizon that never authorized anything.
+        """Delete spent credentials, then the registrations left holding none.
+
+        The order is the mechanism. Codes and tokens past their grace go
+        first, so the never-used predicate frees the client they belonged to
+        in the same pass; without that, a registration that ever authorized
+        anything was a lifetime row and the registration cap a lifetime
+        ceiling on how many clients this brain could ever serve.
 
         Reports its own outcome: a failed sweep says ``ok`` False and names the
         error rather than returning zero, which would read as a healthy pass
         that found nothing (audit OPS-03).
         """
-        cutoff = self._cutoff(now)
+        moment = now or datetime.now(tz=UTC)
+        cutoff = self._cutoff(moment)
         try:
-            with self._store.transaction() as conn:
-                deleted = self._delete_never_used(
-                    conn=conn, cutoff=cutoff, limit=None
+            codes = drain(lambda: self._delete_batch(
+                """
+                DELETE FROM oauth_authorization_codes WHERE code_digest IN (
+                  SELECT code_digest FROM oauth_authorization_codes
+                  WHERE expires_at < ? ORDER BY expires_at LIMIT ?
                 )
+                """, (cutoff, RETENTION_BATCH_ROWS),
+            ))
+            # A rotation chain leaves whole or not at all: parent_token_id
+            # names the row before it, so half a chain would dangle, and the
+            # member that expires last is the one that says the grant is over.
+            tokens = drain(lambda: self._delete_batch(
+                """
+                DELETE FROM oauth_refresh_tokens WHERE family_id IN (
+                  SELECT family_id FROM oauth_refresh_tokens
+                  GROUP BY family_id HAVING MAX(expires_at) < ?
+                  ORDER BY MAX(expires_at) LIMIT ?
+                )
+                """, (_horizon(moment, EXPIRED_REFRESH_GRACE_DAYS), RETENTION_BATCH_ROWS),
+            ))
+            deleted = drain(lambda: self._delete_never_used_batch(cutoff=cutoff))
         except Exception as exc:  # noqa: BLE001 -- one sweep must not abort the pass
-            return {"deleted": 0, "ok": False, "cutoff": cutoff, "error": str(exc)[:200]}
-        return {"deleted": deleted, "ok": True, "cutoff": cutoff}
+            return {"deleted": 0, "codes": 0, "tokens": 0, "ok": False,
+                    "cutoff": cutoff, "error": str(exc)[:200]}
+        return {"deleted": deleted, "codes": codes, "tokens": tokens,
+                "ok": True, "cutoff": cutoff}
+
+    def _delete_batch(self, sql: str, params: tuple[Any, ...]) -> int:
+        with self._store.transaction() as conn:
+            return deleted_rows(conn.execute(sql, params))
+
+    def _delete_never_used_batch(self, *, cutoff: str) -> int:
+        with self._store.transaction() as conn:
+            return self._delete_never_used(conn=conn, cutoff=cutoff, limit=RETENTION_BATCH_ROWS)
 
     def _cutoff(self, now: datetime | None) -> str:
-        return format_iso(
-            (now or datetime.now(tz=UTC))
-            - timedelta(days=self.unused_client_ttl_days)
+        return _horizon(
+            now or datetime.now(tz=UTC), self.unused_client_ttl_days
         )
 
     @staticmethod
@@ -289,8 +330,7 @@ class SqlOAuthRepository:
                 )
                 """
             params = (*params, limit)
-        cursor = conn.execute(statement, params)
-        return max(0, int(getattr(cursor, "rowcount", 0) or 0))
+        return deleted_rows(conn.execute(statement, params))
 
     def insert_code(self, *, code: AuthorizationCode) -> None:
         with self._store.transaction() as conn:
@@ -446,6 +486,11 @@ class SqlOAuthRepository:
             )
 
 
+def _horizon(now: datetime, days: int) -> str:
+    """The timestamp a row must be older than to be swept."""
+    return format_iso(now - timedelta(days=days))
+
+
 def _client(row: Any) -> OAuthClient | None:
     data = row_to_dict(row=row)
     if data is None:
@@ -492,8 +537,8 @@ __all__ = ["SqlOAuthRepository"]
 OAUTH_DDL = """\
 -- OAuth 2.1 public DCR registrations (agent-anywhere Phase B). A repeated
 -- registration with identical metadata resolves to the SAME client_id, so the
--- Cursor double-DCR race is safe without growing the table; registrations that
--- never authorized anything are swept by CleanupService. Only public clients
+-- Cursor double-DCR race is safe without growing the table; the retention
+-- clock sweeps registrations left holding no credential. Only public clients
 -- (token_endpoint_auth_method=none) exist, so no client secret is stored.
 -- ``metadata_fingerprint`` is that "identical metadata" statement made a
 -- database fact: a digest over the CANONICAL (sorted-array) metadata, under

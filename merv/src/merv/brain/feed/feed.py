@@ -501,7 +501,6 @@ class FeedService:
         media_path: str,
         base_url: str,
     ) -> dict[str, Any]:
-        self._sweep_expired_tokens()
         post_id = new_id(prefix="post")
         token = secrets.token_urlsafe(24)
         extra = {
@@ -587,7 +586,6 @@ class FeedService:
         )
 
     def _pending_upload(self, *, token: str, columns: str = "*") -> Any:
-        self._sweep_expired_tokens()
         with closing(self.store.connect()) as conn:
             row = conn.execute(
                 f"SELECT {columns} FROM feed_upload_tokens "
@@ -600,8 +598,13 @@ class FeedService:
             )
         return row
 
-    def _sweep_expired_tokens(self) -> None:
-        """Own transaction so the sweep survives a failing access path."""
+    def prune(self) -> None:
+        """Delete upload tokens nobody can redeem any more.
+
+        The reads that resolve a token already refuse an expired one, so this
+        only reclaims rows; it runs on the retention clock rather than on the
+        write path of whoever happened to post an image next.
+        """
         with self.store.transaction() as conn:
             conn.execute(
                 "DELETE FROM feed_upload_tokens WHERE expires_at < ?", (now_iso(),)

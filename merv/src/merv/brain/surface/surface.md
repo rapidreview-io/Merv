@@ -14,9 +14,9 @@ under 100 lines; qualify named action, role, tool and skill references inline.
 1. `surface.py` builds one `Surface` from `programs.INSTALLED`: each program's
    graphs become the workflow registry, its records bind through Research, and it
    must declare no effect without a handler and no requirement without a resolver.
-   It composes Research, Workflows, Application, Agent Sessions,
-   Artifacts, Feed, Literature, the merv-sandboxes object and sandbox facades,
-   telemetry, and tools.
+   It composes Research, Workflows, Application, Agent Sessions, Artifacts,
+   Feed, Literature, the merv-sandboxes object and sandbox facades, telemetry,
+   tools, and the retention clock every owner registers its own sweep on.
    Machine setting `features.sandbox=false` substitutes a fail-closed backend
    and omits Sandbox tools and HTTP routes; absence keeps Sandbox enabled.
 2. `tools/contracts.py` merges each installed program's tools and each support

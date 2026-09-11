@@ -13,13 +13,21 @@ from __future__ import annotations
 
 from contextlib import closing
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from ..kernel.secret_tokens import hash_secret, mint_secret, secret_digest_matches
 from ..kernel.state.schema import SchemaModule
-from ..kernel.state.store import BaseStateStore, Connection, row_to_dict
-from ..kernel.utils import NotFoundError, ValidationError, new_id, now_iso, parse_iso
+from ..kernel.retention import RETENTION_BATCH_ROWS, drain
+from ..kernel.state.store import BaseStateStore, Connection, deleted_rows, row_to_dict
+from ..kernel.utils import (
+    NotFoundError,
+    ValidationError,
+    format_iso,
+    new_id,
+    now_iso,
+    parse_iso,
+)
 
 PROJECT_KEY_PREFIX = "mk_"
 
@@ -46,6 +54,11 @@ class ProjectKeyRecord:
     parent_key_id: str | None
     label: str | None = None
 
+
+# OAuth mints a fresh access key every hour and revokes the one before it, so
+# rotation exhaust — not the keys an owner minted — is what grows this table. A
+# dead one is kept a month, then goes once nothing can still reach it.
+OAUTH_KEY_RETENTION_DAYS = 30
 
 # A presented digest must be exactly the stored form ``hash_secret`` produces.
 _DIGEST_HEX_LENGTH = 64
@@ -274,6 +287,42 @@ class ProjectKeys:
         if not revoked:
             raise NotFoundError(f"project key not found: {key_id}")
         return {"revoked": True, "root_key_id": key_id}
+
+    def prune(self, *, now: datetime | None = None) -> int:
+        """Delete dead OAuth-minted keys nothing can still reach.
+
+        Direct ``mk_`` keys are never deleted, revoked or not: there is one row
+        per key an owner minted, and it is the owner's visible record that they
+        minted and killed it. A rotated key goes only once no refresh token
+        names it as current and no child names it as parent, so neither a live
+        grant nor a lineage walk can lose its footing. A chain therefore drains
+        from its newest end, one link per batch, and only once its family has
+        expired: an always-on grant keeps every link parented.
+        """
+        cutoff = format_iso(
+            (now or datetime.now(UTC)) - timedelta(days=OAUTH_KEY_RETENTION_DAYS)
+        )
+
+        def batch() -> int:
+            with self._store.transaction() as conn:
+                return deleted_rows(conn.execute(
+                    """
+                    DELETE FROM project_api_keys WHERE id IN (
+                      SELECT id FROM project_api_keys
+                      WHERE oauth_family_id IS NOT NULL
+                        AND expires_at < ? AND (revoked_at IS NULL OR revoked_at < ?)
+                        AND id NOT IN (SELECT current_key_id FROM oauth_refresh_tokens)
+                        AND id NOT IN (
+                          SELECT parent_key_id FROM project_api_keys
+                          WHERE parent_key_id IS NOT NULL
+                        )
+                      ORDER BY expires_at LIMIT ?
+                    )
+                    """,
+                    (cutoff, cutoff, RETENTION_BATCH_ROWS),
+                ))
+
+        return drain(batch)
 
     def verify_secret(self, *, secret: str) -> ProjectKeyRecord | None:
         """Resolve one bearer with a fresh database read on every call."""

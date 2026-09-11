@@ -79,7 +79,7 @@ without native MCP can carry the id too.
   before anything touches disk.
 
 Retention is one horizon for rows and records: `MERV_TOOL_CALL_RETENTION_DAYS`
-(default **180**). The ledger's own hourly sweep deletes each expiring batch's
+(default **180**). The hourly retention clock's ledger sweep deletes each batch's
 blobs by key before its rows; every blob also carries `expires_at`, so the
 blob store's namespace sweep (`POST /api/admin/cleanup`) is a second net.
 

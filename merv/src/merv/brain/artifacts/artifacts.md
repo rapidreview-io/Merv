@@ -65,8 +65,11 @@ Large datasets and models live in merv-sandboxes behind the Infrastructure facad
   role, at which attempt is Research's fact and lives in its link table.
 - Database transactions serialize one-time completion. Blob writes precede
   metadata commits; orphaned bytes are acceptable after a failed transaction.
-- Expired pending content records can be removed. Completed unassociated
-  content is retained; retention must account for all consumers before deletion.
+- A credential past `expires_at` is refused when it is presented, never merely
+  when a sweep gets to it; `prune` runs on the brain's retention clock and
+  deletes expired pending records and retires expired slots. Completed
+  unassociated content is retained; retention must account for all consumers
+  before deletion.
 - Surface adapters authorize callers. Consumers select upload policies, validate
   accepted content, and record their own audit events and associations.
 - R2 configuration requires `MERV_BLOB_BUCKET`, `MERV_BLOB_ENDPOINT_URL`,

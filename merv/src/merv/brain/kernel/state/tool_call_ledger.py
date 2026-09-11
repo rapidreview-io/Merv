@@ -7,8 +7,8 @@ context bloat — survives a restart, and it must never grow into a second
 payload store (BACKEND_AUDIT §15.2). The payload a call carried is instead
 written beside the row, as one blob in the content-addressed store
 (``tool_call_payloads``), and only for calls attributed to an agent context
-window; the row keeps its key in ``payload_ref`` and the retention sweep
-deletes blob and row together.
+window; the row keeps its key in ``payload_ref`` and ``prune`` — the sweep the
+shared retention clock runs — deletes blob and row together.
 
 Every write is fail-safe in both senses. In errors: a ledger failure is counted
 and announced through ``on_failure``, never raised into the call it was
@@ -57,8 +57,6 @@ LEDGER_STATEMENT_TIMEOUT_MS = 1_000
 # 20k-row DELETE rather than the per-row one. It is spent on a connection the
 # sweep opens and closes for itself, so no writer ever inherits it.
 PRUNE_STATEMENT_TIMEOUT_MS = 30_000
-PRUNE_INITIAL_DELAY_SECONDS = 30.0
-PRUNE_INTERVAL_SECONDS = 3600.0
 # How long a drain (``flush``, and shutdown's ``close``) waits for the writer.
 # Bounded because a process must be able to exit past a database that has
 # stopped answering; rows still queued at the deadline are lost, which is what
@@ -155,28 +153,6 @@ class ToolCallLedger:
         self._queue: queue.Queue[Any] = queue.Queue(maxsize=LEDGER_QUEUE_ROWS)
         self._writer: threading.Thread | None = None
         self._writer_lock = threading.Lock()
-        self._retention_stop = threading.Event()
-        self._retention_thread: threading.Thread | None = None
-
-    def start_retention(self) -> None:
-        """Start the bounded retention timer owned by this ledger."""
-        if self._retention_thread is not None and self._retention_thread.is_alive():
-            return
-        self._retention_stop.clear()
-        self._retention_thread = threading.Thread(
-            target=self._retention_loop,
-            name="tool-call-retention",
-            daemon=True,
-        )
-        self._retention_thread.start()
-
-    def _retention_loop(self) -> None:
-        if self._retention_stop.wait(PRUNE_INITIAL_DELAY_SECONDS):
-            return
-        while True:
-            self.prune()
-            if self._retention_stop.wait(PRUNE_INTERVAL_SECONDS):
-                return
 
     def record(self, call: ToolCallRecord) -> None:
         """Hand one call outcome to the writer. Never blocks, never raises.
@@ -279,20 +255,14 @@ class ToolCallLedger:
         return {"deleted": deleted, "ok": True, "cutoff": cutoff, "more": more}
 
     def close(self) -> None:
-        """Stop retention, drain what is queued, and let the writer go.
+        """Drain what is queued and let the writer go.
 
-        Bounded at both steps: shutdown may not hang on a database that has
-        stopped answering, so rows still queued at the deadline are lost. The
-        writer closes its own connection on the way out, so nothing here ever
+        Bounded: shutdown may not hang on a database that has stopped
+        answering, so rows still queued at the deadline are lost. The writer
+        closes its own connection on the way out, so nothing here ever
         finishes a socket underneath a statement someone else is running — a
         retention sweep's connection included, which this has never held.
         """
-        self._retention_stop.set()
-        if (
-            self._retention_thread is not None
-            and self._retention_thread is not threading.current_thread()
-        ):
-            self._retention_thread.join(timeout=2.0)
         writer = self._writer
         if writer is None or not writer.is_alive():
             return

@@ -422,6 +422,9 @@ class SurfaceTest(unittest.TestCase):
             outcome = server.cleanup.run_all().as_dict()["oauth_clients_pruned"]
             self.assertTrue(outcome["ok"])
             self.assertNotIn("skipped", outcome)
+            # The credential sweeps exist only here, and only if hosted
+            # composition put them on the clock.
+            self.assertLessEqual({"oauth", "project_keys"}, set(server.app.retention.run_once()))
 
     def test_local_deployment_keeps_its_unauthenticated_default(self) -> None:
         # Loopback single-user mode never had a verifier and still does not

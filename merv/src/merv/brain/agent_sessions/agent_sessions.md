@@ -95,5 +95,5 @@ Each session writes immutable metadata, provider trace, and stderr under
 `~/.merv/agent-traces/<session-id>/`. The server stores the frozen assignment,
 sanitized setup, aggregate counters and a trace excerpt it bounds and redacts
 as it stores it: at most 60 events and 8 KiB stderr. The runner only caps and
-may refresh it briefly after close; raw traces stay local, and heartbeats
+may refresh it briefly after close (both go 30 days later); raw traces stay local, and heartbeats
 report idle machines too.
