@@ -58,6 +58,10 @@ docker compose --env-file /secure/merv.env \
 
 Check the selected database overlay's example env file before first startup.
 Put TLS in front of port 8787 and restrict database ports to trusted networks.
+The brain believes `X-Forwarded-*` only from `FORWARDED_ALLOW_IPS` (the compose
+default is loopback plus the docker bridge the host's proxy arrives from); a
+proxy elsewhere must be named there or minted URLs and the OAuth audience
+come out `http://`.
 Startup requires service health when `MERV_REQUIRE_SANDBOX_BACKEND=1` (the
 deployment default). Before a connection's first resource request Merv validates
 its consumer role and selected namespace; the service checks the grant and subject

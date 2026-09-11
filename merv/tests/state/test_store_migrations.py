@@ -15,7 +15,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from merv.brain.kernel.state.schema import BASELINE_VERSION, has_column, has_table
+from merv.brain.kernel.state.persistence import KERNEL_SCHEMA
+from merv.brain.kernel.state.schema import BASELINE_VERSION, has_column, has_table, statements
 from tests.support.schema import ALL_SCHEMAS, LADDER, booted_store
 
 # What migration 65 drops: the fleet the brain used to mirror locally.
@@ -181,8 +182,9 @@ class DeclaredIndexesTest(unittest.TestCase):
 
     def test_every_declared_index_is_installed(self) -> None:
         declared = set()
-        for schema in ALL_SCHEMAS:
-            declared.update(re.findall(r"CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\w+)", schema.ddl))
+        for schema in (KERNEL_SCHEMA, *ALL_SCHEMAS):
+            for statement in statements(schema.ddl):
+                declared.update(re.findall(r"CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\w+)", statement))
         with tempfile.TemporaryDirectory() as tmp:
             store = booted_store(db_path=Path(tmp) / "state.sqlite")
             conn = store.connect()
@@ -194,7 +196,7 @@ class DeclaredIndexesTest(unittest.TestCase):
                 }
             finally:
                 conn.close()
-        self.assertGreater(len(declared), 20)
+        self.assertGreater(len(declared), 40)
         self.assertEqual(declared - installed, set())
 
 

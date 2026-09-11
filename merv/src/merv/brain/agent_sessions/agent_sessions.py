@@ -7,6 +7,7 @@ from contextlib import closing
 from datetime import UTC, datetime, timedelta
 import json
 from typing import Any, Iterable, Mapping, Protocol
+from collections.abc import Callable
 
 from ..kernel.secret_tokens import hash_secret, secret_digest_matches
 from ..kernel.state import BaseStateStore, row_to_dict
@@ -236,8 +237,15 @@ class AgentSessions:
         ).fetchone()
         return self._find(tx=tx, session_id=session_id) if inserted is not None else None
 
-    def authenticate(self, *, session_secret: str) -> dict[str, Any] | None:
-        """Validate, activate, and touch a session credential in one write."""
+    def authenticate(
+        self, *, session_secret: str, authorized: Callable[[Mapping[str, Any]], bool] | None = None
+    ) -> dict[str, Any] | None:
+        """Validate, activate, and touch a session credential in one write.
+
+        ``authorized`` is the caller's say on the lease before it activates: a
+        lease it refuses closes here as revoked, so a denied request never
+        starts the work it was denied.
+        """
         digest = hash_secret(session_secret)
         now = datetime.now(UTC)
         with self.store.transaction() as tx:
@@ -258,6 +266,9 @@ class AgentSessions:
                 self._close(tx=tx, row=row, now=now, reason=invalid_reason)
                 return None
             authenticated = _lease_view(row)
+            if authorized is not None and not authorized(authenticated):
+                self._close(tx=tx, row=row, now=now, reason="source_authority_revoked")
+                return None
             if self._workflow_activation is not None:
                 # The workflow's start marker deduplicates this, including
                 # preserved active leases from before the workflow migration.

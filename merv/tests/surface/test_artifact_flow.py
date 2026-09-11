@@ -187,6 +187,11 @@ class ArtifactFlowTest(unittest.TestCase):
         )["association"]
         self.assertNotEqual(association["id"], artifact["artifact_id"])
         verify_downloads(association["id"])
+        # The feed validates a figure by the id the agent holds — the
+        # association's — resolved to the content the figure belongs to.
+        lookup = self.app._app.feed.figure_lookup
+        self.assertTrue(lookup(self.project_id, association["id"], "figures/plot.png"))
+        self.assertFalse(lookup(self.project_id, association["id"], "figures/other.png"))
 
     def test_foreign_project_downloads_do_not_read_blob_bytes(self) -> None:
         artifact = self._store(path="raw.bin", data=b"\x00private bytes")
