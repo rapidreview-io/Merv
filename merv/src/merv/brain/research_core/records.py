@@ -58,12 +58,8 @@ class RecordHooks:
         """Create the kind's row for an instance the runtime just started."""
 
     def bindings(self) -> Mapping[str, Binding]:
-        """Extra workflow bindings this owner supplies for table-less graphs.
-
-        A graph with no row of its own still needs knowledge and a commit; the
-        service that owns it returns them here instead of the composition root
-        reaching into it.
-        """
+        """The table-less graphs this owner runs: knowledge and commit for a graph
+        with no row, returned here instead of reached for from composition."""
         return {}
 
 

@@ -338,9 +338,8 @@ def resolve_record_need(need, context: GateContext, extra: GateItem | None = Non
 
 
 def resolve_dependencies_done(need: DependenciesDone, context: GateContext) -> RequirementEvaluation:
-    """The wave rows behind the gate (``node_dependencies``), including a
-    dependency whose row is gone, which reads as unsettled so no gate opens on
-    a dangling edge."""
+    """The wave rows behind the gate; a dependency whose row is gone reads as
+    unsettled, so no gate opens on a dangling edge."""
     return resolve_record_need(need, context, {"dependencies": [
         {"id": row.get("id"), "node_type": row.get("node_type"), "name": row.get("name"),
          "status": row.get("status"), "settled": bool(row.get("settled"))}
@@ -467,16 +466,12 @@ def evaluate_review_gate(review: ReviewGate, context: GateContext) -> Requiremen
     )
 
 
-# One resolver per requirement class. A program declares the classes its nodes
-# use and bootstrap refuses to start unless each is here, so a new kind of need
-# is a class plus an entry — never a branch inside an evaluation.
+# One resolver per requirement class; bootstrap refuses a program whose need
+# class is not here, so a new kind of need is a class and an entry.
 Resolver: TypeAlias = "Callable[[Any, GateContext], RequirementEvaluation]"
 RESOLVERS: dict[type, Resolver] = {
-    ArtifactNeed: resolve_artifact_need,
-    RecordNeed: resolve_record_need,
-    DependenciesDone: resolve_dependencies_done,
-    ReviewGate: evaluate_review_gate,
-}
+    ArtifactNeed: resolve_artifact_need, RecordNeed: resolve_record_need,
+    DependenciesDone: resolve_dependencies_done, ReviewGate: evaluate_review_gate}
 
 
 def is_review_gate_exempt(*, role: str) -> bool:

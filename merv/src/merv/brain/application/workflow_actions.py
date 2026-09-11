@@ -16,22 +16,17 @@ LOGGER = logging.getLogger(__name__)
 
 class Handler(Protocol):
     """Serve one queued effect kind through the root that owns it."""
-
     def __call__(self, delivery: Delivery) -> None: ...
 
 
 def research_effects(*, research: Research, sessions: AgentSessions) -> dict[str, Handler]:
-    """The two effect kinds a research graph queues, bound to the roots that serve them.
-
-    A program declares the effect names its edges emit; the composition root
-    decides what serves each one, so a new program adds a handler here instead
-    of a case in the worker.
-    """
-    workflows = research.workflows
+    """The two effect kinds a research graph queues, bound to the roots that serve
+    them. A program names the effects it emits; the root decides what serves each."""
 
     def start(delivery: Delivery) -> None:
         data = dict(delivery.data)
-        workflows.start(project_id=delivery.project_id, request_id=str(data.pop("request_id", delivery.id)), **data)
+        research.workflows.start(project_id=delivery.project_id,
+                                 request_id=str(data.pop("request_id", delivery.id)), **data)
 
     def review(delivery: Delivery) -> None:
         research.reviews.request(project_id=delivery.project_id, expected_revision=delivery.revision,

@@ -172,9 +172,8 @@ class Surface:
             max_upload_bytes=storage_max_upload_bytes,
         )
         self.storage = objects if objects.enabled else None
-        # Installing a program means serving every effect its edges emit and
-        # resolving every requirement class its nodes declare. Both are checked
-        # here, once, so a half-installed program cannot start a brain.
+        # Installing a program means serving every effect it emits and resolving
+        # every requirement class it declares; a half-installed one starts nothing.
         effects = research_effects(research=self.research, sessions=self.agent_sessions)
         for program in INSTALLED:
             missing = ([name for name in program.effects if name not in effects]

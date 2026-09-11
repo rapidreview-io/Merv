@@ -360,23 +360,17 @@ class ReviewGate:
 
 
 class Requirement(Protocol):
-    """What a node declares its state needs, whatever class supplies it.
-
-    ``actions`` names the edges the need gates and ``dispatch`` says whether it
-    also blocks the agent handoff; the two checks answer both. A program
-    declares the classes its nodes use, and Research keeps one resolver per
-    class for the gate checklist, so a new kind of need is a new class plus a
-    resolver — never a case in an evaluation.
-    """
+    """What a node declares its state needs, whatever class supplies it: which
+    edges it gates, whether it also blocks the agent handoff, and how to check
+    both. Research keeps one resolver per class, so a new kind of need is a class
+    and an entry — never a case inside an evaluation."""
 
     actions: tuple[str, ...]
     dispatch: bool
 
     @property
     def key(self) -> str: ...
-
     def check(self, snapshot: Snapshot, knowledge: Knowledge) -> Issue | Iterable[Issue] | None: ...
-
     def dispatch_check(self, snapshot: Snapshot, knowledge: Knowledge) -> Issue | Iterable[Issue] | None: ...
 
 
@@ -687,10 +681,9 @@ class RecordKind:
 class Program:
     """One research program: every part a brain must install to run it.
 
-    A program is composition, not behaviour. ``effects`` are the action kinds
-    its edges may emit and ``requirements`` the need classes its nodes use;
-    bootstrap refuses to start unless each has a handler and a resolver, so a
-    second program is an entry in ``programs/__init__.py`` and nothing else.
+    ``effects`` are the action kinds its edges emit and ``requirements`` the need
+    classes its nodes use; bootstrap refuses to start unless each has a handler
+    and a resolver, so a second program is an entry in ``programs`` and nothing else.
     """
 
     name: str
