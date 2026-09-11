@@ -149,6 +149,14 @@ class _ResearchState:
     allowed_transitions: list[Transition]
     gate_checklist: GateChecklist
 
+    @staticmethod
+    def spine(row: Mapping[str, JSON]) -> dict[str, object]:
+        """The row with every shared field decoded into its native value."""
+        return {**row, "reviews": [ReviewReference(**{**item, "verdict": ReviewVerdict(item["verdict"])}) for item in row["reviews"]],
+                "allowed_transitions": [Transition(**item) for item in row["allowed_transitions"]],
+                "gate_checklist": GateChecklist.construct(row["gate_checklist"]),
+                **{name: [Dependency(**item) for item in row[name]] for name in ("dependencies", "dependents") if name in row}}
+
 
 @dataclass(frozen=True, slots=True)
 class ExperimentState(_ResearchState):
@@ -163,12 +171,7 @@ class ExperimentState(_ResearchState):
 
     @classmethod
     def construct(cls, row: Mapping[str, JSON], snapshot: Snapshot | None = None) -> Self:
-        return cls(**{**row, "reviews": [ReviewReference(**{**item, "verdict": ReviewVerdict(item["verdict"])}) for item in row["reviews"]],
-                      "status": ExperimentStatus(row["status"]),
-                      "dependencies": [Dependency(**item) for item in row["dependencies"]],
-                      "dependents": [Dependency(**item) for item in row["dependents"]],
-                      "allowed_transitions": [Transition(**item) for item in row["allowed_transitions"]],
-                      "gate_checklist": GateChecklist.construct(row["gate_checklist"])})
+        return cls(**{**cls.spine(row), "status": ExperimentStatus(row["status"])})
 
 
 class TaskStatus(StrEnum):
@@ -203,12 +206,7 @@ class TaskState(_ResearchState):
 
     @classmethod
     def construct(cls, row: Mapping[str, JSON], snapshot: Snapshot | None = None) -> Self:
-        return cls(**{**row, "reviews": [ReviewReference(**{**item, "verdict": ReviewVerdict(item["verdict"])}) for item in row["reviews"]],
-                      "status": TaskStatus(row["status"]),
-                      "dependencies": [Dependency(**item) for item in row["dependencies"]],
-                      "dependents": [Dependency(**item) for item in row["dependents"]],
-                      "allowed_transitions": [Transition(**item) for item in row["allowed_transitions"]],
-                      "gate_checklist": GateChecklist.construct(row["gate_checklist"]),
+        return cls(**{**cls.spine(row), "status": TaskStatus(row["status"]),
                       **({"results": [TaskResult(**item) for item in row["results"]]} if "results" in row else {})})
 
 
@@ -252,11 +250,14 @@ class ReflectionState(_ResearchState):
 
     @classmethod
     def construct(cls, row: Mapping[str, JSON], snapshot: Snapshot) -> Self:
-        return cls(**{**row, "reviews": [ReviewReference(**{**item, "verdict": ReviewVerdict(item["verdict"])}) for item in row["reviews"]],
-                      "status": ReflectionStatus(row["status"]),
-                      "workflow_state": ReflectionWorkflowState(snapshot.state),
-                      "allowed_transitions": [Transition(**item) for item in row["allowed_transitions"]],
-                      "gate_checklist": GateChecklist.construct(row["gate_checklist"])})
+        return cls(**{**cls.spine(row), "status": ReflectionStatus(row["status"]),
+                      "workflow_state": ReflectionWorkflowState(snapshot.state)})
+
+    @property
+    def corpus_experiment_ids(self) -> tuple[str, ...]:
+        """Every terminal experiment the wave's fixed corpus names."""
+        return tuple(str(item["id"]) for item in self.corpus.get("terminal_experiments") or ()
+                     if isinstance(item, dict) and item.get("id"))
 
 
 @dataclass(frozen=True, slots=True)

@@ -68,9 +68,14 @@ def post_publish_guidance(
 
 
 def present_reflection_state(state: ReflectionState, **computed: Any) -> Record:
+    result = public_record(REFLECTION.public, state, **computed)
     if state.status == REFLECTION.success_status and state.materialized_experiments:
-        computed["post_publish_guidance"] = post_publish_guidance(materialized_experiments=state.materialized_experiments)
-    return public_record(REFLECTION.public, state, **computed)
+        # The follow-up answers the experiments it names, so it sits right after them.
+        items = list(result.items())
+        after = next(index for index, (key, _) in enumerate(items) if key == "materialized_experiments") + 1
+        items.insert(after, ("post_publish_guidance", post_publish_guidance(materialized_experiments=state.materialized_experiments)))
+        result = dict(items)
+    return result
 
 
 def present_agent_reflection_state(

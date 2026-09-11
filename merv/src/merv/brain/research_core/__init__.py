@@ -6,8 +6,7 @@ from .artifacts import ResearchArtifacts
 from .content_summaries import content_tldr
 from .paths import safe_experiment_dirname
 from .models import (
-    CommittedExperimentUpdate,
-    CommittedTaskUpdate,
+    Committed,
     ExhibitVerdict,
     ExperimentState,
     ExperimentSummary,
@@ -50,8 +49,7 @@ __all__ = [
     "FEED_ADOPTABLE_ROLES",
     "FEED_AUTHOR_ROLES",
     "PROJECT_OVERVIEW_CONTENTS",
-    "CommittedExperimentUpdate",
-    "CommittedTaskUpdate",
+    "Committed",
     "ExhibitVerdict",
     "ExperimentState",
     "ExperimentSummary",

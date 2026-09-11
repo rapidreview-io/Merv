@@ -6,13 +6,14 @@ from typing import Any
 
 from ..composition import Child, join_guard
 from ..graph import (
-    Action, ArtifactNeed, Brief, Change, Edge, Guidance, Issue, Metadata, Node, RecordKind, RecordNeed, TransactionalEffect,
-    Reference, ReviewGate, ReviewReturn, Workflow, all_of,
+    Action, ArtifactNeed, Brief, Change, Edge, Guidance, Issue, Metadata, Node, Public, RecordKind, RecordNeed,
+    Reference, ReviewGate, ReviewReturn, TransactionalEffect, Workflow, all_of,
 )
 from ...kernel.utils import NotFoundError, ValidationError, WorkflowError, now_iso
-from .checks import review_summary
-from .execution import RESEARCH_HANDOFF, CONSOLIDATION_EXECUTION, LENS_EXECUTION, REFLECTION_EXECUTION, REVIEW_EXECUTION
+from .checks import evidence_references, rejected, review_summary
 from .documents import graph_problems, reflection_doc_review_problems, reflection_lens_doc_problems, parse_change_spec, preferred_artifact
+from .execution import RESEARCH_HANDOFF, CONSOLIDATION_EXECUTION, LENS_EXECUTION, REFLECTION_EXECUTION, REVIEW_EXECUTION
+from .research_state import ReflectionState
 
 
 def _guarded(validate):
@@ -76,15 +77,9 @@ def _wave(snapshot, knowledge):
     return knowledge.read(Reference("reflection", str(snapshot.data.get("reflection_id") or snapshot.id)))
 
 
-def _refs(artifacts):
-    return tuple(Reference("artifact", str(item.get("artifact_id") or item.get("id")),
-                           str(item.get("role") or item.get("label") or "Evidence"))
-                 for item in artifacts if item.get("artifact_id") or item.get("id"))
-
-
 def _review_refs(pinned):
     return (Reference("review_request", str(pinned["request_id"]), "This independent review request"),
-            *_refs(pinned.get("artifacts") or ()),
+            *evidence_references(pinned.get("artifacts") or ()),
             *((Reference("code", str(pinned["code_sha"]), "Exact submitted code proposal"),) if pinned.get("code_sha") else ()))
 
 
@@ -138,14 +133,6 @@ def can_abandon(snapshot, knowledge):
                      "wait_for_runner_publish")
 
 
-def _rejected(role, destination):
-    def check(snapshot, knowledge):
-        fact = knowledge.read(Reference("review", role))
-        if fact.get("verdict") not in {"needs_changes", "fail"} or fact.get("return_to") != destination:
-            return Issue("review_return_required", f"An authenticated {role} rejection returning to {destination!r} is required.")
-    return check
-
-
 def _revision(snapshot, payload, knowledge):
     wave = _wave(snapshot, knowledge)
     role = "consolidation_reviewer" if snapshot.state == "consolidation_review" else "reflection_reviewer"
@@ -194,7 +181,7 @@ def build_synthesis_context(snapshot, knowledge):
         "Reconcile the five lens contributions into the project graph, reflection and change spec; do not repeat their jobs. "
         "Follow project-reflection and submit the synthesis for independent review.",
         (Reference("reflection", snapshot.id, "Fixed reflection corpus and revision history"),
-         *_refs(wave.get("current_attempt_artifacts") or ())),
+         *evidence_references(wave.get("current_attempt_artifacts") or ())),
     )
 
 
@@ -221,7 +208,7 @@ def build_consolidation_context(snapshot, knowledge):
         (Reference("reflection", snapshot.id, "Approved reflection and consolidation progress"),
          *((Reference("code", str(proposal["base_sha"]), "Declared base of the retained proposal"),)
            if (proposal := consolidation.get("proposal") or {}).get("base_sha") else ()),
-         *_refs(wave.get("current_attempt_artifacts") or ())),
+         *evidence_references(wave.get("current_attempt_artifacts") or ())),
     )
 
 
@@ -302,14 +289,14 @@ REFLECTION = Workflow(
              label="Submit the reflection for independent review", tools=("reflection.transition",)),
         Edge("reflection_review", "begin_consolidation", "consolidating",
              label="Consolidate code from the approved reflection", tools=("reflection.transition",)),
-        Edge("reflection_review", "revise_lenses", RETURN_TO_REFLECTING.to_status, check=_rejected("reflection_reviewer", RETURN_TO_REFLECTING.to_status), change=_new_attempt,
+        Edge("reflection_review", "revise_lenses", RETURN_TO_REFLECTING.to_status, check=rejected("reflection_reviewer", RETURN_TO_REFLECTING.to_status), change=_new_attempt,
              label=RETURN_TO_REFLECTING.choose_when, event_type=RETURN_TO_REFLECTING.event_type),
-        Edge("reflection_review", "revise_synthesis", RETURN_TO_SYNTHESIZING.to_status, check=_rejected("reflection_reviewer", RETURN_TO_SYNTHESIZING.to_status), change=_revision,
+        Edge("reflection_review", "revise_synthesis", RETURN_TO_SYNTHESIZING.to_status, check=rejected("reflection_reviewer", RETURN_TO_SYNTHESIZING.to_status), change=_revision,
              label=RETURN_TO_SYNTHESIZING.choose_when, event_type=RETURN_TO_SYNTHESIZING.event_type),
         *(Edge(state, "submit_consolidation", "consolidation_review", check=proposal_ready, change=pin_proposal,
                label="Review the exact code proposal", tools=("consolidation.submit",))
           for state in ("consolidating", "consolidation_review")),
-        Edge("consolidation_review", "revise_consolidation", RETURN_TO_CONSOLIDATING.to_status, check=_rejected("consolidation_reviewer", RETURN_TO_CONSOLIDATING.to_status), change=_revision,
+        Edge("consolidation_review", "revise_consolidation", RETURN_TO_CONSOLIDATING.to_status, check=rejected("consolidation_reviewer", RETURN_TO_CONSOLIDATING.to_status), change=_revision,
              label=RETURN_TO_CONSOLIDATING.choose_when, event_type=RETURN_TO_CONSOLIDATING.event_type),
         Edge("consolidation_review", "publish", "published",
              change=publish_wave, label="Publish the reviewed wave after the runner advances central"),
@@ -334,9 +321,6 @@ def published_followups(experiments):
 
 
 METADATA = Metadata(subject="reflection wave", success_outcome="published")
-
-from .research_state import ReflectionState
-from ..graph import Public
 
 KIND = RecordKind(
     name="reflection", table="reflections", id_prefix="syn", workflow=REFLECTION,
@@ -383,7 +367,7 @@ def build_lens_context(snapshot, knowledge):
         "Investigate this charter against the fixed corpus; resume retained work. Follow project-reflection's lens procedure. "
         "Upload one complete contribution, then submit this lens with payload={artifact_id: the uploaded content ID}.",
         (Reference("reflection", wave["id"], "Fixed corpus and prior lens progress"),
-         *_refs([item for item in wave.get("current_attempt_artifacts") or () if item.get("lens_id") == lens["id"]])),
+         *evidence_references([item for item in wave.get("current_attempt_artifacts") or () if item.get("lens_id") == lens["id"]])),
     )
 
 
@@ -401,48 +385,19 @@ def reflection_staleness_hint(*, signal: Mapping[str, Any]) -> str:
     if not signal["stale"]:
         return ""
     blocked = bool(signal.get("experiment_create_blocked"))
-    published = bool(signal.get("last_published_reflection_id"))
-    if not published:
-        if blocked:
-            return (
-                "Project reflection required before creating another experiment — "
-                f"{signal['terminal_experiments']} experiments have finished and no "
-                "project reflection exists yet. Use the project-reflection skill "
-                "(reflection.create) and publish the wave before creating another "
-                "experiment."
-            )
-        return (
-            "Consider running the project's first reflection — "
-            f"{signal['terminal_experiments']} experiments have finished and no "
-            "project reflection exists yet. Use the project-reflection skill "
-            "(reflection.create) when you judge the time is right."
-        )
-    prefix = (
-        "Project reflection required before creating another experiment"
-        if blocked
-        else "Consider running a project reflection"
-    )
-    pieces = [
-        f"{prefix} — {signal['new_terminal_since_publish']} experiments have "
-        "finished since the last published reflection"
-    ]
+    lead = "Project reflection required before creating another experiment" if blocked else "Consider running a project reflection"
+    if not signal.get("last_published_reflection_id"):
+        first = lead if blocked else "Consider running the project's first reflection"
+        return (f"{first} — {signal['terminal_experiments']} experiments have finished and no project reflection exists yet. "
+                "Use the project-reflection skill (reflection.create)"
+                + (" and publish the wave before creating another experiment." if blocked else " when you judge the time is right."))
+    pieces = [f"{lead} — {signal['new_terminal_since_publish']} experiments have finished since the last published reflection"]
     if signal["claims_changed_since_publish"]:
-        changed = f"{signal['claims_changed_since_publish']} claims have changed"
-        if signal["contradicted_flip"]:
-            changed += " (including a claim now contradicted)"
-        pieces.append(changed)
-    pieces.append(
-        "the current reflection covers "
-        f"{signal['covered_terminal_experiments']} of "
-        f"{signal['terminal_experiments']} finished experiments"
-    )
-    suffix = (
-        ". Publish a project reflection wave before creating another experiment."
-        if blocked
-        else ". Whether these developments change the project's logic state is "
-        "your call (project-reflection skill, reflection.create)."
-    )
-    return "; ".join(pieces) + suffix
+        pieces.append(f"{signal['claims_changed_since_publish']} claims have changed"
+                      + (" (including a claim now contradicted)" if signal["contradicted_flip"] else ""))
+    pieces.append(f"the current reflection covers {signal['covered_terminal_experiments']} of {signal['terminal_experiments']} finished experiments")
+    return "; ".join(pieces) + (". Publish a project reflection wave before creating another experiment." if blocked else
+                                ". Whether these developments change the project's logic state is your call (project-reflection skill, reflection.create).")
 
 def present_reflection_signal(signal: Any) -> Any:
     if not isinstance(signal, Mapping):

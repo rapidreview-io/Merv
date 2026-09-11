@@ -116,6 +116,18 @@ class StatusAndNextQuery:
     project_context: ProjectContextQuery
     task_context: TaskContextQuery | None = None
 
+    def _selection(self, *, project_id, experiment_id, task_id):
+        """The snapshot plus the one record the caller scoped to, and that experiment's sandboxes."""
+        snapshot = self.research.snapshot(project_id=project_id, experiment_id=experiment_id, task_id=task_id)
+        task = snapshot.selected_task if task_id is not None else None
+        if task_id is not None and task is None:
+            raise NotFoundError(f"task not found in project {snapshot.project_id}: {task_id}")
+        experiment = None if task_id is not None else snapshot.selected_experiment
+        if experiment_id is not None and experiment is None:
+            raise NotFoundError(f"experiment not found: {experiment_id}")
+        sandboxes = self.sandboxes.for_experiment(project_id=snapshot.project_id, experiment_id=experiment.id) if experiment else []
+        return snapshot, experiment, task, sandboxes
+
     def status_and_next(
         self,
         *,
@@ -123,32 +135,8 @@ class StatusAndNextQuery:
         experiment_id: str | None = None,
         task_id: str | None = None,
     ) -> Record:
-        snapshot = self.research.snapshot(
-            project_id=project_id, experiment_id=experiment_id, task_id=task_id
-        )
-        if task_id is not None:
-            task = snapshot.selected_task
-            if task is None:
-                raise NotFoundError(
-                    f"task not found in project {snapshot.project_id}: {task_id}"
-                )
-            return self._status(
-                snapshot=snapshot,
-                experiment=None,
-                sandboxes=[],
-                task=task,
-            )
-        selected = snapshot.selected_experiment
-        sandbox_rows = (
-            self.sandboxes.for_experiment(
-                project_id=snapshot.project_id, experiment_id=selected.id
-            )
-            if selected is not None
-            else []
-        )
-        return self._status(
-            snapshot=snapshot, experiment=selected, sandboxes=sandbox_rows
-        )
+        snapshot, experiment, task, sandboxes = self._selection(project_id=project_id, experiment_id=experiment_id, task_id=task_id)
+        return self._status(snapshot=snapshot, experiment=experiment, sandboxes=sandboxes, task=task)
 
     def status_and_next_agent(
         self,
@@ -157,16 +145,8 @@ class StatusAndNextQuery:
         experiment_id: str | None = None,
         task_id: str | None = None,
     ) -> Record:
-        snapshot = self.research.snapshot(project_id=project_id, experiment_id=experiment_id, task_id=task_id)
-        experiment = snapshot.selected_experiment
-        task = snapshot.selected_task if task_id is not None else None
-        if experiment_id is not None and experiment is None:
-            raise NotFoundError(f"experiment not found: {experiment_id}")
-        if task_id is not None and task is None:
-            raise NotFoundError(f"task not found: {task_id}")
-        sandboxes = self.sandboxes.for_experiment(project_id=snapshot.project_id, experiment_id=experiment.id) if experiment else []
-        full = self._status(snapshot=snapshot, experiment=None if task else experiment,
-                            sandboxes=sandboxes, task=task, agent=True)
+        snapshot, experiment, task, sandboxes = self._selection(project_id=project_id, experiment_id=experiment_id, task_id=task_id)
+        full = self._status(snapshot=snapshot, experiment=experiment, sandboxes=sandboxes, task=task, agent=True)
         return _slim_status(
             full,
             experiment_context=self.context.build(state=experiment, project_id=project_id) if experiment_id else None,

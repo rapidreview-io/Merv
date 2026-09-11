@@ -20,9 +20,10 @@ from ..research_core import ResearchArtifacts as Artifacts
 from ..feed import FeedService
 from ..kernel.utils import ValidationError, WorkflowError
 from ..research_core import (
+    AGENT_DISPATCH_SETTING,
+    ExperimentState,
     Research,
     project_fields,
-    AGENT_DISPATCH_SETTING,
 )
 from ..infrastructure import RemoteObjects, RemoteSandboxes as SandboxEngine
 from .experiments.context import ExperimentContextQuery
@@ -444,44 +445,22 @@ class Application:
     def create_experiment(self, **kwargs: Any) -> dict[str, Any]:
         return create_experiment(self.research, **kwargs)
 
+    def _presented(self, states: list[ExperimentState], *, rich: bool) -> list[dict[str, Any]]:
+        """Each experiment with its produced objects, code workspace and consolidation history beside it."""
+        ids = tuple(state.id for state in states)
+        project_id = states[0].project_id if states else ""
+        objects = self.produced_objects.by_experiment(project_id=project_id, experiment_ids=ids) if ids else {}
+        workspaces = self.agent_sessions.workspaces(project_id=project_id, instance_ids=ids) if ids else {}
+        history = self.research.reflections.experiment_consolidations(project_id=project_id, experiment_ids=ids) if ids else {}
+        return [(rich_experiment_state if rich else slim_experiment_state)(
+                    state, storage_objects=objects.get(state.id, []), code_workspace=workspaces.get(state.id),
+                    consolidation_history=history.get(state.id, []))
+                for state in states]
+
     def experiments(
         self, *, project_id: str | None = None, rich: bool = False
     ) -> dict[str, Any] | list[dict[str, Any]]:
-        states = self.research.project_experiments(project_id=project_id)
-        ids = tuple(state.id for state in states if state.id)
-        resolved = (
-            states[0].project_id if states else ""
-        )
-        objects = (
-            self.produced_objects.by_experiment(project_id=resolved, experiment_ids=ids)
-            if ids
-            else {}
-        )
-        workspaces = (
-            self.agent_sessions.workspaces(
-                project_id=resolved,
-                instance_ids=ids,
-            )
-            if ids and resolved
-            else {}
-        )
-        consolidations = (
-            self.research.reflections.experiment_consolidations(
-                project_id=resolved,
-                experiment_ids=ids,
-            )
-            if ids and resolved
-            else {}
-        )
-        presented = [
-            (rich_experiment_state if rich else slim_experiment_state)(
-                state,
-                storage_objects=objects.get(state.id, []),
-                code_workspace=workspaces.get(state.id),
-                consolidation_history=consolidations.get(state.id, []),
-            )
-            for state in states
-        ]
+        presented = self._presented(self.research.project_experiments(project_id=project_id), rich=rich)
         return presented if rich else {"experiments": presented}
 
     def experiment(
@@ -492,35 +471,10 @@ class Application:
         review_id: str = "",
         rich: bool = False,
     ) -> dict[str, Any]:
-        state = self.research.experiments.get_state(
-            experiment_id=experiment_id,
-            project_id=project_id,
-        )
-        resolved_project_id = state.project_id
-        response = (rich_experiment_state if rich else slim_experiment_state)(
-            state,
-            storage_objects=self.produced_objects.by_experiment(
-                project_id=resolved_project_id, experiment_ids=(experiment_id,),
-            )[experiment_id],
-            code_workspace=self.agent_sessions.workspaces(
-                project_id=resolved_project_id, instance_ids=(experiment_id,),
-            ).get(experiment_id),
-            consolidation_history=self.research.reflections.experiment_consolidations(
-                project_id=resolved_project_id, experiment_ids=(experiment_id,),
-            ).get(experiment_id, []),
-        )
+        state = self.research.experiments.get_state(experiment_id=experiment_id, project_id=project_id)
+        response = self._presented([state], rich=rich)[0]
         if review_id and not rich:
-            body = review_body(state.reviews, review_id=review_id)
-            if body is None:
-                known = [
-                    review.id for review in state.reviews
-                ]
-                raise ValidationError(
-                    f"no review {review_id} on this experiment. Reviews here: "
-                    f"{', '.join(known) or 'none yet'}.",
-                    details={"field": "review_id", "review_ids": known},
-                )
-            response["review"] = body
+            response["review"] = _review(state.reviews, review_id, "experiment")
         return response
 
     def transition_experiment(
@@ -557,14 +511,8 @@ class Application:
         depends_on: list[str] | str | None = None,
         project_id: str | None = None,
     ) -> dict[str, Any]:
-        state = self.research.tasks.create(
-            name=name,
-            goal=goal,
-            deliverables=deliverables,
-            depends_on=depends_on,
-            project_id=project_id,
-        )
-        return slim_task_state(state)
+        return slim_task_state(self.research.tasks.create(
+            name=name, goal=goal, deliverables=deliverables, depends_on=depends_on, project_id=project_id))
 
     def tasks(
         self, *, project_id: str | None = None, rich: bool = False
@@ -589,17 +537,7 @@ class Application:
             return rich_task_state(state)
         response = slim_task_state(state)
         if review_id:
-            body = review_body(state.reviews, review_id=review_id)
-            if body is None:
-                known = [
-                    review.id for review in state.reviews
-                ]
-                raise ValidationError(
-                    f"no review {review_id} on this task. Reviews here: "
-                    f"{', '.join(known) or 'none yet'}.",
-                    details={"field": "review_id", "review_ids": known},
-                )
-            response["review"] = body
+            response["review"] = _review(state.reviews, review_id, "task")
         return response
 
     def transition_task(
@@ -714,15 +652,7 @@ class Application:
 
     def reflections(self, *, project_id: str) -> dict[str, Any]:
         result = self.research.reflections.list_reflections(project_id=project_id)
-        return present_reflection_overview(
-            {
-                "count": result.get(
-                    "count",
-                    len(result.get("reflections", [])),
-                ),
-                **result,
-            }
-        )
+        return present_reflection_overview({"count": len(result["reflections"]), **result})
 
     def transition_reflection(
         self,
@@ -741,23 +671,9 @@ class Application:
         )
 
     def consolidation(self, *, project_id: str, reflection_id: str) -> dict[str, Any]:
-        state = self.research.reflections.get_state(
-            project_id=project_id,
-            reflection_id=reflection_id,
-            include_content=True,
-        )
-        experiment_ids = tuple(
-            str(item.get("id") or "")
-            for item in (state.corpus or {}).get("terminal_experiments", [])
-            if isinstance(item, dict) and item.get("id")
-        )
-        packet = consolidation_packet(
-            state,
-            workspaces=self.agent_sessions.workspaces(
-                project_id=project_id,
-                instance_ids=experiment_ids,
-            ),
-        )
+        state = self.research.reflections.get_state(project_id=project_id, reflection_id=reflection_id, include_content=True)
+        packet = consolidation_packet(state, workspaces=self.agent_sessions.workspaces(
+            project_id=project_id, instance_ids=state.corpus_experiment_ids))
         if not packet.get("base_sha"):
             session = next(
                 (
@@ -787,34 +703,12 @@ class Application:
         decisions: list[dict[str, Any]],
         producer_session_id: str = "",
     ) -> dict[str, Any]:
-        state = self.research.reflections.get_state(
-            project_id=project_id,
-            reflection_id=reflection_id,
-        )
-        experiment_ids = tuple(
-            str(item.get("id") or "")
-            for item in (state.corpus or {}).get("terminal_experiments", [])
-            if isinstance(item, dict) and item.get("id")
-        )
-        workspaces = self.agent_sessions.workspaces(
-            project_id=project_id,
-            instance_ids=experiment_ids,
-        )
-        decisions = [
-            {
-                **decision,
-                # Experiment workspace lineage is Merv-owned evidence. Never
-                # trust a consolidating agent to tell us which branch head it
-                # reviewed.
-                "source_sha": str(
-                    workspaces.get(str(decision.get("experiment_id") or ""), {}).get(
-                        "head_sha"
-                    )
-                    or ""
-                ),
-            }
-            for decision in decisions
-        ]
+        state = self.research.reflections.get_state(project_id=project_id, reflection_id=reflection_id)
+        workspaces = self.agent_sessions.workspaces(project_id=project_id, instance_ids=state.corpus_experiment_ids)
+        # Experiment workspace lineage is Merv-owned evidence: a consolidating
+        # agent is never trusted to say which branch head it reviewed.
+        decisions = [{**decision, "source_sha": str(workspaces.get(str(decision.get("experiment_id") or ""), {}).get("head_sha") or "")}
+                     for decision in decisions]
         return present_agent_reflection_state(
             self.research.reflections.submit_consolidation(
                 project_id=project_id,
@@ -989,6 +883,15 @@ class Application:
         return spend
 
 __all__ = ["Application", "present_session"]
+
+
+def _review(reviews, review_id: str, what: str) -> dict[str, Any]:
+    body = review_body(reviews, review_id=review_id)
+    if body is None:
+        known = [review.id for review in reviews]
+        raise ValidationError(f"no review {review_id} on this {what}. Reviews here: {', '.join(known) or 'none yet'}.",
+                              details={"field": "review_id", "review_ids": known})
+    return body
 
 
 def session_kind(execution: Mapping[str, Any]) -> str:

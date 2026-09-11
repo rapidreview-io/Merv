@@ -11,7 +11,7 @@ from typing import Any
 from merv.brain.application.experiments.transition import TransitionExperiment
 from merv.brain.kernel.events import StoredEvent, freeze_json_object
 from merv.brain.research_core.models import (
-    CommittedExperimentUpdate as CommittedExperimentTransition,
+    Committed as CommittedExperimentTransition,
 )
 
 PRESENTATION_LOGGER = "merv.brain.application.experiments.transition"

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from ..workflows.definitions.research_state import ReflectionState, ReviewStatus, GateStatus
+from ..workflows.definitions.research_state import JSON, ReflectionState, ReviewStatus, GateStatus
 
 from ..workflows import research_contracts
 
@@ -22,14 +22,14 @@ validate_task_name = research_contracts.validate_task_name
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 import json
-from typing import Any, Literal, TypeAlias
+from typing import Any, TypeAlias
 
 from ..kernel.utils import ValidationError
 from ..workflows import (
     EXPERIMENT_KIND as EXPERIMENT, REFLECTION_KIND as REFLECTION, TASK_KIND as TASK,
     REVIEW_VERDICT_VALUES, SYNOPSIS_MAX_LEN, ArtifactNeed, DependenciesDone, Evaluation, Issue,
-    RecordNeed, Requirement, ReviewGate, Snapshot, resolve_review_return,
-    revision_context_for_review_return, validate_review_verdict, validate_synopsis,
+    RecordNeed, Requirement, ReviewGate, Snapshot, preferred_artifact, resolve_review_return,
+    revision_context_for_review_return, snapshot_view, validate_review_verdict, validate_synopsis,
 )
 
 # The record kinds research policy speaks about declare their own vocabulary;
@@ -90,34 +90,13 @@ FEED_ADOPTABLE_ROLES = frozenset({"reviewer", "lens"})
 AGENT_DISPATCH_SETTING = "agent_dispatch"
 
 
-def active_experiment_cap_reached_message(
-    *, active_count: int, reserved_count: int = 0
-) -> str:
-    reserved = (
-        f" and {reserved_count} reserved by an in-flight reflection wave"
-        if reserved_count
-        else ""
-    )
-    return (
-        "active experiment cap reached: "
-        f"project has {active_count} active experiments{reserved}; "
-        "finish one before creating another."
-    )
+def active_experiment_cap_reached_message(*, active_count: int, reserved_count: int = 0) -> str:
+    reserved = f" and {reserved_count} reserved by an in-flight reflection wave" if reserved_count else ""
+    return f"active experiment cap reached: project has {active_count} active experiments{reserved}; finish one before creating another."
 
 
-
-
-def covered_terminal_ids(
-    corpus: Mapping[str, object] | None, *, key: str = "terminal_experiments"
-) -> set[str]:
-    if not corpus:
-        return set()
-    entries = corpus.get(key) or []
-    return {
-        str(entry.get("id"))
-        for entry in entries
-        if isinstance(entry, Mapping)
-    }
+def covered_terminal_ids(corpus: Mapping[str, object] | None, *, key: str = "terminal_experiments") -> set[str]:
+    return {str(entry.get("id")) for entry in (corpus or {}).get(key) or [] if isinstance(entry, Mapping)}
 
 
 def reflection_signal_state(
@@ -179,13 +158,7 @@ def reflection_signal_state(
         "block_new_terminal_threshold": REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD,
     }
 
-
-
-JSONValue: TypeAlias = (
-    str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
-)
-GateItem: TypeAlias = dict[str, JSONValue]
-
+GateItem: TypeAlias = dict[str, JSON]
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,7 +203,7 @@ class GateEvaluation:
         selected = self.decision.suggested
         return self.terminal if selected is None else selected.available
 
-    def checklist(self) -> dict[str, JSONValue]:
+    def checklist(self) -> dict[str, JSON]:
         items = [dict(item) for gate in self.requirements for item in gate.items]
         if self.review is not None:
             items.extend(dict(item) for item in self.review.items)
@@ -298,11 +271,7 @@ class GateContext:
         return next((issue for issue in self.issues if issue.code in codes), None)
 
     def artifact(self, role: str) -> dict[str, Any] | None:
-        from ..workflows import documents
-
-        return documents.preferred_artifact(
-            artifacts=list(self.record.get("current_attempt_artifacts") or ()), roles=(role,)
-        )
+        return preferred_artifact(artifacts=list(self.record.get("current_attempt_artifacts") or ()), roles=(role,))
 
 
 def resolve_requirement(need: Requirement, context: GateContext) -> RequirementEvaluation:
@@ -399,17 +368,9 @@ RESOLVERS: dict[type, Resolver] = {
     DependenciesDone: resolve_dependencies_done, ReviewGate: evaluate_review_gate}
 
 
-def is_review_gate_exempt(*, role: str) -> bool:
-    return role in REVIEW_GATE_EXEMPT_ROLES
-
-
 def validate_review_role(*, role: str) -> None:
     if not isinstance(role, str) or not role.strip() or len(role) > 128:
         raise ValidationError("review role must be a nonempty workflow role of at most 128 characters")
-
-
-
-
 
 
 def parse_project_settings(raw: Any) -> dict[str, Any]:
@@ -434,7 +395,6 @@ def agent_dispatch_enabled(project: Mapping[str, Any]) -> bool:
 def review_snapshot_id(*, target_type: str, target: dict[str, Any], snapshot=None) -> str:
     """Byte-stable identity of the exact state and artifacts under review."""
     if snapshot is not None and (snapshot.version > 1 or target_type not in {"experiment", "reflection", "task"}):
-        from ..workflows import snapshot_view
         pinned = snapshot_view(snapshot)
         return "workflow:" + json.dumps({**pinned, "target_type": target_type, "target_id": snapshot.id,
                                          "status": snapshot.state, "attempt_index": int(target.get("attempt_index") or 1),
@@ -527,7 +487,6 @@ __all__ = [
     "active_experiment_cap_would_exceed_message",
     "agent_dispatch_enabled",
     "covered_terminal_ids",
-    "is_review_gate_exempt",
     "GateContext",
     "evaluate_review_gate",
     "resolve_requirement",

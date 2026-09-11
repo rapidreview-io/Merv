@@ -58,7 +58,7 @@ def orient_project(snapshot, *, selected, workflow, reflection, reflection_workf
     blocked = need.blocked(signal)
     presented = present_reflection_signal(signal) or {}
     recommended = idle and signal.get("has_new_material")
-    reason = need.reason(signal) if blocked else ""
+    reason = need.message(signal) if blocked else ""
     advice = None
     if reflection is not None:
         if blocked:

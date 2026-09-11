@@ -4,9 +4,10 @@ from ..graph import (
     Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Guidance, Metadata, Node, RecordKind,
     Reference, ReviewGate, ReviewReturn, Workflow,
 )
-from .checks import reviewed, review_summary
-from .execution import RESEARCH_HANDOFF, REVIEW_EXECUTION, TASK_EXECUTION
+from .checks import evidence_references, rejected, review_summary, short
 from .documents import brief_problems, delivery_problems
+from .execution import RESEARCH_HANDOFF, REVIEW_EXECUTION, TASK_EXECUTION
+from .research_state import TaskState
 
 
 def _document_problems(role):
@@ -51,31 +52,19 @@ def record_verdict(snapshot, payload, knowledge):
     return Change(data={"revision_context": review_summary(fact) + "\nRevise the delivery against the brief's Done-when checks; the goal stands."})
 
 
-def _references(artifacts):
-    return tuple(
-        Reference("artifact", str(artifact.get("artifact_id") or artifact.get("id")), str(artifact.get("role") or "Evidence"))
-        for artifact in artifacts if artifact.get("artifact_id") or artifact.get("id")
-    )
-
-
-def _short(value, words):
-    parts = str(value or "").split()
-    return " ".join(parts[:words]) + ("…" if len(parts) > words else "")
-
-
 def build_work_context(snapshot, knowledge):
     task = knowledge.read(Reference("task", snapshot.id))
     project = knowledge.read(Reference("project", snapshot.project_id))
-    checks = _short("; ".join(f"{index}. {item}" for index, item in enumerate(task.get("deliverables") or (), 1)), 65)
-    revision = _short(task.get("revision_context") or "No requested revisions.", 45)
+    checks = short("; ".join(f"{index}. {item}" for index, item in enumerate(task.get("deliverables") or (), 1)), 65)
+    revision = short(task.get("revision_context") or "No requested revisions.", 45)
     return Brief(
         f"Complete task {task.get('name', snapshot.id)} for {project.get('name', 'this project')}. "
-        f"Project purpose: {_short(project.get('summary') or 'No project summary supplied.', 35)}\n\n"
-        f"Goal: {_short(task.get('goal'), 50)}\nDeliverables (read the pinned brief for the full contract):\n{checks}\n\n"
+        f"Project purpose: {short(project.get('summary') or 'No project summary supplied.', 35)}\n\n"
+        f"Goal: {short(task.get('goal'), 50)}\nDeliverables (read the pinned brief for the full contract):\n{checks}\n\n"
         f"Why this assignment is active: {revision}\n\n"
         "Reuse retained work to complete the fixed brief and submit a verifiable delivery. Follow research-workflow.",
         (Reference("task", snapshot.id, "Task and durable progress"),
-         *_references(task.get("current_attempt_artifacts") or ())),
+         *evidence_references(task.get("current_attempt_artifacts") or ())),
     )
 
 
@@ -84,11 +73,11 @@ def build_review_context(snapshot, knowledge):
     pinned = knowledge.read(Reference("review_snapshot", snapshot.id))
     return Brief(
         f"Independently review the delivery for task {task.get('name', snapshot.id)}. "
-        f"Goal: {_short(task.get('goal'), 65)}\n\n"
+        f"Goal: {short(task.get('goal'), 65)}\n\n"
         "Verify the pinned brief's checks and whether they achieve the goal. Follow task-review; submit only the verdict.",
         (Reference("task", snapshot.id, "Task goal"),
          Reference("review_request", str(pinned.get("request_id") or "")),
-         *_references(pinned.get("artifacts") or ())),
+         *evidence_references(pinned.get("artifacts") or ())),
     )
 
 
@@ -105,10 +94,10 @@ TASK = Workflow(
              label="Submit the complete delivery for independent review", tools=("task.transition",)),
         Edge("in_review", "accept", "done", change=record_verdict,
              label="Accept the reviewed delivery", tools=("task.transition",)),
-        Edge("in_review", "revise", RETURN_TO_IN_PROGRESS.to_status, check=reviewed("task_reviewer", verdict="needs_changes", return_to=RETURN_TO_IN_PROGRESS.to_status),
+        Edge("in_review", "revise", RETURN_TO_IN_PROGRESS.to_status, check=rejected("task_reviewer", RETURN_TO_IN_PROGRESS.to_status),
              change=record_verdict,
              label=RETURN_TO_IN_PROGRESS.choose_when, event_type=RETURN_TO_IN_PROGRESS.event_type),
-        Edge("in_review", "fail_review", FAIL_TO_FAILED.to_status, check=reviewed("task_reviewer", verdict="fail", return_to=FAIL_TO_FAILED.to_status),
+        Edge("in_review", "fail_review", FAIL_TO_FAILED.to_status, check=rejected("task_reviewer", FAIL_TO_FAILED.to_status),
              change=record_verdict,
              label=FAIL_TO_FAILED.choose_when, event_type=FAIL_TO_FAILED.event_type),
         *(Edge(state, "mark_failed", "failed", label="Withdraw the task with a reason", tools=("task.transition",), suggest=False)
@@ -122,8 +111,6 @@ TASK = Workflow(
 )
 
 METADATA = Metadata(effects={"accept": ("record_outcome",), "mark_failed": ("record_failure",)})
-
-from .research_state import TaskState
 
 KIND = RecordKind(
     name="task", table="tasks", id_prefix="task", workflow=TASK,

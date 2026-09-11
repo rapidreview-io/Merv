@@ -29,18 +29,12 @@ from ..kernel.utils import (
     parse_iso,
 )
 from .policy import (
-    is_review_gate_exempt,
-    ReviewFact, parse_project_settings,
-    review_snapshot_id,
-    revision_context_for_review_return,
-    snapshot_from_id,
-    validate_review_role,
-    resolve_review_return,
+    REVIEW_GATE_EXEMPT_ROLES, ReviewFact, parse_project_settings, review_snapshot_id,
+    revision_context_for_review_return, snapshot_from_id, validate_review_role, resolve_review_return,
 )
 from ..kernel.state.store import Connection, next_created_seq, row_to_dict
 if TYPE_CHECKING:
     from .records import Records
-    from .reflections import ReflectionService
 from ..workflows import Reference, Snapshot
 
 
@@ -137,9 +131,8 @@ class ReviewService:
     provide the procedural read-only boundary.
     """
 
-    def __init__(self, *, records: Records, reflections: ReflectionService) -> None:
+    def __init__(self, *, records: Records) -> None:
         self.records = records
-        self.reflections = reflections
         self.store = records.store
         self.runtime = records.runtime
 
@@ -165,12 +158,7 @@ class ReviewService:
                 if current.revision != expected_revision or current.outcome:
                     return ReviewRequestSkipped()
             self.runtime.lock(conn=conn, project_id=project_id, instance_id=target_id, revision=current.revision)
-            target, _gate = self._target_with_gate(
-                conn=conn,
-                target_type=target_type,
-                target_id=target_id,
-                project_id=project_id,
-            )
+            target = self._target(conn=conn, target_type=target_type, target_id=target_id, project_id=project_id)
             node = self.runtime.registry.get(current.workflow, current.version).node(current.state)
             self._validate_role_matches_gate(
                 target_type=target_type,
@@ -178,8 +166,6 @@ class ReviewService:
                 role=role,
             )
             snapshot_id = review_snapshot_id(target_type=target_type, target=target, snapshot=current)
-            if target_type == "reflection" and role == "consolidation_reviewer":
-                self.reflections.require_consolidation_proposal(_gate)
             if if_current:
                 fact = read_review_fact(conn=conn, project_id=project_id, target_type=target_type, target_id=target_id,
                                         snapshot_id=snapshot_id, role=role)
@@ -484,139 +470,16 @@ class ReviewService:
                 "reviews": [self._with_snapshot(row=row) for row in review_rows],
             }
 
-    def open_requests_for_target(
-        self,
-        *,
-        project_id: str | None,
-        experiment_id: str,
-        statuses: tuple[str, ...] = ("requested", "started"),
-    ) -> list[dict[str, Any]]:
-        if not statuses:
-            return []
+    def locate(self, *, request_id: Any = None, session_id: Any = None) -> tuple[str, str, str] | None:
+        """(project, target type, target id) behind one request or session, or None."""
+        if bool(request_id) == bool(session_id):
+            raise ValueError("provide exactly one of review_request_id or review_session_id")
+        sql = ("SELECT project_id, target_type, target_id FROM review_requests WHERE id = ?" if request_id else
+               "SELECT r.project_id, r.target_type, r.target_id FROM review_sessions s "
+               "JOIN review_requests r ON r.id = s.request_id WHERE s.id = ?")
         with closing(self.store.connect()) as conn:
-            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            placeholders = ", ".join("?" for _ in statuses)
-            rows = conn.execute(
-                f"""
-                SELECT id, role, status, reason, created_at
-                FROM review_requests
-                WHERE project_id = ? AND target_type = 'experiment' AND target_id = ?
-                  AND status IN ({placeholders})
-                ORDER BY created_seq
-                """,
-                (project_id, experiment_id, *statuses),
-            ).fetchall()
-            return [row_to_dict(row=row) or {} for row in rows]
-
-    def assert_request_in_project(
-        self, *, project_id: str | None, review_request_id: Any
-    ) -> None:
-        with closing(self.store.connect()) as conn:
-            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            if not review_request_id:
-                raise ValidationError("review_request_id is required")
-            row = conn.execute(
-                "SELECT project_id FROM review_requests WHERE id = ?",
-                (review_request_id,),
-            ).fetchone()
-            if row is None or row["project_id"] != project_id:
-                raise NotFoundError(
-                    f"review request not found in project {project_id}: {review_request_id}"
-                )
-
-    def request_project_id(self, *, review_request_id: Any) -> str | None:
-        if not review_request_id:
-            return None
-        with closing(self.store.connect()) as conn:
-            row = conn.execute(
-                "SELECT project_id FROM review_requests WHERE id = ?",
-                (str(review_request_id),),
-            ).fetchone()
-            return str(row["project_id"]) if row else None
-
-    def target_for(
-        self,
-        *,
-        review_request_id: Any = None,
-        review_session_id: Any = None,
-    ) -> tuple[str, str, str] | None:
-        """Resolve a review capability to (project, target type, target id)."""
-        if bool(review_request_id) == bool(review_session_id):
-            raise ValueError(
-                "provide exactly one of review_request_id or review_session_id"
-            )
-        with closing(self.store.connect()) as conn:
-            if review_request_id:
-                row = conn.execute(
-                    """
-                    SELECT project_id, target_type, target_id
-                    FROM review_requests WHERE id = ?
-                    """,
-                    (str(review_request_id),),
-                ).fetchone()
-            else:
-                row = conn.execute(
-                    """
-                    SELECT rr.project_id, rr.target_type, rr.target_id
-                    FROM review_sessions rs
-                    JOIN review_requests rr ON rr.id = rs.request_id
-                    WHERE rs.id = ?
-                    """,
-                    (str(review_session_id),),
-                ).fetchone()
-        if row is None:
-            return None
-        return (
-            str(row["project_id"]),
-            str(row["target_type"]),
-            str(row["target_id"]),
-        )
-
-    def session_project_id(self, *, review_session_id: Any) -> str | None:
-        if not review_session_id:
-            return None
-        with closing(self.store.connect()) as conn:
-            row = conn.execute(
-                """
-                SELECT rr.project_id AS project_id
-                FROM review_sessions rs
-                JOIN review_requests rr ON rr.id = rs.request_id
-                WHERE rs.id = ?
-                """,
-                (str(review_session_id),),
-            ).fetchone()
-            return str(row["project_id"]) if row else None
-
-    def request_id_for_session(self, *, review_session_id: Any) -> str | None:
-        if not review_session_id:
-            return None
-        with closing(self.store.connect()) as conn:
-            row = conn.execute(
-                "SELECT request_id FROM review_sessions WHERE id = ?",
-                (str(review_session_id),),
-            ).fetchone()
-        return str(row["request_id"]) if row else None
-
-    def assert_session_in_project(
-        self, *, project_id: str | None, review_session_id: Any
-    ) -> None:
-        with closing(self.store.connect()) as conn:
-            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            if not review_session_id:
-                raise ValidationError("review_session_id is required")
-            row = conn.execute(
-                """
-                SELECT rr.project_id AS project_id
-                FROM review_sessions rs
-                JOIN review_requests rr ON rr.id = rs.request_id
-                WHERE rs.id = ?
-                """,
-                (review_session_id,),
-            ).fetchone()
-            if row is None or row["project_id"] != project_id:
-                raise NotFoundError(
-                    f"review session not found in project {project_id}: {review_session_id}"
-                )
+            row = conn.execute(sql, (str(request_id or session_id),)).fetchone()
+        return None if row is None else (str(row["project_id"]), str(row["target_type"]), str(row["target_id"]))
 
     def _with_snapshot(self, *, row) -> dict[str, Any]:
         data = row_to_dict(row=row) or {}
@@ -642,7 +505,7 @@ class ReviewService:
     def _validate_role_matches_gate(
         self, *, target_type: str, expected: str | None, role: str
     ) -> None:
-        if is_review_gate_exempt(role=role):
+        if role in REVIEW_GATE_EXEMPT_ROLES:
             return
         if expected is None:
             raise PermissionDeniedError(
@@ -657,12 +520,7 @@ class ReviewService:
             raise NotFoundError(f"workflow {target_type!r} not found in this project: {target_id}")
         if lock:
             self.runtime.lock(conn=conn, project_id=project_id, instance_id=target_id, revision=current.revision)
-        target, _gate = self._target_with_gate(
-            conn=conn,
-            project_id=project_id,
-            target_type=target_type,
-            target_id=target_id,
-        )
+        target = self._target(conn=conn, project_id=project_id, target_type=target_type, target_id=target_id)
         return review_snapshot_id(target_type=target_type, target=target, snapshot=current)
 
     def read_fact(self, *, snapshot: Snapshot, reference: Reference, conn: Connection) -> dict[str, Any]:
@@ -677,18 +535,11 @@ class ReviewService:
         return read_review_fact(conn=conn, project_id=snapshot.project_id, target_type=snapshot.workflow,
                                 target_id=snapshot.id, snapshot_id=snapshot_id, role=role).reference(request=reference.kind == "review_snapshot")
 
-    def _target_with_gate(
-        self,
-        *,
-        conn: Connection,
-        target_type: str,
-        target_id: str,
-        project_id: str | None = None,
-    ):
+    def _target(self, *, conn: Connection, target_type: str, target_id: str, project_id: str | None = None) -> dict[str, Any]:
+        """The record under review as a plain mapping, or a table-less instance's pinned artifacts."""
         kind = self.records.kinds.get(target_type)
         if kind is not None:
-            state, gate = self.records.get_state_with_gate(kind, record_id=target_id, project_id=project_id, conn=conn)
-            return public_record(Public(), state), gate
+            return public_record(Public(), self.records.get_state(kind, record_id=target_id, project_id=project_id, conn=conn))
         snapshot = self.runtime.get(conn=conn, project_id=project_id, instance_id=target_id)
         if snapshot.workflow != target_type:
             raise NotFoundError(f"workflow {target_type!r} not found in this project: {target_id}")
@@ -699,7 +550,7 @@ class ReviewService:
             self.records.artifacts.contents.assert_complete(artifact_ids=tuple(selected.values()), project_id=project_id, tx=conn)
         return {"id": snapshot.id, "project_id": snapshot.project_id, "status": snapshot.state,
                 "attempt_index": int(snapshot.data.get("attempt_index") or 1),
-                "current_attempt_artifacts": [{"id": value, "role": label} for label, value in selected.items()]}, None
+                "current_attempt_artifacts": [{"id": value, "role": label} for label, value in selected.items()]}
 
     def _hydrate_review(self, *, row) -> dict[str, Any]:
         data = self._with_snapshot(row=row)

@@ -23,7 +23,7 @@ from .artifact_models import ArtifactTarget
 from .records import RecordHooks, Records
 from ..kernel.state.store import BaseStateStore, Connection, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
-from .models import CommittedTaskUpdate, TaskState
+from .models import Committed, TaskState
 
 
 
@@ -172,10 +172,10 @@ class TaskService(RecordHooks):
     def transition_with_event(
         self, *, task_id: str, transition: str, evidence: dict[str, Any] | None = None,
         project_id: str | None = None,
-    ) -> CommittedTaskUpdate:
+    ) -> Committed[TaskState]:
         state, event = self.records.transition(TASK, record_id=task_id, transition=transition,
                                                evidence=evidence, project_id=project_id)
-        return CommittedTaskUpdate(state=state, event=event)
+        return Committed(state=state, event=event)
 
 
 def _note_from_evidence(evidence: dict[str, Any]) -> str:

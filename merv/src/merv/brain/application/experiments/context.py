@@ -247,39 +247,21 @@ class ExperimentContextQuery:
 
     @staticmethod
     def _plan_status(*, state: ExperimentState, artifact_id: str) -> str:
-        status = state.status
-        if status == _DESIGN_REVIEW_STATUS:
-            return "in_review"
-        review = _latest_review(
-            state=state, role=_DESIGN_REVIEW_ROLE, artifact_id=artifact_id
-        )
-        if review and review.verdict != "pass":
-            return "changes_requested"
-        if review and review.verdict == "pass":
-            return "approved"
-        return "submitted"
+        return _document_status(state, _DESIGN_REVIEW_ROLE, _DESIGN_REVIEW_STATUS, artifact_id)
 
     @staticmethod
-    def _report_status(
-        *,
-        state: ExperimentState,
-        artifact_id: str,
-        status: str,
-    ) -> str:
-        if status == _RESULTS_REVIEW_STATUS:
-            return "in_review"
-        review = _latest_review(
-            state=state, role=_RESULTS_REVIEW_ROLE, artifact_id=artifact_id
-        )
-        if review and review.verdict != "pass":
-            return "changes_requested"
-        if review and review.verdict == "pass":
-            return "approved"
-        if status == EXPERIMENT.success_status and not any(
-            review.role == _RESULTS_REVIEW_ROLE for review in state.reviews
-        ):
-            return "approved"
-        return "submitted"
+    def _report_status(*, state: ExperimentState, artifact_id: str, status: str) -> str:
+        # A completed experiment whose results were never reviewed reads as approved.
+        unreviewed = status == EXPERIMENT.success_status and not any(item.role == _RESULTS_REVIEW_ROLE for item in state.reviews)
+        return _document_status(state, _RESULTS_REVIEW_ROLE, _RESULTS_REVIEW_STATUS, artifact_id, "approved" if unreviewed else "submitted")
+
+
+def _document_status(state: ExperimentState, role: str, review_state: str, artifact_id: str, otherwise: str = "submitted") -> str:
+    """Where one submitted document stands with its reviewer: in review, approved, or sent back."""
+    if state.status == review_state:
+        return "in_review"
+    review = _latest_review(state=state, role=role, artifact_id=artifact_id)
+    return otherwise if review is None else "approved" if review.verdict == "pass" else "changes_requested"
 
 
 def _latest_review(

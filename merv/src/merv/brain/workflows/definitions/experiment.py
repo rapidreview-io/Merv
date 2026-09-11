@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from .research_contracts import REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD
 
-
-from .artifact_roles import EXHIBIT_ROLE
 from merv.shared.markdown_images import markdown_image_links
 
 from ..graph import (
     Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Guidance, Issue, Node, RecordKind,
     Metadata, Reference, ReviewGate, ReviewReturn, Workflow,
 )
-from .execution import RESEARCH_HANDOFF, EXPERIMENT_EXECUTION, REVIEW_EXECUTION
+from .artifact_roles import EXHIBIT_ROLE
+from .checks import evidence_references, rejected, review_summary, short
 from .documents import (REQUIRED_PLAN_SECTIONS, graph_problems, markdown_section_body, preferred_artifact,
                         report_problems, required_markdown_sections_missing)
+from .execution import RESEARCH_HANDOFF, EXPERIMENT_EXECUTION, REVIEW_EXECUTION
+from .research_contracts import REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD
+from .research_state import ExperimentState
 
 
 def _figure_problem(role, path, figures):
@@ -79,16 +80,6 @@ RETURN_TO_RUNNING = ReviewReturn("running", "same", event_type="experiment.retur
                                revision="The approved plan stands; fix execution or conclusions, then resubmit results.")
 
 
-def _references(artifacts):
-    return tuple(Reference("artifact", str(item.get("artifact_id") or item.get("id")), str(item.get("role") or "Evidence"))
-                 for item in artifacts if item.get("artifact_id") or item.get("id"))
-
-
-def _short(value, words):
-    parts = str(value or "").split()
-    return " ".join(parts[:words]) + ("…" if len(parts) > words else "")
-
-
 def approved_plan_artifacts(snapshot, knowledge):
     if snapshot.data.get("approved_plan_artifacts"):
         return snapshot.data["approved_plan_artifacts"]
@@ -104,10 +95,10 @@ def _intro(snapshot, knowledge):
     project = knowledge.read(Reference("project", snapshot.project_id))
     claims = "; ".join(str(item.get("statement") or item.get("id")) for item in experiment.get("tested_claims") or ())
     text = (f"Experiment {experiment.get('name', snapshot.id)}, attempt {experiment.get('attempt_index', 1)}. "
-            f"Project: {_short(project.get('name', snapshot.project_id), 10)} — {_short(project.get('summary') or 'Read project context for its purpose.', 22)}\n"
-            f"Intent: {_short(experiment.get('intent', ''), 35)}\nConstraints: {_short(experiment.get('details') or 'No additional constraints.', 25)}\n"
-            f"Claims: {_short(claims or 'No specific claims linked.', 25)}\n"
-            f"Requested revisions: {_short(experiment.get('revision_context') or 'None.', 40)}\n\n")
+            f"Project: {short(project.get('name', snapshot.project_id), 10)} — {short(project.get('summary') or 'Read project context for its purpose.', 22)}\n"
+            f"Intent: {short(experiment.get('intent', ''), 35)}\nConstraints: {short(experiment.get('details') or 'No additional constraints.', 25)}\n"
+            f"Claims: {short(claims or 'No specific claims linked.', 25)}\n"
+            f"Requested revisions: {short(experiment.get('revision_context') or 'None.', 40)}\n\n")
     return experiment, text
 
 
@@ -115,7 +106,7 @@ def build_plan_context(snapshot, knowledge):
     experiment, intro = _intro(snapshot, knowledge)
     return Brief(intro + "Design a falsifiable test of the intent and linked claims; submit its complete plan for independent review. "
         "Follow the research-workflow skill, including prior-attempt revisions.",
-        (Reference("experiment", snapshot.id, "Experiment and prior attempts"), *_references(experiment.get("current_attempt_artifacts") or ())))
+        (Reference("experiment", snapshot.id, "Experiment and prior attempts"), *evidence_references(experiment.get("current_attempt_artifacts") or ())))
 
 
 def _build_review_context(snapshot, knowledge, *, design):
@@ -127,7 +118,7 @@ def _build_review_context(snapshot, knowledge, *, design):
     return Brief(intro + instructions,
         (Reference("experiment", snapshot.id, "Experiment goal"),
          *((Reference("review_request", str(pinned["request_id"]), "Independent review capability"),) if pinned.get("request_id") else ()),
-         *_references(approved), *_references(pinned.get("artifacts") or ())))
+         *evidence_references(approved), *evidence_references(pinned.get("artifacts") or ())))
 
 
 def build_design_review_context(snapshot, knowledge):
@@ -144,8 +135,8 @@ def build_execution_context(snapshot, knowledge):
     return Brief(intro + "Execute the exact approved plan; keep completed jobs and recover retained outputs before repeating work. "
         "Address this attempt's revisions and apply the approved decision rule. Follow research-workflow. "
         "Preview experiment.exhibit; interpret metrics_exhibit.json when pinned. Submit the completed evidence for review.",
-        (Reference("experiment", snapshot.id, "Durable progress"), *_references(approved),
-         *_references(item for item in experiment.get("current_attempt_artifacts") or () if item.get("role") != "plan")))
+        (Reference("experiment", snapshot.id, "Durable progress"), *evidence_references(approved),
+         *evidence_references(item for item in experiment.get("current_attempt_artifacts") or () if item.get("role") != "plan")))
 
 
 def pin_approved_plan(snapshot, payload, knowledge):
@@ -156,9 +147,7 @@ def pin_approved_plan(snapshot, payload, knowledge):
 
 def _review_revision(snapshot, knowledge):
     role = "design_reviewer" if snapshot.state == "design_review" else "experiment_reviewer"
-    fact = knowledge.read(Reference("review", role))
-    from .checks import review_summary
-    return review_summary(fact)
+    return review_summary(knowledge.read(Reference("review", role)))
 
 
 def return_plan(snapshot, payload, knowledge):
@@ -203,14 +192,6 @@ def conclude(snapshot, payload, knowledge):
         document = {} if report is None else knowledge.read(Reference("artifact", str(report.get("artifact_id") or report.get("id"))))
         text = markdown_section_body(str(document.get("text") or ""), "conclusion") or str(review.get("notes") or "")
     return Change(data={"conclusion": text.strip()})
-
-
-def rejected(role, return_to):
-    def check(snapshot, knowledge):
-        fact = knowledge.read(Reference("review", role))
-        if fact.get("verdict") not in {"needs_changes", "fail"} or fact.get("return_to") != return_to:
-            return Issue(f"{role}_required", f"An independent rejected review returning to {return_to!r} is required.", "request_review", ("review.request",))
-    return check
 
 
 DESIGN_REVIEW = ReviewGate("design_reviewer", "design review must pass before execution", "design_review_required",
@@ -281,64 +262,28 @@ METADATA = Metadata(
              "complete": ("record_conclusion",)},
 )
 
-from .research_state import ExperimentState
-
 @dataclass(frozen=True, slots=True)
 class ReflectionFreshness:
+    """Block a new experiment once enough finished ones await a published reflection."""
+
     threshold: int = REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD
 
-    def blocked(self, signal):
-        return signal.get("new_terminal_since_publish", 0) >= self.threshold
-
-    def reason(self, signal):
-        count = signal.get("new_terminal_since_publish", 0)
-        threshold = signal["block_new_terminal_threshold"]
-        open_id = signal.get("open_reflection_id")
-        if open_id:
-            return (
-                f"{count} experiments have finished since the last published "
-                f"reflection (threshold {threshold}); finish and publish open "
-                f"reflection wave {open_id} before creating another experiment."
-            )
-        since = (
-            "since the last published reflection"
-            if signal.get("last_published_reflection_id")
-            else "and no project reflection has been published yet"
-        )
-        return (
-            f"{count} experiments have finished {since} (threshold {threshold}); "
-            "publish a project reflection wave before creating another experiment."
-        )
-
-    def check(self, facts):
-        if not self.blocked(facts):
-            return None
-        return Issue("reflection_required", self.message(facts),
-                     "start_project_reflection_before_next_experiment", ("reflection.create",))
+    def blocked(self, facts):
+        return facts.get("new_terminal_since_publish", 0) >= self.threshold
 
     def message(self, facts):
-        debt, threshold = facts["new_terminal_since_publish"], self.threshold
-        published_id, open_wave = facts.get("last_published_reflection_id"), facts.get("open_wave")
-        if open_wave is not None:
-            return (
-                "project reflection is required before creating another experiment: "
-                f"{debt} experiments have finished since the last published "
-                f"reflection (threshold {threshold}), and reflection wave "
-                f"{open_wave['id']} is {open_wave['status']!r}. Finish and publish "
-                "that reflection wave; its approved change spec will create the "
-                "next experiment wave."
-            )
-        since = (
-            "since the last published reflection"
-            if published_id
-            else "and no project reflection has been published yet"
-        )
-        return (
-            "project reflection is required before creating another experiment: "
-            f"{debt} experiments have finished {since} (threshold {threshold}). "
-            "Start a reflection wave with reflection.create and publish it before "
-            "creating another experiment."
-        )
+        since = ("since the last published reflection" if facts.get("last_published_reflection_id")
+                 else "and no project reflection has been published yet")
+        open_id = facts.get("open_reflection_id")
+        return (f"project reflection is required before creating another experiment: "
+                f"{facts.get('new_terminal_since_publish', 0)} experiments have finished {since} (threshold {self.threshold}); "
+                + (f"finish and publish open reflection wave {open_id} first." if open_id
+                   else "start one with reflection.create and publish it before creating another experiment."))
+
+    def check(self, facts):
+        if self.blocked(facts):
+            return Issue("reflection_required", self.message(facts),
+                         "start_project_reflection_before_next_experiment", ("reflection.create",))
 
 
 KIND = RecordKind(

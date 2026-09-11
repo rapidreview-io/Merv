@@ -164,21 +164,12 @@ class Literature:
                 by_paper.setdefault(str(link["paper_id"]), []).append(
                     {k: link[k] for k in ("target_type", "target_id", "note")}
                 )
-            ledger = []
-            for row in papers:
-                item = dict(row)
-                item["authors"] = json.loads(item.pop("authors_json") or "[]")
+            ledger = [_paper(row, by_paper.get(str(row["id"]), [])) for row in papers]
+            for item in ledger:
                 item.pop("created_seq", None)
-                item["links"] = by_paper.get(str(row["id"]), [])
-                ledger.append(item)
             return {
                 "summary": overview["summary"],
-                "sections": [
-                    self._present_section(
-                        conn=conn, project_id=project_id, row=row, full=True
-                    )
-                    for row in sections
-                ],
+                "sections": [self._present_section(conn=conn, project_id=project_id, row=row, full=True) for row in sections],
                 "papers": ledger,
             }
 
@@ -239,21 +230,10 @@ class Literature:
             (project_id, cursor, limit + 1),
         ).fetchall()
         page, more = rows[:limit], len(rows) > limit
-        papers = []
-        for row in page:
-            links = conn.execute(
-                "SELECT target_type, target_id FROM paper_links "
-                "WHERE paper_id = ? AND project_id = ?",
-                (row["id"], project_id),
-            ).fetchall()
-            item = dict(row)
-            item["authors"] = json.loads(item.pop("authors_json") or "[]")
-            item["links"] = rows_to_dicts(rows=links)
-            papers.append(item)
-        return {
-            "papers": papers,
-            "next_cursor": int(page[-1]["created_seq"]) if more and page else None,
-        }
+        papers = [_paper(row, rows_to_dicts(rows=conn.execute(
+            "SELECT target_type, target_id FROM paper_links WHERE paper_id = ? AND project_id = ?",
+            (row["id"], project_id)).fetchall())) for row in page]
+        return {"papers": papers, "next_cursor": int(page[-1]["created_seq"]) if more and page else None}
 
     def _present_section(
         self, *, conn: Any, project_id: str, row: Any, full: bool
@@ -328,34 +308,24 @@ class Literature:
             raise ValidationError(f"section limit reached ({MAX_SECTIONS})")
         self._check_title_free(conn=conn, project_id=project_id, title=title)
         position = conn.execute(
-            "SELECT COALESCE(MAX(position), 0) AS p FROM litreview_sections "
-            "WHERE project_id = ? AND kind = 'section'",
+            "SELECT COALESCE(MAX(position), 0) AS p FROM litreview_sections WHERE project_id = ? AND kind = 'section'",
             (project_id,),
         ).fetchone()
-        now = now_iso()
-        section_id = new_id(prefix="lit")
+        section_id = self._insert_section(conn=conn, project_id=project_id, kind="section", title=title, tldr=tldr,
+                                          body=body, position=int(position["p"]) + 1, created_by=created_by)
+        self._section_event(conn=conn, project_id=project_id, event="litreview.section_added", section_id=section_id)
+        return {"section": self._read_section(conn=conn, project_id=project_id, section_id=section_id)}
+
+    def _insert_section(self, *, conn: Any, project_id: str, kind: str, title: str, tldr: str, body: str,
+                        position: int, created_by: str) -> str:
+        section_id, now = new_id(prefix="lit"), now_iso()
         conn.execute(
-            """
-            INSERT INTO litreview_sections
-              (id, project_id, kind, title, tldr, body, position, revision,
-               created_by, created_seq, created_at, updated_at)
-            VALUES (?, ?, 'section', ?, ?, ?, ?, 1, ?, ?, ?, ?)
-            """,
-            (
-                section_id, project_id, title, tldr, body,
-                int(position["p"]) + 1, created_by,
-                next_created_seq(conn=conn, table="litreview_sections"), now, now,
-            ),
+            "INSERT INTO litreview_sections (id, project_id, kind, title, tldr, body, position, revision, created_by, "
+            "created_seq, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+            (section_id, project_id, kind, title, tldr, body, position, created_by,
+             next_created_seq(conn=conn, table="litreview_sections"), now, now),
         )
-        self._section_event(
-            conn=conn, project_id=project_id, event="litreview.section_added",
-            section_id=section_id,
-        )
-        return {
-            "section": self._read_section(
-                conn=conn, project_id=project_id, section_id=section_id
-            )
-        }
+        return section_id
 
     def _edit(
         self, *, conn: Any, project_id: str, address: str, title: str, tldr: str,
@@ -374,30 +344,10 @@ class Literature:
                         "summary does not exist yet; pass expected_revision=0 to create it"
                     )
                 _, tldr = self._check_text(title=SUMMARY_TITLE, tldr=tldr, body=body)
-                now = now_iso()
-                section_id = new_id(prefix="lit")
-                conn.execute(
-                    """
-                    INSERT INTO litreview_sections
-                      (id, project_id, kind, title, tldr, body, position, revision,
-                       created_by, created_seq, created_at, updated_at)
-                    VALUES (?, ?, 'summary', ?, ?, ?, 0, 1, ?, ?, ?, ?)
-                    """,
-                    (
-                        section_id, project_id, SUMMARY_TITLE, tldr, body, created_by,
-                        next_created_seq(conn=conn, table="litreview_sections"),
-                        now, now,
-                    ),
-                )
-                self._section_event(
-                    conn=conn, project_id=project_id,
-                    event="litreview.section_edited", section_id=section_id,
-                )
-                return {
-                    "section": self._read_section(
-                        conn=conn, project_id=project_id, section_id=section_id
-                    )
-                }
+                section_id = self._insert_section(conn=conn, project_id=project_id, kind="summary", title=SUMMARY_TITLE,
+                                                  tldr=tldr, body=body, position=0, created_by=created_by)
+                self._section_event(conn=conn, project_id=project_id, event="litreview.section_edited", section_id=section_id)
+                return {"section": self._read_section(conn=conn, project_id=project_id, section_id=section_id)}
             row = existing
         else:
             row = self._resolve_section(conn=conn, project_id=project_id, address=address)
@@ -562,13 +512,7 @@ class Literature:
                 conn=conn, project_id=project_id, paper_id=paper_id,
                 targets=targets or [], note=note, created_by=created_by,
             )
-            paper = dict(
-                conn.execute(
-                    "SELECT * FROM papers WHERE id = ? AND project_id = ?",
-                    (paper_id, project_id),
-                ).fetchone()
-            )
-            paper["authors"] = json.loads(paper.pop("authors_json") or "[]")
+            paper = _paper(conn.execute("SELECT * FROM papers WHERE id = ? AND project_id = ?", (paper_id, project_id)).fetchone())
             paper.pop("created_seq", None)
             self.store.record_event(
                 conn=conn, project_id=project_id, event_type="litreview.paper_cited",
@@ -768,9 +712,7 @@ class Literature:
         data.pop("created_seq", None)
         return data
 
-    def _section_event(
-        self, *, conn: Any, project_id: str, event: str, section_id: str
-    ) -> None:
+    def _section_event(self, *, conn: Any, project_id: str, event: str, section_id: str) -> None:
         # Full post-state: litreview events double as the document's history.
         self.store.record_event(
             conn=conn, project_id=project_id, event_type=event,
@@ -779,3 +721,12 @@ class Literature:
                 conn=conn, project_id=project_id, section_id=section_id
             ),
         )
+
+
+def _paper(row: Any, links: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """One ledger row as its public shape: decoded authors, plus its links when asked."""
+    item = dict(row)
+    item["authors"] = json.loads(item.pop("authors_json") or "[]")
+    if links is not None:
+        item["links"] = links
+    return item

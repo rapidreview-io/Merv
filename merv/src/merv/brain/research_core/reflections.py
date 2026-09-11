@@ -13,7 +13,7 @@ from ..kernel.state.store import Connection
 from .models import ReflectionState, public_record
 from ..workflows import Public
 
-from contextlib import closing, suppress
+from contextlib import closing, nullcontext, suppress
 import json
 from typing import Any, Protocol
 
@@ -45,7 +45,7 @@ from .policy import (
     reflection_signal_state,
     snapshot_from_id,
 )
-from .records import RecordHooks, RecordKnowledge, Records
+from .records import RecordHooks, RecordKnowledge, Records, literals, query
 from ..workflows import Reference, Snapshot, documents
 from ..kernel.utils import ContentUnavailableError
 from ..kernel.state.store import (
@@ -69,19 +69,18 @@ PINS_WAVE_NAMES = ("submit_reflection_artifacts", "begin_consolidation")
 HOLDS_WAVE_NAMES = ("reflection_review", "consolidating")
 
 
-def _query(conn: Connection, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
-    return rows_to_dicts(rows=conn.execute(sql, parameters).fetchall())
-
-
-def _literals(values) -> str:
-    """A fixed set of declared statuses, spelled into one IN clause."""
-    return ", ".join(f"'{value}'" for value in sorted(values))
-
-
 def _pins(snapshot: dict[str, Any], proposal: dict[str, Any]) -> bool:
     """A review is current only for the exact proposal and code sha it graded."""
     return (snapshot.get("snapshot_token") == proposal["id"]
             and snapshot.get("code_sha") == proposal["proposal_sha"])
+
+
+def wave_row(conn: Connection, project_id: str, *, published: bool, columns: str = "id"):
+    """A project's latest published wave, or its one open wave, as a row or None."""
+    where, order = ((f"status = '{REFLECTION.success_status}'", "published_at DESC, created_seq DESC") if published
+                    else (f"status NOT IN ({literals(REFLECTION.terminal_statuses)})", "created_seq DESC"))
+    return conn.execute(f"SELECT {columns} FROM reflections WHERE project_id = ? AND {where} ORDER BY {order} LIMIT 1",
+                        (project_id,)).fetchone()
 
 
 class ClaimWriter(Protocol):
@@ -144,72 +143,32 @@ def _materialize_wave(
     """
     key_to_node_id: dict[str, str] = {}
     pending_edges: list[tuple[str, list[str]]] = []
+
+    def created(table: str, column: str, node_id: str, key: str, proposal: dict[str, Any]) -> None:
+        conn.execute(f"INSERT INTO {table} (reflection_id, {column}, proposal_key, created_at) VALUES (?, ?, ?, ?)",
+                     (reflection_id, node_id, key, now_iso()))
+        if key:
+            key_to_node_id[key] = node_id
+        pending_edges.append((node_id, depends_on_refs(proposal)))
+
     for proposal in tasks:
-        proposal_key = str(proposal.get("key") or "").strip()
-        task = create_task(
-            conn=conn,
-            project_id=project_id,
-            reflection_id=reflection_id,
-            name=str(proposal.get("name") or ""),
-            goal=str(proposal.get("goal") or ""),
-            deliverables=[
-                str(item)
-                for item in (
-                    proposal.get("deliverables")
-                    if proposal.get("deliverables") is not None
-                    else proposal.get("done_when") or []
-                )
-            ],
-            proposal_key=proposal_key,
-        )
-        task_id = task.id
-        if proposal_key:
-            key_to_node_id[proposal_key] = task_id
-        conn.execute(
-            """
-            INSERT INTO reflection_tasks
-              (reflection_id, task_id, proposal_key, created_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (reflection_id, task_id, proposal_key, now_iso()),
-        )
-        # create_from_reflection pinned the rendered brief already.
-        pending_edges.append((task_id, depends_on_refs(proposal)))
+        key = str(proposal.get("key") or "").strip()
+        listed = proposal.get("deliverables") if proposal.get("deliverables") is not None else proposal.get("done_when") or []
+        task = create_task(conn=conn, project_id=project_id, reflection_id=reflection_id, name=str(proposal.get("name") or ""),
+                           goal=str(proposal.get("goal") or ""), deliverables=[str(item) for item in listed], proposal_key=key)
+        created("reflection_tasks", "task_id", task.id, key, proposal)  # the brief was pinned at create
     for proposal in experiments:
-        claim_ids = [key_to_claim_id.get(ref, ref) for ref in claim_refs(proposal)]
-        proposal_key = str(proposal.get("key") or "").strip()
+        key = str(proposal.get("key") or "").strip()
         experiment = create_experiment(
-            conn=conn,
-            project_id=project_id,
-            reflection_id=reflection_id,
-            name=str(proposal.get("name") or ""),
-            intent=str(proposal.get("intent") or ""),
-            details=str(proposal.get("details") or ""),
-            tested_claim_ids=claim_ids,
-            proposal_key=proposal_key,
-            parallelism=str(proposal.get("parallelism") or ""),
-        )
-        experiment_id = experiment.id
-        if proposal_key:
-            key_to_node_id[proposal_key] = experiment_id
-        conn.execute(
-            """
-            INSERT INTO reflection_experiments
-              (reflection_id, experiment_id, proposal_key, created_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (reflection_id, experiment_id, proposal_key, now_iso()),
-        )
-        pending_edges.append((experiment_id, depends_on_refs(proposal)))
+            conn=conn, project_id=project_id, reflection_id=reflection_id, name=str(proposal.get("name") or ""),
+            intent=str(proposal.get("intent") or ""), details=str(proposal.get("details") or ""),
+            tested_claim_ids=[key_to_claim_id.get(ref, ref) for ref in claim_refs(proposal)],
+            proposal_key=key, parallelism=str(proposal.get("parallelism") or ""))
+        created("reflection_experiments", "experiment_id", experiment.id, key, proposal)
     for node_id, refs in pending_edges:
-        if not refs:
-            continue
-        record_dependencies(
-            conn=conn,
-            project_id=project_id,
-            node_id=node_id,
-            depends_on_ids=[key_to_node_id.get(ref, ref) for ref in refs],
-        )
+        if refs:
+            record_dependencies(conn=conn, project_id=project_id, node_id=node_id,
+                                depends_on_ids=[key_to_node_id.get(ref, ref) for ref in refs])
 
 
 class ReflectionService(RecordHooks):
@@ -287,13 +246,7 @@ class ReflectionService(RecordHooks):
 
     def before_create(self, *, conn: Connection, project_id: str, values: dict[str, Any]) -> None:
         """The project graph is one living artifact: one wave may edit it."""
-        terminal = tuple(sorted(REFLECTION.terminal_statuses))
-        open_row = conn.execute(
-            f"""SELECT id, status FROM reflections WHERE project_id = ?
-                AND status NOT IN ({", ".join("?" for _ in terminal)})
-                ORDER BY created_seq DESC LIMIT 1""",
-            (project_id, *terminal),
-        ).fetchone()
+        open_row = wave_row(conn, project_id, published=False, columns="id, status")
         if open_row is not None:
             raise WorkflowError(
                 f"a reflection wave is already open: {open_row['id']} is "
@@ -313,7 +266,7 @@ class ReflectionService(RecordHooks):
             tasks=self._terminal_nodes(conn=conn, project_id=project_id, kind="task",
                                        statuses=TASK_TERMINAL_STATUSES, roles=(TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE),
                                        columns="id, name, goal, attempt_index, status, outcome, failed_by"),
-            claims=_query(conn, "SELECT id, statement, status, confidence, scope FROM claims"
+            claims=query(conn, "SELECT id, statement, status, confidence, scope FROM claims"
                                 " WHERE project_id = ? ORDER BY created_at, id", (project_id,)),
             covered=covered_terminal_ids(None if previous is None else (previous.corpus or {})),
             covered_tasks=covered_terminal_ids(None if previous is None else (previous.corpus or {}),
@@ -321,8 +274,8 @@ class ReflectionService(RecordHooks):
 
     def _terminal_nodes(self, *, conn: Connection, project_id: str, kind: str, statuses, roles, columns: str):
         """Every finished node of one kind, each naming its authoritative evidence."""
-        nodes = _query(conn, f"SELECT {columns} FROM {kind}s WHERE project_id = ? AND status IN "
-                             f"({_literals(statuses)}) ORDER BY created_at, id", (project_id,))
+        nodes = query(conn, f"SELECT {columns} FROM {kind}s WHERE project_id = ? AND status IN "
+                             f"({literals(statuses)}) ORDER BY created_at, id", (project_id,))
         history = self.artifacts.history(tx=conn, target_type=kind,
                                          target_ids=tuple(str(node["id"]) for node in nodes))
         for node in nodes:
@@ -359,17 +312,17 @@ class ReflectionService(RecordHooks):
                     claims=self._backfill_claim_fields(conn=conn, claims=data["corpus"].get("claims") or []))
                 data["current_attempt_artifacts"] = corpus.hydrated_artifacts(
                     artifacts=data["current_attempt_artifacts"], content=content)
-            data["materialized_claims"] = _query(conn, """
+            data["materialized_claims"] = query(conn, """
                 SELECT sc.reflection_id, sc.claim_id, sc.op, sc.claim_key, sc.created_at,
                        c.statement, c.status, c.confidence
                 FROM reflection_claim_changes sc JOIN claims c ON c.id = sc.claim_id
                 WHERE sc.reflection_id = ? ORDER BY sc.created_at, sc.claim_id""", (reflection_id,))
-            data["materialized_experiments"] = _query(conn, """
+            data["materialized_experiments"] = query(conn, """
                 SELECT se.reflection_id, se.experiment_id, se.proposal_key, se.created_at,
                        e.name, e.intent, e.status
                 FROM reflection_experiments se JOIN experiments e ON e.id = se.experiment_id
                 WHERE se.reflection_id = ? ORDER BY se.created_at, se.experiment_id""", (reflection_id,))
-            data["materialized_tasks"] = _query(conn, """
+            data["materialized_tasks"] = query(conn, """
                 SELECT st.reflection_id, st.task_id, st.proposal_key, st.created_at, t.name, t.goal, t.status
                 FROM reflection_tasks st JOIN tasks t ON t.id = st.task_id
                 WHERE st.reflection_id = ? ORDER BY st.created_at, st.task_id""", (reflection_id,))
@@ -434,7 +387,7 @@ class ReflectionService(RecordHooks):
         review = advance = None
         if proposal is not None:
             proposal["validation"] = json.loads(str(proposal.pop("validation_json", "{}")))
-            decisions = _query(conn, "SELECT * FROM consolidation_decisions WHERE proposal_id = ? "
+            decisions = query(conn, "SELECT * FROM consolidation_decisions WHERE proposal_id = ? "
                                      "ORDER BY experiment_id", (proposal["id"],))
             advance = self._advance_view(
                 self.advances.latest(conn=conn, proposal_ids=(str(proposal["id"]),)).get(str(proposal["id"])))
@@ -460,18 +413,14 @@ class ReflectionService(RecordHooks):
                   f" WHERE id IN ({', '.join('?' * len(missing))})", missing)}
         return [{**live.get(str(row.get("id") or ""), {}), **row} for row in rows]
 
+    def _all(self, *, conn: Connection, project_id: str) -> list[ReflectionState]:
+        return [self.get_state(reflection_id=row["id"], conn=conn) for row in conn.execute(
+            "SELECT id FROM reflections WHERE project_id = ? ORDER BY created_at, id", (project_id,)).fetchall()]
+
     def list_reflections(self, *, project_id: str | None = None) -> dict[str, Any]:
         with closing(self.store.connect()) as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            rows = conn.execute(
-                "SELECT id FROM reflections WHERE project_id = ? ORDER BY created_at, id",
-                (project_id,),
-            ).fetchall()
-            return {
-                "reflections": [
-                    self.get_state(reflection_id=row["id"], conn=conn) for row in rows
-                ]
-            }
+            return {"reflections": self._all(conn=conn, project_id=project_id)}
 
     def experiment_consolidations(self, *, project_id: str,
                                   experiment_ids: tuple[str, ...]) -> dict[str, list[dict[str, Any]]]:
@@ -482,7 +431,7 @@ class ReflectionService(RecordHooks):
             return result
         with closing(self.store.connect()) as conn:
             self.store.require_project_id(conn=conn, project_id=project_id)
-            rows = _query(conn, "SELECT d.*, p.reflection_id, p.revision, p.base_sha, p.proposal_sha, p.summary, "
+            rows = query(conn, "SELECT d.*, p.reflection_id, p.revision, p.base_sha, p.proposal_sha, p.summary, "
                                 "p.created_at FROM consolidation_decisions d "
                                 "JOIN consolidation_proposals p ON p.id = d.proposal_id WHERE p.project_id = ? "
                                 f"AND d.experiment_id IN ({', '.join('?' * len(ids))}) ORDER BY p.created_at, p.revision",
@@ -504,23 +453,11 @@ class ReflectionService(RecordHooks):
         """All waves plus the current reflection signal for project UI views."""
         with closing(self.store.connect()) as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            rows = conn.execute(
-                "SELECT id FROM reflections WHERE project_id = ? ORDER BY created_at, id",
-                (project_id,),
-            ).fetchall()
-            reflections = [
-                self.get_state(reflection_id=row["id"], conn=conn) for row in rows
-            ]
-            signal = self.reflection_signal(project_id=project_id, conn=conn)
             open_wave = self.open_reflection(conn=conn, project_id=project_id)
             published = self.latest_published(conn=conn, project_id=project_id)
-            return {
-                "reflections": reflections,
-                "current": open_wave or published,
-                "open_reflection": open_wave,
-                "latest_published": published,
-                "signal": signal,
-            }
+            return {"reflections": self._all(conn=conn, project_id=project_id), "current": open_wave or published,
+                    "open_reflection": open_wave, "latest_published": published,
+                    "signal": self.reflection_signal(project_id=project_id, conn=conn)}
 
     def project_logic_graph_selection(self, *, project_id: str) -> dict[str, Any]:
         """Select the current project graph wave and reflection signal.
@@ -549,32 +486,12 @@ class ReflectionService(RecordHooks):
 
     def open_reflection(self, *, conn: Connection, project_id: str) -> ReflectionState | None:
         """The one non-terminal wave for the project, fully hydrated, or None."""
-        terminal = tuple(sorted(REFLECTION.terminal_statuses))
-        placeholders = ", ".join("?" for _ in terminal)
-        row = conn.execute(
-            f"""
-            SELECT id FROM reflections
-            WHERE project_id = ? AND status NOT IN ({placeholders})
-            ORDER BY created_seq DESC LIMIT 1
-            """,
-            (project_id, *terminal),
-        ).fetchone()
-        if row is None:
-            return None
-        return self.get_state(reflection_id=row["id"], conn=conn)
+        row = wave_row(conn, project_id, published=False)
+        return None if row is None else self.get_state(reflection_id=row["id"], conn=conn)
 
     def latest_published(self, *, conn: Connection, project_id: str) -> ReflectionState | None:
-        row = conn.execute(
-            """
-            SELECT id FROM reflections
-            WHERE project_id = ? AND status = ?
-            ORDER BY published_at DESC, created_seq DESC LIMIT 1
-            """,
-            (project_id, REFLECTION.success_status),
-        ).fetchone()
-        if row is None:
-            return None
-        return self.get_state(reflection_id=row["id"], conn=conn)
+        row = wave_row(conn, project_id, published=True)
+        return None if row is None else self.get_state(reflection_id=row["id"], conn=conn)
 
     @staticmethod
     def _project_graph_artifact(
@@ -613,44 +530,16 @@ class ReflectionService(RecordHooks):
         except WorkflowError as exc:
             return {"error": str(exc)}
 
-    def _previous_published_graph_ref(
-        self, *, conn: Connection, reflection: dict[str, Any]
-    ) -> dict[str, Any] | None:
-        project_id = str(reflection.get("project_id") or "")
-        status = str(reflection.get("status") or "")
-        current_id = str(reflection.get("id") or "")
-        params: tuple[Any, ...]
-        if status == REFLECTION.success_status:
-            query = """
-                SELECT id, published_graph_version_id
-                FROM reflections
-                WHERE project_id = ? AND status = ?
-                  AND id != ? AND created_seq < ?
-                ORDER BY published_at DESC, created_seq DESC
-                LIMIT 1
-                """
-            params = (
-                project_id,
-                REFLECTION.success_status,
-                current_id,
-                int(reflection.get("created_seq") or 0),
-            )
-        else:
-            query = """
-                SELECT id, published_graph_version_id
-                FROM reflections
-                WHERE project_id = ? AND status = ?
-                ORDER BY published_at DESC, created_seq DESC
-                LIMIT 1
-                """
-            params = (project_id, REFLECTION.success_status)
-        row = conn.execute(query, params).fetchone()
-        if row is None:
-            return None
-        return {
-            "reflection_id": row["id"],
-            "graph_version_id": row["published_graph_version_id"],
-        }
+    def _previous_published_graph_ref(self, *, conn: Connection, reflection: dict[str, Any]) -> dict[str, Any] | None:
+        """The published wave this one is compared against: the one before it, or the latest."""
+        earlier = reflection.get("status") == REFLECTION.success_status
+        row = conn.execute(
+            "SELECT id, published_graph_version_id FROM reflections WHERE project_id = ? AND status = ?"
+            + (" AND id != ? AND created_seq < ?" if earlier else "") + " ORDER BY published_at DESC, created_seq DESC LIMIT 1",
+            (str(reflection.get("project_id") or ""), REFLECTION.success_status,
+             *((str(reflection.get("id") or ""), int(reflection.get("created_seq") or 0)) if earlier else ())),
+        ).fetchone()
+        return None if row is None else {"reflection_id": row["id"], "graph_version_id": row["published_graph_version_id"]}
 
     def _read_document(self, *, artifact_id: str, what: str) -> ArtifactDocument:
         """Read one complete artifact as strict UTF-8 for a workflow gate."""
@@ -762,9 +651,7 @@ class ReflectionService(RecordHooks):
             self._record_proposal(conn=conn, reflection=reflection, proposal=documents.sealed_consolidation_proposal(
                 summary=summary, validation=validation, producer_session_id=producer_session_id,
                 base_sha=base_sha, proposal_sha=proposal_sha, decisions=decisions,
-                expected_experiments={str(item["id"]) for item
-                                      in (reflection.corpus or {}).get("terminal_experiments") or ()
-                                      if isinstance(item, dict) and item.get("id")}))
+                expected_experiments=set(reflection.corpus_experiment_ids)))
             # The graph pins exactly this proposal and requests its review; the
             # kind's declared commit columns clear the revision request.
             return self._transition_in_tx(conn=conn, reflection=reflection, transition="submit_consolidation")
@@ -1203,9 +1090,7 @@ class ReflectionService(RecordHooks):
         hard experiment.create block once project reflection debt reaches the
         blocking threshold.
         """
-        owns_conn = conn is None
-        conn = self.store.connect() if owns_conn else conn
-        try:
+        with (closing(self.store.connect()) if conn is None else nullcontext(conn)) as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             return reflection_signal_state(
                 current_terminal=self._statuses(conn=conn, project_id=project_id, table="experiments",
@@ -1215,14 +1100,11 @@ class ReflectionService(RecordHooks):
                 current_claims=self._statuses(conn=conn, project_id=project_id, table="claims"),
                 published=self.latest_published(conn=conn, project_id=project_id),
                 open_wave=self.open_reflection(conn=conn, project_id=project_id))
-        finally:
-            if owns_conn:
-                conn.close()
 
     @staticmethod
     def _statuses(*, conn: Connection, project_id: str, table: str, statuses: frozenset[str] | None = None) -> dict[str, str]:
         """The status of every row of one kind the drift signal compares."""
-        where = "" if statuses is None else f" AND status IN ({_literals(statuses)})"
+        where = "" if statuses is None else f" AND status IN ({literals(statuses)})"
         return {str(row["id"]): str(row["status"]) for row
                 in conn.execute(f"SELECT id, status FROM {table} WHERE project_id = ?{where}",
                                 (project_id,)).fetchall()}

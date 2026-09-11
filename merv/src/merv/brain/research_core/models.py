@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
-from typing import Any, TypedDict
+from typing import Any, Generic, TypedDict, TypeVar
 
 from ..kernel.events import StoredEvent
 from ..workflows import Public
@@ -38,11 +38,6 @@ def public_record(public: Public, record: object, **computed: Any) -> dict[str, 
             value = getattr(record, name) if is_dataclass(record) else record[name]
         if value is not MISSING:
             result[public.renames.get(name, name)] = _public_value(value)
-    for name, anchor in {"post_publish_guidance": "materialized_experiments"}.items():
-        if name in result and anchor in result:
-            value = result.pop(name)
-            result = {key: item for key, item in result.items()
-                      for key, item in ((key, item), *(((name, value),) if key == anchor else ()))}
     return result
 
 
@@ -73,9 +68,14 @@ class ExhibitVerdict(TypedDict, total=False):
     pinned: bool
 
 
+S = TypeVar("S")
+
+
 @dataclass(frozen=True, slots=True)
-class CommittedExperimentUpdate:
-    state: ExperimentState
+class Committed(Generic[S]):
+    """One transition's resulting state and the event that recorded it."""
+
+    state: S
     event: StoredEvent
 
 
@@ -90,12 +90,6 @@ class TaskSummary(TypedDict):
     failed_by: str
     created_at: str
     updated_at: str
-
-
-@dataclass(frozen=True, slots=True)
-class CommittedTaskUpdate:
-    state: TaskState
-    event: StoredEvent
 
 
 class LiteratureSignal(TypedDict):
@@ -137,8 +131,7 @@ class ResearchSnapshot:
 
 
 __all__ = [
-    "CommittedExperimentUpdate",
-    "CommittedTaskUpdate",
+    "Committed",
     "ExhibitVerdict",
     "ExperimentState",
     "ExperimentSummary",

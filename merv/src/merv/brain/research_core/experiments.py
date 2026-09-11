@@ -13,16 +13,16 @@ from .policy import (
     ACTIVE_EXPERIMENT_CAP,
     EXPERIMENT,
     GateEvaluation,
-    REFLECTION,
     active_experiment_cap_reached_message,
     covered_terminal_ids,
     validate_experiment_name,
 )
 from .artifact_models import ArtifactTarget
-from .records import RecordHooks, Records
-from ..kernel.state.store import BaseStateStore, Connection, row_to_dict, rows_to_dicts
+from .records import RecordHooks, Records, literals
+from .reflections import wave_row
+from ..kernel.state.store import BaseStateStore, Connection, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
-from .models import CommittedExperimentUpdate, ExperimentState
+from .models import Committed, ExperimentState
 
 
 
@@ -123,9 +123,8 @@ class ExperimentService(RecordHooks):
         # Reserved wave names hold their cap slots: the wave passed the cap
         # check when its spec was validated, so tool creates must not consume
         # the slots its publish will materialize into.
-        terminal = ", ".join(f"'{status}'" for status in sorted(EXPERIMENT.terminal_statuses))
         active_count = int(conn.execute(
-            f"SELECT COUNT(*) AS count FROM experiments WHERE project_id = ? AND status NOT IN ({terminal})",
+            f"SELECT COUNT(*) AS count FROM experiments WHERE project_id = ? AND status NOT IN ({literals(EXPERIMENT.terminal_statuses)})",
             (project_id,)).fetchone()["count"])
         reserved_count = int(conn.execute(
             "SELECT COALESCE(SUM(experiment_slots), 0) AS count FROM reflection_reserved_names WHERE project_id = ?",
@@ -151,33 +150,20 @@ class ExperimentService(RecordHooks):
                 "publishes; choose a different name")
 
     def creation_facts(self, *, conn: Connection, project_id: str) -> dict[str, Any]:
+        """What the reflection-freshness requirement reads: debt since the last publish, and the open wave."""
         self._reject_active_experiment_cap(conn=conn, project_id=project_id)
-        debt, published_id = self._terminal_experiments_since_last_reflection(conn=conn, project_id=project_id)
-        terminal = tuple(sorted(REFLECTION.terminal_statuses))
-        open_wave = conn.execute(
-            f"""SELECT id, status FROM reflections WHERE project_id = ?
-                AND status NOT IN ({", ".join("?" for _ in terminal)})
-                ORDER BY created_seq DESC LIMIT 1""", (project_id, *terminal)).fetchone()
-        return {"new_terminal_since_publish": debt, "last_published_reflection_id": published_id,
-                "open_wave": row_to_dict(row=open_wave)}
-
-    def _terminal_experiments_since_last_reflection(self, *, conn: Connection, project_id: str) -> tuple[int, str | None]:
-        terminal = ", ".join(f"'{status}'" for status in sorted(EXPERIMENT.terminal_statuses))
-        current_terminal = {
-            str(row["id"]) for row in conn.execute(
-                f"SELECT id FROM experiments WHERE project_id = ? AND status IN ({terminal})",
-                (project_id,)).fetchall()}
-        published = conn.execute(
-            """SELECT id, corpus_json FROM reflections WHERE project_id = ? AND status = ?
-               ORDER BY published_at DESC, created_seq DESC LIMIT 1""",
-            (project_id, REFLECTION.success_status)).fetchone()
-        if published is None:
-            return len(current_terminal), None
+        terminal = {str(row["id"]) for row in conn.execute(
+            f"SELECT id FROM experiments WHERE project_id = ? AND status IN ({literals(EXPERIMENT.terminal_statuses)})",
+            (project_id,)).fetchall()}
+        published = wave_row(conn, project_id, published=True, columns="id, corpus_json")
+        open_wave = wave_row(conn, project_id, published=False)
         try:
-            corpus = json.loads(str(published["corpus_json"] or "{}"))
+            corpus = json.loads(str(published["corpus_json"] or "{}")) if published else {}
         except json.JSONDecodeError:
             corpus = {}
-        return len(current_terminal - covered_terminal_ids(corpus)), str(published["id"])
+        return {"new_terminal_since_publish": len(terminal - covered_terminal_ids(corpus)),
+                "last_published_reflection_id": None if published is None else str(published["id"]),
+                "open_reflection_id": None if open_wave is None else str(open_wave["id"])}
 
     # ---- reads and transitions ----
 
@@ -201,11 +187,11 @@ class ExperimentService(RecordHooks):
     def transition_with_event(
         self, *, experiment_id: str, transition: str, evidence: dict[str, Any] | None = None,
         project_id: str | None = None, expected_revision: int | None = None,
-    ) -> CommittedExperimentUpdate:
+    ) -> Committed[ExperimentState]:
         state, event = self.records.transition(
             EXPERIMENT, record_id=experiment_id, transition=transition, evidence=evidence,
             project_id=project_id, expected_revision=expected_revision)
-        return CommittedExperimentUpdate(state=state, event=event)
+        return Committed(state=state, event=event)
 
     # ---- experiment-only facts ----
 

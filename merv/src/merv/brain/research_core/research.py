@@ -33,26 +33,15 @@ from .models import (
     TaskState,
     public_record,
 )
-from .reflections import ReflectionService, publication_effect
-from .records import RecordHooks, Records
+from .reflections import ReflectionService, publication_effect, wave_row
+from .records import RecordHooks, Records, query
 from .reviews import ReviewService, verdict_effect
 from .tasks import TaskService
 from ..agent_sessions import WorkspaceAdvances
 from ..workflows import REVIEW_KIND, Binding, Program, Public, RecordKind, Workflows
 from .artifacts import ResearchArtifacts as Artifacts
-from ..kernel.state.store import (
-    BaseStateStore,
-    Connection,
-    next_created_seq,
-    row_to_dict,
-    rows_to_dicts,
-)
-from ..kernel.utils import (
-    NotFoundError,
-    ValidationError,
-    new_id,
-    now_iso,
-)
+from ..kernel.state.store import BaseStateStore, Connection, next_created_seq, row_to_dict
+from ..kernel.utils import NotFoundError, ValidationError, new_id, now_iso
 from .persistence import RESEARCH_SCHEMA
 
 
@@ -129,7 +118,7 @@ class Research:
         workflows.register_transactional_effect("reflection.materialize_change_spec", publication_effect(
             write_claim=self._write_claim, create_experiment=self.experiments.create_from_reflection,
             create_task=self.tasks.create_from_reflection))
-        self.reviews = ReviewService(records=self.records, reflections=self.reflections)
+        self.reviews = ReviewService(records=self.records)
         # A review request is a native record whose graph reads nothing, so it
         # needs no hook of its own beyond the engine's own writes.
         self.records.register(REVIEW_KIND, RecordHooks())
@@ -186,33 +175,14 @@ class Research:
         tenant_id = (tenant_id or "local").strip() or "local"
         with self.store.transaction() as conn:
             project_id = new_id(prefix="proj")
-            conn.execute(
-                """
-                INSERT INTO projects (id, name, summary, tenant_id, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (project_id, name, summary.strip(), tenant_id, now_iso()),
-            )
+            conn.execute("INSERT INTO projects (id, name, summary, tenant_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                         (project_id, name, summary.strip(), tenant_id, now_iso()))
             if user_id:
-                conn.execute(
-                    """
-                    INSERT INTO project_members (project_id, user_id, added_at)
-                    VALUES (?, ?, ?)
-                    """,
-                    (project_id, user_id, now_iso()),
-                )
-            self.store.record_event(
-                conn=conn,
-                project_id=project_id,
-                event_type="project.created",
-                target_type="project",
-                target_id=project_id,
-                payload={"name": name},
-            )
-            row = conn.execute(
-                "SELECT * FROM projects WHERE id = ?", (project_id,)
-            ).fetchone()
-            return self._project_view(row)
+                conn.execute("INSERT INTO project_members (project_id, user_id, added_at) VALUES (?, ?, ?)",
+                             (project_id, user_id, now_iso()))
+            self.store.record_event(conn=conn, project_id=project_id, event_type="project.created",
+                                    target_type="project", target_id=project_id, payload={"name": name})
+            return self.get_project(project_id=project_id, conn=conn)
 
     def update_project(
         self,
@@ -225,52 +195,19 @@ class Research:
         agent_dispatch: bool | None = None,
     ) -> dict[str, Any]:
         with self.store.transaction() as conn:
-            project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            row = conn.execute(
-                "SELECT * FROM projects WHERE id = ?", (project_id,)
-            ).fetchone()
-            if row is None:
-                raise NotFoundError(f"project not found: {project_id}")
-            next_name = (
-                str(row["name"]) if name is None else self._validate_project_name(name)
-            )
-            next_summary = str(row["summary"]) if summary is None else summary.strip()
-            settings = parse_project_settings(row["settings_json"])
-            if require_verified_reviews is not None:
-                settings["require_verified_reviews"] = bool(require_verified_reviews)
-            if hidden is not None:
-                settings["hidden"] = bool(hidden)
-            if agent_dispatch is not None:
-                settings[AGENT_DISPATCH_SETTING] = bool(agent_dispatch)
-            conn.execute(
-                """
-                UPDATE projects
-                SET name = ?, summary = ?, settings_json = ?
-                WHERE id = ?
-                """,
-                (
-                    next_name,
-                    next_summary,
-                    json.dumps(settings, sort_keys=True),
-                    project_id,
-                ),
-            )
-            self.store.record_event(
-                conn=conn,
-                project_id=project_id,
-                event_type="project.updated",
-                target_type="project",
-                target_id=project_id,
-                payload={
-                    "name": next_name,
-                    "summary": next_summary,
-                    "settings": settings,
-                },
-            )
-            updated = conn.execute(
-                "SELECT * FROM projects WHERE id = ?", (project_id,)
-            ).fetchone()
-            return self._project_view(updated)
+            current = self.get_project(project_id=project_id, conn=conn)
+            project_id = str(current["id"])
+            next_name = current["name"] if name is None else self._validate_project_name(name)
+            next_summary = current["summary"] if summary is None else summary.strip()
+            settings = {**current["settings"], **{key: bool(value) for key, value in (
+                ("require_verified_reviews", require_verified_reviews), ("hidden", hidden),
+                (AGENT_DISPATCH_SETTING, agent_dispatch)) if value is not None}}
+            conn.execute("UPDATE projects SET name = ?, summary = ?, settings_json = ? WHERE id = ?",
+                         (next_name, next_summary, json.dumps(settings, sort_keys=True), project_id))
+            self.store.record_event(conn=conn, project_id=project_id, event_type="project.updated",
+                                    target_type="project", target_id=project_id,
+                                    payload={"name": next_name, "summary": next_summary, "settings": settings})
+            return self.get_project(project_id=project_id, conn=conn)
 
     def get_project(self, *, project_id: str | None = None, conn: Connection | None = None) -> dict[str, Any]:
         if conn is not None:
@@ -288,26 +225,11 @@ class Research:
         tenant_id: str | None = None,
         include_hidden: bool = False,
     ) -> dict[str, Any]:
+        where, parameters = ("", ()) if tenant_id is None else (" WHERE tenant_id = ?", (tenant_id,))
         with closing(self.store.connect()) as conn:
-            if tenant_id is None:
-                rows = conn.execute(
-                    "SELECT * FROM projects ORDER BY created_at, id"
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT * FROM projects
-                    WHERE tenant_id = ?
-                    ORDER BY created_at, id
-                    """,
-                    (tenant_id,),
-                ).fetchall()
+            rows = conn.execute(f"SELECT * FROM projects{where} ORDER BY created_at, id", parameters).fetchall()
         projects = [self._project_view(row) for row in rows]
-        if not include_hidden:
-            projects = [
-                project for project in projects if not project["settings"].get("hidden")
-            ]
-        return {"projects": projects}
+        return {"projects": [project for project in projects if include_hidden or not project["settings"].get("hidden")]}
 
     def current_project(self, *, tenant_id: str | None = None) -> dict[str, Any]:
         projects = self.list_projects(tenant_id=tenant_id)["projects"]
@@ -328,18 +250,12 @@ class Research:
         tenant_id: str | None = None,
         include_hidden: bool = False,
     ) -> dict[str, Any]:
-        projects = self.list_projects(
-            tenant_id=tenant_id, include_hidden=include_hidden
-        )["projects"]
+        projects = self.list_projects(tenant_id=tenant_id, include_hidden=include_hidden)["projects"]
         if user_id:
             memberships = self.project_ids_for_user(user_id=user_id)
-            projects = [
-                project for project in projects if str(project["id"]) in memberships
-            ]
+            projects = [project for project in projects if str(project["id"]) in memberships]
         if key_project_id:
-            projects = [
-                project for project in projects if project["id"] == key_project_id
-            ]
+            projects = [project for project in projects if project["id"] == key_project_id]
         return {"projects": projects}
 
     def is_project_member(self, *, project_id: str, user_id: str) -> bool:
@@ -361,13 +277,7 @@ class Research:
 
     def project_ids_for_user(self, *, user_id: str) -> set[str]:
         with closing(self.store.connect()) as conn:
-            rows = conn.execute(
-                """
-                SELECT project_id FROM project_members
-                WHERE user_id = ?
-                """,
-                (user_id,),
-            ).fetchall()
+            rows = conn.execute("SELECT project_id FROM project_members WHERE user_id = ?", (user_id,)).fetchall()
         return {str(row["project_id"]) for row in rows}
 
     # Candidates -----------------------------------------------------------
@@ -388,126 +298,48 @@ class Research:
         higher_is_better: bool = True,
     ) -> dict[str, Any]:
         """Register one immutable resolved source or pending worktree source."""
-        name = str(name or "").strip()
-        primary_metric = str(primary_metric or "").strip()
-        validation_summary = str(validation_summary or "").strip()
-        idempotency_key = str(idempotency_key or "").strip()
-        source_experiment_id = str(source_experiment_id or "").strip()
-        source_kind = str(source_kind or "").strip()
-        source_ref = str(source_ref or "").strip()
-        expected_sha256 = str(expected_sha256 or "").strip()
+        name, primary_metric, validation_summary, idempotency_key, source_experiment_id, source_kind, source_ref, expected_sha256 = (
+            str(value or "").strip() for value in (name, primary_metric, validation_summary, idempotency_key,
+                                                   source_experiment_id, source_kind, source_ref, expected_sha256))
         if not all((name, validation_summary, idempotency_key, source_ref)):
-            raise ValidationError(
-                "candidate source, name, validation, and idempotency key are required"
-            )
+            raise ValidationError("candidate source, name, validation, and idempotency key are required")
         if source_kind not in {"artifact", "storage_object", "experiment_workspace"}:
             raise ValidationError(f"unknown candidate source_kind: {source_kind}")
         if source_kind == "experiment_workspace" and source_ref != source_experiment_id:
-            raise ValidationError(
-                "experiment_workspace source must be its source_experiment_id"
-            )
-        normalized_metrics = {
-            str(key).strip(): float(value) for key, value in metrics.items()
-        }
-        if not normalized_metrics or any(
-            not key or not math.isfinite(value)
-            for key, value in normalized_metrics.items()
-        ):
-            raise ValidationError(
-                "candidate metrics need nonblank names and finite values"
-            )
+            raise ValidationError("experiment_workspace source must be its source_experiment_id")
+        normalized_metrics = {str(key).strip(): float(value) for key, value in metrics.items()}
+        if not normalized_metrics or any(not key or not math.isfinite(value) for key, value in normalized_metrics.items()):
+            raise ValidationError("candidate metrics need nonblank names and finite values")
         if primary_metric not in normalized_metrics:
             raise ValidationError("primary_metric must name a value in metrics")
-        validation = {
-            "metrics": normalized_metrics,
-            "primary_metric": primary_metric,
-            "higher_is_better": bool(higher_is_better),
-            "summary": validation_summary,
-        }
-        request_digest = hashlib.sha256(
-            json.dumps(
-                [
-                    name,
-                    source_kind,
-                    source_ref,
-                    source_experiment_id,
-                    expected_sha256,
-                    validation,
-                ],
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest()
+        validation = {"metrics": normalized_metrics, "primary_metric": primary_metric,
+                      "higher_is_better": bool(higher_is_better), "summary": validation_summary}
+        request_digest = hashlib.sha256(json.dumps(
+            [name, source_kind, source_ref, source_experiment_id, expected_sha256, validation],
+            sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            if source_experiment_id:
-                source = conn.execute(
-                    "SELECT 1 FROM experiments WHERE id = ? AND project_id = ?",
-                    (source_experiment_id, project_id),
-                ).fetchone()
-                if source is None:
-                    raise NotFoundError(
-                        f"experiment not found in project {project_id}: "
-                        f"{source_experiment_id}"
-                    )
-            existing = conn.execute(
-                """
-                SELECT * FROM project_candidates
-                WHERE project_id = ? AND idempotency_key = ?
-                """,
-                (project_id, idempotency_key),
-            ).fetchone()
-            if existing is not None:
-                if str(existing["request_digest"]) != request_digest:
-                    raise ValidationError(
-                        "idempotency_key was already used for a different candidate"
-                    )
-                candidate_id = str(existing["id"])
-                idempotent = True
-            else:
-                candidate_id = new_id(prefix="cand")
-                now = now_iso()
+            if source_experiment_id and conn.execute("SELECT 1 FROM experiments WHERE id = ? AND project_id = ?",
+                                                     (source_experiment_id, project_id)).fetchone() is None:
+                raise NotFoundError(f"experiment not found in project {project_id}: {source_experiment_id}")
+            existing = conn.execute("SELECT id, request_digest FROM project_candidates WHERE project_id = ? AND idempotency_key = ?",
+                                    (project_id, idempotency_key)).fetchone()
+            if existing is not None and str(existing["request_digest"]) != request_digest:
+                raise ValidationError("idempotency_key was already used for a different candidate")
+            candidate_id = str(existing["id"]) if existing is not None else new_id(prefix="cand")
+            if existing is None:
                 conn.execute(
-                    """
-                    INSERT INTO project_candidates (
-                      id, project_id, name, source_kind, source_ref,
-                      source_experiment_id, expected_sha256, validation_json,
-                      idempotency_key, request_digest, created_at, created_seq
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        candidate_id,
-                        project_id,
-                        name,
-                        source_kind,
-                        source_ref,
-                        source_experiment_id or None,
-                        expected_sha256,
-                        json.dumps(validation, sort_keys=True, separators=(",", ":")),
-                        idempotency_key,
-                        request_digest,
-                        now,
-                        next_created_seq(conn=conn, table="project_candidates"),
-                    ),
-                )
-                self.store.record_event(
-                    conn=conn,
-                    project_id=project_id,
-                    event_type="candidate.submitted",
-                    target_type="candidate",
-                    target_id=candidate_id,
-                    payload={},
-                )
-                idempotent = False
-            candidate, state = self._candidate(
-                conn=conn, project_id=project_id, candidate_id=candidate_id
-            )
-            return {
-                "candidate": candidate,
-                "champion_id": state["champion_id"],
-                "idempotent": idempotent,
-            }
+                    "INSERT INTO project_candidates (id, project_id, name, source_kind, source_ref, source_experiment_id, "
+                    "expected_sha256, validation_json, idempotency_key, request_digest, created_at, created_seq) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (candidate_id, project_id, name, source_kind, source_ref, source_experiment_id or None, expected_sha256,
+                     json.dumps(validation, sort_keys=True, separators=(",", ":")), idempotency_key, request_digest,
+                     now_iso(), next_created_seq(conn=conn, table="project_candidates")))
+                self.store.record_event(conn=conn, project_id=project_id, event_type="candidate.submitted",
+                                        target_type="candidate", target_id=candidate_id, payload={})
+            candidate, state = self._candidate(conn=conn, project_id=project_id, candidate_id=candidate_id)
+            return {"candidate": candidate, "champion_id": state["champion_id"], "idempotent": existing is not None}
 
     def stage_candidate(
         self,
@@ -811,15 +643,7 @@ class Research:
     def list_claims(self, *, project_id: str | None = None) -> dict[str, Any]:
         with closing(self.store.connect()) as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            rows = conn.execute(
-                """
-                SELECT * FROM claims
-                WHERE project_id = ?
-                ORDER BY created_at, id
-                """,
-                (project_id,),
-            ).fetchall()
-            return {"claims": rows_to_dicts(rows=rows)}
+            return {"claims": query(conn, "SELECT * FROM claims WHERE project_id = ? ORDER BY created_at, id", (project_id,))}
 
     # Node reads -----------------------------------------------------------
 
@@ -841,41 +665,16 @@ class Research:
 
     # Reviews --------------------------------------------------------------
 
-    def review_project_id(
-        self,
-        *,
-        review_request_id: Any = None,
-        review_session_id: Any = None,
-    ) -> str | None:
-        if bool(review_request_id) == bool(review_session_id):
-            raise ValueError(
-                "provide exactly one of review_request_id or review_session_id"
-            )
-        if review_request_id:
-            return self.reviews.request_project_id(review_request_id=review_request_id)
-        return self.reviews.session_project_id(review_session_id=review_session_id)
+    def review_project_id(self, *, review_request_id: Any = None, review_session_id: Any = None) -> str | None:
+        found = self.reviews.locate(request_id=review_request_id, session_id=review_session_id)
+        return None if found is None else found[0]
 
-    def assert_review_in_project(
-        self,
-        *,
-        project_id: str | None,
-        review_request_id: Any = None,
-        review_session_id: Any = None,
-    ) -> None:
-        if bool(review_request_id) == bool(review_session_id):
-            raise ValueError(
-                "provide exactly one of review_request_id or review_session_id"
-            )
-        if review_request_id:
-            self.reviews.assert_request_in_project(
-                project_id=project_id,
-                review_request_id=review_request_id,
-            )
-        else:
-            self.reviews.assert_session_in_project(
-                project_id=project_id,
-                review_session_id=review_session_id,
-            )
+    def assert_review_in_project(self, *, project_id: str | None, review_request_id: Any = None,
+                                 review_session_id: Any = None) -> None:
+        found = self.reviews.locate(request_id=review_request_id, session_id=review_session_id)
+        if found is None or found[0] != project_id:
+            what = "request" if review_request_id else "session"
+            raise NotFoundError(f"review {what} not found in project {project_id}: {review_request_id or review_session_id}")
 
     # Canonical reads ------------------------------------------------------
 
@@ -889,255 +688,80 @@ class Research:
         """Read all project research once; no caller-selected hydration shape."""
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            project = (
-                row_to_dict(
-                    row=conn.execute(
-                        "SELECT * FROM projects WHERE id = ?", (project_id,)
-                    ).fetchone()
-                )
-                or {}
-            )
-            claims = rows_to_dicts(
-                rows=conn.execute(
-                    """
-                    SELECT id, statement, scope, status, confidence, created_at
-                    FROM claims
-                    WHERE project_id = ?
-                    ORDER BY created_at, id
-                    """,
-                    (project_id,),
-                ).fetchall()
-            )
-            evaluated = self.experiments.list_states_with_gates(
-                conn=conn, project_id=project_id
-            )
-            experiments = [state for state, _ in evaluated]
-            gates = {state.id: evaluation for state, evaluation in evaluated}
-            evaluated_tasks = self.tasks.list_states_with_gates(
-                conn=conn,
-                project_id=project_id,
-                detail_ids=(task_id,) if task_id else (),
-            )
-            tasks = [state for state, _ in evaluated_tasks]
-            gates.update(
-                {state.id: evaluation for state, evaluation in evaluated_tasks}
-            )
-            open_reflection, open_gate = self._reflection(
-                conn=conn, project_id=project_id, terminal=False
-            )
-            published, published_gate = self._reflection(
-                conn=conn, project_id=project_id, terminal=True
-            )
-            for reflection, evaluation in (
-                (open_reflection, open_gate),
-                (published, published_gate),
-            ):
-                if reflection is not None and evaluation is not None:
-                    gates[reflection.id] = evaluation
-            signal = reflection_signal_state(
-                current_terminal={
-                    row.id: row.status
-                    for row in experiments
-                    if row.status in EXPERIMENT_TERMINAL_STATUSES
-                },
-                current_claims={
-                    str(claim["id"]): str(claim["status"]) for claim in claims
-                },
-                published=published,
-                open_wave=open_reflection,
-                current_terminal_tasks={
-                    row.id: row.status
-                    for row in tasks
-                    if row.status in TASK_TERMINAL_STATUSES
-                },
-            )
+            claims = query(conn, "SELECT id, statement, scope, status, confidence, created_at FROM claims "
+                                 "WHERE project_id = ? ORDER BY created_at, id", (project_id,))
+            evaluated = self.experiments.list_states_with_gates(conn=conn, project_id=project_id)
+            evaluated_tasks = self.tasks.list_states_with_gates(conn=conn, project_id=project_id,
+                                                                detail_ids=(task_id,) if task_id else ())
+            open_reflection, open_gate = self._reflection(conn=conn, project_id=project_id, terminal=False)
+            published, published_gate = self._reflection(conn=conn, project_id=project_id, terminal=True)
+            experiments, tasks = [state for state, _ in evaluated], [state for state, _ in evaluated_tasks]
             return ResearchSnapshot(
-                project_id=project_id,
-                requested_experiment_id=experiment_id,
-                project=project,
-                claims=claims,
-                experiments=experiments,
-                open_reflection=open_reflection,
-                latest_published_reflection=published,
-                reflection_signal=signal,
-                gate_evaluations=gates,
-                tasks=tasks,
-                requested_task_id=task_id,
-                literature_signal=self._literature_signal(
-                    conn=conn, project_id=project_id
-                ),
+                project_id=project_id, requested_experiment_id=experiment_id, requested_task_id=task_id,
+                project=row_to_dict(row=conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()) or {},
+                claims=claims, experiments=experiments, tasks=tasks,
+                open_reflection=open_reflection, latest_published_reflection=published,
+                gate_evaluations={**{state.id: gate for state, gate in (*evaluated, *evaluated_tasks)},
+                                  **{wave.id: gate for wave, gate in ((open_reflection, open_gate), (published, published_gate))
+                                     if wave is not None}},
+                reflection_signal=reflection_signal_state(
+                    current_terminal={row.id: row.status for row in experiments if row.status in EXPERIMENT_TERMINAL_STATUSES},
+                    current_terminal_tasks={row.id: row.status for row in tasks if row.status in TASK_TERMINAL_STATUSES},
+                    current_claims={str(claim["id"]): str(claim["status"]) for claim in claims},
+                    published=published, open_wave=open_reflection),
+                literature_signal=self._literature_signal(conn=conn, project_id=project_id),
             )
 
     def project_context_facts(self, *, project_id: str | None = None) -> dict[str, Any]:
         with closing(self.store.connect()) as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            project = (
-                row_to_dict(
-                    row=conn.execute(
-                        """
-                    SELECT id, name, summary FROM projects WHERE id = ?
-                    """,
-                        (project_id,),
-                    ).fetchone()
-                )
-                or {}
-            )
-            claims = rows_to_dicts(
-                rows=conn.execute(
-                    """
-                    SELECT id, statement, scope, status, confidence
-                    FROM claims
-                    WHERE project_id = ?
-                    ORDER BY created_at, id
-                    """,
-                    (project_id,),
-                ).fetchall()
-            )
-            experiments = rows_to_dicts(
-                rows=conn.execute(
-                    """
-                    SELECT id, name, intent, status, attempt_index, conclusion,
-                           created_at, updated_at
-                    FROM experiments
-                    WHERE project_id = ?
-                    ORDER BY created_at, id
-                    """,
-                    (project_id,),
-                ).fetchall()
-            )
-            links = conn.execute(
-                """
-                SELECT ec.experiment_id, ec.claim_id
-                FROM experiment_claims ec
-                JOIN experiments e ON e.id = ec.experiment_id
-                WHERE e.project_id = ?
-                ORDER BY e.created_at, e.id, ec.claim_id
-                """,
-                (project_id,),
-            ).fetchall()
+            experiments = query(conn, "SELECT id, name, intent, status, attempt_index, conclusion, created_at, updated_at "
+                                      "FROM experiments WHERE project_id = ? ORDER BY created_at, id", (project_id,))
             claims_by_experiment: dict[str, list[str]] = {}
-            for link in links:
-                claims_by_experiment.setdefault(str(link["experiment_id"]), []).append(
-                    str(link["claim_id"])
-                )
+            for link in conn.execute("SELECT ec.experiment_id, ec.claim_id FROM experiment_claims ec JOIN experiments e "
+                                     "ON e.id = ec.experiment_id WHERE e.project_id = ? ORDER BY e.created_at, e.id, ec.claim_id",
+                                     (project_id,)).fetchall():
+                claims_by_experiment.setdefault(str(link["experiment_id"]), []).append(str(link["claim_id"]))
             for experiment in experiments:
-                experiment["tested_claim_ids"] = claims_by_experiment.get(
-                    str(experiment["id"]), []
-                )
-            tasks = rows_to_dicts(
-                rows=conn.execute(
-                    """
-                    SELECT id, name, goal, status, attempt_index, outcome,
-                           failed_by, created_at, updated_at
-                    FROM tasks
-                    WHERE project_id = ?
-                    ORDER BY created_at, id
-                    """,
-                    (project_id,),
-                ).fetchall()
-            )
-            reflection_terminal = tuple(sorted(REFLECTION.terminal_statuses))
-            reflection_placeholders = ", ".join("?" for _ in reflection_terminal)
-            latest = row_to_dict(
-                row=conn.execute(
-                    """
-                    SELECT id, title, status, attempt_index, published_at,
-                           updated_at
-                    FROM reflections
-                    WHERE project_id = ? AND status = ?
-                    ORDER BY published_at DESC, created_seq DESC
-                    LIMIT 1
-                    """,
-                    (project_id, REFLECTION.success_status),
-                ).fetchone()
-            )
-            open_wave = row_to_dict(
-                row=conn.execute(
-                    f"""
-                    SELECT id, title, status, attempt_index, updated_at
-                    FROM reflections
-                    WHERE project_id = ?
-                      AND status NOT IN ({reflection_placeholders})
-                    ORDER BY created_seq DESC
-                    LIMIT 1
-                    """,
-                    (project_id, *reflection_terminal),
-                ).fetchone()
-            )
-            literature_summary = row_to_dict(
-                row=conn.execute(
-                    """
-                    SELECT id, tldr, body, updated_at
-                    FROM litreview_sections
-                    WHERE project_id = ? AND kind = 'summary'
-                    """,
-                    (project_id,),
-                ).fetchone()
-            )
-            count = conn.execute(
-                "SELECT COUNT(*) AS n FROM papers WHERE project_id = ?",
-                (project_id,),
-            ).fetchone()
-            candidates = self._candidate_context(conn=conn, project_id=project_id)
-        return {
-            "project": project,
-            "claims": claims,
-            "experiments": experiments,
-            "tasks": tasks,
-            "latest_published_reflection": latest,
-            "open_reflection": open_wave,
-            "literature_summary": literature_summary,
-            "paper_count": int(count["n"]) if count else 0,
-            "candidates": candidates,
-        }
+                experiment["tested_claim_ids"] = claims_by_experiment.get(str(experiment["id"]), [])
+            return {
+                "project": row_to_dict(row=conn.execute("SELECT id, name, summary FROM projects WHERE id = ?",
+                                                        (project_id,)).fetchone()) or {},
+                "claims": query(conn, "SELECT id, statement, scope, status, confidence FROM claims "
+                                      "WHERE project_id = ? ORDER BY created_at, id", (project_id,)),
+                "experiments": experiments,
+                "tasks": query(conn, "SELECT id, name, goal, status, attempt_index, outcome, failed_by, created_at, updated_at "
+                                     "FROM tasks WHERE project_id = ? ORDER BY created_at, id", (project_id,)),
+                "latest_published_reflection": row_to_dict(row=wave_row(
+                    conn, project_id, published=True, columns="id, title, status, attempt_index, published_at, updated_at")),
+                "open_reflection": row_to_dict(row=wave_row(
+                    conn, project_id, published=False, columns="id, title, status, attempt_index, updated_at")),
+                "literature_summary": row_to_dict(row=conn.execute(
+                    "SELECT id, tldr, body, updated_at FROM litreview_sections WHERE project_id = ? AND kind = 'summary'",
+                    (project_id,)).fetchone()),
+                "paper_count": int(conn.execute("SELECT COUNT(*) AS n FROM papers WHERE project_id = ?",
+                                                (project_id,)).fetchone()["n"]),
+                "candidates": self._candidate_context(conn=conn, project_id=project_id),
+            }
 
-    def resolve_graph_refs(
-        self, *, project_id: str, refs: tuple[str, ...]
-    ) -> dict[str, Any]:
+    def resolve_graph_refs(self, *, project_id: str, refs: tuple[str, ...]) -> dict[str, Any]:
         if not refs:
             return {}
         with closing(self.store.connect()) as conn:
             resolved: dict[str, Any] = {}
-            for (
-                prefix,
-                entity_type,
-                id_key,
-                table,
-                selected_fields,
-            ) in _GRAPH_REFS:
-                typed_refs = tuple(
-                    dict.fromkeys(ref for ref in refs if ref.startswith(prefix))
-                )
-                if not typed_refs:
-                    continue
-                fields = ", ".join(("id", *selected_fields))
+            for prefix, entity_type, id_key, table, selected_fields in _GRAPH_REFS:
+                typed_refs = tuple(dict.fromkeys(ref for ref in refs if ref.startswith(prefix)))
                 by_id: dict[str, Any] = {}
                 for start in range(0, len(typed_refs), _GRAPH_REF_BATCH_SIZE):
-                    batch = typed_refs[start : start + _GRAPH_REF_BATCH_SIZE]
-                    placeholders = ", ".join("?" for _ in batch)
-                    rows = conn.execute(
-                        f"""
-                        SELECT {fields} FROM {table}
-                        WHERE project_id = ? AND id IN ({placeholders})
-                        """,
-                        (project_id, *batch),
-                    ).fetchall()
-                    by_id.update((str(row["id"]), row) for row in rows)
+                    batch = typed_refs[start:start + _GRAPH_REF_BATCH_SIZE]
+                    by_id.update((str(row["id"]), row) for row in conn.execute(
+                        f"SELECT {', '.join(('id', *selected_fields))} FROM {table} "
+                        f"WHERE project_id = ? AND id IN ({', '.join('?' for _ in batch)})", (project_id, *batch)).fetchall())
                 for ref in typed_refs:
                     row = by_id.get(ref)
-                    if row is None:
-                        resolved[ref] = {
-                            "type": "unknown",
-                            "resolved": False,
-                        }
-                        continue
-                    record = {
-                        "type": entity_type,
-                        "resolved": True,
-                        id_key: row["id"],
-                    }
-                    record.update({field: row[field] for field in selected_fields})
-                    resolved[ref] = record
+                    resolved[ref] = ({"type": "unknown", "resolved": False} if row is None else
+                                     {"type": entity_type, "resolved": True, id_key: row["id"],
+                                      **{field: row[field] for field in selected_fields}})
             return {ref: resolved[ref] for ref in refs if ref in resolved}
 
     # Event ledger reads ---------------------------------------------------
@@ -1153,65 +777,23 @@ class Research:
 
     def events_since(self, *, project_id: str, after_id: int) -> dict[str, Any]:
         """Ascending tail of the events table — the SSE cursor read."""
-        return self.store.recent_events(
-            project_id=project_id, limit=500, after_id=after_id
-        )
+        return self.store.recent_events(project_id=project_id, limit=500, after_id=after_id)
 
     # Read helpers ---------------------------------------------------------
 
-    def _reflection(
-        self, *, conn: Connection, project_id: str, terminal: bool
-    ) -> tuple[ReflectionState | None, GateEvaluation | None]:
-        terminal_statuses = tuple(sorted(REFLECTION.terminal_statuses))
-        placeholders = ", ".join("?" for _ in terminal_statuses)
-        predicate = "status = ?" if terminal else f"status NOT IN ({placeholders})"
-        parameters = (
-            (project_id, REFLECTION.success_status)
-            if terminal
-            else (project_id, *terminal_statuses)
-        )
-        order = (
-            "published_at DESC, created_seq DESC" if terminal else "created_seq DESC"
-        )
-        row = conn.execute(
-            f"""
-            SELECT id FROM reflections
-            WHERE project_id = ? AND {predicate}
-            ORDER BY {order}
-            LIMIT 1
-            """,
-            parameters,
-        ).fetchone()
-        if row is None:
-            return None, None
-        return self.reflections.get_state_with_gate(reflection_id=row["id"], conn=conn)
+    def _reflection(self, *, conn: Connection, project_id: str, terminal: bool
+                    ) -> tuple[ReflectionState | None, GateEvaluation | None]:
+        row = wave_row(conn, project_id, published=terminal)
+        return (None, None) if row is None else self.reflections.get_state_with_gate(reflection_id=row["id"], conn=conn)
 
     def _literature_signal(self, *, conn: Connection, project_id: str) -> LiteratureSignal:
-        total = conn.execute(
-            "SELECT COUNT(*) AS n FROM papers WHERE project_id = ?",
-            (project_id,),
-        ).fetchone()
+        total = conn.execute("SELECT COUNT(*) AS n FROM papers WHERE project_id = ?", (project_id,)).fetchone()
         unreviewed = conn.execute(
-            """
-            SELECT COUNT(*) AS n FROM papers p
-            WHERE p.project_id = ?
-              AND EXISTS (
-                SELECT 1 FROM paper_links l
-                WHERE l.paper_id = p.id
-                  AND l.target_type IN ('experiment', 'claim')
-              )
-              AND NOT EXISTS (
-                SELECT 1 FROM paper_links l
-                WHERE l.paper_id = p.id
-                  AND l.target_type = 'litreview_section'
-              )
-            """,
-            (project_id,),
-        ).fetchone()
-        return LiteratureSignal(
-            papers_total=int(total["n"]),
-            papers_unreviewed=int(unreviewed["n"]),
-        )
+            "SELECT COUNT(*) AS n FROM papers p WHERE p.project_id = ? "
+            "AND EXISTS (SELECT 1 FROM paper_links l WHERE l.paper_id = p.id AND l.target_type IN ('experiment', 'claim')) "
+            "AND NOT EXISTS (SELECT 1 FROM paper_links l WHERE l.paper_id = p.id AND l.target_type = 'litreview_section')",
+            (project_id,)).fetchone()
+        return LiteratureSignal(papers_total=int(total["n"]), papers_unreviewed=int(unreviewed["n"]))
 
     @staticmethod
     def _validate_project_name(name: str) -> str:
@@ -1219,9 +801,7 @@ class Research:
         if not name:
             raise ValidationError("name is required")
         if len(name) < MIN_PROJECT_NAME_LEN:
-            raise ValidationError(
-                f"name must be at least {MIN_PROJECT_NAME_LEN} characters"
-            )
+            raise ValidationError(f"name must be at least {MIN_PROJECT_NAME_LEN} characters")
         return name
 
     @staticmethod

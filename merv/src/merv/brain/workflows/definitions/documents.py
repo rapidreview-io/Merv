@@ -882,14 +882,8 @@ def reflection_lens_doc_problems(text: str) -> list[str]:
 
     if not text.strip():
         return ["reflection lens document is empty"]
-    missing = required_markdown_sections_missing(
-        text, REQUIRED_REFLECTION_LENS_DOC_SECTIONS
-    )
-    return (
-        ["missing or empty required section: Summary"]
-        if missing
-        else []
-    )
+    missing = required_markdown_sections_missing(text, REQUIRED_REFLECTION_LENS_DOC_SECTIONS)
+    return ["missing or empty required section: Summary"] if missing else []
 
 
 def reflection_doc_problems(text: str) -> list[str]:
@@ -971,15 +965,6 @@ def validate_reflection_roster(*, lenses: list[dict[str, Any]]) -> list[dict[str
             f"missing core lens(es): {', '.join(missing_core)}; {ROSTER_CONTRACT}"
         )
     return roster
-
-
-def current_reflection_requirement_artifact(
-    *, reflection: dict[str, Any], role: str
-) -> dict[str, Any] | None:
-    return preferred_artifact(
-        artifacts=reflection.get("current_attempt_artifacts") or [],
-        roles=(role,),
-    )
 
 
 def reflection_coverage_for(*, reflection: dict[str, Any]) -> dict[str, Any]:

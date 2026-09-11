@@ -24,8 +24,7 @@ from merv.brain.kernel.events import StoredEvent, freeze_json_object
 from merv.brain.research_core.models import (
     LiteratureSignal,
     ResearchSnapshot,
-    CommittedExperimentUpdate,
-    CommittedTaskUpdate,
+    Committed,
     ExhibitVerdict,
     ExperimentState,
     ExperimentSummary,
@@ -193,9 +192,7 @@ SAMPLES: dict[type, object] = {
         "attempt_index": 1,
         "pinned": True,
     },
-    CommittedExperimentUpdate: CommittedExperimentUpdate(
-        state=EXPERIMENT, event=EVENT
-    ),
+    Committed: Committed(state=EXPERIMENT, event=EVENT),
     TaskResult: TaskResult(**{
         "number": 1,
         "state": "met",
@@ -229,9 +226,6 @@ SAMPLES: dict[type, object] = {
         "created_at": "2026-07-21T12:00:00Z",
         "updated_at": "2026-07-21T12:00:00Z",
     },
-    CommittedTaskUpdate: CommittedTaskUpdate(
-        state={"id": "task_1", "status": "in_progress"}, event=EVENT
-    ),
     ResearchSnapshot: ResearchSnapshot(
         project_id="proj_1",
         requested_experiment_id="exp_1",

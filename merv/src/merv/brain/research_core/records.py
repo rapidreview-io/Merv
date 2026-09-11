@@ -28,8 +28,13 @@ from .reviews import read_review_fact
 from .policy import GateContext, GateEvaluation, resolve_requirement, review_snapshot_id, snapshot_from_id
 
 
-def _query(conn: Connection, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
+def query(conn: Connection, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
     return rows_to_dicts(rows=conn.execute(sql, parameters).fetchall())
+
+
+def literals(values) -> str:
+    """A fixed set of declared statuses, spelled into one IN clause."""
+    return ", ".join(f"'{value}'" for value in sorted(values))
 
 
 class RecordHooks:
@@ -187,7 +192,7 @@ class Records:
     def list_states_with_gates(self, kind: RecordKind[S], *, conn: Connection, project_id: str,
                                detail_ids: tuple[str, ...] = (), **extra) -> list[tuple[S, GateEvaluation]]:
         """Hydrate a project's records with one read per child table."""
-        records = _query(conn, f"SELECT * FROM {kind.table} WHERE project_id = ? ORDER BY created_at, id",
+        records = query(conn, f"SELECT * FROM {kind.table} WHERE project_id = ? ORDER BY created_at, id",
                          (project_id,))
         if not records:
             return []
@@ -202,7 +207,7 @@ class Records:
         reviews: dict[str, list[dict[str, Any]]] = {}
         # A focused read pays for one record's reviews; a project read joins once.
         focused = " AND r.target_id = ?" if len(record_ids) == 1 else ""
-        for review in _query(conn, f"""SELECT r.* FROM reviews r JOIN {kind.table} t ON t.id = r.target_id
+        for review in query(conn, f"""SELECT r.* FROM reviews r JOIN {kind.table} t ON t.id = r.target_id
                                        WHERE r.target_type = ? AND t.project_id = ?{focused}
                                        ORDER BY t.created_at, t.id, r.created_seq DESC""",
                              (kind.name, project_id, *(record_ids[:1] if focused else ()))):
@@ -409,4 +414,4 @@ class RecordKnowledge:
         return fact
 
 
-__all__ = ["RecordHooks", "RecordKnowledge", "Records"]
+__all__ = ["RecordHooks", "RecordKnowledge", "Records", "literals", "query"]

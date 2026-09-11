@@ -41,27 +41,11 @@ class LogicGraphQuery:
             artifacts=latest_per_slot(experiment.artifacts),
             roles=("graph",),
         )
-        base = {
-            "experiment_id": experiment_id,
-            "max_nodes": MAX_GRAPH_NODES,
-            "experiment_status": experiment.status,
-            "attempt_index": attempt,
-        }
+        base = {"experiment_id": experiment_id, "max_nodes": MAX_GRAPH_NODES,
+                "experiment_status": experiment.status, "attempt_index": attempt}
         if chosen is None:
             return {**base, "available": False, "graph": None, "problems": []}
-        text = self._associated_text(chosen, project_id=project_id)
-        if text is None:
-            return {
-                **base,
-                "available": False,
-                "graph": None,
-                "problems": [
-                    "graph has no submitted content — resubmit it via "
-                    "artifact.upload (attach_to.role 'graph')"
-                ],
-                "path": chosen.get("path"),
-            }
-        return self._payload(base=base, chosen=chosen, text=text, project_id=project_id)
+        return self._graph(base=base, chosen=chosen, project_id=project_id, role="graph")
 
     def project(self, *, project_id: str) -> Record:
         selection = self.research.reflections.project_logic_graph_selection(project_id=project_id)
@@ -105,35 +89,16 @@ class LogicGraphQuery:
                 "graph": None,
                 "problems": [],
             }
-        base["reflection"] = {
-            "id": reflection.id,
-            "title": reflection.title,
-            "status": reflection.status,
-            "attempt_index": reflection.attempt_index,
-            "published_at": reflection.published_at,
-        }
+        base["reflection"] = {"id": reflection.id, "title": reflection.title, "status": reflection.status,
+                              "attempt_index": reflection.attempt_index, "published_at": reflection.published_at}
+        return self._graph(base=base, chosen=chosen, project_id=project_id, role=PROJECT_GRAPH_ROLE)
+
+    def _graph(self, *, base: Record, chosen: Record, project_id: str, role: str) -> Record:
+        """The chosen graph's payload, or why its bytes could not be read."""
         text = self._associated_text(chosen, project_id=project_id)
         if text is None:
-            return {
-                **base,
-                "available": False,
-                "graph": None,
-                "problems": [
-                    "graph has no submitted content — resubmit it via "
-                    "artifact.upload (attach_to.role 'project_graph')"
-                ],
-                "path": chosen.get("path"),
-            }
-        return self._payload(base=base, chosen=chosen, text=text, project_id=project_id)
-
-    def _payload(
-        self,
-        *,
-        base: Record,
-        chosen: Record,
-        text: str,
-        project_id: str,
-    ) -> Record:
+            return {**base, "available": False, "graph": None, "path": chosen.get("path"),
+                    "problems": [f"graph has no submitted content — resubmit it via artifact.upload (attach_to.role '{role}')"]}
         graph: Record | None = None
         try:
             parsed = json.loads(text)
