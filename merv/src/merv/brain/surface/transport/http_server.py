@@ -62,6 +62,25 @@ def _bind_socket(*, host: str, port: int) -> socket.socket:
     return server_socket
 
 
+def _uvicorn(app: Any, *, host: str, port: int) -> uvicorn.Server:
+    return uvicorn.Server(uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="warning",
+        access_log=False,
+        lifespan="on",
+        # Honor X-Forwarded-Proto/-For from the fronting proxy only: the
+        # artifact upload curls are minted from request.base_url and must say
+        # https, and the pairing route's per-IP budget is keyed on the client
+        # address, which any peer could otherwise forge. uvicorn reads the
+        # trusted addresses from FORWARDED_ALLOW_IPS (default 127.0.0.1); the
+        # deployment sets it to the proxy's network.
+        proxy_headers=True,
+        forwarded_allow_ips=None,
+    ))
+
+
 def is_loopback_host(host: str) -> bool:
     """Whether binding ``host`` can only be reached from this machine."""
     spelling = _normalize_host(host).lower()
@@ -144,15 +163,7 @@ class UvicornHttpServer:
         self._socket = _bind_socket(host=bind_host, port=port)
         selected_port = int(self._socket.getsockname()[1])
         self.server_address = (bind_host, selected_port)
-        config = uvicorn.Config(
-            fastapi_app,
-            host=bind_host,
-            port=selected_port,
-            log_level="warning",
-            access_log=False,
-            lifespan="on",
-        )
-        self._server = uvicorn.Server(config)
+        self._server = _uvicorn(fastapi_app, host=bind_host, port=selected_port)
 
     def serve_forever(self) -> None:
         self._server.run(sockets=[self._socket])
@@ -198,23 +209,7 @@ def _run_server(
         bind_host = refuse_non_loopback_local_surface(host)
     server_socket = _bind_socket(host=bind_host, port=port)
     selected_port = int(server_socket.getsockname()[1])
-    config = uvicorn.Config(
-        server.fastapi_app,
-        host=bind_host,
-        port=selected_port,
-        log_level="warning",
-        access_log=False,
-        lifespan="on",
-        # Honor X-Forwarded-Proto/-For from the fronting proxy only: the
-        # artifact upload curls are minted from request.base_url and must say
-        # https, and the pairing route's per-IP budget is keyed on the client
-        # address, which any peer could otherwise forge. uvicorn reads the
-        # trusted addresses from FORWARDED_ALLOW_IPS (default 127.0.0.1); the
-        # deployment sets it to the proxy's network.
-        proxy_headers=True,
-        forwarded_allow_ips=None,
-    )
-    uv = uvicorn.Server(config)
+    uv = _uvicorn(server.fastapi_app, host=bind_host, port=selected_port)
     print(f"merv {label} listening on http://{bind_host}:{selected_port}", flush=True)
     try:
         uv.run(sockets=[server_socket])

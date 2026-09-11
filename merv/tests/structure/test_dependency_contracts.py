@@ -30,9 +30,7 @@ def _debt(lines: str) -> Counter[tuple[str, str, str, str]]:
 DEPENDENCY_TYPE_DEBT = _debt(
     """kernel/state/dialects.py | PostgresConnection.__init__ | raw | Any
 surface/telemetry.py | StructuredLogger.__init__ | stream | Any | None
-surface/transport/api/gateway.py | RequestAuthenticator | verifier | Any | None
-surface/transport/mcp_http.py | register_mcp_routes | list_tools | ToolCatalog
-surface/transport/mcp_http.py | register_mcp_routes | call_tool | ToolCaller"""
+surface/transport/api/gateway.py | RequestAuthenticator | verifier | Any | None"""
 )
 
 

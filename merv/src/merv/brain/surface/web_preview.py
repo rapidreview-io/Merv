@@ -104,11 +104,6 @@ def _validate_url(url: str) -> urllib.parse.ParseResult:
     return parsed
 
 
-def _is_allowlisted(host: str) -> bool:
-    host = host.lower()
-    return any(host == s or host.endswith("." + s) for s in ALLOWLIST_SUFFIXES)
-
-
 _OPENER = urllib.request.build_opener(NoRedirect)
 
 
@@ -233,7 +228,7 @@ def _publication_year(meta: dict[str, str]) -> str:
 def extract_card(final_url: str, content_type: str, body: bytes) -> dict[str, Any]:
     """Build a preview card from an already-fetched response (pure, testable)."""
     host = (urllib.parse.urlparse(final_url).hostname or "").lower()
-    trusted = _is_allowlisted(host)
+    trusted = _matches(host, ALLOWLIST_SUFFIXES)
     if content_type != "text/html":
         # A direct (non-HTML) link — surface a minimal card rather than parsing.
         return {
@@ -287,7 +282,7 @@ _ARXIV_PDF_RE = re.compile(
 )
 
 
-def unfurl(url: str) -> dict[str, Any]:
+def unfurl(url: str, *, host_policy: Callable[[str], bool] | None = None) -> dict[str, Any]:
     """Fetch ``url`` and extract a static preview card.
 
     Returns ``{url, title, description, image_url, trusted, kind, authors,
@@ -301,10 +296,10 @@ def unfurl(url: str) -> dict[str, Any]:
     url = url.strip()
     m = _ARXIV_PDF_RE.match(url)
     if m:
-        card = extract_card(*safe_fetch(f"https://arxiv.org/abs/{m.group(1)}"))
+        card = extract_card(*safe_fetch(f"https://arxiv.org/abs/{m.group(1)}", host_policy=host_policy))
         card["url"] = url
         return card
-    return extract_card(*safe_fetch(url))
+    return extract_card(*safe_fetch(url, host_policy=host_policy))
 
 
 def fetch_preview_image(image_url: str) -> tuple[bytes, str]:
@@ -361,15 +356,4 @@ class AllowlistedPaperPreview:
         return _paper_host_allowed(host)
 
     def unfurl(self, url: str) -> dict[str, Any]:
-        url = url.strip()
-        m = _ARXIV_PDF_RE.match(url)
-        if m:
-            card = extract_card(
-                *safe_fetch(
-                    f"https://arxiv.org/abs/{m.group(1)}",
-                    host_policy=_paper_host_allowed,
-                )
-            )
-            card["url"] = url
-            return card
-        return extract_card(*safe_fetch(url, host_policy=_paper_host_allowed))
+        return unfurl(url, host_policy=_paper_host_allowed)

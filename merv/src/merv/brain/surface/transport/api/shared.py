@@ -23,6 +23,7 @@ from ...identity import (
     HumanSessionRequiredError, is_human_session, is_local_principal,
     principal_label,
 )
+from ..mcp_streamable_http import RefusalLedger
 
 ADMIN_TOKEN_ENV_VAR = "MERV_ADMIN_TOKEN"
 ADMIN_TOKEN_HEADER = "X-Admin-Token"
@@ -146,13 +147,7 @@ def is_local_origin(origin: str) -> bool:
     return host in ("localhost", "127.0.0.1", "::1")
 
 
-_PROJECT_PATH_RE = re.compile(r"^/api/projects/([^/]+)")
-
-
-class RefusalLedger(Protocol):
-    """Durable sink for calls refused before the dispatcher ever sees them."""
-
-    def reject(self, **kwargs: Any) -> None: ...
+PROJECT_PATH_RE = re.compile(r"^/api/projects/([^/]+)")
 
 
 class CallLedger(RefusalLedger, Protocol):
@@ -204,7 +199,7 @@ def ledger_refusal(
     if ledger is None:
         return
     path = request.url.path
-    match = _PROJECT_PATH_RE.match(path)
+    match = PROJECT_PATH_RE.match(path)
     error_code, detail = _denial_facts(denied)
     with suppress(Exception):  # telemetry never turns a 401 into a 500
         ledger.reject(
@@ -252,13 +247,17 @@ def _operator_token_ok(request: Request) -> bool:
     return bool(token) and hmac.compare_digest(supplied, token)
 
 
-def operator_denial(request: Request) -> JSONResponse | None:
+def operator_denial(request: Request, *, trust_local: bool = True) -> JSONResponse | None:
     """Gate a GLOBAL operator mutator/aggregate (INV-11 FIX 1). LOCAL_PRINCIPAL
     (local mode, no verifier) is the trusted operator and keeps access; any
     hosted caller — even a JWT owner — must present MERV_ADMIN_TOKEN on the
     X-Admin-Token header (constant-time). An unset token in hosted mode denies
-    everyone, so the prod cleanup cron must send the token."""
-    if is_local_principal(getattr(request.state, "principal", None)):
+    everyone, so the prod cleanup cron must send the token. Hosted control
+    WITHOUT a verifier (OPEN mode) labels every caller LOCAL_PRINCIPAL, so it
+    passes ``trust_local=False`` and the token is required unconditionally."""
+    if not request.url.path.startswith(GLOBAL_MUTATOR_PREFIXES):
+        return None
+    if trust_local and is_local_principal(getattr(request.state, "principal", None)):
         return None
     if _operator_token_ok(request):
         return None
@@ -306,23 +305,6 @@ def require_membership_author(request: Request) -> None:
     raise HumanSessionRequiredError(
         "changing project membership requires a signed-in user; share the "
         "project from the Merv UI (API keys cannot add or remove members)"
-    )
-
-
-def open_hosted_operator_denial(request: Request) -> JSONResponse | None:
-    """Operator gate for hosted control mode WITHOUT a verifier (OPEN mode).
-
-    Open mode has no trusted principal — downstream code labels callers
-    LOCAL_PRINCIPAL — so global mutators require the operator token
-    unconditionally; there is no local bypass here.
-    """
-    if not request.url.path.startswith(GLOBAL_MUTATOR_PREFIXES):
-        return None
-    if _operator_token_ok(request):
-        return None
-    return JSONResponse(
-        {"detail": "operator token required", "error_code": "operator_forbidden"},
-        status_code=403,
     )
 
 

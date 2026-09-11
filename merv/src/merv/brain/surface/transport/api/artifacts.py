@@ -22,27 +22,12 @@ from ...artifacts import (
     completed_figure_v1,
     content_envelope_v1,
 )
-from ..request_body import read_capped_body
+from ..request_body import payload_too_large, read_capped_body
 
 _RAW_CONTENT_HEADERS = {
     "Content-Security-Policy": "sandbox",
     "X-Content-Type-Options": "nosniff",
 }
-
-
-def _too_large(cap: int) -> JSONResponse:
-    return JSONResponse(
-        {
-            "detail": (
-                f"upload exceeds the maximum of {cap} bytes for this token — slim "
-                "the file (move raw data/outputs elsewhere and reference them) "
-                "and re-run the upload command"
-            ),
-            "error_code": "payload_too_large",
-            "max_bytes": cap,
-        },
-        status_code=413,
-    )
 
 
 def build_router(*, artifacts: Artifacts) -> APIRouter:
@@ -59,7 +44,9 @@ def build_router(*, artifacts: Artifacts) -> APIRouter:
         cap = artifacts.upload_cap(token=token, kind=kind)
         data = await read_capped_body(request, cap=cap)
         if data is None:
-            return _too_large(cap)
+            return payload_too_large(cap, hint=(
+                "for this token — slim the file (move raw data/outputs elsewhere and reference them)"
+            ))
         completed = artifacts.complete_upload(token=token, kind=kind, data=data)
         if isinstance(completed, CompletedFigure):
             return completed_figure_v1(completed)

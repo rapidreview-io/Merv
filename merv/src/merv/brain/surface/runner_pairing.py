@@ -39,7 +39,7 @@ from ..kernel.utils import (
     parse_iso,
 )
 from ..agent_sessions import runner_ref
-from .project_keys import PROJECT_GRANT, ProjectKeys, public_key_record
+from .project_keys import PROJECT_GRANT, ProjectKeys, public_key_record, required_text, sha256_digest
 from ..agent_sessions import AGENT_SESSION_SCHEMA
 from merv.shared.user_codes import (
     USER_CODE_ALPHABET,
@@ -59,7 +59,6 @@ PENDING_GLOBAL_CAP = 1000
 APPROVAL_MISS_LIMIT = 10
 APPROVAL_MISS_WINDOW_SECONDS = 10 * 60
 MAX_MACHINE_BYTES = 4 * 1024
-_DIGEST_HEX_LENGTH = 64
 _PAIRING_COUNT = "SELECT COUNT(*) AS n FROM agent_runner_pairings WHERE "
 
 
@@ -96,8 +95,8 @@ class RunnerPairings:
         machine: Mapping[str, Any] | None,
         client_ip: str,
     ) -> dict[str, Any]:
-        digest = _digest(key_digest, field="key_digest")
-        runner_id = _required(runner_id, field="runner_id", limit=160)
+        digest = sha256_digest(key_digest, field="key_digest")
+        runner_id = required_text(runner_id, field="runner_id", limit=160)
         client_ip = str(client_ip or "").strip()[:64]
         machine_json = _machine_json(machine)
         now = datetime.now(UTC)
@@ -218,9 +217,9 @@ class RunnerPairings:
         owner_user_id: str,
         principal_label: str,
     ) -> dict[str, Any]:
-        project_id = _required(project_id, field="project_id", limit=160)
-        owner_user_id = _required(owner_user_id, field="owner_user_id", limit=160)
-        principal_label = _required(principal_label, field="principal", limit=240)
+        project_id = required_text(project_id, field="project_id", limit=160)
+        owner_user_id = required_text(owner_user_id, field="owner_user_id", limit=160)
+        principal_label = required_text(principal_label, field="principal", limit=240)
         # A malformed code is a client error, not a guess: it never touches the
         # miss counter and never reveals anything about pending exchanges.
         code = _normalize_user_code(user_code)
@@ -329,24 +328,6 @@ class RunnerPairings:
             """,
             (format_iso(now),),
         )
-
-
-def _required(value: object, *, field: str, limit: int) -> str:
-    text = str(value or "").strip()
-    if not text:
-        raise ValidationError(f"{field} is required", details={"field": field})
-    if len(text) > limit:
-        raise ValidationError(f"{field} is too long", details={"field": field})
-    return text
-
-
-def _digest(value: object, *, field: str) -> str:
-    text = str(value or "").strip().lower()
-    if len(text) != _DIGEST_HEX_LENGTH or any(c not in "0123456789abcdef" for c in text):
-        raise ValidationError(
-            f"{field} must be a sha256 hex digest", details={"field": field}
-        )
-    return text
 
 
 def _normalize_user_code(value: object) -> str:

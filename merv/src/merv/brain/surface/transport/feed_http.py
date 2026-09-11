@@ -20,7 +20,7 @@ from merv.shared.feed_embeds import EMBED_CSP_CONTENT
 from merv.shared.feed_images import SVG_IMAGE_TYPE
 
 from ...feed import FeedService
-from .request_body import read_capped_body
+from .request_body import payload_too_large, read_capped_body
 from ...kernel.utils import ValidationError
 
 
@@ -64,21 +64,6 @@ def _image_headers(content_type: str) -> dict[str, str]:
     return _BASE_IMAGE_HEADERS
 
 
-def _too_large(cap: int) -> JSONResponse:
-    return JSONResponse(
-        {
-            "detail": (
-                f"upload exceeds the maximum of {cap} bytes for this feed post — "
-                "slim the file (a feed visual is a single figure, not a dataset) "
-                "and re-run the upload command"
-            ),
-            "error_code": "payload_too_large",
-            "max_bytes": cap,
-        },
-        status_code=413,
-    )
-
-
 def _enrich_post_urls(post: dict[str, Any], project_id: str) -> None:
     """Attach the relative media URLs the UI uses for <img src> (the service
     exposes only presence flags, never blob hashes)."""
@@ -117,7 +102,9 @@ def register_feed_routes(
         cap = feed_api.get_upload_limit(token=token)
         data = await read_capped_body(request, cap=cap)
         if data is None:
-            return _too_large(cap)
+            return payload_too_large(cap, hint=(
+                "for this feed post — slim the file (a feed visual is a single figure, not a dataset)"
+            ))
         try:
             return feed_api.complete_upload(token=token, data=data)
         except ValidationError as exc:

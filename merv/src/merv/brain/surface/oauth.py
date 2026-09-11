@@ -321,16 +321,7 @@ class OAuthService:
             oauth_family_id=refresh_family_id,
             grant_scope=code.grant_scope,
         )
-        return self._token_response(
-            client=client,
-            minted=minted,
-            resource=code.resource,
-            owner_user_id=code.owner_user_id,
-            project_id=code.project_id,
-            grant_scope=code.grant_scope,
-            parent_refresh_token_id=None,
-            refresh_family_id=refresh_family_id,
-        )
+        return self._token_response(client, minted, code, family_id=refresh_family_id, parent_token_id=None)
 
     def refresh(
         self, *, form: dict[str, str], canonical_resource: str
@@ -374,16 +365,7 @@ class OAuthService:
             )
         except NotFoundError as exc:
             raise OAuthError("invalid_grant", "refresh token is invalid") from exc
-        return self._token_response(
-            client=client,
-            minted=minted,
-            resource=token.resource,
-            owner_user_id=token.owner_user_id,
-            project_id=token.project_id,
-            grant_scope=token.grant_scope,
-            parent_refresh_token_id=token.id,
-            refresh_family_id=token.family_id,
-        )
+        return self._token_response(client, minted, token, family_id=token.family_id, parent_token_id=token.id)
 
     def _revoke_replayed_refresh(self, token: RefreshToken) -> None:
         self._repository.revoke_refresh_family_and_key_lineage(
@@ -452,16 +434,14 @@ class OAuthService:
 
     def _token_response(
         self,
-        *,
         client: OAuthClient,
         minted: dict[str, Any],
-        resource: str,
-        owner_user_id: str,
-        project_id: str,
-        grant_scope: str,
-        parent_refresh_token_id: str | None,
-        refresh_family_id: str,
+        grant: AuthorizationCode | RefreshToken,
+        *,
+        family_id: str,
+        parent_token_id: str | None,
     ) -> dict[str, Any]:
+        """The bearer, plus a refresh token carrying the grant's consent forward."""
         response: dict[str, Any] = {
             "access_token": str(minted["secret"]),
             "token_type": "Bearer",
@@ -473,15 +453,15 @@ class OAuthService:
         key = dict(minted["key"])
         token = RefreshToken(
             id=new_id(prefix="ort"),
-            family_id=refresh_family_id,
+            family_id=family_id,
             secret_digest=hash_secret(raw_refresh),
             client_id=client.client_id,
-            owner_user_id=owner_user_id,
-            project_id=project_id,
-            grant_scope=grant_scope,
-            resource=resource,
+            owner_user_id=grant.owner_user_id,
+            project_id=grant.project_id,
+            grant_scope=grant.grant_scope,
+            resource=grant.resource,
             current_key_id=str(key["id"]),
-            parent_token_id=parent_refresh_token_id,
+            parent_token_id=parent_token_id,
             created_at=now_iso(),
             expires_at=iso_after(seconds=REFRESH_TOKEN_TTL_SECONDS),
             consumed_at=None,
@@ -492,9 +472,7 @@ class OAuthService:
         except Exception:
             # Do not leave an untracked bearer active if refresh persistence fails.
             self._project_keys.revoke(
-                project_id=project_id,
-                key_id=str(key["id"]),
-                owner_user_id=owner_user_id,
+                project_id=grant.project_id, key_id=str(key["id"]), owner_user_id=grant.owner_user_id,
             )
             raise
         response["refresh_token"] = raw_refresh

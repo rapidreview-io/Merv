@@ -41,13 +41,13 @@ from .shared import (
     CallLedger,
     GLOBAL_MUTATOR_PREFIXES,
     MIN_PROXY_VERSION,
+    PROJECT_PATH_RE,
     RefusalLedger,
     bind_request_principal,
     is_below_floor,
     is_local_origin,
     ledger_refusal,
     ledger_tool_refusal,
-    open_hosted_operator_denial,
     operator_denial,
     operator_membership_recovery,
     refusal,
@@ -172,7 +172,6 @@ class ProjectAuthorizer:
     """The single project-membership boundary for every HTTP entry path."""
 
     research: Research
-    _project_path = re.compile(r"^/api/projects/([^/]+)")
     _query_scoped_prefixes = ("/api/activity", "/api/debug/")
     # Operator/tenant diagnostics an mk_ key must never reach (INV-11).
     _operator_diagnostic_prefixes = ("/api/activity", "/api/debug/", "/api/admin")
@@ -217,7 +216,7 @@ class ProjectAuthorizer:
         if path.startswith(GLOBAL_MUTATOR_PREFIXES):
             # Operator token replaces membership scoping here (local keeps access).
             return operator_denial(request)
-        match = self._project_path.match(path)
+        match = PROJECT_PATH_RE.match(path)
         project_id = match.group(1) if match else ""
         if not project_id and path.startswith(self._query_scoped_prefixes):
             project_id = request.query_params.get("project_id") or ""
@@ -642,7 +641,7 @@ def install_request_middleware(
             return authorizer.http_denial(request)
         if denied is None and authenticator.surface.hosted_control:
             # OPEN hosted mode (no verifier): still operator-gate global mutators.
-            return open_hosted_operator_denial(request)
+            return operator_denial(request, trust_local=False)
         return denied
 
     @http.middleware("http")
