@@ -60,6 +60,13 @@ class AuthenticationContentionTest(ResearchCase):
         with patch.object(self.app.store, "transaction", side_effect=AssertionError("candidate scan took writer lock")):
             self.assertEqual(self.runtime.candidates(project_id=self.project_id), expected)
 
+    def test_disabled_dispatch_does_not_prepare_or_hydrate_candidates(self):
+        with patch.object(self.app.application, "_dispatch_plan", side_effect=AssertionError("dispatch was disabled")):
+            result = self.app.application.lease_agent_session(
+                project_id=self.project_id, runner_id="disabled", platform="codex",
+                idempotency_key="disabled", session_secret="mas_" + secrets.token_urlsafe(32))
+        self.assertEqual(result, {"session": None, "reason": "agent_dispatch_disabled"})
+
     def test_slow_blob_reader_does_not_hold_up_an_independent_writer(self):
         self.assertIsNotNone(self.app.agent_sessions.authenticate(session_secret=self.secret))
         entered, release = Event(), Event()

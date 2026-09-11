@@ -169,6 +169,9 @@ class Application:
         source_user_id: str = "", hard_deadline_seconds: int = 24 * 60 * 60,
     ) -> dict[str, Any]:
         """Lease one node; the node owns its brief and its completion boundary."""
+        project = self.research.get_project(project_id=project_id)
+        if not project["settings"].get(AGENT_DISPATCH_SETTING, False):
+            return {"session": None, "reason": "agent_dispatch_disabled"}
         plan = self._dispatch_plan(project_id=project_id)
         if not plan["project"]["settings"].get(AGENT_DISPATCH_SETTING, False):
             return {"session": None, "reason": "agent_dispatch_disabled"}
@@ -929,4 +932,3 @@ def _advance_view(advance: Mapping[str, Any]) -> dict[str, Any]:
             for item in advance.get("sources") or ()
         ],
     }
-
