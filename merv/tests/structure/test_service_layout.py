@@ -792,7 +792,7 @@ class ServiceLayoutTest(unittest.TestCase):
         self.assertFalse((HTTP_API_PACKAGE / "resources.py").exists())
         routes = (HTTP_API_PACKAGE / "artifacts.py").read_text(encoding="utf-8")
         views = _api_views_source()
-        self.assertIn("artifacts.get(", routes)
+        self.assertIn("artifacts.resolve(", routes)
         self.assertIn("artifacts.figure(", routes)
         self.assertNotIn("FROM artifacts", routes + views)
         self.assertNotIn(".blobs.get", routes + views)

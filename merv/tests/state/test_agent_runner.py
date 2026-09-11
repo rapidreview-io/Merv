@@ -2078,5 +2078,40 @@ class AgentRunnerTest(unittest.TestCase):
             self.assertEqual(client.heartbeats, ["ags_good"])
 
 
+class CloneFailureTest(unittest.TestCase):
+    """A bare clone that times out leaves no half-made repository behind and
+    raises the daemon's retryable error."""
+
+    def test_a_timed_out_clone_is_cleaned_up_and_retryable(self) -> None:
+        import subprocess as real_subprocess
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manager = WorkspaceManager(
+                WorkspaceSettings(
+                    strategy="git_worktree",
+                    repository=_git_repository(root / "repo"),
+                    root=root / "workers",
+                    base_ref="main",
+                )
+            )
+            bare = root / "workers" / ".merv-repository.git"
+            real_run = real_subprocess.run  # the patch below replaces the module attribute
+
+            def run(command, *args, **kwargs):
+                if "clone" in command:
+                    bare.mkdir(parents=True)
+                    (bare / "HEAD").write_text("half-made")
+                    raise real_subprocess.TimeoutExpired(command, kwargs.get("timeout"))
+                return real_run(command, *args, **kwargs)
+
+            with mock.patch("merv.client.agent_runner.subprocess.run", side_effect=run):
+                with self.assertRaises(RunnerError) as ctx:
+                    manager._canonical_repository()
+            self.assertIn("timed out", str(ctx.exception))
+            self.assertFalse(bare.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

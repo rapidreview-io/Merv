@@ -551,13 +551,14 @@ class McpStreamableResultSerializationTest(unittest.TestCase):
         )
         response = self.mcp.request("tools/call", {"name": "large.tool"})
         self.assertEqual(response.status_code, 200, response.text)
-        text = response.json()["result"]["content"][0]["text"]
+        envelope, raw = _envelope(response)
+        text = envelope["result"]["content"][0]["text"]
         self.assertIn("\n", text)
         self.assertEqual(json.loads(text), large)
-        self.assertEqual(response.json()["result"]["structuredContent"], large)
+        self.assertEqual(envelope["result"]["structuredContent"], large)
         # The envelope holds the text as a JSON string, so its newlines are
-        # escaped and the HTTP body itself stays a single line.
-        self.assertNotIn(b"\n", response.content)
+        # escaped and the message itself stays a single line.
+        self.assertNotIn(b"\n", raw)
 
     def test_streamed_large_result_keeps_the_sse_frame_on_one_line(self) -> None:
         response = self.client.post(
@@ -592,6 +593,16 @@ class McpStreamableResultSerializationTest(unittest.TestCase):
         text = frames[-1]["result"]["content"][0]["text"]
         self.assertIn("\n", text)
         self.assertEqual(json.loads(text), self._large())
+
+
+def _envelope(response) -> tuple[dict, bytes]:
+    """The JSON-RPC message and its raw line, whether the call answered at
+    once or, past the transport's fast-call window, as an event stream."""
+    if "text/event-stream" not in response.headers.get("content-type", ""):
+        return response.json(), response.content
+    data = [line[5:].strip() for line in response.text.splitlines() if line.startswith("data:")]
+    assert data, response.text
+    return json.loads(data[-1]), data[-1].encode()
 
 
 class McpStreamablePreflightTest(unittest.TestCase):
