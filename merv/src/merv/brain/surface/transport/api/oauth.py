@@ -9,11 +9,12 @@ from urllib.parse import parse_qsl
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from ...identity import is_human_session
 from ...oauth import OAuthControl, OAuthError, oauth_error_redirect
 from ...project_keys import PROJECT_GRANT
 from ..request_body import RequestBodyTooLarge, read_limited_body
 
-_NO_STORE = dict((("Cache-Control", "no-store"), ("Pra" + "gma", "no-cache")))
+_NO_STORE = {"Cache-Control": "no-store"}
 _MAX_DCR_BODY_BYTES = 32 * 1024
 _MAX_TOKEN_BODY_BYTES = 8 * 1024
 
@@ -155,17 +156,11 @@ def build_router(
             )
         try:
             metadata = json.loads(body)
-        except Exception:
-            return _oauth_error(
-                OAuthError(
-                    "invalid_client_metadata", "request body must be a JSON object"
-                )
-            )
+        except ValueError:
+            metadata = None
         if not isinstance(metadata, dict):
             return _oauth_error(
-                OAuthError(
-                    "invalid_client_metadata", "request body must be a JSON object"
-                )
+                OAuthError("invalid_client_metadata", "request body must be a JSON object")
             )
         try:
             result = service.register_client(metadata)
@@ -206,7 +201,6 @@ def build_router(
         denial = _require_supabase_session(request)
         if denial is not None:
             return denial
-        issuer = _origin(request)
         try:
             result = service.authorization_details(
                 params=_unique_query(request),
@@ -374,8 +368,7 @@ async def _consent_body(request: Request) -> tuple[Any, dict[str, Any]]:
 
 
 def _require_supabase_session(request: Request) -> JSONResponse | None:
-    principal = getattr(request.state, "principal", None)
-    if not str(getattr(principal, "client_id", "")).startswith("jwt:"):
+    if not is_human_session(getattr(request.state, "principal", None)):
         return JSONResponse(
             {
                 "error": "access_denied",
