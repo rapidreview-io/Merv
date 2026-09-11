@@ -297,7 +297,7 @@ class ReflectionService(RecordHooks):
                                                 conn=conn, include_content=include_content)
 
     def hydrate(self, *, conn: Connection, project_id: str, records: list[dict[str, Any]], detail_ids=(),
-                include_content: bool = False) -> None:
+                include_content: bool = False, presentation=True) -> None:
         """Everything a wave is beyond its row: pinned lenses, the corpus it
         reads, what its change spec has materialized, and its code proposal."""
         for data in records:
@@ -332,7 +332,8 @@ class ReflectionService(RecordHooks):
                 data["snapshot_token"] = str(proposal.get("id") or "")
                 data["code_sha"] = str(proposal.get("proposal_sha") or "")
             data["reflection_coverage"] = reflection_coverage_for(reflection=data)
-            data["project_graph_diff"] = self._project_graph_diff(conn=conn, reflection=data)
+            if presentation:
+                data["project_graph_diff"] = self._project_graph_diff(conn=conn, reflection=data)
 
     def _pin_lens_artifacts(self, *, conn: Connection, reflection: dict[str, Any]) -> None:
         """A submitted lens child freezes its contribution: the pinned artifact
@@ -563,10 +564,11 @@ class ReflectionService(RecordHooks):
                 "research_wave": Binding(self._wave_knowledge, self._commit_wave_change, self.initialize_wave)}
 
     def _lens_knowledge(self, snapshot: Snapshot, conn: Connection):
-        reflection = self.get_state(reflection_id=str(snapshot.data["reflection_id"]), project_id=snapshot.project_id, conn=conn)
-        if str(snapshot.data["lens_id"]) not in {str(item["id"]) for item in reflection.roster}:
+        reflection = self.records.metadata(REFLECTION, record_id=str(snapshot.data["reflection_id"]),
+                                           project_id=snapshot.project_id, conn=conn)
+        if str(snapshot.data["lens_id"]) not in {str(item["id"]) for item in reflection["roster"]}:
             raise WorkflowError("lens does not belong to this reflection's fixed roster")
-        return RecordKnowledge(self.records, REFLECTION, conn, public_record(Public(), reflection), snapshot)
+        return RecordKnowledge(self.records, REFLECTION, conn, reflection, snapshot)
 
     def initialize_lens(self, conn: Connection, snapshot: Snapshot) -> None:
         parent = conn.execute(
@@ -586,11 +588,11 @@ class ReflectionService(RecordHooks):
             self._commit_lens_change(conn, snapshot, snapshot, "adopt_lens", {})
 
     def _wave_knowledge(self, snapshot: Snapshot, conn: Connection):
-        reflection = self.get_state(reflection_id=str(snapshot.data.get("reflection_id") or ""),
-                                    project_id=snapshot.project_id, conn=conn)
-        if reflection.status != "published":
+        reflection = self.records.metadata(REFLECTION, record_id=str(snapshot.data.get("reflection_id") or ""),
+                                           project_id=snapshot.project_id, conn=conn)
+        if reflection["status"] != "published":
             raise WorkflowError("A research wave can start only from a published reflection.")
-        return RecordKnowledge(self.records, REFLECTION, conn, public_record(Public(), reflection), snapshot)
+        return RecordKnowledge(self.records, REFLECTION, conn, reflection, snapshot)
 
     def initialize_wave(self, conn: Connection, snapshot: Snapshot) -> None:
         self._wave_knowledge(snapshot, conn)

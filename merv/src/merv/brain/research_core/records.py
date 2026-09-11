@@ -13,8 +13,6 @@ from collections.abc import Mapping
 from contextlib import closing
 import json
 from typing import Any, TypeVar
-from .models import public_record
-from ..workflows import Public
 
 S = TypeVar("S")
 
@@ -55,7 +53,7 @@ class RecordHooks:
     def after_create(self, *, conn: Connection, project_id: str, record_id: str, values: dict[str, Any]) -> None:
         """Write the kind's child rows on the same transaction as its row."""
 
-    def hydrate(self, *, conn: Connection, project_id: str, records: list[dict[str, Any]], detail_ids: tuple[str, ...]) -> None:
+    def hydrate(self, *, conn: Connection, project_id: str, records: list[dict[str, Any]], detail_ids: tuple[str, ...], presentation=True) -> None:
         """Add the kind's own read state to every record in one batch."""
 
     def before_write(self, *, conn: Connection, before: Snapshot, after: Snapshot, action: str) -> None:
@@ -236,7 +234,18 @@ class Records:
 
     def _assemble(self, kind: RecordKind[S], *, conn: Connection, records: list[dict[str, Any]],
                   detail_ids: tuple[str, ...], snapshots=None, **extra) -> list[tuple[S, GateEvaluation]]:
-        self._evidence(kind, conn=conn, records=records, summarize=True)
+        self._hydrate(kind, conn=conn, records=records, detail_ids=detail_ids, **extra)
+        assembled = []
+        for record in records:
+            evaluation = self.evaluate_gate(kind, conn=conn, record=record, snapshots=snapshots)
+            record["allowed_transitions"] = [dict(item) for item in evaluation.legal_transitions]
+            record["gate_checklist"] = evaluation.checklist()
+            assembled.append((kind.construct(record, evaluation.decision.snapshot), evaluation))
+        return assembled
+
+    def _hydrate(self, kind: RecordKind, *, conn: Connection, records: list[dict[str, Any]],
+                 detail_ids=(), presentation=True, **extra) -> None:
+        self._evidence(kind, conn=conn, records=records, summarize=presentation)
         project_id = str(records[0]["project_id"])
         record_ids = tuple(str(record["id"]) for record in records)
         dependencies = dependency_rows(conn=conn, project_id=project_id, node_ids=record_ids) if kind.dependencies else {}
@@ -247,14 +256,7 @@ class Records:
                 record["dependencies"] = dependencies.get(record_id, [])
                 record["dependents"] = dependents.get(record_id, [])
         self.hooks[kind.name].hydrate(conn=conn, project_id=project_id, records=records,
-                                      detail_ids=detail_ids, **extra)
-        assembled = []
-        for record in records:
-            evaluation = self.evaluate_gate(kind, conn=conn, record=record, snapshots=snapshots)
-            record["allowed_transitions"] = [dict(item) for item in evaluation.legal_transitions]
-            record["gate_checklist"] = evaluation.checklist()
-            assembled.append((kind.construct(record, evaluation.decision.snapshot), evaluation))
-        return assembled
+                                      detail_ids=detail_ids, presentation=presentation, **extra)
 
     # ---- gates ----
 
@@ -301,15 +303,26 @@ class Records:
 
     # ---- workflow binding ----
 
+    def metadata(self, kind: RecordKind, *, conn: Connection, project_id: str, record_id: str) -> dict[str, Any]:
+        """Workflow facts without display hydration or eager gate evaluation."""
+        row = conn.execute(f"SELECT * FROM {kind.table} WHERE id = ? AND project_id = ?",
+                           (record_id, project_id)).fetchone()
+        if row is None:
+            raise NotFoundError(f"{kind.name} not found: {record_id}")
+        record = row_to_dict(row=row) or {}
+        self.snapshot_for(kind, conn=conn, record=record)
+        self._hydrate(kind, conn=conn, records=[record], presentation=False)
+        return record
+
     def knowledge(self, kind: RecordKind, snapshot: Snapshot, conn: Connection) -> Knowledge:
         if not kind.reads_record:
             return EmptyKnowledge()
-        row = conn.execute(f"SELECT status FROM {kind.table} WHERE id = ? AND project_id = ?",
-                           (snapshot.id, snapshot.project_id)).fetchone()
-        if row is not None and row["status"] != kind.status_of(snapshot.state):
+        record = self.metadata(kind, conn=conn, project_id=snapshot.project_id, record_id=snapshot.id)
+        if record["status"] != kind.status_of(snapshot.state):
             raise WorkflowError(f"{kind.name} state differs from its workflow instance; "
                                 "an explicit migration is required")
-        record = public_record(Public(), self.get_state(kind, record_id=snapshot.id, project_id=snapshot.project_id, conn=conn))
+        # Knowledge supplies facts to the evaluator; constructing it must not
+        # recursively evaluate every exit or fetch optional display summaries.
         return RecordKnowledge(self, kind, conn, record, snapshot)
 
     def transition(self, kind: RecordKind, *, record_id: str, transition: str, evidence=None,

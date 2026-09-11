@@ -486,8 +486,11 @@ class Runtime:
 
     def require_assignment(self, *, conn: Connection, project_id: str, instance_id: str, revision: int) -> None:
         """The dispatcher calls this in the transaction that issues the lease."""
-        self.lock(conn=conn, project_id=project_id, instance_id=instance_id, revision=revision)
-        evaluation = self.evaluate(project_id=project_id, instance_id=instance_id, conn=conn)
+        snapshot = self.lock(conn=conn, project_id=project_id, instance_id=instance_id, revision=revision)
+        # Authentication rechecks readiness on every call. Unrelated exit
+        # validators do not govern permission to keep working at this node.
+        evaluation = self.registry.get(snapshot.workflow, snapshot.version).evaluate(
+            snapshot, self.knowledge(snapshot, conn), dispatch_only=True)
         if not evaluation.dispatchable:
             raise WorkflowError("assignment is stale or its dispatch prerequisites no longer hold")
 

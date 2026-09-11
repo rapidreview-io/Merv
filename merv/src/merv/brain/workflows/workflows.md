@@ -43,7 +43,8 @@ After replay/revision checks, gates and reduction: save state/pending actions, r
 tuple order, commit native columns/sealing/hooks, enter composition, record history/event.
 Migration shares this save; activation rejects effects. Missing handlers/failures abort. It
 provides a final revision/prerequisite fence for the assignment lease transaction, and
-answers Agent Sessions' `InstanceFacts` port (revision, terminal, label) so leases never
+rechecks only dispatch prerequisites during authentication; exit validators still run for transitions.
+It answers Agent Sessions' `InstanceFacts` port (revision, terminal, label) so leases never
 read a research table. The assignment packet carries `execution` as the node's declared
 policy in JSON.
 `delivery.py` retries effects using stable keys and expiring leases; an

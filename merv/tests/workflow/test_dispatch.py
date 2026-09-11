@@ -14,12 +14,14 @@ from merv.brain.workflows import (
     Issue,
     Node,
     Reference,
+    RecordNeed,
     ReviewGate,
     Scope,
     Workflow,
 )
 from merv.brain.workflows.definitions.checks import reviewed
 from merv.brain.workflows.definitions.execution import REVIEW_WORKSPACE
+from merv.shared.errors import WorkflowError
 from tests.research_core.scenarios import ResearchCase
 
 
@@ -27,13 +29,15 @@ class WorkflowDispatchTest(ResearchCase):
     def setUp(self):
         super().setUp()
         self.call("project.update", project_id=self.project_id, agent_dispatch=True)
-        self.facts = {"ready": True, "context": "initial context"}
+        self.facts = {"ready": True, "requirement_ready": True, "context": "initial context"}
         self.plugin = Workflow(
             name="replication", version=1, initial="investigate",
             nodes=(
                 Node("investigate", "Investigate replication", "researcher",
                      lambda snapshot, knowledge: Brief(self.facts["context"], (Reference("project", snapshot.project_id),)),
-                     lambda snapshot, knowledge: () if self.facts["ready"] else (Issue("dependency", "Wait for the dependency"),)),
+                     lambda snapshot, knowledge: () if self.facts["ready"] else (Issue("dependency", "Wait for the dependency"),),
+                     requires=(RecordNeed("inputs", "Inputs unavailable", "inputs", "wait", dispatch=True,
+                         verify=lambda snapshot, knowledge: None if self.facts["requirement_ready"] else Issue("inputs", "Inputs unavailable")),)),
                 # A plugin verifier with no review capability records its outcome
                 # through the generic exit, so the node grants that one tool.
                 Node("review", "Review replication", "independent_verifier",
@@ -127,6 +131,24 @@ class WorkflowDispatchTest(ResearchCase):
         with self.app.store.transaction() as tx:
             self.assertEqual(tx.execute("SELECT COUNT(*) FROM events WHERE type = 'workflow.work_started'").fetchone()[0], 1)
         self.assertEqual(self.runtime.get(project_id=self.project_id, instance_id=self.instance_id).revision, 0)
+
+    def test_first_and_repeated_authentication_recheck_dispatch_readiness(self):
+        session, secret = self.claim()
+        self.facts["ready"] = False
+        with self.assertRaisesRegex(WorkflowError, "prerequisites"):
+            self.app.agent_sessions.authenticate(session_secret=secret)
+        self.facts["ready"] = True
+        self.assertIsNotNone(self.app.agent_sessions.authenticate(session_secret=secret))
+        self.facts["ready"] = False
+        with self.assertRaisesRegex(WorkflowError, "prerequisites"):
+            self.app.agent_sessions.authenticate(session_secret=secret)
+        self.facts["ready"] = True
+        self.facts["requirement_ready"] = False
+        with self.assertRaisesRegex(WorkflowError, "prerequisites"):
+            self.app.agent_sessions.authenticate(session_secret=secret)
+        self.facts["requirement_ready"] = True
+        self.move("submit", 0)
+        self.assertIsNone(self.app.agent_sessions.authenticate(session_secret=secret))
 
     def test_session_tools_are_scoped_to_instance_revision_and_read_only_policy(self):
         session, secret = self.claim()

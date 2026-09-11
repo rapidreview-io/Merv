@@ -561,7 +561,7 @@ class Workflow:
     def node(self, state: str) -> Node | None:
         return next((node for node in self.nodes if node.name == state), None)
 
-    def evaluate(self, snapshot: Snapshot, knowledge: Knowledge) -> Evaluation:
+    def evaluate(self, snapshot: Snapshot, knowledge: Knowledge, *, dispatch_only: bool = False) -> Evaluation:
         if (snapshot.workflow, snapshot.version) != (self.name, self.version):
             raise WorkflowError("snapshot is pinned to a different workflow definition")
         node = self.node(snapshot.state)
@@ -579,7 +579,7 @@ class Workflow:
         return Evaluation(
             snapshot,
             node,
-            tuple(EvaluatedEdge(edge, (*issues(edge.check, snapshot, knowledge),
+            () if dispatch_only else tuple(EvaluatedEdge(edge, (*issues(edge.check, snapshot, knowledge),
                                        *(issue for need in requires if edge.name in need.actions
                                          for issue in declared(need, False))))
                   for edge in self.edges if edge.source == snapshot.state),

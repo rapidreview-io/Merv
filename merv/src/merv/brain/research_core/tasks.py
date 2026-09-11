@@ -112,7 +112,7 @@ class TaskService(RecordHooks):
                                     "deliverables": values["deliverables"]}).encode("utf-8"),
         )
 
-    def hydrate(self, *, conn: Connection, project_id: str, records: list[dict[str, Any]], detail_ids=()) -> None:
+    def hydrate(self, *, conn: Connection, project_id: str, records: list[dict[str, Any]], detail_ids=(), presentation=True) -> None:
         """The structure the UI renders: the goal's deliverables (the column;
         pre-53 rows fall back to the brief's list) and — for detail reads —
         the delivery's confirmations, Notes prose, and legacy Caveats."""

@@ -106,7 +106,7 @@ class ExperimentService(RecordHooks):
             conn.execute("INSERT INTO experiment_claims (experiment_id, claim_id) VALUES (?, ?)",
                          (record_id, claim_id))
 
-    def hydrate(self, *, conn: Connection, project_id: str, records: list[dict[str, Any]], detail_ids=()) -> None:
+    def hydrate(self, *, conn: Connection, project_id: str, records: list[dict[str, Any]], detail_ids=(), presentation=True) -> None:
         claims: dict[str, list[dict[str, Any]]] = {}
         for claim in rows_to_dicts(rows=conn.execute(
             """SELECT ec.experiment_id AS _experiment_id, c.* FROM experiment_claims ec
