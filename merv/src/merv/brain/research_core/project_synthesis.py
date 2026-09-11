@@ -66,8 +66,8 @@ class ProjectSynthesis:
             if kind_name not in {"experiment", "reflection"}:
                 continue
             kind = self.records.kinds[kind_name]
-            record = public_record(Public(), self.records.get_state(
-                kind, record_id=record_id, project_id=snapshot.project_id, conn=conn))
+            record = self.records.evidence_snapshot(
+                kind, record_id=record_id, project_id=snapshot.project_id, conn=conn)
             selected = {key: record[key] for key in (
                 "id", "name", "title", "intent", "status", "attempt_index", "conclusion", "revision_context", "corpus", "reviews"
             ) if key in record}

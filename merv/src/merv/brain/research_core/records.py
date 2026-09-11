@@ -199,8 +199,17 @@ class Records:
         return self._assemble(kind, conn=conn, records=records, detail_ids=detail_ids,
                               snapshots=self.runtime.snapshots(project_id=project_id, conn=conn), **extra)
 
-    def _assemble(self, kind: RecordKind[S], *, conn: Connection, records: list[dict[str, Any]],
-                  detail_ids: tuple[str, ...], snapshots=None, **extra) -> list[tuple[S, GateEvaluation]]:
+    def evidence_snapshot(self, kind: RecordKind, *, conn: Connection, project_id: str, record_id: str) -> dict[str, Any]:
+        """Pin record metadata, all attempts and reviews without evaluating gates or reading blobs."""
+        records = query(conn, f"SELECT * FROM {kind.table} WHERE project_id = ? AND id = ?", (project_id, record_id))
+        if not records:
+            raise NotFoundError(f"{kind.name} not found in project {project_id}: {record_id}")
+        self.snapshot_for(kind, conn=conn, record=records[0])
+        self._evidence(kind, conn=conn, records=records)
+        return records[0]
+
+    def _evidence(self, kind: RecordKind, *, conn: Connection, records: list[dict[str, Any]]) -> None:
+        """Shared database-only evidence hydration for source snapshots and full record reads."""
         project_id = str(records[0]["project_id"])
         record_ids = tuple(str(record["id"]) for record in records)
         history = self.artifacts.history(tx=conn, target_type=kind.name, target_ids=record_ids, summarize=True)
@@ -214,8 +223,6 @@ class Records:
             review["findings"] = json.loads(review.pop("findings_json", "[]"))
             review["evidence"] = json.loads(review.pop("evidence_json", "{}"))
             reviews.setdefault(str(review["target_id"]), []).append(review)
-        dependencies = dependency_rows(conn=conn, project_id=project_id, node_ids=record_ids) if kind.dependencies else {}
-        dependents = dependent_rows(conn=conn, project_id=project_id, node_ids=record_ids) if kind.dependencies else {}
         for record in records:
             record_id = str(record["id"])
             for column, (field, empty) in kind.json_columns.items():
@@ -226,6 +233,16 @@ class Records:
                 record["artifacts"], attempt=record["attempt_index"])
             record["submissions"] = [documents.submission_state_record(item) for item in history[record_id].submissions]
             record["reviews"] = reviews.get(record_id, [])
+
+    def _assemble(self, kind: RecordKind[S], *, conn: Connection, records: list[dict[str, Any]],
+                  detail_ids: tuple[str, ...], snapshots=None, **extra) -> list[tuple[S, GateEvaluation]]:
+        self._evidence(kind, conn=conn, records=records)
+        project_id = str(records[0]["project_id"])
+        record_ids = tuple(str(record["id"]) for record in records)
+        dependencies = dependency_rows(conn=conn, project_id=project_id, node_ids=record_ids) if kind.dependencies else {}
+        dependents = dependent_rows(conn=conn, project_id=project_id, node_ids=record_ids) if kind.dependencies else {}
+        for record in records:
+            record_id = str(record["id"])
             if kind.dependencies:
                 record["dependencies"] = dependencies.get(record_id, [])
                 record["dependents"] = dependents.get(record_id, [])

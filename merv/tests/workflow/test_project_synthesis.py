@@ -189,7 +189,8 @@ class ProjectSynthesisTest(ResearchCase):
         self.assertFalse(self.document()["maintenance"]["pending"])
         self.consolidate_and_publish(reflection)
         self.assertTrue(self.document()["maintenance"]["pending"])
-        packet = self.prepare()
+        with patch.object(self.app.blobs, "get", side_effect=AssertionError("source preparation must not read blobs")):
+            packet = self.prepare()
         self.assertTrue(any(e["target_id"] == reflection and e["to"] == "published" for e in packet["source"]["events"]))
         self.assertTrue(any(ref["kind"] == "artifact" for ref in packet["source"]["references"]))
         self.publish(packet)

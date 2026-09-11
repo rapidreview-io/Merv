@@ -11,7 +11,7 @@ workflow version; instance/kind mismatches fail before checklist evaluation or n
 
 ## Files
 
-- `records.py`: one engine interprets each graph's `RecordKind`: creation, hydration,
+- `records.py`: one engine interprets each graph's `RecordKind`: creation, database-only evidence snapshots, hydration,
   gates, typed construction, `RecordKnowledge`, column writes and sealing.
   `RecordKind.creation_requires` checks transaction-bound creation facts; reserved creates
   retain their existing guard bypass. `ReflectionFreshness` owns experiment creation debt. `RecordHooks.before_write` and
