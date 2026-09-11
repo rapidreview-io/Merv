@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from contextlib import closing, suppress
 import json
-from typing import Any
+from typing import Any, Protocol
 
 from ..agent_sessions import WorkspaceAdvances
 from ..workflows import Binding, PROJECT_GRAPH_ROLE, REFLECTION_LENS_DOC_ROLE, TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE
@@ -81,6 +81,11 @@ def _pins(snapshot: dict[str, Any], proposal: dict[str, Any]) -> bool:
             and snapshot.get("code_sha") == proposal["proposal_sha"])
 
 
+class ClaimWriter(Protocol):
+    def __call__(self, *, conn, project_id: str, changes: dict[str, Any], claim_id: str = "",
+                 provenance: dict[str, Any] | None = None) -> dict[str, Any]: ...
+
+
 class ReflectionService(RecordHooks):
     """The reflection wave's own rules; its record runs on ``Records``."""
 
@@ -93,6 +98,7 @@ class ReflectionService(RecordHooks):
         tasks: TaskService,
         records: Records,
         advances: WorkspaceAdvances,
+        write_claim: ClaimWriter,
     ) -> None:
         self.store = store
         self.artifacts = artifacts
@@ -101,6 +107,7 @@ class ReflectionService(RecordHooks):
         self.records = records
         self.runtime = records.runtime
         self.advances = advances
+        self.write_claim = write_claim
         records.register(REFLECTION, self)
         self.classify_reservations()
 
@@ -1077,48 +1084,16 @@ class ReflectionService(RecordHooks):
         by_key: dict[str, str] = {}
         for change in changes:
             op, key = str(change["op"]), str(change.get("key") or "").strip()
-            claim_id = (self._create_claim(conn=conn, project_id=project_id, change=change) if op == "create"
-                        else self._update_claim(conn=conn, project_id=project_id, change=change))
+            claim = self.write_claim(conn=conn, project_id=project_id, changes=change,
+                                     claim_id="" if op == "create" else str(change["claim_id"]).strip(),
+                                     provenance={"source_reflection_id": reflection_id,
+                                                 "rationale": str(change.get("rationale") or "").strip()})
+            claim_id = str(claim["id"])
             if op == "create" and key:
                 by_key[key] = claim_id
-            self._claim_event(conn=conn, project_id=project_id, reflection_id=reflection_id, op=op,
-                              claim_id=claim_id, key=key, change=change)
+            conn.execute("INSERT INTO reflection_claim_changes (reflection_id, claim_id, op, claim_key, created_at) "
+                         "VALUES (?, ?, ?, ?, ?)", (reflection_id, claim_id, op, key, now_iso()))
         return by_key
-
-    def _create_claim(self, *, conn, project_id: str, change: dict[str, Any]) -> str:
-        claim_id = new_id(prefix="claim")
-        conn.execute(
-            "INSERT INTO claims (id, project_id, statement, scope, status, confidence, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (claim_id, project_id, str(change.get("statement") or "").strip(), str(change.get("scope") or "").strip(),
-             str(change.get("status") or "active"), str(change.get("confidence") or "medium"), now_iso()))
-        return claim_id
-
-    def _update_claim(self, *, conn, project_id: str, change: dict[str, Any]) -> str:
-        """Overwrite only the fields the spec named; the rest stand as they are."""
-        claim_id = str(change["claim_id"]).strip()
-        row = conn.execute("SELECT statement, scope, status, confidence FROM claims WHERE id = ? AND project_id = ?",
-                           (claim_id, project_id)).fetchone()
-        if row is None:
-            raise NotFoundError(f"claim not found: {claim_id}")
-        fields = {name: str(row[name]) if change.get(name) is None else str(change[name]).strip()
-                  for name in ("statement", "scope", "status", "confidence")}
-        conn.execute("UPDATE claims SET statement = ?, scope = ?, status = ?, confidence = ? WHERE id = ?",
-                     (*fields.values(), claim_id))
-        return claim_id
-
-    def _claim_event(self, *, conn, project_id: str, reflection_id: str, op: str, claim_id: str,
-                     key: str, change: dict[str, Any]) -> None:
-        row = conn.execute("SELECT statement, scope, status, confidence FROM claims WHERE id = ?",
-                           (claim_id,)).fetchone()
-        self.store.record_event(
-            conn=conn, project_id=project_id, event_type=f"claim.{'created' if op == 'create' else 'updated'}",
-            target_type="claim", target_id=claim_id,
-            payload={**{name: str(row[name]) for name in ("statement", "scope", "status", "confidence")},
-                     "source_reflection_id": reflection_id,
-                     "rationale": str(change.get("rationale") or "").strip()})
-        conn.execute("INSERT INTO reflection_claim_changes (reflection_id, claim_id, op, claim_key, created_at) "
-                     "VALUES (?, ?, ?, ?, ?)", (reflection_id, claim_id, op, key, now_iso()))
 
     def _materialize_wave(
         self,

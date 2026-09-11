@@ -21,7 +21,8 @@ native record runs on one engine; its service keeps only that kind's own rules.
   replacement visibility, immutable submission members. `artifact_models.py`: association
   projections and snapshot references.
 - `research.py`: public root; only what crosses the kinds — project, claim and candidate
-  writes, snapshots, project context, membership, events, graph refs, and the one loop that
+  writes (one transactional claim writer also serves reflection), snapshots, membership,
+  events, graph refs, and the one loop that
   binds `program.kinds`. One kind is reached at `experiments`/`tasks`/`reflections`/`reviews`.
 - `experiments.py`: what is true of experiments alone — the create blocks (active cap,
   reserved wave name, reflection debt), claim links, the attempt clock, the metrics exhibit.
@@ -46,7 +47,6 @@ native record runs on one engine; its service keeps only that kind's own rules.
 - `content_summaries.py`: deterministic TLDRs of submitted documents. `paths.py`: safe experiment folder names. `tools.py`: the experiment/task/reflection/consolidation/review/claim/candidate/litreview MCP contracts, their enums and prose read off the graphs above; the research program carries the table into the registry. `persistence.py`: every research table, its read-path indexes, and the `research_artifacts` view that joins a link row to the immutable content it names.
 
 ## Experiment lifecycle
-
 The graph uses `planned -> design_review -> running -> experiment_review -> complete`;
 failure and abandonment are terminal outcomes. Passing design review immediately enters
 execution. Dependencies gate dispatch; actual activation starts the attempt clock. Graph

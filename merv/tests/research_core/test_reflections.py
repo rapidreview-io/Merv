@@ -25,6 +25,49 @@ from .scenarios import (
 
 
 class ReflectionWorkflowTest(ResearchCase):
+    def test_direct_and_reflection_claims_share_fields_and_events(self):
+        direct = self.app.research.create_claim(project_id=self.project_id, statement="  Compare the effect.  ", scope=" Local ")
+        reflection = self.create_reflection()
+        service = self.app.research.reflections
+        with self.app.store.transaction() as conn:
+            ids = service._materialize_claim_changes(conn=conn, project_id=self.project_id, reflection_id=reflection,
+                changes=[{"op": "create", "key": "effect", "statement": "  Compare the effect.  ", "scope": " Local ", "rationale": " Evidence "}])
+            wave_id = ids["effect"]
+            wave = dict(conn.execute("SELECT * FROM claims WHERE id = ?", (wave_id,)).fetchone())
+            for field in ("statement", "scope", "status", "confidence"):
+                self.assertEqual(wave[field], direct[field])
+            events = [json.loads(row["payload_json"]) for row in conn.execute("SELECT payload_json FROM events WHERE target_type = 'claim' ORDER BY id").fetchall()]
+            self.assertEqual(events[-1], {**events[0], "source_reflection_id": reflection, "rationale": "Evidence"})
+            service._materialize_claim_changes(conn=conn, project_id=self.project_id, reflection_id=reflection,
+                changes=[{"op": "update", "claim_id": direct["id"], "statement": "Revised claim.", "status": "supported"}])
+            updated = dict(conn.execute("SELECT * FROM claims WHERE id = ?", (direct["id"],)).fetchone())
+            self.assertEqual((updated["statement"], updated["scope"], updated["confidence"], updated["status"]),
+                             ("Revised claim.", "Local", "medium", "supported"))
+
+    def test_reflection_claim_edits_reject_foreign_project_and_rollback_together(self):
+        from merv.brain.kernel.utils import NotFoundError
+        other = self.call("project", action="create", name="Foreign claims")["id"]
+        foreign = self.app.research.create_claim(project_id=other, statement="Foreign claim.")
+        reflection = self.create_reflection()
+        changes = [{"op": "create", "key": "local", "statement": "Local claim."},
+                   {"op": "update", "claim_id": foreign["id"], "status": "supported"}]
+        def counts():
+            with self.app.store.transaction() as conn:
+                return [conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
+                        for table in ("claims", "events", "reflection_claim_changes")]
+        before = counts()
+        with self.assertRaises(NotFoundError), self.app.store.transaction() as conn:
+            self.app.research.reflections._materialize_claim_changes(conn=conn, project_id=self.project_id,
+                reflection_id=reflection, changes=changes)
+        self.assertEqual(counts(), before)
+        with self.assertRaisesRegex(RuntimeError, "abort after association"), self.app.store.transaction() as conn:
+            self.app.research.reflections._materialize_claim_changes(conn=conn, project_id=self.project_id,
+                reflection_id=reflection, changes=changes[:1])
+            raise RuntimeError("abort after association")
+        self.assertEqual(counts(), before)
+        with self.assertRaises(NotFoundError):
+            self.app.research.update_claim(project_id=self.project_id, claim_id=foreign["id"], status="supported")
+
     def _reserve_spec(self, *, experiments=True):
         spec = json.loads(VALID_CHANGE_SPEC)
         spec["decision"]["tasks"] = [{"key": "prep", "name": "prep-data", "goal": "Prepare data.",
