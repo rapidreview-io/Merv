@@ -22,7 +22,6 @@ from ..research_core import (
 from ..infrastructure import RemoteSandboxes as SandboxEngine
 from .experiments.presentation import ProducedObjectCatalog, rich_experiment_state
 from .experiments.context import ExperimentContextQuery
-from .project_context import ProjectContextQuery
 from .tasks import TaskContextQuery, rich_task_state, slim_task_state
 
 Record = dict[str, Any]
@@ -113,7 +112,6 @@ class StatusAndNextQuery:
     sandboxes: SandboxEngine
     objects: ProducedObjectCatalog
     context: ExperimentContextQuery
-    project_context: ProjectContextQuery
     task_context: TaskContextQuery | None = None
 
     def _selection(self, *, project_id, experiment_id, task_id):
@@ -151,7 +149,7 @@ class StatusAndNextQuery:
             full,
             experiment_context=self.context.build(state=experiment, project_id=project_id) if experiment_id else None,
             task_context=self.task_context.build(state=task, project_id=project_id) if task and self.task_context else None,
-            project_context=self.project_context.build(project_id=project_id) if not experiment_id and not task_id else None,
+            project_context={"project": self.research.synthesis.document(project_id=project_id)} if not experiment_id and not task_id else None,
         )
 
     def project_models(
@@ -211,7 +209,7 @@ class StatusAndNextQuery:
         ) if orientation else {"workflow": workflow}
         result = {
             "project": {
-                **snapshot.project,
+                **self.research.synthesis.document(project_id=snapshot.project_id),
                 "active_claims": snapshot.claims,
                 "active_experiments": project_rows(
                     snapshot.experiments, _STATUS_EXPERIMENT_FIELDS
@@ -353,7 +351,7 @@ def _slim_status(
             "task": task,
             "workflow": workflow,
             "context": task_context or {},
-            "project": {"id": project.get("id"), "name": project.get("name")},
+            "project": {key: value for key, value in project.items() if key not in {"active_claims", "active_experiments", "active_tasks"}},
         }
     elif project_context is not None:
         result = {
@@ -372,7 +370,7 @@ def _slim_status(
             "workflow": workflow,
             "context": experiment_context,
             "sandbox": _sandbox_summary(full.get("sandboxes", [])),
-            "project": {"id": project.get("id"), "name": project.get("name")},
+            "project": {key: value for key, value in project.items() if key not in {"active_claims", "active_experiments", "active_tasks"}},
         }
     if full.get("project_reflection"):
         result["project_reflection"] = full["project_reflection"]

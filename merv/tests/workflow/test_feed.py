@@ -452,7 +452,7 @@ class FeedServiceTest(unittest.TestCase):
                 "feed.post", project_id=self.pid, handle="Nova-7", text="hello"
             )["post"]["id"]
         orig = feed_module.NUDGE_AFTER_EVENTS, feed_module.NUDGE_AFTER_HOURS
-        feed_module.NUDGE_AFTER_EVENTS, feed_module.NUDGE_AFTER_HOURS = 2, 0.0
+        feed_module.NUDGE_AFTER_EVENTS, feed_module.NUDGE_AFTER_HOURS = 3, 0.0
         try:
             self.assertNotIn("nudge", self.call("feed.list", project_id=self.pid))
             self.call("claim.create", project_id=self.pid, statement="a claim")

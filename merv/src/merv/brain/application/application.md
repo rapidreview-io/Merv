@@ -54,7 +54,7 @@ qualify named action, role, tool and skill references inline.
 - `application.py`: the single public root and visible cross-module workflows.
 - `workflow.py`: rich/slim status, canonical evaluation and review metadata projections;
   the installed `Program.orientation` chooses project advice beside `programs/research.py`.
-- `project_context.py` and `experiments/context.py`: bounded context packets.
+- Shared project orientation comes from Research's living document; `experiments/context.py` retains scoped evidence.
 - `experiments/transition.py`: experiment transition ordering and exhibit pin.
 - `tasks.py`: task presentation, transition receipts, and the bounded task context
   (brief, delivery, deliverables, dependencies) for status and review start.

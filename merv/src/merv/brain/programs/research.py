@@ -8,6 +8,7 @@ from ..workflows import (
 )
 from ..workflows.definitions.experiment import EXPERIMENT, KIND as EXPERIMENT_KIND
 from ..workflows.definitions.reflection import LENS, REFLECTION, KIND as REFLECTION_KIND, present_reflection_signal
+from ..workflows.definitions.project_synthesis import PROJECT_SYNTHESIS
 from ..workflows.definitions.research_wave import RESEARCH_WAVE
 from ..workflows.definitions.review import REVIEW, KIND as REVIEW_KIND
 from ..workflows.definitions.task import TASK, KIND as TASK_KIND
@@ -105,7 +106,7 @@ def orient_project(snapshot, *, selected, workflow, reflection, reflection_workf
 PROGRAM = Program(
     name="research", orientation=orient_project,
     version=1,
-    workflows=(EXPERIMENT, TASK, REFLECTION, LENS, RESEARCH_WAVE, REVIEW),
+    workflows=(EXPERIMENT, TASK, REFLECTION, LENS, RESEARCH_WAVE, REVIEW, PROJECT_SYNTHESIS),
     kinds=(EXPERIMENT_KIND, TASK_KIND, REFLECTION_KIND, REVIEW_KIND),
     effects=("workflow.start", "review.request"),
     transactional_effects=("reflection.materialize_change_spec", "review.record_verdict"),

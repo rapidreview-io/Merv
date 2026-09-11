@@ -282,9 +282,11 @@ class TaskWorkflowTest(ResearchCase):
             [row["id"] for row in status["workflow"]["live_tasks"]], [task_id]
         )
         self.assertIn("task.create", status["workflow"]["allowed_actions"])
+        records = self.call("project", action="records", project_id=self.project_id)
         self.assertEqual(
-            [row["id"] for row in status["context"]["tasks"]], [task_id]
+            [row["id"] for row in records["tasks"]], [task_id]
         )
+        self.assertEqual(set(status["context"]), {"project"})
 
     # ---- dependencies ----
 

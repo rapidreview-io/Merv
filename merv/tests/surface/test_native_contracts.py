@@ -34,7 +34,7 @@ class NativeContractTest(ResearchCase):
                     self.assertIsNone(rich["report"])
                     self.assertNotIn("report", slim)
                 for listing in (self.get(kind + "s"), self.call(kind + ".list", project_id=self.project_id),
-                                self.get("home"), self.call("project", action="overview", project_id=self.project_id)):
+                                self.get("home"), self.call("project", action="records", project_id=self.project_id)):
                     row = next(row for row in listing[kind + "s"] if row["id"] == record_id)
                     self.assertEqual(row["status"], initial)
                 status = self.get(f"{kind}s/{record_id}/status")

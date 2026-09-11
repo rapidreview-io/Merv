@@ -9,9 +9,9 @@ workflow change cannot leave the agent-facing contract stale.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from ..kernel.tools import ContractModel, ProjectScopedInput, ToolContract
 from ..workflows import documents
@@ -47,6 +47,16 @@ _REFLECTION_FIRST_TRANSITION = next(
 )
 _REFLECTION_PUBLISH_TRANSITION = next(edge.name for edge in REFLECTION.workflow.edges
                                       if edge.target == REFLECTION.success_status)
+
+
+class ProjectContextUpdateInput(ProjectScopedInput):
+    summary: str = Field(description="Full user-defined project background/problem, goal and scope; preserve the user's meaning.")
+    expected_summary: Annotated[str, StringConstraints(strip_whitespace=False)] = Field(
+        description="Exact summary last read; a stale value rejects the entire write.")
+
+
+class SynthesisReadInput(ProjectScopedInput):
+    instance_id: str
 
 
 class CandidateSubmitInput(ProjectScopedInput):
@@ -555,6 +565,15 @@ class LitreviewCiteInput(ProjectScopedInput):
 
 
 TOOLS: dict[str, ToolContract] = {
+    "project.synthesis.read": ToolContract(
+        handler_identity="synthesis.inputs", input_model=SynthesisReadInput,
+        description="Read the writing assignment's pinned changes and evidence plus the current published project document.",
+    ),
+    "project.context.update": ToolContract(
+        handler_identity="research.update_project_context",
+        input_model=ProjectContextUpdateInput,
+        description="Persist user-grounded project intent from the interactive conversation. Ask focused questions when needed for your assignment; never invent intent or replace it with research findings. Reread and reconcile on a stale expected_summary.",
+    ),
     "candidate.submit": ToolContract(
         handler_identity="application.submit_candidate",
         input_model=CandidateSubmitInput,

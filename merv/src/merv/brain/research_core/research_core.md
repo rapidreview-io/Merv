@@ -1,5 +1,4 @@
 # Research Core
-
 ## Purpose and boundary
 
 `research_core` owns projects, claims, native records, reviews, artifact associations and candidate
@@ -23,7 +22,8 @@ workflow version; instance/kind mismatches fail before checklist evaluation or n
   its association, else the immutable content lifted into the same shape.
   `artifact_models.py`: association projections.
 - `research.py`: projects, claims, candidates, snapshots, membership and events; one loop
-  binds `program.kinds`. Its transactional claim writer also serves reflection, preserving
+  binds `program.kinds`. `tool:project.context.update` conditionally replaces only user intent in
+  projects.summary, with an atomic expected-text comparison and an event in the same transaction. Its transactional claim writer also serves reflection, preserving
   omitted fields and writing identical claim events plus explicit reflection provenance.
 - `experiments.py`: active cap, reserved names, reflection debt facts, claim links, attempt clock
   and metrics exhibit. `tasks.py`: immutable goals, pinned briefs and parsed deliveries.
@@ -42,6 +42,8 @@ workflow version; instance/kind mismatches fail before checklist evaluation or n
   `tools.py`: concise operation/parameter contracts; role skills own procedural detail.
   `persistence.py`: research tables, migrations, indexes and the `research_artifacts` view.
 
+`project_synthesis.py` binds one project author: frozen inputs, Methods/Results and coverage use
+workflow state/history; intent and the Literature summary are composed on read, never copied.
 ## Lifecycles
 
 Experiments follow `planned -> design_review -> running -> experiment_review -> complete`; failure

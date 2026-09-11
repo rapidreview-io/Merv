@@ -33,7 +33,43 @@ it and that is the only project the key can ever act on; a mismatched
 `project_id` is rejected. Omitting `project_id` on a project-scoped tool raises
 "project_id is required" — never guess an id, call `project(action="list")`.
 There is no linking step and no `connect` action. Use
-`project(action="overview")` for the full claim and experiment history.
+`project(action="overview")` for the living project document; use
+`project(action="records")` to discover the full claim and experiment inventory.
+
+## User-defined project intent
+
+After selecting a project, read its full summary: the user's background/problem,
+goal and scope. Judge whether it is sufficient for your own assignment. In an
+interactive conversation, ask focused questions when missing context matters;
+there is no required outline, completeness score or workflow gate. Preserve the
+user's meaning and unresolved uncertainty. Use `project.context.update` with the
+full revised summary and the exact last-read `expected_summary` to persist a
+user-grounded clarification. On a conflict, reread and reconcile before retrying.
+Never fill gaps by inventing intent. Automatically deployed sessions have read
+access but cannot edit intent or conduct background interviews. Keep agent-authored
+methods, results and evolving conclusions in the research narrative and evidence,
+separate from this user-defined prose.
+
+## Living Methods and Results
+
+Joining briefs include the current project document: user intent, the existing
+literature summary, Methods, Results and selected evidence. The narrative stays
+short by rewriting and consolidating earlier material; detailed records remain
+available on demand. A pending update means newer research has not yet been
+incorporated; keep established findings separate from provisional work.
+
+A project-author assignment maintains Methods and Results after completed
+experiments and approved/published reflection waves. Read `project.synthesis.read`
+for its frozen source packet, inspect the evidence, and follow the assignment's
+revision/compression instructions. Publish with its scoped workflow transition;
+never supply a coverage cursor. Successful publication alone incorporates that
+snapshot. New arrivals remain pending. Failed work resumes the same input; use
+`refresh` only to discard obsolete inputs, preserving the last publication.
+When auto-run is disabled, the document's maintenance instance exposes the same
+`prepare`, `workflow.begin`, and `publish` path for an interactive author.
+The author cannot change user intent or literature. Existing reviewers stay
+read-only. A reflection update must reconcile project-wide conclusions, not
+append a wave report. No numerical length budget or additional review gate applies.
 
 ## Operating rules
 

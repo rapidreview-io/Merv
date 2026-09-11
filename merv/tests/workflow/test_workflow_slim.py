@@ -121,8 +121,8 @@ class WorkflowSlimTest(unittest.TestCase):
         self.assertEqual(context["report"], {"status": "missing"})
         self.assertEqual(context["artifacts"], [])
 
-        # Project block is a bare reference — no other experiments' intents.
-        self.assertEqual(set(slim["project"]), {"id", "name"})
+        # Project intent is complete; other experiments stay outside this scoped context.
+        self.assertEqual(set(slim["project"]), {"id", "name", "summary", "intent_guidance", "literature", "methods", "results", "references", "maintenance"})
 
         # No sandbox yet → explicitly says so.
         self.assertFalse(slim["sandbox"]["active"])
@@ -246,20 +246,9 @@ class WorkflowSlimTest(unittest.TestCase):
 
         self.assertEqual(slim["scope"], "project")
         self.assertIsNone(slim["experiment"])
-        self.assertEqual(
-            set(slim["context"]),
-            {
-                "project",
-                "reflection",
-                "literature",
-                "claims",
-                "candidates",
-                "experiments",
-                "tasks",
-            },
-        )
+        self.assertEqual(set(slim["context"]), {"project"})
         self.assertEqual(slim["workflow"]["current_gate"], "project_setup")
-        claim = slim["context"]["claims"][0]
+        claim = self.call("project", action="records", project_id=self.project_id)["claims"][0]
         self.assertEqual(
             set(claim), {"id", "statement", "scope", "status", "confidence"}
         )

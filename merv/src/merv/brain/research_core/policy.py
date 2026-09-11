@@ -72,9 +72,8 @@ ACTIVITY_VOCABULARY: dict[str, tuple[Any, ...]] = {
 # reads. Research owns the contents, so the tool registry quotes this instead
 # of listing research records itself.
 PROJECT_OVERVIEW_CONTENTS = (
-    "the latest published reflection, the literature General Summary, every "
-    "claim including settled and abandoned ones, and every experiment "
-    "including terminal ones with one status-dependent summary"
+    "canonical user intent, the literature General Summary with citations, "
+    "synthesized Methods and Results, and selected evidence with current work status"
 )
 
 # Agent voices on the project feed. Adoptable roles share one persistent voice

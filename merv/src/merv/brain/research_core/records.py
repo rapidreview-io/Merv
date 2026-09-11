@@ -349,9 +349,6 @@ class RecordKnowledge:
         record, conn, kind = self.record, self.conn, self.kind
         if reference.kind == kind.name and reference.id == record["id"]:
             return record
-        if reference.kind == "project" and reference.id == record["project_id"]:
-            row = conn.execute("SELECT id, name, summary FROM projects WHERE id = ?", (reference.id,)).fetchone()
-            return {} if row is None else dict(row)
         if reference.kind == "artifact":
             return self._artifact(reference.id)
         if reference.kind in {"review", "review_snapshot"}:

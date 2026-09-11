@@ -4,7 +4,8 @@ A passing review and an open review request are declared as a node
 ``ReviewGate`` requirement; the checks here read a verdict that already landed.
 """
 
-from ..graph import Issue, Knowledge, Reference, Snapshot
+from .research_contracts import render_project_document
+from ..graph import Brief, Issue, Knowledge, Reference, Snapshot
 
 
 def reviewed(role: str, *, verdict: str = "pass", return_to: str = ""):
@@ -53,3 +54,8 @@ def evidence_references(artifacts):
     return tuple(Reference("artifact", str(item.get("artifact_id") or item.get("id")),
                            str(item.get("role") or item.get("label") or "Evidence"))
                  for item in artifacts if item.get("artifact_id") or item.get("id"))
+
+
+def project_brief(snapshot, knowledge, summary, references):
+    project = knowledge.read(Reference("project", snapshot.project_id))
+    return Brief(render_project_document(project) + "\n\n" + summary, references)

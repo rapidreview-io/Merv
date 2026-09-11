@@ -372,7 +372,7 @@ class McpStreamableHttpProgressTest(unittest.TestCase):
 
         register_mcp_routes(
             app,
-            list_tools=lambda: [
+            list_tools=lambda request: [
                 {"name": "fast.tool"},
                 {"name": "slow.tool"},
                 {"name": "slow.error"},
@@ -527,7 +527,7 @@ class McpStreamableResultSerializationTest(unittest.TestCase):
 
         register_mcp_routes(
             app,
-            list_tools=lambda: [
+            list_tools=lambda request: [
                 {"name": "small.tool"},
                 {"name": "large.tool"},
                 {"name": "slow.large"},
@@ -628,7 +628,7 @@ class McpStreamablePreflightTest(unittest.TestCase):
 
         register_mcp_routes(
             app,
-            list_tools=lambda: [{"name": "slow.tool"}],
+            list_tools=lambda request: [{"name": "slow.tool"}],
             call_tool=call_tool,
             plan_tool=plan_tool,
         )
@@ -708,7 +708,7 @@ class McpStreamablePreflightTest(unittest.TestCase):
 
         register_mcp_routes(
             app,
-            list_tools=lambda: [
+            list_tools=lambda request: [
                 {"name": "project"}, {"name": "review.start"}, {"name": "review.submit"},
             ],
             call_tool=call_tool,
@@ -759,7 +759,7 @@ class McpStreamablePreflightTest(unittest.TestCase):
 
         register_mcp_routes(
             app,
-            list_tools=lambda: [{"name": "claim.list"}],
+            list_tools=lambda request: [{"name": "claim.list"}],
             call_tool=lambda *_args: {"ok": True},
             plan_tool=plan_tool,
         )

@@ -4,7 +4,7 @@ agent processes stay outside. Python functions own gates and agent context. `gra
 immutable nodes, ordinary directed edges and one `Evaluation` for command enforcement,
 available/blocked actions, guidance and dispatch. Branches, loops and review rejection use the same
 transition model. Agent nodes provide `build_context(snapshot, knowledge) -> Brief`, with a concise
-assignment and exact references. `Node.guidance` declares `Guidance` (skill, handoff, messages);
+assignment and exact references. Research briefs include full user intent and assignment-specific clarification advice. `Node.guidance` declares `Guidance` (skill, handoff, messages);
 `Workflow.outcome_guidance` is keyed by outcome. The runtime projects this presentation
 for every program; role skills own procedures. Wait and terminal states dispatch no agent.
 A node also declares what its state needs, as `requires`: `ArtifactNeed` (a submitted
@@ -57,7 +57,7 @@ replaces children and never replaces live work.
 `definitions/research_state.py` owns research state values beside their graphs.
 `definitions/` contains experiment, task, reflection, review, independent reflection lens, and
 published research-wave graphs, each beside its `RecordKind`, plus pure evidence validators,
-context builders, research contracts and the passive legacy `Metadata` (action effects and how a
+context builders, the project-synthesis prepare/publish loop, research contracts and the passive legacy `Metadata` (action effects and how a
 subject is named). `review.py` also owns the verdict, synopsis and return-routing rules its
 `action:review.submit` reducer applies before declaring `review.record_verdict`; a review reads no
 record of its own, so the engine hands its graph no knowledge.

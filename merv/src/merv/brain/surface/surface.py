@@ -133,7 +133,7 @@ class Surface:
         self.artifact_store = Artifacts(store=store, blobs=blobs)
         self.artifacts = ResearchArtifacts(store=store, artifacts=self.artifact_store)
         self.workflows = Workflows(store=store, programs=INSTALLED, knowledge=lambda snapshot, conn: WorkflowKnowledge(
-            snapshot=snapshot, conn=conn, artifacts=self.artifact_store, project=self.research.get_project,
+            snapshot=snapshot, conn=conn, artifacts=self.artifact_store, project=self.research.synthesis.document,
             review=self.research.reviews.read_fact))
         self.research = Research(store=store, advances=WorkspaceAdvances(store=store), artifacts=self.artifacts,
                                  workflows=self.workflows, program=PROGRAM)
@@ -209,6 +209,7 @@ class Surface:
             "agents": self.agent_identities,
             "application": self.application,
             "research": self.research,
+            "synthesis": self.research.synthesis,
             "reviews": self.research.reviews,
             "workflows": self.research.workflows,
             "artifact_submissions": self.artifact_tools,

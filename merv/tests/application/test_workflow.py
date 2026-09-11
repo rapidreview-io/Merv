@@ -74,6 +74,7 @@ class ApplicationDashboardTest(unittest.TestCase):
         self._seed_terminal_project(project_id="proj_one", experiments=1)
         self._seed_terminal_project(project_id="proj_many", experiments=25)
 
+        self.app.research.initialize_workflows()
         one, one_selects = self._dashboard("proj_one")
         many, many_selects = self._dashboard("proj_many")
 

@@ -512,6 +512,15 @@ class ToolInvocationGateway:
             )
         return contract, internal_kwargs, call_kwargs
 
+    def list_tools(self, request: Request) -> list[dict[str, Any]]:
+        """Filter each request with the same effective allowlist used for calls."""
+        principal = getattr(request.state, "principal", LOCAL_PRINCIPAL)
+        catalog = self.tools.list_tools()
+        if not principal.agent_session_id:
+            return catalog
+        allowed = (principal.agent_execution or SessionExecution()).allowed_tools
+        return [tool for tool in catalog if tool["name"] in allowed]
+
     def authorize_agent_session(
         self, *, name: str, arguments: dict[str, Any], principal: Principal
     ) -> dict[str, Any]:
@@ -528,8 +537,6 @@ class ToolInvocationGateway:
         instance_id = principal.agent_workflow_instance_id or ""
         if name not in policy.allowed_tools:
             raise AgentSessionScopeError(f"agent session cannot call {name}", details={"tool": name})
-        if name.startswith("sandbox.") and not policy.sandbox:
-            raise AgentSessionScopeError("this session has no sandbox authority", details={"tool": name})
         if name == "workflow.transition":
             if str(arguments.get("instance_id") or "") != instance_id:
                 raise AgentSessionScopeError("workflow tool must target the assigned instance")

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -23,7 +25,52 @@ class ProjectToolTest(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        self.app.shutdown()
         self.tmp.cleanup()
+
+    def test_context_writer_is_narrow_persistent_and_rejects_stale_text(self) -> None:
+        project = self.call("project", action="create", name="Intent", summary="A user's problem.")
+        args = dict(project_id=project["id"], expected_summary=project["summary"])
+        for extra in ({"name": "Renamed"}, {"agent_dispatch": True}, {"hidden": True}):
+            with self.assertRaises(ValidationError):
+                self.call("project.context.update", summary="Changed", **args, **extra)
+        with self.assertRaises(ValidationError):
+            self.call("project.context.update", project_id=project["id"], summary="Changed")
+        with self.assertRaisesRegex(ValidationError, "intent changed"):
+            self.call("project.context.update", project_id=project["id"], summary="Changed",
+                      expected_summary=" " + project["summary"])
+        revised = "A user's problem.\nGoal: answer it within the original scope."
+        changed = self.call("project.context.update", summary=revised, **args)
+        self.assertEqual(changed["settings"], project["settings"])
+        self.assertEqual(changed["name"], project["name"])
+        with self.assertRaisesRegex(ValidationError, "intent changed"):
+            self.call("project.context.update", summary="Stale replacement", **args)
+        self.app.shutdown()
+        self.app = TestBrain(repo_root=self.repo, db_path=self.app.db_path,
+                             env={"MERV_AGENT_IDENTITY": "optional"})
+        self.assertEqual(self.call("project", action="overview", project_id=project["id"])["project"]["summary"], revised)
+        with self.app.store.connect() as conn:
+            events = conn.execute("SELECT payload_json FROM events WHERE project_id = ? AND type = ?",
+                                  (project["id"], "project.context.updated")).fetchall()
+        self.assertEqual(len(events), 1)
+        self.assertIn("original scope", events[0]["payload_json"])
+
+    def test_two_writers_cannot_overwrite_the_same_observed_intent(self) -> None:
+        project = self.call("project", action="create", name="Concurrent intent")
+        barrier = Barrier(2)
+        def write(summary):
+            barrier.wait(timeout=5)
+            try:
+                return self.app.research.update_project_context(
+                    project_id=project["id"], summary=summary, expected_summary="")
+            except ValidationError as error:
+                return error
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(write, ("User clarification A", "User clarification B")))
+        winners = [result for result in results if isinstance(result, dict)]
+        self.assertEqual(len(winners), 1)
+        self.assertEqual(sum(isinstance(result, ValidationError) for result in results), 1)
+        self.assertEqual(self.call("project.get", project_id=project["id"])["summary"], winners[0]["summary"])
 
     def call(self, tool: str, **kwargs):
         return self.app.call_tool(tool, kwargs)
@@ -99,13 +146,13 @@ class ProjectToolTest(unittest.TestCase):
             self.call("project", action="overview", name="Alpha")
         self.assertIn("overview", str(ctx.exception))
 
-    def test_action_overview_reads_all_claims_and_experiments(self) -> None:
+    def test_action_records_reads_all_claims_and_experiments(self) -> None:
         # overview returns every claim including a non-active one (the
         # whole-project read). A direct caller may pass an explicit project id.
         pid = self.app.current_project()["project"]["id"]
         claim = self.call("claim.create", project_id=pid, statement="Overview claim.")
         self.call("claim.update", project_id=pid, claim_id=claim["id"], status="abandoned")
-        overview = self.call("project", action="overview", project_id=pid)
+        overview = self.call("project", action="records", project_id=pid)
         self.assertEqual(overview["project"]["id"], pid)
         self.assertEqual(
             {c["id"]: c["status"] for c in overview["claims"]}[claim["id"]],

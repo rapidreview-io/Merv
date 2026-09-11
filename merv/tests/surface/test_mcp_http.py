@@ -26,7 +26,7 @@ class McpCallThreadpoolTest(unittest.TestCase):
 
         register_mcp_routes(
             app,
-            list_tools=lambda: [{"name": "slow.tool"}],
+            list_tools=lambda request: [{"name": "slow.tool"}],
             call_tool=call_tool,
         )
         return app

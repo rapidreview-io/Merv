@@ -7,11 +7,11 @@ from dataclasses import dataclass
 from merv.shared.markdown_images import markdown_image_links
 
 from ..graph import (
-    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Guidance, Issue, Node, RecordKind,
+    Action, ArtifactNeed, Change, DependenciesDone, Edge, Guidance, Issue, Node, RecordKind,
     Metadata, Reference, ReviewGate, ReviewReturn, Workflow,
 )
 from .artifact_roles import EXHIBIT_ROLE
-from .checks import evidence_references, rejected, review_summary, short
+from .checks import project_brief, evidence_references, rejected, review_summary, short
 from .documents import (REQUIRED_PLAN_SECTIONS, graph_problems, markdown_section_body, preferred_artifact,
                         report_problems, required_markdown_sections_missing)
 from .execution import RESEARCH_HANDOFF, EXPERIMENT_EXECUTION, REVIEW_EXECUTION
@@ -92,10 +92,8 @@ def approved_plan_artifacts(snapshot, knowledge):
 
 def _intro(snapshot, knowledge):
     experiment = knowledge.read(Reference("experiment", snapshot.id))
-    project = knowledge.read(Reference("project", snapshot.project_id))
     claims = "; ".join(str(item.get("statement") or item.get("id")) for item in experiment.get("tested_claims") or ())
     text = (f"Experiment {experiment.get('name', snapshot.id)}, attempt {experiment.get('attempt_index', 1)}. "
-            f"Project: {short(project.get('name', snapshot.project_id), 10)} — {short(project.get('summary') or 'Read project context for its purpose.', 22)}\n"
             f"Intent: {short(experiment.get('intent', ''), 35)}\nConstraints: {short(experiment.get('details') or 'No additional constraints.', 25)}\n"
             f"Claims: {short(claims or 'No specific claims linked.', 25)}\n"
             f"Requested revisions: {short(experiment.get('revision_context') or 'None.', 40)}\n\n")
@@ -104,7 +102,7 @@ def _intro(snapshot, knowledge):
 
 def build_plan_context(snapshot, knowledge):
     experiment, intro = _intro(snapshot, knowledge)
-    return Brief(intro + "Design a falsifiable test of the intent and linked claims; submit its complete plan for independent review. "
+    return project_brief(snapshot, knowledge, intro + "Design a falsifiable test of the intent and linked claims; submit its complete plan for independent review. "
         "Follow the research-workflow skill, including prior-attempt revisions.",
         (Reference("experiment", snapshot.id, "Experiment and prior attempts"), *evidence_references(experiment.get("current_attempt_artifacts") or ())))
 
@@ -115,7 +113,7 @@ def _build_review_context(snapshot, knowledge, *, design):
     instructions = ("Verify whether the pinned plan can test its claim. Follow experiment-design-review."
                     if design else "Verify the completed attempt against its exact approved plan. Follow experiment-attempt-review.")
     approved = () if design else approved_plan_artifacts(snapshot, knowledge)
-    return Brief(intro + instructions,
+    return project_brief(snapshot, knowledge, intro + instructions,
         (Reference("experiment", snapshot.id, "Experiment goal"),
          *((Reference("review_request", str(pinned["request_id"]), "Independent review capability"),) if pinned.get("request_id") else ()),
          *evidence_references(approved), *evidence_references(pinned.get("artifacts") or ())))
@@ -132,7 +130,7 @@ def build_attempt_review_context(snapshot, knowledge):
 def build_execution_context(snapshot, knowledge):
     experiment, intro = _intro(snapshot, knowledge)
     approved = approved_plan_artifacts(snapshot, knowledge)
-    return Brief(intro + "Execute the exact approved plan; keep completed jobs and recover retained outputs before repeating work. "
+    return project_brief(snapshot, knowledge, intro + "Execute the exact approved plan; keep completed jobs and recover retained outputs before repeating work. "
         "Address this attempt's revisions and apply the approved decision rule. Follow research-workflow. "
         "Preview experiment.exhibit; interpret metrics_exhibit.json when pinned. Submit the completed evidence for review.",
         (Reference("experiment", snapshot.id, "Durable progress"), *evidence_references(approved),

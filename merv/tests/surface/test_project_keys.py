@@ -123,6 +123,36 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         )
         self.assertEqual(added.status_code, 201, added.text)
 
+    def test_context_writer_is_public_but_respects_key_scope_and_membership(self) -> None:
+        headers = {**_bearer(self.key), "Accept": "application/json, text/event-stream"}
+        self.assertIn("project.context.update", {
+            item["name"] for item in self.client.get("/mcp/tools", headers=headers).json()["tools"]})
+        stream_catalog = self.client.post("/mcp", headers=headers,
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).json()["result"]["tools"]
+        self.assertIn("project.context.update", {item["name"] for item in stream_catalog})
+        args = {"project_id": self.project_a, "summary": "The user's clarified scope.", "expected_summary": ""}
+        response = self.client.post("/mcp", headers=headers, json={
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "project.context.update", "arguments": args},
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["result"]["structuredContent"]["summary"], args["summary"])
+        current = self.client.post("/mcp/call", headers=_bearer(self.key), json={
+            "name": "project", "arguments": {"action": "current"}}).json()["result"]["project"]
+        self.assertEqual(current["summary"], args["summary"])
+        self.assertIn("ask the user focused questions", current["intent_guidance"])
+        for secret, project_id, status in ((self.key, self.project_b, 403), (self.jwt_b, self.project_a, 404)):
+            denied = self.client.post("/mcp/call", headers=_bearer(secret), json={
+                "name": "project.context.update", "arguments": {**args, "project_id": project_id}})
+            self.assertEqual(denied.status_code, status, denied.text)
+        updated = self.client.post("/mcp/call", headers=_bearer(self.key), json={
+            "name": "project.context.update",
+            "arguments": {**args, "expected_summary": args["summary"], "summary": "The user refined the scope."}})
+        self.assertEqual(updated.status_code, 200, updated.text)
+        denied = self.client.post("/mcp/call", headers=_bearer(self.key), json={
+            "name": "project.update", "arguments": {"project_id": self.project_a, "summary": "Broad edit"}})
+        self.assertNotEqual(denied.status_code, 200)
+
     def test_generic_download_url_requires_project_authority_before_blob_access(self) -> None:
         artifact = self.app.artifacts.contents.create(
             project_id=self.project_a, path="unattached.bin", data=b"\x00private evidence"

@@ -236,9 +236,12 @@ class RecordEngineTest(ResearchCase):
                 with self.app.store.connect() as conn:
                     snapshot = self.app.workflows.runtime.get(
                         project_id=self.project_id, instance_id=record_id, conn=conn)
-                    knowledge = self.records().knowledge(case.kind, snapshot, conn)
+                    knowledge = self.app.workflows.runtime.knowledge(snapshot, conn)
                     self.assertEqual(knowledge.read(Reference(case.name, record_id))["id"], record_id)
-                    self.assertEqual(knowledge.read(Reference("project", self.project_id))["id"], self.project_id)
+                    project = knowledge.read(Reference("project", self.project_id))
+                    self.assertEqual(project["id"], self.project_id)
+                    self.assertIn("methods", project)
+                    self.assertIn("literature", project)
                     with self.assertRaises(NotFoundError):
                         knowledge.read(Reference("nonsense", record_id))
 

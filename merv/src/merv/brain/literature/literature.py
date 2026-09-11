@@ -174,10 +174,6 @@ class Literature:
             }
 
     def _overview(self, *, conn: Any, project_id: str) -> dict[str, Any]:
-        summary = conn.execute(
-            "SELECT * FROM litreview_sections WHERE project_id = ? AND kind = 'summary'",
-            (project_id,),
-        ).fetchone()
         sections = conn.execute(
             """
             SELECT id, title, tldr, position, revision, updated_at
@@ -191,29 +187,22 @@ class Literature:
             "SELECT COUNT(*) AS n FROM papers WHERE project_id = ?", (project_id,)
         ).fetchone()
         return {
-            "summary": (
-                {
-                    **self._present_section(
-                        conn=conn, project_id=project_id, row=summary, full=True
-                    ),
-                    "exists": True,
-                }
-                if summary is not None
-                # Synthesized when absent — reads never create it; the first
-                # write (edit op=edit, section='summary', expected_revision=0)
-                # does.
-                else {
-                    "id": "",
-                    "title": SUMMARY_TITLE,
-                    "tldr": "",
-                    "body": "",
-                    "revision": 0,
-                    "exists": False,
-                }
-            ),
+            "summary": self.summary(conn=conn, project_id=project_id),
             "sections": rows_to_dicts(rows=sections),
             "paper_count": int(paper_count["n"]),
         }
+
+    @classmethod
+    def summary(cls, *, conn: Any, project_id: str) -> dict[str, Any]:
+        """The canonical summary body and its citations, on the caller's read transaction."""
+        summary = conn.execute(
+            "SELECT * FROM litreview_sections WHERE project_id = ? AND kind = 'summary'",
+            (project_id,),
+        ).fetchone()
+        if summary is None:
+            # Reads do not create a section; the first edit uses revision zero.
+            return {"id": "", "title": SUMMARY_TITLE, "tldr": "", "body": "", "revision": 0, "exists": False}
+        return {**cls._present_section(conn=conn, project_id=project_id, row=summary, full=True), "exists": True}
 
     def _paper_page(
         self, *, conn: Any, project_id: str, cursor: int, limit: int
@@ -235,8 +224,9 @@ class Literature:
             (row["id"], project_id)).fetchall())) for row in page]
         return {"papers": papers, "next_cursor": int(page[-1]["created_seq"]) if more and page else None}
 
+    @staticmethod
     def _present_section(
-        self, *, conn: Any, project_id: str, row: Any, full: bool
+        *, conn: Any, project_id: str, row: Any, full: bool
     ) -> dict[str, Any]:
         data = dict(row)
         data.pop("created_seq", None)

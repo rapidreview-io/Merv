@@ -38,15 +38,15 @@ def register_mcp_routes(
     record_session: SessionRecorder | None = None,
     agent_identity: str | None = None,
 ) -> None:
-    def catalog() -> list[dict[str, Any]]:
-        visible = [tool for tool in list_tools() if not tool.get("hidden")]
+    def catalog(request: Request) -> list[dict[str, Any]]:
+        visible = [tool for tool in list_tools(request) if not tool.get("hidden")]
         if agent_identity is None:
             return visible
         return with_agent_id_argument(visible, required=agent_identity == "required")
 
     @http.get("/mcp/tools")
-    def mcp_tools_list() -> dict[str, Any]:
-        return {"tools": catalog()}
+    def mcp_tools_list(request: Request) -> dict[str, Any]:
+        return {"tools": catalog(request)}
 
     @http.post("/mcp/call")
     async def mcp_call(request: Request) -> Any:

@@ -285,5 +285,7 @@ class WorkflowDispatchTest(ResearchCase):
         self.assertEqual(parent.state, "synthesizing")
         self.assertEqual(set(parent.data["lens_artifacts"].values()), retained)
         synthesizer, _ = self.claim("synthesis")
+        if synthesizer["assignment"]["role"] == "project_author":
+            synthesizer, _ = self.claim("reflection-synthesis")
         self.assertEqual(synthesizer["workflow_instance_id"], reflection_id)
         self.assertEqual(synthesizer["assignment"]["role"], "reflection_owner")

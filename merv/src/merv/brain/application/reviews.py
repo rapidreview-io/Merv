@@ -20,7 +20,6 @@ from ..research_core import (
 from ..research_core import ResearchArtifacts as Artifacts
 from .experiments.context import ExperimentContextQuery
 from .experiments.transition import feed_transition_note
-from .project_context import ProjectContextQuery
 from .reflections import present_agent_reflection_state
 from .tasks import TaskContextQuery
 
@@ -80,7 +79,6 @@ def start_review(
     research: Research,
     artifacts: Artifacts,
     experiment_context: ExperimentContextQuery,
-    project_context: ProjectContextQuery,
     review_request_id: str,
     reviewer_capability: str,
     declared_agent: str = "",
@@ -114,7 +112,7 @@ def start_review(
         "artifact",
         "review",
     ]
-    result["project_context"] = project_context.build(project_id=project_id)
+    result["project_context"] = {"project": research.synthesis.document(project_id=project_id)}
     if target_type == "experiment":
         live_state = research.experiments.get_state(
             experiment_id=target_id,

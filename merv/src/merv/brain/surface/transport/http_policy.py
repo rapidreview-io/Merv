@@ -95,4 +95,5 @@ class SessionExecution:
     def allowed_tools(self) -> frozenset[str]:
         """Effective allowlist: the baseline for the policy's read/write mode plus node tools."""
         baseline = SESSION_READ_BASELINE if self.read_only else SESSION_READ_BASELINE | SESSION_WRITE_BASELINE
-        return baseline | self.tools
+        return frozenset(name for name in baseline | self.tools
+                         if self.sandbox or not name.startswith("sandbox."))

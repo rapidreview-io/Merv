@@ -6,6 +6,47 @@ import re
 
 from ...kernel.utils import ValidationError
 
+
+PROJECT_INTENT_GUIDANCE = (
+    "Use this user-defined background/problem, goal and scope to orient your assignment. "
+    "Judge whether missing or ambiguous intent matters for the work at hand; there is no completeness gate. "
+    "In an interactive conversation, ask the user focused questions when needed. "
+    "If project.context.update is available, persist only faithful user-grounded clarification, "
+    "preserving existing intent and using the last-read summary as expected_summary. "
+    "On a conflict, reread and reconcile before retrying. Never invent the user's intent. "
+    "Automatically deployed sessions can read this context but cannot edit it; do not start a background interview. "
+    "Agent-authored methods, results and evolving research conclusions belong in Methods/Results and research evidence, not user intent."
+)
+
+
+def project_context(project):
+    return {"id": project.get("id"), "name": project.get("name"),
+            "summary": project.get("summary", ""), "intent_guidance": PROJECT_INTENT_GUIDANCE}
+
+
+def render_project_document(project):
+    literature = project.get("literature") or {}
+    refs = "\n".join(
+        f"- {ref['label']}: {ref['kind']} {ref['id']}"
+        + (f" — current status {ref['status']}, attempt {ref.get('attempt_index', '?')}" if "status" in ref else "")
+        for ref in project.get("references", ())
+    )
+    papers = "\n".join(f"- [{paper['title']}]({paper['url']}) ({paper['id']})"
+                       for paper in literature.get("cited_papers", ()))
+    pending = ""
+    if (project.get("maintenance") or {}).get("pending"):
+        pending = "Newer research awaits incorporation into Methods/Results.\n\n"
+    return (
+        f"# {project.get('name', 'Project')}\n\n## User-defined intent\n{project.get('summary', '')}\n\n"
+        f"{project.get('intent_guidance', PROJECT_INTENT_GUIDANCE)}\n\n"
+        f"## Literature\n{literature.get('body') or 'No literature summary yet.'}\n{papers}\n\n"
+        f"{pending}## Methods\n{project.get('methods') or 'Not yet synthesized.'}\n\n"
+        f"## Results\n{project.get('results') or 'Not yet synthesized.'}\n\n"
+        f"## Selected evidence and current work\n{refs}\n"
+        "Read project(action='records') for the full record inventory and litreview.view for the detailed review."
+    )
+
+
 CLAIM_STATUSES = frozenset(
     {
         "draft",

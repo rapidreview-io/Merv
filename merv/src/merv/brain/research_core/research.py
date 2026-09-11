@@ -34,6 +34,7 @@ from .models import (
     public_record,
 )
 from .reflections import ReflectionService, publication_effect, wave_row
+from .project_synthesis import ProjectSynthesis
 from .records import RecordHooks, Records, query
 from .reviews import ReviewService, verdict_effect
 from .tasks import TaskService
@@ -89,6 +90,7 @@ class Research:
 
     __slots__ = (
         "program",
+        "synthesis",
         "store",
         "artifacts",
         "records",
@@ -130,6 +132,7 @@ class Research:
             self.workflows.bind(kind.name, Binding(partial(self.records.knowledge, kind),
                                                   partial(self.records.commit_change, kind),
                                                   hooks.initialize_workflow))
+        self.synthesis = ProjectSynthesis(store=store, records=self.records, workflows=workflows)
         for hooks in self.records.hooks.values():
             for name, binding in hooks.bindings().items():
                 self.workflows.bind(name, binding)
@@ -143,6 +146,8 @@ class Research:
         """Explicit bootstrap of version-pinned legacy compositions after binding."""
         with self.store.transaction() as conn:
             self.reflections.migrate_workflow_instances(conn=conn)
+            for project in conn.execute("SELECT id FROM projects").fetchall():
+                self.synthesis.ensure(conn=conn, project_id=project["id"])
             # Schema 60 adopts released research records, including gates whose
             # review already passed. Resume only that pinned migration revision;
             # an arbitrary plugin's read-only node still needs its assigned work.
@@ -182,6 +187,7 @@ class Research:
                              (project_id, user_id, now_iso()))
             self.store.record_event(conn=conn, project_id=project_id, event_type="project.created",
                                     target_type="project", target_id=project_id, payload={"name": name})
+            self.synthesis.ensure(conn=conn, project_id=project_id)
             return self.get_project(project_id=project_id, conn=conn)
 
     def update_project(
@@ -207,6 +213,25 @@ class Research:
             self.store.record_event(conn=conn, project_id=project_id, event_type="project.updated",
                                     target_type="project", target_id=project_id,
                                     payload={"name": next_name, "summary": next_summary, "settings": settings})
+            return self.get_project(project_id=project_id, conn=conn)
+
+    def update_project_context(self, *, project_id: str, summary: str, expected_summary: str) -> dict[str, Any]:
+        """Replace user-defined intent only if the caller's observed text still matches."""
+        with self.store.transaction() as conn:
+            current = self.get_project(project_id=project_id, conn=conn)
+            summary = summary.strip()
+            updated = conn.execute(
+                "UPDATE projects SET summary = ? WHERE id = ? AND summary = ? RETURNING id",
+                (summary, current["id"], expected_summary),
+            ).fetchone()
+            if updated is None:
+                raise ValidationError(
+                    "Project intent changed. Reread the project and reconcile the user's clarification before retrying.",
+                    details={"field": "expected_summary", "reason": "stale_project_context"},
+                )
+            self.store.record_event(conn=conn, project_id=project_id, event_type="project.context.updated",
+                                    target_type="project", target_id=project_id,
+                                    payload={"previous_summary": expected_summary, "summary": summary})
             return self.get_project(project_id=project_id, conn=conn)
 
     def get_project(self, *, project_id: str | None = None, conn: Connection | None = None) -> dict[str, Any]:

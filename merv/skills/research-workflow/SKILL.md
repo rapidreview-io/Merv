@@ -43,7 +43,15 @@ For an interactive session, operate in this loop:
 1. If the project is unknown, call `project(action="list")` and select the one
    the user means. Never guess an id. Use `current` only when the credential is
    known to be bound to exactly one project.
-2. Call `workflow.status_and_next(project_id, experiment_id?)`.
+2. Read the selected project's full summary as the user's background/problem,
+   goal and scope. Judge missing context against your assignment, and ask focused
+   questions in this conversation when needed. Persist only user-grounded
+   clarification with `project.context.update(project_id, summary, expected_summary)`;
+   preserve existing meaning and reread/reconcile if the expected text is stale.
+   Do not invent intent, impose a completeness checklist, or put agent-authored
+   methods/results in this field. Auto-run credentials can read but cannot edit
+   intent; they do not conduct background interviews.
+   Call `workflow.status_and_next(project_id, experiment_id?)`.
 3. Read its context, gates, allowed actions, missing evidence, and next action.
 4. Before starting the current node's work interactively, call
    `workflow.begin(project_id, instance_id, expected_revision)` with the revision
@@ -54,9 +62,11 @@ For an interactive session, operate in this loop:
 6. Call `workflow.status_and_next` again after every transition or review.
 
 Pass the selected `project_id` explicitly to every project-scoped operation.
-Use `project(action="overview", project_id=...)` when you need the whole
-project picture or must check that a proposed claim, experiment, or task is
-not a duplicate of settled work.
+Read the living project document in your joining context or with
+`project(action="overview", project_id=...)`. Use `project(action="records", project_id=...)`
+to discover evidence or check a proposed claim, experiment, or task against settled work.
+Methods/Results are maintained by the project-author workflow after experiment
+completion and reflection waves; keep detailed findings in the submitted evidence.
 
 ## Experiment or task?
 

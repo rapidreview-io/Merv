@@ -32,7 +32,7 @@ under 100 lines; qualify named action, role, tool and skill references inline.
    Research, Agent Sessions, the shared logic-graph read — and takes them as
    keywords here; Application appears only where a route joins two components.
 5. `transport/api/gateway.py` authenticates the caller, resolves project scope,
-   applies hosted/local policy, and invokes tools. Middleware supplies CORS,
+   applies hosted/local policy, and invokes tools. Both MCP catalogs use its per-request session allowlist, as direct calls do. Middleware supplies CORS,
    error rendering, redaction, and request telemetry.
 
 ## Necessary supporting boundaries

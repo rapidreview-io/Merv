@@ -65,22 +65,22 @@ class AgentHelloInput(ContractModel):
 
 
 class ProjectInput(ContractModel):
-    """The one agent-facing project tool: list / current / create / overview."""
+    """Project discovery, living document, explicit records and creation."""
 
-    action: Literal["list", "current", "create", "overview"] = Field(
+    action: Literal["list", "current", "create", "overview", "records"] = Field(
         description=(
             "list = every project you can work in, with names, summaries, "
             "and creation dates — start here to pick a project_id; "
             "current = the project this credential is bound to, if it is "
             "bound to exactly one; "
-            f"overview = the canonical bounded project context ({PROJECT_OVERVIEW_CONTENTS}) "
-            "for orienting or re-grounding; "
+            f"overview = the living project document ({PROJECT_OVERVIEW_CONTENTS}); "
+            "records = explicit full record inventory for evidence discovery; "
             "create = create a project."
         )
     )
     project_id: str = Field(
         default="",
-        description="Optional explicit project id for action=overview.",
+        description="Optional explicit project id for action=overview or records.",
     )
     name: str = Field(
         default="",
@@ -107,9 +107,8 @@ class ProjectInput(ContractModel):
                 raise ValueError(
                     f"action=list takes no other fields; got {', '.join(extras)}"
                 )
-        elif self.action in ("current", "overview"):
-            # Both default to the project bound to the caller's MCP key;
-            # overview also tolerates an explicit project_id.
+        elif self.action in ("current", "overview", "records"):
+            # Reads default to the project bound to the caller's MCP key.
             forbidden = ["name", "summary"]
             if self.action == "current":
                 forbidden = ["project_id", *forbidden]
@@ -192,8 +191,8 @@ SURFACE_TOOLS: dict[str, ToolContract] = {
             "action=current returns the single project this credential is "
             "bound to; a credential that reaches several returns exists=false "
             "and the same list, because there is no one current project. "
-            "action=overview is the whole-project read for orienting or "
-            "re-grounding: the same bounded project context used by project-"
+            "action=records retrieves the full inventory for evidence discovery. "
+            "action=overview is the living project document: the same bounded context used by project-"
             f"scoped workflow and review starts, holding {PROJECT_OVERVIEW_CONTENTS}. "
             "action=create creates a project from a user-confirmed name and "
             "summary."

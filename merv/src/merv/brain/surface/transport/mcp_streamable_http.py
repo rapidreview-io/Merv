@@ -123,7 +123,7 @@ async def read_limited_mcp_body(request: Request) -> bytes:
 
 
 class ToolCatalog(Protocol):
-    def __call__(self) -> list[JsonObject]: ...
+    def __call__(self, request: Request) -> list[JsonObject]: ...
 
 
 class ToolCaller(Protocol):
@@ -425,7 +425,7 @@ class McpStreamableHttp:
             # Spec liveness probe: an empty result echoing the request id.
             return _json_response(_result(request_id, {}))
         if method == "tools/list":
-            return await self._tools_list(request_id=request_id, params=params)
+            return await self._tools_list(request=request, request_id=request_id, params=params)
         if method == "tools/call":
             return await self._tools_call(
                 request=request, request_id=request_id, params=params
@@ -489,10 +489,10 @@ class McpStreamableHttp:
             headers={"Mcp-Session-Id": session_id},
         )
 
-    def _catalog(self) -> list[JsonObject]:
+    def _catalog(self, request: Request) -> list[JsonObject]:
         visible = [
             tool
-            for tool in self._list_tools()
+            for tool in self._list_tools(request)
             if tool_visible_over_mcp(name=str(tool.get("name") or ""))
             and not tool.get("hidden")
         ]
@@ -503,7 +503,7 @@ class McpStreamableHttp:
         )
 
     async def _tools_list(
-        self, *, request_id: RequestId, params: JsonObject
+        self, *, request: Request, request_id: RequestId, params: JsonObject
     ) -> JSONResponse:
         cursor = params.get("cursor")
         if cursor is not None:
@@ -513,7 +513,7 @@ class McpStreamableHttp:
                 message="Invalid cursor",
                 tool="tools/list",
             )
-        return _json_response(_result(request_id, {"tools": self._catalog()}))
+        return _json_response(_result(request_id, {"tools": self._catalog(request)}))
 
     async def _tools_call(
         self, *, request: Request, request_id: RequestId, params: JsonObject

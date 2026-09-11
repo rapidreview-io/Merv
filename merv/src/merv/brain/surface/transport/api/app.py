@@ -185,7 +185,7 @@ def create_fastapi_app(
     )
     register_mcp_routes(
         http,
-        list_tools=api.tools.list_tools,
+        list_tools=gateway.list_tools,
         call_tool=gateway.call_mcp,
         plan_tool=gateway.plan_mcp,
         ledger=api.tool_ledger,

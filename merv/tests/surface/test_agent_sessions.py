@@ -112,6 +112,90 @@ class AgentSessionSurfaceTest(unittest.TestCase):
             },
         )
 
+    def assert_intent_is_read_only(self, secret: str, summary: str = "") -> None:
+        headers = {"Authorization": f"Bearer {secret}", "Accept": "application/json, text/event-stream"}
+        legacy = self.client.get("/mcp/tools", headers=headers).json()["tools"]
+        streamed = self.client.post("/mcp", headers=headers, json={
+            "jsonrpc": "2.0", "id": 1, "method": "tools/list"}).json()["result"]["tools"]
+        self.assertEqual({item["name"] for item in legacy}, {item["name"] for item in streamed})
+        for catalog in (legacy, streamed):
+            names = {item["name"] for item in catalog}
+            self.assertIn("project", names)
+            self.assertNotIn("project.context.update", names)
+            self.assertNotIn("project.update", names)
+        args = {"project_id": self.project_id, "summary": "Invented intent", "expected_summary": ""}
+        denied = self.mcp(secret=secret, name="project.context.update", arguments=args)
+        self.assertEqual(denied.json()["error_code"], "agent_session_scope_forbidden", denied.text)
+        denied = self.client.post("/mcp", headers=headers, json={
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "project.context.update", "arguments": args}})
+        self.assertIn("agent_session_scope_forbidden", denied.text)
+        denied = self.mcp(secret=secret, name="project.update", arguments=args)
+        self.assertNotEqual(denied.status_code, 200)
+        for method in ("patch", "put"):
+            denied = getattr(self.client, method)(f"/api/projects/{self.project_id}", headers=headers,
+                                                  json={"summary": "Invented intent"})
+            self.assertEqual(denied.status_code, 403, denied.text)
+        read = self.mcp(secret=secret, name="project",
+                        arguments={"action": "overview", "project_id": self.project_id})
+        self.assertEqual(read.status_code, 200, read.text)
+        self.assertEqual(read.json()["result"]["project"]["summary"], summary)
+        # A session lookup must not contaminate the following interactive catalog.
+        interactive = self.client.get("/mcp/tools").json()["tools"]
+        self.assertIn("project.context.update", {item["name"] for item in interactive})
+
+    def test_deployed_producer_cannot_discover_or_edit_user_intent(self) -> None:
+        summary = "User background and goal. " * 90 + "\nScope: preserve the final constraint."
+        self.brain.call_tool("project.context.update",
+            {"project_id": self.project_id, "summary": summary, "expected_summary": ""})
+        secret = self.secret()
+        session = self.claim(secret=secret, runner_id="intent-reader")
+        self.assertIn(summary, session["assignment"]["brief"])
+        self.assertIn(summary, session["instruction"])
+        self.assert_intent_is_read_only(secret, summary)
+
+    def test_deployed_project_author_can_publish_only_its_narrative(self) -> None:
+        self.claim(secret=self.secret(), runner_id="experiment-owner")
+        secret = self.secret()
+        author = self.claim(secret=secret, runner_id="project-author")
+        self.assertEqual(author["assignment"]["role"], "project_author")
+        self.assert_intent_is_read_only(secret)
+        arguments = {"project_id": self.project_id, "instance_id": author["workflow_instance_id"]}
+        read = self.mcp(secret=secret, name="project.synthesis.read", arguments=arguments)
+        self.assertEqual(read.status_code, 200, read.text)
+        source = read.json()["result"]["source"]
+        headers = {"Authorization": f"Bearer {secret}"}
+        names = {tool["name"] for tool in self.client.get("/mcp/tools", headers=headers).json()["tools"]}
+        self.assertIn("project.synthesis.read", names)
+        self.assertNotIn("litreview.edit", names)
+        # The shared writable baseline must not let a document author attach
+        # replacement evidence to somebody else's research record.
+        denied = self.mcp(secret=secret, name="artifact.attach", arguments={
+            "project_id": self.project_id, "artifact_id": "unrelated-evidence",
+            "target_type": "experiment", "target_id": self.experiment_id, "role": "report"})
+        self.assertEqual(denied.status_code, 400, denied.text)
+        self.assertEqual(denied.json()["error_code"], "agent_session_scope_forbidden")
+        publication = {"methods": "The registered test is underway; inspect its live status.",
+                       "results": "No established results yet.", "references": source["references"][:1],
+                       "editorial_note": "Kept one causal account without adding a report inventory."}
+        for extra in ({"summary": "Rewritten intent"}, {"covered_event": 999999}):
+            rejected = self.mcp(secret=secret, name="workflow.transition", arguments={**arguments,
+                "expected_revision": author["workflow_revision"], "action": "publish",
+                "request_id": "bad-publication", "payload": {**publication, **extra}})
+            self.assertNotEqual(rejected.status_code, 200, rejected.text)
+        foreign = self.brain.call_tool("project", {"action": "create", "name": "Foreign narrative"})["id"]
+        denied = self.mcp(secret=secret, name="project.synthesis.read",
+                          arguments={**arguments, "project_id": foreign})
+        self.assertNotEqual(denied.status_code, 200)
+        published = self.mcp(secret=secret, name="workflow.transition", arguments={**arguments,
+            "expected_revision": author["workflow_revision"], "action": "publish",
+            "request_id": "published", "payload": publication})
+        self.assertEqual(published.status_code, 200, published.text)
+        self.assertIsNone(self.brain.agent_sessions.authenticate(session_secret=secret))
+        document = self.brain.call_tool("project", {"action": "overview", "project_id": self.project_id})["project"]
+        self.assertEqual(document["methods"], publication["methods"])
+        self.assertEqual(document["maintenance"]["covered_event"], source["through_event"])
+
     def reflection_ready_for_review(self) -> str:
         self.brain.call_tool(
             "experiment.transition",
@@ -464,6 +548,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
 
         reviewer_secret = self.secret()
         reviewer = self.claim(secret=reviewer_secret, runner_id="reviewer")
+        self.assert_intent_is_read_only(reviewer_secret)
         content = self.brain.artifacts.contents.create(
             project_id=self.project_id, path="review-input.bin", data=b"\x00review input"
         )
@@ -813,6 +898,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         self,
     ) -> None:
         reflection_id = self.reflection_ready_for_consolidation()
+        self.claim(secret=self.secret(), runner_id="project-author")
         consolidator_secret = self.secret()
         consolidator = self.claim(
             secret=consolidator_secret,
@@ -1147,10 +1233,11 @@ class AgentDispatchSwitchTest(unittest.TestCase):
         listing = self.client.get(f"/api/projects/{self.project_id}/agent-sessions").json()
         self.assertEqual(
             [(item["kind"], item["title"], item["status"]) for item in listing["queue"]],
-            [("workflow", "Design experiment", "planned")],
+            [("workflow", "Design experiment", "planned"),
+             ("workflow", "Revise the living project document", "writing")],
         )
         self.assertEqual(listing["queue"][0]["target_type"], "experiment")
-        self.assertEqual(listing["queue_total"], 1)
+        self.assertEqual(listing["queue_total"], 2)
 
         # A live session on the target takes it out of the queue; closing it
         # (here: halt) puts it back.
@@ -1158,7 +1245,7 @@ class AgentDispatchSwitchTest(unittest.TestCase):
         session = self.claim()["session"]
         self.assertIsNotNone(session)
         listing = self.client.get(f"/api/projects/{self.project_id}/agent-sessions").json()
-        self.assertEqual(listing["queue"], [])
+        self.assertEqual([item["role"] for item in listing["queue"]], ["project_author"])
         self.client.post(f"/api/projects/{self.project_id}/agent-sessions/halt")
         listing = self.client.get(f"/api/projects/{self.project_id}/agent-sessions").json()
-        self.assertEqual([item["target_id"] for item in listing["queue"]], [session["target_id"]])
+        self.assertIn(session["target_id"], [item["target_id"] for item in listing["queue"]])

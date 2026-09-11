@@ -67,6 +67,8 @@ BASE_PUBLIC_TOOLS = frozenset(
         "litreview.edit",
         "litreview.view",
         "project",
+        "project.context.update",
+        "project.synthesis.read",
         "reflection.create",
         "reflection.get",
         "reflection.transition",
@@ -121,6 +123,8 @@ STORAGE_INTERNAL_TOOLS = frozenset({"storage.complete_upload", "storage.put_obje
 # position, and strict additional-property behavior remain part of the wire
 # contract.
 TOOL_INPUT_SCHEMA_SHA256 = {
+    "project.synthesis.read": "7cc45e51178ed3547e389156185e8f329fd7b92e0a8559e3358d953be345fc2d",
+    "project.context.update": "146f0a868e2730e6dd9850e41e6cbab9a2980cb39d86af779516f9f8466669f4",
     "workflow.begin": "7e1f66e8766a011eae57680548d7d9cb2761ac24f8445d6d2c0866b4b4a05e39",
     "workflow.history": "5eb500efff24fefe5e4ea72ecf5eaf0dda5eaf04da3edf73000e65f064d4671a",
     "workflow.assignment": "5eb500efff24fefe5e4ea72ecf5eaf0dda5eaf04da3edf73000e65f064d4671a",
@@ -151,7 +155,7 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "litreview.cite": "41b1e99b098e985e03ff27958c701057f2b7c82b00c11c8990173ff685933896",
     "litreview.edit": "43fdf886b705bdf60d7b7361179eca819fce296fcabb59d85b74ba5cf8587cf5",
     "litreview.view": "092471f2f3c7d5df39cbfb741f6ddf78ef646303aa9cf367c746292c6f3f2312",
-    "project": "ee6b0a43422608b1c6647bd3e6dc7b9316ff4ef4ad9e35716626bfe99ad63b59",
+    "project": "b786270c921a4e4beb9c861cc7294a54441e45d40de4af4df89530b475359495",
     "project.get": "bf7f9192978f1785b0939d890a89c3b562db9125d34cb44f988d990e2bbc509c",
     "project.list": "99334726611ccf58a148b0814696bfa6fe08c1b2d027e946beccf5a74331c9aa",
     "project.update": "55818f8adb3b5d75b86ff5b7321423928234b1729eb44134850531e2e8d5d929",

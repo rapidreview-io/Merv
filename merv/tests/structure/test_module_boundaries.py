@@ -24,7 +24,7 @@ from tests.paths import BACKEND_ROOT
 # reads, and tests may name whatever they exercise.
 GRAPH_DEFINITIONS = frozenset(
     f"workflows/definitions/{name}.py"
-    for name in ("experiment", "reflection", "research_wave", "review", "task")
+    for name in ("experiment", "reflection", "research_wave", "review", "task", "project_synthesis")
 )
 
 # Three layers, one component each side of the line: Research is the science,

@@ -6,11 +6,11 @@ from typing import Any
 
 from ..composition import Child, join_guard
 from ..graph import (
-    Action, ArtifactNeed, Brief, Change, Edge, Guidance, Issue, Metadata, Node, Public, RecordKind, RecordNeed,
+    Action, ArtifactNeed, Change, Edge, Guidance, Issue, Metadata, Node, Public, RecordKind, RecordNeed,
     Reference, ReviewGate, ReviewReturn, TransactionalEffect, Workflow, all_of,
 )
 from ...kernel.utils import NotFoundError, ValidationError, WorkflowError, now_iso
-from .checks import evidence_references, rejected, review_summary
+from .checks import project_brief, evidence_references, rejected, review_summary
 from .documents import graph_problems, reflection_doc_review_problems, reflection_lens_doc_problems, parse_change_spec, preferred_artifact
 from .execution import RESEARCH_HANDOFF, CONSOLIDATION_EXECUTION, LENS_EXECUTION, REFLECTION_EXECUTION, REVIEW_EXECUTION
 from .research_state import ReflectionState
@@ -173,7 +173,7 @@ def pin_lenses(snapshot, payload, knowledge):
 def build_synthesis_context(snapshot, knowledge):
     wave = _wave(snapshot, knowledge)
     corpus = wave.get("corpus") or {}
-    return Brief(
+    return project_brief(snapshot, knowledge,
         f"Reconcile reflection wave {wave.get('title') or snapshot.id}, attempt {wave['attempt_index']}. "
         f"The fixed corpus contains {len(corpus.get('terminal_experiments') or ())} completed experiments and "
         f"{len(corpus.get('terminal_tasks') or ())} completed tasks.\n"
@@ -188,7 +188,7 @@ def build_synthesis_context(snapshot, knowledge):
 def build_review_context(snapshot, knowledge):
     wave = _wave(snapshot, knowledge)
     pinned = knowledge.read(Reference("review_snapshot", snapshot.id))
-    return Brief(
+    return project_brief(snapshot, knowledge,
         f"Independently review reflection wave {wave.get('title') or snapshot.id}, attempt {wave['attempt_index']}. "
         "Grade the pinned graph, reflection, change spec and five lenses against the fixed corpus and previous graph. "
         "Follow project-reflection-review; submit only the verdict and its return path.",
@@ -199,7 +199,7 @@ def build_review_context(snapshot, knowledge):
 def build_consolidation_context(snapshot, knowledge):
     wave = _wave(snapshot, knowledge)
     consolidation = wave.get("consolidation") or {}
-    return Brief(
+    return project_brief(snapshot, knowledge,
         f"Consolidate code for approved reflection wave {wave.get('title') or snapshot.id}. "
         f"Revision request: {wave.get('revision_context') or 'Initial code consolidation.'}\n"
         f"Retained proposal: {(consolidation.get('proposal') or {}).get('id') or 'None submitted.'}\n\n"
@@ -214,7 +214,7 @@ def build_consolidation_context(snapshot, knowledge):
 
 def build_consolidation_review_context(snapshot, knowledge):
     pinned = knowledge.read(Reference("review_snapshot", snapshot.id))
-    return Brief(
+    return project_brief(snapshot, knowledge,
         f"Independently review code consolidation for reflection wave {snapshot.id}. "
         f"The exact proposal is {pinned.get('snapshot_token') or 'in the review packet'} at Git SHA "
         f"{pinned.get('code_sha') or 'recorded in the pinned proposal'}. "
@@ -360,7 +360,7 @@ def submit_lens(snapshot, payload, knowledge):
 def build_lens_context(snapshot, knowledge):
     wave = _wave(snapshot, knowledge)
     lens = next(item for item in wave["roster"] if item["id"] == snapshot.data["lens_id"])
-    return Brief(
+    return project_brief(snapshot, knowledge,
         f"Work independently as the {lens.get('title') or lens['id']} lens for reflection wave {wave.get('title') or wave['id']}, "
         f"attempt {snapshot.data['attempt_index']}. Your charter: {lens.get('charter') or lens.get('prompt') or ''}\n\n"
         f"Revision request: {wave.get('revision_context') or 'First pass over this fixed corpus.'}\n\n"

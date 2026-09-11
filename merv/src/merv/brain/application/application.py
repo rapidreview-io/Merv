@@ -9,7 +9,7 @@ the composition-wide bag of one-use Application objects.
 
 from __future__ import annotations
 
-from ..workflows import Connection
+from ..workflows import Connection, research_contracts
 
 import json
 from typing import Any, Mapping
@@ -36,7 +36,6 @@ from .experiments.presentation import (
     slim_experiment_state,
 )
 from .experiments.transition import TransitionExperiment
-from .project_context import ProjectContextQuery
 from .reflections import (
     consolidation_packet,
     present_agent_reflection_state,
@@ -89,10 +88,6 @@ class Application:
         # Which effect name each installed program emits is the root's to say.
         self.workflow_deliveries = WorkflowDeliveries(workflows=research.workflows, handlers=effects)
 
-        self._project_context = ProjectContextQuery(
-            research=research,
-            artifacts=artifacts,
-        )
         self._experiment_context = ExperimentContextQuery(artifacts=artifacts)
         self._task_context = TaskContextQuery(artifacts=artifacts)
         self._task_transition = TransitionTask(research=research, feed=feed)
@@ -110,7 +105,6 @@ class Application:
             sandboxes=sandboxes,
             objects=produced_objects,
             context=self._experiment_context,
-            project_context=self._project_context,
             task_context=self._task_context,
         )
 
@@ -119,6 +113,7 @@ class Application:
     def _dispatch_plan(self, *, project_id: str) -> dict[str, Any]:
         """Queue every registered graph's dispatchable nodes from one evaluation."""
         self.workflow_deliveries.run_once(project_id=project_id)
+        self.research.synthesis.prepare(project_id=project_id)
         candidates = self.research.workflows.candidates(project_id=project_id)
         # Reviews release waiting research, but the scheduler knows no workflow
         # names, native states, reviewer roles, or forward-path assumptions.
@@ -392,14 +387,9 @@ class Application:
                         key_project_id=key_project_id,
                     ),
                 }
-            project = self.research.get_project(project_id=key_project_id)
             return {
                 "exists": True,
-                "project": {
-                    "id": project["id"],
-                    "name": project["name"],
-                    "summary": project.get("summary", ""),
-                },
+                "project": self.research.synthesis.document(project_id=key_project_id),
             }
         if action == "create":
             return self.research.create_project(
@@ -408,7 +398,7 @@ class Application:
                 tenant_id=tenant_id,
                 user_id=user_id,
             )
-        if action == "overview":
+        if action in {"overview", "records"}:
             resolved = project_id or key_project_id
             if not resolved:
                 raise ValidationError(
@@ -417,7 +407,9 @@ class Application:
                     "projects you can work in, then pass project_id explicitly.",
                     details={"field": "project_id"},
                 )
-            return self._project_context.build(project_id=resolved)
+            if action == "records":
+                return self.research.project_context_facts(project_id=resolved)
+            return {"project": self.research.synthesis.document(project_id=resolved)}
         raise ValidationError(f'action="{action}" is not recognized for project')
 
     def _reachable_projects(
@@ -430,9 +422,7 @@ class Application:
         return {
             "projects": [
                 {
-                    "id": project["id"],
-                    "name": project["name"],
-                    "summary": project.get("summary", ""),
+                    **research_contracts.project_context(project),
                     "status": project.get("status", ""),
                     "created_at": project.get("created_at", ""),
                 }
@@ -593,7 +583,6 @@ class Application:
             research=self.research,
             artifacts=self.artifacts,
             experiment_context=self._experiment_context,
-            project_context=self._project_context,
             task_context=self._task_context,
             review_request_id=review_request_id,
             reviewer_capability=reviewer_capability,
@@ -940,5 +929,4 @@ def _advance_view(advance: Mapping[str, Any]) -> dict[str, Any]:
             for item in advance.get("sources") or ()
         ],
     }
-
 

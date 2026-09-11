@@ -1,10 +1,10 @@
 """Task graph: immutable goal, delivery, and independent review."""
 
 from ..graph import (
-    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Guidance, Metadata, Node, RecordKind,
+    Action, ArtifactNeed, Change, DependenciesDone, Edge, Guidance, Metadata, Node, RecordKind,
     Reference, ReviewGate, ReviewReturn, Workflow,
 )
-from .checks import evidence_references, rejected, review_summary, short
+from .checks import project_brief, evidence_references, rejected, review_summary, short
 from .documents import brief_problems, delivery_problems
 from .execution import RESEARCH_HANDOFF, REVIEW_EXECUTION, TASK_EXECUTION
 from .research_state import TaskState
@@ -57,9 +57,8 @@ def build_work_context(snapshot, knowledge):
     project = knowledge.read(Reference("project", snapshot.project_id))
     checks = short("; ".join(f"{index}. {item}" for index, item in enumerate(task.get("deliverables") or (), 1)), 65)
     revision = short(task.get("revision_context") or "No requested revisions.", 45)
-    return Brief(
+    return project_brief(snapshot, knowledge,
         f"Complete task {task.get('name', snapshot.id)} for {project.get('name', 'this project')}. "
-        f"Project purpose: {short(project.get('summary') or 'No project summary supplied.', 35)}\n\n"
         f"Goal: {short(task.get('goal'), 50)}\nDeliverables (read the pinned brief for the full contract):\n{checks}\n\n"
         f"Why this assignment is active: {revision}\n\n"
         "Reuse retained work to complete the fixed brief and submit a verifiable delivery. Follow research-workflow.",
@@ -71,7 +70,7 @@ def build_work_context(snapshot, knowledge):
 def build_review_context(snapshot, knowledge):
     task = knowledge.read(Reference("task", snapshot.id))
     pinned = knowledge.read(Reference("review_snapshot", snapshot.id))
-    return Brief(
+    return project_brief(snapshot, knowledge,
         f"Independently review the delivery for task {task.get('name', snapshot.id)}. "
         f"Goal: {short(task.get('goal'), 65)}\n\n"
         "Verify the pinned brief's checks and whether they achieve the goal. Follow task-review; submit only the verdict.",
