@@ -15,7 +15,8 @@ native record runs on one engine; its service keeps only that kind's own rules.
   writes, whether dependency rows apply, any status projection — and this is the runtime
   that interprets it: one create (also on a caller's connection), one hydration, one gate
   evaluation, one `RecordKnowledge`, one commit. `RecordHooks` carries the per-kind steps
-  that need the open transaction, `read_fact` a reference only that kind knows, and
+  `before_write`/`after_write` both run inside the caller's transaction; `read_fact` answers
+  a reference only that kind knows, and
   `bindings` the graphs its owner runs without a row; registration installs a kind.
 - `artifacts.py`: research-owned associations, role/target policy, accepted evidence,
   replacement visibility, immutable submission members. `artifact_models.py`: association
@@ -65,7 +66,6 @@ state/evidence/how); `dependents` sits beside `dependencies`. Both node kinds sh
 dependencies before dispatch; tasks also wait before dispatch and `submit_delivery`.
 
 ## Reflection and review lifecycle
-
 A reflection moves `reflecting -> synthesizing -> reflection_review -> consolidating ->
 consolidation_review -> published`; the row has no column for the last review state, so a
 declared projection keeps every reader on `consolidating`; review makes its research

@@ -128,7 +128,7 @@ class TaskService(RecordHooks):
                 delivery_section(delivery.text, "notes") or delivery_section(delivery.text, "report"))
             task["caveats"] = None if delivery is None else delivery_section(delivery.text, "caveats")
 
-    def after_commit(self, *, conn, before, after, action: str, payload) -> None:
+    def after_write(self, *, conn, before, after, action: str, payload) -> None:
         """Who ended the task, and with what note; the status write is declared."""
         if action == "fail_review":
             conn.execute("UPDATE tasks SET outcome = ?, failed_by = 'reviewer' WHERE id = ?",

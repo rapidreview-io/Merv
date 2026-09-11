@@ -94,6 +94,27 @@ class RecordEngineTest(ResearchCase):
     def state(self, case: Case, record_id: str) -> dict[str, Any]:
         return self.records().get_state(case.kind, record_id=record_id, project_id=self.project_id)
 
+    def test_failed_after_write_rolls_back_native_history_sealing_and_child_writes(self):
+        from unittest.mock import patch
+        case = CASES[0]
+        record_id = self.create(case, "atomic-hook")
+        case.prepare(self, record_id)
+        def rows():
+            with self.app.store.transaction() as conn:
+                return {table: [dict(row) for row in conn.execute(f"SELECT * FROM {table}").fetchall()]
+                        for table in ("experiments", "claims", "events", "workflow_instances", "workflow_history",
+                                      "workflow_actions", "submissions", "research_artifact_links")}
+        before = rows()
+        def fail(**kwargs):
+            conn = kwargs["conn"]
+            self.assertEqual(conn.execute("SELECT status FROM experiments WHERE id = ?", (record_id,)).fetchone()["status"], "design_review")
+            self.assertTrue(conn.execute("SELECT id FROM research_artifact_links WHERE target_id = ? AND submission_id <> ''", (record_id,)).fetchone())
+            self.app.research._write_claim(conn=conn, project_id=self.project_id, changes={"statement": "Child write."})
+            raise RuntimeError("after-write failed")
+        with patch.object(self.records().hooks[case.name], "after_write", side_effect=fail), self.assertRaisesRegex(RuntimeError, "after-write failed"):
+            self.records().transition(case.kind, record_id=record_id, project_id=self.project_id, transition=case.advance)
+        self.assertEqual(rows(), before)
+
     def test_create_writes_the_declared_spine_and_its_declared_event(self) -> None:
         for case in CASES:
             with self.subTest(kind=case.name):

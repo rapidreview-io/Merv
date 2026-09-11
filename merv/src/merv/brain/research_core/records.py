@@ -45,11 +45,11 @@ class RecordHooks:
     def hydrate(self, *, conn, project_id: str, records: list[dict[str, Any]], detail_ids: tuple[str, ...]) -> None:
         """Add the kind's own read state to every record in one batch."""
 
-    def before_commit(self, *, conn, before: Snapshot, after: Snapshot, action: str) -> None:
-        """Refuse a transition the kind's own record state forbids."""
+    def before_write(self, *, conn, before: Snapshot, after: Snapshot, action: str) -> None:
+        """Refuse a transition before native writes, inside the caller's transaction."""
 
-    def after_commit(self, *, conn, before: Snapshot, after: Snapshot, action: str, payload) -> None:
-        """React to a committed transition beyond its declared column writes."""
+    def after_write(self, *, conn, before: Snapshot, after: Snapshot, action: str, payload) -> None:
+        """React after native writes, still inside the caller's uncommitted transaction."""
 
     def read_fact(self, *, conn, record: dict[str, Any], reference: Reference) -> dict[str, Any] | None:
         """Answer a graph reference only this kind knows about."""
@@ -292,7 +292,7 @@ class Records:
         if action in {"start_work", "adopt_children"}:
             return  # The runtime's idempotent work_started event owns the clock.
         hooks = self.hooks[kind.name]
-        hooks.before_commit(conn=conn, before=before, after=after, action=action)
+        hooks.before_write(conn=conn, before=before, after=after, action=action)
         if action not in kind.seal_exempt_actions:
             self.artifacts.seal(tx=conn, target=ArtifactTarget(kind.name, before.id, before.project_id),
                                 transition=action)
@@ -301,7 +301,7 @@ class Records:
         values = [kind.status_of(after.state), *(after.data[column] for column in written), now_iso()]
         conn.execute(f"UPDATE {kind.table} SET {', '.join(f'{name} = ?' for name in columns)} "
                      "WHERE id = ? AND project_id = ?", (*values, before.id, before.project_id))
-        hooks.after_commit(conn=conn, before=before, after=after, action=action, payload=payload)
+        hooks.after_write(conn=conn, before=before, after=after, action=action, payload=payload)
 
 
 class RecordKnowledge:

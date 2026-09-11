@@ -934,7 +934,7 @@ class ReflectionService(RecordHooks):
                 and not (state := self.runtime.get(project_id=parent.project_id, instance_id=child.id,
                                                    conn=conn)).outcome]
 
-    def after_commit(self, *, conn, before, after, action: str, payload) -> None:
+    def after_write(self, *, conn, before, after, action: str, payload) -> None:
         """What a wave transition means beyond its declared column writes.
 
         Reserved names follow the states that hold them: a pinning edge
@@ -954,7 +954,7 @@ class ReflectionService(RecordHooks):
         if action != "migrate" and REFLECTION.status_of(after.state) not in HOLDS_WAVE_NAMES:
             conn.execute("DELETE FROM reflection_reserved_names WHERE reflection_id = ?", (before.id,))
 
-    def before_commit(self, *, conn, before, after, action: str) -> None:
+    def before_write(self, *, conn, before, after, action: str) -> None:
         """A bound receipt means central already advanced: the only legal exit
         is publish (the runner retries settle), so a terminal exit here would
         strand the reviewed belief-state update forever."""
