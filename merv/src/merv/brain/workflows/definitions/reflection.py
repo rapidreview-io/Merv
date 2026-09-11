@@ -1,6 +1,8 @@
 """Reflection decisions and independent lens, synthesis, and review assignments."""
 
 from dataclasses import replace
+from collections.abc import Mapping
+from typing import Any
 
 from ..composition import Child, join_guard
 from ..graph import (
@@ -442,3 +444,59 @@ LENS = Workflow(
                 label="Submit this lens's completed contribution", tools=("workflow.transition",)),),
     outcomes={"submitted": "submitted"}, entries={"submitted": "submitted"},
 )
+
+
+def reflection_staleness_hint(*, signal: Mapping[str, Any]) -> str:
+    if not signal["stale"]:
+        return ""
+    blocked = bool(signal.get("experiment_create_blocked"))
+    published = bool(signal.get("last_published_reflection_id"))
+    if not published:
+        if blocked:
+            return (
+                "Project reflection required before creating another experiment — "
+                f"{signal['terminal_experiments']} experiments have finished and no "
+                "project reflection exists yet. Use the project-reflection skill "
+                "(reflection.create) and publish the wave before creating another "
+                "experiment."
+            )
+        return (
+            "Consider running the project's first reflection — "
+            f"{signal['terminal_experiments']} experiments have finished and no "
+            "project reflection exists yet. Use the project-reflection skill "
+            "(reflection.create) when you judge the time is right."
+        )
+    prefix = (
+        "Project reflection required before creating another experiment"
+        if blocked
+        else "Consider running a project reflection"
+    )
+    pieces = [
+        f"{prefix} — {signal['new_terminal_since_publish']} experiments have "
+        "finished since the last published reflection"
+    ]
+    if signal["claims_changed_since_publish"]:
+        changed = f"{signal['claims_changed_since_publish']} claims have changed"
+        if signal["contradicted_flip"]:
+            changed += " (including a claim now contradicted)"
+        pieces.append(changed)
+    pieces.append(
+        "the current reflection covers "
+        f"{signal['covered_terminal_experiments']} of "
+        f"{signal['terminal_experiments']} finished experiments"
+    )
+    suffix = (
+        ". Publish a project reflection wave before creating another experiment."
+        if blocked
+        else ". Whether these developments change the project's logic state is "
+        "your call (project-reflection skill, reflection.create)."
+    )
+    return "; ".join(pieces) + suffix
+
+def present_reflection_signal(signal: Any) -> Any:
+    if not isinstance(signal, Mapping):
+        return signal
+    result = dict(signal)
+    if "stale" in result:
+        result["hint"] = result.get("hint") or reflection_staleness_hint(signal=result)
+    return result

@@ -64,6 +64,35 @@ CALIBRATION = Program(
 
 
 class WorkflowPluginTest(ResearchCase):
+    def test_program_orientation_is_optional_and_application_projects_its_result(self):
+        from dataclasses import replace
+        program = self.app.research.program
+        self.app.research.program = replace(program, orientation=None)
+        status = self.call("workflow.status_and_next", project_id=self.project_id)
+        self.assertEqual(status["workflow"], {})
+        self.app.research.program = replace(program, orientation=lambda snapshot, **facts:
+            {"workflow": {"current_gate": "instrument_setup", "next_action": "calibrate", "hint": "Any prose."}})
+        status = self.call("workflow.status_and_next", project_id=self.project_id)
+        self.assertEqual(status["workflow"], {"current_gate": "instrument_setup", "next_action": "calibrate", "hint": "Any prose."})
+
+    def test_native_creation_interprets_a_second_programs_requirement_and_reserved_bypass(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+        from merv.brain.workflows import TASK_KIND
+        class Permit:
+            def check(self, facts):
+                return Issue("permit_required", "An instrument permit is required.")
+        kind = replace(TASK_KIND, creation_requires=(Permit(),))
+        with patch("merv.brain.research_core.tasks.TASK", kind):
+            with self.assertRaisesRegex(WorkflowError, "instrument permit"):
+                self.call("task.create", project_id=self.project_id, name="instrument-check",
+                          goal="Check the instrument", deliverables=DELIVERABLES)
+            self.assertEqual(self.app.research.tasks.list_task_summaries(project_id=self.project_id), [])
+            with self.app.research.store.transaction() as conn:
+                state = self.app.research.tasks._create(conn=conn, project_id=self.project_id,
+                    name="instrument-check", goal="Check the instrument", deliverables=DELIVERABLES, guard=False)
+                self.assertEqual(state.name, "instrument-check")
+
     def test_task_uses_generic_api_and_the_same_evidence_gate(self):
         started = self.call(
             "workflow.start", project_id=self.project_id, workflow="task", request_id="create-task",

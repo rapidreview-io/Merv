@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from .research_contracts import REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD
+
 
 from .artifact_roles import EXHIBIT_ROLE
 from merv.shared.markdown_images import markdown_image_links
@@ -308,10 +311,67 @@ METADATA = Metadata(
 
 from .research_state import ExperimentState
 
+@dataclass(frozen=True, slots=True)
+class ReflectionFreshness:
+    threshold: int = REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD
+
+    def blocked(self, signal):
+        return signal.get("new_terminal_since_publish", 0) >= self.threshold
+
+    def reason(self, signal):
+        count = signal.get("new_terminal_since_publish", 0)
+        threshold = signal["block_new_terminal_threshold"]
+        open_id = signal.get("open_reflection_id")
+        if open_id:
+            return (
+                f"{count} experiments have finished since the last published "
+                f"reflection (threshold {threshold}); finish and publish open "
+                f"reflection wave {open_id} before creating another experiment."
+            )
+        since = (
+            "since the last published reflection"
+            if signal.get("last_published_reflection_id")
+            else "and no project reflection has been published yet"
+        )
+        return (
+            f"{count} experiments have finished {since} (threshold {threshold}); "
+            "publish a project reflection wave before creating another experiment."
+        )
+
+    def check(self, facts):
+        if not self.blocked(facts):
+            return None
+        return Issue("reflection_required", self.message(facts),
+                     "start_project_reflection_before_next_experiment", ("reflection.create",))
+
+    def message(self, facts):
+        debt, threshold = facts["new_terminal_since_publish"], self.threshold
+        published_id, open_wave = facts.get("last_published_reflection_id"), facts.get("open_wave")
+        if open_wave is not None:
+            return (
+                "project reflection is required before creating another experiment: "
+                f"{debt} experiments have finished since the last published "
+                f"reflection (threshold {threshold}), and reflection wave "
+                f"{open_wave['id']} is {open_wave['status']!r}. Finish and publish "
+                "that reflection wave; its approved change spec will create the "
+                "next experiment wave."
+            )
+        since = (
+            "since the last published reflection"
+            if published_id
+            else "and no project reflection has been published yet"
+        )
+        return (
+            "project reflection is required before creating another experiment: "
+            f"{debt} experiments have finished {since} (threshold {threshold}). "
+            "Start a reflection wave with reflection.create and publish it before "
+            "creating another experiment."
+        )
+
 KIND = RecordKind(
     name="experiment", table="experiments", id_prefix="exp", workflow=EXPERIMENT,
     construct=ExperimentState.construct, metadata=METADATA, created_event="experiment.created",
-    columns=("name", "intent", "details"), dependencies=True,
+    columns=("name", "intent", "details"), dependencies=True, creation_requires=(ReflectionFreshness(),),
     seal_exempt_actions=frozenset({"revise_plan", "revise_execution", "migrate"}),
     commit_columns={"revise_plan": ("attempt_index", "revision_context"),
                     "revise_execution": ("revision_context",), "retry_running": ("revision_context",),

@@ -608,6 +608,10 @@ class StateConstructor(Protocol[S]):
     def __call__(self, row: Data, snapshot: Snapshot) -> S: ...
 
 
+class CreationRequirement(Protocol):
+    def check(self, facts: Data) -> Issue | None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class RecordKind(Generic[S]):
     """One native record bound to a workflow: what differs between kinds is data.
@@ -638,6 +642,7 @@ class RecordKind(Generic[S]):
     commit_columns: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     status_projection: Mapping[str, str] = field(default_factory=dict)
     public: Public = Public()
+    creation_requires: tuple[CreationRequirement, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "json_columns", MappingProxyType(dict(self.json_columns)))
@@ -697,6 +702,13 @@ class RecordKind(Generic[S]):
                                    for route in gate.returns))
 
 
+class Orientation(Protocol):
+    """Project advice over program-owned facts and already evaluated record projections."""
+
+    def __call__(self, snapshot: object, *, selected: object, workflow: Data,
+                 reflection: Data | None, reflection_workflow: Data | None) -> Data: ...
+
+
 @dataclass(frozen=True, slots=True)
 class Program:
     """One research program: every part a brain must install to run it.
@@ -713,6 +725,7 @@ class Program:
     effects: tuple[str, ...] = ()
     requirements: tuple[type, ...] = ()
     tools: Mapping[str, ToolContract] = field(default_factory=dict)
+    orientation: Orientation | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tools", MappingProxyType(dict(self.tools)))

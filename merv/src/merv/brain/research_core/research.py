@@ -99,6 +99,7 @@ class Research:
     """
 
     __slots__ = (
+        "program",
         "store",
         "artifacts",
         "records",
@@ -114,6 +115,7 @@ class Research:
         self.store = store
         self.artifacts = artifacts
         self.workflows = workflows
+        self.program = program
         store.install(RESEARCH_SCHEMA)
         self.records = Records(store=store, artifacts=artifacts, runtime=workflows.runtime)
         self.experiments = ExperimentService(store=store, records=self.records)

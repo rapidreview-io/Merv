@@ -23,8 +23,8 @@ public names. The serializer owns computed-field placement. It also answers what
 graph already says: the success status, the actions, which action carries an effect, and the
 review gates and returns, so nothing restates a state machine. A plugin workflow declares no
 kind and keeps its record in instance data. `Program` names what a brain installs — graphs,
-kinds, the effect kinds its edges emit, the requirement classes its nodes use, its tool
-table — and validates them at import; `requires` is a `Requirement` protocol, so a program
+kinds, effects, requirements, tools and an optional project orientation callback;
+`RecordKind.creation_requires` separately gates native creation from declared facts; `requires` is a `Requirement` protocol, so a program
 may bring its own need class. `brain/programs/` holds the programs and `INSTALLED`, the only
 place a definition module is named.
 
@@ -96,4 +96,4 @@ may gate only outgoing actions of their declaring node. Review facts are scoped 
 and role; Research reviews reads SQL/settings and pure policy formats the same fact
 for checklists and runtime, including request expiry and independence. Permanent effect
 failures wait for project-scoped `Deliveries.retry`; transient failures retain backoff.
-Keep this note under 100 lines; qualify named actions, roles, tools and skills inline.
+Keep under 100 lines; qualify named actions, roles, tools and skills inline.

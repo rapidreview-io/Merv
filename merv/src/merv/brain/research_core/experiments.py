@@ -16,7 +16,6 @@ from .policy import (
     REFLECTION,
     active_experiment_cap_reached_message,
     covered_terminal_ids,
-    reflection_create_block_message,
     validate_experiment_name,
 )
 from .artifact_models import ArtifactTarget
@@ -98,7 +97,6 @@ class ExperimentService(RecordHooks):
 
     def before_create(self, *, conn: Connection, project_id: str, values: dict[str, Any]) -> None:
         self._reject_active_experiment_cap(conn=conn, project_id=project_id)
-        self._reject_reflection_blocked_experiment_create(conn=conn, project_id=project_id)
         self._reject_reserved_wave_name(conn=conn, project_id=project_id, name=str(values["name"]))
 
     def after_create(self, *, conn: Connection, project_id: str, record_id: str, values: dict[str, Any]) -> None:
@@ -153,17 +151,15 @@ class ExperimentService(RecordHooks):
                 f"{row['reflection_id']} — it will be created when the wave "
                 "publishes; choose a different name")
 
-    def _reject_reflection_blocked_experiment_create(self, *, conn: Connection, project_id: str) -> None:
+    def creation_facts(self, *, conn: Connection, project_id: str) -> dict[str, Any]:
         debt, published_id = self._terminal_experiments_since_last_reflection(conn=conn, project_id=project_id)
         terminal = tuple(sorted(REFLECTION.terminal_statuses))
         open_wave = conn.execute(
             f"""SELECT id, status FROM reflections WHERE project_id = ?
                 AND status NOT IN ({", ".join("?" for _ in terminal)})
                 ORDER BY created_seq DESC LIMIT 1""", (project_id, *terminal)).fetchone()
-        message = reflection_create_block_message(
-            debt=debt, published_id=published_id, open_wave=row_to_dict(row=open_wave))
-        if message:
-            raise WorkflowError(message)
+        return {"new_terminal_since_publish": debt, "last_published_reflection_id": published_id,
+                "open_wave": row_to_dict(row=open_wave)}
 
     def _terminal_experiments_since_last_reflection(self, *, conn: Connection, project_id: str) -> tuple[int, str | None]:
         terminal = ", ".join(f"'{status}'" for status in sorted(EXPERIMENT.terminal_statuses))

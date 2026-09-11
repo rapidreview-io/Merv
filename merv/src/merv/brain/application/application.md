@@ -52,8 +52,8 @@ qualify named action, role, tool and skill references inline.
 ## Files
 
 - `application.py`: the single public root and visible cross-module workflows.
-- `workflow.py`: rich/slim status composition and project-orientation helpers.
-- `status_guidance.py`: formats graph evaluations; it evaluates no gate itself.
+- `workflow.py`: rich/slim status, canonical evaluation and review metadata projections;
+  the installed `Program.orientation` chooses project advice beside `programs/research.py`.
 - `project_context.py` and `experiments/context.py`: bounded context packets.
 - `experiments/transition.py`: experiment transition ordering and exhibit pin.
 - `tasks.py`: task presentation, transition receipts, and the bounded task context
@@ -61,8 +61,8 @@ qualify named action, role, tool and skill references inline.
 - `experiments/exhibits.py`/`metrics_exhibit.py`: deterministic exhibits.
 - `experiments/presentation.py` and `create.py`: the experiment's
   declared public shape and create inputs; claim suggestions are deliberately absent.
-- `reviews.py`, `reflections.py`, and `reflection_guidance.py`: review handoff,
-  reflection presentation, and signal hints. Publication wording comes from outcome guidance.
+- `reviews.py` and `reflections.py`: review handoff and reflection presentation;
+  node/outcome declarations own wording, and the research program owns advisory choices.
 - `queries.py`: logic-graph composition, built once and shared by its routes.
 - `maintenance.py`: token/log retention and lease cleanup; merv-sandboxes owns machine
   and object expiry.

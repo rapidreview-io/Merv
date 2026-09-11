@@ -14,7 +14,7 @@ from ..research_core import (
 )
 from ..workflows.definitions.research_state import ReflectionState
 from .experiments.presentation import slim_review_rows
-from .reflection_guidance import present_reflection_signal
+from ..workflows import present_reflection_signal
 
 Record = dict[str, Any]
 

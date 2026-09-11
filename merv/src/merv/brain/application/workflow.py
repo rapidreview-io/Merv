@@ -11,7 +11,7 @@ from ..research_core import (
     EXPERIMENT_ACTIVE_PROCESS_STATUSES,
     EXPERIMENT_TERMINAL_STATUSES,
     EXPERIMENT,
-    Research,
+    Research, GateEvaluation,
     ResearchSnapshot,
     ExperimentState,
     TaskState,
@@ -23,11 +23,54 @@ from ..infrastructure import RemoteSandboxes as SandboxEngine
 from .experiments.presentation import ProducedObjectCatalog, rich_experiment_state
 from .experiments.context import ExperimentContextQuery
 from .project_context import ProjectContextQuery
-from .reflection_guidance import literature_hint
-from .status_guidance import StatusGuidancePolicy
 from .tasks import TaskContextQuery, rich_task_state, slim_task_state
 
 Record = dict[str, Any]
+
+_SLIM_REFLECTION_FIELDS = ("id", "title", "status", "attempt_index", "revision_context", "reflection_coverage")
+
+
+def present_workflow(*, revision_context, evaluation: GateEvaluation):
+    decision = evaluation.decision
+    if decision is None:
+        raise RuntimeError("canonical workflow evaluation is missing")
+    selected = decision.suggested
+    issues = tuple(dict.fromkeys((*decision.dispatch_issues, *(() if selected is None else selected.issues))))
+    first = next(iter(issues), None)
+    tools = tuple(tool for issue in issues for tool in issue.tools)
+    if not tools and selected is not None and selected.available:
+        tools = selected.edge.tools or ("workflow.transition",)
+    result = {
+        **decision.public(),
+        "current_gate": first.code if first is not None else "terminal" if decision.snapshot.outcome else decision.snapshot.state,
+        "next_action": (first.action or "resolve_workflow_blocker") if first is not None else "none" if selected is None else selected.edge.name,
+        "allowed_actions": list(dict.fromkeys(tools)),
+        "missing_evidence": [issue.message for issue in issues],
+        "revision_context": revision_context,
+    }
+    # This is request metadata for older views, not another review policy.
+    review = evaluation.review
+    if review is not None and decision.node is not None and decision.node.execution.read_only:
+        item = next(iter(review.items), {})
+        status = "attested_blocked" if review.problems and review.status == "pending" else review.status
+        result["review_gate"] = {
+            "role": decision.node.role, "target_type": decision.snapshot.workflow,
+            "target_id": decision.snapshot.id, "status": status,
+            "read_only": True,
+            **{name: item[name] for name in ("request_id", "expires_at", "skill", "label") if item.get(name)},
+        }
+    return result
+
+
+def slim_reflection(reflection):
+    return {
+        **project_fields(reflection, _SLIM_REFLECTION_FIELDS),
+        "roster": project_rows(reflection.roster, ("id", "title", "core")),
+        "current_attempt_artifacts": project_rows(reflection.current_attempt_artifacts,
+                                                  ("id", "role", "lens_id", "path", "size_bytes", "tldr")),
+        "reviews": project_rows(reflection.reviews, ("id", "role", "verdict", "created_at", "synopsis")),
+        "allowed_transitions": project_rows(reflection.allowed_transitions, ("transition", "leads_to")),
+    }
 
 _RESULT_WORK = EXPERIMENT.effect_sources("result_submission")
 _RESULT_REVIEW = EXPERIMENT.effect_destinations("result_submission")
@@ -68,7 +111,6 @@ class StatusAndNextQuery:
 
     research: Research
     sandboxes: SandboxEngine
-    policy: StatusGuidancePolicy
     objects: ProducedObjectCatalog
     context: ExperimentContextQuery
     project_context: ProjectContextQuery
@@ -176,61 +218,17 @@ class StatusAndNextQuery:
         task: TaskState | None = None,
         agent: bool = False,
     ) -> Record:
-        if task is not None:
-            workflow = self.policy.task(
-                task=task,
-                evaluation=snapshot.gate_evaluations[task.id],
-            )
-        elif experiment is not None:
-            workflow = self.policy.experiment(
-                experiment=experiment,
-                sandboxes=sandboxes,
-                evaluation=snapshot.gate_evaluations[experiment.id],
-            )
-        else:
-            workflow = self.policy.project_setup()
-        idle = all(
-            row.status in EXPERIMENT_TERMINAL_STATUSES
-            for row in snapshot.experiments
-        ) and all(
-            row.status in TASK_TERMINAL_STATUSES for row in snapshot.tasks
-        )
-        live_tasks = [
-            row
-            for row in snapshot.tasks
-            if row.status not in TASK_TERMINAL_STATUSES
-        ]
-        reflection = self.policy.project_reflection(
-            open_wave=snapshot.open_reflection,
-            evaluation=(
-                None
-                if snapshot.open_reflection is None
-                else snapshot.gate_evaluations[snapshot.open_reflection.id]
-            ),
-            signal=snapshot.reflection_signal,
-            idle=idle,
-        )
-        scoped = (
-            snapshot.requested_experiment_id is not None
-            or snapshot.requested_task_id is not None
-        )
-        if not scoped and idle:
-            workflow = (
-                self.policy.reflection_workflow_takeover(reflection=reflection)
-                or workflow
-            )
-        elif not scoped and (
-            (
-                experiment is not None
-                and experiment.status in EXPERIMENT_TERMINAL_STATUSES
-            )
-            or (experiment is None and live_tasks)
-        ):
-            workflow = self.policy.live_experiments_takeover(
-                exp_rows=snapshot.experiments,
-                reflection=reflection,
-                task_rows=snapshot.tasks,
-            )
+        selected = task or experiment
+        workflow = (present_workflow(revision_context=selected.revision_context,
+                                     evaluation=snapshot.gate_evaluations[selected.id]) if selected else {})
+        wave = snapshot.open_reflection
+        orientation = self.research.program.orientation
+        oriented = orientation(
+            snapshot, selected=selected, workflow=workflow,
+            reflection=slim_reflection(wave) if wave else None,
+            reflection_workflow=present_workflow(revision_context=wave.revision_context,
+                evaluation=snapshot.gate_evaluations[wave.id]) if wave else None,
+        ) if orientation else {"workflow": workflow}
         result = {
             "project": {
                 **snapshot.project,
@@ -244,16 +242,8 @@ class StatusAndNextQuery:
                 project_id=snapshot.project_id, experiments=[experiment])[0]) if experiment else None,
             "task": (slim_task_state if agent else rich_task_state)(task) if task else None,
             "sandboxes": sandboxes,
-            "workflow": workflow,
+            **oriented,
         }
-        if reflection is not None:
-            result["project_reflection"] = reflection
-        hint = literature_hint(signal=snapshot.literature_signal)
-        if hint is not None:
-            result["litreview"] = {
-                **snapshot.literature_signal,
-                "hint": hint,
-            }
         return result
 
     def _active_work(
@@ -294,9 +284,8 @@ class StatusAndNextQuery:
             active.append(
                 {
                     **experiment,
-                    "workflow": self.policy.experiment(
-                        experiment=next(item for item in snapshot.experiments if item.id == experiment["id"]),
-                        sandboxes=experiment_sandboxes,
+                    "workflow": present_workflow(
+                        revision_context=next(item for item in snapshot.experiments if item.id == experiment["id"]).revision_context,
                         evaluation=snapshot.gate_evaluations[str(experiment["id"])],
                     ),
                     "sandboxes": experiment_sandboxes,
@@ -311,8 +300,8 @@ class StatusAndNextQuery:
         active_tasks = [
             {
                 **rich_task_state(task),
-                "workflow": self.policy.task(
-                    task=task,
+                "workflow": present_workflow(
+                    revision_context=task.revision_context,
                     evaluation=snapshot.gate_evaluations[task.id],
                 ),
             }
