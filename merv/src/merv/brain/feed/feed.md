@@ -59,7 +59,8 @@ reply to one's own post continues the author's chain (`thread_root`,
    inserts the root row and every continuation row (`_insert_post_row`,
    advancing `created_seq` and emitting `feed.post_created` per row), and
    updates the author's last-post time. Concurrent or replayed uploads cannot
-   create the preallocated post twice. Expired tokens are swept separately.
+   create the preallocated post twice. A token past `expires_at` is refused on
+   the spot, and `prune` deletes it on the brain's retention clock.
 5. Link unfurling is best-effort: ordinary preview failures preserve a plain
    HTTP(S) link plus error metadata; non-web schemes store no clickable URL.
    Preview images are rehosted only for serveable sniffed types, excluding SVG.
