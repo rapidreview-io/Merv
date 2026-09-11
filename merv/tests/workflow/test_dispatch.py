@@ -2,6 +2,7 @@
 
 import secrets
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -271,7 +272,8 @@ class WorkflowDispatchTest(ResearchCase):
         self.assertIsNone(self.app.agent_sessions.authenticate(session_secret=secret))
         self.assertIsNone(self.claim("audit-after-completion")[0])
 
-    def test_lens_agents_read_parent_and_submit_generic_content_before_join(self):
+    @patch("merv.brain.workflows.runtime.now_iso", return_value="2026-09-11T18:00:00Z")
+    def test_lens_agents_read_parent_and_submit_generic_content_before_join(self, clock):
         import shlex
 
         from tests.research_core.scenarios import LENSES
@@ -280,12 +282,21 @@ class WorkflowDispatchTest(ResearchCase):
         self.move("accept", 1)
         experiment = self.call("experiment.create", project_id=self.project_id, name="completed-source", intent="Provide the reflection corpus.")
         self.call("experiment.transition", project_id=self.project_id, experiment_id=experiment["id"], transition="abandon")
+        # The author can predate the lenses across a second boundary. Queue
+        # priority is not part of the lens identity/authority contract.
+        clock.return_value = "2026-09-11T18:00:01Z"
         reflection = self.call("reflection.create", project_id=self.project_id, lenses=[dict(lens) for lens in LENSES])
         reflection_id = reflection["id"]
-        retained = set()
+        expected_lenses = {child.id for child in self.runtime.get(project_id=self.project_id, instance_id=reflection_id).children}
+        retained, seen_lenses = set(), set()
         for index in range(5):
             worker, secret = self.claim(f"lens-{index}")
+            if worker["assignment"]["role"] == "project_author":
+                worker, secret = self.claim(f"lens-{index}-after-author")
             self.assertEqual(worker["assignment"]["role"], "reflection_lens")
+            self.assertIn(worker["workflow_instance_id"], expected_lenses)
+            self.assertNotIn(worker["workflow_instance_id"], seen_lenses)
+            seen_lenses.add(worker["workflow_instance_id"])
             read_parent = self.mcp(secret, "reflection.get", project_id=self.project_id, reflection_id=reflection_id)
             self.assertEqual(read_parent.status_code, 200, read_parent.text)
             forbidden = self.mcp(secret, "reflection.transition", project_id=self.project_id, reflection_id=reflection_id, transition="abandon")
@@ -304,6 +315,7 @@ class WorkflowDispatchTest(ResearchCase):
             self.assertEqual(submitted.status_code, 200, submitted.text)
             self.assertIsNone(self.app.agent_sessions.authenticate(session_secret=secret))
         parent = self.runtime.get(project_id=self.project_id, instance_id=reflection_id)
+        self.assertEqual(seen_lenses, expected_lenses)
         self.assertEqual(parent.state, "synthesizing")
         self.assertEqual(set(parent.data["lens_artifacts"].values()), retained)
         synthesizer, _ = self.claim("synthesis")

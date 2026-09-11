@@ -11,10 +11,8 @@ workflow version; instance/kind mismatches fail before checklist evaluation or n
 
 ## Files
 
-- `records.py`: one engine interprets each graph's `RecordKind`: creation, database-only evidence snapshots, hydration,
-  gates, typed construction, `RecordKnowledge`, column writes and sealing.
-  Workflow knowledge retains evidence/dependency metadata without presentation summaries or eager exit validation;
-  artifact bytes remain available when a declared gate actually requests them.
+- `records.py`: the `RecordKind` engine owns creation, snapshots, hydration, gates, construction and sealing. Workflow knowledge retains
+  metadata without display summaries or eager exit validation; declared gates can still request artifact bytes.
   `RecordKind.creation_requires` checks transaction-bound creation facts; reserved creates
   retain their existing guard bypass. `ReflectionFreshness` owns experiment creation debt. `RecordHooks.before_write` and
   `RecordHooks.after_write` both run inside the caller's transaction. `read_fact` supplies

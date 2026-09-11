@@ -42,8 +42,7 @@ separately from transitions. `Change.transactional` carries `TransactionalEffect
 After replay/revision checks, gates and reduction: save state/pending actions, run effects in
 tuple order, commit native columns/sealing/hooks, enter composition, record history/event.
 Migration shares this save; activation rejects effects. Missing handlers/failures abort. It
-provides a final revision/prerequisite fence for the assignment lease transaction, and
-rechecks only dispatch prerequisites during authentication; exit validators still run for transitions.
+provides a revision/prerequisite lease fence; authentication checks dispatch prerequisites, transitions check exit validators.
 It answers Agent Sessions' `InstanceFacts` port (revision, terminal, label) so leases never
 read a research table. The assignment packet carries `execution` as the node's declared
 policy in JSON.
