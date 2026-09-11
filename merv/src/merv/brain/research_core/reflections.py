@@ -8,6 +8,9 @@ evidence, reserved names, central receipts, and materialized wave consistent.
 
 from __future__ import annotations
 
+from .models import ReflectionState, public_record
+from ..workflows import Public
+
 from contextlib import closing, suppress
 import json
 from typing import Any, Protocol
@@ -143,7 +146,7 @@ class ReflectionService(RecordHooks):
         title: str = "",
         lenses: list[dict[str, Any]] | None = None,
         project_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> ReflectionState:
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             return self._create(conn=conn, project_id=project_id, title=title, lenses=lenses)
@@ -195,8 +198,8 @@ class ReflectionService(RecordHooks):
                                        columns="id, name, goal, attempt_index, status, outcome, failed_by"),
             claims=_query(conn, "SELECT id, statement, status, confidence, scope FROM claims"
                                 " WHERE project_id = ? ORDER BY created_at, id", (project_id,)),
-            covered=covered_terminal_ids(None if previous is None else (previous.get("corpus") or {})),
-            covered_tasks=covered_terminal_ids(None if previous is None else (previous.get("corpus") or {}),
+            covered=covered_terminal_ids(None if previous is None else (previous.corpus or {})),
+            covered_tasks=covered_terminal_ids(None if previous is None else (previous.corpus or {}),
                                                key="terminal_tasks"))
 
     def _terminal_nodes(self, *, conn, project_id: str, kind: str, statuses, roles, columns: str):
@@ -214,12 +217,12 @@ class ReflectionService(RecordHooks):
     # ---- read ----
 
     def get_state(self, *, reflection_id: str, project_id: str | None = None, conn=None,
-                  include_content: bool = False) -> dict[str, Any]:
+                  include_content: bool = False) -> ReflectionState:
         return self.records.get_state(REFLECTION, record_id=reflection_id, project_id=project_id,
                                       conn=conn, include_content=include_content)
 
     def get_state_with_gate(self, *, reflection_id: str, project_id: str | None = None, conn=None,
-                            include_content: bool = False) -> tuple[dict[str, Any], GateEvaluation]:
+                            include_content: bool = False) -> tuple[ReflectionState, GateEvaluation]:
         return self.records.get_state_with_gate(REFLECTION, record_id=reflection_id, project_id=project_id,
                                                 conn=conn, include_content=include_content)
 
@@ -428,7 +431,7 @@ class ReflectionService(RecordHooks):
                 "graph_artifact": graph_artifact,
             }
 
-    def open_reflection(self, *, conn, project_id: str) -> dict[str, Any] | None:
+    def open_reflection(self, *, conn, project_id: str) -> ReflectionState | None:
         """The one non-terminal wave for the project, fully hydrated, or None."""
         terminal = tuple(sorted(REFLECTION.terminal_statuses))
         placeholders = ", ".join("?" for _ in terminal)
@@ -444,7 +447,7 @@ class ReflectionService(RecordHooks):
             return None
         return self.get_state(reflection_id=row["id"], conn=conn)
 
-    def latest_published(self, *, conn, project_id: str) -> dict[str, Any] | None:
+    def latest_published(self, *, conn, project_id: str) -> ReflectionState | None:
         row = conn.execute(
             """
             SELECT id FROM reflections
@@ -459,7 +462,7 @@ class ReflectionService(RecordHooks):
 
     @staticmethod
     def _project_graph_artifact(
-        *, reflection: dict[str, Any] | None
+        *, reflection: ReflectionState | None
     ) -> dict[str, Any] | None:
         """This wave's graph, or None — the current attempt only.
 
@@ -469,7 +472,7 @@ class ReflectionService(RecordHooks):
         if reflection is None:
             return None
         return preferred_artifact(
-            artifacts=reflection.get("current_attempt_artifacts") or [],
+            artifacts=reflection.current_attempt_artifacts or [],
             roles=(PROJECT_GRAPH_ROLE,),
         )
 
@@ -478,7 +481,7 @@ class ReflectionService(RecordHooks):
         published = reflection.get("status") == REFLECTION.success_status
         # published_graph_version_id holds the artifact id pinned at publish.
         current = str((reflection.get("published_graph_version_id") if published else None)
-                      or (self._project_graph_artifact(reflection=reflection) or {}).get("id") or "")
+                      or (preferred_artifact(artifacts=reflection["current_attempt_artifacts"], roles=(PROJECT_GRAPH_ROLE,)) or {}).get("id") or "")
         base = self._previous_published_graph_ref(conn=conn, reflection=reflection)
         comparable = current and base and base.get("graph_version_id")
         return corpus.graph_comparison(
@@ -556,9 +559,9 @@ class ReflectionService(RecordHooks):
 
     def _lens_knowledge(self, snapshot: Snapshot, conn):
         reflection = self.get_state(reflection_id=str(snapshot.data["reflection_id"]), project_id=snapshot.project_id, conn=conn)
-        if str(snapshot.data["lens_id"]) not in {str(item["id"]) for item in reflection["roster"]}:
+        if str(snapshot.data["lens_id"]) not in {str(item["id"]) for item in reflection.roster}:
             raise WorkflowError("lens does not belong to this reflection's fixed roster")
-        return RecordKnowledge(self.records, REFLECTION, conn, reflection, snapshot)
+        return RecordKnowledge(self.records, REFLECTION, conn, public_record(Public(), reflection), snapshot)
 
     def initialize_lens(self, conn, snapshot: Snapshot) -> None:
         parent = conn.execute(
@@ -580,9 +583,9 @@ class ReflectionService(RecordHooks):
     def _wave_knowledge(self, snapshot: Snapshot, conn):
         reflection = self.get_state(reflection_id=str(snapshot.data.get("reflection_id") or ""),
                                     project_id=snapshot.project_id, conn=conn)
-        if reflection["status"] != "published":
+        if reflection.status != "published":
             raise WorkflowError("A research wave can start only from a published reflection.")
-        return RecordKnowledge(self.records, REFLECTION, conn, reflection, snapshot)
+        return RecordKnowledge(self.records, REFLECTION, conn, public_record(Public(), reflection), snapshot)
 
     def initialize_wave(self, conn, snapshot: Snapshot) -> None:
         self._wave_knowledge(snapshot, conn)
@@ -612,7 +615,7 @@ class ReflectionService(RecordHooks):
         ).fetchall()
         for row in rows:
             reflection = self.get_state(reflection_id=row["id"], project_id=row["project_id"], conn=conn)
-            validate_reflection_roster(lenses=reflection["roster"])
+            validate_reflection_roster(lenses=reflection.roster)
             self.runtime.adopt_children(conn=conn, project_id=row["project_id"], instance_id=row["id"],
                                         expected_revision=row["revision"], request_id="reflection_lenses:v1")
 
@@ -629,12 +632,12 @@ class ReflectionService(RecordHooks):
         decisions: list[dict[str, Any]],
         producer_session_id: str,
         project_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> ReflectionState:
         """Record one immutable code proposal covering the whole reflection corpus."""
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             reflection = self.get_state(reflection_id=reflection_id, project_id=project_id, conn=conn)
-            if reflection["status"] != "consolidating":
+            if reflection.status != "consolidating":
                 raise WorkflowError("consolidation proposals are accepted only after the "
                                     "authoritative reflection review has passed")
             if self.advances.unsettled(conn=conn, instance_id=reflection_id):
@@ -644,17 +647,17 @@ class ReflectionService(RecordHooks):
                 summary=summary, validation=validation, producer_session_id=producer_session_id,
                 base_sha=base_sha, proposal_sha=proposal_sha, decisions=decisions,
                 expected_experiments={str(item["id"]) for item
-                                      in (reflection.get("corpus") or {}).get("terminal_experiments") or ()
+                                      in (reflection.corpus or {}).get("terminal_experiments") or ()
                                       if isinstance(item, dict) and item.get("id")}))
             # The graph pins exactly this proposal and requests its review; the
             # kind's declared commit columns clear the revision request.
             return self._transition_in_tx(conn=conn, reflection=reflection, transition="submit_consolidation")
 
-    def _record_proposal(self, *, conn, reflection: dict[str, Any], proposal: dict[str, Any]) -> None:
+    def _record_proposal(self, *, conn, reflection: ReflectionState, proposal: dict[str, Any]) -> None:
         """Write the sealed proposal, its per-experiment decisions and its event."""
-        reflection_id, project_id, now = str(reflection["id"]), str(reflection["project_id"]), now_iso()
+        reflection_id, project_id, now = str(reflection.id), str(reflection.project_id), now_iso()
         proposal_id = new_id(prefix="cpr")
-        revision = int(((reflection.get("consolidation") or {}).get("proposal") or {}).get("revision") or 0) + 1
+        revision = int(((reflection.consolidation or {}).get("proposal") or {}).get("revision") or 0) + 1
         conn.execute(
             "INSERT INTO consolidation_proposals (id, reflection_id, project_id, revision, base_sha, proposal_sha, "
             "summary, validation_json, created_by_session_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -673,11 +676,9 @@ class ReflectionService(RecordHooks):
                      "base_sha": proposal["base_sha"], "revision": revision,
                      "experiments_considered": len(proposal["decisions"])})
 
-    def require_consolidation_proposal(self, *, conn, reflection: dict[str, Any]) -> None:
-        if reflection["status"] != "consolidating":
-            return
-        decision = self.records.evaluate_gate(REFLECTION, conn=conn, record=reflection).decision
-        for action in decision.actions:
+    @staticmethod
+    def require_consolidation_proposal(gate: GateEvaluation) -> None:
+        for action in gate.decision.actions:
             for issue in action.issues:
                 if issue.code == "consolidation_proposal_required":
                     raise WorkflowError(issue.message)
@@ -700,15 +701,15 @@ class ReflectionService(RecordHooks):
                 project_id=project_id,
                 conn=conn,
             )
-            if reflection["status"] != "consolidating":
+            if reflection.status != "consolidating":
                 raise WorkflowError("reflection is not awaiting consolidation")
-            self.require_consolidation_proposal(conn=conn, reflection=reflection)
+            self.require_consolidation_proposal(gate)
             if gate.review is None or not gate.review.satisfied:
                 raise WorkflowError(
                     "the exact consolidation proposal must pass independent "
                     "review before central can advance"
                 )
-            proposal = (reflection.get("consolidation") or {}).get("proposal") or {}
+            proposal = (reflection.consolidation or {}).get("proposal") or {}
             advance, previous = self.advances.intend(
                 conn=conn,
                 instance_id=reflection_id,
@@ -764,7 +765,7 @@ class ReflectionService(RecordHooks):
         ancestry: dict[str, bool] | None = None,
         error: str = "",
         project_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> ReflectionState:
         """Settle one CAS receipt and atomically publish when it reached target."""
         observed_sha = documents.git_sha(observed_sha)
         parents = tuple(documents.git_sha(value) for value in (proposal_parents or []))
@@ -854,7 +855,7 @@ class ReflectionService(RecordHooks):
 
     def _publish_bound_advance(
         self, *, advance_id: str, reflection_id: str, project_id: str
-    ) -> dict[str, Any]:
+    ) -> ReflectionState:
         """Publish a bound central advance in its own transaction.
 
         A blocked publish records its error on the advance and leaves the
@@ -869,7 +870,7 @@ class ReflectionService(RecordHooks):
                 self.advances.note(conn=conn, advance_id=advance_id, error="")
                 reflection = self.get_state(reflection_id=reflection_id, project_id=project_id,
                                             conn=conn, include_content=True)
-                if str(reflection.get("status")) == REFLECTION.success_status:
+                if str(reflection.status) == REFLECTION.success_status:
                     return reflection  # A retried settle after a publish is idempotent.
                 return self._transition_in_tx(conn=conn, reflection=reflection, transition="publish")
         except Exception as exc:
@@ -895,7 +896,7 @@ class ReflectionService(RecordHooks):
         reflection_id: str,
         transition: str,
         project_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> ReflectionState:
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             return self._transition_in_tx(
@@ -903,12 +904,12 @@ class ReflectionService(RecordHooks):
                 reflection=self.get_state(reflection_id=reflection_id, project_id=project_id, conn=conn),
             )
 
-    def _transition_in_tx(self, *, conn, reflection: dict[str, Any], transition: str,
-                          payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        reflection_id = str(reflection["id"])
-        current = self.runtime.adopt(conn=conn, project_id=reflection["project_id"], instance_id=reflection_id,
-                                     workflow="reflection", version=REFLECTION.workflow.version, state=reflection["status"],
-                                     data={"attempt_index": reflection["attempt_index"]})
+    def _transition_in_tx(self, *, conn, reflection: ReflectionState, transition: str,
+                          payload: dict[str, Any] | None = None) -> ReflectionState:
+        reflection_id = str(reflection.id)
+        current = self.runtime.adopt(conn=conn, project_id=reflection.project_id, instance_id=reflection_id,
+                                     workflow="reflection", version=REFLECTION.workflow.version, state=reflection.status,
+                                     data={"attempt_index": reflection.attempt_index})
         # Compatibility for the released bulk-submit tool: the child action the
         # parent's edge declares still runs on each open child, so the last one
         # fires the same guarded join an independent lens agent would.
@@ -919,7 +920,7 @@ class ReflectionService(RecordHooks):
         if transition in CLOSES_CHILDREN:
             # The final child's guarded join already applied the parent action.
             current = self.runtime.get(project_id=current.project_id, instance_id=reflection_id, conn=conn)
-            if current.state != reflection["status"]:
+            if current.state != reflection.status:
                 return self.get_state(reflection_id=reflection_id, conn=conn, include_content=True)
         self.runtime.apply_in_transaction(conn=conn, project_id=current.project_id, instance_id=reflection_id,
                                           action=transition, expected_revision=current.revision,
@@ -989,7 +990,7 @@ class ReflectionService(RecordHooks):
             self.artifacts.seal(tx=conn, target=target, transition="submit_lens" if action == "submit" else "adopt_lens",
                                 association_ids=(association_id,))
 
-    def _reserve_wave_names(self, *, conn, reflection: dict[str, Any]) -> None:
+    def _reserve_wave_names(self, *, conn, reflection: ReflectionState) -> None:
         """Pin the validated spec and reserve the names its wave will take.
 
         The reservation rows carry the validated artifact's id, so publish
@@ -999,7 +1000,7 @@ class ReflectionService(RecordHooks):
         time instead of blocking an already-bound publish (see
         ExperimentService._reject_reserved_wave_name).
         """
-        reflection_id, project_id = str(reflection["id"]), str(reflection["project_id"])
+        reflection_id, project_id = str(reflection.id), str(reflection.project_id)
         document = self._submitted_role_document(reflection=reflection, roles=("change_spec",), what="change spec")
         if document is None:
             raise WorkflowError("a change spec artifact must be submitted before reflection review")
@@ -1022,7 +1023,7 @@ class ReflectionService(RecordHooks):
             conn.execute("INSERT INTO reflection_reserved_names (reflection_id, project_id, name_lower, artifact_id, experiment_slots) "
                          "VALUES (?, ?, ?, ?, ?)", (reflection_id, project_id, name, document.artifact_id, int(name in proposed["experiments"])))
 
-    def _pinned_change_spec(self, *, conn, reflection: dict[str, Any]) -> dict[str, Any]:
+    def _pinned_change_spec(self, *, conn, reflection: ReflectionState) -> dict[str, Any]:
         """The spec pinned when its names were validated and reserved.
 
         Publish reads the artifact id stored on the wave's reservation rows,
@@ -1033,7 +1034,7 @@ class ReflectionService(RecordHooks):
         """
         row = conn.execute("SELECT artifact_id FROM reflection_reserved_names "
                            "WHERE reflection_id = ? AND artifact_id != '' LIMIT 1",
-                           (str(reflection["id"]),)).fetchone()
+                           (str(reflection.id),)).fetchone()
         # Upgrade path: a wave already consolidating when the pin shipped has
         # no reservation rows; fall back to the current sealed spec (the
         # pre-pin behavior) so its bound publish cannot wedge.
@@ -1042,7 +1043,7 @@ class ReflectionService(RecordHooks):
                                                        what="change spec"))
         if document is None:
             raise WorkflowError("a change spec artifact must be submitted before publish")
-        return self._parse_change_spec(world=self._world(conn=conn, project_id=str(reflection["project_id"])),
+        return self._parse_change_spec(world=self._world(conn=conn, project_id=str(reflection.project_id)),
                                        document=document)
 
     def _world(self, *, conn, project_id: str) -> dict[str, Any]:
@@ -1061,14 +1062,14 @@ class ReflectionService(RecordHooks):
                                  claim_exists=lambda value: value in world["claim_ids"],
                                  node_exists=lambda value: value in world["node_ids"])
 
-    def _materialize_change_spec(self, *, conn, reflection: dict[str, Any]) -> None:
+    def _materialize_change_spec(self, *, conn, reflection: ReflectionState) -> None:
         """Apply the reviewer-approved belief-state update.
 
         This is called only from the publish transition after the review gate
         passes. Rejected reflections never reach this function, so speculative
         claim edits or experiment specs do not leak into project state.
         """
-        project_id, reflection_id = str(reflection["project_id"]), str(reflection["id"])
+        project_id, reflection_id = str(reflection.project_id), str(reflection.id)
         spec = self._pinned_change_spec(conn=conn, reflection=reflection)
         self._materialize_wave(
             conn=conn, project_id=project_id, reflection_id=reflection_id,
@@ -1184,12 +1185,12 @@ class ReflectionService(RecordHooks):
     def _submitted_role_document(
         self,
         *,
-        reflection: dict[str, Any],
+        reflection: ReflectionState,
         roles: tuple[str, ...],
         what: str,
     ) -> ArtifactDocument | None:
         artifact = preferred_artifact(
-            artifacts=reflection.get("current_attempt_artifacts") or [],
+            artifacts=reflection.current_attempt_artifacts or [],
             roles=roles,
         )
         if artifact is None:

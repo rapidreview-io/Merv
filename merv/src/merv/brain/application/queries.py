@@ -17,7 +17,7 @@ from ..workflows import (
 
 from ..research_core import Artifact, Research, ResearchArtifacts as Artifacts
 from .reflection_guidance import present_reflection_signal
-from .reflections import present_reflection_state
+from ..workflows.definitions.research_state import ReflectionState
 
 Record = dict[str, Any]
 
@@ -75,10 +75,8 @@ class LogicGraphQuery:
     def reflection_graph(self, *, project_id: str, reflection_id: str) -> Record:
         return self._for_reflection(
             project_id=project_id,
-            reflection=present_reflection_state(
-                self.research.reflections.get_state(
-                    reflection_id=reflection_id, project_id=project_id
-                )
+            reflection=self.research.reflections.get_state(
+                reflection_id=reflection_id, project_id=project_id,
             ),
         )
 
@@ -86,14 +84,14 @@ class LogicGraphQuery:
         self,
         *,
         project_id: str,
-        reflection: Record | None,
+        reflection: ReflectionState | None,
         graph_artifact: Record | None = None,
         extra_base: Record | None = None,
     ) -> Record:
         base: Record = {"max_nodes": MAX_GRAPH_NODES, **(extra_base or {})}
         chosen = graph_artifact or (
             preferred_artifact(
-                artifacts=reflection.get("current_attempt_artifacts") or [],
+                artifacts=reflection.current_attempt_artifacts or [],
                 roles=(PROJECT_GRAPH_ROLE,),
             )
             if reflection
@@ -108,11 +106,11 @@ class LogicGraphQuery:
                 "problems": [],
             }
         base["reflection"] = {
-            "id": reflection.get("id"),
-            "title": reflection.get("title"),
-            "status": reflection.get("status"),
-            "attempt_index": reflection.get("attempt_index"),
-            "published_at": reflection.get("published_at"),
+            "id": reflection.id,
+            "title": reflection.title,
+            "status": reflection.status,
+            "attempt_index": reflection.attempt_index,
+            "published_at": reflection.published_at,
         }
         text = self._associated_text(chosen, project_id=project_id)
         if text is None:

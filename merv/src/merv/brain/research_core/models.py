@@ -10,7 +10,8 @@ from typing import Any, TypedDict
 
 from ..kernel.events import StoredEvent
 from ..workflows import Public
-from ..workflows.definitions.research_state import ExperimentState, TaskState, Missing, MISSING
+from ..workflows.definitions.research_state import ExperimentState, TaskState, ReflectionState, Missing, MISSING
+from .policy import GateEvaluation
 
 
 def _public_value(value):
@@ -37,7 +38,7 @@ def public_record(public: Public, record, **computed: Any) -> dict[str, Any]:
             value = getattr(record, name) if is_dataclass(record) else record[name]
         if value is not MISSING:
             result[public.renames.get(name, name)] = _public_value(value)
-    for name, anchor in {**public.after, "post_publish_guidance": "materialized_experiments"}.items():
+    for name, anchor in {"post_publish_guidance": "materialized_experiments"}.items():
         if name in result and anchor in result:
             value = result.pop(name)
             result = {key: item for key, item in result.items()
@@ -111,10 +112,10 @@ class ResearchSnapshot:
     project: dict[str, Any]
     claims: list[dict[str, Any]]
     experiments: list[ExperimentState]
-    open_reflection: dict[str, Any] | None
-    latest_published_reflection: dict[str, Any] | None
+    open_reflection: ReflectionState | None
+    latest_published_reflection: ReflectionState | None
     reflection_signal: dict[str, Any]
-    gate_evaluations: dict[str, Any]
+    gate_evaluations: dict[str, GateEvaluation]
     tasks: list[TaskState] = field(default_factory=list)
     requested_task_id: str | None = None
     literature_signal: LiteratureSignal = field(

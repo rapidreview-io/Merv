@@ -131,10 +131,7 @@ class ReviewService:
             )
             snapshot_id = review_snapshot_id(target_type=target_type, target=target, snapshot=current)
             if target_type == "reflection" and role == "consolidation_reviewer":
-                self.reflections.require_consolidation_proposal(
-                    conn=conn,
-                    reflection=target,
-                )
+                self.reflections.require_consolidation_proposal(_gate)
             if if_current:
                 fact = read_review_fact(conn=conn, project_id=project_id, target_type=target_type, target_id=target_id,
                                         snapshot_id=snapshot_id, role=role)

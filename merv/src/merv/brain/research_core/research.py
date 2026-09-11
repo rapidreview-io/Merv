@@ -987,7 +987,7 @@ class Research:
                 (published, published_gate),
             ):
                 if reflection is not None and evaluation is not None:
-                    gates[str(reflection["id"])] = evaluation
+                    gates[reflection.id] = evaluation
             signal = reflection_signal_state(
                 current_terminal={
                     row.id: row.status

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from ..workflows.definitions.research_state import ReflectionState, ReviewStatus, GateStatus
+
 from ..workflows import research_contracts
 
 ACTIVE_EXPERIMENT_CAP = research_contracts.ACTIVE_EXPERIMENT_CAP
@@ -144,14 +146,14 @@ def reflection_signal_state(
     *,
     current_terminal: Mapping[str, str],
     current_claims: Mapping[str, str],
-    published: Mapping[str, Any] | None,
-    open_wave: Mapping[str, Any] | None,
+    published: ReflectionState | None,
+    open_wave: ReflectionState | None,
     current_terminal_tasks: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     covered_ids = covered_terminal_ids(
-        None if published is None else (published.get("corpus") or {})
+        None if published is None else (published.corpus or {})
     )
-    corpus = {} if published is None else published.get("corpus") or {}
+    corpus = {} if published is None else published.corpus or {}
     # Tasks are inputs the reflection reads, not evidence: a finished task
     # counts as new material (something to reflect over) but never toward
     # the experiment debt that nudges or blocks.
@@ -190,9 +192,9 @@ def reflection_signal_state(
         "claims_changed_since_publish": len(claims_changed),
         "contradicted_flip": contradicted_flip,
         "has_new_material": has_new_material,
-        "last_published_at": (published or {}).get("published_at"),
-        "last_published_reflection_id": (published or {}).get("id"),
-        "open_reflection_id": (open_wave or {}).get("id"),
+        "last_published_at": published.published_at if published else None,
+        "last_published_reflection_id": published.id if published else None,
+        "open_reflection_id": open_wave.id if open_wave else None,
         "stale": stale,
         "experiment_create_blocked": create_blocked,
         "nudge_new_terminal_threshold": REFLECTION_NUDGE_NEW_TERMINAL_THRESHOLD,
@@ -235,22 +237,13 @@ JSONValue: TypeAlias = (
     str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
 )
 GateItem: TypeAlias = dict[str, JSONValue]
-EvaluationStatus = Literal[
-    "missing",
-    "present",
-    "valid",
-    "invalid",
-    "pending",
-    "requested",
-    "started",
-    "passed",
-]
+
 
 
 @dataclass(frozen=True, slots=True)
 class RequirementEvaluation:
     role: str
-    status: EvaluationStatus
+    status: GateStatus | ReviewStatus
     blocker_code: str
     enforcement_error: str
     problems: tuple[str, ...]
@@ -330,8 +323,8 @@ class ReviewFact:
         return self.request.get("status") in {"requested", "started"} and not self.expired
 
     @property
-    def status(self) -> str:
-        return "passed" if self.passed else str(self.request["status"]) if self.request_valid else "pending"
+    def status(self) -> ReviewStatus:
+        return ReviewStatus.PASSED if self.passed else ReviewStatus(self.request["status"]) if self.request_valid else ReviewStatus.PENDING
 
     def reference(self, *, request: bool = False) -> dict[str, Any]:
         pinned = snapshot_from_id(snapshot_id=self.snapshot_id)
@@ -389,7 +382,7 @@ def resolve_dependencies_done(need: DependenciesDone, context: GateContext) -> R
 def resolve_artifact_need(need: ArtifactNeed, context: GateContext) -> RequirementEvaluation:
     """A submitted document, missing or invalid by which code its own issue carried."""
     issue = context.issue_for(need.codes)
-    status: EvaluationStatus = ("missing" if issue is not None and issue.code == need.gate
+    status: GateStatus | ReviewStatus = ("missing" if issue is not None and issue.code == need.gate
                                 else "invalid" if issue is not None
                                 else "valid" if need.validator else "present")
     artifact = context.artifact(need.role) or {}
@@ -399,7 +392,7 @@ def resolve_artifact_need(need: ArtifactNeed, context: GateContext) -> Requireme
         "artifact_id": artifact.get("id"), "path": artifact.get("path")})
 
 
-def _requirement_item(need, context: GateContext, *, kind: str, status: EvaluationStatus,
+def _requirement_item(need, context: GateContext, *, kind: str, status: GateStatus | ReviewStatus,
                       extra: GateItem) -> RequirementEvaluation:
     issue = context.issue_for(need.codes)
     item: GateItem = {
@@ -410,7 +403,7 @@ def _requirement_item(need, context: GateContext, *, kind: str, status: Evaluati
         **({} if issue is None else {"problems": [issue.message]}),
     }
     return RequirementEvaluation(
-        role=need.key, status=status, blocker_code="" if issue is None else issue.code,
+        role=need.key, status=GateStatus(status), blocker_code="" if issue is None else issue.code,
         enforcement_error="" if issue is None else issue.message,
         problems=() if issue is None else (issue.message,), items=(item,))
 

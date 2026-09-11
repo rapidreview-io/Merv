@@ -575,31 +575,20 @@ class Metadata:
 
 @dataclass(frozen=True, slots=True)
 class Public:
-    """What a stored record shows a reader — declared, not assembled by hand.
-
-    A record's public shape is its row, decoded, minus what is private:
-    ``hidden`` names columns that reader never sees, and ``renames`` maps a
-    stored column onto the field it is known by (a record kind's JSON columns
-    already declare their own rename, so this carries only the rest).
-    ``after`` seats a computed field beside the field it explains, which is
-    the only reason key order matters anywhere. A narrower reader — an agent
-    reading a state rather than a UI rendering it — declares its own.
-    """
+    """The fields an audience must never see, and public names for the rest."""
 
     hidden: tuple[str, ...] = ()
     renames: Mapping[str, str] = field(default_factory=dict)
-    after: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for name in ("renames", "after"):
-            object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
+        object.__setattr__(self, "renames", MappingProxyType(dict(self.renames)))
 
 
 S = TypeVar("S", covariant=True)
 
 
 class StateConstructor(Protocol[S]):
-    def __call__(self, row: Data) -> S: ...
+    def __call__(self, row: Data, snapshot: Snapshot) -> S: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -619,7 +608,7 @@ class RecordKind(Generic[S]):
     table: str
     id_prefix: str
     workflow: Workflow
-    construct: StateConstructor[S] = dict
+    construct: StateConstructor[S]
     metadata: Metadata = Metadata()
     created_event: str = ""
     label: str = "name"

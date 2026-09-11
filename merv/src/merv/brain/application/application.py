@@ -519,7 +519,7 @@ class Application:
             body = review_body(state.reviews, review_id=review_id)
             if body is None:
                 known = [
-                    str(review.get("id") or "") for review in state.reviews
+                    review.id for review in state.reviews
                 ]
                 raise ValidationError(
                     f"no review {review_id} on this experiment. Reviews here: "
@@ -598,7 +598,7 @@ class Application:
             body = review_body(state.reviews, review_id=review_id)
             if body is None:
                 known = [
-                    str(review.get("id") or "") for review in state.reviews
+                    review.id for review in state.reviews
                 ]
                 raise ValidationError(
                     f"no review {review_id} on this task. Reviews here: "
@@ -754,7 +754,7 @@ class Application:
         )
         experiment_ids = tuple(
             str(item.get("id") or "")
-            for item in (state.get("corpus") or {}).get("terminal_experiments", [])
+            for item in (state.corpus or {}).get("terminal_experiments", [])
             if isinstance(item, dict) and item.get("id")
         )
         packet = consolidation_packet(
@@ -799,7 +799,7 @@ class Application:
         )
         experiment_ids = tuple(
             str(item.get("id") or "")
-            for item in (state.get("corpus") or {}).get("terminal_experiments", [])
+            for item in (state.corpus or {}).get("terminal_experiments", [])
             if isinstance(item, dict) and item.get("id")
         )
         workspaces = self.agent_sessions.workspaces(
@@ -862,20 +862,20 @@ class Application:
 
     def _pending_advance(self, *, project_id: str) -> tuple[dict[str, Any] | None, str]:
         reflection = self.research.snapshot(project_id=project_id).open_reflection
-        if not reflection or reflection.get("status") != "consolidating":
+        if not reflection or reflection.status != "consolidating":
             return None, ""
         state = self.research.reflections.get_state(
             project_id=project_id,
-            reflection_id=str(reflection["id"]),
+            reflection_id=str(reflection.id),
         )
-        consolidation = state.get("consolidation") or {}
+        consolidation = state.consolidation or {}
         proposal = consolidation.get("proposal") or {}
         advance = consolidation.get("advance") or {}
         review_passed = any(
-            item.get("kind") == "review"
-            and item.get("role") == "consolidation_reviewer"
-            and item.get("satisfied")
-            for item in (state.get("gate_checklist") or {}).get("items", [])
+            item.kind == "review"
+            and item.role == "consolidation_reviewer"
+            and item.satisfied
+            for item in state.gate_checklist.items
         )
         if not proposal or not review_passed:
             return None, ""
@@ -892,7 +892,7 @@ class Application:
         # retries it through the same prepare/settle pair.
         return {
             "advance_id": str(advance.get("id") or ""),
-            "instance_id": str(state["id"]),
+            "instance_id": str(state.id),
             "revision": proposal["revision"],
             "expected_sha": str(proposal["base_sha"]),
             "target_sha": str(proposal["proposal_sha"]),
@@ -921,14 +921,14 @@ class Application:
             ancestry=ancestry,
             error=error,
         )
-        consolidation = state.get("consolidation") or {}
+        consolidation = state.consolidation or {}
         advance = consolidation.get("advance") or {}
         return {
             "advance_id": advance_id,
-            "instance_id": str(state["id"]),
+            "instance_id": str(state.id),
             "status": str(advance.get("status") or ""),
             "observed_sha": str(advance.get("observed_sha") or ""),
-            "outcome": str(state.get("status") or ""),
+            "outcome": str(state.status or ""),
         }
 
     # Read models ----------------------------------------------------------

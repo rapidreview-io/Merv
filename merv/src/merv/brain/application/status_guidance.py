@@ -28,7 +28,7 @@ class StatusGuidancePolicy:
         return self._workflow(revision_context=task.revision_context, evaluation=evaluation)
 
     def _reflection_workflow_for(self, *, reflection, evaluation: GateEvaluation):
-        return self._workflow(revision_context=reflection.get("revision_context") or "", evaluation=evaluation)
+        return self._workflow(revision_context=reflection.revision_context, evaluation=evaluation)
 
     def _workflow(self, *, revision_context, evaluation: GateEvaluation):
         decision = evaluation.decision
@@ -123,11 +123,11 @@ class StatusGuidancePolicy:
     def _slim_reflection(self, reflection):
         return {
             **project_fields(reflection, _SLIM_REFLECTION_FIELDS),
-            "roster": project_rows(reflection.get("roster", []), ("id", "title", "core")),
-            "current_attempt_artifacts": project_rows(reflection.get("current_attempt_artifacts", []),
+            "roster": project_rows(reflection.roster, ("id", "title", "core")),
+            "current_attempt_artifacts": project_rows(reflection.current_attempt_artifacts,
                                                       ("id", "role", "lens_id", "path", "size_bytes", "tldr")),
-            "reviews": project_rows(reflection.get("reviews", []), ("id", "role", "verdict", "created_at", "synopsis")),
-            "allowed_transitions": reflection.get("allowed_transitions", []),
+            "reviews": project_rows(reflection.reviews, ("id", "role", "verdict", "created_at", "synopsis")),
+            "allowed_transitions": project_rows(reflection.allowed_transitions, ("transition", "leads_to")),
         }
 
     @staticmethod

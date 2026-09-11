@@ -532,8 +532,8 @@ class TaskWorkflowTest(ResearchCase):
             target_type="reflection", target_id=reflection_id, role="reflection_reviewer"
         )
         published = self.consolidate_and_publish(reflection_id)
-        self.assertEqual(published["status"], "published")
-        materialized = {row["name"]: row for row in published["materialized_tasks"]}
+        self.assertEqual(published.status, "published")
+        materialized = {row["name"]: row for row in published.materialized_tasks}
         self.assertEqual(set(materialized), {"prep-data", "lit-sweep"})
         prep = self.call(
             "task.get_state",
@@ -550,7 +550,7 @@ class TaskWorkflowTest(ResearchCase):
             task_id=materialized["lit-sweep"]["task_id"],
         )
         self.assertEqual([d["id"] for d in lit["dependencies"]], [prep["id"]])
-        experiment_id = published["materialized_experiments"][0]["experiment_id"]
+        experiment_id = published.materialized_experiments[0]["experiment_id"]
         experiment = self.call(
             "experiment.get_state", project_id=self.project_id, experiment_id=experiment_id
         )
@@ -599,5 +599,5 @@ class TaskWorkflowTest(ResearchCase):
             target_type="reflection", target_id=reflection_id, role="reflection_reviewer"
         )
         published = self.consolidate_and_publish(reflection_id)
-        self.assertEqual(len(published["materialized_tasks"]), 2)
-        self.assertEqual(published["materialized_experiments"], [])
+        self.assertEqual(len(published.materialized_tasks), 2)
+        self.assertEqual(published.materialized_experiments, [])

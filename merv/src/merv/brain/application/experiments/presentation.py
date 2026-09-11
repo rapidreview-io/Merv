@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from ...workflows.definitions.research_state import ReviewReference
+
 from typing import Any, Iterable, Protocol
 
 from ...research_core import (
@@ -18,8 +20,7 @@ from ...workflows import Public
 
 # What an agent reading an experiment does not need: the project it named to
 # ask, the whole artifact history, and the sealed submission rounds.
-AGENT = Public(hidden=("project_id", "artifacts", "submissions", "dependents"),
-               after=EXPERIMENT.public.after)
+AGENT = Public(hidden=("project_id", "artifacts", "submissions", "dependents"))
 
 _CLAIM_ROW = ("id", "statement", "confidence", "status", "scope")
 _ARTIFACT_ROW = ("id", "role", "path", "lens_id", "size_bytes", "title", "tldr")
@@ -43,25 +44,25 @@ class ProducedObjectCatalog(Protocol):
     ) -> dict[str, Any] | None: ...
 
 
-def review_synopsis(review: dict[str, Any]) -> str:
+def review_synopsis(review: ReviewReference) -> str:
     """The one line a review row shows, clipped to the synopsis envelope.
 
     Reviews written before the synopsis field carry their narrative in notes
     or findings; the last resort states the verdict itself, so no row is blank.
     """
-    findings = review.get("findings")
+    findings = review.findings
     issues = [
         text
         for finding in (findings if isinstance(findings, list) else ())
         if isinstance(finding, dict) and (text := str(finding.get("issue") or "").strip())
     ]
-    verdict = str(review.get("verdict") or "completed").replace("_", " ")
-    role = str(review.get("role") or "review").replace("_", " ")
+    verdict = str(review.verdict or "completed").replace("_", " ")
+    role = str(review.role or "review").replace("_", " ")
     line = next(
         text
         for text in (
-            str(review.get("synopsis") or ""),
-            *str(review.get("notes") or "").splitlines(),
+            str(review.synopsis or ""),
+            *str(review.notes or "").splitlines(),
             *(("Review finding: " + "; ".join(issues[:3]),) if issues else ()),
             f"The {role} returned {verdict}; this legacy review stored no "
             "narrative synopsis.",
@@ -75,7 +76,7 @@ def review_synopsis(review: dict[str, Any]) -> str:
     return (clipped.rsplit(" ", 1)[0].rstrip() if " " in clipped else clipped) + "…"
 
 
-def slim_review_rows(reviews: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def slim_review_rows(reviews: Iterable[ReviewReference]) -> list[dict[str, Any]]:
     """Project every review to its TLDR; bodies require an explicit id read."""
     return [
         {**project_fields(review, _REVIEW_TLDR), "synopsis": review_synopsis(review)}
@@ -84,17 +85,17 @@ def slim_review_rows(reviews: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def review_body(
-    reviews: Iterable[dict[str, Any]], *, review_id: str
+    reviews: Iterable[ReviewReference], *, review_id: str
 ) -> dict[str, Any] | None:
     """Read one review's full prose back out of a state whose bodies are intact."""
     match = next(
-        (row for row in reviews if str(row.get("id") or "") == review_id), None
+        (row for row in reviews if str(row.id or "") == review_id), None
     )
     if match is None:
         return None
     body = project_fields(match, _REVIEW_BODY)
-    if match.get("return_to"):
-        body["return_to"] = match["return_to"]
+    if match.return_to:
+        body["return_to"] = match.return_to
     return body
 
 

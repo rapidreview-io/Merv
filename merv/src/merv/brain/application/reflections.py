@@ -11,17 +11,12 @@ from ..research_core import (
     project_fields,
     public_record,
 )
-from ..workflows import Public
+from ..workflows.definitions.research_state import ReflectionState
 from .experiments.presentation import slim_review_rows
 from .reflection_guidance import post_publish_guidance, present_reflection_signal
 
 Record = dict[str, Any]
 
-# A published wave's guidance is about the experiments it just created, and an
-# agent reads the two together; the reflection row has no other ordered field.
-# It is declared here rather than on the kind because the reflection graph is
-# owned by a parallel change.
-PUBLIC = Public(after={"post_publish_guidance": "materialized_experiments"})
 AUTHORITATIVE_ROLES = frozenset({"project_graph", "reflection_doc", "change_spec"})
 _PACKET_REFLECTION = ("id", "title", "status", "attempt_index", "created_at", "published_at")
 _PACKET_ARTIFACT = ("id", "artifact_id", "role", "path", "content", "tldr")
@@ -48,23 +43,19 @@ def _tldr_only(artifact: Record) -> Record:
             for key, value in artifact.items()}
 
 
-def present_reflection_state(state: Record) -> Record:
-    materialized = state.get("materialized_experiments")
-    published = state.get("status") == REFLECTION.success_status
-    return public_record(PUBLIC, state, **(
-        {"post_publish_guidance": post_publish_guidance(materialized_experiments=materialized)}
-        if published and materialized else {}
-    ))
+def present_reflection_state(state: ReflectionState, **computed: Any) -> Record:
+    if state.status == REFLECTION.success_status and state.materialized_experiments:
+        computed["post_publish_guidance"] = post_publish_guidance(materialized_experiments=state.materialized_experiments)
+    return public_record(REFLECTION.public, state, **computed)
 
 
 def present_agent_reflection_state(
-    state: Record, *, include_content: bool = False
+    state: ReflectionState, *, include_content: bool = False
 ) -> Record:
     """Agent reflection state: TLDRs by default, exact documents on opt-in."""
-    presented = present_reflection_state(state)
     if include_content:
-        return presented
-    corpus = dict(presented.get("corpus") or {})
+        return present_reflection_state(state)
+    corpus = dict(state.corpus)
     for key in ("previous_lens_reflections", "previous_published_artifacts"):
         corpus[key] = {
             str(name): _tldr_only(artifact)
@@ -78,13 +69,12 @@ def present_agent_reflection_state(
         for experiment in corpus.get("terminal_experiments", [])
         if isinstance(experiment, dict)
     ]
-    return public_record(
-        PUBLIC,
-        presented,
-        reviews=slim_review_rows(presented.get("reviews", [])),
+    return present_reflection_state(
+        state,
+        reviews=slim_review_rows(state.reviews),
         current_attempt_artifacts=[
             _tldr_only(artifact)
-            for artifact in presented.get("current_attempt_artifacts", [])
+            for artifact in state.current_attempt_artifacts
         ],
         corpus=corpus,
     )
@@ -96,25 +86,25 @@ def present_reflection_overview(overview: Record) -> Record:
         present_reflection_state(item) for item in result.get("reflections", [])
     ]
     for key in ("current", "open_reflection", "latest_published"):
-        if isinstance(result.get(key), dict):
+        if result.get(key) is not None:
             result[key] = present_reflection_state(result[key])
     if isinstance(result.get("signal"), dict):
         result["signal"] = present_reflection_signal(result["signal"])
     return result
 
 
-def consolidation_packet(state: Record, *, workspaces: dict[str, Record]) -> Record:
+def consolidation_packet(state: ReflectionState, *, workspaces: dict[str, Record]) -> Record:
     """The compact, immutable handoff a code consolidator actually needs."""
-    consolidation = state.get("consolidation") or {}
+    consolidation = state.consolidation or {}
     advance = consolidation.get("advance") or {}
     stale = advance.get("status") == "stale"
     return {
         "reflection": {
             **project_fields(state, _PACKET_REFLECTION),
-            "reviews": slim_review_rows(state.get("reviews", [])),
+            "reviews": slim_review_rows(state.reviews),
             "reviewed_artifacts": [
                 _kept(artifact, _PACKET_ARTIFACT)
-                for artifact in state.get("current_attempt_artifacts", [])
+                for artifact in state.current_attempt_artifacts
                 if artifact.get("role") in AUTHORITATIVE_ROLES
             ],
         },
@@ -131,11 +121,11 @@ def consolidation_packet(state: Record, *, workspaces: dict[str, Record]) -> Rec
                 ],
                 "workspace": workspaces.get(str(experiment["id"])),
             }
-            for experiment in (state.get("corpus") or {}).get("terminal_experiments", [])
+            for experiment in (state.corpus or {}).get("terminal_experiments", [])
             if isinstance(experiment, dict) and experiment.get("id")
         ],
         "consolidation": consolidation,
-        "revision_context": state.get("revision_context", ""),
+        "revision_context": state.revision_context,
     }
 
 

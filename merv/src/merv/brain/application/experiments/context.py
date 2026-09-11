@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from ...workflows.definitions.research_state import ReviewReference
+
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -256,9 +258,9 @@ class ExperimentContextQuery:
         review = _latest_review(
             state=state, role=_DESIGN_REVIEW_ROLE, artifact_id=artifact_id
         )
-        if review and str(review.get("verdict") or "") != "pass":
+        if review and str(review.verdict or "") != "pass":
             return "changes_requested"
-        if review and str(review.get("verdict") or "") == "pass":
+        if review and str(review.verdict or "") == "pass":
             return "approved"
         return "submitted"
 
@@ -274,9 +276,9 @@ class ExperimentContextQuery:
         review = _latest_review(
             state=state, role=_RESULTS_REVIEW_ROLE, artifact_id=artifact_id
         )
-        if review and str(review.get("verdict") or "") != "pass":
+        if review and str(review.verdict or "") != "pass":
             return "changes_requested"
-        if review and str(review.get("verdict") or "") == "pass":
+        if review and str(review.verdict or "") == "pass":
             return "approved"
         if status == EXPERIMENT.success_status and not _reviews_for_role(
             state=state, role=_RESULTS_REVIEW_ROLE
@@ -290,21 +292,21 @@ def _latest_review(
     state: ExperimentState,
     role: str,
     artifact_id: str,
-) -> Record | None:
+) -> ReviewReference | None:
     for review in state.reviews:
-        if not isinstance(review, dict) or str(review.get("role") or "") != role:
+        if review.role != role:
             continue
-        snapshot_id = str(review.get("target_snapshot_id") or "")
+        snapshot_id = str(review.target_snapshot_id or "")
         if not snapshot_id or f"{artifact_id}:" in snapshot_id:
             return review
     return None
 
 
-def _reviews_for_role(*, state: ExperimentState, role: str) -> list[Record]:
+def _reviews_for_role(*, state: ExperimentState, role: str) -> list[ReviewReference]:
     return [
         review
         for review in state.reviews
-        if isinstance(review, dict) and str(review.get("role") or "") == role
+        if review.role == role
     ]
 
 

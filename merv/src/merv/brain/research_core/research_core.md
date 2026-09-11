@@ -69,7 +69,8 @@ its already-reserved creates bypass mutable capacity checks. Failure restores ev
 ## Read model and invariants
 
 `Research.snapshot` hydrates native records and gates in one transaction-consistent project
-read. Focused reads preserve project scope, attempt rules and byte-stable snapshot identity.
+read. State values live beside their graphs in `definitions/research_state.py`; reflection
+keeps native status separate from workflow state. Focused reads preserve snapshot identity.
 Capabilities expire, are returned once and stored as hashes. A fresh request supersedes
 open requests for the same gate. `tool:review.start` verifies tenant, producer separation,
 snapshot and capability or assigned session; submission rechecks the immutable snapshot.

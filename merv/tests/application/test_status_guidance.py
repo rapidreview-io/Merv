@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from tests.support.research_state import reflection_state
 import unittest
 
 from merv.brain.application.status_guidance import StatusGuidancePolicy
@@ -63,13 +64,13 @@ class StatusGuidanceContractTest(unittest.TestCase):
     def test_reflection_missing_lenses_are_the_graphs_issues(self):
         gate = evaluation(workflow="reflection", state="collect_lenses",
                           blockers=(Issue("lens_missing", "amplify reflection"), Issue("lens_missing", "avoid reflection")))
-        result = self.policy.project_reflection(open_wave={"id": "instance_1", "status": "collect_lenses"}, evaluation=gate,
+        result = self.policy.project_reflection(open_wave=reflection_state(id="instance_1"), evaluation=gate,
                                                signal={"experiment_create_blocked": False}, idle=True)
         self.assertEqual(result["workflow"]["missing_evidence"], ["amplify reflection", "avoid reflection"])
 
     def test_new_plugin_actions_are_presented_without_a_state_or_workflow_case(self):
         gate = evaluation(state="external_confirmation", action="replicate_in_new_setting")
-        result = self.policy._reflection_workflow_for(reflection=self.target, evaluation=gate)
+        result = self.policy._reflection_workflow_for(reflection=SimpleNamespace(**self.target), evaluation=gate)
         self.assertEqual(result["next_action"], "replicate_in_new_setting")
         self.assertEqual(result["available_actions"], gate.decision.public()["available_actions"])
         self.assertEqual(result["revision"], 3)

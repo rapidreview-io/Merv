@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from ..workflows.definitions.research_state import ReviewReference
+
 from dataclasses import dataclass
 from typing import Any, TypedDict
 
@@ -181,7 +183,7 @@ class TaskContextQuery:
             "reviews": [
                 item
                 for item in (
-                    review_body(state.reviews, review_id=str(review.get("id")))
+                    review_body(state.reviews, review_id=str(review.id))
                     for review in state.reviews[:1]
                 )
                 if item

@@ -33,9 +33,9 @@ from merv.brain.research_core.models import (
     TaskSummary,
 )
 from tests.paths import BACKEND_ROOT
-from tests.support.research_state import task_state
+from tests.support.research_state import task_state, reflection_state, review_reference
 from merv.brain.workflows.definitions.research_state import (
-    TaskResult, ChecklistItem, Dependency, ExperimentStatus, GateChecklist, GateKind, GateStatus, MISSING, Transition,
+    ReflectionState, ReviewReference, TaskResult, ChecklistItem, Dependency, ExperimentStatus, GateChecklist, GateKind, GateStatus, MISSING, Transition,
 )
 
 EXPERIMENT = ExperimentState.construct(dict(
@@ -123,6 +123,8 @@ EVENT = StoredEvent(
 SAMPLES: dict[type, object] = {
     ExperimentState: EXPERIMENT,
     TaskState: task_state(),
+    ReflectionState: reflection_state(),
+    ReviewReference: review_reference(),
     Transition: EXPERIMENT.allowed_transitions[0],
     Dependency: Dependency("exp_2", "experiment", "Example", "running", False, False),
     GateChecklist: EXPERIMENT.gate_checklist,
@@ -236,7 +238,7 @@ SAMPLES: dict[type, object] = {
         open_reflection=None,
         latest_published_reflection=None,
         reflection_signal={"needed": False},
-        gate_evaluations={"exp_1": {"ready": True}},
+        gate_evaluations={},
         tasks=[task_state()],
         requested_task_id="task_1",
         literature_signal=LiteratureSignal(papers_total=1, papers_unreviewed=0),
@@ -255,13 +257,7 @@ ANNOTATION_DEBT = frozenset(
         ),
         ("merv.brain.research_core.models.ResearchSnapshot.project", "Any"),
         ("merv.brain.research_core.models.ResearchSnapshot.claims", "Any"),
-        ("merv.brain.research_core.models.ResearchSnapshot.open_reflection", "Any"),
-        (
-            "merv.brain.research_core.models.ResearchSnapshot.latest_published_reflection",
-            "Any",
-        ),
         ("merv.brain.research_core.models.ResearchSnapshot.reflection_signal", "Any"),
-        ("merv.brain.research_core.models.ResearchSnapshot.gate_evaluations", "Any"),
     }
 )
 

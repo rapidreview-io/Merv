@@ -89,9 +89,43 @@ class GateChecklist:
     items: list[ChecklistItem]
 
     @classmethod
-    def construct(cls, row):
+    def construct(cls, row, snapshot=None):
         return cls(**{**row, "items": [ChecklistItem(**{**item, "kind": GateKind(item["kind"]),
                                                       "status": GateStatus(item["status"])}) for item in row["items"]]})
+
+
+class ReviewStatus(StrEnum):
+    PENDING = "pending"
+    REQUESTED = "requested"
+    STARTED = "started"
+    PASSED = "passed"
+
+
+class ReviewVerdict(StrEnum):
+    PASS = "pass"
+    NEEDS_CHANGES = "needs_changes"
+    FAIL = "fail"
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewReference:
+    id: str
+    project_id: str
+    request_id: str
+    session_id: str
+    target_snapshot_id: str
+    target_type: str
+    target_id: str
+    role: str
+    verdict: ReviewVerdict
+    return_to: str
+    notes: str
+    synopsis: str
+    created_at: str
+    created_seq: int
+    submission_id: str
+    findings: list[dict[str, JSON]]
+    evidence: dict[str, JSON]
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +144,7 @@ class ExperimentState:
     artifacts: list[dict[str, JSON]]
     current_attempt_artifacts: list[dict[str, JSON]]
     submissions: list[dict[str, JSON]]
-    reviews: list[dict[str, JSON]]
+    reviews: list[ReviewReference]
     dependencies: list[Dependency]
     dependents: list[Dependency]
     tested_claims: list[dict[str, JSON]]
@@ -118,8 +152,9 @@ class ExperimentState:
     gate_checklist: GateChecklist
 
     @classmethod
-    def construct(cls, row):
-        return cls(**{**row, "status": ExperimentStatus(row["status"]),
+    def construct(cls, row, snapshot=None):
+        return cls(**{**row, "reviews": [ReviewReference(**{**item, "verdict": ReviewVerdict(item["verdict"])}) for item in row["reviews"]],
+                      "status": ExperimentStatus(row["status"]),
                       "dependencies": [Dependency(**item) for item in row["dependencies"]],
                       "dependents": [Dependency(**item) for item in row["dependents"]],
                       "allowed_transitions": [Transition(**item) for item in row["allowed_transitions"]],
@@ -159,7 +194,7 @@ class TaskState:
     artifacts: list[dict[str, JSON]]
     current_attempt_artifacts: list[dict[str, JSON]]
     submissions: list[dict[str, JSON]]
-    reviews: list[dict[str, JSON]]
+    reviews: list[ReviewReference]
     dependencies: list[Dependency]
     dependents: list[Dependency]
     results: list[TaskResult] | Missing = MISSING
@@ -169,10 +204,70 @@ class TaskState:
     gate_checklist: GateChecklist
 
     @classmethod
-    def construct(cls, row):
-        return cls(**{**row, "status": TaskStatus(row["status"]),
+    def construct(cls, row, snapshot=None):
+        return cls(**{**row, "reviews": [ReviewReference(**{**item, "verdict": ReviewVerdict(item["verdict"])}) for item in row["reviews"]],
+                      "status": TaskStatus(row["status"]),
                       "dependencies": [Dependency(**item) for item in row["dependencies"]],
                       "dependents": [Dependency(**item) for item in row["dependents"]],
                       "allowed_transitions": [Transition(**item) for item in row["allowed_transitions"]],
                       "gate_checklist": GateChecklist.construct(row["gate_checklist"]),
                       **({"results": [TaskResult(**item) for item in row["results"]]} if "results" in row else {})})
+
+
+class ReflectionStatus(StrEnum):
+    REFLECTING = "reflecting"
+    SYNTHESIZING = "synthesizing"
+    REFLECTION_REVIEW = "reflection_review"
+    CONSOLIDATING = "consolidating"
+    PUBLISHED = "published"
+    ABANDONED = "abandoned"
+
+
+class ReflectionWorkflowState(StrEnum):
+    REFLECTING = "reflecting"
+    SYNTHESIZING = "synthesizing"
+    REFLECTION_REVIEW = "reflection_review"
+    CONSOLIDATING = "consolidating"
+    CONSOLIDATION_REVIEW = "consolidation_review"
+    PUBLISHED = "published"
+    ABANDONED = "abandoned"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ReflectionState:
+    id: str
+    project_id: str
+    title: str
+    status: ReflectionStatus
+    attempt_index: int
+    revision_context: str
+    published_at: str | None
+    published_graph_version_id: str | None
+    created_at: str
+    updated_at: str
+    created_seq: int
+    roster: list[dict[str, JSON]]
+    corpus: dict[str, JSON]
+    artifacts: list[dict[str, JSON]]
+    current_attempt_artifacts: list[dict[str, JSON]]
+    submissions: list[dict[str, JSON]]
+    reviews: list[ReviewReference]
+    materialized_claims: list[dict[str, JSON]]
+    materialized_experiments: list[dict[str, JSON]]
+    materialized_tasks: list[dict[str, JSON]]
+    consolidation: dict[str, JSON]
+    snapshot_token: str | Missing = MISSING
+    code_sha: str | Missing = MISSING
+    reflection_coverage: dict[str, JSON]
+    project_graph_diff: dict[str, JSON]
+    allowed_transitions: list[Transition]
+    gate_checklist: GateChecklist
+    workflow_state: ReflectionWorkflowState
+
+    @classmethod
+    def construct(cls, row, snapshot):
+        return cls(**{**row, "reviews": [ReviewReference(**{**item, "verdict": ReviewVerdict(item["verdict"])}) for item in row["reviews"]],
+                      "status": ReflectionStatus(row["status"]),
+                      "workflow_state": ReflectionWorkflowState(snapshot.state),
+                      "allowed_transitions": [Transition(**item) for item in row["allowed_transitions"]],
+                      "gate_checklist": GateChecklist.construct(row["gate_checklist"])})

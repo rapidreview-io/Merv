@@ -211,7 +211,7 @@ class StatusAndNextQuery:
             evaluation=(
                 None
                 if snapshot.open_reflection is None
-                else snapshot.gate_evaluations[str(snapshot.open_reflection["id"])]
+                else snapshot.gate_evaluations[snapshot.open_reflection.id]
             ),
             signal=snapshot.reflection_signal,
             idle=idle,

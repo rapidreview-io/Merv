@@ -365,8 +365,12 @@ REFLECTION = Workflow(
 METADATA = Metadata(effects={"publish": ("materialize_change_spec", "pin_project_graph")},
                     subject="reflection wave", success_outcome="published")
 
+from .research_state import ReflectionState
+from ..graph import Public
+
 KIND = RecordKind(
     name="reflection", table="reflections", id_prefix="syn", workflow=REFLECTION,
+    construct=ReflectionState.construct, public=Public(hidden=("workflow_state",)),
     metadata=METADATA, created_event="reflection.created",
     label="title", unique_name=False, columns=("title", "roster_json", "corpus_json"),
     json_columns={"roster_json": ("roster", "[]"), "corpus_json": ("corpus", "{}")}, created_seq=True,

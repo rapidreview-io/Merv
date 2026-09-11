@@ -223,7 +223,7 @@ class Records:
             evaluation = self.evaluate_gate(kind, conn=conn, record=record, snapshots=snapshots)
             record["allowed_transitions"] = [dict(item) for item in evaluation.legal_transitions]
             record["gate_checklist"] = evaluation.checklist()
-            assembled.append((kind.construct(record), evaluation))
+            assembled.append((kind.construct(record, evaluation.decision.snapshot), evaluation))
         return assembled
 
     # ---- gates ----
@@ -285,10 +285,10 @@ class Records:
         """Apply one graph action and return the state and event it committed."""
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
-            record = public_record(Public(), self.get_state(kind, record_id=record_id, project_id=project_id, conn=conn))
+            record = self.get_state(kind, record_id=record_id, project_id=project_id, conn=conn)
             current = self.runtime.adopt(conn=conn, project_id=project_id, instance_id=record_id,
-                                         workflow=kind.name, version=kind.workflow.version, state=record["status"],
-                                         data={"attempt_index": record["attempt_index"]})
+                                         workflow=kind.name, version=kind.workflow.version, state=record.status,
+                                         data={"attempt_index": record.attempt_index})
             after = self.runtime.apply_in_transaction(
                 conn=conn, project_id=project_id, instance_id=record_id, action=transition,
                 expected_revision=current.revision if expected_revision is None else expected_revision,
