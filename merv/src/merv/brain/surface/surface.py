@@ -138,9 +138,7 @@ class Surface:
             ref_vocabulary=ENTITY_REF_VOCABULARY,
             author_roles=FEED_AUTHOR_ROLES,
             adoptable_roles=FEED_ADOPTABLE_ROLES,
-            figure_lookup=lambda project_id, artifact_id, path: self.artifacts.figure(
-                project_id=project_id, artifact_id=artifact_id, link_path=path
-            ) is not None,
+            figure_lookup=self._figure_exists,
         )
         self.literature = Literature(store=store, unfurl=AllowlistedPaperPreview())
         # The logic-graph read the experiment and reflection routes both
@@ -220,6 +218,14 @@ class Surface:
             activity=self.activity,
             ledger=self.tool_ledger,
             tool_names=tool_names,
+        )
+
+    def _figure_exists(self, project_id: str, artifact_id: str, path: str) -> bool:
+        """A research-visible artifact (by association id) whose attachment is
+        recorded under its content id: two row reads, never the bytes."""
+        found = self.artifacts.get(artifact_ids=(artifact_id,), project_id=project_id)
+        return bool(found) and self.artifact_store.has_figure(
+            project_id=found[0].project_id, artifact_id=found[0].artifact_id, link_path=path
         )
 
     def _ledger_dropped(self, error: str) -> None:

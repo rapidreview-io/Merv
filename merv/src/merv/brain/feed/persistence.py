@@ -36,6 +36,12 @@ CREATE TABLE IF NOT EXISTS posts (
   FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 
+-- The feed reads newest-first per project, counts a voice's posts, and takes
+-- the next created_seq on every insert; none of those may scan the table.
+CREATE INDEX IF NOT EXISTS idx_posts_project_seq ON posts(project_id, created_seq);
+CREATE INDEX IF NOT EXISTS idx_posts_project_author ON posts(project_id, author_handle);
+CREATE INDEX IF NOT EXISTS idx_posts_seq ON posts(created_seq);
+
 CREATE TABLE IF NOT EXISTS feed_authors (
   project_id TEXT NOT NULL,
   handle TEXT NOT NULL,

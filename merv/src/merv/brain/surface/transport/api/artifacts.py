@@ -14,8 +14,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from ....artifacts import CompletedFigure
-from ....research_core import ResearchArtifacts as Artifacts, CompletedArtifact
-from ....kernel.utils import NotFoundError, ValidationError
+from ....research_core import ResearchArtifacts as Artifacts
+from ....kernel.utils import NotFoundError
 from ...artifacts import (
     artifact_list_v1,
     completed_artifact_v1,
@@ -60,55 +60,25 @@ def build_router(*, artifacts: Artifacts) -> APIRouter:
             )
         return found[0]
 
-    @api_router.put("/api/artifacts/u/{token}")
-    async def upload_artifact(token: str, request: Request) -> Any:
-        # Token first: an unknown token 404s before any body byte is buffered.
-        cap = artifacts.upload_cap(token=token, kind="artifact")
+    async def upload(token: str, request: Request, *, kind: str) -> Any:
+        # Token first: an unknown token 404s before any body byte is buffered,
+        # and the body is capped at the token's own ceiling before completion.
+        cap = artifacts.upload_cap(token=token, kind=kind)
         data = await read_capped_body(request, cap=cap)
         if data is None:
             return _too_large(cap)
-        try:
-            completed = artifacts.complete_upload(
-                token=token,
-                kind="artifact",
-                data=data,
-            )
-        except ValidationError as exc:
-            if "max_bytes" in exc.details:
-                return JSONResponse(
-                    {"detail": exc.message, "error_code": "payload_too_large", **exc.details},
-                    status_code=413,
-                )
-            raise
-        if not isinstance(completed, CompletedArtifact):
-            raise TypeError("artifact upload returned a figure result")
-        return completed_artifact_v1(
-            completed,
-            base_url=str(request.base_url).rstrip("/"),
-        )
+        completed = artifacts.complete_upload(token=token, kind=kind, data=data)
+        if isinstance(completed, CompletedFigure):
+            return completed_figure_v1(completed)
+        return completed_artifact_v1(completed, base_url=str(request.base_url).rstrip("/"))
+
+    @api_router.put("/api/artifacts/u/{token}")
+    async def upload_artifact(token: str, request: Request) -> Any:
+        return await upload(token, request, kind="artifact")
 
     @api_router.put("/api/artifacts/f/{token}")
     async def upload_figure(token: str, request: Request) -> Any:
-        cap = artifacts.upload_cap(token=token, kind="figure")
-        data = await read_capped_body(request, cap=cap)
-        if data is None:
-            return _too_large(cap)
-        try:
-            completed = artifacts.complete_upload(
-                token=token,
-                kind="figure",
-                data=data,
-            )
-        except ValidationError as exc:
-            if "max_bytes" in exc.details:
-                return JSONResponse(
-                    {"detail": exc.message, "error_code": "payload_too_large", **exc.details},
-                    status_code=413,
-                )
-            raise
-        if not isinstance(completed, CompletedFigure):
-            raise TypeError("figure upload returned an artifact result")
-        return completed_figure_v1(completed)
+        return await upload(token, request, kind="figure")
 
     @api_router.get("/api/projects/{project_id}/artifacts")
     def list_artifacts(

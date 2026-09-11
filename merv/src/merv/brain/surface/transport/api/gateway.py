@@ -5,7 +5,7 @@ from __future__ import annotations
 from ....infrastructure import infrastructure_actor
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -66,6 +66,20 @@ class RequestAuthenticator:
     oauth_enabled: bool = False
     canonical_mcp_resource: str = ""
 
+    def _source_authority_holds(self, record: Mapping[str, Any]) -> bool:
+        """The key a session was minted from still grants what the lease claims."""
+        source_key_id = str(record.get("source_key_id") or "")
+        if not source_key_id:
+            return True
+        key_control = getattr(self.verifier, "project_keys", None)
+        key = None if key_control is None else key_control.active_record(key_id=source_key_id)
+        return (
+            key is not None
+            and key.owner_user_id == str(record.get("source_user_id") or "")
+            and key.tenant_id == str(record["tenant_id"])
+            and (key.grant_scope != "project" or key.project_id == str(record["project_id"]))
+        )
+
     def authenticate(self, request: Request) -> JSONResponse | None:
         if request.method == "OPTIONS":
             return None
@@ -120,7 +134,9 @@ class RequestAuthenticator:
             record = (
                 None
                 if self.agent_sessions is None
-                else self.agent_sessions.authenticate(session_secret=token, activate=False)
+                else self.agent_sessions.authenticate(
+                    session_secret=token, authorized=self._source_authority_holds
+                )
             )
             if record is None:
                 return oauth.bearer_denial(
@@ -130,35 +146,6 @@ class RequestAuthenticator:
                     session_denial=None,
                 )
             source_key_id = str(record.get("source_key_id") or "")
-            source_key = None
-            if source_key_id:
-                key_control = getattr(self.verifier, "project_keys", None)
-                source_key = (
-                    None
-                    if key_control is None
-                    else key_control.active_record(key_id=source_key_id)
-                )
-                source_user_id = str(record.get("source_user_id") or "")
-                source_valid = (
-                    source_key is not None
-                    and source_key.owner_user_id == source_user_id
-                    and source_key.tenant_id == str(record["tenant_id"])
-                    and (
-                        source_key.grant_scope != "project"
-                        or source_key.project_id == str(record["project_id"])
-                    )
-                )
-                if not source_valid:
-                    self.agent_sessions.invalidate(
-                        session_id=str(record["id"]),
-                        reason="source_authority_revoked",
-                    )
-                    return oauth.bearer_denial(
-                        request,
-                        message="unknown, expired, or released agent session",
-                        enabled=self.oauth_enabled,
-                        session_denial=None,
-                    )
             principal = Principal(
                 tenant_id=str(record["tenant_id"]),
                 client_id=f"agent-session:{record['id']}",
@@ -183,11 +170,6 @@ class RequestAuthenticator:
             )
             if denied is not None:
                 return denied
-            if self.agent_sessions.authenticate(session_secret=token) is None:
-                return oauth.bearer_denial(
-                    request, message="unknown, expired, or released agent session",
-                    enabled=self.oauth_enabled, session_denial=None,
-                )
             request.state.principal = principal
             request.state.authenticated = True
             return None
@@ -426,7 +408,7 @@ class ToolInvocationGateway:
             if self.agent_sessions is not None and getattr(
                 principal, "agent_session_id", None
             ):
-                self.agent_sessions.reconcile()
+                self.agent_sessions.reconcile(project_id=self.projects.key_project_id(principal) or None)
             return result
 
         return run

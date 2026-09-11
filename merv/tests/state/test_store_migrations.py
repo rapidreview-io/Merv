@@ -8,14 +8,16 @@ baseline (production, at head 64 when the squash landed) applies only that.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
 
-from merv.brain.kernel.state.schema import BASELINE_VERSION, has_column, has_table
-from tests.support.schema import LADDER, booted_store
+from merv.brain.kernel.state.persistence import KERNEL_SCHEMA
+from merv.brain.kernel.state.schema import BASELINE_VERSION, has_column, has_table, statements
+from tests.support.schema import ALL_SCHEMAS, LADDER, booted_store
 
 # What migration 65 drops: the fleet the brain used to mirror locally.
 RETIRED_TABLES = (
@@ -172,6 +174,30 @@ class DroppedUserHfTokensTest(unittest.TestCase):
                 self.assertFalse(has_table(conn, "user_hf_tokens"))
             finally:
                 conn.close()
+
+
+class DeclaredIndexesTest(unittest.TestCase):
+    """Every CREATE INDEX a schema module declares exists after a fresh install,
+    so a hot lookup cannot silently fall back to a table scan."""
+
+    def test_every_declared_index_is_installed(self) -> None:
+        declared = set()
+        for schema in (KERNEL_SCHEMA, *ALL_SCHEMAS):
+            for statement in statements(schema.ddl):
+                declared.update(re.findall(r"CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\w+)", statement))
+        with tempfile.TemporaryDirectory() as tmp:
+            store = booted_store(db_path=Path(tmp) / "state.sqlite")
+            conn = store.connect()
+            try:
+                installed = {
+                    str(row["name"]) for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'index'"
+                    ).fetchall()
+                }
+            finally:
+                conn.close()
+        self.assertGreater(len(declared), 40)
+        self.assertEqual(declared - installed, set())
 
 
 if __name__ == "__main__":

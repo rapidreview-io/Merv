@@ -78,6 +78,16 @@ CREATE TABLE IF NOT EXISTS artifact_figures (
 -- earlier round it carried forward (see research_submission_artifacts).
 CREATE INDEX IF NOT EXISTS idx_submissions_target
   ON submissions(target_type, target_id, attempt_index, created_seq);
+
+-- One-time upload tokens are resolved by value, the expiry sweep walks
+-- pending rows by deadline, figures are read per document, and every insert
+-- takes the next created_seq.
+CREATE INDEX IF NOT EXISTS idx_artifacts_token ON artifacts(upload_token);
+CREATE INDEX IF NOT EXISTS idx_artifacts_pending ON artifacts(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_artifacts_seq ON artifacts(created_seq);
+CREATE INDEX IF NOT EXISTS idx_submissions_seq ON submissions(created_seq);
+CREATE INDEX IF NOT EXISTS idx_artifact_figures_token ON artifact_figures(upload_token);
+CREATE INDEX IF NOT EXISTS idx_artifact_figures_artifact ON artifact_figures(artifact_id, status);
 """
 
 

@@ -595,6 +595,12 @@ CREATE TABLE IF NOT EXISTS project_api_keys (
   FOREIGN KEY(project_id) REFERENCES projects(id),
   FOREIGN KEY(parent_key_id) REFERENCES project_api_keys(id)
 );
+
+-- Keys are listed per owner and project, and a revocation walks the lineage
+-- down parent_key_id.
+CREATE INDEX IF NOT EXISTS idx_project_api_keys_owner
+  ON project_api_keys(project_id, owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_project_api_keys_parent ON project_api_keys(parent_key_id);
 """
 
 

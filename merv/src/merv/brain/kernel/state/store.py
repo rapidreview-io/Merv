@@ -254,20 +254,15 @@ class BaseStateStore:
             return [row_to_dict(row=row) or {} for row in rows]
 
     def project_event_signal(self, *, project_id: str | None) -> str:
-        """Monotonic per-project signal for the append-only event stream."""
+        """Monotonic per-project signal for the append-only event stream: the
+        newest id, one index probe, which only an append moves."""
         with closing(self.connect()) as conn:
             project_id = self.require_project_id(conn=conn, project_id=project_id)
             row = conn.execute(
-                """
-                SELECT COALESCE(MAX(id), 0) AS max_id, COUNT(*) AS count
-                FROM events
-                WHERE project_id = ?
-                """,
+                "SELECT COALESCE(MAX(id), 0) AS max_id FROM events WHERE project_id = ?",
                 (project_id,),
             ).fetchone()
-            if row is None:
-                return "0:0"
-            return f"{int(row['max_id'] or 0)}:{int(row['count'] or 0)}"
+            return str(int(row["max_id"] or 0)) if row is not None else "0"
 
     def tenant_event_count(self, *, tenant_id: str) -> int:
         """Count durable project events for one tenant."""
