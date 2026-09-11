@@ -13,88 +13,6 @@ from merv.brain.kernel.state.store import StateStore
 from merv.brain.research_core import Research
 
 
-class _Connection:
-    def __init__(self) -> None:
-        self.calls = []
-
-    def execute(self, query, arguments):
-        self.calls.append((query, arguments))
-        _project_id, *refs = arguments
-        rows = []
-        if "FROM claims" in query and "claim_1" in refs:
-            rows.append(
-                {"id": "claim_1", "statement": "Claim", "status": "active"}
-            )
-        if "FROM experiments" in query and "exp_1" in refs:
-            rows.append({"id": "exp_1", "intent": "Test", "status": "running"})
-        return _Cursor(rows)
-
-    def close(self):
-        return None
-
-
-class _Cursor:
-    def __init__(self, rows) -> None:
-        self.rows = rows
-
-    def fetchall(self):
-        return self.rows
-
-
-class _Store:
-    def __init__(self) -> None:
-        self.connection = _Connection()
-
-    def connect(self):
-        return self.connection
-
-    def install(self, module):
-        return None
-
-
-class GraphRefResolverTest(unittest.TestCase):
-    def test_resolves_only_research_owned_prefixes(self) -> None:
-        store = _Store()
-
-        result = Research(store=store, advances=WorkspaceAdvances(store=store), artifacts=Mock(), workflows=Workflows(store=store, programs=INSTALLED), program=PROGRAM).resolve_graph_refs(
-            project_id="proj_1",
-            refs=(
-                "claim_1",
-                "results.json",
-                "claim_missing",
-                "res_missing",
-                "exp_1",
-            ),
-        )
-
-        self.assertEqual(
-            result,
-            {
-                "claim_1": {
-                    "type": "claim",
-                    "resolved": True,
-                    "claim_id": "claim_1",
-                    "statement": "Claim",
-                    "status": "active",
-                },
-                "claim_missing": {"type": "unknown", "resolved": False},
-                "exp_1": {
-                    "type": "experiment",
-                    "resolved": True,
-                    "experiment_id": "exp_1",
-                    "intent": "Test",
-                    "status": "running",
-                },
-            },
-        )
-        self.assertEqual(
-            [arguments for _query, arguments in store.connection.calls],
-            [
-                ("proj_1", "claim_1", "claim_missing"),
-                ("proj_1", "exp_1"),
-            ],
-        )
-
 
 class CountingStateStore(StateStore):
     def __init__(self, *, db_path: Path) -> None:
@@ -202,6 +120,37 @@ class GraphRefQueryCountTest(unittest.TestCase):
             if statement.lstrip().upper().startswith(("SELECT", "WITH"))
         ]
         return result, selects
+
+    def test_resolves_only_research_owned_prefixes(self) -> None:
+        result, selects = self._resolve((
+                "claim_000",
+                "results.json",
+                "claim_missing",
+                "res_missing",
+                "exp_00",
+            ))
+
+        self.assertEqual(
+            result,
+            {
+                "claim_000": {
+                    "type": "claim",
+                    "resolved": True,
+                    "claim_id": "claim_000",
+                    "statement": "Claim 0",
+                    "status": "active",
+                },
+                "claim_missing": {"type": "unknown", "resolved": False},
+                "exp_00": {
+                    "type": "experiment",
+                    "resolved": True,
+                    "experiment_id": "exp_00",
+                    "intent": "Intent 0",
+                    "status": "running",
+                },
+            },
+        )
+        self.assertEqual(len(selects), 2)
 
     def test_one_and_twenty_five_refs_each_use_one_query_per_type(self) -> None:
         for prefix in ("claim", "exp", "rev", "syn"):
