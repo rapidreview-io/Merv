@@ -1,7 +1,6 @@
 # Research Core
 
 ## Purpose and boundary
-
 `research_core` owns projects, claims, native research records, reviews, artifact
 associations and candidate lineage. It supplies project-scoped verified facts and
 transactional record bindings to Workflows, which owns graph decisions and agent briefs.
@@ -11,8 +10,7 @@ ML objects; Research records their producer. `Research` is the public root, buil
 from `BaseStateStore`, `ResearchArtifacts` and its `Program`; Surface injects `Workflows`. Every
 native record runs on one engine; its service keeps only that kind's own rules.
 
-## Files
-- `records.py`: the engine every native record runs on. Workflows declares a `RecordKind`
+## Files- `records.py`: the engine every native record runs on. Workflows declares a `RecordKind`
   beside each graph — table, id prefix, insert and JSON columns, which UPDATE each action
   writes, whether dependency rows apply, any status projection — and this is the runtime
   that interprets it: one create (also on a caller's connection), one hydration, one gate
@@ -32,7 +30,9 @@ native record runs on one engine; its service keeps only that kind's own rules.
   per-node dependency and dependent rows the shared gate and UI read.
 - `reflections.py`: the wave's own machinery — single-open-wave guard, the rows behind its
   fixed corpus, lens pinning, reserved names, change-spec materialization, drift facts, and
-  the lens and wave bindings; its reads are declared in `definitions/reflection_corpus.py`.
+  the lens and wave bindings; publication reads the pinned spec before releasing names.
+  Only experiment names reserve cap slots; migration 71 defaults unknown names to one
+  slot, then initialization classifies task-only names from pinned artifact bytes.
 - `reviews.py`: review requests, one-time capabilities, isolated sessions, pinned snapshots,
   verdicts, return routing. `association_targets.py`: target resolution. `objects.py`: the
   object facade's lifecycle hook and its `ProducedObject` snapshot.

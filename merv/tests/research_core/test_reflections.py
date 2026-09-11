@@ -25,6 +25,64 @@ from .scenarios import (
 
 
 class ReflectionWorkflowTest(ResearchCase):
+    def _reserve_spec(self, *, experiments=True):
+        spec = json.loads(VALID_CHANGE_SPEC)
+        spec["decision"]["tasks"] = [{"key": "prep", "name": "prep-data", "goal": "Prepare data.",
+                                      "done_when": ["The split counts are verified."]}]
+        if not experiments:
+            spec["decision"]["experiments"] = []
+        reflection = self.create_reflection()
+        self.submit_lenses(reflection)
+        self.call("reflection.transition", project_id=self.project_id, reflection_id=reflection, transition="submit_reflections")
+        self.submit_reflection_bundle(reflection, change_spec=json.dumps(spec))
+        self.call("reflection.transition", project_id=self.project_id, reflection_id=reflection, transition="submit_reflection_artifacts")
+        return reflection
+
+    def test_task_only_reservations_leave_all_experiment_slots_available(self):
+        self._reserve_spec(experiments=False)
+        for index in range(ACTIVE_EXPERIMENT_CAP):
+            self.call("experiment.create", project_id=self.project_id, name=f"fill-{index}", intent="Use an available slot.")
+        with self.app.store.transaction() as conn:
+            self.assertEqual(conn.execute("SELECT SUM(experiment_slots) AS n FROM reflection_reserved_names").fetchone()["n"], 0)
+
+    def test_mixed_reservations_publish_at_capacity_from_pinned_spec(self):
+        reflection = self._reserve_spec()
+        self.pass_review(target_type="reflection", target_id=reflection, role="reflection_reviewer")
+        advance = self._reviewed_no_code_advance(reflection)
+        for index in range(ACTIVE_EXPERIMENT_CAP - 1):
+            self.call("experiment.create", project_id=self.project_id, name=f"fill-{index}", intent="Use an available slot.")
+        with self.assertRaises(WorkflowError):
+            self.call("experiment.create", project_id=self.project_id, name="overflow", intent="Cannot steal the reserved slot.")
+        with self.app.store.transaction() as conn:
+            rows = [dict(row) for row in conn.execute("SELECT * FROM reflection_reserved_names ORDER BY name_lower").fetchall()]
+        self.assertEqual([row["experiment_slots"] for row in rows], [0, 1])
+        with self._flaky_materialization():
+            with self.assertRaises(RuntimeError):
+                self._settle(advance)
+        with self.app.store.transaction() as conn:
+            self.assertEqual([dict(row) for row in conn.execute("SELECT * FROM reflection_reserved_names ORDER BY name_lower").fetchall()], rows)
+        # Publication must never fall back to the current spec after dropping its pin.
+        with mock.patch.object(self.app.research.reflections, "_submitted_role_document", side_effect=AssertionError("lost pin")):
+            self.assertEqual(self._settle(advance)["status"], "published")
+
+    def test_migration_71_classifies_two_existing_names_and_keeps_unknown_safe(self):
+        from merv.brain.research_core.persistence import RESEARCH_SCHEMA
+        reflection = self._reserve_spec()
+        self.pass_review(target_type="reflection", target_id=reflection, role="reflection_reviewer")
+        with self.app.store.transaction() as conn:
+            conn.execute("ALTER TABLE reflection_reserved_names DROP COLUMN experiment_slots")
+            conn.execute("DELETE FROM schema_migrations WHERE version = 71")
+        self.app.store.install(RESEARCH_SCHEMA)
+        with self.app.store.transaction() as conn:
+            self.assertEqual([r["experiment_slots"] for r in conn.execute("SELECT experiment_slots FROM reflection_reserved_names").fetchall()], [1, 1])
+        self.app.research.reflections.classify_reservations()
+        with self.app.store.transaction() as conn:
+            self.assertEqual([r["experiment_slots"] for r in conn.execute("SELECT experiment_slots FROM reflection_reserved_names ORDER BY name_lower").fetchall()], [0, 1])
+            conn.execute("INSERT INTO reflection_reserved_names (reflection_id, project_id, name_lower, artifact_id) VALUES (?, ?, 'unknown', 'missing')", (reflection, self.project_id))
+        self.app.research.reflections.classify_reservations()
+        with self.app.store.transaction() as conn:
+            self.assertEqual(conn.execute("SELECT experiment_slots FROM reflection_reserved_names WHERE name_lower = 'unknown'").fetchone()["experiment_slots"], 1)
+
     def test_roster_and_single_open_wave_are_enforced(self) -> None:
         with self.assertRaisesRegex(ValidationError, "exactly 5 lenses"):
             self.call(

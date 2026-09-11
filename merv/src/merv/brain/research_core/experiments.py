@@ -131,7 +131,7 @@ class ExperimentService(RecordHooks):
             f"SELECT COUNT(*) AS count FROM experiments WHERE project_id = ? AND status NOT IN ({terminal})",
             (project_id,)).fetchone()["count"])
         reserved_count = int(conn.execute(
-            "SELECT COUNT(*) AS count FROM reflection_reserved_names WHERE project_id = ?",
+            "SELECT COALESCE(SUM(experiment_slots), 0) AS count FROM reflection_reserved_names WHERE project_id = ?",
             (project_id,)).fetchone()["count"])
         if active_count + reserved_count >= ACTIVE_EXPERIMENT_CAP:
             raise WorkflowError(active_experiment_cap_reached_message(

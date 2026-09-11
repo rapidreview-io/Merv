@@ -44,6 +44,7 @@ from .policy import (
 )
 from .records import RecordHooks, RecordKnowledge, Records
 from ..workflows import Reference, Snapshot, documents
+from ..kernel.utils import ContentUnavailableError
 from ..kernel.state.store import (
     BaseStateStore,
     row_to_dict,
@@ -101,6 +102,31 @@ class ReflectionService(RecordHooks):
         self.runtime = records.runtime
         self.advances = advances
         records.register(REFLECTION, self)
+        self.classify_reservations()
+
+    def classify_reservations(self) -> None:
+        """Complete migration 71 using pinned artifact bytes, unavailable to SQL.
+
+        Unknown names and unreadable specs retain one slot; only proven task-only
+        names release capacity. This is safe to repeat when storage recovers.
+        """
+        with self.store.transaction() as conn:
+            for row in conn.execute("SELECT DISTINCT reflection_id, project_id, artifact_id FROM reflection_reserved_names").fetchall():
+                experiments, tasks = set(), set()
+                try:
+                    found = self.artifacts.get(artifact_ids=(row["artifact_id"],), project_id=row["project_id"], include="document")
+                    document = require_artifact_document(found[0] if found else None, artifact_id=row["artifact_id"], what="change spec")
+                    decision = parse_change_spec(text=document.text, path=document.path,
+                                                claim_exists=lambda _: True, node_exists=lambda _: True)["decision"]
+                    experiments, tasks = ({str(item["name"]).strip().lower() for item in decision.get(kind) or ()}
+                                          for kind in ("experiments", "tasks"))
+                except (NotFoundError, ValidationError, WorkflowError, ContentUnavailableError):
+                    pass
+                names = conn.execute("SELECT name_lower FROM reflection_reserved_names WHERE reflection_id = ? AND artifact_id = ?",
+                                     (row["reflection_id"], row["artifact_id"])).fetchall()
+                for name in names:
+                    conn.execute("UPDATE reflection_reserved_names SET experiment_slots = ? WHERE reflection_id = ? AND name_lower = ?",
+                                 (int(name["name_lower"] in experiments or name["name_lower"] not in tasks), row["reflection_id"], name["name_lower"]))
 
     # ---- create ----
 
@@ -915,11 +941,11 @@ class ReflectionService(RecordHooks):
         if action in PINS_WAVE_NAMES:
             self._reserve_wave_names(conn=conn, reflection=self.get_state(
                 reflection_id=before.id, project_id=before.project_id, conn=conn))
-        elif action != "migrate" and REFLECTION.status_of(after.state) not in HOLDS_WAVE_NAMES:
-            conn.execute("DELETE FROM reflection_reserved_names WHERE reflection_id = ?", (before.id,))
         if action == "publish":
             self._materialize_change_spec(conn=conn, reflection=self.get_state(
                 reflection_id=before.id, project_id=before.project_id, conn=conn))
+        if action != "migrate" and REFLECTION.status_of(after.state) not in HOLDS_WAVE_NAMES:
+            conn.execute("DELETE FROM reflection_reserved_names WHERE reflection_id = ?", (before.id,))
 
     def before_commit(self, *, conn, before, after, action: str) -> None:
         """A bound receipt means central already advanced: the only legal exit
@@ -986,8 +1012,8 @@ class ReflectionService(RecordHooks):
             for kind, taken in (("experiments", world["experiment_names"]), ("tasks", world["task_names"])):
                 if name in proposed[kind] and name in taken:
                     raise WorkflowError(f"{kind[:-1]} name already exists in project: {name}")
-            conn.execute("INSERT INTO reflection_reserved_names (reflection_id, project_id, name_lower, artifact_id) "
-                         "VALUES (?, ?, ?, ?)", (reflection_id, project_id, name, document.artifact_id))
+            conn.execute("INSERT INTO reflection_reserved_names (reflection_id, project_id, name_lower, artifact_id, experiment_slots) "
+                         "VALUES (?, ?, ?, ?, ?)", (reflection_id, project_id, name, document.artifact_id, int(name in proposed["experiments"])))
 
     def _pinned_change_spec(self, *, conn, reflection: dict[str, Any]) -> dict[str, Any]:
         """The spec pinned when its names were validated and reserved.

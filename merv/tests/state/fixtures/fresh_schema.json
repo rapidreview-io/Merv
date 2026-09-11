@@ -391,6 +391,7 @@
     ],
     "reflection_reserved_names": [
       "artifact_id",
+      "experiment_slots",
       "name_lower",
       "project_id",
       "reflection_id"

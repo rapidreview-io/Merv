@@ -292,6 +292,7 @@ CREATE TABLE IF NOT EXISTS reflection_reserved_names (
   project_id TEXT NOT NULL,
   name_lower TEXT NOT NULL,
   artifact_id TEXT NOT NULL DEFAULT '',
+  experiment_slots INTEGER NOT NULL DEFAULT 1 CHECK (experiment_slots IN (0, 1)),
   PRIMARY KEY (reflection_id, name_lower),
   FOREIGN KEY(reflection_id) REFERENCES reflections(id)
 );
@@ -491,9 +492,17 @@ def _hand_advances_to_workspaces(conn: Connection) -> None:
     conn.execute("ALTER TABLE workspace_advances RENAME COLUMN reflection_id TO instance_id")
 
 
+def _reserve_experiment_slots(conn: Connection) -> None:
+    """Keep legacy reservations conservative until their pinned bytes can be read."""
+    if has_table(conn, "reflection_reserved_names") and not has_column(conn, "reflection_reserved_names", "experiment_slots"):
+        conn.execute("ALTER TABLE reflection_reserved_names ADD COLUMN experiment_slots "
+                     "INTEGER NOT NULL DEFAULT 1 CHECK (experiment_slots IN (0, 1))")
+
+
 RESEARCH_SCHEMA = SchemaModule(
     name="research_core",
     ddl=RESEARCH_DDL,
     migrations=(Migration(68, "drop_experiment_tracking_columns", _drop_tracking_columns),
-                Migration(70, "hand_advances_to_workspaces", _hand_advances_to_workspaces)),
+                Migration(70, "hand_advances_to_workspaces", _hand_advances_to_workspaces),
+                Migration(71, "reserve_experiment_slots", _reserve_experiment_slots)),
 )
