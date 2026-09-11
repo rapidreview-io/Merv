@@ -44,7 +44,8 @@ _REFLECTION_FIRST_TRANSITION = next(
     edge.name for edge in REFLECTION.workflow.edges
     if edge.source == REFLECTION.workflow.initial
 )
-_REFLECTION_PUBLISH_TRANSITION = REFLECTION.action_with_effect("materialize_change_spec")
+_REFLECTION_PUBLISH_TRANSITION = next(edge.name for edge in REFLECTION.workflow.edges
+                                      if edge.target == REFLECTION.success_status)
 
 
 class CandidateSubmitInput(ProjectScopedInput):

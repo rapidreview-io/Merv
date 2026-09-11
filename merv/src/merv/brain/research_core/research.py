@@ -33,7 +33,7 @@ from .models import (
     TaskState,
     public_record,
 )
-from .reflections import ReflectionService
+from .reflections import ReflectionService, publication_effect
 from .records import Records
 from .reviews import ReviewService
 from .tasks import TaskService
@@ -122,13 +122,13 @@ class Research:
         self.tasks = TaskService(store=store, records=self.records)
         self.reflections = ReflectionService(
             advances=advances,
-            write_claim=self._write_claim,
             store=store,
             artifacts=artifacts,
-            experiments=self.experiments,
-            tasks=self.tasks,
             records=self.records,
         )
+        workflows.register_transactional_effect("reflection.materialize_change_spec", publication_effect(
+            write_claim=self._write_claim, create_experiment=self.experiments.create_from_reflection,
+            create_task=self.tasks.create_from_reflection))
         self.reviews = ReviewService(
             store=store,
             records=self.records,

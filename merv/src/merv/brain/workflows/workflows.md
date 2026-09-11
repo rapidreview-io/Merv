@@ -1,7 +1,6 @@
 # Workflows
 Workflow definitions, durable execution and composition live here; projects, claims,
 artifacts and agent processes stay outside. Python functions own gates and agent context.
-
 `graph.py` defines immutable nodes, ordinary directed edges and one `Evaluation`
 for command enforcement, available/blocked actions, guidance and dispatch.
 Branches, loops and review rejection use the same transition model. Agent nodes
@@ -9,7 +8,6 @@ provide `build_context(snapshot, knowledge) -> Brief`, with a concise assignment
 and exact references. `Node.guidance` declares `Guidance` (skill, handoff, named messages);
 `Workflow.outcome_guidance` is keyed by outcome. The runtime projects this presentation
 for every program; role skills own procedures. Wait and terminal states dispatch no agent.
-
 A node also declares what its state needs, as `requires`: `ArtifactNeed` (a submitted
 document, selected and validated), `RecordNeed` (a fact its own graph function verifies),
 `DependenciesDone`, `ReviewGate`, and whatever class a program brings. Each names the edges
@@ -27,7 +25,6 @@ kinds, effects, requirements, tools and an optional project orientation callback
 `RecordKind.creation_requires` separately gates native creation from declared facts; `requires` is a `Requirement` protocol, so a program
 may bring its own need class. `brain/programs/` holds the programs and `INSTALLED`, the only
 place a definition module is named.
-
 Every agent node declares an `Execution`: whether it is read-only, its node-specific tools
 beyond the support baseline, the `mutating` subset, `Scope` rules binding arguments to the
 instance id, the workflow name, or a brief `Reference` by kind, sandbox authority, and the
@@ -37,18 +34,21 @@ argument and binds the resolved value into the handler call for mutating tools a
 whose contract declares the field, so every mutating tool must accept its scoped fields as
 keywords.
 `definitions/execution.py` holds the shared vocabularies.
-
 `persistence.py` declares the three tables this package owns: instances,
 history, and the action outbox. `runtime.py` stores version-pinned instances, immutable history and requested actions. It
 enforces revision checks and idempotent request keys, records actual work activation
-separately from state transitions, and calls transactional native record bindings. It
+separately from transitions. `Change.transactional` carries `TransactionalEffect(kind, data)`;
+`Program.transactional_effects` declares names, distinct from delivery `Program.effects`.
+`Workflows` validates/registers `handler(conn, before, after, data) -> None` per workflow version.
+After replay/revision checks, gates and reduction: save state/pending actions, run effects in
+tuple order, commit native columns/sealing/hooks, enter composition, record history/event.
+Migration shares this save; activation rejects effects. Missing handlers/failures abort. It
 provides a final revision/prerequisite fence for the assignment lease transaction, and
 answers Agent Sessions' `InstanceFacts` port (revision, terminal, label) so leases never
 read a research table. The assignment packet carries `execution` as the node's declared
 policy in JSON.
 `delivery.py` retries effects using stable keys and expiring leases; an
 obsolete worker cannot acknowledge a newer worker's lease.
-
 `composition.py` describes child workflows by name and named entry, or attaches existing
 instances without changing their progress. Wait nodes pin membership and join named
 outcomes. `join_guard` enforces the same route for manual commands and automatic joins. Old

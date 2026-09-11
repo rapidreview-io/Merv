@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from merv.brain.research_core.reflections import _materialize_claim_changes
 import unittest
 from unittest import mock
 
@@ -30,7 +31,7 @@ class ReflectionWorkflowTest(ResearchCase):
         reflection = self.create_reflection()
         service = self.app.research.reflections
         with self.app.store.transaction() as conn:
-            ids = service._materialize_claim_changes(conn=conn, project_id=self.project_id, reflection_id=reflection,
+            ids = _materialize_claim_changes(write_claim=self.app.research._write_claim, conn=conn, project_id=self.project_id, reflection_id=reflection,
                 changes=[{"op": "create", "key": "effect", "statement": "  Compare the effect.  ", "scope": " Local ", "rationale": " Evidence "}])
             wave_id = ids["effect"]
             wave = dict(conn.execute("SELECT * FROM claims WHERE id = ?", (wave_id,)).fetchone())
@@ -38,7 +39,7 @@ class ReflectionWorkflowTest(ResearchCase):
                 self.assertEqual(wave[field], direct[field])
             events = [json.loads(row["payload_json"]) for row in conn.execute("SELECT payload_json FROM events WHERE target_type = 'claim' ORDER BY id").fetchall()]
             self.assertEqual(events[-1], {**events[0], "source_reflection_id": reflection, "rationale": "Evidence"})
-            service._materialize_claim_changes(conn=conn, project_id=self.project_id, reflection_id=reflection,
+            _materialize_claim_changes(write_claim=self.app.research._write_claim, conn=conn, project_id=self.project_id, reflection_id=reflection,
                 changes=[{"op": "update", "claim_id": direct["id"], "statement": "Revised claim.", "status": "supported"}])
             updated = dict(conn.execute("SELECT * FROM claims WHERE id = ?", (direct["id"],)).fetchone())
             self.assertEqual((updated["statement"], updated["scope"], updated["confidence"], updated["status"]),
@@ -57,11 +58,11 @@ class ReflectionWorkflowTest(ResearchCase):
                         for table in ("claims", "events", "reflection_claim_changes")]
         before = counts()
         with self.assertRaises(NotFoundError), self.app.store.transaction() as conn:
-            self.app.research.reflections._materialize_claim_changes(conn=conn, project_id=self.project_id,
+            _materialize_claim_changes(write_claim=self.app.research._write_claim, conn=conn, project_id=self.project_id,
                 reflection_id=reflection, changes=changes)
         self.assertEqual(counts(), before)
         with self.assertRaisesRegex(RuntimeError, "abort after association"), self.app.store.transaction() as conn:
-            self.app.research.reflections._materialize_claim_changes(conn=conn, project_id=self.project_id,
+            _materialize_claim_changes(write_claim=self.app.research._write_claim, conn=conn, project_id=self.project_id,
                 reflection_id=reflection, changes=changes[:1])
             raise RuntimeError("abort after association")
         self.assertEqual(counts(), before)
@@ -331,19 +332,18 @@ class ReflectionWorkflowTest(ResearchCase):
 
     def _flaky_materialization(self):
         """Patch context: the first publish attempt fails, later ones succeed."""
-        service = self.app.reflection_waves
-        original = service._materialize_change_spec
+        handlers = self.app.workflows.runtime.transactional_effects
+        key = ("reflection", 1, "reflection.materialize_change_spec")
+        original = handlers[key]
         calls = {"n": 0}
 
-        def flaky(**kwargs):
+        def flaky(*args):
+            original(*args)
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError("transient publish failure")
-            return original(**kwargs)
 
-        return mock.patch.object(
-            service, "_materialize_change_spec", side_effect=flaky
-        )
+        return mock.patch.dict(handlers, {key: flaky})
 
     def test_duplicate_claim_refs_are_rejected_at_the_review_gate(self) -> None:
         # Materialization inserts experiment_claims rows keyed on

@@ -25,7 +25,7 @@ from .delivery import Deliveries, Delivery
 from .graph import (
     Action, ArtifactNeed, Brief, Change, CreationRequirement, DependenciesDone, Edge, Evaluation, Execution, Guidance, Issue,
     Knowledge, Metadata, Node, Program, Public, RecordKind, RecordNeed, Reference, Registry, Requirement,
-    ReviewGate, ReviewReturn, Scope, Snapshot, Workflow, WorkspacePolicy, all_of,
+    ReviewGate, ReviewReturn, Scope, Snapshot, TransactionalEffect, Workflow, WorkspacePolicy, all_of,
 )
 from .runtime import InstanceFact, Runtime, snapshot_view
 from .tools import TOOLS
@@ -48,6 +48,6 @@ __all__ = [
     "Action", "ArtifactNeed", "Brief", "Change", "CreationRequirement", "Child", "ChildResult", "DependenciesDone",
     "Edge", "Evaluation", "Execution", "Guidance", "InstanceFact", "Issue", "Knowledge", "Metadata", "Node", "Program", "Public", "RecordKind",
     "RecordNeed", "Reference", "Registry", "Requirement", "ReviewGate", "ReviewReturn", "Scope",
-    "Snapshot", "Workflow", "WorkspacePolicy",
+    "Snapshot", "TransactionalEffect", "Workflow", "WorkspacePolicy",
     "Binding", "Deliveries", "Delivery", "Runtime", "TOOLS", "Workflows", "snapshot_view", "all_of", "wait_for_all",
 ]

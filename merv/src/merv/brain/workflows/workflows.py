@@ -10,7 +10,7 @@ from ..kernel.state.store import BaseStateStore, Connection
 from ..kernel.utils import NotFoundError
 from .graph import Data, Knowledge, Program, Registry, Snapshot
 from .delivery import Deliveries
-from .runtime import CommitRecord, CreateRecord, EmptyKnowledge, KnowledgeFactory, Runtime, snapshot_view
+from .runtime import CommitRecord, CreateRecord, EmptyKnowledge, KnowledgeFactory, Runtime, TransactionalHandler, snapshot_view
 from .persistence import WORKFLOW_SCHEMA
 
 
@@ -42,6 +42,11 @@ class Workflows:
         bindings: Mapping[str, Binding] | None = None,
         knowledge: KnowledgeFactory | None = None,
     ) -> None:
+        programs = tuple(programs)
+        self._transactional = {name: {(workflow.name, workflow.version)
+                              for program in programs if name in program.transactional_effects
+                              for workflow in program.workflows}
+                              for program in programs for name in program.transactional_effects}
         store.install(WORKFLOW_SCHEMA)
         self.bindings = dict(bindings or {})
         self.preparations: dict[str, PrepareTransition] = {}
@@ -51,6 +56,14 @@ class Workflows:
             store=store, registry=Registry(workflow for program in programs for workflow in program.workflows),
             knowledge=self._read, commit=self._commit, create=self._create,
         )
+
+    def register_transactional_effect(self, name: str, handler: TransactionalHandler) -> None:
+        if name not in self._transactional or not callable(handler):
+            raise ValueError(f"undeclared transactional effect or invalid handler: {name!r}")
+        keys = [(workflow, version, name) for workflow, version in self._transactional[name]]
+        if any(key in self.runtime.transactional_effects for key in keys):
+            raise ValueError(f"transactional effect {name!r} already registered")
+        self.runtime.transactional_effects.update((key, handler) for key in keys)
 
     def _read(self, snapshot, conn):
         binding = self.bindings.get(snapshot.workflow)

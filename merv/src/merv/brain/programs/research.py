@@ -107,6 +107,7 @@ PROGRAM = Program(
     workflows=(EXPERIMENT, TASK, REFLECTION, LENS, RESEARCH_WAVE),
     kinds=(EXPERIMENT_KIND, TASK_KIND, REFLECTION_KIND),
     effects=("workflow.start", "review.request"),
+    transactional_effects=("reflection.materialize_change_spec",),
     requirements=(ArtifactNeed, RecordNeed, DependenciesDone, ReviewGate),
     tools={**WORKFLOW_TOOLS, **RESEARCH_TOOLS},
 )

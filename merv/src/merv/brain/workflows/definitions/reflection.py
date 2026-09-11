@@ -6,7 +6,7 @@ from typing import Any
 
 from ..composition import Child, join_guard
 from ..graph import (
-    Action, ArtifactNeed, Brief, Change, Edge, Guidance, Issue, Metadata, Node, RecordKind, RecordNeed,
+    Action, ArtifactNeed, Brief, Change, Edge, Guidance, Issue, Metadata, Node, RecordKind, RecordNeed, TransactionalEffect,
     Reference, ReviewGate, ReviewReturn, Workflow, all_of,
 )
 from ...kernel.utils import NotFoundError, ValidationError, WorkflowError, now_iso
@@ -156,7 +156,7 @@ def _revision(snapshot, payload, knowledge):
 
 def _new_attempt(snapshot, payload, knowledge):
     change = _revision(snapshot, payload, knowledge)
-    return Change(data={**change.data, "attempt_index": int(change.data["attempt_index"]) + 1, "lens_artifacts": {}})
+    return replace(change, data={**change.data, "attempt_index": int(change.data["attempt_index"]) + 1, "lens_artifacts": {}})
 
 
 def _lens_children(snapshot, knowledge):
@@ -258,6 +258,8 @@ def publish_wave(snapshot, payload, knowledge):
     """Pin the graph this wave published and start its experiment/task wave."""
     return Change(data={"published_at": now_iso(),
                         "published_graph_version_id": (_artifact(_wave(snapshot, knowledge), "project_graph") or {}).get("id")},
+                  transactional=(TransactionalEffect("reflection.materialize_change_spec",
+                      {"spec": knowledge.read(Reference("reflection_change_spec", snapshot.id))}),),
                   actions=(Action("workflow.start", {"workflow": "research_wave", "request_id": f"reflection-wave:{snapshot.id}",
                                                      "data": {"reflection_id": snapshot.id}}),))
 
@@ -331,8 +333,7 @@ def published_followups(experiments):
              "why": REFLECTION.outcome_guidance["published"].messages["first_experiment"]}] if experiments else []
 
 
-METADATA = Metadata(effects={"publish": ("materialize_change_spec", "pin_project_graph")},
-                    subject="reflection wave", success_outcome="published")
+METADATA = Metadata(subject="reflection wave", success_outcome="published")
 
 from .research_state import ReflectionState
 from ..graph import Public
