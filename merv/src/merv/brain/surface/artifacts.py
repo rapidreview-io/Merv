@@ -19,7 +19,6 @@ from ..research_core import (
     CompletedArtifact,
     ResearchArtifacts as Artifacts,
 )
-from ..kernel.utils import NotFoundError
 
 
 _ARTIFACT_LIST_FIELDS = (

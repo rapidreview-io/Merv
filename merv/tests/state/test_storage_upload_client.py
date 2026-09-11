@@ -157,5 +157,32 @@ class StorageUploadClientTest(unittest.TestCase):
         self.assertIn("checksum changed", str(ctx.exception))
 
 
+class RedirectRefusalTest(unittest.TestCase):
+    """The client follows no redirect: a 302 from the brain is an error naming
+    the status, never a request replayed against the redirect target."""
+
+    def test_a_redirect_is_refused(self) -> None:
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        from merv.client.storage_upload import StorageUploadError, _request_json
+
+        class Redirect(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", "http://127.0.0.1:9/elsewhere")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        with self.assertRaises(StorageUploadError) as ctx:
+            _request_json(f"http://127.0.0.1:{server.server_port}/api/anything")
+        self.assertIn("302", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

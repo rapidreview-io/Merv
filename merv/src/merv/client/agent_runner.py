@@ -1125,11 +1125,12 @@ class WorkspaceManager:
             source_base = self._rev_parse(source, self.settings.base_ref)
             # A clone that fails or times out must leave nothing behind, or
             # every later cycle would find the half-made repository and stop
-            # here for good; the error is the daemon's retryable kind.
+            # here for good; the error is the daemon's retryable kind. It runs
+            # inside a 300 s offer lease, so it must give up before that does.
             try:
                 result = subprocess.run(
                     ["git", "clone", "--bare", str(source), str(bare)],
-                    capture_output=True, text=True, check=False, timeout=600,
+                    capture_output=True, text=True, check=False, timeout=240,
                 )
             except subprocess.TimeoutExpired as exc:
                 shutil.rmtree(bare, ignore_errors=True)

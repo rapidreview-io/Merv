@@ -119,6 +119,11 @@ def _upload_part(
                 )
             return {"part_number": part_number, "etag": etag}
         except (urllib.error.URLError, OSError) as exc:
+            if isinstance(exc, urllib.error.HTTPError) and 300 <= exc.code < 400:
+                # A redirect is refused, not retried: the target is misrouted.
+                raise StorageUploadError(
+                    f"object store redirected part {part_number} (HTTP {exc.code})"
+                ) from exc
             if attempt == 2:
                 raise StorageUploadError(
                     f"upload failed for part {part_number} after 3 attempts"
