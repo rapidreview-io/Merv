@@ -17,13 +17,12 @@ validate_experiment_name = research_contracts.validate_experiment_name
 validate_task_name = research_contracts.validate_task_name
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import re
 from typing import Any, Literal, TypeAlias
 
-from ..kernel.state.store import Connection
-from ..kernel.utils import ValidationError, now_iso
+from ..kernel.utils import ValidationError
 from ..workflows import (
     EXPERIMENT_KIND as EXPERIMENT, REFLECTION_KIND as REFLECTION, TASK_KIND as TASK,
     ArtifactNeed, DependenciesDone, Evaluation, Issue, RecordKind, RecordNeed, Requirement,
@@ -304,14 +303,55 @@ class GateEvaluation:
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewFact:
+    role: str
+    snapshot_id: str
+    verdict: Mapping[str, Any]
+    request: Mapping[str, Any]
+    strict: bool
+    expired: bool
+
+    @property
+    def passed(self) -> bool:
+        return self.verdict.get("verdict") == "pass" and not self.blocked_reason
+
+    @property
+    def blocked_reason(self) -> str:
+        if self.verdict.get("verdict") == "pass" and self.strict and self.verdict.get("independence") != "verified_agent_review":
+            return (f"a {self.role} review passed but its independence is only attested "
+                    "(the reviewer did not present a session identity) and this project "
+                    "requires verified reviews (require_verified_reviews is on): request "
+                    "a fresh review and have the reviewer pass its own caller_session_id "
+                    "to review.start")
+        return ""
+
+    @property
+    def request_valid(self) -> bool:
+        return self.request.get("status") in {"requested", "started"} and not self.expired
+
+    @property
+    def status(self) -> str:
+        return "passed" if self.passed else str(self.request["status"]) if self.request_valid else "pending"
+
+    def reference(self, *, request: bool = False) -> dict[str, Any]:
+        pinned = snapshot_from_id(snapshot_id=self.snapshot_id)
+        if request:
+            return {**pinned, "request_id": self.request["id"]} if self.request_valid else {}
+        return {**self.verdict, "role": self.role, "passed": self.passed,
+                "error": "" if self.passed else self.blocked_reason or f"A passing independent {self.role} review is required.",
+                "snapshot_id": self.snapshot_id, "artifacts": pinned.get("artifacts") or [],
+                "findings": json.loads(str(self.verdict.get("findings_json") or "[]")),
+                "evidence": json.loads(str(self.verdict.get("evidence_json") or "{}"))}
+
+
+@dataclass(frozen=True, slots=True)
 class GateContext:
     """Everything a requirement resolver may read: no resolver re-derives a fact."""
 
-    conn: Connection
-    project_id: str
     record: dict[str, Any]
     snapshot: Snapshot
     issues: tuple[Issue, ...]
+    reviews: Mapping[str, ReviewFact] = field(default_factory=dict)
 
     def issue_for(self, codes) -> Issue | None:
         return next((issue for issue in self.issues if issue.code in codes), None)
@@ -376,67 +416,11 @@ def _requirement_item(need, context: GateContext, *, kind: str, status: Evaluati
 
 
 def evaluate_review_gate(review: ReviewGate, context: GateContext) -> RequirementEvaluation:
-    """The one gate that reads its own rows: a verdict and its open request."""
-    conn, target, target_type = context.conn, context.record, context.snapshot.workflow
-    snapshot_id = review_snapshot_id(target_type=target_type, target=target, snapshot=context.snapshot)
-    latest = conn.execute(
-        """
-        SELECT r.verdict, s.independence FROM reviews r
-        JOIN review_sessions s ON s.id = r.session_id
-        WHERE r.target_type = ? AND r.target_id = ? AND r.role = ?
-          AND r.target_snapshot_id = ? AND r.project_id = ? AND s.status = 'submitted'
-        ORDER BY r.created_seq DESC LIMIT 1
-        """,
-        (
-            target_type,
-            str(target["id"]),
-            review.role,
-            snapshot_id,
-            str(target["project_id"]),
-        ),
-    ).fetchall()
-    passes = [row for row in latest if row["verdict"] == "pass"]
-    verified = any(
-        str(row["independence"]) == "verified_agent_review" for row in passes
-    )
-    strict = bool(
-        passes
-        and project_settings(conn=conn, project_id=str(target["project_id"])).get(
-            "require_verified_reviews"
-        )
-    )
-    passed = bool(passes) and (verified or not strict)
-    row = conn.execute(
-        """
-        SELECT id, status, expires_at
-        FROM review_requests
-        WHERE target_type = ? AND target_id = ? AND role = ?
-          AND target_snapshot_id = ?
-        ORDER BY created_seq DESC
-        LIMIT 1
-        """,
-        (
-            target_type,
-            str(target["id"]),
-            review.role,
-            snapshot_id,
-        ),
-    ).fetchone()
-    request = None if row is None else dict(row)
-    review_status = "pending"
-    if passed:
-        review_status = "passed"
-    elif request is not None and request.get("status") in {"requested", "started"}:
-        review_status = str(request["status"])
-    blocked_reason = (
-        f"a {review.role} review passed but its independence is only attested "
-        "(the reviewer did not present a session identity) and this project "
-        "requires verified reviews (require_verified_reviews is on): request "
-        "a fresh review and have the reviewer pass its own caller_session_id "
-        "to review.start"
-        if passes and strict and not verified
-        else ""
-    )
+    """Format the exact scoped fact the graph used for enforcement."""
+    target = context.record
+    fact = context.reviews[review.role]
+    passed, request = fact.passed, fact.request
+    review_status, blocked_reason = fact.status, fact.blocked_reason
     error = "" if passed else blocked_reason or review.error
     item: GateItem = {
         "id": f"review:{review.role}",
@@ -451,7 +435,7 @@ def evaluate_review_gate(review: ReviewGate, context: GateContext) -> Requiremen
     }
     if blocked_reason:
         item["problems"] = [blocked_reason]
-    if request is not None:
+    if request:
         item.update(
             request_id=str(request["id"]),
             expires_at=str(request["expires_at"]),
@@ -559,13 +543,6 @@ def parse_project_settings(raw: Any) -> dict[str, Any]:
     return settings if isinstance(settings, dict) else {}
 
 
-def project_settings(*, conn: Any, project_id: str) -> dict[str, Any]:
-    row = conn.execute(
-        "SELECT settings_json FROM projects WHERE id = ?", (project_id,)
-    ).fetchone()
-    return parse_project_settings(row["settings_json"]) if row else {}
-
-
 def agent_dispatch_enabled(project: Mapping[str, Any]) -> bool:
     """Whether this project may hand work to local coding-agent runners.
 
@@ -640,37 +617,6 @@ def snapshot_from_id(*, snapshot_id: str) -> dict[str, Any]:
         "snapshot_token": parts[5] if len(parts) > 5 else "",
         "code_sha": parts[6] if len(parts) > 6 else "",
     }
-
-
-def read_review_fact(*, conn, project_id: str, target_type: str, target_id: str,
-                     snapshot_id: str, role: str, request: bool = False) -> dict[str, Any]:
-    """Read a capability or verdict for exactly one scoped immutable snapshot."""
-    if request:
-        row = conn.execute(
-            "SELECT id, target_snapshot_id FROM review_requests WHERE project_id = ? AND target_type = ? "
-            "AND target_id = ? AND role = ? AND target_snapshot_id = ? AND status IN ('requested', 'started') "
-            "AND expires_at > ? ORDER BY created_seq DESC LIMIT 1",
-            (project_id, target_type, target_id, role, snapshot_id, now_iso()),
-        ).fetchone()
-        return {} if row is None else {**snapshot_from_id(snapshot_id=row["target_snapshot_id"]), "request_id": row["id"]}
-    row = conn.execute(
-        "SELECT r.id, r.verdict, r.return_to, r.notes, r.synopsis, r.findings_json, r.evidence_json, s.independence "
-        "FROM reviews r JOIN review_sessions s ON s.id = r.session_id WHERE r.project_id = ? AND r.target_type = ? "
-        "AND r.target_id = ? AND r.role = ? AND r.target_snapshot_id = ? AND s.status = 'submitted' "
-        "ORDER BY r.created_seq DESC LIMIT 1", (project_id, target_type, target_id, role, snapshot_id),
-    ).fetchone()
-    fact = {} if row is None else dict(row)
-    passed = fact.get("verdict") == "pass"
-    strict = project_settings(conn=conn, project_id=project_id).get("require_verified_reviews")
-    error = f"A passing independent {role} review is required."
-    if passed and strict and fact.get("independence") != "verified_agent_review":
-        passed = False
-        error = (f"A {role} review passed with only attested independence; this project requires verified reviews "
-                 "(require_verified_reviews is on). Request a fresh review with the reviewer's own caller_session_id.")
-    return {**fact, "role": role, "passed": passed, "error": "" if passed else error, "snapshot_id": snapshot_id,
-            "artifacts": snapshot_from_id(snapshot_id=snapshot_id).get("artifacts") or [],
-            "findings": json.loads(str(fact.get("findings_json") or "[]")),
-            "evidence": json.loads(str(fact.get("evidence_json") or "{}"))}
 
 
 def _int_or_zero(value: str) -> int:
@@ -755,7 +701,6 @@ __all__ = [
     "evaluate_review_gate",
     "resolve_requirement",
     "parse_project_settings",
-    "project_settings",
     "reflection_create_block_message",
     "reflection_signal_state",
     "resolve_review_return",

@@ -229,7 +229,7 @@ class ProgramInstallationTest(unittest.TestCase):
 
     def test_its_own_requirement_class_resolves_into_the_shared_checklist(self) -> None:
         need = CALIBRATION.workflows[0].node("calibrate").requires[0]
-        context = GateContext(conn=None, project_id=self.project_id, record={}, issues=(),
+        context = GateContext(record={}, issues=(),
                               snapshot=Snapshot(id="cal_1", project_id=self.project_id, workflow="calibration",
                                                 version=1, state="calibrate", revision=0))
         self.assertEqual(resolve_requirement(need, context).items[0]["id"], "record:calibrated")

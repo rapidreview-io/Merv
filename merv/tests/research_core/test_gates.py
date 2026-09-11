@@ -24,7 +24,7 @@ PROPOSAL = next(need for need in REFLECTION.requirements("consolidating")
 
 
 def context(record=None, *, issues=(), state="planned") -> GateContext:
-    return GateContext(conn=None, project_id="proj_1", record=record or {"id": "rec_1", "project_id": "proj_1"},
+    return GateContext(record=record or {"id": "rec_1", "project_id": "proj_1"},
                        snapshot=Snapshot(id="rec_1", project_id="proj_1", workflow="experiment", version=1,
                                          state=state, revision=0),
                        issues=tuple(issues))

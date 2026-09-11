@@ -60,6 +60,20 @@ class GenericReviewTest(ResearchCase):
         return self.call("review.submit", review_session_id=session["review_session_id"], verdict=verdict,
                          synopsis=REVIEW_SYNOPSIS, **extra)
 
+    def test_expired_or_superseded_requests_are_not_runtime_capabilities(self):
+        first = self.request()
+        second = self.request()
+        runtime = self.app.workflows.runtime
+        with self.app.store.transaction() as conn:
+            current = runtime.get(conn=conn, project_id=self.project_id, instance_id=self.instance["id"])
+            conn.execute("UPDATE review_requests SET status = 'superseded' WHERE id = ?", (second["review_request_id"],))
+            self.assertEqual(self.app.reviews.read_fact(snapshot=current, reference=Reference("review_snapshot", current.id), conn=conn), {})
+            for status in ("requested", "started"):
+                conn.execute("UPDATE review_requests SET status = ?, expires_at = '2000-01-01' WHERE id = ?", (status, second["review_request_id"]))
+                self.assertEqual(self.app.reviews.read_fact(snapshot=current, reference=Reference("review_snapshot", current.id), conn=conn), {})
+        third = self.app.reviews.request(project_id=self.project_id, target_type=PLUGIN.name, target_id=current.id, role=ROLE, if_current=True)
+        self.assertNotIn(third["review_request_id"], {first["review_request_id"], second["review_request_id"]})
+
     def test_custom_role_pass_and_repair_follow_ordinary_edges_with_exact_context(self):
         first = self.request()
         pinned = first["target_snapshot"]

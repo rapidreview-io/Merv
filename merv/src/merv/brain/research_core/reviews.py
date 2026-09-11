@@ -7,7 +7,7 @@ from contextlib import closing
 from collections.abc import Mapping
 import json
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from .artifacts import ResearchArtifacts as Artifacts
 from ..kernel.secret_tokens import hash_secret, mint_secret, secret_digest_matches
@@ -24,7 +24,7 @@ from ..kernel.utils import (
 )
 from .policy import (
     is_review_gate_exempt,
-    read_review_fact,
+    ReviewFact, parse_project_settings,
     review_snapshot_id,
     revision_context_for_review_return,
     snapshot_from_id,
@@ -34,9 +34,37 @@ from .policy import (
     validate_synopsis,
 )
 from ..kernel.state.store import BaseStateStore, next_created_seq, row_to_dict
-from .records import Records
-from .reflections import ReflectionService
+if TYPE_CHECKING:
+    from .records import Records
+    from .reflections import ReflectionService
 from ..workflows import Reference, Snapshot
+
+
+def project_settings(*, conn: Any, project_id: str) -> dict[str, Any]:
+    row = conn.execute(
+        "SELECT settings_json FROM projects WHERE id = ?", (project_id,)
+    ).fetchone()
+    return parse_project_settings(row["settings_json"]) if row else {}
+
+
+def read_review_fact(*, conn, project_id: str, target_type: str, target_id: str,
+                     snapshot_id: str, role: str) -> ReviewFact:
+    """Read the latest verdict and request for one project, role and immutable snapshot."""
+    scope = (project_id, target_type, target_id, role, snapshot_id)
+    row = conn.execute(
+        "SELECT r.id, r.verdict, r.return_to, r.notes, r.synopsis, r.findings_json, r.evidence_json, s.independence "
+        "FROM reviews r JOIN review_sessions s ON s.id = r.session_id WHERE r.project_id = ? AND r.target_type = ? "
+        "AND r.target_id = ? AND r.role = ? AND r.target_snapshot_id = ? AND s.status = 'submitted' "
+        "ORDER BY r.created_seq DESC LIMIT 1", scope,
+    ).fetchone()
+    request = conn.execute(
+        "SELECT id, status, expires_at FROM review_requests WHERE project_id = ? AND target_type = ? "
+        "AND target_id = ? AND role = ? AND target_snapshot_id = ? ORDER BY created_seq DESC LIMIT 1", scope,
+    ).fetchone()
+    return ReviewFact(role, snapshot_id, {} if row is None else dict(row),
+                      {} if request is None else dict(request),
+                      bool(project_settings(conn=conn, project_id=project_id).get("require_verified_reviews")),
+                      request is not None and str(request["expires_at"]) <= now_iso())
 
 
 class ReviewService:
@@ -105,17 +133,12 @@ class ReviewService:
                     reflection=target,
                 )
             if if_current:
-                if read_review_fact(conn=conn, project_id=project_id, target_type=target_type, target_id=target_id,
-                                    snapshot_id=snapshot_id, role=role).get("passed"):
+                fact = read_review_fact(conn=conn, project_id=project_id, target_type=target_type, target_id=target_id,
+                                        snapshot_id=snapshot_id, role=role)
+                if fact.passed:
                     return {"skipped": True, "reason": "The exact submitted snapshot already passed review."}
-                current = conn.execute(
-                    "SELECT id FROM review_requests WHERE project_id = ? AND target_type = ? AND target_id = ? "
-                    "AND role = ? AND target_snapshot_id = ? AND status IN ('requested', 'started') AND expires_at > ? "
-                    "ORDER BY created_seq DESC LIMIT 1",
-                    (project_id, target_type, target_id, role, snapshot_id, now_iso()),
-                ).fetchone()
-                if current is not None:
-                    return {"review_request_id": current["id"], "reused": True}
+                if fact.request_valid:
+                    return {"review_request_id": fact.request["id"], "reused": True}
             # Refresh is revoke-and-reissue: a new capability for the same gate
             # closes every prior open request, so a lost or stale capability can
             # never race the fresh one to submit.
@@ -739,7 +762,7 @@ class ReviewService:
         snapshot_id = self._target_snapshot_id(conn=conn, project_id=snapshot.project_id,
                                                target_type=snapshot.workflow, target_id=snapshot.id)
         return read_review_fact(conn=conn, project_id=snapshot.project_id, target_type=snapshot.workflow,
-                                target_id=snapshot.id, snapshot_id=snapshot_id, role=role, request=reference.kind == "review_snapshot")
+                                target_id=snapshot.id, snapshot_id=snapshot_id, role=role).reference(request=reference.kind == "review_snapshot")
 
     def _target_with_gate(
         self,

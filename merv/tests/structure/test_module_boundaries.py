@@ -587,7 +587,7 @@ def _foreign_artifact_sql() -> Counter[tuple[str, str, str]]:
 def _application_purity_violations() -> list[str]:
     violations: list[str] = []
     dotted = _dotted_index()
-    for path in sorted((BACKEND_ROOT / "application").rglob("*.py")):
+    for path in [*sorted((BACKEND_ROOT / "application").rglob("*.py")), BACKEND_ROOT / "research_core/policy.py"]:
         rel = path.relative_to(BACKEND_ROOT).as_posix()
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source)

@@ -34,13 +34,13 @@ native record runs on one engine; its service keeps only that kind's own rules.
   Only experiment names reserve cap slots; migration 71 defaults unknown names to one
   slot, then initialization classifies task-only names from pinned artifact bytes.
 - `reviews.py`: review requests, one-time capabilities, isolated sessions, pinned snapshots,
-  verdicts, return routing. `association_targets.py`: target resolution. `objects.py`: the
+  verdicts, return routing, and scoped review facts shared by enforcement and checklists. `association_targets.py`: target resolution. `objects.py`: the
   object facade's lifecycle hook and its `ProducedObject` snapshot.
 - `policy.py`: the record kinds and their status vocabulary read off the graphs, plus
   validation, snapshot identity, review-return routing, reflection signal, limits, and one
   `RESOLVERS`, one per requirement class — artifact, record, dependencies, review — each
-  returning one checklist item keyed `artifact:`/`record:`/`review:` plus the role; only
-  the review gate reads rows, the rest read the evaluation the graph produced. `models.py`:
+  returning one checklist item keyed `artifact:`/`record:`/`review:` plus the role; all
+  resolvers are pure: review facts include request expiry and verified/attested independence. `models.py`:
   typed state shapes and `public_record`, the one projection every presenter applies to a
   `Public` declaration. `__init__.py`: narrow imports.
 - `content_summaries.py`: deterministic TLDRs of submitted documents. `paths.py`: safe experiment folder names. `tools.py`: the experiment/task/reflection/consolidation/review/claim/candidate/litreview MCP contracts, their enums and prose read off the graphs above; the research program carries the table into the registry. `persistence.py`: every research table, its read-path indexes, and the `research_artifacts` view that joins a link row to the immutable content it names.

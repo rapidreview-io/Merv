@@ -36,6 +36,53 @@ class ReviewPolicyTest(unittest.TestCase):
     def call(self, tool_name: str, **kwargs):
         return self.app.call_tool(tool_name, kwargs)
 
+    def test_expired_requests_are_pending_in_checklist_and_absent_from_runtime(self):
+        from merv.brain.workflows import Reference
+        exp_id = self._drive_to_design_review()
+        for status in ("requested", "started"):
+            with self.subTest(status=status):
+                request = self.call("review.request", project_id=self.project_id, target_type="experiment", target_id=exp_id, role="design_reviewer")
+                with self.app.store.transaction() as conn:
+                    conn.execute("UPDATE review_requests SET status = ?, expires_at = '2000-01-01' WHERE id = ?", (status, request["review_request_id"]))
+                    records = self.app.research.records
+                    kind = records.kinds["experiment"]
+                    record, gate = records.get_state_with_gate(kind, conn=conn, project_id=self.project_id, record_id=exp_id)
+                    self.assertEqual(gate.review.status, "pending")
+                    self.assertFalse(gate.review.satisfied)
+                    knowledge = records.knowledge(kind, gate.decision.snapshot, conn)
+                    self.assertEqual(knowledge.read(Reference("review_snapshot", exp_id)), {})
+                refreshed = self.app.reviews.request(project_id=self.project_id, target_type="experiment", target_id=exp_id,
+                                                     role="design_reviewer", if_current=True)
+                self.assertNotEqual(refreshed["review_request_id"], request["review_request_id"])
+                self.assertTrue(self.app.reviews.request(project_id=self.project_id, target_type="experiment", target_id=exp_id,
+                                                        role="design_reviewer", if_current=True)["reused"])
+
+    def test_scoped_latest_verdict_and_independence_have_checklist_runtime_parity(self):
+        from merv.brain.research_core.reviews import read_review_fact
+        from unittest.mock import patch
+        exp_id = self._drive_to_design_review()
+        self._insert_attested_pass(exp_id=exp_id, role="design_reviewer")
+        self._insert_attested_pass(exp_id=exp_id, role="design_reviewer")
+        for strict in (True, False):
+            self.call("project.update", project_id=self.project_id, require_verified_reviews=strict)
+            with self.app.store.transaction() as conn, patch("merv.brain.research_core.records.read_review_fact", wraps=read_review_fact) as reads:
+                records = self.app.research.records
+                _, gate = records.get_state_with_gate(records.kinds["experiment"], conn=conn, record_id=exp_id, project_id=self.project_id)
+                approve = next(item for item in gate.decision.actions if item.edge.name == "approve_design")
+                self.assertEqual((gate.review.satisfied, approve.available), (not strict, not strict))
+                self.assertEqual(reads.call_count, 1)
+                args = reads.call_args.kwargs
+                for changes in ({"project_id": "foreign"}, {"snapshot_id": "different"}, {"role": "experiment_reviewer"}):
+                    isolated = read_review_fact(**{**args, **changes})
+                    self.assertFalse(isolated.passed)
+                    self.assertFalse(isolated.request_valid)
+        with self.app.store.transaction() as conn:
+            conn.execute("UPDATE reviews SET verdict = 'fail' WHERE id = (SELECT id FROM reviews WHERE target_id = ? ORDER BY created_seq DESC LIMIT 1)", (exp_id,))
+            records = self.app.research.records
+            _, gate = records.get_state_with_gate(records.kinds["experiment"], conn=conn, record_id=exp_id)
+            self.assertFalse(gate.review.satisfied)
+            self.assertFalse(next(item for item in gate.decision.actions if item.edge.name == "approve_design").available)
+
     # ---- helpers ----
 
     def _drive_to_design_review(self, *, name: str = "exp-policy") -> str:

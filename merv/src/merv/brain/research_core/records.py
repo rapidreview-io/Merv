@@ -20,7 +20,8 @@ from ..workflows import Binding, RecordKind, Reference, ReviewGate, Runtime, Sna
 from .artifacts import ResearchArtifacts as Artifacts
 from .artifact_models import ArtifactTarget
 from .dependencies import dependency_rows, dependent_rows, record_dependencies
-from .policy import GateContext, GateEvaluation, read_review_fact, resolve_requirement, review_snapshot_id, snapshot_from_id
+from .reviews import read_review_fact
+from .policy import GateContext, GateEvaluation, resolve_requirement, review_snapshot_id, snapshot_from_id
 
 
 def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
@@ -239,8 +240,11 @@ class Records:
         """Evaluate the registered graph once; the checklist reads that evaluation."""
         snapshot = self.snapshot_for(kind, conn=conn, record=record, snapshots=snapshots)
         definition = self.runtime.registry.get(kind.name, snapshot.version)
-        decision = definition.evaluate(snapshot, RecordKnowledge(self, kind, conn, record, snapshot))
-        context = GateContext(conn=conn, project_id=str(record["project_id"]), record=record, snapshot=snapshot,
+        knowledge = RecordKnowledge(self, kind, conn, record, snapshot)
+        decision = definition.evaluate(snapshot, knowledge)
+        context = GateContext(record=record, snapshot=snapshot,
+                              reviews={need.role: knowledge.review_fact(need.role) for need in kind.requirements(snapshot.state)
+                                       if isinstance(need, ReviewGate)},
                               issues=(*(issue for action in decision.actions for issue in action.issues),
                                       *decision.dispatch_issues))
         resolved = [(need, resolve_requirement(need, context)) for need in kind.requirements(snapshot.state)]
@@ -306,6 +310,7 @@ class RecordKnowledge:
     def __init__(self, records: Records, kind: RecordKind, conn, record: dict[str, Any], snapshot: Snapshot) -> None:
         self.records, self.kind, self.conn, self.record, self.snapshot = records, kind, conn, record, snapshot
         self._documents: dict[str, dict[str, Any]] = {}
+        self._reviews = {}
 
     def read(self, reference: Reference) -> dict[str, Any]:
         record, conn, kind = self.record, self.conn, self.kind
@@ -321,9 +326,7 @@ class RecordKnowledge:
                 raise NotFoundError("review snapshot belongs to another workflow instance")
             node = self.records.runtime.registry.get(self.snapshot.workflow, self.snapshot.version).node(self.snapshot.state)
             role = reference.id if reference.kind == "review" else (node.role if node is not None else "")
-            return read_review_fact(conn=conn, project_id=record["project_id"], target_type=kind.name,
-                                    target_id=record["id"], role=role, request=reference.kind == "review_snapshot",
-                                    snapshot_id=self._snapshot_id())
+            return self.review_fact(role).reference(request=reference.kind == "review_snapshot")
         if reference.kind == "review_history":
             rows = conn.execute(
                 "SELECT r.target_snapshot_id, r.verdict, r.return_to, r.notes, s.independence FROM reviews r "
@@ -336,6 +339,13 @@ class RecordKnowledge:
         if fact is None:
             raise NotFoundError(f"{kind.name} fact not available: {reference.kind}/{reference.id}")
         return fact
+
+    def review_fact(self, role: str):
+        if role not in self._reviews:
+            self._reviews[role] = read_review_fact(conn=self.conn, project_id=self.record["project_id"],
+                                                  target_type=self.kind.name, target_id=self.record["id"],
+                                                  role=role, snapshot_id=self._snapshot_id())
+        return self._reviews[role]
 
     def _snapshot_id(self) -> str:
         return review_snapshot_id(target_type=self.kind.name, target=self.record, snapshot=self.snapshot)
