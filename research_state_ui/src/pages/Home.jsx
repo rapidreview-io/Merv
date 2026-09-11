@@ -1,3 +1,4 @@
+import ProjectDocument from '../components/ProjectDocument';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
@@ -57,7 +58,7 @@ export default function Home() {
   }, [activeExperiments.length]);
 
   if (!project) {
-    return <div className="page-stage"><div className="empty-state">Loading project…</div></div>;
+    return <div className="page-stage"><ProjectDocument /></div>;
   }
 
   const safeIdx = Math.min(activeIdx, Math.max(0, activeExperiments.length - 1));
@@ -77,14 +78,7 @@ export default function Home() {
 
   return (
     <div className="page-stage">
-      {/* The project name is always in the sidebar's project chip — repeating it
-          as the page title is noise. Lead with the summary (real content) when
-          there is one; otherwise go straight to the work below. */}
-      {project.summary && (
-        <header className="page-header page-header--lg">
-          <p className="page-summary page-summary--lead">{project.summary}</p>
-        </header>
-      )}
+      <ProjectDocument project={project} />
 
       {firstRun && <ConnectAgentPanel project={project} />}
 

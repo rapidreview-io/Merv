@@ -1,11 +1,10 @@
+import ProjectIntentEditor from '../components/ProjectIntentEditor';
 import { useNavigate } from 'react-router-dom';
 import { useProjectStore, projectPath } from '../store/useProjectStore';
 import ObjId from '../components/ObjId';
 
 /**
- * MobileProjects — read-only project switcher. The desktop page exposes
- * rename + create mutations. Here you only switch; create/rename live on
- * desktop.
+ * Mobile project switcher with the shared user-intent editor.
  */
 export default function MobileProjects() {
   const navigate = useNavigate();
@@ -32,21 +31,23 @@ export default function MobileProjects() {
       ) : (
         <div className="mcard-list">
           {projects.map(p => (
-            <button
-              key={p.id}
-              type="button"
-              className={`mcard${p.id === projectId ? ' mcard--attn' : ''}`}
-              onClick={() => switchTo(p.id)}
-            >
-              <div className="mcard-head">
-                <div className="mcard-title">{p.name || 'Untitled'}</div>
-                {p.id === projectId && <span className="proj-active-tag">Active</span>}
-              </div>
-              {p.summary && <div className="mcard-sub">{p.summary}</div>}
-              <div className="mcard-meta">
-                <ObjId id={p.id} strong />
-              </div>
-            </button>
+            <div key={p.id}>
+              <button
+                type="button"
+                className={`mcard${p.id === projectId ? ' mcard--attn' : ''}`}
+                onClick={() => switchTo(p.id)}
+              >
+                <div className="mcard-head">
+                  <div className="mcard-title">{p.name || 'Untitled'}</div>
+                  {p.id === projectId && <span className="proj-active-tag">Active</span>}
+                </div>
+                {p.summary && <div className="mcard-sub">{p.summary}</div>}
+                <div className="mcard-meta">
+                  <ObjId id={p.id} strong />
+                </div>
+              </button>
+              <ProjectIntentEditor project={p} />
+            </div>
           ))}
         </div>
       )}

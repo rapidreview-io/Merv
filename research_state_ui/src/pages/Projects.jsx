@@ -1,3 +1,4 @@
+import ProjectIntentEditor from '../components/ProjectIntentEditor';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useProjectStore, projectPath } from '../store/useProjectStore';
@@ -51,7 +52,7 @@ export default function Projects() {
               project={p}
               isActive={p.id === projectId}
               onSwitch={() => switchTo(p.id)}
-              onRename={(name, summary) => patchProject(p.id, { name, summary })}
+              onRename={name => patchProject(p.id, { name })}
             />
           ))}
         </div>
@@ -63,7 +64,6 @@ export default function Projects() {
 function ProjectCard({ project, isActive, onSwitch, onRename }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(project.name || '');
-  const [summary, setSummary] = useState(project.summary || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -73,7 +73,7 @@ function ProjectCard({ project, isActive, onSwitch, onRename }) {
     setBusy(true);
     setError(null);
     try {
-      await onRename(name.trim(), summary.trim());
+      await onRename(name.trim());
       setEditing(false);
     } catch (err) {
       setError(err.message);
@@ -84,14 +84,12 @@ function ProjectCard({ project, isActive, onSwitch, onRename }) {
 
   function cancel() {
     setName(project.name || '');
-    setSummary(project.summary || '');
     setError(null);
     setEditing(false);
   }
 
   function startEditing() {
     setName(project.name || '');
-    setSummary(project.summary || '');
     setError(null);
     setEditing(true);
   }
@@ -103,10 +101,6 @@ function ProjectCard({ project, isActive, onSwitch, onRename }) {
           <div className="form-row">
             <label className="label">Name</label>
             <input className="input" value={name} onChange={e => setName(e.target.value)} autoFocus required />
-          </div>
-          <div className="form-row">
-            <label className="label">Summary</label>
-            <textarea className="textarea" value={summary} onChange={e => setSummary(e.target.value)} />
           </div>
           {error && <div className="error-message">{error}</div>}
           <div className="form-actions">
@@ -126,14 +120,14 @@ function ProjectCard({ project, isActive, onSwitch, onRename }) {
               </div>
               {project.summary
                 ? <p className="proj-card-sum">{project.summary}</p>
-                : <p className="proj-card-sum faint">No summary yet.</p>}
+                : <p className="proj-card-sum faint">No intent provided yet.</p>}
               <div className="cluster" style={{ marginTop: 10, fontSize: 'var(--text-xs)', color: 'var(--faint)' }}>
                 <ObjId id={project.id} strong />
                 {project.created_at && <span className="mono">· created {fmtDate(project.created_at)}</span>}
               </div>
             </div>
             <div className="cluster" style={{ flexShrink: 0 }}>
-              <button className="btn btn--sm btn--ghost" onClick={startEditing}>Edit</button>
+              <button className="btn btn--sm btn--ghost" onClick={startEditing}>Rename</button>
               {isActive
                 ? <Link to={projectPath(project.id)} className="btn btn--sm">Open →</Link>
                 : <button className="btn btn--sm btn--primary" onClick={onSwitch}>Switch →</button>}
@@ -141,6 +135,7 @@ function ProjectCard({ project, isActive, onSwitch, onRename }) {
           </div>
         </>
       )}
+      <ProjectIntentEditor project={project} />
     </div>
   );
 }

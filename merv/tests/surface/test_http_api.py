@@ -91,6 +91,37 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
         self.app.application.workflow_deliveries.run_once(project_id=project_id)
         return self.app.call_tool("experiment.get_state", {"project_id": project_id, "experiment_id": experiment_id})
 
+    def test_project_context_http_cas_and_pending_document(self) -> None:
+        project = self.request("POST", "/api/projects", {"name": "Intent", "summary": "Original"})
+        pid = project["id"]
+        path = f"/api/projects/{pid}"
+        home = self.request("GET", f"{path}/home")
+        self.assertFalse(home["project"]["maintenance"]["pending"])
+        updated = self.request("PATCH", f"{path}/context", {
+            "summary": "Clarified scope", "expected_summary": "Original",
+        })
+        self.assertEqual(updated["summary"], "Clarified scope")
+        stale = self.client.patch(f"{path}/context", json={
+            "summary": "Overwrite", "expected_summary": "Original",
+        })
+        self.assertEqual(stale.status_code, 400, stale.text)
+        self.assertEqual(stale.json()["reason"], "stale_project_context")
+        missing = self.client.patch(f"{path}/context", json={"summary": "No CAS"})
+        self.assertEqual(missing.status_code, 400, missing.text)
+        home = self.request("GET", f"{path}/home")
+        self.assertEqual(home["project"]["summary"], "Clarified scope")
+        self.assertTrue(home["project"]["maintenance"]["pending"])
+        self.assertEqual(home["project"]["methods"], "")
+        self.assertIn("project.context.updated", [e["type"] for e in home["recent_events"]])
+        renamed = self.request("PATCH", path, {"name": "Renamed", "agent_dispatch": False})
+        self.assertEqual(renamed["summary"], "Clarified scope")
+        self.assertEqual(renamed["name"], "Renamed")
+        # Optional intent can be cleared without adding a completeness gate.
+        cleared = self.request("PATCH", f"{path}/context", {
+            "summary": "", "expected_summary": "Clarified scope",
+        })
+        self.assertEqual(cleared["summary"], "")
+
     def test_home_claim_experiment_artifact_review_endpoints(self) -> None:
         project = self.request(
             "POST",

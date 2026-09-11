@@ -137,6 +137,9 @@ class AgentSessionSurfaceTest(unittest.TestCase):
             denied = getattr(self.client, method)(f"/api/projects/{self.project_id}", headers=headers,
                                                   json={"summary": "Invented intent"})
             self.assertEqual(denied.status_code, 403, denied.text)
+        denied = self.client.patch(f"/api/projects/{self.project_id}/context", headers=headers,
+                                   json={"summary": "Invented intent", "expected_summary": summary})
+        self.assertEqual(denied.status_code, 403, denied.text)
         read = self.mcp(secret=secret, name="project",
                         arguments={"action": "overview", "project_id": self.project_id})
         self.assertEqual(read.status_code, 200, read.text)

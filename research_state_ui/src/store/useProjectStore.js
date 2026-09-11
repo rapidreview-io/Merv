@@ -134,6 +134,19 @@ export const useProjectStore = create((set, get) => ({
     return row;
   },
 
+  async updateProjectContext(pid, context) {
+    const updated = await api.updateProjectContext(pid, context);
+    const row = updated.project || updated;
+    set(state => ({
+      projects: state.projects.map(p => p.id === pid ? { ...p, ...row } : p),
+      home: state.home?.project?.id === pid
+        ? { ...state.home, project: { ...state.home.project, ...row } }
+        : state.home,
+    }));
+    if (get().projectId === pid) await get().refreshHome();
+    return row;
+  },
+
   async refreshHome() {
     const pid = get().projectId;
     if (!pid) return null;

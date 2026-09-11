@@ -130,6 +130,9 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         stream_catalog = self.client.post("/mcp", headers=headers,
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).json()["result"]["tools"]
         self.assertIn("project.context.update", {item["name"] for item in stream_catalog})
+        denied = self.client.patch(f"/api/projects/{self.project_b}/context", headers=headers,
+                                   json={"summary": "Cross-project edit", "expected_summary": ""})
+        self.assertEqual(denied.status_code, 403, denied.text)
         args = {"project_id": self.project_a, "summary": "The user's clarified scope.", "expected_summary": ""}
         response = self.client.post("/mcp", headers=headers, json={
             "jsonrpc": "2.0", "id": 2, "method": "tools/call",
@@ -152,6 +155,15 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         denied = self.client.post("/mcp/call", headers=_bearer(self.key), json={
             "name": "project.update", "arguments": {"project_id": self.project_a, "summary": "Broad edit"}})
         self.assertNotEqual(denied.status_code, 200)
+
+    def test_http_context_writer_accepts_owner_and_scoped_key(self) -> None:
+        expected = ""
+        for secret, summary in ((self.jwt_a, "Owner scope"), (self.key, "Clarified scope")):
+            response = self.client.patch(f"/api/projects/{self.project_a}/context",
+                headers=_bearer(secret), json={"summary": summary, "expected_summary": expected})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["summary"], summary)
+            expected = summary
 
     def test_generic_download_url_requires_project_authority_before_blob_access(self) -> None:
         artifact = self.app.artifacts.contents.create(

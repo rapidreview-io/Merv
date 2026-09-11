@@ -59,6 +59,7 @@ const ROUTE = {
   artifact: (id) => `/artifacts/${id}`,
   // No per-review page: the reviews screen is the destination.
   review: () => '/reviews',
+  reflection: (id) => `/reflection/${id}`,
   // A sandbox is a section of the experiment that ran on it.
   sandbox: (id) => `/experiments/${id}#execution`,
   // Sections and papers live on the one lit-review screen (no per-id page),

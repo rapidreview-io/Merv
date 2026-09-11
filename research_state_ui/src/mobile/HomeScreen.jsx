@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import ProjectDocument from '../components/ProjectDocument';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import {
@@ -77,17 +78,6 @@ export default function HomeScreen() {
   const sandboxes = useProjectStore(selectSandboxes);
   const experiments = useProjectStore(selectExperiments);
   const needsRef = useRef(null);
-  const summaryRef = useRef(null);
-  const [summaryOpen, setSummaryOpen] = useState(false);
-  // Whether the clamped summary actually truncates — the toggle only
-  // appears "if needed" (a short summary that already fits gets no button).
-  const [summaryClamped, setSummaryClamped] = useState(false);
-  useLayoutEffect(() => {
-    const el = summaryRef.current;
-    if (!el) { setSummaryClamped(false); return; }
-    setSummaryClamped(el.scrollHeight > el.clientHeight + 1);
-  }, [project?.summary]);
-
   // Half-minute tick keeps the standing line and elapsed times honest.
   const now = useNow();
 
@@ -159,7 +149,7 @@ export default function HomeScreen() {
   }
 
   if (!project) {
-    return <div className="page-stage"><div className="empty-state">Loading project…</div></div>;
+    return <div className="page-stage"><ProjectDocument /></div>;
   }
 
   const liveElapsed = liveSandbox?.requested_at
@@ -171,29 +161,7 @@ export default function HomeScreen() {
         <div className="mbanner">Backend unreachable — showing last known state. {lastSyncError}</div>
       )}
 
-      {project.summary && (
-        <div className="mhome-summary-wrap">
-          <p
-            ref={summaryRef}
-            className={`mhome-summary${summaryOpen ? ' mhome-summary--open' : ''}`}
-          >
-            {project.summary}
-            {summaryOpen && summaryClamped && (
-              <button type="button" className="mhome-summary-less" onClick={() => setSummaryOpen(false)}>
-                less
-              </button>
-            )}
-          </p>
-          {/* Overlaid, not appended: line-clamp truncates wherever the browser
-              likes, so this fades over the last visible characters rather than
-              trying to land a real inline link exactly at the cut. */}
-          {!summaryOpen && summaryClamped && (
-            <button type="button" className="mhome-summary-more" onClick={() => setSummaryOpen(true)}>
-              … more
-            </button>
-          )}
-        </div>
-      )}
+      <ProjectDocument project={project} />
 
       <div className="mstand">
         <span className="mstand-date">{fmtStanding(new Date(now))}</span>

@@ -101,6 +101,7 @@ GET   /api/projects
 POST  /api/projects
 GET   /api/projects/{project_id}
 PATCH /api/projects/{project_id}
+PATCH /api/projects/{project_id}/context   {"summary": "full user intent", "expected_summary": "exact last-read text"}
 PUT   /api/projects/{project_id}
 GET   /api/projects/{project_id}/home
 ```
@@ -108,6 +109,12 @@ GET   /api/projects/{project_id}/home
 Create projects with `name` and `summary`. Do not send a repo path: projects are
 never tied to a checkout; each agent key carries an immutable scope (one
 project, or the owner's whole account).
+
+`PATCH /context` delegates to `project.context.update`: it conditionally replaces
+user intent and emits the canonical context event used by document maintenance.
+On `reason: stale_project_context`, reread and reconcile before retrying. Keep
+name/settings changes on the existing project route. Automatic agent sessions
+cannot write intent through either route.
 
 `/home` is the primary UI bootstrap. It returns `project`, `claims`, the full
 `experiments` and `tasks` lists, `artifacts`, `reviews`, `recent_events`,

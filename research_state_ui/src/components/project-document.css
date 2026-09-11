@@ -1,0 +1,30 @@
+.project-document { margin-bottom: 32px; min-width: 0; overflow-wrap: anywhere; }
+.project-document-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.project-document-heading h2 { margin: 0; font-size: 22px; }
+.project-document-heading p { margin: 6px 0 0; }
+.project-document-status, .project-evidence-status { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; flex-shrink: 0; }
+.project-document-section { border-top: 1px solid var(--line); padding: 20px 0; margin-top: 16px; }
+.project-document-section h3, .project-document-section summary { font-size: 16px; font-weight: 600; margin: 0 0 12px; }
+.project-document-section summary { cursor: pointer; }
+.project-document-section:not([open]) summary { margin-bottom: 0; }
+.project-intent-text { white-space: pre-wrap; line-height: 1.65; }
+.project-document-note, .project-document-notice, .intent-conflict { border-left: 3px solid var(--active); padding: 12px 16px; background: var(--bg-elev); }
+.project-document-note p, .intent-conflict p { margin: 8px 0; line-height: 1.6; }
+.project-document-references { padding: 0; margin: 16px 0 0; list-style: none; }
+.project-document-references li { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.project-document-references li > div { min-width: 0; }
+.project-document-references .muted { font-size: 12px; margin-top: 5px; }
+.intent-editor { margin-top: 12px; }
+.intent-editor p { font-size: 13px; }
+.intent-editor .textarea { width: 100%; min-height: 150px; resize: vertical; }
+.intent-editor-action { display: flex; align-items: center; gap: 12px; }
+.project-document .markdown-body { max-width: 100%; }
+.project-document .markdown-body pre, .project-document .markdown-body table { overflow-x: auto; }
+@media (max-width: 640px) {
+  .project-document-heading { flex-direction: column; gap: 12px; }
+  .project-document-references li { flex-direction: column; gap: 8px; }
+  .intent-editor .textarea { font-size: 16px; }
+  .project-document .btn { min-height: 44px; }
+}
+
+html[data-surface="mobile"] .project-document .btn { min-height: 44px; }

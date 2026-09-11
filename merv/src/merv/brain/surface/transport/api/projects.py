@@ -163,6 +163,16 @@ def build_router(
             arguments=path_scoped_body(body, project_id=project_id),
         )
 
+    @api_router.patch("/api/projects/{project_id}/context")
+    def update_project_context(
+        project_id: str, request: Request, body: JsonBody = Body(default=None)
+    ) -> dict[str, Any]:
+        return gateway.call_http(
+            request,
+            name="project.context.update",
+            arguments=path_scoped_body(body, project_id=project_id),
+        )
+
     @api_router.get("/api/projects/{project_id}/home")
     def home(project_id: str, request: Request) -> Response:
         # Composite signal ETag. The home payload is a pure function of two
