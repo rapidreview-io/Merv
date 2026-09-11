@@ -25,9 +25,9 @@ class ExperimentExhibits:
         self.artifacts = artifacts
 
     def generate(self, *, state: ExperimentState) -> dict[str, object]:
-        project_id = str(state.get("project_id") or "")
-        experiment_id = str(state.get("id") or "")
-        attempt_index = int(state.get("attempt_index") or 1)
+        project_id = state.project_id
+        experiment_id = state.id
+        attempt_index = int(state.attempt_index or 1)
         return build_metrics_exhibit(
             project_id=project_id,
             experiment_id=experiment_id,
@@ -48,24 +48,24 @@ class ExperimentExhibits:
         state = self.research.experiments.get_state(
             experiment_id=experiment_id, project_id=project_id
         )
-        if str(state.get("status")) not in EXPERIMENT.effect_sources(
+        if state.status not in EXPERIMENT.effect_sources(
             "result_submission"
         ):
             raise WorkflowError(
                 "experiment.exhibit previews a running experiment; this one is "
-                f"{state.get('status')!r}. After submit_results, read the pinned "
+                f"{state.status!r}. After submit_results, read the pinned "
                 "exhibit artifact instead (artifact.read)."
             )
         exhibit = self.generate(state=state)
         path = (
             experiment_folder(
-                experiment_id=str(state.get("id") or experiment_id),
-                name=str(state.get("name") or ""),
+                experiment_id=state.id,
+                name=state.name,
             )
             + METRICS_EXHIBIT_FILENAME
         )
         return {
-            "project_id": str(state.get("project_id") or ""),
+            "project_id": state.project_id,
             "experiment_id": experiment_id,
             "exhibit_path": path,
             "exhibit": exhibit,

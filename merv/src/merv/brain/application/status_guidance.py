@@ -22,15 +22,15 @@ class StatusGuidancePolicy:
                           allowed=["claim.create", "experiment.create", "task.create"])
 
     def experiment(self, *, experiment, sandboxes, evaluation: GateEvaluation):
-        return self._workflow(target=experiment, evaluation=evaluation)
+        return self._workflow(revision_context=experiment.revision_context, evaluation=evaluation)
 
     def task(self, *, task, evaluation: GateEvaluation):
-        return self._workflow(target=task, evaluation=evaluation)
+        return self._workflow(revision_context=task.revision_context, evaluation=evaluation)
 
     def _reflection_workflow_for(self, *, reflection, evaluation: GateEvaluation):
-        return self._workflow(target=reflection, evaluation=evaluation)
+        return self._workflow(revision_context=reflection.revision_context, evaluation=evaluation)
 
-    def _workflow(self, *, target, evaluation: GateEvaluation):
+    def _workflow(self, *, revision_context, evaluation: GateEvaluation):
         decision = evaluation.decision
         if decision is None:
             raise RuntimeError("canonical workflow evaluation is missing")
@@ -46,7 +46,7 @@ class StatusGuidancePolicy:
             "next_action": (first.action or "resolve_workflow_blocker") if first is not None else "none" if selected is None else selected.edge.name,
             "allowed_actions": list(dict.fromkeys(tools)),
             "missing_evidence": [issue.message for issue in issues],
-            "revision_context": str(target.get("revision_context") or ""),
+            "revision_context": revision_context,
         }
         # This is request metadata for older views, not another review policy.
         review = evaluation.review
@@ -97,9 +97,9 @@ class StatusGuidancePolicy:
         return None
 
     def live_experiments_takeover(self, *, exp_rows, reflection, task_rows=None):
-        live = project_rows([row for row in exp_rows if row["status"] not in EXPERIMENT.workflow.outcomes],
+        live = project_rows([row for row in exp_rows if row.status not in EXPERIMENT.workflow.outcomes],
                             ("id", "name", "status", "attempt_index", "intent"))
-        tasks = project_rows([row for row in task_rows or [] if row["status"] not in TASK.workflow.outcomes],
+        tasks = project_rows([row for row in task_rows or [] if row.status not in TASK.workflow.outcomes],
                              ("id", "name", "status", "goal"))
         signal = (reflection or {}).get("signal") or {}
         allowed, blocked = ["workflow.status_and_next", "task.create"], []
@@ -123,11 +123,11 @@ class StatusGuidancePolicy:
     def _slim_reflection(self, reflection):
         return {
             **project_fields(reflection, _SLIM_REFLECTION_FIELDS),
-            "roster": project_rows(reflection.get("roster", []), ("id", "title", "core")),
-            "current_attempt_artifacts": project_rows(reflection.get("current_attempt_artifacts", []),
+            "roster": project_rows(reflection.roster, ("id", "title", "core")),
+            "current_attempt_artifacts": project_rows(reflection.current_attempt_artifacts,
                                                       ("id", "role", "lens_id", "path", "size_bytes", "tldr")),
-            "reviews": project_rows(reflection.get("reviews", []), ("id", "role", "verdict", "created_at", "synopsis")),
-            "allowed_transitions": reflection.get("allowed_transitions", []),
+            "reviews": project_rows(reflection.reviews, ("id", "role", "verdict", "created_at", "synopsis")),
+            "allowed_transitions": project_rows(reflection.allowed_transitions, ("transition", "leads_to")),
         }
 
     @staticmethod

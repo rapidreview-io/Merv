@@ -9,6 +9,8 @@ the composition-wide bag of one-use Application objects.
 
 from __future__ import annotations
 
+from ..workflows import Connection
+
 import json
 from typing import Any, Mapping
 
@@ -20,6 +22,7 @@ from ..feed import FeedService
 from ..kernel.utils import ValidationError, WorkflowError
 from ..research_core import (
     Research,
+    project_fields,
     AGENT_DISPATCH_SETTING,
 )
 from ..infrastructure import RemoteObjects, RemoteSandboxes as SandboxEngine
@@ -42,7 +45,7 @@ from .reflections import (
 from .reviews import (
     read_review_status,
     request_review,
-    review_queue,
+    present_review_recovery,
     start_review,
 )
 from .status_guidance import StatusGuidancePolicy
@@ -52,7 +55,7 @@ from .tasks import (
     rich_task_state,
     slim_task_state,
 )
-from .workflow import StatusAndNextQuery, artifact_list_record
+from .workflow import StatusAndNextQuery
 from .workflow_actions import Handler, WorkflowDeliveries
 
 
@@ -195,7 +198,7 @@ class Application:
         return {"session": present_session(session)}
 
     def _workflow_assignment(
-        self, tx: Any, project_id: str, instance_id: str, revision: int,
+        self, tx: Connection, project_id: str, instance_id: str, revision: int,
     ) -> dict[str, Any]:
         runtime = self.research.workflows.runtime
         runtime.require_assignment(conn=tx, project_id=project_id, instance_id=instance_id, revision=revision)
@@ -224,7 +227,7 @@ class Application:
             "navigation": {"type": packet["workflow"], "target_id": instance_id},
         }
 
-    def _activate_workflow_session(self, tx: Any, row: Mapping[str, Any]) -> None:
+    def _activate_workflow_session(self, tx: Connection, row: Mapping[str, Any]) -> None:
         self.research.workflows.activate(
             conn=tx, project_id=str(row["project_id"]), instance_id=str(row["workflow_instance_id"]),
             revision=int(row["workflow_revision"]), session_id=str(row["id"]),
@@ -454,9 +457,9 @@ class Application:
         self, *, project_id: str | None = None, rich: bool = False
     ) -> dict[str, Any] | list[dict[str, Any]]:
         states = self.research.project_experiments(project_id=project_id)
-        ids = tuple(str(state.get("id") or "") for state in states if state.get("id"))
+        ids = tuple(state.id for state in states if state.id)
         resolved = (
-            str(states[0].get("project_id") or project_id or "") if states else ""
+            states[0].project_id if states else ""
         )
         objects = (
             self.produced_objects.by_experiment(project_id=resolved, experiment_ids=ids)
@@ -480,16 +483,12 @@ class Application:
             else {}
         )
         presented = [
-            {
-                **(rich_experiment_state if rich else slim_experiment_state)(
-                    state,
-                    storage_objects=objects.get(str(state.get("id") or ""), []),
-                ),
-                "code_workspace": workspaces.get(str(state.get("id") or "")),
-                "consolidation_history": consolidations.get(
-                    str(state.get("id") or ""), []
-                ),
-            }
+            (rich_experiment_state if rich else slim_experiment_state)(
+                state,
+                storage_objects=objects.get(state.id, []),
+                code_workspace=workspaces.get(state.id),
+                consolidation_history=consolidations.get(state.id, []),
+            )
             for state in states
         ]
         return presented if rich else {"experiments": presented}
@@ -502,53 +501,28 @@ class Application:
         review_id: str = "",
         rich: bool = False,
     ) -> dict[str, Any]:
-        if rich:
-            state = self.research.experiments.get_state(
-                experiment_id=experiment_id,
-                project_id=project_id,
-            )
-            resolved_project_id = str(state.get("project_id") or project_id or "")
-            response = rich_experiment_state(
-                state,
-                storage_objects=self.produced_objects.by_experiment(
-                    project_id=resolved_project_id,
-                    experiment_ids=(experiment_id,),
-                )[experiment_id],
-            )
-            response["code_workspace"] = self.agent_sessions.workspaces(
-                project_id=resolved_project_id,
-                instance_ids=(experiment_id,),
-            ).get(experiment_id)
-            response["consolidation_history"] = self.research.reflections.experiment_consolidations(
-                project_id=resolved_project_id,
-                experiment_ids=(experiment_id,),
-            ).get(experiment_id, [])
-            return response
         state = self.research.experiments.get_state(
             experiment_id=experiment_id,
             project_id=project_id,
         )
-        resolved_project_id = str(state.get("project_id") or project_id or "")
-        response = slim_experiment_state(
+        resolved_project_id = state.project_id
+        response = (rich_experiment_state if rich else slim_experiment_state)(
             state,
             storage_objects=self.produced_objects.by_experiment(
-                project_id=resolved_project_id,
-                experiment_ids=(experiment_id,),
+                project_id=resolved_project_id, experiment_ids=(experiment_id,),
             )[experiment_id],
+            code_workspace=self.agent_sessions.workspaces(
+                project_id=resolved_project_id, instance_ids=(experiment_id,),
+            ).get(experiment_id),
+            consolidation_history=self.research.reflections.experiment_consolidations(
+                project_id=resolved_project_id, experiment_ids=(experiment_id,),
+            ).get(experiment_id, []),
         )
-        response["code_workspace"] = self.agent_sessions.workspaces(
-            project_id=resolved_project_id,
-            instance_ids=(experiment_id,),
-        ).get(experiment_id)
-        response["consolidation_history"] = self.research.reflections.experiment_consolidations(
-            project_id=resolved_project_id,
-            experiment_ids=(experiment_id,),
-        ).get(experiment_id, [])
-        if review_id:
-            body = review_body(state.get("reviews", []), review_id=review_id)
+        if review_id and not rich:
+            body = review_body(state.reviews, review_id=review_id)
             if body is None:
                 known = [
-                    str(review.get("id") or "") for review in state.get("reviews", [])
+                    review.id for review in state.reviews
                 ]
                 raise ValidationError(
                     f"no review {review_id} on this experiment. Reviews here: "
@@ -599,14 +573,14 @@ class Application:
             depends_on=depends_on,
             project_id=project_id,
         )
-        return dict(slim_task_state(state))
+        return slim_task_state(state)
 
     def tasks(
         self, *, project_id: str | None = None, rich: bool = False
     ) -> dict[str, Any] | list[dict[str, Any]]:
         states = self.research.project_tasks(project_id=project_id)
         presented = [
-            dict((rich_task_state if rich else slim_task_state)(state))
+            (rich_task_state if rich else slim_task_state)(state)
             for state in states
         ]
         return presented if rich else {"tasks": presented}
@@ -621,13 +595,13 @@ class Application:
     ) -> dict[str, Any]:
         state = self.research.tasks.get_state(task_id=task_id, project_id=project_id)
         if rich:
-            return dict(rich_task_state(state))
-        response = dict(slim_task_state(state))
+            return rich_task_state(state)
+        response = slim_task_state(state)
         if review_id:
-            body = review_body(state.get("reviews", []), review_id=review_id)
+            body = review_body(state.reviews, review_id=review_id)
             if body is None:
                 known = [
-                    str(review.get("id") or "") for review in state.get("reviews", [])
+                    review.id for review in state.reviews
                 ]
                 raise ValidationError(
                     f"no review {review_id} on this task. Reviews here: "
@@ -783,7 +757,7 @@ class Application:
         )
         experiment_ids = tuple(
             str(item.get("id") or "")
-            for item in (state.get("corpus") or {}).get("terminal_experiments", [])
+            for item in (state.corpus or {}).get("terminal_experiments", [])
             if isinstance(item, dict) and item.get("id")
         )
         packet = consolidation_packet(
@@ -828,7 +802,7 @@ class Application:
         )
         experiment_ids = tuple(
             str(item.get("id") or "")
-            for item in (state.get("corpus") or {}).get("terminal_experiments", [])
+            for item in (state.corpus or {}).get("terminal_experiments", [])
             if isinstance(item, dict) and item.get("id")
         )
         workspaces = self.agent_sessions.workspaces(
@@ -891,20 +865,20 @@ class Application:
 
     def _pending_advance(self, *, project_id: str) -> tuple[dict[str, Any] | None, str]:
         reflection = self.research.snapshot(project_id=project_id).open_reflection
-        if not reflection or reflection.get("status") != "consolidating":
+        if not reflection or reflection.status != "consolidating":
             return None, ""
         state = self.research.reflections.get_state(
             project_id=project_id,
-            reflection_id=str(reflection["id"]),
+            reflection_id=reflection.id,
         )
-        consolidation = state.get("consolidation") or {}
+        consolidation = state.consolidation or {}
         proposal = consolidation.get("proposal") or {}
         advance = consolidation.get("advance") or {}
         review_passed = any(
-            item.get("kind") == "review"
-            and item.get("role") == "consolidation_reviewer"
-            and item.get("satisfied")
-            for item in (state.get("gate_checklist") or {}).get("items", [])
+            item.kind == "review"
+            and item.role == "consolidation_reviewer"
+            and item.satisfied
+            for item in state.gate_checklist.items
         )
         if not proposal or not review_passed:
             return None, ""
@@ -921,7 +895,7 @@ class Application:
         # retries it through the same prepare/settle pair.
         return {
             "advance_id": str(advance.get("id") or ""),
-            "instance_id": str(state["id"]),
+            "instance_id": state.id,
             "revision": proposal["revision"],
             "expected_sha": str(proposal["base_sha"]),
             "target_sha": str(proposal["proposal_sha"]),
@@ -950,14 +924,14 @@ class Application:
             ancestry=ancestry,
             error=error,
         )
-        consolidation = state.get("consolidation") or {}
+        consolidation = state.consolidation or {}
         advance = consolidation.get("advance") or {}
         return {
             "advance_id": advance_id,
-            "instance_id": str(state["id"]),
+            "instance_id": state.id,
             "status": str(advance.get("status") or ""),
             "observed_sha": str(advance.get("observed_sha") or ""),
-            "outcome": str(state.get("status") or ""),
+            "outcome": state.status,
         }
 
     # Read models ----------------------------------------------------------
@@ -969,10 +943,13 @@ class Application:
             sandboxes=self.sandboxes.for_project(project_id=project_id),
         )
         artifacts = [
-            artifact_list_record(artifact)
+            project_fields(artifact, (
+                "id", "target_type", "target_id", "role", "attempt_index", "lens_id", "path",
+                "title", "size_bytes", "content_type", "status", "created_by", "created_at", "updated_at",
+            ))
             for artifact in self.artifacts.scan(project_id=project_id)
         ]
-        reviews = review_queue(self.research, project_id=project_id)
+        reviews = present_review_recovery(self.research.reviews.queue(project_id=project_id))
         claims = status["project"]["active_claims"]
         active_experiments = work["active_experiments"]
         active_tasks = work.get("active_tasks", [])
@@ -982,7 +959,7 @@ class Application:
             "project": status["project"],
             "claims": claims,
             "experiments": experiments,
-            "tasks": [dict(rich_task_state(task)) for task in snapshot.tasks],
+            "tasks": [rich_task_state(task) for task in snapshot.tasks],
             "active_experiments": active_experiments,
             "active_tasks": active_tasks,
             "active_processes": active_processes,

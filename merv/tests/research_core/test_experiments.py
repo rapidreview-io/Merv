@@ -49,7 +49,7 @@ class ExperimentWorkflowTest(ResearchCase):
         with self.app.store.connect() as conn:
             linked = conn.execute(
                 "SELECT COUNT(*) AS n FROM experiment_claims WHERE experiment_id = ?",
-                (created["id"],),
+                (created.id,),
             ).fetchone()["n"]
         self.assertEqual(int(linked), 1)
 

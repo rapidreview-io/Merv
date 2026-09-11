@@ -130,14 +130,14 @@ class TenancyTest(unittest.TestCase):
             role="design_reviewer",
             project_id=self.proj_a,
         )
-        capability = req["reviewer_capability"]
+        capability = req.reviewer_capability
         self.assertTrue(capability.startswith("rp_"))
         # At rest only the hash exists; the plaintext is nowhere in the row.
         conn = self.store.connect()
         try:
             row = conn.execute(
                 "SELECT capability_hash FROM review_requests WHERE id = ?",
-                (req["review_request_id"],),
+                (req.review_request_id,),
             ).fetchone()
             cols = {
                 str(r["name"])
@@ -152,7 +152,7 @@ class TenancyTest(unittest.TestCase):
         )
         # start resolves by hashing the presented plaintext.
         started = self.app.reviews.start(
-            review_request_id=req["review_request_id"],
+            review_request_id=req.review_request_id,
             reviewer_capability=capability,
             caller_session_id="reviewer",
         )
@@ -168,7 +168,7 @@ class TenancyTest(unittest.TestCase):
         )
         with self.assertRaises(PermissionDeniedError):
             self.app.reviews.start(
-                review_request_id=req["review_request_id"],
+                review_request_id=req.review_request_id,
                 reviewer_capability="rp_wrong",
                 caller_session_id="reviewer",
             )
@@ -187,15 +187,15 @@ class TenancyTest(unittest.TestCase):
         # tenant_a's target — it reads as not-found (no existence leak).
         with self.assertRaises(NotFoundError):
             self.app.reviews.start(
-                review_request_id=req["review_request_id"],
-                reviewer_capability=req["reviewer_capability"],
+                review_request_id=req.review_request_id,
+                reviewer_capability=req.reviewer_capability,
                 caller_session_id="reviewer",
                 tenant_id="tenant_b",
             )
         # The owning tenant can start it, and the session records that tenant.
         started = self.app.reviews.start(
-            review_request_id=req["review_request_id"],
-            reviewer_capability=req["reviewer_capability"],
+            review_request_id=req.review_request_id,
+            reviewer_capability=req.reviewer_capability,
             caller_session_id="reviewer",
             tenant_id="tenant_a",
         )
@@ -220,8 +220,8 @@ class TenancyTest(unittest.TestCase):
             project_id=self.proj_a,
         )
         started = self.app.reviews.start(
-            review_request_id=req["review_request_id"],
-            reviewer_capability=req["reviewer_capability"],
+            review_request_id=req.review_request_id,
+            reviewer_capability=req.reviewer_capability,
             caller_session_id="reviewer",
         )
         conn = self.store.connect()

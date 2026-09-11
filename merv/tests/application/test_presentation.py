@@ -1,14 +1,9 @@
-"""The computed fields of an experiment projection.
-
-Its wire shape is pinned by tests/surface/test_wire_shapes.py against a real
-seeded project; what stays here is what a fixture cannot show: the fallback
-when a caller hands in a state with no current-attempt selection, and the
-synopsis a review row is given when it stored none.
-"""
+"""Computed experiment fields and review summaries; public contracts live in test_public_contracts.py."""
 
 from __future__ import annotations
 
 import unittest
+from tests.support.research_state import experiment_state, review_reference
 
 from merv.brain.application.experiments.presentation import (
     review_body,
@@ -21,7 +16,7 @@ BODY_KEYS = TLDR_KEYS | {"findings", "notes", "evidence"}
 
 
 def _review(review_id: str, *, created_at: str, **overrides) -> dict:
-    return {
+    return review_reference(**{
         "id": review_id,
         "role": "experiment_reviewer",
         "verdict": "pass",
@@ -32,12 +27,12 @@ def _review(review_id: str, *, created_at: str, **overrides) -> dict:
         "evidence": {"exit_code": 0},
         "target_snapshot_id": "drop",
         **overrides,
-    }
+    })
 
 
 class ExperimentPresentationTest(unittest.TestCase):
     def test_explicit_empty_current_resources_does_not_fall_back(self) -> None:
-        state = {
+        state = experiment_state(**{
             "id": "exp_1",
             "attempt_index": 1,
             "artifacts": [
@@ -48,7 +43,7 @@ class ExperimentPresentationTest(unittest.TestCase):
                 }
             ],
             "current_attempt_artifacts": [],
-        }
+        })
 
         result = slim_experiment_state(state, storage_objects=[])
 
@@ -72,11 +67,11 @@ class ReviewDietTest(unittest.TestCase):
             ),
         )
         for reviews in cases:
-            with self.subTest(ids=[review["id"] for review in reviews]):
+            with self.subTest(ids=[review.id for review in reviews]):
                 rows = slim_review_rows(reviews)
                 self.assertEqual(
                     [row["id"] for row in rows],
-                    [review["id"] for review in reviews],
+                    [review.id for review in reviews],
                 )
                 self.assertTrue(all(set(row) == TLDR_KEYS for row in rows))
 

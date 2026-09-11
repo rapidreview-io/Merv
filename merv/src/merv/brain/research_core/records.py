@@ -12,9 +12,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextlib import closing
 import json
-from typing import Any
+from typing import Any, TypeVar
+from .models import public_record
+from ..workflows import Public
 
-from ..kernel.state.store import BaseStateStore, next_created_seq, row_to_dict, rows_to_dicts
+S = TypeVar("S")
+
+from ..kernel.state.store import BaseStateStore, Connection, next_created_seq, row_to_dict, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError, new_id, now_iso
 from ..workflows import Binding, RecordKind, Reference, ReviewGate, Runtime, Snapshot, documents
 from .artifacts import ResearchArtifacts as Artifacts
@@ -24,7 +28,7 @@ from .reviews import read_review_fact
 from .policy import GateContext, GateEvaluation, resolve_requirement, review_snapshot_id, snapshot_from_id
 
 
-def _query(conn, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
+def _query(conn: Connection, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
     return rows_to_dicts(rows=conn.execute(sql, parameters).fetchall())
 
 
@@ -36,26 +40,26 @@ class RecordHooks:
     exactly why they are not part of the declaration.
     """
 
-    def before_create(self, *, conn, project_id: str, values: dict[str, Any]) -> None:
+    def before_create(self, *, conn: Connection, project_id: str, values: dict[str, Any]) -> None:
         """Refuse a create the kind's own invariants forbid."""
 
-    def after_create(self, *, conn, project_id: str, record_id: str, values: dict[str, Any]) -> None:
+    def after_create(self, *, conn: Connection, project_id: str, record_id: str, values: dict[str, Any]) -> None:
         """Write the kind's child rows on the same transaction as its row."""
 
-    def hydrate(self, *, conn, project_id: str, records: list[dict[str, Any]], detail_ids: tuple[str, ...]) -> None:
+    def hydrate(self, *, conn: Connection, project_id: str, records: list[dict[str, Any]], detail_ids: tuple[str, ...]) -> None:
         """Add the kind's own read state to every record in one batch."""
 
-    def before_write(self, *, conn, before: Snapshot, after: Snapshot, action: str) -> None:
+    def before_write(self, *, conn: Connection, before: Snapshot, after: Snapshot, action: str) -> None:
         """Refuse a transition before native writes, inside the caller's transaction."""
 
-    def after_write(self, *, conn, before: Snapshot, after: Snapshot, action: str, payload) -> None:
+    def after_write(self, *, conn: Connection, before: Snapshot, after: Snapshot, action: str, payload) -> None:
         """React after native writes, still inside the caller's uncommitted transaction."""
 
-    def read_fact(self, *, conn, record: dict[str, Any], reference: Reference) -> dict[str, Any] | None:
+    def read_fact(self, *, conn: Connection, record: dict[str, Any], reference: Reference) -> dict[str, Any] | None:
         """Answer a graph reference only this kind knows about."""
         return None
 
-    def initialize_workflow(self, conn, snapshot: Snapshot) -> None:
+    def initialize_workflow(self, conn: Connection, snapshot: Snapshot) -> None:
         """Create the kind's row for an instance the runtime just started."""
 
     def bindings(self) -> Mapping[str, Binding]:
@@ -84,10 +88,10 @@ class Records:
     # ---- create ----
 
     def create_in_transaction(
-        self, kind: RecordKind, *, conn, project_id: str, values: dict[str, Any], event: dict[str, Any],
+        self, kind: RecordKind[S], *, conn: Connection, project_id: str, values: dict[str, Any], event: dict[str, Any],
         depends_on=(), instance: Snapshot | None = None, guard: bool = True,
         read: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> S:
         """Insert one record on the caller's transaction, then read its state back.
 
         The reflection wave calls this on its own connection, which is why the
@@ -149,12 +153,12 @@ class Records:
         if row is None:
             raise NotFoundError(f"{kind.name} not found in project {project_id}: {record_id}")
 
-    def get_state(self, kind: RecordKind, *, record_id: str, project_id: str | None = None,
-                  conn=None, **extra) -> dict[str, Any]:
+    def get_state(self, kind: RecordKind[S], *, record_id: str, project_id: str | None = None,
+                  conn: Connection | None=None, **extra) -> S:
         return self.get_state_with_gate(kind, record_id=record_id, project_id=project_id, conn=conn, **extra)[0]
 
-    def get_state_with_gate(self, kind: RecordKind, *, record_id: str, project_id: str | None = None,
-                            conn=None, **extra) -> tuple[dict[str, Any], GateEvaluation]:
+    def get_state_with_gate(self, kind: RecordKind[S], *, record_id: str, project_id: str | None = None,
+                            conn: Connection | None=None, **extra) -> tuple[S, GateEvaluation]:
         owns_conn = conn is None
         if conn is None:
             conn = self.store.connect()
@@ -172,8 +176,8 @@ class Records:
             if owns_conn:
                 conn.close()
 
-    def list_states_with_gates(self, kind: RecordKind, *, conn, project_id: str,
-                               detail_ids: tuple[str, ...] = (), **extra):
+    def list_states_with_gates(self, kind: RecordKind[S], *, conn: Connection, project_id: str,
+                               detail_ids: tuple[str, ...] = (), **extra) -> list[tuple[S, GateEvaluation]]:
         """Hydrate a project's records with one read per child table."""
         records = _query(conn, f"SELECT * FROM {kind.table} WHERE project_id = ? ORDER BY created_at, id",
                          (project_id,))
@@ -182,8 +186,8 @@ class Records:
         return self._assemble(kind, conn=conn, records=records, detail_ids=detail_ids,
                               snapshots=self.runtime.snapshots(project_id=project_id, conn=conn), **extra)
 
-    def _assemble(self, kind: RecordKind, *, conn, records: list[dict[str, Any]],
-                  detail_ids: tuple[str, ...], snapshots=None, **extra):
+    def _assemble(self, kind: RecordKind[S], *, conn: Connection, records: list[dict[str, Any]],
+                  detail_ids: tuple[str, ...], snapshots=None, **extra) -> list[tuple[S, GateEvaluation]]:
         project_id = str(records[0]["project_id"])
         record_ids = tuple(str(record["id"]) for record in records)
         history = self.artifacts.history(tx=conn, target_type=kind.name, target_ids=record_ids, summarize=True)
@@ -219,12 +223,12 @@ class Records:
             evaluation = self.evaluate_gate(kind, conn=conn, record=record, snapshots=snapshots)
             record["allowed_transitions"] = [dict(item) for item in evaluation.legal_transitions]
             record["gate_checklist"] = evaluation.checklist()
-            assembled.append((record, evaluation))
+            assembled.append((kind.construct(record, evaluation.decision.snapshot), evaluation))
         return assembled
 
     # ---- gates ----
 
-    def snapshot_for(self, kind: RecordKind, *, conn, record: dict[str, Any], snapshots=None) -> Snapshot:
+    def snapshot_for(self, kind: RecordKind, *, conn: Connection, record: dict[str, Any], snapshots=None) -> Snapshot:
         """The record's workflow instance, or a projection of the row alone."""
         record_id, status = str(record["id"]), str(record.get("status") or "")
         if snapshots is not None:
@@ -246,7 +250,7 @@ class Records:
         if (snapshot.workflow, snapshot.version) != (kind.workflow.name, kind.workflow.version):
             raise WorkflowError(f"{kind.name} instance differs from its record kind's workflow version; an explicit migration is required")
 
-    def evaluate_gate(self, kind: RecordKind, *, conn, record: dict[str, Any], snapshots=None) -> GateEvaluation:
+    def evaluate_gate(self, kind: RecordKind, *, conn: Connection, record: dict[str, Any], snapshots=None) -> GateEvaluation:
         """Evaluate the registered graph once; the checklist reads that evaluation."""
         snapshot = self.snapshot_for(kind, conn=conn, record=record, snapshots=snapshots)
         definition = self.runtime.registry.get(kind.name, snapshot.version)
@@ -267,11 +271,13 @@ class Records:
 
     # ---- workflow binding ----
 
-    def knowledge(self, kind: RecordKind, snapshot: Snapshot, conn) -> RecordKnowledge:
-        record = self.get_state(kind, record_id=snapshot.id, project_id=snapshot.project_id, conn=conn)
-        if record["status"] != kind.status_of(snapshot.state):
+    def knowledge(self, kind: RecordKind, snapshot: Snapshot, conn: Connection) -> RecordKnowledge:
+        row = conn.execute(f"SELECT status FROM {kind.table} WHERE id = ? AND project_id = ?",
+                           (snapshot.id, snapshot.project_id)).fetchone()
+        if row is not None and row["status"] != kind.status_of(snapshot.state):
             raise WorkflowError(f"{kind.name} state differs from its workflow instance; "
                                 "an explicit migration is required")
+        record = public_record(Public(), self.get_state(kind, record_id=snapshot.id, project_id=snapshot.project_id, conn=conn))
         return RecordKnowledge(self, kind, conn, record, snapshot)
 
     def transition(self, kind: RecordKind, *, record_id: str, transition: str, evidence=None,
@@ -281,8 +287,8 @@ class Records:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             record = self.get_state(kind, record_id=record_id, project_id=project_id, conn=conn)
             current = self.runtime.adopt(conn=conn, project_id=project_id, instance_id=record_id,
-                                         workflow=kind.name, version=kind.workflow.version, state=record["status"],
-                                         data={"attempt_index": record["attempt_index"]})
+                                         workflow=kind.name, version=kind.workflow.version, state=record.status,
+                                         data={"attempt_index": record.attempt_index})
             after = self.runtime.apply_in_transaction(
                 conn=conn, project_id=project_id, instance_id=record_id, action=transition,
                 expected_revision=current.revision if expected_revision is None else expected_revision,
@@ -291,7 +297,7 @@ class Records:
             return (self.get_state(kind, record_id=record_id, project_id=project_id, conn=conn),
                     self.runtime.event(conn=conn, snapshot=after))
 
-    def commit_change(self, kind: RecordKind, conn, before: Snapshot, after: Snapshot, action: str, payload) -> None:
+    def commit_change(self, kind: RecordKind, conn: Connection, before: Snapshot, after: Snapshot, action: str, payload) -> None:
         """Keep the native record and its sealed evidence on the runtime's transaction.
 
         Lifecycle decisions live in the graph. What this writes is declared:
@@ -319,7 +325,7 @@ class Records:
 class RecordKnowledge:
     """Transaction- and project-bound facts; graph functions own every decision."""
 
-    def __init__(self, records: Records, kind: RecordKind, conn, record: dict[str, Any], snapshot: Snapshot) -> None:
+    def __init__(self, records: Records, kind: RecordKind, conn: Connection, record: dict[str, Any], snapshot: Snapshot) -> None:
         self.records, self.kind, self.conn, self.record, self.snapshot = records, kind, conn, record, snapshot
         self._documents: dict[str, dict[str, Any]] = {}
         self._reviews = {}

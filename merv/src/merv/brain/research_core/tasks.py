@@ -21,9 +21,9 @@ from ..workflows import (
 from .policy import TASK, validate_task_name
 from .artifact_models import ArtifactTarget
 from .records import RecordHooks, Records
-from ..kernel.state.store import BaseStateStore, rows_to_dicts
+from ..kernel.state.store import BaseStateStore, Connection, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError
-from .models import CommittedTaskUpdate
+from .models import CommittedTaskUpdate, TaskState
 
 
 
@@ -42,17 +42,17 @@ class TaskService(RecordHooks):
         self, *, name: str, goal: str,
         deliverables: list[str] | tuple[str, ...] | str | None = None,
         depends_on: list[str] | str | None = None, project_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> TaskState:
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             return self._create(conn=conn, project_id=project_id, name=name, goal=goal,
                                 deliverables=deliverables, depends_on=depends_on)
 
     def create_from_reflection(
-        self, *, conn, project_id: str, reflection_id: str, name: str, goal: str,
+        self, *, conn: Connection, project_id: str, reflection_id: str, name: str, goal: str,
         deliverables: list[str] | tuple[str, ...] | None = None, proposal_key: str = "",
         depends_on: list[str] | str | None = None,
-    ) -> dict[str, Any]:
+    ) -> TaskState:
         """Create one reviewed reflection proposal through normal invariants."""
         reflection_id = str(reflection_id or "").strip()
         if conn.execute("SELECT id FROM reflections WHERE id = ? AND project_id = ?",
@@ -62,13 +62,13 @@ class TaskService(RecordHooks):
                             deliverables=deliverables, depends_on=depends_on, guard=False,
                             source={"source_reflection_id": reflection_id, "proposal_key": proposal_key.strip()})
 
-    def initialize_workflow(self, conn, snapshot: Snapshot) -> None:
+    def initialize_workflow(self, conn: Connection, snapshot: Snapshot) -> None:
         self._create(conn=conn, project_id=snapshot.project_id, instance=snapshot,
                      name=str(snapshot.data.get("name") or ""), goal=str(snapshot.data.get("goal") or ""),
                      deliverables=snapshot.data.get("deliverables"), depends_on=snapshot.data.get("depends_on"))
 
-    def _create(self, *, conn, project_id, name, goal, deliverables, depends_on=None,
-                guard=True, source=None, instance=None) -> dict[str, Any]:
+    def _create(self, *, conn: Connection, project_id, name, goal, deliverables, depends_on=None,
+                guard=True, source=None, instance=None) -> TaskState:
         name = validate_task_name(name)
         if not (goal or "").strip():
             raise ValidationError(
@@ -86,7 +86,7 @@ class TaskService(RecordHooks):
 
     # ---- declared hooks ----
 
-    def before_create(self, *, conn, project_id: str, values: dict[str, Any]) -> None:
+    def before_create(self, *, conn: Connection, project_id: str, values: dict[str, Any]) -> None:
         # Names reserved by an in-flight reflection wave (experiments and tasks
         # share the reservation table) are not for tool creates to take.
         row = conn.execute(
@@ -101,7 +101,7 @@ class TaskService(RecordHooks):
                 f"the name {str(values['name'])!r} is reserved by reflection wave "
                 f"{row['reflection_id']} — pick another, or wait for the wave to publish")
 
-    def after_create(self, *, conn, project_id: str, record_id: str, values: dict[str, Any]) -> None:
+    def after_create(self, *, conn: Connection, project_id: str, record_id: str, values: dict[str, Any]) -> None:
         # The goal is immutable: Merv renders and pins the brief here, once;
         # brief submissions against tasks are refused (see artifacts).
         name = str(values["name"])
@@ -112,7 +112,7 @@ class TaskService(RecordHooks):
                                     "deliverables": values["deliverables"]}).encode("utf-8"),
         )
 
-    def hydrate(self, *, conn, project_id: str, records: list[dict[str, Any]], detail_ids=()) -> None:
+    def hydrate(self, *, conn: Connection, project_id: str, records: list[dict[str, Any]], detail_ids=()) -> None:
         """The structure the UI renders: the goal's deliverables (the column;
         pre-53 rows fall back to the brief's list) and — for detail reads —
         the delivery's confirmations, Notes prose, and legacy Caveats."""
@@ -128,7 +128,7 @@ class TaskService(RecordHooks):
                 delivery_section(delivery.text, "notes") or delivery_section(delivery.text, "report"))
             task["caveats"] = None if delivery is None else delivery_section(delivery.text, "caveats")
 
-    def after_write(self, *, conn, before, after, action: str, payload) -> None:
+    def after_write(self, *, conn: Connection, before, after, action: str, payload) -> None:
         """Who ended the task, and with what note; the status write is declared."""
         if action == "fail_review":
             conn.execute("UPDATE tasks SET outcome = ?, failed_by = 'reviewer' WHERE id = ?",
@@ -150,10 +150,10 @@ class TaskService(RecordHooks):
 
     # ---- reads and transitions ----
 
-    def get_state(self, *, task_id: str, project_id: str | None = None, conn=None) -> dict[str, Any]:
+    def get_state(self, *, task_id: str, project_id: str | None = None, conn: Connection | None=None) -> TaskState:
         return self.records.get_state(TASK, record_id=task_id, project_id=project_id, conn=conn)
 
-    def list_states_with_gates(self, *, conn, project_id: str, detail_ids: tuple[str, ...] = ()):
+    def list_states_with_gates(self, *, conn: Connection, project_id: str, detail_ids: tuple[str, ...] = ()):
         """``detail_ids`` name the tasks that also pay for the delivery read."""
         return self.records.list_states_with_gates(TASK, conn=conn, project_id=project_id, detail_ids=detail_ids)
 

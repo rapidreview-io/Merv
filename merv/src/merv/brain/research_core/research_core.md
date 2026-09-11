@@ -14,7 +14,7 @@ instance/kind mismatches fail before checklist evaluation or native writes.
 ## Files
 
 - `records.py`: one engine interprets each graph's `RecordKind`: creation, hydration,
-  gates, `RecordKnowledge`, column writes and sealing. `RecordHooks.before_write` and
+  gates, typed construction, `RecordKnowledge`, column writes and sealing. `RecordHooks.before_write` and
   `RecordHooks.after_write` both run inside the caller's transaction. `read_fact` supplies
   kind-specific facts; `bindings` supplies graphs without native rows. Duplicate kinds fail.
 - `artifacts.py`: research associations, role/target policy, accepted evidence, replacement
@@ -34,7 +34,7 @@ instance/kind mismatches fail before checklist evaluation or native writes.
   limits and `RESOLVERS`. Each requirement class formats one checklist item from the
   same verified facts and graph issues enforcement uses; policy contains no persistence.
 - `association_targets.py`: target resolution. `objects.py`: completion lifecycle and
-  `ProducedObject` snapshots. `models.py`: typed state and `public_record` projection.
+  `ProducedObject` snapshots. `models.py`: research snapshots and `public_record` serialization.
 - `content_summaries.py`: document TLDRs. `paths.py`: safe experiment folder names.
   `tools.py`: research tool contracts, read from graph declarations where applicable.
   `persistence.py`: research tables, migrations, indexes and the `research_artifacts` view.
@@ -69,7 +69,8 @@ its already-reserved creates bypass mutable capacity checks. Failure restores ev
 ## Read model and invariants
 
 `Research.snapshot` hydrates native records and gates in one transaction-consistent project
-read. Focused reads preserve project scope, attempt rules and byte-stable snapshot identity.
+read. State values live beside their graphs in `definitions/research_state.py`; reflection
+keeps native status separate from workflow state. Focused reads preserve snapshot identity.
 Capabilities expire, are returned once and stored as hashes. A fresh request supersedes
 open requests for the same gate. `tool:review.start` verifies tenant, producer separation,
 snapshot and capability or assigned session; submission rechecks the immutable snapshot.

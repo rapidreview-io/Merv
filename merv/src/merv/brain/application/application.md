@@ -19,9 +19,9 @@ qualify named action, role, tool and skill references inline.
 - `status` and `status_for_agent` preserve rich UI and slim agent views, in
   project, experiment, or task scope. `instance_id` selects any registered
   workflow and its node-owned brief through the Workflows root.
-- A record's public shape is its row: Workflows declares `Public` beside the graph
-  — what a reader never sees, what a column is called, where a computed field sits
-  — and `public_record` applies it. A presenter is that call plus what it computes.
+- Native state remains typed through application logic. `Public` beside the graph
+  declares hidden fields and public names; `public_record` serializes dataclass
+  fields, enums and computed values, preserving omission independently of null.
 - One kind's work is called on that kind's service (`research.experiments`,
   `tasks`, `reflections`, `reviews`); nothing forwards through the root.
 - Task create/list/get/transition carry no exhibit: a task commits through its

@@ -170,7 +170,7 @@ class ResearchArtifacts:
         return Artifact.from_row(row)
 
     def _link(
-        self, tx, artifact_id, target, role, lens_id="", *, active, association_id=None
+        self, tx: Connection, artifact_id, target, role, lens_id="", *, active, association_id=None
     ):
         association_id = association_id or new_id(prefix="artref")
         tx.execute(
@@ -357,7 +357,7 @@ class ResearchArtifacts:
             )
 
     def history(
-        self, *, tx, target_type, target_ids, summarize=False
+        self, *, tx: Connection, target_type, target_ids, summarize=False
     ) -> dict[str, TargetHistory]:
         ids = tuple(dict.fromkeys(target_ids))
         if not ids:
@@ -434,7 +434,7 @@ class ResearchArtifacts:
             ).fetchall()
             return tuple(Artifact.from_row(row) for row in rows)
 
-    def _resolve_target(self, *, tx, target, for_submission=False):
+    def _resolve_target(self, *, tx: Connection, target, for_submission=False):
         project_id = self._store.require_project_id(
             conn=tx, project_id=target.project_id
         )
@@ -446,7 +446,7 @@ class ResearchArtifacts:
             for_submission=for_submission,
         )
 
-    def _stale_upload_error(self, *, tx, row):
+    def _stale_upload_error(self, *, tx: Connection, row):
         try:
             target = self._resolve_target(
                 tx=tx,
@@ -468,7 +468,7 @@ class ResearchArtifacts:
             )
         return None
 
-    def _replace_slot(self, *, tx, row, system=False):
+    def _replace_slot(self, *, tx: Connection, row, system=False):
         where = "project_id=? AND target_type=? AND target_id=? AND role=? AND attempt_index=? AND active=1 AND status='complete' AND id!=?"
         params = [
             row[k]
@@ -493,7 +493,7 @@ class ResearchArtifacts:
                     (old["id"],),
                 )
 
-    def _event(self, tx, row, event_type):
+    def _event(self, tx: Connection, row, event_type):
         payload = {
             "artifact_id": str(row["id"]),
             "role": str(row["role"]),

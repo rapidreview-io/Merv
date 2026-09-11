@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from merv.brain.kernel.utils import NotFoundError, ValidationError, WorkflowError
-from merv.brain.research_core import EXPERIMENT, REFLECTION, TASK
+from merv.brain.research_core import EXPERIMENT, REFLECTION, TASK, public_record
+from merv.brain.workflows import Public
 from merv.brain.workflows import ArtifactNeed, RecordKind, Reference, ReviewGate
 
 from .scenarios import VALID_PLAN, ResearchCase
@@ -92,7 +93,7 @@ class RecordEngineTest(ResearchCase):
         return case.create(self, name)
 
     def state(self, case: Case, record_id: str) -> dict[str, Any]:
-        return self.records().get_state(case.kind, record_id=record_id, project_id=self.project_id)
+        return public_record(Public(), self.records().get_state(case.kind, record_id=record_id, project_id=self.project_id))
 
     def test_failed_after_write_rolls_back_native_history_sealing_and_child_writes(self):
         from unittest.mock import patch
@@ -122,11 +123,11 @@ class RecordEngineTest(ResearchCase):
         kind = replace(EXPERIMENT, workflow=replace(EXPERIMENT.workflow, version=2))
         runtime = Runtime(store=self.app.store, registry=Registry((kind.workflow, replace(kind.workflow, version=3))))
         records = Records(store=self.app.store, artifacts=self.app.research.artifacts, runtime=runtime)
-        records.register(kind, RecordHooks())
+        records.register(kind, self.records().hooks["experiment"])
         with self.app.store.transaction() as conn:
             created = records.create_in_transaction(kind, conn=conn, project_id=self.project_id,
                 values={"name": "pinned-kind", "intent": "Keep the native contract.", "details": ""}, event={})
-            current = runtime.get(conn=conn, project_id=self.project_id, instance_id=created["id"])
+            current = runtime.get(conn=conn, project_id=self.project_id, instance_id=created.id)
             self.assertEqual(current.version, 2)
             self.assertEqual(runtime.registry.get(kind.name).version, 3)
 

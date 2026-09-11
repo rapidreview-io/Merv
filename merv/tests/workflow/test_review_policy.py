@@ -53,9 +53,24 @@ class ReviewPolicyTest(unittest.TestCase):
                     self.assertEqual(knowledge.read(Reference("review_snapshot", exp_id)), {})
                 refreshed = self.app.reviews.request(project_id=self.project_id, target_type="experiment", target_id=exp_id,
                                                      role="design_reviewer", if_current=True)
-                self.assertNotEqual(refreshed["review_request_id"], request["review_request_id"])
+                self.assertNotEqual(refreshed.review_request_id, request["review_request_id"])
                 self.assertTrue(self.app.reviews.request(project_id=self.project_id, target_type="experiment", target_id=exp_id,
-                                                        role="design_reviewer", if_current=True)["reused"])
+                                                        role="design_reviewer", if_current=True).reused)
+
+    def test_request_outcomes_serialize_only_their_available_fields(self):
+        from merv.brain.application.reviews import request_review
+        exp_id = self._drive_to_design_review()
+        arguments = dict(project_id=self.project_id, target_type="experiment",
+                         target_id=exp_id, role="design_reviewer", if_current=True)
+        created = request_review(self.app.research, **arguments)
+        self.assertEqual(set(created), {"review_request_id", "reviewer_capability", "role",
+                                       "target_snapshot_id", "target_snapshot", "expires_at", "reviewer_handoff"})
+        self.assertEqual(request_review(self.app.research, **arguments),
+                         {"review_request_id": created["review_request_id"], "reused": True})
+        self.assertEqual(request_review(self.app.research, **arguments, expected_revision=-1), {"skipped": True})
+        self._insert_attested_pass(exp_id=exp_id, role="design_reviewer")
+        self.assertEqual(request_review(self.app.research, **arguments),
+                         {"skipped": True, "reason": "The exact submitted snapshot already passed review."})
 
     def test_scoped_latest_verdict_and_independence_have_checklist_runtime_parity(self):
         from merv.brain.research_core.reviews import read_review_fact
@@ -188,7 +203,7 @@ class ReviewPolicyTest(unittest.TestCase):
         exp_id = self._drive_to_design_review()
         self._insert_attested_pass(exp_id=exp_id, role="design_reviewer")
         out = self._approve_design(exp_id)
-        self.assertEqual(out["status"], "running")
+        self.assertEqual(out.status, "running")
 
     # ---- knob on ----
 
@@ -223,7 +238,7 @@ class ReviewPolicyTest(unittest.TestCase):
         self._insert_attested_pass(exp_id=exp_id, role="design_reviewer")
         self._pass_verified_review(exp_id=exp_id, role="design_reviewer")
         out = self.app.research.experiments.get_state(project_id=self.project_id, experiment_id=exp_id)
-        self.assertEqual(out["status"], "running")
+        self.assertEqual(out.status, "running")
 
     def test_policy_can_be_switched_back_off(self) -> None:
         self.call("project.update", project_id=self.project_id, require_verified_reviews=True)
@@ -231,7 +246,7 @@ class ReviewPolicyTest(unittest.TestCase):
         exp_id = self._drive_to_design_review()
         self._insert_attested_pass(exp_id=exp_id, role="design_reviewer")
         out = self._approve_design(exp_id)
-        self.assertEqual(out["status"], "running")
+        self.assertEqual(out.status, "running")
 
     # ---- settings surface ----
 

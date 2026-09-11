@@ -106,7 +106,7 @@ class ReflectionWorkflowTest(ResearchCase):
             self.assertEqual([dict(row) for row in conn.execute("SELECT * FROM reflection_reserved_names ORDER BY name_lower").fetchall()], rows)
         # Publication must never fall back to the current spec after dropping its pin.
         with mock.patch.object(self.app.research.reflections, "_submitted_role_document", side_effect=AssertionError("lost pin")):
-            self.assertEqual(self._settle(advance)["status"], "published")
+            self.assertEqual(self._settle(advance).status, "published")
 
     def test_migration_71_classifies_two_existing_names_and_keeps_unknown_safe(self):
         from merv.brain.research_core.persistence import RESEARCH_SCHEMA
@@ -249,7 +249,7 @@ class ReflectionWorkflowTest(ResearchCase):
         )
         published = self.consolidate_and_publish(reflection_id)
 
-        self.assertEqual(published["status"], "published")
+        self.assertEqual(published.status, "published")
         claims = self.call("claim.list", project_id=self.project_id)["claims"]
         self.assertEqual(
             {claim["statement"]: claim["status"] for claim in claims},
@@ -265,8 +265,8 @@ class ReflectionWorkflowTest(ResearchCase):
             [(item["name"], item["status"]) for item in experiments],
             [("transfer-test", "planned")],
         )
-        self.assertEqual(len(published["materialized_claims"]), 2)
-        self.assertEqual(len(published["materialized_experiments"]), 1)
+        self.assertEqual(len(published.materialized_claims), 2)
+        self.assertEqual(len(published.materialized_experiments), 1)
 
     def _reviewed_no_code_advance(self, reflection_id: str) -> dict:
         """Drive the consolidation gate to a prepared advance without settling."""
@@ -395,7 +395,7 @@ class ReflectionWorkflowTest(ResearchCase):
             self.assertEqual(
                 self.app.reflection_waves.get_state(
                     reflection_id=reflection_id, project_id=self.project_id
-                )["status"],
+                ).status,
                 "consolidating",
             )
             # Discovery hands the bound receipt back, and preparing it again
@@ -412,7 +412,7 @@ class ReflectionWorkflowTest(ResearchCase):
             )
             self.assertEqual(retried, pending)
             published = self._settle(advance)
-        self.assertEqual(published["status"], "published")
+        self.assertEqual(published.status, "published")
         row = self._advance_row(advance["id"])
         self.assertEqual(row["status"], "bound")
         self.assertEqual(row["error"], "")  # no stale failure diagnostic
@@ -446,7 +446,7 @@ class ReflectionWorkflowTest(ResearchCase):
                     ("2026-08-08T00:00:00Z", advance["id"]),
                 )
             published = self._settle(advance, runner_id="replacement")
-        self.assertEqual(published["status"], "published")
+        self.assertEqual(published.status, "published")
 
     def test_wave_names_are_reserved_from_validation_onward(self) -> None:
         # A tool create that takes a validated spec's name mid-wave would
@@ -522,7 +522,7 @@ class ReflectionWorkflowTest(ResearchCase):
                 intent="The reserved slot is not consumable by tool creates.",
             )
         published = self._settle(advance)
-        self.assertEqual(published["status"], "published")
+        self.assertEqual(published.status, "published")
         experiments = self.call("experiment.list", project_id=self.project_id)[
             "experiments"
         ]
@@ -551,7 +551,7 @@ class ReflectionWorkflowTest(ResearchCase):
                     transition="abandon",
                 )
             published = self._settle(advance)
-        self.assertEqual(published["status"], "published")
+        self.assertEqual(published.status, "published")
 
     def test_consolidating_wave_refuses_late_artifact_submissions(self) -> None:
         # A new artifact mid-consolidation would reset review freshness and
@@ -576,7 +576,7 @@ class ReflectionWorkflowTest(ResearchCase):
                 body=json.dumps(late_spec),
             )
         published = self._settle(advance)
-        self.assertEqual(published["status"], "published")
+        self.assertEqual(published.status, "published")
         names = {
             item["name"]
             for item in self.call("experiment.list", project_id=self.project_id)[
@@ -604,7 +604,7 @@ class ReflectionWorkflowTest(ResearchCase):
         )
         self.assertEqual(abandoned["status"], "abandoned")
         settled = self._settle(advance)
-        self.assertEqual(settled["status"], "abandoned")
+        self.assertEqual(settled.status, "abandoned")
         row = self._advance_row(advance["id"])
         self.assertEqual(row["status"], "stale")
         self.assertIn("orphaned", row["error"])
@@ -634,7 +634,7 @@ class ReflectionWorkflowTest(ResearchCase):
         )
         advance = self._reviewed_no_code_advance(reflection_id)
         published = self._settle(advance)
-        self.assertEqual(published["status"], "published")
+        self.assertEqual(published.status, "published")
         names = {
             item["name"]
             for item in self.call("experiment.list", project_id=self.project_id)[
@@ -661,7 +661,7 @@ class ReflectionWorkflowTest(ResearchCase):
                 (reflection_id,),
             )
         published = self._settle(advance)
-        self.assertEqual(published["status"], "published")
+        self.assertEqual(published.status, "published")
         experiments = self.call("experiment.list", project_id=self.project_id)[
             "experiments"
         ]
@@ -679,7 +679,7 @@ class ReflectionWorkflowTest(ResearchCase):
         )
         advance = self._reviewed_no_code_advance(reflection_id)
         published = self._settle(advance)
-        self.assertEqual(published["status"], "published")
+        self.assertEqual(published.status, "published")
         service = self.app.reflection_waves
         with mock.patch.object(
             service, "get_state", side_effect=RuntimeError("ack lost")
@@ -726,7 +726,7 @@ class ReflectionWorkflowTest(ResearchCase):
         )
         published = self.consolidate_and_publish(reflection_id)
 
-        experiment_id = str(published["materialized_experiments"][0]["experiment_id"])
+        experiment_id = str(published.materialized_experiments[0]["experiment_id"])
         experiment = self.call(
             "experiment.get_state",
             project_id=self.project_id,
@@ -920,8 +920,8 @@ class ReflectionWorkflowTest(ResearchCase):
             diffstat={"commit_count": 1, "files_changed": 1},
             ancestry={experiment_id: False},
         )
-        self.assertEqual(published["status"], "published")
-        final = published["consolidation"]["decisions"][0]
+        self.assertEqual(published.status, "published")
+        final = published.consolidation["decisions"][0]
         self.assertFalse(final["ancestry_verified"])
         self.assertEqual(final["integration_outcome"], "applied")
 
@@ -1065,7 +1065,7 @@ class ReflectionWorkflowTest(ResearchCase):
             **settle,
             ancestry={experiment_id: True},
         )
-        self.assertEqual(published["status"], "published")
+        self.assertEqual(published.status, "published")
 
     def test_consolidation_review_loops_without_reopening_reflection(self) -> None:
         reflection_id = self.drive_reflection_to_review()
@@ -1084,6 +1084,10 @@ class ReflectionWorkflowTest(ResearchCase):
             decisions=[],
             producer_session_id="consolidator",
         )
+        native, gate = self.app.research.reflections.get_state_with_gate(
+            project_id=self.project_id, reflection_id=reflection_id)
+        self.assertEqual((native.status, native.workflow_state, gate.decision.public()["state"]),
+                         ("consolidating", "consolidation_review", "consolidation_review"))
         self.review(
             target_type="reflection",
             target_id=reflection_id,

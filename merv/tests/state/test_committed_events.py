@@ -96,16 +96,16 @@ class CommittedEventTest(unittest.TestCase):
         )
         committed = research.experiments.transition_with_event(
             project_id=self.project_id,
-            experiment_id=created["id"],
+            experiment_id=created.id,
             transition="mark_failed",
             evidence={"reason": "expected failure", "codes": [1, 2]},
         )
         state, event = committed.state, committed.event
         with self.assertRaises(FrozenInstanceError):
             committed.event = event
-        self.assertEqual(state["status"], "failed")
+        self.assertEqual(state.status, "failed")
         self.assertEqual(event.type, "experiment.transitioned")
-        self.assertEqual(event.target_id, created["id"])
+        self.assertEqual(event.target_id, created.id)
         self.assertEqual(
             dict(event.payload),
             {
@@ -154,21 +154,21 @@ class CommittedEventTest(unittest.TestCase):
         with self.assertRaisesRegex(sqlite3.IntegrityError, "forced event failure"):
             experiments.transition_with_event(
                 project_id=self.project_id,
-                experiment_id=created["id"],
+                experiment_id=created.id,
                 transition="mark_failed",
             )
 
         state = experiments.get_state(
-            project_id=self.project_id, experiment_id=created["id"]
+            project_id=self.project_id, experiment_id=created.id
         )
-        self.assertEqual(state["status"], "planned")
+        self.assertEqual(state.status, "planned")
         with closing(self.store.connect()) as conn:
             row = conn.execute(
                 """
                 SELECT COUNT(*) AS count FROM events
                 WHERE type = 'experiment.transitioned' AND target_id = ?
                 """,
-                (created["id"],),
+                (created.id,),
             ).fetchone()
         assert row is not None
         self.assertEqual(int(row["count"]), 0)

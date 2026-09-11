@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.support.research_state import experiment_state
+
 import unittest
 from copy import deepcopy
 from typing import Any
@@ -56,7 +58,7 @@ class RecordingExperiments:
     def __init__(self, order: list[str], *, error: Exception | None = None) -> None:
         self.order = order
         self.error = error
-        self.state = {"id": "exp_1", "project_id": "proj_1", "status": "planned"}
+        self.state = experiment_state()
 
     def get_state(self, **_kwargs: Any) -> dict[str, Any]:
         self.order.append("research.state")

@@ -3,6 +3,12 @@
 
 from __future__ import annotations
 
+from .models import public_record
+from ..workflows.definitions.research_state import (
+    ReviewRequestCreated, ReviewRequestReused, ReviewRequestSkipped, ReviewRequestOutcome,
+)
+from ..workflows import Public
+
 from contextlib import closing
 from collections.abc import Mapping
 import json
@@ -33,21 +39,21 @@ from .policy import (
     validate_review_verdict,
     validate_synopsis,
 )
-from ..kernel.state.store import BaseStateStore, next_created_seq, row_to_dict
+from ..kernel.state.store import BaseStateStore, Connection, next_created_seq, row_to_dict
 if TYPE_CHECKING:
     from .records import Records
     from .reflections import ReflectionService
 from ..workflows import Reference, Snapshot
 
 
-def project_settings(*, conn: Any, project_id: str) -> dict[str, Any]:
+def project_settings(*, conn: Connection, project_id: str) -> dict[str, Any]:
     row = conn.execute(
         "SELECT settings_json FROM projects WHERE id = ?", (project_id,)
     ).fetchone()
     return parse_project_settings(row["settings_json"]) if row else {}
 
 
-def read_review_fact(*, conn, project_id: str, target_type: str, target_id: str,
+def read_review_fact(*, conn: Connection, project_id: str, target_type: str, target_id: str,
                      snapshot_id: str, role: str) -> ReviewFact:
     """Read the latest verdict and request for one project, role and immutable snapshot."""
     scope = (project_id, target_type, target_id, role, snapshot_id)
@@ -103,7 +109,7 @@ class ReviewService:
         project_id: str | None = None,
         expected_revision: int | None = None,
         if_current: bool = False,
-    ) -> dict[str, Any]:
+    ) -> ReviewRequestOutcome:
         validate_review_role(role=role)
         with self.store.transaction() as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
@@ -112,7 +118,7 @@ class ReviewService:
                 raise NotFoundError(f"workflow {target_type!r} not found in this project: {target_id}")
             if expected_revision is not None:
                 if current.revision != expected_revision or current.outcome:
-                    return {"skipped": True}
+                    return ReviewRequestSkipped()
             self.runtime.lock(conn=conn, project_id=project_id, instance_id=target_id, revision=current.revision)
             target, _gate = self._target_with_gate(
                 conn=conn,
@@ -128,17 +134,14 @@ class ReviewService:
             )
             snapshot_id = review_snapshot_id(target_type=target_type, target=target, snapshot=current)
             if target_type == "reflection" and role == "consolidation_reviewer":
-                self.reflections.require_consolidation_proposal(
-                    conn=conn,
-                    reflection=target,
-                )
+                self.reflections.require_consolidation_proposal(_gate)
             if if_current:
                 fact = read_review_fact(conn=conn, project_id=project_id, target_type=target_type, target_id=target_id,
                                         snapshot_id=snapshot_id, role=role)
                 if fact.passed:
-                    return {"skipped": True, "reason": "The exact submitted snapshot already passed review."}
+                    return ReviewRequestSkipped(reason="The exact submitted snapshot already passed review.")
                 if fact.request_valid:
-                    return {"review_request_id": fact.request["id"], "reused": True}
+                    return ReviewRequestReused(review_request_id=fact.request["id"])
             # Refresh is revoke-and-reissue: a new capability for the same gate
             # closes every prior open request, so a lost or stale capability can
             # never race the fresh one to submit.
@@ -200,14 +203,11 @@ class ReviewService:
                     "superseded_request_ids": superseded,
                 },
             )
-            return {
-                "review_request_id": request_id,
-                "reviewer_capability": capability,
-                "role": role,
-                "target_snapshot_id": snapshot_id,
-                "target_snapshot": snapshot_from_id(snapshot_id=snapshot_id),
-                "expires_at": expires_at,
-            }
+            return ReviewRequestCreated(
+                review_request_id=request_id, reviewer_capability=capability, role=role,
+                target_snapshot_id=snapshot_id, target_snapshot=snapshot_from_id(snapshot_id=snapshot_id),
+                expires_at=expires_at,
+            )
 
     def start(
         self,
@@ -738,7 +738,7 @@ class ReviewService:
         if role != expected:
             raise PermissionDeniedError(f"active gate requires {expected}, not {role}")
 
-    def _target_snapshot_id(self, *, conn, project_id: str, target_type: str, target_id: str, lock: bool = False) -> str:
+    def _target_snapshot_id(self, *, conn: Connection, project_id: str, target_type: str, target_id: str, lock: bool = False) -> str:
         current = self.runtime.get(conn=conn, project_id=project_id, instance_id=target_id)
         if current.workflow != target_type:
             raise NotFoundError(f"workflow {target_type!r} not found in this project: {target_id}")
@@ -752,7 +752,7 @@ class ReviewService:
         )
         return review_snapshot_id(target_type=target_type, target=target, snapshot=current)
 
-    def read_fact(self, *, snapshot: Snapshot, reference: Reference, conn) -> dict[str, Any]:
+    def read_fact(self, *, snapshot: Snapshot, reference: Reference, conn: Connection) -> dict[str, Any]:
         if reference.kind not in {"review", "review_snapshot"}:
             raise NotFoundError(f"unknown review fact: {reference.kind}")
         node = self.runtime.registry.get(snapshot.workflow, snapshot.version).node(snapshot.state)
@@ -767,14 +767,15 @@ class ReviewService:
     def _target_with_gate(
         self,
         *,
-        conn,
+        conn: Connection,
         target_type: str,
         target_id: str,
         project_id: str | None = None,
     ):
         kind = self.records.kinds.get(target_type)
         if kind is not None:
-            return self.records.get_state_with_gate(kind, record_id=target_id, project_id=project_id, conn=conn)
+            state, gate = self.records.get_state_with_gate(kind, record_id=target_id, project_id=project_id, conn=conn)
+            return public_record(Public(), state), gate
         snapshot = self.runtime.get(conn=conn, project_id=project_id, instance_id=target_id)
         if snapshot.workflow != target_type:
             raise NotFoundError(f"workflow {target_type!r} not found in this project: {target_id}")

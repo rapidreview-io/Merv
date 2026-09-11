@@ -18,8 +18,8 @@ of a hand-written edge check, and Research reads the same declaration for the ga
 checklist. A check survives only where it says something a requirement cannot — a rejection
 verdict, a lens roster, an abandon guard. `RecordKind` declares the native row a graph is
 bound to: table, id prefix, insert and JSON columns, per-action commit columns, seal
-exemptions, any status projection, and `Public` — what a reader of that row never sees, what
-a stored column is called, and where a computed field sits. It also answers what its own
+exemptions, a typed constructor, any status projection, and `Public` — hidden fields and
+public names. The serializer owns computed-field placement. It also answers what its own
 graph already says: the success status, the actions, which action carries an effect, and the
 review gates and returns, so nothing restates a state machine. A plugin workflow declares no
 kind and keeps its record in instance data. `Program` names what a brain installs — graphs,
@@ -55,6 +55,7 @@ outcomes. `join_guard` enforces the same route for manual commands and automatic
 child generations cannot resume a new wait. Version migration explicitly preserves or
 replaces children and never replaces live work.
 
+`definitions/research_state.py` owns research state values beside their graphs.
 `definitions/` contains experiment, task, reflection, independent reflection lens, and
 published research-wave graphs, each beside its `RecordKind`, plus pure evidence validators,
 context builders, research contracts and the passive legacy `Metadata` (action effects and

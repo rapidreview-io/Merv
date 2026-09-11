@@ -3,12 +3,11 @@
 
 from __future__ import annotations
 
-from typing import TypedDict, Unpack
+from typing import Any, TypedDict, Unpack
 
 from ...kernel.utils import ValidationError
 from ...research_core import (
     EXPERIMENT,
-    ExperimentState,
     Research,
     safe_experiment_dirname,
 )
@@ -41,7 +40,7 @@ def experiment_folder(*, experiment_id: str, name: str = "") -> str:
 
 def create_experiment(
     research: Research, **kwargs: Unpack[ExperimentCreateArgs]
-) -> ExperimentState:
+) -> dict[str, Any]:
     """Translate released aliases, create in Research, and add folder guidance."""
     initial = EXPERIMENT.workflow.initial
     status = str(kwargs.pop("status", initial) or initial)
@@ -86,12 +85,12 @@ def create_experiment(
         raise ValidationError(
             "unexpected experiment.create fields: " + ", ".join(sorted(kwargs))
         )
-    state["folder"] = experiment_folder(
-        experiment_id=str(state.get("id") or ""),
-        name=str(state.get("name") or ""),
+    folder = experiment_folder(
+        experiment_id=state.id,
+        name=state.name,
     )
-    state["folder_guidance"] = (
-        f"Use {state['folder']} as the experiment's one local folder. "
+    folder_guidance = (
+        f"Use {folder} as the experiment's one local folder. "
         "Create it yourself before working in it: plan.md, scripts, configs, "
         "retained results, report, and graph all live there. This local folder "
         "is not uploaded to a sandbox automatically: create, fetch, or explicitly "
@@ -99,7 +98,7 @@ def create_experiment(
         "back with sandbox.pull_outputs, or upload heavy outputs to configured "
         "object storage, before the sandbox is released."
     )
-    return rich_experiment_state(state, storage_objects=())
+    return rich_experiment_state(state, storage_objects=(), folder=folder, folder_guidance=folder_guidance)
 
 
 __all__ = [

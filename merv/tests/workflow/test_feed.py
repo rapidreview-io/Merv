@@ -1342,7 +1342,7 @@ class FeedNoteTransitionIntegrationTest(unittest.TestCase):
 
     def test_completed_review_status_carries_feed_note_when_feed_is_silent(self) -> None:
         exp_id = self._drive_to_complete(name="exp-silent")
-        self.assertEqual(self.app.research.experiments.get_state(project_id=self.pid, experiment_id=exp_id)["status"], "complete")
+        self.assertEqual(self.app.research.experiments.get_state(project_id=self.pid, experiment_id=exp_id).status, "complete")
         result = self.call(
             "review.status",
             project_id=self.pid,

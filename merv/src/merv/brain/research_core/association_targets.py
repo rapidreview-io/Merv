@@ -7,6 +7,8 @@ checks. The generic artifact component never receives research targets.
 
 from __future__ import annotations
 
+from ..kernel.state.store import Connection
+
 from .artifact_models import ArtifactTarget
 from ..kernel.utils import NotFoundError, ValidationError
 from .policy import (
@@ -49,7 +51,7 @@ class AssociationTargets:
     """Resolve Research targets and their current artifact attempt."""
 
     def resolve(
-        self, *, tx, target: ArtifactTarget, for_submission: bool = False
+        self, *, tx: Connection, target: ArtifactTarget, for_submission: bool = False
     ) -> ArtifactTarget:
         kind, target_id = target.target_type, target.target_id
         if kind == "attempt":
@@ -114,7 +116,7 @@ class AssociationTargets:
             attempt_index=int(row["attempt_index"]) if attempt else 0,
         )
 
-    def is_protected(self, *, tx, artifact_id: str) -> bool:
+    def is_protected(self, *, tx: Connection, artifact_id: str) -> bool:
         """Whether a published reflection froze this artifact as its graph."""
         row = tx.execute(
             """

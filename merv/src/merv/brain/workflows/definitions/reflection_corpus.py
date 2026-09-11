@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from .research_state import ReflectionState
 
 from .artifact_roles import METRIC_RESULT_MAX_BYTES, PROJECT_GRAPH_ROLE, REFLECTION_LENS_DOC_ROLE
 from .documents import (
@@ -49,7 +50,7 @@ def authoritative_references(*, artifacts, attempt_index: int, roles: tuple[str,
 
 def corpus_snapshot(
     *, captured_at: str, experiments: list[dict[str, Any]], tasks: list[dict[str, Any]],
-    claims: list[dict[str, Any]], previous: dict[str, Any] | None, covered: set[str], covered_tasks: set[str],
+    claims: list[dict[str, Any]], previous: ReflectionState | None, covered: set[str], covered_tasks: set[str],
 ) -> dict[str, Any]:
     """The fixed corpus one wave reasons over, pinned the moment it is created.
 
@@ -59,9 +60,9 @@ def corpus_snapshot(
     focused reads.
     """
     graph = None if previous is None else preferred_artifact(
-        artifacts=previous.get("current_attempt_artifacts") or [], roles=(PROJECT_GRAPH_ROLE,))
+        artifacts=previous.current_attempt_artifacts or [], roles=(PROJECT_GRAPH_ROLE,))
     doc = None if previous is None else preferred_artifact(
-        artifacts=previous.get("current_attempt_artifacts") or [], roles=("reflection_doc",))
+        artifacts=previous.current_attempt_artifacts or [], roles=("reflection_doc",))
     return {
         "captured_at": captured_at,
         "terminal_experiments": experiments,
@@ -71,10 +72,10 @@ def corpus_snapshot(
                                      for item in experiments if str(item["id"]) not in covered],
         "new_terminal_tasks": [{"id": item["id"], "name": item["name"], "status": item["status"]}
                                for item in tasks if str(item["id"]) not in covered_tasks],
-        "previous_published_reflection_id": None if previous is None else previous["id"],
+        "previous_published_reflection_id": None if previous is None else previous.id,
         "previous_lens_reflections": {} if previous is None else {
             str(lens["lens_id"]): {key: lens[key] for key in ("artifact_id", "path", "role", "submitted_order")}
-            for lens in previous["reflection_coverage"]["lenses"] if lens.get("covered")},
+            for lens in previous.reflection_coverage["lenses"] if lens.get("covered")},
         "previous_published_artifacts": {role: content_reference(artifact)
                                          for role, artifact in ((PROJECT_GRAPH_ROLE, graph), ("reflection_doc", doc))
                                          if artifact is not None},

@@ -6,7 +6,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..research_core import Artifact
 from ..kernel.utils import NotFoundError
 from ..research_core import (
     EXPERIMENT_ACTIVE_PROCESS_STATUSES,
@@ -14,6 +13,8 @@ from ..research_core import (
     EXPERIMENT,
     Research,
     ResearchSnapshot,
+    ExperimentState,
+    TaskState,
     TASK_TERMINAL_STATUSES,
     project_fields,
     project_rows,
@@ -44,11 +45,6 @@ _EXPERIMENT_PRIORITY = {
 _PROCESS_PRIORITY = {"running": 0, "provisioning": 1}
 _STATUS_EXPERIMENT_FIELDS = ("id", "name", "intent", "status", "attempt_index")
 _PROCESS_EXPERIMENT_FIELDS = ("id", "intent", "status", "attempt_index")
-_ARTIFACT_LIST_FIELDS = (
-    "id", "target_type", "target_id", "role", "attempt_index", "lens_id", "path",
-    "title", "size_bytes", "content_type", "status", "created_by", "created_at",
-    "updated_at",
-)
 _STATUS_TASK_FIELDS = ("id", "name", "goal", "status", "attempt_index")
 _TASK_PRIORITY = {"in_review": 0, "in_progress": 1}
 _SANDBOX_SUMMARY_FIELDS = (
@@ -98,23 +94,18 @@ class StatusAndNextQuery:
                 snapshot=snapshot,
                 experiment=None,
                 sandboxes=[],
-                task=rich_task_state(task),
+                task=task,
             )
         selected = snapshot.selected_experiment
         sandbox_rows = (
             self.sandboxes.for_experiment(
-                project_id=snapshot.project_id, experiment_id=str(selected["id"])
+                project_id=snapshot.project_id, experiment_id=selected.id
             )
             if selected is not None
             else []
         )
-        experiment = (
-            self._enrich(project_id=snapshot.project_id, experiments=[selected])[0]
-            if selected is not None
-            else None
-        )
         return self._status(
-            snapshot=snapshot, experiment=experiment, sandboxes=sandbox_rows
+            snapshot=snapshot, experiment=selected, sandboxes=sandbox_rows
         )
 
     def status_and_next_agent(
@@ -124,30 +115,22 @@ class StatusAndNextQuery:
         experiment_id: str | None = None,
         task_id: str | None = None,
     ) -> Record:
-        full = self.status_and_next(
-            project_id=project_id, experiment_id=experiment_id, task_id=task_id
+        snapshot = self.research.snapshot(project_id=project_id, experiment_id=experiment_id, task_id=task_id)
+        experiment = snapshot.selected_experiment
+        task = snapshot.selected_task if task_id is not None else None
+        if experiment_id is not None and experiment is None:
+            raise NotFoundError(f"experiment not found: {experiment_id}")
+        if task_id is not None and task is None:
+            raise NotFoundError(f"task not found: {task_id}")
+        sandboxes = self.sandboxes.for_experiment(project_id=snapshot.project_id, experiment_id=experiment.id) if experiment else []
+        full = self._status(snapshot=snapshot, experiment=None if task else experiment,
+                            sandboxes=sandboxes, task=task, agent=True)
+        return _slim_status(
+            full,
+            experiment_context=self.context.build(state=experiment, project_id=project_id) if experiment_id else None,
+            task_context=self.task_context.build(state=task, project_id=project_id) if task and self.task_context else None,
+            project_context=self.project_context.build(project_id=project_id) if not experiment_id and not task_id else None,
         )
-        if task_id is not None:
-            task = full.get("task")
-            builder = self.task_context
-            context = (
-                builder.build(state=task, project_id=project_id)
-                if isinstance(task, dict) and builder is not None
-                else None
-            )
-            return _slim_status(full, task_context=context)
-        if experiment_id is None:
-            return _slim_status(
-                full,
-                project_context=self.project_context.build(project_id=project_id),
-            )
-        experiment = full.get("experiment")
-        context = (
-            self.context.build(state=experiment, project_id=project_id)
-            if isinstance(experiment, dict)
-            else None
-        )
-        return _slim_status(full, experiment_context=context)
 
     def project_models(
         self, *, snapshot: ResearchSnapshot, sandboxes: list[Record]
@@ -158,7 +141,7 @@ class StatusAndNextQuery:
         )
         by_id = {str(item["id"]): item for item in experiments}
         selected = (
-            by_id.get(str(snapshot.selected_experiment["id"]))
+            by_id.get(snapshot.selected_experiment.id)
             if snapshot.selected_experiment is not None
             else None
         )
@@ -173,7 +156,7 @@ class StatusAndNextQuery:
         return (
             self._status(
                 snapshot=snapshot,
-                experiment=selected,
+                experiment=snapshot.selected_experiment,
                 sandboxes=selected_sandboxes,
             ),
             self._active_work(
@@ -188,40 +171,41 @@ class StatusAndNextQuery:
         self,
         *,
         snapshot: ResearchSnapshot,
-        experiment: Record | None,
+        experiment: ExperimentState | None,
         sandboxes: list[Record],
-        task: Record | None = None,
+        task: TaskState | None = None,
+        agent: bool = False,
     ) -> Record:
         if task is not None:
             workflow = self.policy.task(
                 task=task,
-                evaluation=snapshot.gate_evaluations[str(task["id"])],
+                evaluation=snapshot.gate_evaluations[task.id],
             )
         elif experiment is not None:
             workflow = self.policy.experiment(
                 experiment=experiment,
                 sandboxes=sandboxes,
-                evaluation=snapshot.gate_evaluations[str(experiment["id"])],
+                evaluation=snapshot.gate_evaluations[experiment.id],
             )
         else:
             workflow = self.policy.project_setup()
         idle = all(
-            str(row["status"]) in EXPERIMENT_TERMINAL_STATUSES
+            row.status in EXPERIMENT_TERMINAL_STATUSES
             for row in snapshot.experiments
         ) and all(
-            str(row["status"]) in TASK_TERMINAL_STATUSES for row in snapshot.tasks
+            row.status in TASK_TERMINAL_STATUSES for row in snapshot.tasks
         )
         live_tasks = [
             row
             for row in snapshot.tasks
-            if str(row["status"]) not in TASK_TERMINAL_STATUSES
+            if row.status not in TASK_TERMINAL_STATUSES
         ]
         reflection = self.policy.project_reflection(
             open_wave=snapshot.open_reflection,
             evaluation=(
                 None
                 if snapshot.open_reflection is None
-                else snapshot.gate_evaluations[str(snapshot.open_reflection["id"])]
+                else snapshot.gate_evaluations[snapshot.open_reflection.id]
             ),
             signal=snapshot.reflection_signal,
             idle=idle,
@@ -238,7 +222,7 @@ class StatusAndNextQuery:
         elif not scoped and (
             (
                 experiment is not None
-                and str(experiment.get("status")) in EXPERIMENT_TERMINAL_STATUSES
+                and experiment.status in EXPERIMENT_TERMINAL_STATUSES
             )
             or (experiment is None and live_tasks)
         ):
@@ -256,8 +240,9 @@ class StatusAndNextQuery:
                 ),
                 "active_tasks": project_rows(snapshot.tasks, _STATUS_TASK_FIELDS),
             },
-            "experiment": experiment,
-            "task": task,
+            "experiment": (experiment if agent else self._enrich(
+                project_id=snapshot.project_id, experiments=[experiment])[0]) if experiment else None,
+            "task": (slim_task_state if agent else rich_task_state)(task) if task else None,
             "sandboxes": sandboxes,
             "workflow": workflow,
         }
@@ -310,7 +295,7 @@ class StatusAndNextQuery:
                 {
                     **experiment,
                     "workflow": self.policy.experiment(
-                        experiment=experiment,
+                        experiment=next(item for item in snapshot.experiments if item.id == experiment["id"]),
                         sandboxes=experiment_sandboxes,
                         evaluation=snapshot.gate_evaluations[str(experiment["id"])],
                     ),
@@ -325,14 +310,14 @@ class StatusAndNextQuery:
             )
         active_tasks = [
             {
-                **dict(task),
+                **rich_task_state(task),
                 "workflow": self.policy.task(
-                    task=dict(task),
-                    evaluation=snapshot.gate_evaluations[str(task["id"])],
+                    task=task,
+                    evaluation=snapshot.gate_evaluations[task.id],
                 ),
             }
             for task in snapshot.tasks
-            if str(task["status"]) not in TASK_TERMINAL_STATUSES
+            if task.status not in TASK_TERMINAL_STATUSES
         ]
         return {
             "active_experiments": _sort_active(active, _EXPERIMENT_PRIORITY),
@@ -340,11 +325,11 @@ class StatusAndNextQuery:
             "active_processes": processes,
         }
 
-    def _enrich(self, *, project_id: str, experiments: list[Record]) -> list[Record]:
+    def _enrich(self, *, project_id: str, experiments: list[ExperimentState]) -> list[Record]:
         ids = tuple(
-            str(experiment.get("id") or "")
+            experiment.id
             for experiment in experiments
-            if experiment.get("id")
+            if experiment.id
         )
         by_experiment = self.objects.by_experiment(
             project_id=project_id, experiment_ids=ids
@@ -352,15 +337,10 @@ class StatusAndNextQuery:
         return [
             rich_experiment_state(
                 experiment,
-                storage_objects=by_experiment.get(str(experiment.get("id") or ""), []),
+                storage_objects=by_experiment.get(experiment.id, []),
             )
             for experiment in experiments
         ]
-
-
-def artifact_list_record(artifact: Artifact) -> Record:
-    """The dashboard's artifact row: the model's own columns, minus the bytes."""
-    return {name: getattr(artifact, name) for name in _ARTIFACT_LIST_FIELDS}
 
 
 def _sort_active(items: list[Record], priority: dict[str, int]) -> list[Record]:
@@ -397,11 +377,11 @@ def _slim_status(
     experiment = full.get("experiment")
     if task_context is not None or full.get("task") is not None:
         task = full.get("task")
-        if not isinstance(task, dict):
+        if task is None:
             raise RuntimeError("task state is required for task scope")
         result: Record = {
             "scope": "task",
-            "task": dict(slim_task_state(task)),
+            "task": task,
             "workflow": workflow,
             "context": task_context or {},
             "project": {"id": project.get("id"), "name": project.get("name")},
@@ -454,4 +434,4 @@ def _sandbox_summary(sandboxes: list[Record]) -> Record:
     }
 
 
-__all__ = ["StatusAndNextQuery", "artifact_list_record"]
+__all__ = ["StatusAndNextQuery"]

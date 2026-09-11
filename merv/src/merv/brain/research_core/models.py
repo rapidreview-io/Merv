@@ -4,56 +4,56 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
+from enum import Enum
 from typing import Any, TypedDict
 
 from ..kernel.events import StoredEvent
 from ..workflows import Public
+from ..workflows.definitions.research_state import ExperimentState, TaskState, ReflectionState, MISSING
+from .policy import GateEvaluation
 
 
-def public_record(public: Public, record: Mapping[str, Any], **computed: Any) -> dict[str, Any]:
-    """One record's public shape, and the only place a public shape is built.
+def _public_value(value):
+    if isinstance(value, Enum):
+        return value.value
+    if is_dataclass(value):
+        return public_record(Public(), value)
+    if isinstance(value, Mapping):
+        return {name: _public_value(item) for name, item in value.items() if item is not MISSING}
+    if isinstance(value, (list, tuple)):
+        return [_public_value(item) for item in value]
+    return value
 
-    The row is the shape: a reader sees every field it carries, under the name
-    the declaration gives it, minus what that declaration hides. Fields a
-    presenter computes are passed here — one already in the row keeps its
-    place, and a new one takes the seat the declaration gave it.
-    """
-    result: dict[str, Any] = {
-        public.renames.get(name, name): value
-        for name, value in record.items()
-        if name not in public.hidden
-    }
-    for name, value in computed.items():
-        anchor = public.after.get(name, "")
-        if anchor not in result or name in result:
-            result[name] = value
+
+def public_record(public: Public, record: object, **computed: Any) -> dict[str, Any]:
+    """Serialize declared fields; hidden names cannot be restored by computations."""
+    names = (item.name for item in fields(record)) if is_dataclass(record) else record
+    result = {}
+    for name in dict.fromkeys((*names, *computed)):
+        if name in public.hidden:
             continue
-        keys = list(result)
-        seat = keys.index(anchor) + 1
-        result = {**{key: result[key] for key in keys[:seat]}, name: value,
-                  **{key: result[key] for key in keys[seat:]}}
+        value = computed.get(name, MISSING)
+        if name not in computed:
+            value = getattr(record, name) if is_dataclass(record) else record[name]
+        if value is not MISSING:
+            result[public.renames.get(name, name)] = _public_value(value)
+    for name, anchor in {"post_publish_guidance": "materialized_experiments"}.items():
+        if name in result and anchor in result:
+            value = result.pop(name)
+            result = {key: item for key, item in result.items()
+                      for key, item in ((key, item), *(((name, value),) if key == anchor else ()))}
     return result
 
 
-def project_fields(record: Mapping[str, Any], fields: Iterable[str]) -> dict[str, Any]:
+def project_fields(record: object, fields: Iterable[str]) -> dict[str, Any]:
     """Narrow one record to the columns a reader needs."""
-    return {name: record.get(name) for name in fields}
+    return {name: _public_value(getattr(record, name, None) if is_dataclass(record) else record.get(name)) for name in fields}
 
 
-def project_rows(rows: Iterable[Mapping[str, Any]], fields: Iterable[str]) -> list[dict[str, Any]]:
+def project_rows(rows: Iterable[object], fields: Iterable[str]) -> list[dict[str, Any]]:
     fields = tuple(fields)
     return [project_fields(row, fields) for row in rows]
-
-
-class ExperimentState(TypedDict, total=False):
-    id: str
-    project_id: str
-    name: str
-    intent: str
-    details: str
-    status: str
-    attempt_index: int
 
 
 class ExperimentSummary(TypedDict):
@@ -77,46 +77,6 @@ class ExhibitVerdict(TypedDict, total=False):
 class CommittedExperimentUpdate:
     state: ExperimentState
     event: StoredEvent
-
-
-class TaskResult(TypedDict):
-    """One confirmation: the executor's claim, the pointer, how to check."""
-
-    number: int
-    state: str | None
-    evidence: str | None
-    how: str | None
-    text: str
-
-
-class DependencyNode(TypedDict):
-    """A node on either side of a wave-DAG edge, with its current standing."""
-
-    id: str
-    node_type: str
-    name: str
-    status: str
-    settled: bool
-    failed: bool
-
-
-class TaskState(TypedDict, total=False):
-    id: str
-    project_id: str
-    name: str
-    goal: str
-    status: str
-    attempt_index: int
-    outcome: str
-    failed_by: str
-    # The goal's contract and the delivery parsed to structure;
-    # `dependents` mirrors `dependencies` on the other side of the edge.
-    deliverables: list[str]
-    results: list[TaskResult]
-    report: str | None
-    caveats: str | None
-    dependencies: list[DependencyNode]
-    dependents: list[DependencyNode]
 
 
 class TaskSummary(TypedDict):
@@ -152,10 +112,10 @@ class ResearchSnapshot:
     project: dict[str, Any]
     claims: list[dict[str, Any]]
     experiments: list[ExperimentState]
-    open_reflection: dict[str, Any] | None
-    latest_published_reflection: dict[str, Any] | None
+    open_reflection: ReflectionState | None
+    latest_published_reflection: ReflectionState | None
     reflection_signal: dict[str, Any]
-    gate_evaluations: dict[str, Any]
+    gate_evaluations: dict[str, GateEvaluation]
     tasks: list[TaskState] = field(default_factory=list)
     requested_task_id: str | None = None
     literature_signal: LiteratureSignal = field(
@@ -166,31 +126,14 @@ class ResearchSnapshot:
 
     @property
     def selected_task(self) -> TaskState | None:
-        selected_id = self.requested_task_id
-        if selected_id is None:
-            return None
-        return next(
-            (
-                task
-                for task in self.tasks
-                if str(task.get("id") or "") == selected_id
-            ),
-            None,
-        )
+        return next((task for task in self.tasks if task.id == self.requested_task_id), None)
 
     @property
     def selected_experiment(self) -> ExperimentState | None:
-        selected_id = self.requested_experiment_id
-        if selected_id is None and self.experiments:
-            selected_id = str(self.experiments[-1].get("id") or "")
-        return next(
-            (
-                experiment
-                for experiment in self.experiments
-                if str(experiment.get("id") or "") == selected_id
-            ),
-            None,
-        )
+        if self.requested_experiment_id is None:
+            return self.experiments[-1] if self.experiments else None
+        return next((experiment for experiment in self.experiments
+                     if experiment.id == self.requested_experiment_id), None)
 
 
 __all__ = [

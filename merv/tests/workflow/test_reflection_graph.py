@@ -136,7 +136,7 @@ class ReflectionGraphTest(ResearchCase):
         reflection_id = self.drive_reflection_to_review()
         self.pass_review(target_type="reflection", target_id=reflection_id, role="reflection_reviewer")
         published = self.consolidate_and_publish(reflection_id)
-        experiment_id = published["materialized_experiments"][0]["experiment_id"]
+        experiment_id = published.materialized_experiments[0]["experiment_id"]
         before = self.state(experiment_id)
         started = self.call("workflow.start", project_id=self.project_id, workflow="research_wave", request_id=f"reflection-wave:{reflection_id}",
                             data={"reflection_id": reflection_id})

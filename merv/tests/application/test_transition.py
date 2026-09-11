@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.support.research_state import experiment_state
+
 import json
 import unittest
 from copy import deepcopy
@@ -48,14 +50,14 @@ def _state(
     attempt_index: int = 3,
     token: str = "committed",
 ) -> dict[str, Any]:
-    return {
+    return experiment_state(**{
         "id": EXPERIMENT_ID,
         "project_id": PROJECT_ID,
         "name": "A Characterized Experiment",
         "status": status,
         "attempt_index": attempt_index,
-        "state_token": token,
-    }
+        "details": token,
+    })
 
 
 def _exhibit(*, result_files: int = 1) -> dict[str, Any]:
@@ -90,7 +92,7 @@ class RecordingResearch:
                 get=lambda **kwargs: SimpleNamespace(
                     revision=self.workflow_revision,
                     outcome=self.workflow_outcome,
-                    state=str(self.before["status"]),
+                    state=str(self.before.status),
                     id=EXPERIMENT_ID,
                     project_id=PROJECT_ID,
                 )
@@ -441,7 +443,7 @@ class SubmitResultsExhibitPrerequisiteTest(unittest.TestCase):
 
     def test_verdict_and_pin_are_one_fenced_capability_before_transition(self):
         use_case, research, artifacts, feed, exhibits, order = self._fixture()
-        research.before["current_attempt_artifacts"] = [
+        research.before.current_attempt_artifacts[:] = [
             {"id": "result_1", "role": "result"},
             {"id": "old_exhibit", "role": "exhibit"},
         ]

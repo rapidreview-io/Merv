@@ -317,8 +317,8 @@ class ExperimentSlimTest(unittest.TestCase):
         full = self.app.experiments.get_state(
             experiment_id=exp_id, project_id=self.project_id
         )
-        self.assertIn("artifacts", full)
-        self.assertIn("content_type", full["current_attempt_artifacts"][0])
+        self.assertTrue(full.artifacts)
+        self.assertIn("content_type", full.current_attempt_artifacts[0])
 
 
 if __name__ == "__main__":

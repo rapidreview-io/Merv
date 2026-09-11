@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.support.research_state import experiment_state
+
 from dataclasses import replace
 import unittest
 
@@ -21,7 +23,7 @@ class GraphResearch:
         })
 
     def experiment_state(self, **_kwargs):
-        return {
+        return experiment_state(**{
             "id": "exp_1",
             "status": "running",
             "attempt_index": 2,
@@ -43,7 +45,7 @@ class GraphResearch:
                     "association_version_id": "ver_new",
                 },
             ],
-        }
+        })
 
     def reflection_state(self, **_kwargs):
         return {"id": "syn_1", "attempt_index": 1, "artifacts": []}

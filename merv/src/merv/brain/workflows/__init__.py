@@ -29,9 +29,10 @@ from .graph import (
 )
 from .runtime import InstanceFact, Runtime, snapshot_view
 from .tools import TOOLS
-from .workflows import Binding, Workflows
+from .workflows import Binding, Connection, Workflows
 
 __all__ = [
+    "Connection",
     "artifact_roles", "documents", "research_contracts",
     "EXPERIMENT_KIND", "REFLECTION_KIND", "TASK_KIND",
     "ARTIFACT_TARGET_TYPES", "ARTIFACT_TOOL_VOCABULARY", "EXHIBIT_ROLE", "GATED_ROLES",

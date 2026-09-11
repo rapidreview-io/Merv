@@ -4,15 +4,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from dataclasses import replace
+from ..workflows.definitions.research_state import ExperimentStatus, ReviewRequestCreated
 from typing import Any
 
-from ..workflows import EXHIBIT_ROLE, GATED_ROLES, RecordKind
+from ..workflows import EXHIBIT_ROLE, GATED_ROLES, RecordKind, Public
 
 from ..feed import FeedAdvisory
 from ..kernel.utils import parse_iso
 from ..research_core import (
     Research,
     project_fields,
+    public_record,
 )
 from ..research_core import ResearchArtifacts as Artifacts
 from .experiments.context import ExperimentContextQuery
@@ -27,17 +30,15 @@ _SUBMITTED_FIELDS = ("role", "lens_id", "path", "submission_id")
 def request_review(research: Research, **kwargs: Any) -> dict[str, Any]:
     """Add delivery instructions to a Research-owned review capability."""
     result = research.reviews.request(**kwargs)
-    return {
-        **result,
-        "reviewer_handoff": reviewer_handoff_payload(
-            kind=research.kinds.get(str(kwargs["target_type"])),
-            role=str(kwargs["role"]),
-            target_type=str(kwargs["target_type"]),
-            target_id=str(kwargs["target_id"]),
-            review_request_id=str(result["review_request_id"]),
-            reviewer_capability=str(result["reviewer_capability"]),
-        ),
-    }
+    computed = {}
+    if isinstance(result, ReviewRequestCreated):
+        computed["reviewer_handoff"] = reviewer_handoff_payload(
+            kind=research.kinds.get(str(kwargs["target_type"])), role=result.role,
+            target_type=str(kwargs["target_type"]), target_id=str(kwargs["target_id"]),
+            review_request_id=result.review_request_id, reviewer_capability=result.reviewer_capability,
+        )
+    return public_record(Public(), result, **computed)
+
 
 
 def reviewer_handoff_payload(
@@ -89,15 +90,13 @@ def start_review(
     task_context: TaskContextQuery | None = None,
 ) -> dict[str, Any]:
     """Start a pinned review, then attach bounded orientation for its target."""
-    result = dict(
-        research.reviews.start(
-            review_request_id=review_request_id,
-            reviewer_capability=reviewer_capability,
-            declared_agent=declared_agent,
-            caller_session_id=caller_session_id,
-            assigned_agent_session_id=assigned_agent_session_id,
-            assigned_review_request_id=assigned_review_request_id,
-        )
+    result = research.reviews.start(
+        review_request_id=review_request_id,
+        reviewer_capability=reviewer_capability,
+        declared_agent=declared_agent,
+        caller_session_id=caller_session_id,
+        assigned_agent_session_id=assigned_agent_session_id,
+        assigned_review_request_id=assigned_review_request_id,
     )
     project_id = str(result.get("project_id") or "")
     target_type = str(result.get("target_type") or "")
@@ -121,12 +120,9 @@ def start_review(
             experiment_id=target_id,
             project_id=project_id,
         )
-        state = {
-            **live_state,
-            "status": target_snapshot.get("status") or live_state.get("status"),
-            "attempt_index": target_snapshot.get("attempt_index")
-            or live_state.get("attempt_index"),
-        }
+        state = replace(live_state,
+                        status=ExperimentStatus(target_snapshot.get("status") or live_state.status),
+                        attempt_index=target_snapshot.get("attempt_index") or live_state.attempt_index)
         result["context"] = experiment_context.build(
             state=state,
             project_id=project_id,
@@ -137,7 +133,7 @@ def start_review(
         live_task = research.tasks.get_state(task_id=target_id, project_id=project_id)
         if task_context is not None:
             result["context"] = task_context.build(
-                state=dict(live_task), project_id=project_id
+                state=live_task, project_id=project_id
             )
     elif target_type == "reflection":
         result["submitted_artifacts"] = submitted_artifacts
@@ -182,7 +178,7 @@ def read_review_status(
         event = research.reviews.latest_submitted_event(
             target_type=target_type,
             target_id=target_id,
-            project_id=str(state.get("project_id") or project_id or ""),
+            project_id=state.project_id,
         )
     except Exception:
         return result
@@ -190,19 +186,13 @@ def read_review_status(
         return result
     note = feed_transition_note(
         feed,
-        project_id=str(state.get("project_id") or ""),
-        ref=str(state.get("id") or ""),
+        project_id=state.project_id,
+        ref=state.id,
         event="experiment_review_verdict",
     )
     if note:
         result["feed_note"] = note
     return result
-
-
-def review_queue(
-    research: Research, *, project_id: str | None = None
-) -> dict[str, Any]:
-    return present_review_recovery(research.reviews.queue(project_id=project_id))
 
 
 def present_review_recovery(result: dict[str, Any]) -> dict[str, Any]:
@@ -271,6 +261,6 @@ def _submitted_artifacts(
 __all__ = [
     "read_review_status",
     "request_review",
-    "review_queue",
+    "present_review_recovery",
     "start_review",
 ]

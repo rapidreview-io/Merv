@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict
 
 from ...workflows import EXHIBIT_ROLE
 
@@ -22,12 +22,7 @@ from ...research_core import (
 from .create import experiment_folder
 from .exhibits import ExhibitBuilder, should_pin_exhibit
 from .metrics_exhibit import METRICS_EXHIBIT_FILENAME, exhibit_bytes
-from .presentation import ProducedObjectCatalog, SlimExperimentState, slim_experiment_state
-
-
-class TransitionResponse(SlimExperimentState, total=False):
-    metrics_exhibit: dict[str, object]
-    feed_note: str
+from .presentation import ProducedObjectCatalog, slim_experiment_state
 
 
 class TransitionReceipt(TypedDict, total=False):
@@ -120,7 +115,7 @@ class TransitionExperiment:
         transition: str,
         evidence: dict[str, Any] | None = None,
         project_id: str | None = None,
-    ) -> TransitionResponse:
+    ) -> dict[str, Any]:
         response, _event = self._execute(
             experiment_id=experiment_id,
             transition=transition,
@@ -136,7 +131,7 @@ class TransitionExperiment:
         transition: str,
         evidence: dict[str, Any] | None,
         project_id: str | None,
-    ) -> tuple[TransitionResponse, StoredEvent]:
+    ) -> tuple[dict[str, Any], StoredEvent]:
         effects = EXPERIMENT.metadata.effects.get(transition, ())
         before = (
             self.research.experiments.get_state(
@@ -145,7 +140,7 @@ class TransitionExperiment:
             if "prepare_metrics_exhibit" in effects or not project_id
             else None
         )
-        resolved_project_id = str((before or {}).get("project_id") or project_id or "")
+        resolved_project_id = before.project_id if before is not None else project_id or ""
         storage_objects = self.objects.by_experiment(
             project_id=resolved_project_id, experiment_ids=(experiment_id,)
         )[experiment_id]
@@ -154,7 +149,7 @@ class TransitionExperiment:
         if (
             "prepare_metrics_exhibit" in effects
             and before is not None
-            and str(before.get("status"))
+            and before.status
             in EXPERIMENT.effect_sources("prepare_metrics_exhibit")
         ):
             prepared_snapshot = self.research.workflows.runtime.get(project_id=resolved_project_id, instance_id=experiment_id)
@@ -168,18 +163,15 @@ class TransitionExperiment:
             **({"expected_revision": prepared_snapshot.revision} if prepared_snapshot is not None else {}),
         )
         state = committed.state
-        response = cast(
-            TransitionResponse,
-            dict(slim_experiment_state(state, storage_objects=storage_objects)),
-        )
+        response = slim_experiment_state(state, storage_objects=storage_objects)
         if "show_metrics_exhibit" in effects:
             response["metrics_exhibit"] = self._exhibit_expectation(
-                experiment_id=experiment_id, state=response
+                experiment_id=experiment_id, state=state
             )
         elif "prepare_metrics_exhibit" in effects and exhibit is not None:
             response["metrics_exhibit"] = {
                 "pinned": True,
-                "path": self._exhibit_path(experiment_id=experiment_id, state=response),
+                "path": self._exhibit_path(experiment_id=experiment_id, state=state),
                 "verdict": exhibit["verdict"],
             }
 
@@ -191,7 +183,7 @@ class TransitionExperiment:
     def _feed_advisory(
         self, *, event: StoredEvent, state: ExperimentState
     ) -> str | None:
-        status = str(state.get("status") or "")
+        status = state.status
         if (
             event.type != EXPERIMENT.workflow.event_type
             or status not in EXPERIMENT_TERMINAL_STATUSES
@@ -199,8 +191,8 @@ class TransitionExperiment:
             return None
         return feed_transition_note(
             self.feed,
-            project_id=str(state.get("project_id") or ""),
-            ref=str(state.get("id") or ""),
+            project_id=state.project_id,
+            ref=state.id,
             event=f"experiment_{status}",
         )
 
@@ -212,10 +204,10 @@ class TransitionExperiment:
         return self._finalize_exhibit(state=state, snapshot=snapshot)
 
     def _finalize_exhibit(self, *, state: ExperimentState, snapshot: Snapshot | None = None) -> dict[str, object] | None:
-        project_id, experiment_id = str(state.get("project_id") or ""), str(state.get("id") or "")
+        project_id, experiment_id = state.project_id, state.id
         if snapshot is None:
             snapshot = self.research.workflows.runtime.get(project_id=project_id, instance_id=experiment_id)
-        source_ids = tuple(str(item["id"]) for item in state.get("current_attempt_artifacts") or () if item.get("role") != EXHIBIT_ROLE)
+        source_ids = tuple(str(item["id"]) for item in state.current_attempt_artifacts or () if item.get("role") != EXHIBIT_ROLE)
         # Remote reads happen before any database transaction. The native
         # capability locks/rechecks this revision and evidence before pinning.
         exhibit = self.exhibits.generate(state=state)
@@ -223,24 +215,24 @@ class TransitionExperiment:
         verdict = {**dict(exhibit["verdict"]), "attempt_index": exhibit["attempt_index"], "pinned": pinned}
         self.research.experiments.record_exhibit_verdict(
             experiment_id=experiment_id, project_id=project_id, verdict=verdict,
-            expected_revision=snapshot.revision, expected_attempt_index=int(state["attempt_index"]),
+            expected_revision=snapshot.revision, expected_attempt_index=int(state.attempt_index),
             expected_artifact_ids=source_ids,
             artifact_path=self._exhibit_path(experiment_id=experiment_id, state=state) if pinned else "",
             artifact_data=exhibit_bytes(exhibit) if pinned else None,
         )
         return exhibit if pinned else None
 
-    def _exhibit_path(self, *, experiment_id: str, state: dict[str, Any]) -> str:
+    def _exhibit_path(self, *, experiment_id: str, state: ExperimentState) -> str:
         return (
             experiment_folder(
                 experiment_id=experiment_id,
-                name=str(state.get("name") or ""),
+                name=state.name,
             )
             + METRICS_EXHIBIT_FILENAME
         )
 
     def _exhibit_expectation(
-        self, *, experiment_id: str, state: dict[str, Any]
+        self, *, experiment_id: str, state: ExperimentState
     ) -> dict[str, object]:
         path = self._exhibit_path(experiment_id=experiment_id, state=state)
         return {
@@ -258,4 +250,4 @@ class TransitionExperiment:
         }
 
 
-__all__ = ["TransitionExperiment", "TransitionReceipt", "TransitionResponse"]
+__all__ = ["TransitionExperiment", "TransitionReceipt"]

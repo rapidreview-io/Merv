@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+from ..kernel.state.store import Connection
+
 from contextlib import closing
 from functools import partial
 import hashlib
 import json
 import math
-from typing import Any, cast
+from typing import Any
 
 
 from .policy import (
@@ -24,6 +26,7 @@ from .policy import (
 )
 from .experiments import ExperimentService
 from .models import (
+    ReflectionState,
     ExperimentState,
     LiteratureSignal,
     ResearchSnapshot,
@@ -833,7 +836,7 @@ class Research:
             return self._write_claim(conn=conn, project_id=project_id, claim_id=claim_id,
                                      changes={"status": status, "confidence": confidence})
 
-    def _write_claim(self, *, conn, project_id: str, changes: dict[str, Any], claim_id: str = "",
+    def _write_claim(self, *, conn: Connection, project_id: str, changes: dict[str, Any], claim_id: str = "",
                      provenance: dict[str, Any] | None = None) -> dict[str, Any]:
         """Write a claim and its event on the caller's transaction, preserving omitted fields."""
         creating = not claim_id
@@ -883,10 +886,7 @@ class Research:
             evaluated = self.experiments.list_states_with_gates(
                 conn=conn, project_id=project_id
             )
-            return cast(
-                list[ExperimentState],
-                [state for state, _gate in evaluated],
-            )
+            return [state for state, _gate in evaluated]
 
     def project_tasks(self, *, project_id: str | None) -> list[TaskState]:
         with closing(self.store.connect()) as conn:
@@ -894,7 +894,7 @@ class Research:
             evaluated = self.tasks.list_states_with_gates(
                 conn=conn, project_id=project_id
             )
-            return cast(list[TaskState], [state for state, _gate in evaluated])
+            return [state for state, _gate in evaluated]
 
     # Reviews --------------------------------------------------------------
 
@@ -968,16 +968,16 @@ class Research:
             evaluated = self.experiments.list_states_with_gates(
                 conn=conn, project_id=project_id
             )
-            experiments = cast(list[ExperimentState], [state for state, _ in evaluated])
-            gates = {str(state["id"]): evaluation for state, evaluation in evaluated}
+            experiments = [state for state, _ in evaluated]
+            gates = {state.id: evaluation for state, evaluation in evaluated}
             evaluated_tasks = self.tasks.list_states_with_gates(
                 conn=conn,
                 project_id=project_id,
                 detail_ids=(task_id,) if task_id else (),
             )
-            tasks = cast(list[TaskState], [state for state, _ in evaluated_tasks])
+            tasks = [state for state, _ in evaluated_tasks]
             gates.update(
-                {str(state["id"]): evaluation for state, evaluation in evaluated_tasks}
+                {state.id: evaluation for state, evaluation in evaluated_tasks}
             )
             open_reflection, open_gate = self._reflection(
                 conn=conn, project_id=project_id, terminal=False
@@ -990,12 +990,12 @@ class Research:
                 (published, published_gate),
             ):
                 if reflection is not None and evaluation is not None:
-                    gates[str(reflection["id"])] = evaluation
+                    gates[reflection.id] = evaluation
             signal = reflection_signal_state(
                 current_terminal={
-                    str(row["id"]): str(row["status"])
+                    row.id: row.status
                     for row in experiments
-                    if str(row["status"]) in EXPERIMENT_TERMINAL_STATUSES
+                    if row.status in EXPERIMENT_TERMINAL_STATUSES
                 },
                 current_claims={
                     str(claim["id"]): str(claim["status"]) for claim in claims
@@ -1003,9 +1003,9 @@ class Research:
                 published=published,
                 open_wave=open_reflection,
                 current_terminal_tasks={
-                    str(row["id"]): str(row["status"])
+                    row.id: row.status
                     for row in tasks
-                    if str(row["status"]) in TASK_TERMINAL_STATUSES
+                    if row.status in TASK_TERMINAL_STATUSES
                 },
             )
             return ResearchSnapshot(
@@ -1217,8 +1217,8 @@ class Research:
     # Read helpers ---------------------------------------------------------
 
     def _reflection(
-        self, *, conn: Any, project_id: str, terminal: bool
-    ) -> tuple[dict[str, Any] | None, GateEvaluation | None]:
+        self, *, conn: Connection, project_id: str, terminal: bool
+    ) -> tuple[ReflectionState | None, GateEvaluation | None]:
         terminal_statuses = tuple(sorted(REFLECTION.terminal_statuses))
         placeholders = ", ".join("?" for _ in terminal_statuses)
         predicate = "status = ?" if terminal else f"status NOT IN ({placeholders})"
@@ -1243,7 +1243,7 @@ class Research:
             return None, None
         return self.reflections.get_state_with_gate(reflection_id=row["id"], conn=conn)
 
-    def _literature_signal(self, *, conn: Any, project_id: str) -> LiteratureSignal:
+    def _literature_signal(self, *, conn: Connection, project_id: str) -> LiteratureSignal:
         total = conn.execute(
             "SELECT COUNT(*) AS n FROM papers WHERE project_id = ?",
             (project_id,),
