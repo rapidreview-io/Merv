@@ -43,6 +43,10 @@ class RecordHooks:
     def before_create(self, *, conn: Connection, project_id: str, values: dict[str, Any]) -> None:
         """Refuse a create the kind's own invariants forbid."""
 
+    def creation_facts(self, *, conn: Connection, project_id: str) -> dict[str, Any]:
+        """Prepare transaction-bound facts for the kind's declared creation requirements."""
+        return {}
+
     def after_create(self, *, conn: Connection, project_id: str, record_id: str, values: dict[str, Any]) -> None:
         """Write the kind's child rows on the same transaction as its row."""
 
@@ -102,6 +106,10 @@ class Records:
             self._require_version(kind, instance)
         hooks = self.hooks[kind.name]
         if guard:
+            facts = hooks.creation_facts(conn=conn, project_id=project_id)
+            for need in kind.creation_requires:
+                if issue := need.check(facts):
+                    raise WorkflowError(issue.message)
             hooks.before_create(conn=conn, project_id=project_id, values=values)
         name = str(values.get(kind.label) or "")
         if kind.unique_name and conn.execute(

@@ -1,14 +1,14 @@
 # Workflows
-
-This package separates workflow definitions, durable execution, and composition.
-Projects, claims, artifacts, agent processes, and cloud infrastructure remain
-outside it. Python functions own workflow gates, transitions and agent context.
+Workflow definitions, durable execution and composition live here; projects, claims,
+artifacts and agent processes stay outside. Python functions own gates and agent context.
 
 `graph.py` defines immutable nodes, ordinary directed edges and one `Evaluation`
 for command enforcement, available/blocked actions, guidance and dispatch.
 Branches, loops and review rejection use the same transition model. Agent nodes
 provide `build_context(snapshot, knowledge) -> Brief`, with a concise assignment
-and exact evidence references. Wait and terminal nodes dispatch no agent.
+and exact references. `Node.guidance` declares `Guidance` (skill, handoff, named messages);
+`Workflow.outcome_guidance` is keyed by outcome. The runtime projects this presentation
+for every program; role skills own procedures. Wait and terminal states dispatch no agent.
 
 A node also declares what its state needs, as `requires`: `ArtifactNeed` (a submitted
 document, selected and validated), `RecordNeed` (a fact its own graph function verifies),
@@ -23,8 +23,8 @@ public names. The serializer owns computed-field placement. It also answers what
 graph already says: the success status, the actions, which action carries an effect, and the
 review gates and returns, so nothing restates a state machine. A plugin workflow declares no
 kind and keeps its record in instance data. `Program` names what a brain installs — graphs,
-kinds, the effect kinds its edges emit, the requirement classes its nodes use, its tool
-table — and validates them at import; `requires` is a `Requirement` protocol, so a program
+kinds, effects, requirements, tools and an optional project orientation callback;
+`RecordKind.creation_requires` separately gates native creation from declared facts; `requires` is a `Requirement` protocol, so a program
 may bring its own need class. `brain/programs/` holds the programs and `INSTALLED`, the only
 place a definition module is named.
 
@@ -96,4 +96,4 @@ may gate only outgoing actions of their declaring node. Review facts are scoped 
 and role; Research reviews reads SQL/settings and pure policy formats the same fact
 for checklists and runtime, including request expiry and independence. Permanent effect
 failures wait for project-scoped `Deliveries.retry`; transient failures retain backoff.
-Keep this note under 100 lines; qualify named actions, roles, tools and skills inline.
+Keep under 100 lines; qualify named actions, roles, tools and skills inline.

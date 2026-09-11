@@ -23,7 +23,9 @@ call `review.start` with `reviewer_capability="assigned"` and
 For an interactive handoff, require its exact capability and use your own stable
 `caller_session_id`, distinct from the producer, with optional `declared_agent`. Use its
 pinned `project_context` and experiment `context` as the default evidence.
-Read listed artifacts only when a load-bearing detail needs deeper inspection.
+Read listed artifacts when a load-bearing detail needs deeper inspection. On a
+revised plan, inspect previous findings and reused evidence before demanding new work;
+identify what evidence would disprove the claim and whether the plan can produce it.
 
 Operate read-only. Auto-run credentials enforce this boundary; interactive
 reviewers must follow it when using a general project key. Do not mutate the
@@ -86,5 +88,4 @@ design returns to planning automatically.
 
 Each finding should name the issue, cite the exact plan section or missing
 evidence, assign severity when useful, and recommend the smallest correction.
-After submission, return a brief summary to the producing agent. Do not perform
-any other mutation.
+Return a brief verdict summary after submission.

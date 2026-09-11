@@ -90,5 +90,5 @@ Submit only the fields accepted by `review.submit`: `review_session_id`,
 `verdict`, `synopsis`, concise `notes`, actionable `findings`, and optional
 structured `evidence`. Each finding names the check number, states what could
 not be verified or what is wrong, cites the file, command, or observed fact,
-and recommends the smallest correction. After submission, return a brief
-summary to the producing agent. Do not perform any other mutation.
+and recommends the smallest correction against the unchanged brief. Return a
+brief verdict summary after submission.

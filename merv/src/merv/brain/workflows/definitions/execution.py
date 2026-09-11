@@ -12,6 +12,9 @@ from __future__ import annotations
 from ..graph import Execution, Scope, WorkspacePolicy
 
 
+RESEARCH_HANDOFF = "Complete only this node's assignment, commit its allowed action, then hand off and exit."
+
+
 # Project-scoped knowledge every research agent reads; mutations stay scoped.
 KNOWLEDGE_TOOLS = frozenset({
     "claim.list", "experiment.get_state", "experiment.list", "task.get_state", "task.list",

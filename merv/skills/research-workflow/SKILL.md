@@ -31,7 +31,9 @@ An auto-run assignment owns one workflow node. Start from its brief and exact
 references; use `workflow.assignment(project_id, instance_id)` for current
 prerequisites and actions. Submit the node's durable evidence, take its allowed
 transition with the assigned `expected_revision`, and stop when it hands off.
-The next node may run in a fresh agent. Resume retained work before repeating it.
+The next node may run in a fresh agent. Inspect retained results and durable run
+receipts first: keep completed jobs, attach to live work, and start only missing
+work or an explicitly justified retry. Checkpoint evidence for the next agent.
 
 For an interactive session, operate in this loop:
 
@@ -101,8 +103,9 @@ creates a better one.
    one item per thing that must exist, each carrying its own acceptance
    criterion in the sentence (counts, tolerances, required sections), no
    bundles, no vague nouns; 1-7 items is the rule of thumb.
-2. **Do the work** however fits — locally, in a sandbox, in the task folder.
-   Keep evidence as you go: files, run receipts, storage objects.
+2. **Do the work** from the pinned brief and existing delivery. Reuse retained
+   evidence and address the remaining checks; the brief stands after a rejection.
+   Work locally or in a sandbox and retain files, receipts and storage objects.
 3. **Delivery** (`tasks/<name>/delivery.md`, role `delivery`,
    [delivery-template.md](delivery-template.md)): a **Confirmations** section
    with one numbered entry per deliverable, same numbering — where the thing
@@ -139,8 +142,7 @@ immutable once created; the approved plan supersedes `details` on anything
 about how.
 
 There is no automatic synchronization between the checkout, a sandbox, and
-Merv. Pull remote outputs into the experiment folder before submitting them.
-Use durable object storage for large binary outputs.
+Merv. Follow sandbox-operation for explicit input transfer and output retention.
 
 ## Maintain the project champion
 
@@ -177,7 +179,11 @@ Use the bundled templates only when creating their corresponding documents:
 
 Start the graph early and update it when reasoning changes. Write the plan,
 report, and graph for a human reader; raw data and logs belong in separate
-result artifacts.
+result artifacts. A fresh executor must be able to follow the plan without this
+conversation; name controls, confounds, the data/compute budget and decision rule.
+When a review changes the experiment's reasoning, revise its logic graph too;
+the 16-node budget still applies. A planning return starts a new attempt; an
+execution return keeps the approved plan and repairs the current attempt.
 
 Prefer the smallest experiment capable of producing a credible,
 decision-relevant signal about its intent. Start with the minimum data, scale,
@@ -208,6 +214,12 @@ Treat the plan's Evaluation section as the contract. The report interprets the
 record; it does not replace it. A conclusion is ready only when the submitted
 results support it under the pre-registered rule.
 
+Preview `experiment.exhibit` before writing the report. Eligible pinned JSON
+sources are `metrics.json`, `results.json` and `results/*.json` with role `result`.
+At `submit_results`, Merv evaluates the attempt's submitted evidence and may pin
+`metrics_exhibit.json`; reference and interpret it in the report when present.
+Keep CSV evidence and unsuccessful runs even when they are not exhibit sources.
+
 ## Submit artifacts
 
 Follow `artifact_guidance` and the `artifact.upload` tool contract for roles,
@@ -235,8 +247,15 @@ answer the question.
 - Load `project-reflection` when project-level reflection is requested or
   `workflow.status_and_next` reports reflection work or a reflection gate.
 - Keep the living literature review current when a paper materially informs a
-  claim, plan, or conclusion: cite it, inspect the outline, and edit only the
-  relevant section. Literature guidance is advisory, not an experiment gate.
+  claim, plan, or conclusion: use `litreview.cite` to link the paper to sections,
+  experiments or claims (arXiv/DOI/URL forms are deduplicated; provide a fallback
+  title for other hosts). Inspect the outline and edit only the relevant section,
+  keeping its TLDR current. Re-read after revision conflicts. Literature guidance
+  is advisory, not an experiment gate; three unreviewed papers trigger a nudge.
+- With no active work, consider reflection if the project logic has drifted;
+  otherwise choose the next experiment. A reflection-required creation gate
+  means publish the wave before creating another experiment. Claims and tasks
+  remain permitted follow-ups; they do not erase experiment debt.
 
 Run lightweight safe checks locally. Use a sandbox for expensive, isolated,
 long-running, data-intensive, or GPU work.

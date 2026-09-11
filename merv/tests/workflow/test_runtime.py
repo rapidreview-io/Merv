@@ -11,7 +11,7 @@ from pathlib import Path
 from tests.support.schema import booted_store
 from merv.brain.kernel.utils import NotFoundError, WorkflowError
 from merv.brain.workflows import (
-    Action, Brief, Change, Child, Deliveries, Edge, Issue, Node, Reference,
+    Action, Brief, Change, Child, Deliveries, Edge, Guidance, Issue, Node, Reference,
     Registry, Runtime, Workflow, wait_for_all, join_guard,
 )
 
@@ -186,7 +186,7 @@ class RuntimeTests(unittest.TestCase):
         def context(snapshot, knowledge):
             return Brief("Review the pinned result for this attempt.", (Reference("artifact", snapshot.data["result_id"], "Submitted result"),))
 
-        definition = replace(replication(), nodes=(worker("work"), Node("review", role="reviewer", build_context=context)))
+        definition = replace(replication(), nodes=(worker("work"), Node("review", role="reviewer", build_context=context, guidance=Guidance(handoff="Review, then hand off and exit."))))
         runtime.registry = Registry((definition,))
         current = runtime.start(
             project_id=project_id, workflow="replication", request_id="review", entry="review_results",

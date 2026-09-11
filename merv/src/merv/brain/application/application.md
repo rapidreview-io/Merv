@@ -52,8 +52,8 @@ qualify named action, role, tool and skill references inline.
 ## Files
 
 - `application.py`: the single public root and visible cross-module workflows.
-- `workflow.py`: rich/slim status composition and project-orientation helpers.
-- `status_guidance.py`: formats graph evaluations; it evaluates no gate itself.
+- `workflow.py`: rich/slim status, canonical evaluation and review metadata projections;
+  the installed `Program.orientation` chooses project advice beside `programs/research.py`.
 - `project_context.py` and `experiments/context.py`: bounded context packets.
 - `experiments/transition.py`: experiment transition ordering and exhibit pin.
 - `tasks.py`: task presentation, transition receipts, and the bounded task context
@@ -61,8 +61,8 @@ qualify named action, role, tool and skill references inline.
 - `experiments/exhibits.py`/`metrics_exhibit.py`: deterministic exhibits.
 - `experiments/presentation.py` and `create.py`: the experiment's
   declared public shape and create inputs; claim suggestions are deliberately absent.
-- `reviews.py`, `reflections.py`, and `reflection_guidance.py`: review handoff,
-  reflection presentation, and guidance.
+- `reviews.py` and `reflections.py`: review handoff and reflection presentation;
+  declarations own wording and advisory choices; consumer tests gate prose reduction.
 - `queries.py`: logic-graph composition, built once and shared by its routes.
 - `maintenance.py`: token/log retention and lease cleanup; merv-sandboxes owns machine
   and object expiry.
@@ -84,7 +84,7 @@ qualify named action, role, tool and skill references inline.
   polling until project-scoped `Deliveries.retry` requeues their existing id and attempts.
 - Artifact sealing and Research mutations retain their existing transaction boundaries.
   Feed effects occur after commit and remain advisory.
-- Feed advisories: `experiments/transition.py` phrases what a committed event is called;
+- Feed advisories: workflow node/outcome guidance names committed events;
   the Feed only decides whether the feed already covers that ref; exceptions are logged.
 - Large candidates stay in merv-sandboxes. Application pins candidate pointers through
   the object facade and reads the producing experiment from Research; it never queries a

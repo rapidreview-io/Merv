@@ -173,7 +173,7 @@ def reflection_signal_state(
         if published is not None and snapshot_claims.get(claim_id) != status
     ]
     contradicted_flip = any(change["to"] == "contradicted" for change in claims_changed)
-    create_blocked = len(new_terminal) >= REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD
+    create_blocked = EXPERIMENT.creation_requires[0].blocked({"new_terminal_since_publish": len(new_terminal)})
     has_new_material = (
         len(new_terminal) >= REFLECTION_IDLE_RECOMMEND_NEW_TERMINAL_THRESHOLD
         or contradicted_flip
@@ -201,36 +201,6 @@ def reflection_signal_state(
         "block_new_terminal_threshold": REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD,
     }
 
-
-def reflection_create_block_message(
-    *,
-    debt: int,
-    published_id: str | None,
-    open_wave: Mapping[str, Any] | None,
-    threshold: int = REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD,
-) -> str | None:
-    if debt < threshold:
-        return None
-    if open_wave is not None:
-        return (
-            "project reflection is required before creating another experiment: "
-            f"{debt} experiments have finished since the last published "
-            f"reflection (threshold {threshold}), and reflection wave "
-            f"{open_wave['id']} is {open_wave['status']!r}. Finish and publish "
-            "that reflection wave; its approved change spec will create the "
-            "next experiment wave."
-        )
-    since = (
-        "since the last published reflection"
-        if published_id
-        else "and no project reflection has been published yet"
-    )
-    return (
-        "project reflection is required before creating another experiment: "
-        f"{debt} experiments have finished {since} (threshold {threshold}). "
-        "Start a reflection wave with reflection.create and publish it before "
-        "creating another experiment."
-    )
 
 
 JSONValue: TypeAlias = (
@@ -638,30 +608,6 @@ def revision_context_for_review_return(
         pieces.append(notes)
     if finding_text:
         pieces.append(f"Findings: {finding_text}")
-    if role == "consolidation_reviewer":
-        pieces.append(
-            "Revise only the code proposal, validation, or per-experiment "
-            "integration decisions. The approved reflection is authoritative "
-            "and cannot be reopened here"
-        )
-    elif target_type == "task":
-        pieces.append(
-            "Revise the delivery against the brief's Done-when checks: give the "
-            "evidence the reviewer could not verify, or state plainly which "
-            "checks are unmet and why; the brief itself stands"
-        )
-    elif target_type == "reflection":
-        pieces.append(
-            "Consider revising the project graph, reflection doc, and/or "
-            "change spec where this review changes the project's story; the "
-            "16-node graph budget still applies"
-        )
-    else:
-        pieces.append(
-            "Consider updating the experiment's logic graph (role 'graph') "
-            "if this review changes the experiment's story; the 16-node graph "
-            "budget still applies"
-        )
     return " | ".join(pieces)
 
 
@@ -694,7 +640,6 @@ __all__ = [
     "evaluate_review_gate",
     "resolve_requirement",
     "parse_project_settings",
-    "reflection_create_block_message",
     "reflection_signal_state",
     "resolve_review_return",
     "review_snapshot_id",

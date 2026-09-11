@@ -26,7 +26,9 @@ beside your private key as `<key>-cert.pub`, pin `ssh.host_public_key` in a
 known-hosts file, and connect to `ssh.user@ssh.host` on `ssh.port` using that
 key and certificate. Refresh the certificate with `sandbox.get` when it
 expires. Never disable host-key checking to make a failed connection work.
-The working directory is `/workspace`.
+The working directory is `/workspace`. Local experiment folders are not copied
+automatically: create or fetch inputs there, or explicitly transfer them after
+provisioning using the verified SSH connection.
 
 `sandbox.attach` adds a research association to an existing running machine.
 Use `additional=true` only when an experiment needs another machine.

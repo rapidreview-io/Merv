@@ -375,11 +375,24 @@ class Requirement(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class Guidance:
+    """Presentation only: no predicates, permissions or transition names to interpret."""
+
+    skill: str = ""
+    handoff: str = ""
+    messages: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "messages", MappingProxyType(dict(self.messages)))
+
+
+@dataclass(frozen=True, slots=True)
 class Node:
     name: str
     label: str = ""
     role: str = ""
     build_context: ContextBuilder | None = None
+    guidance: Guidance = field(default=Guidance(), kw_only=True)
     dispatch_check: Check = ready
     children: ChildrenBuilder | None = None
     join: Join | None = None
@@ -488,12 +501,16 @@ class Workflow:
     entries: Mapping[str, str] = field(default_factory=dict)
     event_type: str = "workflow.transitioned"
     id_prefix: str = "wf"
+    outcome_guidance: Mapping[str, Guidance] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "nodes", tuple(self.nodes))
         object.__setattr__(self, "edges", tuple(self.edges))
         object.__setattr__(self, "outcomes", MappingProxyType(dict(self.outcomes)))
         object.__setattr__(self, "entries", MappingProxyType(dict(self.entries)))
+        object.__setattr__(self, "outcome_guidance", MappingProxyType(dict(self.outcome_guidance)))
+        if set(self.outcome_guidance) - set(self.outcomes.values()):
+            raise ValueError("guidance names an undeclared outcome")
         names = [node.name for node in self.nodes]
         if not self.name or self.version < 1 or len(names) != len(set(names)):
             raise ValueError("workflow needs a name, positive version and unique nodes")
@@ -591,6 +608,10 @@ class StateConstructor(Protocol[S]):
     def __call__(self, row: Data, snapshot: Snapshot) -> S: ...
 
 
+class CreationRequirement(Protocol):
+    def check(self, facts: Data) -> Issue | None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class RecordKind(Generic[S]):
     """One native record bound to a workflow: what differs between kinds is data.
@@ -621,6 +642,7 @@ class RecordKind(Generic[S]):
     commit_columns: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     status_projection: Mapping[str, str] = field(default_factory=dict)
     public: Public = Public()
+    creation_requires: tuple[CreationRequirement, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "json_columns", MappingProxyType(dict(self.json_columns)))
@@ -680,6 +702,13 @@ class RecordKind(Generic[S]):
                                    for route in gate.returns))
 
 
+class Orientation(Protocol):
+    """Project advice over program-owned facts and already evaluated record projections."""
+
+    def __call__(self, snapshot: object, *, selected: object, workflow: Data,
+                 reflection: Data | None, reflection_workflow: Data | None) -> Data: ...
+
+
 @dataclass(frozen=True, slots=True)
 class Program:
     """One research program: every part a brain must install to run it.
@@ -696,6 +725,7 @@ class Program:
     effects: tuple[str, ...] = ()
     requirements: tuple[type, ...] = ()
     tools: Mapping[str, ToolContract] = field(default_factory=dict)
+    orientation: Orientation | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tools", MappingProxyType(dict(self.tools)))

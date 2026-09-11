@@ -16,7 +16,7 @@ from ..workflows import (
 )
 
 from ..research_core import Artifact, Research, ResearchArtifacts as Artifacts
-from .reflection_guidance import present_reflection_signal
+from ..workflows import present_reflection_signal
 from ..workflows.definitions.research_state import ReflectionState
 
 Record = dict[str, Any]

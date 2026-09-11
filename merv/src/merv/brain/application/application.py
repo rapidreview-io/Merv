@@ -14,7 +14,6 @@ from ..workflows import Connection
 import json
 from typing import Any, Mapping
 
-from merv.shared.storage_guidance import storage_guidance
 
 from ..agent_sessions import AgentSessions
 from ..research_core import ResearchArtifacts as Artifacts
@@ -48,7 +47,6 @@ from .reviews import (
     present_review_recovery,
     start_review,
 )
-from .status_guidance import StatusGuidancePolicy
 from .tasks import (
     TaskContextQuery,
     TransitionTask,
@@ -106,16 +104,9 @@ class Application:
             objects=produced_objects,
         )
         self.research.workflows.register_preparation("experiment", self._transition.prepare_workflow_transition)
-        self._policy = StatusGuidancePolicy(
-            storage_enabled=bool(getattr(objects, "enabled", False)),
-            storage_guidance=storage_guidance(
-                enabled=bool(getattr(objects, "enabled", False))
-            ),
-        )
         self._workflow = StatusAndNextQuery(
             research=research,
             sandboxes=sandboxes,
-            policy=self._policy,
             objects=produced_objects,
             context=self._experiment_context,
             project_context=self._project_context,

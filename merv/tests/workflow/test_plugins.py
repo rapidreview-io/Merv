@@ -17,7 +17,7 @@ from merv.brain.research_core.policy import (
 )
 from merv.brain.surface.tools.contracts import build_manifest
 from merv.brain.workflows import (
-    Action, Brief, Change, Child, Edge, Issue, Node, Program, Snapshot, Workflow, Workflows, join_guard,
+    Action, Brief, Change, Child, Edge, Guidance, Issue, Node, Program, Snapshot, Workflow, Workflows, join_guard,
 )
 from tests.research_core.scenarios import ResearchCase
 from tests.research_core.test_tasks import DELIVERABLES, VALID_DELIVERY
@@ -47,12 +47,13 @@ CALIBRATION = Program(
     name="calibration", version=1,
     workflows=(Workflow(
         name="calibration", version=1, initial="calibrate",
-        nodes=(Node("calibrate", role="technician", requires=(Calibrated(),),
+        nodes=(Node("calibrate", role="technician", guidance=Guidance("instrument-operation", "Leave the reading for the operator.", messages={"setup": "Zero the sensor."}), requires=(Calibrated(),),
                     build_context=lambda snapshot, knowledge: Brief("Calibrate the instrument.")),),
         edges=(Edge("calibrate", "record", "calibrate",
                     change=lambda snapshot, payload, knowledge: Change(data={"reading": payload.get("reading")})),
                Edge("calibrate", "publish", "published", change=_notify)),
         outcomes={"published": "calibrated"},
+        outcome_guidance={"calibrated": Guidance("instrument-operation", messages={"summary": "Instrument ready."})},
     ),),
     effects=("calibration.notify",),
     requirements=(Calibrated,),
@@ -63,6 +64,34 @@ CALIBRATION = Program(
 
 
 class WorkflowPluginTest(ResearchCase):
+    def test_program_orientation_is_optional_and_application_projects_its_result(self):
+        from dataclasses import replace
+        self.app.research.program = CALIBRATION
+        status = self.call("workflow.status_and_next", project_id=self.project_id)
+        self.assertEqual(status["workflow"], {})
+        self.app.research.program = replace(CALIBRATION, orientation=lambda snapshot, **facts:
+            {"workflow": {"current_gate": "instrument_setup", "next_action": "calibrate", "hint": "Any prose."}})
+        status = self.call("workflow.status_and_next", project_id=self.project_id)
+        self.assertEqual(status["workflow"], {"current_gate": "instrument_setup", "next_action": "calibrate", "hint": "Any prose."})
+
+    def test_native_creation_interprets_a_second_programs_requirement_and_reserved_bypass(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+        from merv.brain.workflows import TASK_KIND
+        class Permit:
+            def check(self, facts):
+                return Issue("permit_required", "An instrument permit is required.")
+        kind = replace(TASK_KIND, creation_requires=(Permit(),))
+        with patch("merv.brain.research_core.tasks.TASK", kind):
+            with self.assertRaisesRegex(WorkflowError, "instrument permit"):
+                self.call("task.create", project_id=self.project_id, name="instrument-check",
+                          goal="Check the instrument", deliverables=DELIVERABLES)
+            self.assertEqual(self.app.research.tasks.list_task_summaries(project_id=self.project_id), [])
+            with self.app.research.store.transaction() as conn:
+                state = self.app.research.tasks._create(conn=conn, project_id=self.project_id,
+                    name="instrument-check", goal="Check the instrument", deliverables=DELIVERABLES, guard=False)
+                self.assertEqual(state.name, "instrument-check")
+
     def test_task_uses_generic_api_and_the_same_evidence_gate(self):
         started = self.call(
             "workflow.start", project_id=self.project_id, workflow="task", request_id="create-task",
@@ -226,6 +255,32 @@ class ProgramInstallationTest(unittest.TestCase):
         self.assertEqual(self.delivered, [instance_id])
         self.assertIn("calibration.status", build_manifest(self.programs))
         self.assertNotIn("calibration.status", build_manifest((PROGRAM,)))
+
+    def test_second_program_projects_its_own_assignment_and_outcome_guidance(self):
+        started = self.workflows.start(project_id=self.project_id, workflow="calibration", request_id="guidance")
+        arguments = {"project_id": self.project_id, "instance_id": started["id"]}
+        context = self.workflows.describe(**arguments)["context"]
+        self.assertEqual(context["brief"], "Calibrate the instrument.")
+        self.assertEqual(context["skill"], "instrument-operation")
+        self.assertEqual(context["handoff"], "Leave the reading for the operator.")
+        self.assertEqual(context["messages"], {"setup": "Zero the sensor."})
+        self.workflows.transition(**arguments, action="record", expected_revision=0, request_id="reading", payload={"reading": 7})
+        self.workflows.transition(**arguments, action="publish", expected_revision=1, request_id="publish")
+        described = self.workflows.describe(**arguments)
+        self.assertFalse(described["workflow"]["dispatchable"])
+        self.assertEqual(described["context"]["messages"], {"summary": "Instrument ready."})
+        self.assertIsNone(CALIBRATION.workflows[0].node("published"))
+
+    def test_guidance_is_immutable_and_outcomes_are_declared(self):
+        from dataclasses import replace
+        messages = {"summary": "Original"}
+        guidance = Guidance(messages=messages)
+        messages["summary"] = "Changed"
+        self.assertEqual(guidance.messages["summary"], "Original")
+        with self.assertRaises(TypeError):
+            guidance.messages["summary"] = "Changed"
+        with self.assertRaisesRegex(ValueError, "undeclared outcome"):
+            replace(CALIBRATION.workflows[0], outcome_guidance={"typo": guidance})
 
     def test_requirements_can_only_name_their_own_nodes_outgoing_actions(self):
         from dataclasses import replace

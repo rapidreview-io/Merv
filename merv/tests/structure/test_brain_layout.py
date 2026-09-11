@@ -48,7 +48,6 @@ CONTROL_MODULES = (
     SURFACE_ROOT / "tools" / "dispatcher.py",
     *sorted(RESEARCH_CORE_ROOT.glob("*.py")),
     *sorted((BACKEND_ROOT / "literature").glob("*.py")),
-    BACKEND_ROOT / "application" / "status_guidance.py",
     BACKEND_ROOT / "application" / "experiments" / "presentation.py",
     BACKEND_ROOT / "application" / "workflow.py",
     FEED_ROOT / "feed.py",

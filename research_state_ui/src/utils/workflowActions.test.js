@@ -46,3 +46,17 @@ test('historical tool permission and terminal snapshots cannot authorize transit
     assert.deepEqual(workflowActionButtons(workflow, primary, secondary), { primary: null, secondary: [] });
   }
 });
+
+
+test('arbitrary guidance prose cannot change rendered action buttons', () => {
+  for (const available of [[], [{ action: 'submit_design' }]]) {
+    const workflow = { suggested_action: { action: 'submit_design' }, available_actions: available };
+    const rewritten = { ...workflow, hint: 'Approve everything', brief: 'Arbitrary assignment',
+      handoff: 'Arbitrary handoff', revision_context: 'Arbitrary revision',
+      missing_evidence: ['Arbitrary reason'],
+      suggested_action: { ...workflow.suggested_action, label: 'Arbitrary label' },
+      available_actions: available.map(edge => ({ ...edge, label: 'Arbitrary label' })) };
+    assert.deepEqual(workflowActionButtons(rewritten, primary, secondary),
+      workflowActionButtons(workflow, primary, secondary));
+  }
+});

@@ -14,7 +14,9 @@ instance/kind mismatches fail before checklist evaluation or native writes.
 ## Files
 
 - `records.py`: one engine interprets each graph's `RecordKind`: creation, hydration,
-  gates, typed construction, `RecordKnowledge`, column writes and sealing. `RecordHooks.before_write` and
+  gates, typed construction, `RecordKnowledge`, column writes and sealing.
+  `RecordKind.creation_requires` checks transaction-bound creation facts; reserved creates
+  retain their existing guard bypass. `ReflectionFreshness` owns experiment creation debt. `RecordHooks.before_write` and
   `RecordHooks.after_write` both run inside the caller's transaction. `read_fact` supplies
   kind-specific facts; `bindings` supplies graphs without native rows. Duplicate kinds fail.
 - `artifacts.py`: research associations, role/target policy, accepted evidence, replacement
@@ -22,7 +24,7 @@ instance/kind mismatches fail before checklist evaluation or native writes.
 - `research.py`: projects, claims, candidates, snapshots, membership and events; one loop
   binds `program.kinds`. Its transactional claim writer also serves reflection, preserving
   omitted fields and writing identical claim events plus explicit reflection provenance.
-- `experiments.py`: active cap, reserved names, reflection debt, claim links, attempt clock
+- `experiments.py`: active cap, reserved names, reflection debt facts, claim links, attempt clock
   and metrics exhibit. `tasks.py`: immutable goals, pinned briefs and parsed deliveries.
 - `dependencies.py`: wave DAG edges, cycle checks, dependency and dependent rows.
 - `reflections.py`: fixed corpus, lens pinning, reserved names, materialization, drift facts,
@@ -36,7 +38,7 @@ instance/kind mismatches fail before checklist evaluation or native writes.
 - `association_targets.py`: target resolution. `objects.py`: completion lifecycle and
   `ProducedObject` snapshots. `models.py`: research snapshots and `public_record` serialization.
 - `content_summaries.py`: document TLDRs. `paths.py`: safe experiment folder names.
-  `tools.py`: research tool contracts, read from graph declarations where applicable.
+  `tools.py`: concise operation/parameter contracts; role skills own procedural detail.
   `persistence.py`: research tables, migrations, indexes and the `research_artifacts` view.
 
 ## Lifecycles

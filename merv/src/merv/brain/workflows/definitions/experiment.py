@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from .research_contracts import REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD
+
 
 from .artifact_roles import EXHIBIT_ROLE
 from merv.shared.markdown_images import markdown_image_links
 
 from ..graph import (
-    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Issue, Node, RecordKind,
+    Action, ArtifactNeed, Brief, Change, DependenciesDone, Edge, Guidance, Issue, Node, RecordKind,
     Metadata, Reference, ReviewGate, ReviewReturn, Workflow,
 )
-from .execution import EXPERIMENT_EXECUTION, REVIEW_EXECUTION
+from .execution import RESEARCH_HANDOFF, EXPERIMENT_EXECUTION, REVIEW_EXECUTION
 from .documents import (REQUIRED_PLAN_SECTIONS, graph_problems, markdown_section_body, preferred_artifact,
                         report_problems, required_markdown_sections_missing)
 
@@ -69,7 +72,8 @@ ARTIFACTS = {
 DEPENDENCIES = DependenciesDone()
 
 RETURN_TO_PLANNED = ReviewReturn("planned", "new", event_type="experiment.returned_to_planned",
-                               choose_when="The plan itself is flawed and must be revised.", default=True)
+                               choose_when="The plan itself is flawed and must be revised.", default=True,
+                               revision="Revise the plan for a new attempt; follow research-workflow.")
 RETURN_TO_RUNNING = ReviewReturn("running", "same", event_type="experiment.returned_to_running",
                                choose_when="The plan stands, but execution or the conclusion needs work.",
                                revision="The approved plan stands; fix execution or conclusions, then resubmit results.")
@@ -109,43 +113,18 @@ def _intro(snapshot, knowledge):
 
 def build_plan_context(snapshot, knowledge):
     experiment, intro = _intro(snapshot, knowledge)
-    return Brief(intro +
-        "Design a test that can resolve the intent and linked claims. Read the project graph and relevant earlier "
-        "experiments through existing tools; focus on the decision this experiment should enable. Specify a falsifiable "
-        "hypothesis, controls and comparisons, the data and compute budget, quantitative metrics where appropriate, "
-        "and a decision rule that distinguishes meaningful outcomes. Make the plan detailed enough for a fresh "
-        "agent to execute it without this conversation.\n\n"
-        "Use prior attempt evidence and review findings to correct the design; a revised plan begins a new attempt. "
-        "Keep useful retained artifacts and explain deliberate changes. Submit one complete plan with substantive "
-        "Summary, Objective & hypothesis, and Evaluation sections. Any local figures must be uploaded with the "
-        "document. Submit the design for independent review once its evidence is complete. The review determines "
-        "whether this plan can test its claim; approval sends the workflow directly to execution.",
+    return Brief(intro + "Design a falsifiable test of the intent and linked claims; submit its complete plan for independent review. "
+        "Follow the research-workflow skill, including prior-attempt revisions.",
         (Reference("experiment", snapshot.id, "Experiment and prior attempts"), *_references(experiment.get("current_attempt_artifacts") or ())))
 
 
 def _build_review_context(snapshot, knowledge, *, design):
     experiment, intro = _intro(snapshot, knowledge)
     pinned = knowledge.read(Reference("review_snapshot", snapshot.id))
-    instructions = (
-        "Independently review whether this plan can test its stated claim. Check the hypothesis, controls, measurement "
-        "validity, confounds, budget and decision rule. Identify what evidence would disprove the claim and whether "
-        "the proposed design could produce it. A rejection returns to planning and starts a new attempt; approval "
-        "enters execution immediately. Follow the experiment-design-review skill."
-        if design else
-        "Independently review the completed attempt against the exact approved plan. Verify retained outputs, run "
-        "receipts, metrics, results report and logic graph. Apply the original decision rule and check whether the "
-        "conclusion follows from the evidence. Pass completes the experiment. For a rejection, choose planned when "
-        "the plan must change (a new attempt), or running when the plan stands and execution or conclusions need "
-        "repair (the same attempt). Follow the experiment-attempt-review skill."
-    )
+    instructions = ("Verify whether the pinned plan can test its claim. Follow experiment-design-review."
+                    if design else "Verify the completed attempt against its exact approved plan. Follow experiment-attempt-review.")
     approved = () if design else approved_plan_artifacts(snapshot, knowledge)
-    return Brief(intro + instructions + "\n\n"
-        "This is an independent, read-only assignment apart from the review verdict. Start the supplied review with "
-        "your own reviewer identity. Grade the immutable submission referenced here; read surrounding project "
-        "knowledge through existing tools as needed. Check the producer's claims rather than repeating them, "
-        "record concrete findings with supporting evidence, and submit the verdict through review.submit. A later "
-        "agent receives those findings in a separate assignment. Do not rerun completed work merely to recreate "
-        "the producer's context; inspect its retained outputs and durable receipts first.",
+    return Brief(intro + instructions,
         (Reference("experiment", snapshot.id, "Experiment goal"),
          *((Reference("review_request", str(pinned["request_id"]), "Independent review capability"),) if pinned.get("request_id") else ()),
          *_references(approved), *_references(pinned.get("artifacts") or ())))
@@ -162,20 +141,9 @@ def build_attempt_review_context(snapshot, knowledge):
 def build_execution_context(snapshot, knowledge):
     experiment, intro = _intro(snapshot, knowledge)
     approved = approved_plan_artifacts(snapshot, knowledge)
-    return Brief(intro +
-        "Execute the exact approved plan referenced below. Read its decision rule before starting, then inspect "
-        "retained results and durable run receipts to establish what already finished and what "
-        "remains. A new agent assignment does not mean a new experiment: keep completed jobs, attach to live "
-        "work and recover its outputs. Start another job only for work still needed or an explicitly justified retry. "
-        "Dependencies must have succeeded before execution is dispatched.\n\n"
-        "For execution or conclusion revisions, preserve the approved plan and address the review findings in this "
-        "attempt. If the plan itself is invalid, return through review to a new planning attempt. Record checkpoints "
-        "and retained evidence so another agent can continue without this conversation.\n\n"
-        "Submit compact machine-readable results, a report with Summary, Results, Deviations from plan and "
-        "Conclusion, and a logic graph explaining the key decisions. Use the system metrics exhibit when one is "
-        "available: preview it with experiment.exhibit; submit_results pins metrics_exhibit.json as the record "
-        "of this attempt's result evidence. Apply the approved decision rule. Submit results for independent review only when the "
-        "planned work and requested corrections are complete.",
+    return Brief(intro + "Execute the exact approved plan; keep completed jobs and recover retained outputs before repeating work. "
+        "Address this attempt's revisions and apply the approved decision rule. Follow research-workflow. "
+        "Preview experiment.exhibit; interpret metrics_exhibit.json when pinned. Submit the completed evidence for review.",
         (Reference("experiment", snapshot.id, "Durable progress"), *_references(approved),
          *_references(item for item in experiment.get("current_attempt_artifacts") or () if item.get("role") != "plan")))
 
@@ -258,13 +226,32 @@ ATTEMPT_REVIEW = ReviewGate("experiment_reviewer", "experiment review must pass 
 EXPERIMENT = Workflow(
     name="experiment", version=1, initial="planned", event_type="experiment.transitioned", id_prefix="exp",
     nodes=(
-        Node("planned", "Design experiment", "experiment_owner", build_plan_context, execution=EXPERIMENT_EXECUTION,
+        Node("planned", "Design experiment", "experiment_owner", build_plan_context,
+             guidance=Guidance("research-workflow", RESEARCH_HANDOFF, messages={
+                 "folder": ("Use {folder} as the experiment's one local folder. "
+                     "Create it yourself before working in it: plan.md, scripts, configs, "
+                     "retained results, report, and graph all live there. This local folder "
+                     "is not uploaded to a sandbox automatically: create, fetch, or explicitly "
+                     "transfer sandbox inputs after provisioning. Pull selected light outputs "
+                     "back with sandbox.pull_outputs, or upload heavy outputs to configured "
+                     "object storage, before the sandbox is released."),
+                 "feed_update": "{entity} just had a workflow update"}), execution=EXPERIMENT_EXECUTION,
              requires=(ARTIFACTS["plan"],)),
-        Node("design_review", "Review experiment design", "design_reviewer", build_design_review_context,
+        Node("design_review", "Review experiment design", "design_reviewer", build_design_review_context, guidance=Guidance(DESIGN_REVIEW.skill, RESEARCH_HANDOFF),
              execution=REVIEW_EXECUTION, requires=(DESIGN_REVIEW,)),
-        Node("running", "Execute approved plan", "experiment_owner", build_execution_context, execution=EXPERIMENT_EXECUTION,
+        Node("running", "Execute approved plan", "experiment_owner", build_execution_context,
+             guidance=Guidance("research-workflow", RESEARCH_HANDOFF, messages={
+                 "exhibit": ("Retain every quantitative run as a role-'result' JSON or "
+                     "CSV artifact, including failed and aborted runs, plus the "
+                     "figures used by the report. At submit_results the system "
+                     "evaluates the attempt's submitted result evidence. Preview "
+                     "the current exhibit with experiment.exhibit; when one is "
+                     "pinned at {path}, report.md must reference and interpret "
+                     "{filename}.")}), execution=EXPERIMENT_EXECUTION,
              requires=(ARTIFACTS["result"], ARTIFACTS["report"], ARTIFACTS["graph"], DEPENDENCIES)),
         Node("experiment_review", "Review completed attempt", "experiment_reviewer", build_attempt_review_context,
+             guidance=Guidance(ATTEMPT_REVIEW.skill, RESEARCH_HANDOFF,
+                               messages={"experiment_review_verdict": "a review verdict just landed on {entity}"}),
              execution=REVIEW_EXECUTION, requires=(ATTEMPT_REVIEW,)),
     ),
     edges=(
@@ -280,6 +267,11 @@ EXPERIMENT = Workflow(
           for state in ("planned", "design_review", "running", "experiment_review")
           for name, target, label in (("abandon", "abandoned", "Abandon experiment"), ("mark_failed", "failed", "End failed experiment"))),
     ),
+    outcome_guidance={
+        "completed": Guidance(messages={"experiment_complete": "{entity} just completed"}),
+        "failed": Guidance(messages={"experiment_failed": "{entity} just failed"}),
+        "abandoned": Guidance(messages={"experiment_abandoned": "{entity} was just abandoned"}),
+    },
     outcomes={"complete": "completed", "abandoned": "abandoned", "failed": "failed"},
 )
 
@@ -291,10 +283,68 @@ METADATA = Metadata(
 
 from .research_state import ExperimentState
 
+@dataclass(frozen=True, slots=True)
+class ReflectionFreshness:
+    threshold: int = REFLECTION_BLOCK_NEW_TERMINAL_THRESHOLD
+
+    def blocked(self, signal):
+        return signal.get("new_terminal_since_publish", 0) >= self.threshold
+
+    def reason(self, signal):
+        count = signal.get("new_terminal_since_publish", 0)
+        threshold = signal["block_new_terminal_threshold"]
+        open_id = signal.get("open_reflection_id")
+        if open_id:
+            return (
+                f"{count} experiments have finished since the last published "
+                f"reflection (threshold {threshold}); finish and publish open "
+                f"reflection wave {open_id} before creating another experiment."
+            )
+        since = (
+            "since the last published reflection"
+            if signal.get("last_published_reflection_id")
+            else "and no project reflection has been published yet"
+        )
+        return (
+            f"{count} experiments have finished {since} (threshold {threshold}); "
+            "publish a project reflection wave before creating another experiment."
+        )
+
+    def check(self, facts):
+        if not self.blocked(facts):
+            return None
+        return Issue("reflection_required", self.message(facts),
+                     "start_project_reflection_before_next_experiment", ("reflection.create",))
+
+    def message(self, facts):
+        debt, threshold = facts["new_terminal_since_publish"], self.threshold
+        published_id, open_wave = facts.get("last_published_reflection_id"), facts.get("open_wave")
+        if open_wave is not None:
+            return (
+                "project reflection is required before creating another experiment: "
+                f"{debt} experiments have finished since the last published "
+                f"reflection (threshold {threshold}), and reflection wave "
+                f"{open_wave['id']} is {open_wave['status']!r}. Finish and publish "
+                "that reflection wave; its approved change spec will create the "
+                "next experiment wave."
+            )
+        since = (
+            "since the last published reflection"
+            if published_id
+            else "and no project reflection has been published yet"
+        )
+        return (
+            "project reflection is required before creating another experiment: "
+            f"{debt} experiments have finished {since} (threshold {threshold}). "
+            "Start a reflection wave with reflection.create and publish it before "
+            "creating another experiment."
+        )
+
+
 KIND = RecordKind(
     name="experiment", table="experiments", id_prefix="exp", workflow=EXPERIMENT,
     construct=ExperimentState.construct, metadata=METADATA, created_event="experiment.created",
-    columns=("name", "intent", "details"), dependencies=True,
+    columns=("name", "intent", "details"), dependencies=True, creation_requires=(ReflectionFreshness(),),
     seal_exempt_actions=frozenset({"revise_plan", "revise_execution", "migrate"}),
     commit_columns={"revise_plan": ("attempt_index", "revision_context"),
                     "revise_execution": ("revision_context",), "retry_running": ("revision_context",),

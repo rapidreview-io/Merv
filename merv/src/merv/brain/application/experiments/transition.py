@@ -15,7 +15,7 @@ from ...feed import FeedAdvisory
 from ...kernel.events import StoredEvent
 from ...research_core import (
     EXPERIMENT_TERMINAL_STATUSES,
-    EXPERIMENT,
+    EXPERIMENT, TASK,
     ExperimentState,
     Research,
 )
@@ -40,24 +40,15 @@ class TransitionReceipt(TypedDict, total=False):
     feed_note: str
 
 
-# What a committed research event is called on the feed. Research owns the
-# words; the Feed only decides whether the feed already mentions the ref.
-FEED_NOTE_PHRASES: dict[str, str] = {
-    "experiment_complete": "{entity} just completed",
-    "experiment_failed": "{entity} just failed",
-    "experiment_abandoned": "{entity} was just abandoned",
-    "task_done": "task {entity} was just accepted",
-    "task_failed": "task {entity} just failed",
-    "experiment_review_verdict": "a review verdict just landed on {entity}",
-}
-_FEED_NOTE_DEFAULT = "{entity} just had a workflow update"
-
-
 def feed_transition_note(
     feed: FeedAdvisory, *, project_id: str, ref: str, event: str
 ) -> str | None:
     """Best-effort feed nudge for one committed event; any failure reads as no note."""
-    message = FEED_NOTE_PHRASES.get(event, _FEED_NOTE_DEFAULT).format(entity=ref)
+    guidance = (item for kind in (EXPERIMENT, TASK)
+                for item in (*[node.guidance for node in kind.workflow.nodes], *kind.workflow.outcome_guidance.values()))
+    template = next((item.messages[event] for item in guidance if event in item.messages),
+                    EXPERIMENT.workflow.node("planned").guidance.messages["feed_update"])
+    message = template.format(entity=ref)
     try:
         return feed.advisory(project_id=project_id, ref=ref, message=message)
     except Exception:
@@ -238,15 +229,8 @@ class TransitionExperiment:
         return {
             "final_path": path,
             "preview_tool": "experiment.exhibit",
-            "notice": (
-                "Retain every quantitative run as a role-'result' JSON or "
-                "CSV artifact, including failed and aborted runs, plus the "
-                "figures used by the report. At submit_results the system "
-                "evaluates the attempt's submitted result evidence. Preview "
-                "the current exhibit with experiment.exhibit; when one is "
-                f"pinned at {path}, report.md must reference and interpret "
-                f"{METRICS_EXHIBIT_FILENAME}."
-            ),
+            "notice": EXPERIMENT.workflow.node("running").guidance.messages["exhibit"].format(
+                path=path, filename=METRICS_EXHIBIT_FILENAME),
         }
 
 
