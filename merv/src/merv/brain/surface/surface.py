@@ -155,6 +155,8 @@ class Surface:
         # runtime's facts; Agent Sessions never reads a research record.
         self.agent_sessions = AgentSessions(store=store, facts=self.workflows.runtime)
         self.retention.add("agent_sessions", self.agent_sessions.prune)
+        self.retention.add("feed", self.feed.prune)
+        self.retention.add("artifacts", self.artifact_store.prune)
         self.artifact_tools = ArtifactTools(artifacts=self.artifacts)
         self.infrastructure_client = infrastructure_client
         self.sandbox_providers = RemoteProviders(store=store, client=infrastructure_client)

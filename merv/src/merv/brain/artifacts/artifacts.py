@@ -53,7 +53,6 @@ class Artifacts:
         if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 1:
             raise ValidationError("max_bytes must be a positive integer")
         with (nullcontext(tx) if tx is not None else self._store.transaction()) as conn:
-            self._sweep_expired(tx=conn)
             project_id = self._store.require_project_id(conn=conn, project_id=project_id)
             artifact_id, token, now = new_id(prefix="art"), secrets.token_urlsafe(24), now_iso()
             conn.execute(
@@ -109,13 +108,11 @@ class Artifacts:
         self, *, token: str, kind: UploadKind, tx: Connection | None = None,
     ) -> Artifact:
         """Resolve a live upload credential to its owning content record."""
-        self._sweep_expired(tx=tx)
         with (nullcontext(tx) if tx is not None else closing(self._store.connect())) as conn:
             return Artifact.from_row(self._pending(tx=conn, token=token, kind=kind))
 
     def upload_cap(self, *, token: str, kind: UploadKind) -> int:
         """Validate a credential and return its cap before reading the body."""
-        self._sweep_expired()
         with closing(self._store.connect()) as tx:
             row = self._pending(tx=tx, token=token, kind=kind)
             return markdown.MARKDOWN_FIGURE_MAX_BYTES if kind == "figure" else int(row["max_bytes"])
@@ -125,7 +122,6 @@ class Artifacts:
         tx: Connection | None = None,
     ) -> CompletedArtifact | CompletedFigure:
         """Commit bytes independently, or join an explicit caller transaction."""
-        self._sweep_expired(tx=tx)
         with (nullcontext(tx) if tx is not None else self._store.transaction()) as conn:
             artifact = self._pending(tx=conn, token=token, kind=kind)
             if kind == "figure":
@@ -298,15 +294,20 @@ class Artifacts:
                 )
 
     def _pending(self, *, tx: Connection, token: str, kind: UploadKind) -> Row:
+        # Expiry is decided HERE, not by whether the sweep has run: an hourly
+        # sweep would otherwise let an expired credential complete for an hour.
         if not token:
             raise NotFoundError("an upload token is required")
         if kind == "artifact":
-            where = "upload_token = ? AND status = 'pending'"
+            where = "upload_token = ? AND status = 'pending' AND expires_at >= ?"
         elif kind == "figure":
-            where = "id = (SELECT artifact_id FROM artifact_figures WHERE upload_token = ? AND status = 'pending')"
+            where = ("id = (SELECT artifact_id FROM artifact_figures WHERE upload_token = ?"
+                     " AND status = 'pending' AND expires_at >= ?)")
         else:
             raise ValidationError(f"unknown upload kind: {kind}")
-        row = tx.execute(f"SELECT * FROM artifacts WHERE {where}", (token,)).fetchone()
+        row = tx.execute(
+            f"SELECT * FROM artifacts WHERE {where}", (token, now_iso())
+        ).fetchone()
         if row is None:
             raise NotFoundError(f"unknown, used, or expired {kind} upload token — create a new upload")
         return row
@@ -341,8 +342,14 @@ class Artifacts:
         except NotFoundError:
             return None
 
-    def _sweep_expired(self, *, tx: Connection | None = None) -> None:
-        with (nullcontext(tx) if tx is not None else self._store.transaction()) as conn:
+    def prune(self) -> None:
+        """Retire upload credentials nobody can redeem any more.
+
+        Reads refuse an expired token on their own, so this only reclaims the
+        rows and retires the slots; it runs on the retention clock rather than
+        three times inside whichever upload happened to come next.
+        """
+        with self._store.transaction() as conn:
             now = now_iso()
             # Keep the manifest so expiry can never make an incomplete document
             # appear complete; only its upload credential is retired.
