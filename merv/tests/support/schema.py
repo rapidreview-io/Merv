@@ -20,7 +20,6 @@ from merv.brain.research_core.persistence import RESEARCH_SCHEMA
 from merv.brain.surface.agent_identity import AGENT_IDENTITY_SCHEMA
 from merv.brain.surface.oauth_store import OAUTH_SCHEMA
 from merv.brain.surface.project_keys import PROJECT_KEY_SCHEMA
-from merv.brain.surface.user_settings import USER_SETTINGS_SCHEMA
 from merv.brain.workflows.persistence import WORKFLOW_SCHEMA
 
 # Install order is the foreign-key order Postgres validates at CREATE:
@@ -28,7 +27,6 @@ from merv.brain.workflows.persistence import WORKFLOW_SCHEMA
 ALL_SCHEMAS = (
     PROJECT_KEY_SCHEMA,
     OAUTH_SCHEMA,
-    USER_SETTINGS_SCHEMA,
     AGENT_IDENTITY_SCHEMA,
     ARTIFACT_SCHEMA,
     RESEARCH_SCHEMA,

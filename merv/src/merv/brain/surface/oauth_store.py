@@ -587,8 +587,16 @@ def _drop_retired_oauth_tables(conn: Connection) -> None:
         conn.execute(f"DROP TABLE IF EXISTS {table}")
 
 
+def _drop_user_hf_tokens(conn: Connection) -> None:
+    """Migration 80: the per-user Hugging Face token had writers and no reader."""
+    conn.execute("DROP TABLE IF EXISTS user_hf_tokens")
+
+
 OAUTH_SCHEMA = SchemaModule(
     name="surface.oauth",
     ddl=OAUTH_DDL,
-    migrations=(Migration(66, "drop_retired_oauth_tables", _drop_retired_oauth_tables),),
+    migrations=(
+        Migration(66, "drop_retired_oauth_tables", _drop_retired_oauth_tables),
+        Migration(80, "drop_user_hf_tokens", _drop_user_hf_tokens),
+    ),
 )

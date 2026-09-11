@@ -593,11 +593,6 @@
       "tool",
       "ts"
     ],
-    "user_hf_tokens": [
-      "token",
-      "updated_at",
-      "user_id"
-    ],
     "workflow_actions": [
       "attempts",
       "created_at",

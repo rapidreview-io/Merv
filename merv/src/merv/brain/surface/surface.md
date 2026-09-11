@@ -53,8 +53,8 @@ under 100 lines; qualify named action, role, tool and skill references inline.
   runner-facing routes are the only unauthenticated ones besides `/health`; it
   is mounted exactly where owner key management is (hosted auth).
 - `oauth.py`, `oauth_store.py`, and `transport/api/oauth.py`: OAuth policy,
-  race-safe persistence, and protocol routes. `oauth_store.py`, `project_keys.py`,
-  `user_settings.py` and `agent_identity.py` each declare the tables behind the
+  race-safe persistence, and protocol routes. `oauth_store.py`, `project_keys.py`
+  and `agent_identity.py` each declare the tables behind the
   flow they own; composition installs them, kernel first, then every other
   component's as it is constructed. Persistence stays separate because
   both halves are substantial and transactional behavior must remain explicit.
