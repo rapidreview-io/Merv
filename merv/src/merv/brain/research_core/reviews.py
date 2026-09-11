@@ -11,6 +11,7 @@ from ..workflows import REVIEW_KIND as KIND, Public
 
 from contextlib import closing
 from collections.abc import Mapping
+from functools import partial
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any, TYPE_CHECKING
@@ -36,14 +37,55 @@ from .policy import (
     snapshot_from_id,
     validate_review_role,
     resolve_review_return,
-    validate_review_verdict,
-    validate_synopsis,
 )
 from ..kernel.state.store import BaseStateStore, Connection, next_created_seq, row_to_dict
 if TYPE_CHECKING:
     from .records import Records
     from .reflections import ReflectionService
 from ..workflows import Reference, Snapshot
+
+
+def verdict_effect(*, records: Records):
+    """Record one verdict and let its target take the edge that verdict opens.
+
+    Both writes belong to the review's own ``submit`` transition: the runtime
+    runs this on that transition's connection, so a target that refuses its
+    edge leaves behind no verdict, no closed session and no closed request.
+    """
+    def record(conn: Connection, before: Snapshot, after: Snapshot, data) -> None:
+        request = conn.execute("SELECT * FROM review_requests WHERE id = ?", (before.id,)).fetchone()
+        # The submitted payload arrives frozen, so mappings serialize as objects.
+        dump = partial(json.dumps, sort_keys=True, default=dict)
+        conn.execute(
+            """
+            INSERT INTO reviews (
+              id, project_id, request_id, session_id, target_snapshot_id, target_type, target_id,
+              role, verdict, return_to, notes, synopsis, findings_json, evidence_json, created_at,
+              created_seq, submission_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (data["review_id"], request["project_id"], before.id, data["session_id"],
+             request["target_snapshot_id"], request["target_type"], request["target_id"],
+             request["role"], data["verdict"], data["return_to"], data["notes"], data["synopsis"],
+             dump(data["findings"]), dump(data["evidence"]), now_iso(),
+             next_created_seq(conn=conn, table="reviews"), data["submission_id"]),
+        )
+        conn.execute("UPDATE review_sessions SET status = 'submitted' WHERE id = ?", (data["session_id"],))
+        target_id = str(request["target_id"])
+        decision = records.runtime.evaluate(conn=conn, project_id=before.project_id, instance_id=target_id)
+        selected = decision.suggested
+        if (decision.node is not None and decision.node.execution.read_only
+                and decision.node.role == request["role"] and selected is not None and selected.available):
+            records.runtime.apply_in_transaction(
+                conn=conn, project_id=before.project_id, instance_id=target_id,
+                expected_revision=decision.snapshot.revision, action=selected.edge.name,
+                request_id=f"review:{data['review_id']}",
+                payload={**data["evidence"], "review_id": data["review_id"], "notes": data["notes"],
+                         "synopsis": data["synopsis"], "revision_context": data["revision_context"]},
+            )
+
+    return record
 
 
 def project_settings(*, conn: Connection, project_id: str) -> dict[str, Any]:
@@ -307,11 +349,6 @@ class ReviewService:
         evidence: dict[str, Any] | None = None,
         return_to: str = "",
     ) -> dict[str, Any]:
-        validate_review_verdict(verdict=verdict)
-        try:
-            synopsis = validate_synopsis(synopsis)
-        except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
         with self.store.transaction() as conn:
             session = conn.execute(
                 "SELECT * FROM review_sessions WHERE id = ?", (review_session_id,)
@@ -377,75 +414,18 @@ class ReviewService:
                 default=None,
             )
             review_id = new_id(prefix="rev")
-            conn.execute(
-                """
-                INSERT INTO reviews (
-                  id, project_id, request_id, session_id, target_snapshot_id, target_type, target_id,
-                  role, verdict, return_to, notes, synopsis, findings_json, evidence_json, created_at,
-                  created_seq, submission_id
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    review_id,
-                    req["project_id"],
-                    req["id"],
-                    review_session_id,
-                    req["target_snapshot_id"],
-                    req["target_type"],
-                    req["target_id"],
-                    req["role"],
-                    verdict,
-                    return_to,
-                    notes,
-                    synopsis,
-                    json.dumps(findings or [], sort_keys=True),
-                    json.dumps(evidence or {}, sort_keys=True),
-                    now_iso(),
-                    next_created_seq(conn=conn, table="reviews"),
-                    # The round this verdict graded. The seal ran on the
-                    # forward transition that put the target under review, so
-                    # the newest submission for this attempt is that round.
-                    "" if latest_submission is None else latest_submission.id,
-                ),
-            )
-            conn.execute(
-                "UPDATE review_sessions SET status = 'submitted' WHERE id = ?",
-                (review_session_id,),
-            )
-            conn.execute(
-                "UPDATE review_requests SET status = 'submitted' WHERE id = ?",
-                (req["id"],),
-            )
-            self.store.record_event(
-                conn=conn,
-                project_id=req["project_id"],
-                event_type="review.submitted",
-                target_type=req["target_type"],
-                target_id=req["target_id"],
-                payload={
-                    "role": req["role"],
-                    "verdict": verdict,
-                    "review_id": review_id,
-                    "return_to": return_to,
-                    "synopsis": synopsis,
-                },
-            )
-            revision_context = "" if route is None else revision_context_for_review_return(
-                target_type=req["target_type"], role=req["role"], verdict=verdict,
-                notes=notes, findings=findings or [], route=route,
-            )
-            decision = self.runtime.evaluate(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
-            selected = decision.suggested
-            if (decision.node is not None and decision.node.execution.read_only and decision.node.role == req["role"]
-                    and selected is not None and selected.available):
-                self.runtime.apply_in_transaction(
-                    conn=conn, project_id=req["project_id"], instance_id=req["target_id"],
-                    expected_revision=decision.snapshot.revision, action=selected.edge.name,
-                    request_id=f"review:{review_id}",
-                    payload={**(evidence or {}), "review_id": review_id, "notes": notes,
-                             "synopsis": synopsis, "revision_context": revision_context},
-                )
+            self._apply(conn=conn, request_id=str(req["id"]), action="submit", payload={
+                "review_id": review_id, "session_id": review_session_id, "verdict": verdict,
+                "synopsis": synopsis, "notes": notes, "return_to": return_to,
+                "findings": findings or [], "evidence": evidence or {},
+                "revision_context": "" if route is None else revision_context_for_review_return(
+                    target_type=req["target_type"], role=req["role"], verdict=verdict,
+                    notes=notes, findings=findings or [], route=route),
+                # The round this verdict graded. The seal ran on the forward
+                # transition that put the target under review, so the newest
+                # submission for this attempt is that round.
+                "submission_id": "" if latest_submission is None else latest_submission.id,
+            })
             review = conn.execute(
                 "SELECT * FROM reviews WHERE id = ?", (review_id,)
             ).fetchone()
@@ -478,16 +458,20 @@ class ReviewService:
     def latest_submitted_event(
         self, *, target_type: str, target_id: str, project_id: str | None = None
     ) -> StoredEvent | None:
-        """Return the durable event for the newest verdict without appending one."""
+        """Return the durable event for the newest verdict without appending one.
+
+        A verdict is a transition of its own request, so the event names the
+        request; the target it graded is one join away.
+        """
         with closing(self.store.connect()) as conn:
             project_id = self.store.require_project_id(conn=conn, project_id=project_id)
             row = conn.execute(
                 """
-                SELECT id, project_id, type, target_type, target_id, payload_json, created_at
-                FROM events
-                WHERE project_id = ? AND type = 'review.submitted'
-                  AND target_type = ? AND target_id = ?
-                ORDER BY id DESC LIMIT 1
+                SELECT e.id, e.project_id, e.type, e.target_type, e.target_id, e.payload_json, e.created_at
+                FROM events e JOIN review_requests r ON r.id = e.target_id
+                WHERE e.project_id = ? AND e.type = 'review.submitted'
+                  AND r.target_type = ? AND r.target_id = ?
+                ORDER BY e.id DESC LIMIT 1
                 """,
                 (project_id, target_type, target_id),
             ).fetchone()

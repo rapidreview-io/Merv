@@ -35,7 +35,7 @@ from .models import (
 )
 from .reflections import ReflectionService, publication_effect
 from .records import RecordHooks, Records
-from .reviews import ReviewService
+from .reviews import ReviewService, verdict_effect
 from .tasks import TaskService
 from ..agent_sessions import WorkspaceAdvances
 from ..workflows import REVIEW_KIND, Binding, Program, Public, RecordKind, Workflows
@@ -138,6 +138,7 @@ class Research:
         # A review request is a native record whose graph reads nothing, so it
         # needs no hook of its own beyond the engine's own writes.
         self.records.register(REVIEW_KIND, RecordHooks())
+        workflows.register_transactional_effect("review.record_verdict", verdict_effect(records=self.records))
         # Every native record binds through the one engine; a graph with no row
         # of its own is bound by the service that owns it.
         for kind in program.kinds:

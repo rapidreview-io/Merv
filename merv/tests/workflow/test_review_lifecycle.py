@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
-from merv.brain.kernel.utils import PermissionDeniedError, ValidationError
+from merv.brain.kernel.utils import PermissionDeniedError, ValidationError, WorkflowError
 from merv.brain.workflows import REVIEW_KIND
 from merv.brain.workflows.definitions.review import REVIEW, record_verdict
 
@@ -104,6 +105,96 @@ class RequestTest(ReviewLifecycleCase):
         self.assertEqual([(str(row["id"]), str(row["status"]), str(row["independence"])) for row in rows],
                          [(session["review_session_id"], "started", "verified_agent_review")])
         self.assertIn("review.started", [str(row["type"]) for row in started])
+
+
+class VerdictTest(ReviewLifecycleCase):
+    def start(self, request):
+        return self.call("review.start", review_request_id=request["review_request_id"],
+                         reviewer_capability=request["reviewer_capability"],
+                         caller_session_id="independent-reviewer")["review_session_id"]
+
+    def test_a_passing_verdict_closes_the_request_and_advances_its_target(self) -> None:
+        request = self.request()
+        session = self.start(request)
+        verdict = self.call("review.submit", review_session_id=session, verdict="pass",
+                            synopsis=REVIEW_SYNOPSIS)
+        self.assertEqual((verdict["verdict"], verdict["role"], verdict["synopsis"]),
+                         ("pass", "design_reviewer", REVIEW_SYNOPSIS))
+        closed = self.instance(request["review_request_id"])
+        self.assertEqual((closed.state, closed.outcome, closed.data["review_id"]),
+                         ("submitted", "submitted", verdict["id"]))
+        self.assertEqual(self.row_status(request["review_request_id"]), "submitted")
+        self.assertEqual(self.app.research.experiments.get_state(
+            project_id=self.project_id, experiment_id=self.experiment_id).status, "running")
+
+    def test_a_rejection_routes_its_target_back_to_the_declared_return(self) -> None:
+        request = self.request()
+        verdict = self.call("review.submit", review_session_id=self.start(request),
+                            verdict="needs_changes", synopsis=REVIEW_SYNOPSIS,
+                            notes="The evaluation cannot separate the arms.")
+        self.assertEqual(verdict["return_to"], "planned")
+        state = self.app.research.experiments.get_state(
+            project_id=self.project_id, experiment_id=self.experiment_id)
+        self.assertEqual((state.status, state.attempt_index), ("planned", 2))
+        self.assertIn("design_reviewer returned needs_changes", state.revision_context)
+
+    def test_the_graph_refuses_a_verdict_from_a_request_nobody_started(self) -> None:
+        request = self.request()
+        session = self.start(request)
+        with self.app.store.transaction() as conn:
+            conn.execute("UPDATE review_requests SET status = 'requested' WHERE id = ?",
+                         (request["review_request_id"],))
+            self.app.workflows.runtime.apply_in_transaction(
+                conn=conn, project_id=self.project_id, instance_id=request["review_request_id"],
+                action="supersede", expected_revision=1, request_id="rewind")
+            conn.execute("UPDATE review_requests SET status = 'started' WHERE id = ?",
+                         (request["review_request_id"],))
+        with self.assertRaisesRegex(WorkflowError, "not allowed from terminal state"):
+            self.call("review.submit", review_session_id=session, verdict="pass",
+                      synopsis=REVIEW_SYNOPSIS)
+
+    def test_a_target_that_refuses_its_edge_leaves_no_verdict_behind(self) -> None:
+        request = self.request()
+        session = self.start(request)
+        runtime = self.app.workflows.runtime
+        before = runtime.get(project_id=self.project_id, instance_id=self.experiment_id)
+        apply_in_transaction = runtime.apply_in_transaction
+
+        def refuse(**kwargs):
+            if kwargs["instance_id"] == self.experiment_id:
+                raise WorkflowError("the target refused its edge")
+            return apply_in_transaction(**kwargs)
+
+        with patch.object(runtime, "apply_in_transaction", side_effect=refuse):
+            with self.assertRaisesRegex(WorkflowError, "refused its edge"):
+                self.call("review.submit", review_session_id=session, verdict="pass",
+                          synopsis=REVIEW_SYNOPSIS)
+        after = runtime.get(project_id=self.project_id, instance_id=self.experiment_id)
+        self.assertEqual((after.state, after.revision), (before.state, before.revision))
+        self.assertEqual(self.row_status(request["review_request_id"]), "started")
+        self.assertEqual(self.instance(request["review_request_id"]).state, "started")
+        self.assertEqual(self.call("review.status", project_id=self.project_id,
+                                   target_type="experiment", target_id=self.experiment_id)["reviews"], [])
+
+
+class ReflectionVerdictTest(ResearchCase):
+    """The same graph carries a target that is not an experiment."""
+
+    def test_a_reflection_review_passes_and_rejects_through_the_same_edges(self) -> None:
+        reflection_id = self.drive_reflection_to_review()
+        rejected = self.review(target_type="reflection", target_id=reflection_id,
+                               role="reflection_reviewer", verdict="needs_changes",
+                               return_to="synthesizing")
+        self.assertEqual(rejected["return_to"], "synthesizing")
+        self.assertEqual(self.app.research.reflections.get_state(
+            project_id=self.project_id, reflection_id=reflection_id).workflow_state, "synthesizing")
+        self.submit_reflection_bundle(reflection_id)
+        self.call("reflection.transition", project_id=self.project_id,
+                  reflection_id=reflection_id, transition="submit_reflection_artifacts")
+        self.pass_review(target_type="reflection", target_id=reflection_id,
+                         role="reflection_reviewer")
+        self.assertEqual(self.app.research.reflections.get_state(
+            project_id=self.project_id, reflection_id=reflection_id).workflow_state, "consolidating")
 
 
 if __name__ == "__main__":
