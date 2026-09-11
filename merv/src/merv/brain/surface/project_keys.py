@@ -18,7 +18,8 @@ from typing import Any, Protocol
 
 from ..kernel.secret_tokens import hash_secret, mint_secret, secret_digest_matches
 from ..kernel.state.schema import SchemaModule
-from ..kernel.state.store import BaseStateStore, Connection, row_to_dict
+from ..kernel.retention import RETENTION_BATCH_ROWS, drain
+from ..kernel.state.store import BaseStateStore, Connection, deleted_rows, row_to_dict
 from ..kernel.utils import (
     NotFoundError,
     ValidationError,
@@ -294,27 +295,34 @@ class ProjectKeys:
         per key an owner minted, and it is the owner's visible record that they
         minted and killed it. A rotated key goes only once no refresh token
         names it as current and no child names it as parent, so neither a live
-        grant nor a lineage walk can lose its footing — which means a chain
-        drains from its newest end, one link per sweep.
+        grant nor a lineage walk can lose its footing. A chain therefore drains
+        from its newest end, one link per batch, and only once its family has
+        expired: an always-on grant keeps every link parented.
         """
         cutoff = format_iso(
             (now or datetime.now(UTC)) - timedelta(days=OAUTH_KEY_RETENTION_DAYS)
         )
-        with self._store.transaction() as conn:
-            cursor = conn.execute(
-                """
-                DELETE FROM project_api_keys
-                WHERE oauth_family_id IS NOT NULL
-                  AND expires_at < ? AND (revoked_at IS NULL OR revoked_at < ?)
-                  AND id NOT IN (SELECT current_key_id FROM oauth_refresh_tokens)
-                  AND id NOT IN (
-                    SELECT parent_key_id FROM project_api_keys
-                    WHERE parent_key_id IS NOT NULL
-                  )
-                """,
-                (cutoff, cutoff),
-            )
-            return max(0, int(getattr(cursor, "rowcount", 0) or 0))
+
+        def batch() -> int:
+            with self._store.transaction() as conn:
+                return deleted_rows(conn.execute(
+                    """
+                    DELETE FROM project_api_keys WHERE id IN (
+                      SELECT id FROM project_api_keys
+                      WHERE oauth_family_id IS NOT NULL
+                        AND expires_at < ? AND (revoked_at IS NULL OR revoked_at < ?)
+                        AND id NOT IN (SELECT current_key_id FROM oauth_refresh_tokens)
+                        AND id NOT IN (
+                          SELECT parent_key_id FROM project_api_keys
+                          WHERE parent_key_id IS NOT NULL
+                        )
+                      ORDER BY expires_at LIMIT ?
+                    )
+                    """,
+                    (cutoff, cutoff, RETENTION_BATCH_ROWS),
+                ))
+
+        return drain(batch)
 
     def verify_secret(self, *, secret: str) -> ProjectKeyRecord | None:
         """Resolve one bearer with a fresh database read on every call."""

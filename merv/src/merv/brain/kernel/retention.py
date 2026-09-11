@@ -16,6 +16,22 @@ from typing import Protocol
 # Never during start-up, then once an hour for the life of the process.
 PRUNE_INITIAL_DELAY_SECONDS = 30.0
 PRUNE_INTERVAL_SECONDS = 3600.0
+# A sweep deletes in batches, each its own short transaction, so it never holds
+# the store's single write lock across a backlog; a pass gives up after this
+# many and the next tick carries on.
+RETENTION_BATCH_ROWS = 5_000
+RETENTION_MAX_BATCHES = 20
+
+
+def drain(batch: Callable[[], int]) -> int:
+    """Run one bounded deletion until it removes nothing or the pass is spent."""
+    total = 0
+    for _ in range(RETENTION_MAX_BATCHES):
+        removed = batch()
+        total += removed
+        if removed == 0:
+            break
+    return total
 
 
 class SweepFailureSink(Protocol):

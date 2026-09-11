@@ -263,9 +263,9 @@ def control_main() -> int:
 
     The console-script entry for the ``control`` extra and the deploy Dockerfile:
     forces control mode (MERV_MODE=control) so the image entrypoint
-    never accidentally binds the local preset. The expiry reaper runs, but the
-    broader cleanup sweeps are only built; a managed cron or sidecar must POST
-    ``/api/admin/cleanup``. End-user auth is Supabase verification and startup
+    never accidentally binds the local preset. The retention clock sweeps every
+    owner's rows in-process; ``POST /api/admin/cleanup`` runs the same sweeps on
+    demand. End-user auth is Supabase verification and startup
     fails without it (MERV_ALLOW_OPEN_CONTROL=1 is the deliberate, loudly
     logged escape); deploy behind TLS and a trusted network boundary either way.
     """

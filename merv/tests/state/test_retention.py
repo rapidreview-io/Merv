@@ -82,10 +82,22 @@ class ComposedSweepTest(unittest.TestCase):
     def test_one_pass_clears_expired_feed_and_artifact_credentials(self) -> None:
         stale = self.brain.artifact_store.submit(project_id=self.project_id, path="stale.md")
         live = self.brain.artifact_store.submit(project_id=self.project_id, path="fresh.md")
+        # A completed document whose figure slot was never filled: the slot is
+        # retired, the document stays.
+        doc = self.brain.artifact_store.submit(
+            project_id=self.project_id, path="doc.md", discover_figures=True
+        )
+        self.brain.artifact_store.complete_upload(
+            token=doc.token, kind="artifact", data=b"![p](figures/p.png)\n"
+        )
         with self.brain.store.transaction() as conn:
             conn.execute(
                 "UPDATE artifacts SET expires_at = ? WHERE id = ?",
                 (STALE, stale.artifact_id),
+            )
+            conn.execute(
+                "UPDATE artifact_figures SET expires_at = ? WHERE artifact_id = ?",
+                (STALE, doc.artifact_id),
             )
             conn.execute(
                 """
@@ -110,8 +122,13 @@ class ComposedSweepTest(unittest.TestCase):
             tokens = conn.execute(
                 "SELECT COUNT(*) AS n FROM feed_upload_tokens"
             ).fetchone()
-        self.assertEqual(kept, {live.artifact_id})
+            slot = conn.execute(
+                "SELECT status, upload_token FROM artifact_figures WHERE artifact_id = ?",
+                (doc.artifact_id,),
+            ).fetchone()
+        self.assertEqual(kept, {live.artifact_id, doc.artifact_id})
         self.assertEqual(int(tokens["n"]), 0)
+        self.assertEqual((slot["status"], slot["upload_token"]), ("expired", ""))
 
 
 if __name__ == "__main__":

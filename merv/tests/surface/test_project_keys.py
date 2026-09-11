@@ -312,19 +312,18 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         self.assertEqual(revoked.status_code, 200, revoked.text)
 
         month = datetime.now(UTC) + timedelta(days=31)
-        self.assertEqual(self.keys.prune(now=month), 1)
+        # A link is free only once its child has left, so the dead chain drains
+        # from its newest end, one link per batch, within the one pass.
+        self.assertEqual(self.keys.prune(now=month), len(chain))
         with self.app.store.connect() as conn:
             kept = {
                 str(row["id"])
                 for row in conn.execute("SELECT id FROM project_api_keys").fetchall()
             }
-        self.assertNotIn(str(chain[-1]["key"]["id"]), kept, "the free end of the chain")
-        self.assertIn(str(chain[0]["key"]["id"]), kept, "a key with a child")
+        self.assertTrue({str(link["key"]["id"]) for link in chain}.isdisjoint(kept))
         self.assertIn(str(held["key"]["id"]), kept, "a refresh token names it")
         self.assertIn(self.key_id, kept, "a revoked direct mk_ key is history")
-        # A link is free only once its child has left, so a chain drains from
-        # its newest end, one link per sweep.
-        self.assertEqual(self.keys.prune(now=month), 1)
+        self.assertEqual(self.keys.prune(now=month), 0)
         self.assertEqual(self.keys.prune(now=datetime.now(UTC)), 0)
 
     def test_infrastructure_limits_are_rejected_without_minting_a_key(self) -> None:

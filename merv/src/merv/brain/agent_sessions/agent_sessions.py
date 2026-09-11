@@ -11,7 +11,8 @@ from collections.abc import Callable
 
 from ..kernel.secret_tokens import hash_secret, secret_digest_matches
 from ..kernel.state import BaseStateStore, row_to_dict
-from ..kernel.state.store import Connection
+from ..kernel.retention import RETENTION_BATCH_ROWS, drain
+from ..kernel.state.store import Connection, deleted_rows
 from ..kernel.utils import (
     NotFoundError,
     PermissionDeniedError,
@@ -814,15 +815,23 @@ class AgentSessions:
         cutoff = format_iso(
             (now or datetime.now(UTC)) - timedelta(days=CLOSED_LEASE_RETENTION_DAYS)
         )
-        closed = "status NOT IN ('offered', 'active') AND closed_at < ?"
-        with self.store.transaction() as tx:
-            tx.execute(
-                "DELETE FROM agent_session_traces WHERE session_id IN "
-                f"(SELECT id FROM agent_sessions WHERE {closed})",
-                (cutoff,),
-            )
-            cursor = tx.execute(f"DELETE FROM agent_sessions WHERE {closed}", (cutoff,))
-            return max(0, int(getattr(cursor, "rowcount", 0) or 0))
+        oldest = (
+            "SELECT id FROM agent_sessions WHERE status NOT IN ('offered', 'active') "
+            "AND closed_at < ? ORDER BY closed_at LIMIT ?"
+        )
+
+        def batch() -> int:
+            with self.store.transaction() as tx:
+                tx.execute(
+                    f"DELETE FROM agent_session_traces WHERE session_id IN ({oldest})",
+                    (cutoff, RETENTION_BATCH_ROWS),
+                )
+                return deleted_rows(tx.execute(
+                    f"DELETE FROM agent_sessions WHERE id IN ({oldest})",
+                    (cutoff, RETENTION_BATCH_ROWS),
+                ))
+
+        return drain(batch)
 
     def halt(self, *, project_id: str, reason: str = "dispatch_halted") -> int:
         """Close every live session in a project so runners stop their children.

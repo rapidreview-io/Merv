@@ -173,7 +173,6 @@ class Artifacts:
 
     def cancel_upload(self, *, token: str, kind: UploadKind, tx: Connection) -> None:
         """Retire an unconsumed credential without altering completed content."""
-        self._pending(tx=tx, token=token, kind=kind)
         if kind == "artifact":
             tx.execute("DELETE FROM artifacts WHERE upload_token = ? AND status = 'pending'", (token,))
         else:

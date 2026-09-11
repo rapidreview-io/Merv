@@ -12,7 +12,8 @@ from typing import Any
 
 from ..kernel.env import env_int
 from ..kernel.state.schema import Connection, Migration, SchemaModule
-from ..kernel.state.store import BaseStateStore, row_to_dict
+from ..kernel.retention import RETENTION_BATCH_ROWS, drain
+from ..kernel.state.store import BaseStateStore, deleted_rows, row_to_dict
 from ..kernel.utils import format_iso
 from .oauth import (
     CAP_EVICTION_LIMIT,
@@ -78,10 +79,10 @@ def _fingerprint(client: OAuthClient) -> str:
     )
 
 
-# A spent credential is kept past its own expiry, long enough that no sweep can
-# race a request still holding one: a code lives 60 seconds and a refresh token
-# 30 days, so neither grace is a meaningful share of its life.
-EXPIRED_CODE_GRACE_DAYS = 1
+# A spent refresh token is kept a week past its expiry, so no sweep can race a
+# request still holding one. A spent code is kept for the client's whole
+# unused horizon: it is the evidence the never-used predicate reads, and a
+# client that only ever authorizes (no refresh grant) has no other.
 EXPIRED_REFRESH_GRACE_DAYS = 7
 
 # A registration holding no credential: it authorizes nothing, so deleting it
@@ -262,36 +263,40 @@ class SqlOAuthRepository:
         moment = now or datetime.now(tz=UTC)
         cutoff = self._cutoff(moment)
         try:
-            with self._store.transaction() as conn:
-                codes = _deleted(
-                    conn.execute(
-                        "DELETE FROM oauth_authorization_codes WHERE expires_at < ?",
-                        (_horizon(moment, EXPIRED_CODE_GRACE_DAYS),),
-                    )
+            codes = drain(lambda: self._delete_batch(
+                """
+                DELETE FROM oauth_authorization_codes WHERE code_digest IN (
+                  SELECT code_digest FROM oauth_authorization_codes
+                  WHERE expires_at < ? ORDER BY expires_at LIMIT ?
                 )
-                # A rotation chain leaves whole or not at all: parent_token_id
-                # names the row before it, so half a chain would dangle, and
-                # the member that expires last is the one that says the grant
-                # itself is over.
-                tokens = _deleted(
-                    conn.execute(
-                        """
-                        DELETE FROM oauth_refresh_tokens WHERE family_id NOT IN (
-                          SELECT family_id FROM oauth_refresh_tokens
-                          WHERE expires_at >= ?
-                        )
-                        """,
-                        (_horizon(moment, EXPIRED_REFRESH_GRACE_DAYS),),
-                    )
+                """, (cutoff, RETENTION_BATCH_ROWS),
+            ))
+            # A rotation chain leaves whole or not at all: parent_token_id
+            # names the row before it, so half a chain would dangle, and the
+            # member that expires last is the one that says the grant is over.
+            tokens = drain(lambda: self._delete_batch(
+                """
+                DELETE FROM oauth_refresh_tokens WHERE family_id IN (
+                  SELECT family_id FROM oauth_refresh_tokens
+                  GROUP BY family_id HAVING MAX(expires_at) < ?
+                  ORDER BY MAX(expires_at) LIMIT ?
                 )
-                deleted = self._delete_never_used(
-                    conn=conn, cutoff=cutoff, limit=None
-                )
+                """, (_horizon(moment, EXPIRED_REFRESH_GRACE_DAYS), RETENTION_BATCH_ROWS),
+            ))
+            deleted = drain(lambda: self._delete_never_used_batch(cutoff=cutoff))
         except Exception as exc:  # noqa: BLE001 -- one sweep must not abort the pass
             return {"deleted": 0, "codes": 0, "tokens": 0, "ok": False,
                     "cutoff": cutoff, "error": str(exc)[:200]}
         return {"deleted": deleted, "codes": codes, "tokens": tokens,
                 "ok": True, "cutoff": cutoff}
+
+    def _delete_batch(self, sql: str, params: tuple[Any, ...]) -> int:
+        with self._store.transaction() as conn:
+            return deleted_rows(conn.execute(sql, params))
+
+    def _delete_never_used_batch(self, *, cutoff: str) -> int:
+        with self._store.transaction() as conn:
+            return self._delete_never_used(conn=conn, cutoff=cutoff, limit=RETENTION_BATCH_ROWS)
 
     def _cutoff(self, now: datetime | None) -> str:
         return _horizon(
@@ -325,7 +330,7 @@ class SqlOAuthRepository:
                 )
                 """
             params = (*params, limit)
-        return _deleted(conn.execute(statement, params))
+        return deleted_rows(conn.execute(statement, params))
 
     def insert_code(self, *, code: AuthorizationCode) -> None:
         with self._store.transaction() as conn:
@@ -486,11 +491,6 @@ def _horizon(now: datetime, days: int) -> str:
     return format_iso(now - timedelta(days=days))
 
 
-def _deleted(cursor: Any) -> int:
-    """How many rows one DELETE removed, on either dialect."""
-    return max(0, int(getattr(cursor, "rowcount", 0) or 0))
-
-
 def _client(row: Any) -> OAuthClient | None:
     data = row_to_dict(row=row)
     if data is None:
@@ -537,8 +537,8 @@ __all__ = ["SqlOAuthRepository"]
 OAUTH_DDL = """\
 -- OAuth 2.1 public DCR registrations (agent-anywhere Phase B). A repeated
 -- registration with identical metadata resolves to the SAME client_id, so the
--- Cursor double-DCR race is safe without growing the table; registrations that
--- never authorized anything are swept by CleanupService. Only public clients
+-- Cursor double-DCR race is safe without growing the table; the retention
+-- clock sweeps registrations left holding no credential. Only public clients
 -- (token_endpoint_auth_method=none) exist, so no client secret is stored.
 -- ``metadata_fingerprint`` is that "identical metadata" statement made a
 -- database fact: a digest over the CANONICAL (sorted-array) metadata, under

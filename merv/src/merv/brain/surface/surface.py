@@ -56,7 +56,7 @@ from ..kernel.env import env_bool, env_value
 from ..kernel.ports.blob_store import BlobStore, EvidenceBlobStore
 from ..kernel.state import BaseStateStore
 from ..kernel.retention import Retention
-from ..kernel.state.activity import register_activity_vocabulary
+from ..kernel.state.activity import error_head, register_activity_vocabulary
 from ..kernel.state.tool_call_ledger import (
     ToolCallLedger,
     configured_retention_days,
@@ -245,7 +245,7 @@ class Surface:
         with suppress(Exception):
             self.activity.emit(
                 event_type="telemetry.dropped",
-                payload={"sink": name, "status": "error", "error": str(error)[:200]},
+                payload={"sink": name, "status": "error", "error": error_head(error=str(error))},
             )
 
     def shutdown(self) -> None:
