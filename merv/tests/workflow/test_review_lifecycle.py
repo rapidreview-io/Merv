@@ -88,6 +88,23 @@ class RequestTest(ReviewLifecycleCase):
         self.call("review.start", review_request_id=second["review_request_id"],
                   reviewer_capability=second["reviewer_capability"], caller_session_id="reviewer")
 
+    def test_starting_a_review_moves_the_request_and_records_one_session(self) -> None:
+        request = self.request()
+        session = self.call("review.start", review_request_id=request["review_request_id"],
+                            reviewer_capability=request["reviewer_capability"],
+                            caller_session_id="independent-reviewer")
+        self.assertEqual((self.instance(request["review_request_id"]).state,
+                          self.row_status(request["review_request_id"])), ("started", "started"))
+        with self.app.store.transaction() as conn:
+            rows = conn.execute("SELECT id, status, independence FROM review_sessions WHERE request_id = ?",
+                                (request["review_request_id"],)).fetchall()
+            started = conn.execute(
+                "SELECT type FROM events WHERE target_id = ? ORDER BY id", (request["review_request_id"],),
+            ).fetchall()
+        self.assertEqual([(str(row["id"]), str(row["status"]), str(row["independence"])) for row in rows],
+                         [(session["review_session_id"], "started", "verified_agent_review")])
+        self.assertIn("review.started", [str(row["type"]) for row in started])
+
 
 if __name__ == "__main__":
     unittest.main()

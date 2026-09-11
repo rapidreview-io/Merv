@@ -259,6 +259,8 @@ class ReviewService:
             # caller_session_id is mandatory, so every new session is verified;
             # 'attested_agent_review' survives only on legacy rows.
             independence = "verified_agent_review"
+            self._apply(conn=conn, request_id=review_request_id, action="start",
+                        payload={"role": req["role"], "session_id": session_id})
             conn.execute(
                 """
                 INSERT INTO review_sessions (
@@ -276,22 +278,6 @@ class ReviewService:
                     independence,
                     now_iso(),
                 ),
-            )
-            conn.execute(
-                "UPDATE review_requests SET status = 'started' WHERE id = ?",
-                (review_request_id,),
-            )
-            self.store.record_event(
-                conn=conn,
-                project_id=req["project_id"],
-                event_type="review.started",
-                target_type=req["target_type"],
-                target_id=req["target_id"],
-                payload={
-                    "role": req["role"],
-                    "request_id": review_request_id,
-                    "session_id": session_id,
-                },
             )
             snapshot = snapshot_from_id(snapshot_id=str(req["target_snapshot_id"]))
             current = self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
