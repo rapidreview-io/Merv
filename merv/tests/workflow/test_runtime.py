@@ -117,8 +117,9 @@ class RuntimeTests(unittest.TestCase):
         assert [action.edge.name for action in result.available] == ["revise"]
         assert result.public()["blocked_actions"][0]["blockers"][0]["code"] == "review_required"
         assert result.suggested.edge.name == "approve"
-        with self.assertRaisesRegex(WorkflowError, "independent review must pass"):
+        with self.assertRaisesRegex(WorkflowError, "independent review must pass") as error:
             act(runtime, project_id, current, "approve", payload={"approved": True})
+        assert error.exception.details["issues"] == result.public()["blocked_actions"][0]["blockers"]
         facts["approved"] = True
         assert act(runtime, project_id, current, "approve").outcome == "success"
 

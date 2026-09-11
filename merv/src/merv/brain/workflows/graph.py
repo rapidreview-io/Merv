@@ -441,7 +441,8 @@ class Evaluation:
             ending = "terminal state " if self.snapshot.outcome else ""
             raise WorkflowError(f"action {name!r} is not allowed from {ending}{self.snapshot.state!r}")
         if action.issues:
-            raise WorkflowError("; ".join(issue.message for issue in action.issues))
+            raise WorkflowError("; ".join(issue.message for issue in action.issues),
+                                details={"issues": [issue_view(issue) for issue in action.issues]})
         return action.edge
 
     def public(self) -> dict[str, Any]:

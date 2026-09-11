@@ -94,5 +94,5 @@ change requires explicit instance migration; duplicate registrations fail and re
 may gate only outgoing actions of their declaring node. Review facts are scoped to project, snapshot
 and role; Research reviews reads SQL/settings and pure policy formats the same fact
 for checklists and runtime, including request expiry and independence.See `docs/WORKFLOW_IMPLEMENTATION.md` for composition, persistence and upgrade
-behavior. Keep this document under 100 lines and keep workflow decisions here,
+behavior. Permanent effect failures wait for project-scoped `Deliveries.retry`. Keep decisions here,
 not in support systems or presentation adapters.

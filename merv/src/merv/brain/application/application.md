@@ -80,12 +80,12 @@ spans them. Research remains the public owner of its event ledger reads.
 - Graph changes queue durable actions with their committed event. The composition root
   supplies one handler per effect kind an installed program declares, so the worker
   knows only that a name has a handler. It retries support-system calls using stable
-  keys and fenced leases; a non-idempotent effect may fence retries before its remote
-  call and stay visible in `workflow.history.actions`.
+  keys and fenced leases; permanent validation/authorization/missing-target failures stop
+  polling until project-scoped `Deliveries.retry` requeues their existing id and attempts.
 - Artifact sealing and Research mutations retain their existing transaction boundaries.
   Feed effects occur after commit and remain advisory.
 - Feed advisories: `experiments/transition.py` phrases what a committed event is called;
-  the Feed only decides whether the feed already covers that ref.
+  the Feed only decides whether the feed already covers that ref; exceptions are logged.
 - Large candidates stay in merv-sandboxes. Application pins candidate pointers through
   the object facade and reads the producing experiment from Research; it never queries a
   sibling's persistence tables.

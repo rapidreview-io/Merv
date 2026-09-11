@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, TypedDict, cast
 
@@ -65,6 +66,7 @@ def feed_transition_note(
     try:
         return feed.advisory(project_id=project_id, ref=ref, message=message)
     except Exception:
+        logging.getLogger(__name__).exception("feed advisory failed for %s in project %s", ref, project_id)
         return None
 
 

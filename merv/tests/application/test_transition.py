@@ -353,11 +353,14 @@ class FeedTransitionReactionTest(unittest.TestCase):
         self.assertNotIn("feed_note", result)
 
     def test_feed_failure_is_suppressed(self) -> None:
-        result, feed, research, _order = self._execute(
-            status="complete",
-            transition="complete",
-            feed_error=RuntimeError("feed unavailable"),
-        )
+        with self.assertLogs("merv.brain.application.experiments.transition", level="ERROR") as logged:
+            result, feed, research, _order = self._execute(
+                status="complete",
+                transition="complete",
+                feed_error=RuntimeError("feed unavailable"),
+            )
+        self.assertIn("feed unavailable", logged.output[0])
+        self.assertIn(EXPERIMENT_ID, logged.output[0])
         self.assertTrue(research.transition_committed)
         self.assertEqual(len(feed.calls), 1)
         self.assertEqual(result["status"], "complete")
