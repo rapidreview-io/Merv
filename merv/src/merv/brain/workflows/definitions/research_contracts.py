@@ -72,6 +72,25 @@ def validate_experiment_name(name: str) -> str:
 def validate_task_name(name: str) -> str:
     return _validate_folder_name(name, subject="task", folder="tasks")
 
+# Entity id prefixes agents may cite from prose, each with the kind it names.
+# Support surfaces (the feed) receive this at composition and match prefixes
+# only; the kinds label validation messages. `res_` and `rver_` predate the
+# current reviews module and stay so older mentions keep parsing.
+ENTITY_REF_VOCABULARY: tuple[tuple[str, str], ...] = (
+    ("exp_", "experiment"),
+    ("task_", "task"),
+    ("claim_", "claim"),
+    ("res_", "result"),
+    ("rver_", "review verdict"),
+    ("syn_", "reflection"),
+    ("rev_", "review"),
+    ("lit_", "literature"),
+    ("paper_", "paper"),
+)
+ENTITY_ID_RE = re.compile(
+    r"\b(?:%s)[A-Za-z0-9]" % "|".join(prefix for prefix, _ in ENTITY_REF_VOCABULARY)
+)
+
 ROSTER_SIZE = 5
 
 CORE_LENSES: tuple[dict[str, str], ...] = (

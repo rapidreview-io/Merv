@@ -20,7 +20,7 @@ S = TypeVar("S")
 
 from ..kernel.state.store import BaseStateStore, Connection, next_created_seq, row_to_dict, rows_to_dicts
 from ..kernel.utils import NotFoundError, ValidationError, WorkflowError, new_id, now_iso
-from ..workflows import Binding, RecordKind, Reference, ReviewGate, Runtime, Snapshot, documents
+from ..workflows import Binding, EmptyKnowledge, Knowledge, RecordKind, Reference, ReviewGate, Runtime, Snapshot, documents
 from .artifacts import ResearchArtifacts as Artifacts
 from .artifact_models import ArtifactTarget
 from .dependencies import dependency_rows, dependent_rows, record_dependencies
@@ -279,7 +279,9 @@ class Records:
 
     # ---- workflow binding ----
 
-    def knowledge(self, kind: RecordKind, snapshot: Snapshot, conn: Connection) -> RecordKnowledge:
+    def knowledge(self, kind: RecordKind, snapshot: Snapshot, conn: Connection) -> Knowledge:
+        if not kind.reads_record:
+            return EmptyKnowledge()
         row = conn.execute(f"SELECT status FROM {kind.table} WHERE id = ? AND project_id = ?",
                            (snapshot.id, snapshot.project_id)).fetchone()
         if row is not None and row["status"] != kind.status_of(snapshot.state):

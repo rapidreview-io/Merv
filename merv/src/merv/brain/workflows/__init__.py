@@ -5,6 +5,10 @@ from .definitions import artifact_roles, documents, research_contracts
 # installs is its program's business; this only publishes the declarations.
 from .definitions.experiment import KIND as EXPERIMENT_KIND
 from .definitions.reflection import KIND as REFLECTION_KIND, present_reflection_signal, published_followups
+from .definitions.review import (
+    KIND as REVIEW_KIND, REVIEW_VERDICT_VALUES, SYNOPSIS_MAX_LEN, resolve_review_return,
+    revision_context_for_review_return, validate_review_verdict, validate_synopsis,
+)
 from .definitions.task import KIND as TASK_KIND
 from .definitions.artifact_roles import (
     ARTIFACT_TARGET_TYPES, ARTIFACT_TOOL_VOCABULARY, EXHIBIT_ROLE, GATED_ROLES,
@@ -27,14 +31,16 @@ from .graph import (
     Knowledge, Metadata, Node, Program, Public, RecordKind, RecordNeed, Reference, Registry, Requirement,
     ReviewGate, ReviewReturn, Scope, Snapshot, TransactionalEffect, Workflow, WorkspacePolicy, all_of,
 )
-from .runtime import InstanceFact, Runtime, snapshot_view
+from .runtime import EmptyKnowledge, InstanceFact, Runtime, snapshot_view
 from .tools import TOOLS
 from .workflows import Binding, Connection, Workflows
 
 __all__ = [
     "Connection",
     "artifact_roles", "documents", "research_contracts",
-    "EXPERIMENT_KIND", "REFLECTION_KIND", "TASK_KIND", "present_reflection_signal", "published_followups",
+    "EXPERIMENT_KIND", "REFLECTION_KIND", "REVIEW_KIND", "TASK_KIND", "present_reflection_signal", "published_followups",
+    "REVIEW_VERDICT_VALUES", "SYNOPSIS_MAX_LEN", "resolve_review_return",
+    "revision_context_for_review_return", "validate_review_verdict", "validate_synopsis",
     "ARTIFACT_TARGET_TYPES", "ARTIFACT_TOOL_VOCABULARY", "EXHIBIT_ROLE", "GATED_ROLES",
     "METRIC_RESULT_MAX_BYTES", "PROJECT_GRAPH_ROLE", "REFLECTION_LENS_DOC_ROLE",
     "SUBMITTABLE_ROLES", "TASK_BRIEF_ROLE", "TASK_DELIVERY_ROLE",
@@ -49,5 +55,5 @@ __all__ = [
     "Edge", "Evaluation", "Execution", "Guidance", "InstanceFact", "Issue", "Knowledge", "Metadata", "Node", "Program", "Public", "RecordKind",
     "RecordNeed", "Reference", "Registry", "Requirement", "ReviewGate", "ReviewReturn", "Scope",
     "Snapshot", "TransactionalEffect", "Workflow", "WorkspacePolicy",
-    "Binding", "Deliveries", "Delivery", "Runtime", "TOOLS", "Workflows", "snapshot_view", "all_of", "wait_for_all",
+    "Binding", "Deliveries", "Delivery", "EmptyKnowledge", "Runtime", "TOOLS", "Workflows", "snapshot_view", "all_of", "wait_for_all",
 ]

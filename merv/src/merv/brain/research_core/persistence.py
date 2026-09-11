@@ -100,6 +100,12 @@ CREATE TABLE IF NOT EXISTS review_requests (
   producer_session_id TEXT NOT NULL DEFAULT '',
   expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  -- The record spine every graph-bound row carries. A review never retries,
+  -- so its attempt stays 1 and its revision context stays empty; the engine
+  -- writes them because the shape is the engine's, not the review's.
+  attempt_index INTEGER NOT NULL DEFAULT 1,
+  revision_context TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT '',
   -- Insertion-order column replacing rowid ordering (cloud plan Phase 6).
   created_seq INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY(project_id) REFERENCES projects(id)
@@ -499,10 +505,21 @@ def _reserve_experiment_slots(conn: Connection) -> None:
                      "INTEGER NOT NULL DEFAULT 1 CHECK (experiment_slots IN (0, 1))")
 
 
+def _reviews_join_the_record_spine(conn: Connection) -> None:
+    """Migration 72: the review lifecycle is a declared graph, so its row
+    carries the same spine every other graph-bound record does."""
+    for column, declaration in (("attempt_index", "INTEGER NOT NULL DEFAULT 1"),
+                                ("revision_context", "TEXT NOT NULL DEFAULT ''"),
+                                ("updated_at", "TEXT NOT NULL DEFAULT ''")):
+        if has_table(conn, "review_requests") and not has_column(conn, "review_requests", column):
+            conn.execute(f"ALTER TABLE review_requests ADD COLUMN {column} {declaration}")
+
+
 RESEARCH_SCHEMA = SchemaModule(
     name="research_core",
     ddl=RESEARCH_DDL,
     migrations=(Migration(68, "drop_experiment_tracking_columns", _drop_tracking_columns),
                 Migration(70, "hand_advances_to_workspaces", _hand_advances_to_workspaces),
-                Migration(71, "reserve_experiment_slots", _reserve_experiment_slots)),
+                Migration(71, "reserve_experiment_slots", _reserve_experiment_slots),
+                Migration(72, "reviews_join_the_record_spine", _reviews_join_the_record_spine)),
 )

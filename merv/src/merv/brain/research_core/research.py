@@ -34,11 +34,11 @@ from .models import (
     public_record,
 )
 from .reflections import ReflectionService, publication_effect
-from .records import Records
+from .records import RecordHooks, Records
 from .reviews import ReviewService
 from .tasks import TaskService
 from ..agent_sessions import WorkspaceAdvances
-from ..workflows import Binding, Program, Public, RecordKind, Workflows
+from ..workflows import REVIEW_KIND, Binding, Program, Public, RecordKind, Workflows
 from .artifacts import ResearchArtifacts as Artifacts
 from ..kernel.state.store import (
     BaseStateStore,
@@ -135,6 +135,9 @@ class Research:
             reflections=self.reflections,
             artifacts=artifacts,
         )
+        # A review request is a native record whose graph reads nothing, so it
+        # needs no hook of its own beyond the engine's own writes.
+        self.records.register(REVIEW_KIND, RecordHooks())
         # Every native record binds through the one engine; a graph with no row
         # of its own is bound by the service that owns it.
         for kind in program.kinds:

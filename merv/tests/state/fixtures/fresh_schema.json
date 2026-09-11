@@ -463,6 +463,7 @@
       "submission_id"
     ],
     "review_requests": [
+      "attempt_index",
       "capability_hash",
       "created_at",
       "created_seq",
@@ -471,11 +472,13 @@
       "producer_session_id",
       "project_id",
       "reason",
+      "revision_context",
       "role",
       "status",
       "target_id",
       "target_snapshot_id",
-      "target_type"
+      "target_type",
+      "updated_at"
     ],
     "review_sessions": [
       "caller_session_id",
