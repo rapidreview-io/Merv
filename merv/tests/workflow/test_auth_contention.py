@@ -55,6 +55,11 @@ class AuthenticationContentionTest(ResearchCase):
             self.assertIsNotNone(self.app.agent_sessions.authenticate(session_secret=self.secret))
         get.assert_not_called()
 
+    def test_candidate_hints_do_not_take_the_writer_transaction(self):
+        expected = self.runtime.candidates(project_id=self.project_id)
+        with patch.object(self.app.store, "transaction", side_effect=AssertionError("candidate scan took writer lock")):
+            self.assertEqual(self.runtime.candidates(project_id=self.project_id), expected)
+
     def test_slow_blob_reader_does_not_hold_up_an_independent_writer(self):
         self.assertIsNotNone(self.app.agent_sessions.authenticate(session_secret=self.secret))
         entered, release = Event(), Event()

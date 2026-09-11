@@ -528,7 +528,9 @@ class Runtime:
         return self.get(project_id=project_id, instance_id=instance_id, conn=conn)
 
     def candidates(self, *, project_id: str) -> list[dict[str, Any]]:
-        with self.store.transaction() as conn:
+        # Candidates are hints. The lease rebuilds and fences its selected
+        # packet atomically; optional context reads must not block all writers.
+        with closing(self.store.connect()) as conn:
             rows = conn.execute(
                 "SELECT id FROM workflow_instances WHERE project_id = ? AND outcome = '' ORDER BY created_at, id",
                 (project_id,),
