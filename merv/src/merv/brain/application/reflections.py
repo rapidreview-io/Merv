@@ -37,7 +37,7 @@ def _tldr(artifact: Record) -> str:
 def _tldr_only(artifact: Record) -> Record:
     """Replace a document's bytes with the one line that stands in for them."""
     if "content" not in artifact:
-        return dict(artifact)
+        return artifact
     return {("tldr" if key == "content" else key):
             (_tldr(artifact) if key == "content" else value)
             for key, value in artifact.items()}

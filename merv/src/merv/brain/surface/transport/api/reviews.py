@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Request
 
-from ....application.reviews import review_queue
+from ....application.reviews import present_review_recovery
 from ....research_core import Research
 from .shared import JsonBody, path_scoped_body
 
@@ -24,7 +24,7 @@ def build_router(gateway: ToolInvocationGateway, *, research: Research) -> APIRo
         target_id: str | None = None,
     ) -> dict[str, Any]:
         if not target_id:
-            return review_queue(research, project_id=project_id)
+            return present_review_recovery(research.reviews.queue(project_id=project_id))
         return gateway.call_http(
             request,
             name="review.status",

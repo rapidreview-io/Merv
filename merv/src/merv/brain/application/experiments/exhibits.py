@@ -48,7 +48,7 @@ class ExperimentExhibits:
         state = self.research.experiments.get_state(
             experiment_id=experiment_id, project_id=project_id
         )
-        if str(state.status) not in EXPERIMENT.effect_sources(
+        if state.status not in EXPERIMENT.effect_sources(
             "result_submission"
         ):
             raise WorkflowError(
@@ -59,7 +59,7 @@ class ExperimentExhibits:
         exhibit = self.generate(state=state)
         path = (
             experiment_folder(
-                experiment_id=str(state.id or experiment_id),
+                experiment_id=state.id,
                 name=state.name,
             )
             + METRICS_EXHIBIT_FILENAME

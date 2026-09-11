@@ -132,28 +132,34 @@ class ReviewReference:
     evidence: dict[str, JSON]
 
 
-@dataclass(frozen=True, slots=True)
-class ExperimentState:
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _ResearchState:
+    """The required record spine shared by all native workflows."""
+
     id: str
     project_id: str
-    name: str
-    intent: str
-    status: ExperimentStatus
     attempt_index: int
     revision_context: str
-    conclusion: str
     created_at: str
     updated_at: str
-    details: str
     artifacts: list[dict[str, JSON]]
     current_attempt_artifacts: list[dict[str, JSON]]
     submissions: list[dict[str, JSON]]
     reviews: list[ReviewReference]
+    allowed_transitions: list[Transition]
+    gate_checklist: GateChecklist
+
+
+@dataclass(frozen=True, slots=True)
+class ExperimentState(_ResearchState):
+    name: str
+    intent: str
+    status: ExperimentStatus
+    conclusion: str
+    details: str
     dependencies: list[Dependency]
     dependents: list[Dependency]
     tested_claims: list[dict[str, JSON]]
-    allowed_transitions: list[Transition]
-    gate_checklist: GateChecklist
 
     @classmethod
     def construct(cls, row: Mapping[str, JSON], snapshot: Snapshot | None = None) -> Self:
@@ -182,30 +188,18 @@ class TaskResult:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class TaskState:
-    id: str
-    project_id: str
+class TaskState(_ResearchState):
     name: str
     goal: str
     status: TaskStatus
-    attempt_index: int
-    revision_context: str
     outcome: str
     failed_by: str
-    created_at: str
-    updated_at: str
     deliverables: list[str]
-    artifacts: list[dict[str, JSON]]
-    current_attempt_artifacts: list[dict[str, JSON]]
-    submissions: list[dict[str, JSON]]
-    reviews: list[ReviewReference]
     dependencies: list[Dependency]
     dependents: list[Dependency]
     results: list[TaskResult] | Missing = MISSING
     report: str | None | Missing = MISSING
     caveats: str | None | Missing = MISSING
-    allowed_transitions: list[Transition]
-    gate_checklist: GateChecklist
 
     @classmethod
     def construct(cls, row: Mapping[str, JSON], snapshot: Snapshot | None = None) -> Self:
@@ -238,24 +232,14 @@ class ReflectionWorkflowState(StrEnum):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ReflectionState:
-    id: str
-    project_id: str
+class ReflectionState(_ResearchState):
     title: str
     status: ReflectionStatus
-    attempt_index: int
-    revision_context: str
     published_at: str | None
     published_graph_version_id: str | None
-    created_at: str
-    updated_at: str
     created_seq: int
     roster: list[dict[str, JSON]]
     corpus: dict[str, JSON]
-    artifacts: list[dict[str, JSON]]
-    current_attempt_artifacts: list[dict[str, JSON]]
-    submissions: list[dict[str, JSON]]
-    reviews: list[ReviewReference]
     materialized_claims: list[dict[str, JSON]]
     materialized_experiments: list[dict[str, JSON]]
     materialized_tasks: list[dict[str, JSON]]
@@ -264,8 +248,6 @@ class ReflectionState:
     code_sha: str | Missing = MISSING
     reflection_coverage: dict[str, JSON]
     project_graph_diff: dict[str, JSON]
-    allowed_transitions: list[Transition]
-    gate_checklist: GateChecklist
     workflow_state: ReflectionWorkflowState
 
     @classmethod

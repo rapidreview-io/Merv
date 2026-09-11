@@ -3,13 +3,11 @@
 
 from __future__ import annotations
 
-from ..workflows.definitions.research_state import ReviewReference
-
 from dataclasses import dataclass
 from typing import Any, TypedDict
 
 from ..workflows import TASK_BRIEF_ROLE, TASK_DELIVERY_ROLE
-from ..research_core import TASK, content_tldr
+from ..research_core import content_tldr
 
 from ..research_core import ResearchArtifacts as Artifacts
 from ..feed import FeedAdvisory
@@ -87,12 +85,13 @@ class TransitionTask:
         evidence: dict[str, Any] | None = None,
         project_id: str | None = None,
     ) -> TaskTransitionReceipt:
-        state, event = self._execute(
+        committed = self.research.tasks.transition_with_event(
             task_id=task_id,
             transition=transition,
             evidence=evidence,
             project_id=project_id,
         )
+        state, event = committed.state, committed.event
         receipt = TaskTransitionReceipt(
             task_id=task_id,
             transition=transition,
@@ -116,29 +115,13 @@ class TransitionTask:
         evidence: dict[str, Any] | None = None,
         project_id: str | None = None,
     ) -> Record:
-        state, _event = self._execute(
-            task_id=task_id,
-            transition=transition,
-            evidence=evidence,
-            project_id=project_id,
-        )
-        return slim_task_state(state)
-
-    def _execute(
-        self,
-        *,
-        task_id: str,
-        transition: str,
-        evidence: dict[str, Any] | None,
-        project_id: str | None,
-    ) -> tuple[TaskState, StoredEvent]:
         committed = self.research.tasks.transition_with_event(
             task_id=task_id,
             transition=transition,
             evidence=evidence,
             project_id=project_id,
         )
-        return committed.state, committed.event
+        return slim_task_state(committed.state)
 
     def _feed_advisory(self, *, event: StoredEvent, state: TaskState) -> str | None:
         status = state.status
@@ -159,7 +142,7 @@ class TaskContextQuery:
     artifacts: Artifacts
 
     def build(self, *, state: TaskState, project_id: str | None = None) -> Record:
-        artifacts = list(state.current_attempt_artifacts or [])
+        artifacts = state.current_attempt_artifacts
         brief = preferred_artifact(artifacts=artifacts, roles=(TASK_BRIEF_ROLE,))
         delivery = preferred_artifact(artifacts=artifacts, roles=(TASK_DELIVERY_ROLE,))
         documents = self._documents(
@@ -174,16 +157,16 @@ class TaskContextQuery:
             "folder": task_folder(
                 task_id=state.id, name=state.name
             ),
-            "deliverables": list(state.deliverables or []),
+            "deliverables": state.deliverables,
             "dependencies": project_rows(
-                state.dependencies or [], _SLIM_DEPENDENCY_FIELDS
+                state.dependencies, _SLIM_DEPENDENCY_FIELDS
             ),
             "brief": self._document(brief, documents, full=True),
             "delivery": self._document(delivery, documents, full=not terminal),
             "reviews": [
                 item
                 for item in (
-                    review_body(state.reviews, review_id=str(review.id))
+                    review_body(state.reviews, review_id=review.id)
                     for review in state.reviews[:1]
                 )
                 if item

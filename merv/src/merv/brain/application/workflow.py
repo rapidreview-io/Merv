@@ -6,7 +6,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..research_core import Artifact
 from ..kernel.utils import NotFoundError
 from ..research_core import (
     EXPERIMENT_ACTIVE_PROCESS_STATUSES,
@@ -46,11 +45,6 @@ _EXPERIMENT_PRIORITY = {
 _PROCESS_PRIORITY = {"running": 0, "provisioning": 1}
 _STATUS_EXPERIMENT_FIELDS = ("id", "name", "intent", "status", "attempt_index")
 _PROCESS_EXPERIMENT_FIELDS = ("id", "intent", "status", "attempt_index")
-_ARTIFACT_LIST_FIELDS = (
-    "id", "target_type", "target_id", "role", "attempt_index", "lens_id", "path",
-    "title", "size_bytes", "content_type", "status", "created_by", "created_at",
-    "updated_at",
-)
 _STATUS_TASK_FIELDS = ("id", "name", "goal", "status", "attempt_index")
 _TASK_PRIORITY = {"in_review": 0, "in_progress": 1}
 _SANDBOX_SUMMARY_FIELDS = (
@@ -185,13 +179,13 @@ class StatusAndNextQuery:
         if task is not None:
             workflow = self.policy.task(
                 task=task,
-                evaluation=snapshot.gate_evaluations[str(task.id)],
+                evaluation=snapshot.gate_evaluations[task.id],
             )
         elif experiment is not None:
             workflow = self.policy.experiment(
                 experiment=experiment,
                 sandboxes=sandboxes,
-                evaluation=snapshot.gate_evaluations[str(experiment.id)],
+                evaluation=snapshot.gate_evaluations[experiment.id],
             )
         else:
             workflow = self.policy.project_setup()
@@ -228,7 +222,7 @@ class StatusAndNextQuery:
         elif not scoped and (
             (
                 experiment is not None
-                and str(experiment.status) in EXPERIMENT_TERMINAL_STATUSES
+                and experiment.status in EXPERIMENT_TERMINAL_STATUSES
             )
             or (experiment is None and live_tasks)
         ):
@@ -246,7 +240,8 @@ class StatusAndNextQuery:
                 ),
                 "active_tasks": project_rows(snapshot.tasks, _STATUS_TASK_FIELDS),
             },
-            "experiment": self._enrich(project_id=snapshot.project_id, experiments=[experiment])[0] if experiment else None,
+            "experiment": (experiment if agent else self._enrich(
+                project_id=snapshot.project_id, experiments=[experiment])[0]) if experiment else None,
             "task": (slim_task_state if agent else rich_task_state)(task) if task else None,
             "sandboxes": sandboxes,
             "workflow": workflow,
@@ -318,11 +313,11 @@ class StatusAndNextQuery:
                 **rich_task_state(task),
                 "workflow": self.policy.task(
                     task=task,
-                    evaluation=snapshot.gate_evaluations[str(task.id)],
+                    evaluation=snapshot.gate_evaluations[task.id],
                 ),
             }
             for task in snapshot.tasks
-            if str(task.status) not in TASK_TERMINAL_STATUSES
+            if task.status not in TASK_TERMINAL_STATUSES
         ]
         return {
             "active_experiments": _sort_active(active, _EXPERIMENT_PRIORITY),
@@ -346,11 +341,6 @@ class StatusAndNextQuery:
             )
             for experiment in experiments
         ]
-
-
-def artifact_list_record(artifact: Artifact) -> Record:
-    """The dashboard's artifact row: the model's own columns, minus the bytes."""
-    return {name: getattr(artifact, name) for name in _ARTIFACT_LIST_FIELDS}
 
 
 def _sort_active(items: list[Record], priority: dict[str, int]) -> list[Record]:
@@ -387,7 +377,7 @@ def _slim_status(
     experiment = full.get("experiment")
     if task_context is not None or full.get("task") is not None:
         task = full.get("task")
-        if not isinstance(task, dict):
+        if task is None:
             raise RuntimeError("task state is required for task scope")
         result: Record = {
             "scope": "task",
@@ -444,4 +434,4 @@ def _sandbox_summary(sandboxes: list[Record]) -> Record:
     }
 
 
-__all__ = ["StatusAndNextQuery", "artifact_list_record"]
+__all__ = ["StatusAndNextQuery"]

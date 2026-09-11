@@ -53,8 +53,8 @@ def review_synopsis(review: ReviewReference) -> str:
     findings = review.findings
     issues = [
         text
-        for finding in (findings if isinstance(findings, list) else ())
-        if isinstance(finding, dict) and (text := str(finding.get("issue") or "").strip())
+        for finding in findings
+        if (text := str(finding.get("issue") or "").strip())
     ]
     verdict = str(review.verdict or "completed").replace("_", " ")
     role = str(review.role or "review").replace("_", " ")
@@ -89,7 +89,7 @@ def review_body(
 ) -> dict[str, Any] | None:
     """Read one review's full prose back out of a state whose bodies are intact."""
     match = next(
-        (row for row in reviews if str(row.id or "") == review_id), None
+        (row for row in reviews if row.id == review_id), None
     )
     if match is None:
         return None

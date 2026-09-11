@@ -48,7 +48,7 @@ class ExperimentContextQuery:
         pinned_artifacts: Iterable[Mapping[str, Any]] | None = None,
     ) -> Record:
         status = state.status
-        artifact_project_id = str(state.project_id or project_id or "") or None
+        artifact_project_id = state.project_id or None
         rows, pinned_content = self._artifact_rows(
             state=state, pinned_artifacts=pinned_artifacts
         )
@@ -101,15 +101,10 @@ class ExperimentContextQuery:
         state: ExperimentState,
         pinned_artifacts: Iterable[Mapping[str, Any]] | None,
     ) -> tuple[list[Record], dict[str, str | None]]:
-        current = [
-            dict(artifact)
-            for artifact in state.current_attempt_artifacts
-            if isinstance(artifact, dict)
-        ]
+        current = state.current_attempt_artifacts
         if pinned_artifacts is None:
             return current, {}
 
-        pinned = [dict(artifact) for artifact in pinned_artifacts]
         by_id = {
             str(artifact.get("id") or ""): artifact
             for artifact in current
@@ -117,7 +112,7 @@ class ExperimentContextQuery:
         }
         rows: list[Record] = []
         content: dict[str, str | None] = {}
-        for artifact in pinned:
+        for artifact in pinned_artifacts:
             artifact_id = str(artifact.get("artifact_id") or artifact.get("id") or "")
             if not artifact_id:
                 continue
@@ -258,9 +253,9 @@ class ExperimentContextQuery:
         review = _latest_review(
             state=state, role=_DESIGN_REVIEW_ROLE, artifact_id=artifact_id
         )
-        if review and str(review.verdict or "") != "pass":
+        if review and review.verdict != "pass":
             return "changes_requested"
-        if review and str(review.verdict or "") == "pass":
+        if review and review.verdict == "pass":
             return "approved"
         return "submitted"
 
@@ -276,12 +271,12 @@ class ExperimentContextQuery:
         review = _latest_review(
             state=state, role=_RESULTS_REVIEW_ROLE, artifact_id=artifact_id
         )
-        if review and str(review.verdict or "") != "pass":
+        if review and review.verdict != "pass":
             return "changes_requested"
-        if review and str(review.verdict or "") == "pass":
+        if review and review.verdict == "pass":
             return "approved"
-        if status == EXPERIMENT.success_status and not _reviews_for_role(
-            state=state, role=_RESULTS_REVIEW_ROLE
+        if status == EXPERIMENT.success_status and not any(
+            review.role == _RESULTS_REVIEW_ROLE for review in state.reviews
         ):
             return "approved"
         return "submitted"
@@ -296,18 +291,10 @@ def _latest_review(
     for review in state.reviews:
         if review.role != role:
             continue
-        snapshot_id = str(review.target_snapshot_id or "")
+        snapshot_id = review.target_snapshot_id
         if not snapshot_id or f"{artifact_id}:" in snapshot_id:
             return review
     return None
-
-
-def _reviews_for_role(*, state: ExperimentState, role: str) -> list[ReviewReference]:
-    return [
-        review
-        for review in state.reviews
-        if review.role == role
-    ]
 
 
 def _submitted_at(artifact: Mapping[str, Any]) -> str:

@@ -126,31 +126,14 @@ class ResearchSnapshot:
 
     @property
     def selected_task(self) -> TaskState | None:
-        selected_id = self.requested_task_id
-        if selected_id is None:
-            return None
-        return next(
-            (
-                task
-                for task in self.tasks
-                if task.id == selected_id
-            ),
-            None,
-        )
+        return next((task for task in self.tasks if task.id == self.requested_task_id), None)
 
     @property
     def selected_experiment(self) -> ExperimentState | None:
-        selected_id = self.requested_experiment_id
-        if selected_id is None and self.experiments:
-            selected_id = self.experiments[-1].id
-        return next(
-            (
-                experiment
-                for experiment in self.experiments
-                if experiment.id == selected_id
-            ),
-            None,
-        )
+        if self.requested_experiment_id is None:
+            return self.experiments[-1] if self.experiments else None
+        return next((experiment for experiment in self.experiments
+                     if experiment.id == self.requested_experiment_id), None)
 
 
 __all__ = [

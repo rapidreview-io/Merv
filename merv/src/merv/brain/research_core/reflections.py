@@ -236,8 +236,9 @@ class ReflectionService(RecordHooks):
             reflection_id = str(data["id"])
             self._pin_lens_artifacts(conn=conn, reflection=data)
             if include_content:
-                content = self._submitted_bytes(artifact_ids=corpus.referenced_content_ids(
-                    corpus=data["corpus"], current=data["current_attempt_artifacts"]))
+                content = {artifact.id: artifact.data for artifact in self.artifacts.get(
+                    artifact_ids=corpus.referenced_content_ids(
+                        corpus=data["corpus"], current=data["current_attempt_artifacts"]), include="content")}
                 data["corpus"] = corpus.hydrated_corpus(
                     corpus=data["corpus"], content=content,
                     claims=self._backfill_claim_fields(conn=conn, claims=data["corpus"].get("claims") or []))
@@ -325,11 +326,6 @@ class ReflectionService(RecordHooks):
                 and _pins(snapshot_from_id(snapshot_id=str(item.get("target_snapshot_id") or "")), proposal)), None)
         return corpus.consolidation_state(proposal=proposal, decisions=decisions, review=review, advance=advance,
                                           corpus=reflection.get("corpus") or {})
-
-    def _submitted_bytes(self, *, artifact_ids: tuple[str, ...]) -> dict[str, bytes | None]:
-        """The immutable bytes behind every content id this wave shows."""
-        return {artifact.id: artifact.data for artifact
-                in self.artifacts.get(artifact_ids=artifact_ids, include="content")}
 
     def _backfill_claim_fields(self, *, conn: Connection, claims: list[Any]) -> list[dict[str, Any]]:
         """Snapshots taken before claims carried text get it joined in live.

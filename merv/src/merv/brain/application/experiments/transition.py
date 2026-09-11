@@ -149,7 +149,7 @@ class TransitionExperiment:
         if (
             "prepare_metrics_exhibit" in effects
             and before is not None
-            and str(before.status)
+            and before.status
             in EXPERIMENT.effect_sources("prepare_metrics_exhibit")
         ):
             prepared_snapshot = self.research.workflows.runtime.get(project_id=resolved_project_id, instance_id=experiment_id)

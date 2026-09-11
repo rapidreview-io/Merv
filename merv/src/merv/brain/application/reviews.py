@@ -90,15 +90,13 @@ def start_review(
     task_context: TaskContextQuery | None = None,
 ) -> dict[str, Any]:
     """Start a pinned review, then attach bounded orientation for its target."""
-    result = dict(
-        research.reviews.start(
-            review_request_id=review_request_id,
-            reviewer_capability=reviewer_capability,
-            declared_agent=declared_agent,
-            caller_session_id=caller_session_id,
-            assigned_agent_session_id=assigned_agent_session_id,
-            assigned_review_request_id=assigned_review_request_id,
-        )
+    result = research.reviews.start(
+        review_request_id=review_request_id,
+        reviewer_capability=reviewer_capability,
+        declared_agent=declared_agent,
+        caller_session_id=caller_session_id,
+        assigned_agent_session_id=assigned_agent_session_id,
+        assigned_review_request_id=assigned_review_request_id,
     )
     project_id = str(result.get("project_id") or "")
     target_type = str(result.get("target_type") or "")
@@ -180,7 +178,7 @@ def read_review_status(
         event = research.reviews.latest_submitted_event(
             target_type=target_type,
             target_id=target_id,
-            project_id=str(state.project_id or project_id or ""),
+            project_id=state.project_id,
         )
     except Exception:
         return result
@@ -195,12 +193,6 @@ def read_review_status(
     if note:
         result["feed_note"] = note
     return result
-
-
-def review_queue(
-    research: Research, *, project_id: str | None = None
-) -> dict[str, Any]:
-    return present_review_recovery(research.reviews.queue(project_id=project_id))
 
 
 def present_review_recovery(result: dict[str, Any]) -> dict[str, Any]:
@@ -269,6 +261,6 @@ def _submitted_artifacts(
 __all__ = [
     "read_review_status",
     "request_review",
-    "review_queue",
+    "present_review_recovery",
     "start_review",
 ]

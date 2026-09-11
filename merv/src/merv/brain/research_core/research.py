@@ -10,7 +10,7 @@ from functools import partial
 import hashlib
 import json
 import math
-from typing import Any, cast
+from typing import Any
 
 
 from .policy import (
@@ -26,6 +26,7 @@ from .policy import (
 )
 from .experiments import ExperimentService
 from .models import (
+    ReflectionState,
     ExperimentState,
     LiteratureSignal,
     ResearchSnapshot,
@@ -1217,7 +1218,7 @@ class Research:
 
     def _reflection(
         self, *, conn: Connection, project_id: str, terminal: bool
-    ) -> tuple[dict[str, Any] | None, GateEvaluation | None]:
+    ) -> tuple[ReflectionState | None, GateEvaluation | None]:
         terminal_statuses = tuple(sorted(REFLECTION.terminal_statuses))
         placeholders = ", ".join("?" for _ in terminal_statuses)
         predicate = "status = ?" if terminal else f"status NOT IN ({placeholders})"

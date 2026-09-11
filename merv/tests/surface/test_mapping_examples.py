@@ -31,6 +31,8 @@ class MappingExampleTest(ResearchCase):
                 actual[name] = response.json()
         actual["tool:candidate.list"] = self.call("candidate.list", project_id=self.project_id)
         actual["tool:project.current"] = self.call("project", action="current")
+        claims = actual["http:claims"]["claims"]
+        self.assertEqual(claims, sorted(claims, key=lambda claim: (claim["created_at"], claim["id"])))
         for value in (actual, examples):
             value["http:claims"]["claims"].sort(key=lambda claim: claim["statement"])
 

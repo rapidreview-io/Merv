@@ -22,6 +22,7 @@ from ..feed import FeedService
 from ..kernel.utils import ValidationError, WorkflowError
 from ..research_core import (
     Research,
+    project_fields,
     AGENT_DISPATCH_SETTING,
 )
 from ..infrastructure import RemoteObjects, RemoteSandboxes as SandboxEngine
@@ -44,7 +45,7 @@ from .reflections import (
 from .reviews import (
     read_review_status,
     request_review,
-    review_queue,
+    present_review_recovery,
     start_review,
 )
 from .status_guidance import StatusGuidancePolicy
@@ -54,7 +55,7 @@ from .tasks import (
     rich_task_state,
     slim_task_state,
 )
-from .workflow import StatusAndNextQuery, artifact_list_record
+from .workflow import StatusAndNextQuery
 from .workflow_actions import Handler, WorkflowDeliveries
 
 
@@ -458,7 +459,7 @@ class Application:
         states = self.research.project_experiments(project_id=project_id)
         ids = tuple(state.id for state in states if state.id)
         resolved = (
-            str(states[0].project_id or project_id or "") if states else ""
+            states[0].project_id if states else ""
         )
         objects = (
             self.produced_objects.by_experiment(project_id=resolved, experiment_ids=ids)
@@ -504,7 +505,7 @@ class Application:
             experiment_id=experiment_id,
             project_id=project_id,
         )
-        resolved_project_id = str(state.project_id or project_id or "")
+        resolved_project_id = state.project_id
         response = (rich_experiment_state if rich else slim_experiment_state)(
             state,
             storage_objects=self.produced_objects.by_experiment(
@@ -868,7 +869,7 @@ class Application:
             return None, ""
         state = self.research.reflections.get_state(
             project_id=project_id,
-            reflection_id=str(reflection.id),
+            reflection_id=reflection.id,
         )
         consolidation = state.consolidation or {}
         proposal = consolidation.get("proposal") or {}
@@ -894,7 +895,7 @@ class Application:
         # retries it through the same prepare/settle pair.
         return {
             "advance_id": str(advance.get("id") or ""),
-            "instance_id": str(state.id),
+            "instance_id": state.id,
             "revision": proposal["revision"],
             "expected_sha": str(proposal["base_sha"]),
             "target_sha": str(proposal["proposal_sha"]),
@@ -927,10 +928,10 @@ class Application:
         advance = consolidation.get("advance") or {}
         return {
             "advance_id": advance_id,
-            "instance_id": str(state.id),
+            "instance_id": state.id,
             "status": str(advance.get("status") or ""),
             "observed_sha": str(advance.get("observed_sha") or ""),
-            "outcome": str(state.status or ""),
+            "outcome": state.status,
         }
 
     # Read models ----------------------------------------------------------
@@ -942,10 +943,13 @@ class Application:
             sandboxes=self.sandboxes.for_project(project_id=project_id),
         )
         artifacts = [
-            artifact_list_record(artifact)
+            project_fields(artifact, (
+                "id", "target_type", "target_id", "role", "attempt_index", "lens_id", "path",
+                "title", "size_bytes", "content_type", "status", "created_by", "created_at", "updated_at",
+            ))
             for artifact in self.artifacts.scan(project_id=project_id)
         ]
-        reviews = review_queue(self.research, project_id=project_id)
+        reviews = present_review_recovery(self.research.reviews.queue(project_id=project_id))
         claims = status["project"]["active_claims"]
         active_experiments = work["active_experiments"]
         active_tasks = work.get("active_tasks", [])
