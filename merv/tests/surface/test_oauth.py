@@ -583,7 +583,11 @@ class OAuthSurfaceTest(unittest.TestCase):
         )
 
         fresh = repository.prune(now=datetime.now(tz=UTC))
-        self.assertEqual(fresh, {"deleted": 0, "ok": True, "cutoff": fresh["cutoff"]})
+        self.assertEqual(
+            fresh,
+            {"deleted": 0, "codes": 0, "tokens": 0, "ok": True,
+             "cutoff": fresh["cutoff"]},
+        )
 
         outcome = repository.prune(now=datetime.now(tz=UTC) + timedelta(days=31))
         self.assertTrue(outcome["ok"])
@@ -595,6 +599,18 @@ class OAuthSurfaceTest(unittest.TestCase):
         """One protection, isolated: an unexchanged code alone keeps the row."""
         registration = self._register(client_name="Consenting Agent")
         self._authorize(registration["client_id"])  # a code, never exchanged
+        # A 60-second code cannot outlive a 30-day client horizon on its own,
+        # so hold this one open: what is under test is the predicate, not how
+        # long a code lives.
+        with self.app.store.transaction() as conn:
+            conn.execute(
+                "UPDATE oauth_authorization_codes SET expires_at = ? "
+                "WHERE client_id = ?",
+                (
+                    format_iso(datetime.now(tz=UTC) + timedelta(days=60)),
+                    registration["client_id"],
+                ),
+            )
         with self.app.store.connect() as conn:
             codes = conn.execute(
                 "SELECT COUNT(*) AS n FROM oauth_authorization_codes "
@@ -648,6 +664,32 @@ class OAuthSurfaceTest(unittest.TestCase):
             repository.client_by_id(client_id=registration["client_id"])
         )
 
+    def test_expired_codes_and_tokens_go_and_free_the_client_they_held(self) -> None:
+        """The lifetime ceiling lifted: spent credentials go, then their row."""
+        registration, _tokens = self._mint_oauth_tokens()
+        repository = SqlOAuthRepository(
+            store=self.app.store, unused_client_ttl_days=30
+        )
+
+        # The refresh token is live for 30 days and keeps its client for seven
+        # more; the code it was exchanged for is already a day past its own.
+        held = repository.prune(now=datetime.now(tz=UTC) + timedelta(days=31))
+        self.assertEqual((held["codes"], held["tokens"], held["deleted"]), (1, 0, 0))
+        self.assertIsNotNone(
+            repository.client_by_id(client_id=registration["client_id"])
+        )
+
+        swept = repository.prune(now=datetime.now(tz=UTC) + timedelta(days=38))
+        self.assertEqual(
+            (swept["codes"], swept["tokens"], swept["deleted"]), (0, 1, 1)
+        )
+        self.assertTrue(swept["ok"])
+        self.assertIsNone(repository.client_by_id(client_id=registration["client_id"]))
+        with self.app.store.connect() as conn:
+            for table in ("oauth_authorization_codes", "oauth_refresh_tokens"):
+                row = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
+                self.assertEqual(int(row["n"]), 0, table)
+
     def test_a_failing_client_sweep_says_so_instead_of_zero(self) -> None:
         class ExplodingStore:
             def install(self, module):
@@ -658,7 +700,7 @@ class OAuthSurfaceTest(unittest.TestCase):
 
         outcome = SqlOAuthRepository(store=ExplodingStore()).prune()
         self.assertFalse(outcome["ok"])
-        self.assertEqual(outcome["deleted"], 0)
+        self.assertEqual((outcome["deleted"], outcome["codes"], outcome["tokens"]), (0, 0, 0))
         self.assertIn("unreachable", outcome["error"])
 
     def test_code_pkce_exchange_mints_working_key_for_mcp_tools_list(

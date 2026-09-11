@@ -11,6 +11,7 @@ import json
 import tempfile
 import time
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,6 +26,7 @@ from merv.brain.surface.auth import (
     SupabaseVerifier,
     UnauthorizedError,
 )
+from merv.brain.kernel.utils import format_iso, now_iso
 from merv.brain.surface.project_keys import ProjectKeyRecord, ProjectKeys
 from merv.brain.surface.transport.api import create_fastapi_app
 from merv.brain.surface.transport.http_policy import HttpSurfacePolicy
@@ -265,6 +267,65 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         self.assertTrue(revoked.json()["key"]["revoked_at"])
         with self.assertRaises(UnauthorizedError):
             self.verifier.verify_bearer(f"Bearer {self.key}")
+
+    def test_only_unreachable_rotated_oauth_keys_are_swept(self) -> None:
+        """Rotation exhaust goes; a referenced key and a direct mk_ key stay."""
+        hour = format_iso(datetime.now(UTC) + timedelta(hours=1))
+        chain = [
+            self.keys.create(
+                project_id=self.project_a, owner_user_id=USER_A,
+                oauth_family_id="orf_spent", expires_at=hour,
+            )
+        ]
+        for _rotation in range(2):
+            chain.append(
+                self.keys.rotate(
+                    project_id=self.project_a, owner_user_id=USER_A,
+                    parent_key_id=str(chain[-1]["key"]["id"]),
+                    oauth_family_id="orf_spent", expires_at=hour,
+                )
+            )
+        held = self.keys.create(
+            project_id=self.project_a, owner_user_id=USER_A,
+            oauth_family_id="orf_live", expires_at=hour,
+        )
+        with self.app.store.transaction() as conn:
+            conn.execute(
+                "INSERT INTO oauth_clients (client_id, client_name, "
+                "redirect_uris_json, grant_types_json, created_at) "
+                "VALUES ('oac_t', 'Agent', '[]', '[]', ?)",
+                (now_iso(),),
+            )
+            conn.execute(
+                """
+                INSERT INTO oauth_refresh_tokens (
+                  id, family_id, secret_digest, client_id, owner_user_id,
+                  project_id, resource, current_key_id, created_at, expires_at
+                ) VALUES ('ort_t', 'orf_live', 'digest', 'oac_t', ?, ?, '', ?, ?, ?)
+                """,
+                (USER_A, self.project_a, str(held["key"]["id"]), now_iso(), hour),
+            )
+        revoked = self.client.post(
+            f"/api/projects/{self.project_a}/keys/{self.key_id}/revoke",
+            headers=_bearer(self.jwt_a),
+        )
+        self.assertEqual(revoked.status_code, 200, revoked.text)
+
+        month = datetime.now(UTC) + timedelta(days=31)
+        self.assertEqual(self.keys.prune(now=month), 1)
+        with self.app.store.connect() as conn:
+            kept = {
+                str(row["id"])
+                for row in conn.execute("SELECT id FROM project_api_keys").fetchall()
+            }
+        self.assertNotIn(str(chain[-1]["key"]["id"]), kept, "the free end of the chain")
+        self.assertIn(str(chain[0]["key"]["id"]), kept, "a key with a child")
+        self.assertIn(str(held["key"]["id"]), kept, "a refresh token names it")
+        self.assertIn(self.key_id, kept, "a revoked direct mk_ key is history")
+        # A link is free only once its child has left, so a chain drains from
+        # its newest end, one link per sweep.
+        self.assertEqual(self.keys.prune(now=month), 1)
+        self.assertEqual(self.keys.prune(now=datetime.now(UTC)), 0)
 
     def test_infrastructure_limits_are_rejected_without_minting_a_key(self) -> None:
         before = self.keys.list(project_id=self.project_a, owner_user_id=USER_A)

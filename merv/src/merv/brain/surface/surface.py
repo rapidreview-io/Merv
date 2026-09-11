@@ -364,6 +364,10 @@ def build_control_server(
         agent_sessions=app.agent_sessions,
     )
     project_keys = ProjectKeys(store=app._store)
+    # The two credential tables only exist in hosted composition, so they join
+    # the clock here rather than in __init__; it has been running since then.
+    app.retention.add("oauth", oauth_repository.prune)
+    app.retention.add("project_keys", project_keys.prune)
     # Device-code pairing registers runner-generated key digests; it exists
     # exactly where owner key management exists (hosted auth), so the loopback
     # brain, which needs no runner credential, never mounts it.

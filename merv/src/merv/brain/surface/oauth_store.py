@@ -78,8 +78,15 @@ def _fingerprint(client: OAuthClient) -> str:
     )
 
 
-# A registration nobody ever authorized: it holds no credential, so deleting it
-# revokes nothing.
+# A spent credential is kept past its own expiry, long enough that no sweep can
+# race a request still holding one: a code lives 60 seconds and a refresh token
+# 30 days, so neither grace is a meaningful share of its life.
+EXPIRED_CODE_GRACE_DAYS = 1
+EXPIRED_REFRESH_GRACE_DAYS = 7
+
+# A registration holding no credential: it authorizes nothing, so deleting it
+# revokes nothing. Expired codes and tokens are deleted before this runs, which
+# is how a client that once authorized something becomes collectable at all.
 _NEVER_USED_PREDICATE = """
   client_id NOT IN (SELECT client_id FROM oauth_authorization_codes)
   AND client_id NOT IN (SELECT client_id FROM oauth_refresh_tokens)
@@ -240,26 +247,55 @@ class SqlOAuthRepository:
         return _client(row)
 
     def prune(self, *, now: datetime | None = None) -> dict[str, Any]:
-        """Delete registrations past the horizon that never authorized anything.
+        """Delete spent credentials, then the registrations left holding none.
+
+        The order is the mechanism. Codes and tokens past their grace go
+        first, so the never-used predicate frees the client they belonged to
+        in the same pass; without that, a registration that ever authorized
+        anything was a lifetime row and the registration cap a lifetime
+        ceiling on how many clients this brain could ever serve.
 
         Reports its own outcome: a failed sweep says ``ok`` False and names the
         error rather than returning zero, which would read as a healthy pass
         that found nothing (audit OPS-03).
         """
-        cutoff = self._cutoff(now)
+        moment = now or datetime.now(tz=UTC)
+        cutoff = self._cutoff(moment)
         try:
             with self._store.transaction() as conn:
+                codes = _deleted(
+                    conn.execute(
+                        "DELETE FROM oauth_authorization_codes WHERE expires_at < ?",
+                        (_horizon(moment, EXPIRED_CODE_GRACE_DAYS),),
+                    )
+                )
+                # A rotation chain leaves whole or not at all: parent_token_id
+                # names the row before it, so half a chain would dangle, and
+                # the member that expires last is the one that says the grant
+                # itself is over.
+                tokens = _deleted(
+                    conn.execute(
+                        """
+                        DELETE FROM oauth_refresh_tokens WHERE family_id NOT IN (
+                          SELECT family_id FROM oauth_refresh_tokens
+                          WHERE expires_at >= ?
+                        )
+                        """,
+                        (_horizon(moment, EXPIRED_REFRESH_GRACE_DAYS),),
+                    )
+                )
                 deleted = self._delete_never_used(
                     conn=conn, cutoff=cutoff, limit=None
                 )
         except Exception as exc:  # noqa: BLE001 -- one sweep must not abort the pass
-            return {"deleted": 0, "ok": False, "cutoff": cutoff, "error": str(exc)[:200]}
-        return {"deleted": deleted, "ok": True, "cutoff": cutoff}
+            return {"deleted": 0, "codes": 0, "tokens": 0, "ok": False,
+                    "cutoff": cutoff, "error": str(exc)[:200]}
+        return {"deleted": deleted, "codes": codes, "tokens": tokens,
+                "ok": True, "cutoff": cutoff}
 
     def _cutoff(self, now: datetime | None) -> str:
-        return format_iso(
-            (now or datetime.now(tz=UTC))
-            - timedelta(days=self.unused_client_ttl_days)
+        return _horizon(
+            now or datetime.now(tz=UTC), self.unused_client_ttl_days
         )
 
     @staticmethod
@@ -289,8 +325,7 @@ class SqlOAuthRepository:
                 )
                 """
             params = (*params, limit)
-        cursor = conn.execute(statement, params)
-        return max(0, int(getattr(cursor, "rowcount", 0) or 0))
+        return _deleted(conn.execute(statement, params))
 
     def insert_code(self, *, code: AuthorizationCode) -> None:
         with self._store.transaction() as conn:
@@ -444,6 +479,16 @@ class SqlOAuthRepository:
                 owner_user_id=owner_user_id,
                 revoked_at=revoked_at,
             )
+
+
+def _horizon(now: datetime, days: int) -> str:
+    """The timestamp a row must be older than to be swept."""
+    return format_iso(now - timedelta(days=days))
+
+
+def _deleted(cursor: Any) -> int:
+    """How many rows one DELETE removed, on either dialect."""
+    return max(0, int(getattr(cursor, "rowcount", 0) or 0))
 
 
 def _client(row: Any) -> OAuthClient | None:
