@@ -186,6 +186,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.store = _booted_postgres(_reset_database())
+        self.addCleanup(self.store.close)
 
     def _seed_project(self, project_id: str = "proj_pg") -> str:
         with self.store.transaction() as conn:
@@ -257,7 +258,35 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
             conn.close()
         # Re-construction against the same database is a no-op (IF NOT EXISTS
         # DDL + already-recorded ledger), exactly like the SQLite store.
-        PostgresStateStore(dsn=_dsn)
+        PostgresStateStore(dsn=_dsn).close()
+
+    def test_connections_are_pooled_and_released(self) -> None:
+        """close() returns a borrowed connection, rolled back if left open; a
+        full pool overflows into a dialed one; close() on the store drains it."""
+        from psycopg_pool import PoolClosed
+
+        first = self.store.connect()
+        raw = first._raw
+        first.close()
+        dirty = self.store.connect()
+        self.assertIs(dirty._raw, raw)
+        dirty.execute("BEGIN")
+        dirty.close()
+        again = self.store.connect()
+        try:
+            self.assertIs(again._raw, raw)
+            self.assertEqual(raw.info.transaction_status, 0)  # IDLE, not INTRANS
+        finally:
+            again.close()
+        held = [self.store.connect() for _ in range(16)]
+        overflow = self.store.connect()
+        self.assertIsNone(overflow._pool)
+        overflow.close()
+        for conn in held:
+            conn.close()
+        self.store.close()
+        with self.assertRaises(PoolClosed):
+            self.store.connect()
 
     def test_projects_default_to_the_local_tenant(self) -> None:
         project_id = self._seed_project()
@@ -564,6 +593,7 @@ class PostgresStoreBehaviorTest(unittest.TestCase):
             db_path=Path("/nonexistent/unused.sqlite"),
             env={"RESEARCH_PLUGIN_DB_URL": _reset_database()},
         )
+        self.addCleanup(store.close)
         self.assertIsInstance(store, PostgresStateStore)
 
 

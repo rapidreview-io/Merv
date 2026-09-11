@@ -14,6 +14,16 @@ Single-writer semantics: SQLite gets them from ``BEGIN IMMEDIATE``; here a
 The UI's recent activity/tool-I/O rings are process-local diagnostics and are
 not part of this record-store dialect.
 
+Connections are pooled: ``connect()`` borrows one from a ``psycopg_pool`` and
+the facade's ``close()`` returns it, so the ``closing(store.connect())`` idiom
+every service uses costs a liveness ping rather than a TCP handshake and
+authentication round trip. The pool caps what stays warm, not what may run:
+services borrow a second connection inside a write transaction, so a full pool
+overflows into a dialed connection instead of making a lock holder wait on the
+pool it is starving. ``dial()`` is for scopes that own session state — schema
+installation's session-level advisory lock, the tool-call ledger's deadlines —
+because nothing a borrower sets may travel back into the pool.
+
 psycopg is imported lazily so SQLite-backed test and development compositions
 do not import it.
 """
@@ -25,7 +35,10 @@ import re
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, suppress
 from types import TracebackType
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover — psycopg stays a lazy runtime import
+    from psycopg_pool import ConnectionPool
 
 from .persistence import KERNEL_SCHEMA
 from .schema import Connection
@@ -86,8 +99,11 @@ class PostgresConnection:
     # codebase is a sqlite3 one, or a test wrapper that delegates to one.
     dialect = "postgres"
 
-    def __init__(self, raw: Any) -> None:
+    def __init__(self, raw: Any, *, pool: ConnectionPool | None = None) -> None:
         self._raw = raw
+        # A pooled connection goes back to its pool on close(); a dialed one
+        # really closes.
+        self._pool = pool
 
     def execute(self, sql: str, parameters: Sequence[Any] = ()) -> Any:
         translated = sql.replace("?", "%s")
@@ -121,7 +137,10 @@ class PostgresConnection:
         self._raw.rollback()
 
     def close(self) -> None:
-        self._raw.close()
+        if self._pool is None:
+            self._raw.close()
+        else:
+            self._pool.putconn(self._raw)
 
 
 class PostgresStateStore(BaseStateStore):
@@ -139,6 +158,19 @@ class PostgresStateStore(BaseStateStore):
 
     def __init__(self, *, dsn: str) -> None:
         self.dsn = dsn
+        _, dict_row, pool = _psycopg()
+        # Opened on demand and kept warm between requests; idle ones are
+        # retired by the pool's own max_idle/max_lifetime timers. No server-side
+        # prepared plans: a pooled connection outlives a migration another
+        # process applies, and a cached plan across a dropped column fails
+        # every later borrow. The check discards a connection the server
+        # closed underneath the pool instead of handing it to a request.
+        self._pool = pool.ConnectionPool(
+            dsn, min_size=0, max_size=16, open=True, name="merv",
+            check=pool.ConnectionPool.check_connection,
+            kwargs={"row_factory": dict_row, "autocommit": True, "prepare_threshold": None},
+        )
+        self._pool_timeout = pool.PoolTimeout
         # One advisory-lock key per database identity: every store pointed at
         # this DSN serializes its write transactions on the same key. Hashing
         # the DSN string is deliberately coarse (two spellings of the same
@@ -150,9 +182,20 @@ class PostgresStateStore(BaseStateStore):
         self._initialize()
 
     def connect(self) -> Connection:
-        psycopg, dict_row = _psycopg()
-        raw = psycopg.connect(self.dsn, row_factory=dict_row, autocommit=True)
-        return PostgresConnection(raw)
+        try:
+            raw = self._pool.getconn(timeout=0.1)
+        except self._pool_timeout:
+            return self.dial()
+        return PostgresConnection(raw, pool=self._pool)
+
+    def dial(self) -> Connection:
+        psycopg, dict_row, _ = _psycopg()
+        return PostgresConnection(
+            psycopg.connect(self.dsn, row_factory=dict_row, autocommit=True)
+        )
+
+    def close(self) -> None:
+        self._pool.close()
 
     @contextmanager
     def transaction(self) -> Iterator[Connection]:
@@ -196,7 +239,7 @@ class PostgresStateStore(BaseStateStore):
         booting the same upgrade serialize their check-then-ALTER passes
         instead of crashing on duplicate-column/duplicate-key errors. Each
         migration commits inside _migration_scope."""
-        conn = self.connect()
+        conn = self.dial()
         try:
             conn.execute("SELECT pg_advisory_lock(?)", (self._advisory_lock_key,))
             try:
@@ -210,16 +253,17 @@ class PostgresStateStore(BaseStateStore):
         self.install(KERNEL_SCHEMA)
 
 
-def _psycopg() -> tuple[Any, Any]:
+def _psycopg() -> tuple[Any, Any, Any]:
     try:
         import psycopg
+        import psycopg_pool
         from psycopg.rows import dict_row
     except ImportError as exc:  # pragma: no cover — environment-dependent
         raise RuntimeError(
-            "PostgresStateStore requires psycopg (pip install 'psycopg[binary]'); "
+            "PostgresStateStore requires psycopg (pip install 'psycopg[binary]' psycopg-pool); "
             "it is a control-profile/test dependency — local mode never needs it"
         ) from exc
-    return psycopg, dict_row
+    return psycopg, dict_row, psycopg_pool
 
 
 __all__ = [

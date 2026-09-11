@@ -86,7 +86,7 @@ def configured_retention_days(*, env: Mapping[str, str] | None = None) -> int:
 class LedgerConnections(Protocol):
     """The single store capability an append-only ledger needs."""
 
-    def connect(self) -> Connection: ...
+    def dial(self) -> Connection: ...
 
 
 class DroppedRowSink(Protocol):
@@ -431,7 +431,7 @@ class ToolCallLedger:
         A connection that can wait forever is worse than no connection: the
         caller counts a drop, which is exactly the promised behavior.
         """
-        conn = self._store.connect()
+        conn = self._store.dial()
         try:
             _bound_connection(
                 conn=conn,

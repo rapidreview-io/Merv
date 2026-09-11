@@ -61,6 +61,14 @@ class BaseStateStore:
     def transaction(self) -> Iterator[Connection]:
         raise NotImplementedError
 
+    def dial(self) -> Connection:
+        """A connection whose session state is the caller's alone: opened for
+        it, closed by it, shared with nobody. SQLite shares none, so connect()."""
+        return self.connect()
+
+    def close(self) -> None:
+        """Release whatever the dialect keeps open between calls; SQLite keeps nothing."""
+
     @contextmanager
     def _schema_transaction(self) -> Iterator[Connection]:
         """A connection that may reshape tables — see the SQLite override."""
