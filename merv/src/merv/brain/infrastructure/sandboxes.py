@@ -61,7 +61,7 @@ class RemoteSandboxes:
 
     def __init__(
         self, *, client: InfrastructureTransport | None, store: BaseStateStore,
-        attachment_check: ExperimentAttachmentCheck | None = None, **_: Any,
+        attachment_check: ExperimentAttachmentCheck | None = None,
     ) -> None:
         self.client = client
         self._store = store
@@ -175,13 +175,15 @@ class RemoteSandboxes:
                 region: str | None = None, **_: Any) -> dict[str, Any]:
         pid = self._project(project_id)
         params = {key: value for key, value in {"gpu": gpu, "region": region}.items() if value}
-        offers = self._call("GET", "/options", project_id=pid, params=params).get("offers", [])
-        return {"options": [{
-            "instance_type": offer["offer_id"], "provider": offer["provider"], "region": offer.get("region"),
-            "gpu": (offer.get("resources") or {}).get("gpu"), "gpu_count": (offer.get("resources") or {}).get("gpu_count"),
-            "cpu": (offer.get("resources") or {}).get("cpu"), "memory": (offer.get("resources") or {}).get("memory_mb"),
-            "price_usd_per_hour": _usd(offer.get("hourly_price")), "available": offer.get("available", True),
-        } for offer in offers]}
+        options = []
+        for offer in self._call("GET", "/options", project_id=pid, params=params).get("offers", []):
+            resources = offer.get("resources") or {}
+            options.append({
+                "instance_type": offer["offer_id"], "provider": offer["provider"], "region": offer.get("region"),
+                "gpu": resources.get("gpu"), "gpu_count": resources.get("gpu_count"),
+                "cpu": resources.get("cpu"), "memory": resources.get("memory_mb"),
+                "price_usd_per_hour": _usd(offer.get("hourly_price")), "available": offer.get("available", True)})
+        return {"options": options}
 
     def request(self, *, project_id: str | None = None, experiment_id: str | None = None,
                 gpu: str | None = None, cpu: float | None = None, memory: int | None = None,

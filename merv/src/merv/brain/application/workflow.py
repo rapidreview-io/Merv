@@ -341,25 +341,11 @@ def _slim_status(full: Record, *, experiment_context: Record | None, task_contex
 
 
 def _sandbox_summary(sandboxes: list[Record]) -> Record:
-    active = next(
-        (
-            sandbox
-            for sandbox in sandboxes
-            if sandbox.get("status") in EXPERIMENT_ACTIVE_PROCESS_STATUSES
-        ),
-        None,
-    )
+    active = next((sandbox for sandbox in sandboxes if sandbox.get("status") in EXPERIMENT_ACTIVE_PROCESS_STATUSES), None)
     if active is not None:
-        return {
-            "active": True,
-            **project_fields(active, _SANDBOX_SUMMARY_FIELDS),
-        }
-    last = sandboxes[0] if sandboxes else None
-    return {
-        "active": False,
-        "last_status": last.get("status") if last else None,
-        "note": "No active sandbox for this experiment — call sandbox.request to create or reuse one.",
-    }
+        return {"active": True, **project_fields(active, _SANDBOX_SUMMARY_FIELDS)}
+    return {"active": False, "last_status": sandboxes[0].get("status") if sandboxes else None,
+            "note": "No active sandbox for this experiment — call sandbox.request to create or reuse one."}
 
 
 __all__ = ["StatusAndNextQuery"]

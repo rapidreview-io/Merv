@@ -10,10 +10,6 @@ from ...kernel.utils import ValidationError
 PROJECT_FIELDS = ("id", "name", "summary", "created_at")
 
 
-def project_context(project):
-    return {"id": project.get("id"), "name": project.get("name"), "summary": project.get("summary", "")}
-
-
 def render_project_document(project):
     literature = project.get("literature") or {}
     refs = "\n".join(

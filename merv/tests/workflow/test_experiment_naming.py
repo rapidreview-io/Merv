@@ -43,20 +43,15 @@ class ExperimentNamingTest(unittest.TestCase):
             with self.assertRaises(ValidationError, msg=bad):
                 self._create(name=bad, intent="Bad name.")
 
-    def test_create_returns_folder_without_eager_local_io(self) -> None:
-        exp = self._create(name="lora-rank-sweep", intent="Sweep LoRA ranks.")
-        self.assertEqual(exp["name"], "lora-rank-sweep")
-        self.assertEqual(exp["folder"], "experiments/lora-rank-sweep/")
-        self.assertFalse((self.repo / "experiments" / "lora-rank-sweep").exists())
-        self.assertFalse((self.repo / "experiments" / exp["id"]).exists())
-
-    def test_create_response_is_a_receipt_naming_the_next_document(self) -> None:
+    def test_create_is_a_receipt_naming_the_folder_and_next_document_without_local_io(self) -> None:
         exp = self._create(name="lora-rank-sweep", intent="Sweep LoRA ranks.")
         self.assertEqual(set(exp), {"id", "name", "status", "folder", "next"})
-        self.assertEqual(exp["status"], "planned")
+        self.assertEqual((exp["name"], exp["status"], exp["folder"]), ("lora-rank-sweep", "planned", "experiments/lora-rank-sweep/"))
         self.assertEqual(exp["next"], {"action": "write_and_submit_plan", "tool": "artifact.upload", "role": "plan",
                                        "required_sections": ["Summary", "Objective & hypothesis", "Evaluation"]})
         self.assertLess(len(json.dumps(exp)), 400)
+        self.assertFalse((self.repo / "experiments" / "lora-rank-sweep").exists())
+        self.assertFalse((self.repo / "experiments" / exp["id"]).exists())
 
     def test_duplicate_name_is_rejected(self) -> None:
         self._create(name="baseline", intent="First baseline.")

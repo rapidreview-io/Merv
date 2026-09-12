@@ -130,9 +130,7 @@ class FeedServiceTest(unittest.TestCase):
         for text in ("   ", "x" * (POST_TEXT_MAX + 1)):
             with self.subTest(text_length=len(text)):
                 with self.assertRaises(ValidationError):
-                    self.post(handle="Nova-7",
-                        text=text,
-                    )
+                    self.post(handle="Nova-7", text=text)
 
     def test_media_post_contract_and_single_use_completion(self) -> None:
         # The mint shape: feed.post with a visual returns {post_id, run} (a
@@ -237,18 +235,12 @@ class FeedServiceTest(unittest.TestCase):
         # The mint validates the handle up front, so an unregistered author is
         # rejected before any token is minted (the image path is never read).
         with self.assertRaisesRegex(ValidationError, "not registered"):
-            self.post(handle="Ghost",
-                text="plot",
-                image_path="missing.png",
-            )
+            self.post(handle="Ghost", text="plot", image_path="missing.png")
 
     def test_bad_link_degrades_to_plain_chip(self) -> None:
         # An unreachable/disallowed URL must NOT fail the post (PRD edge case).
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
-        result = self.post(handle="Nova-7",
-            text="see",
-            url="http://127.0.0.1/secret",
-        )
+        result = self.post(handle="Nova-7", text="see", url="http://127.0.0.1/secret")
         preview = result["link_preview"]
         self.assertTrue(preview and preview.get("error"))
 
@@ -262,11 +254,7 @@ class FeedServiceTest(unittest.TestCase):
             "file:///etc/passwd",
         ):
             with self.subTest(url=url):
-                result = self.post(handle="Nova-7",
-                    text="see",
-                    url=url,
-                )
-                post = result
+                post = self.post(handle="Nova-7", text="see", url=url)
                 self.assertNotIn("link_url", post)
                 self.assertFalse(post["link_preview"]["url"])
                 self.assertTrue(post["link_preview"]["error"])
@@ -276,10 +264,7 @@ class FeedServiceTest(unittest.TestCase):
         plain = self.post(handle="Nova-7", text="hi")
         self.assertNotIn("kind", plain)
 
-        status = self.post(handle="Nova-7",
-            text="40% through training",
-            kind="status",
-        )
+        status = self.post(handle="Nova-7", text="40% through training", kind="status")
         self.assertEqual(status["kind"], "status")
         self.assertEqual(
             self.call("feed.list", project_id=self.pid)["posts"][0]["kind"],
@@ -295,8 +280,7 @@ class FeedServiceTest(unittest.TestCase):
 
     def test_reaction_validation_distinguishes_kind_and_post(self) -> None:
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
-        post_id = self.post(handle="Nova-7", text="hi"
-        )["id"]
+        post_id = self.post(handle="Nova-7", text="hi")["id"]
         with self.assertRaises(ValidationError):
             self.app.feed.set_reaction(
                 project_id=self.pid, post_id=post_id, kind="love", on=True
@@ -311,11 +295,8 @@ class FeedServiceTest(unittest.TestCase):
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
         reacted = []
         for i in range(5):
-            post_id = self.post(handle="Nova-7", text=f"post {i}"
-            )["id"]
-            reacted.append(post_id)
-        long_post = self.post(handle="Nova-7", text="a" * 100
-        )["id"]
+            reacted.append(self.post(handle="Nova-7", text=f"post {i}")["id"])
+        long_post = self.post(handle="Nova-7", text="a" * 100)["id"]
         reacted.append(long_post)
         self.assertNotIn(
             "researcher_attention",
@@ -347,8 +328,7 @@ class FeedServiceTest(unittest.TestCase):
 
     def test_researcher_reply_enforces_char_cap(self) -> None:
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
-        original = self.post(handle="Nova-7", text="finding"
-        )["id"]
+        original = self.post(handle="Nova-7", text="finding")["id"]
         with self.assertRaises(ValidationError):
             self.app.feed.researcher_reply(
                 project_id=self.pid, post_id=original, text="x" * (POST_TEXT_MAX + 1)
@@ -356,21 +336,14 @@ class FeedServiceTest(unittest.TestCase):
 
     def test_agent_post_can_thread_via_in_reply_to(self) -> None:
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
-        original = self.post(handle="Nova-7", text="finding"
-        )["id"]
-        result = self.post(handle="Nova-7",
-            text="follow-up",
-            in_reply_to=original,
-        )
+        original = self.post(handle="Nova-7", text="finding")["id"]
+        result = self.post(handle="Nova-7", text="follow-up", in_reply_to=original)
         self.assertEqual(result["in_reply_to"], original)
 
     def test_in_reply_to_validates_target_exists(self) -> None:
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
         with self.assertRaisesRegex(ValidationError, "in_reply_to"):
-            self.post(handle="Nova-7",
-                text="follow-up",
-                in_reply_to="post_missing",
-            )
+            self.post(handle="Nova-7", text="follow-up", in_reply_to="post_missing")
 
     # -- embeds -----------------------------------------------------------------
 
@@ -417,11 +390,7 @@ class FeedServiceTest(unittest.TestCase):
     def test_image_and_html_path_together_rejected_at_mint(self) -> None:
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
         with self.assertRaisesRegex(ValidationError, "image or an embed"):
-            self.post(handle="Nova-7",
-                text="both",
-                image_path="p.png",
-                html_path="c.html",
-            )
+            self.post(handle="Nova-7", text="both", image_path="p.png", html_path="c.html")
 
     # -- nudge --------------------------------------------------------------
 
@@ -430,8 +399,7 @@ class FeedServiceTest(unittest.TestCase):
         with unittest.mock.patch.object(
             feed_module, "now_iso", return_value="2020-01-01T00:00:00Z"
         ):
-            post_id = self.post(handle="Nova-7", text="hello"
-            )["id"]
+            post_id = self.post(handle="Nova-7", text="hello")["id"]
         orig = feed_module.NUDGE_AFTER_EVENTS, feed_module.NUDGE_AFTER_HOURS
         feed_module.NUDGE_AFTER_EVENTS, feed_module.NUDGE_AFTER_HOURS = 3, 0.0
         try:
@@ -527,17 +495,12 @@ class FeedPostModelTest(FeedServiceTest):
             "unfurl",
             return_value={"url": "https://arxiv.org/abs/2401.10774", "title": "Medusa"},
         ):
-            post = self.post(handle="Ansible",
-                text=f"243 tok/s on {exp_id}, see arXiv:2401.10774",
-            )
+            post = self.post(handle="Ansible", text=f"243 tok/s on {exp_id}, see arXiv:2401.10774")
         self.assertEqual(post["ref"], exp_id)
         self.assertEqual(post["link_url"], "https://arxiv.org/abs/2401.10774")
         self.assertEqual(post["link_preview"]["title"], "Medusa")
         # An explicit ref wins over the parsed one.
-        explicit = self.post(handle="Ansible",
-            text=f"mentions {exp_id}",
-            ref="claim_000000000000",
-        )
+        explicit = self.post(handle="Ansible", text=f"mentions {exp_id}", ref="claim_000000000000")
         self.assertEqual(explicit["ref"], "claim_000000000000")
 
     # -- attachments -----------------------------------------------------------
@@ -557,8 +520,7 @@ class FeedPostModelTest(FeedServiceTest):
             {"type": "table", "columns": ["arm", "tok/s"], "rows": [["bf16", 82.4], ["W4A16", "125.8"]], "hero_row": 1},
             {"type": "log", "text": "line one\nRuntimeError: boom\nline three", "highlight": [1]},
         ]
-        post = self.post(handle="Ansible", text="numbers", attachments=attachments
-        )
+        post = self.post(handle="Ansible", text="numbers", attachments=attachments)
         kinds = [a["type"] for a in post["attachments"]]
         self.assertEqual(kinds, ["stat", "chart", "table", "log"])
         self.assertEqual(post["attachments"][0]["value"], "243.2")
@@ -603,25 +565,21 @@ class FeedPostModelTest(FeedServiceTest):
         self.app.feed.figure_lookup = lookup
         try:
             post = self.post(handle="Ansible", text="the curve I already made",
-                attachments=[{"type": "figure", "artifact_id": "art_ok", "path": "figures/curve.png", "caption": "val loss"}],
-            )
+                             attachments=[{"type": "figure", "artifact_id": "art_ok", "path": "figures/curve.png", "caption": "val loss"}])
             self.assertEqual(post["attachments"][0], {"type": "figure", "artifact_id": "art_ok", "path": "figures/curve.png", "caption": "val loss"})
             self.assertEqual(seen[-1], (self.pid, "art_ok", "figures/curve.png"))
             with self.assertRaises(ValidationError):
                 self.post(handle="Ansible", text="x",
-                    attachments=[{"type": "figure", "artifact_id": "art_missing", "path": "figures/curve.png"}],
-                )
+                          attachments=[{"type": "figure", "artifact_id": "art_missing", "path": "figures/curve.png"}])
             # Inside a thread too.
             with self.assertRaises(ValidationError):
                 self.post(handle="Ansible", text="x",
-                    thread=[{"text": "y", "attachments": [{"type": "figure", "artifact_id": "nope", "path": "p.png"}]}],
-                )
+                          thread=[{"text": "y", "attachments": [{"type": "figure", "artifact_id": "nope", "path": "p.png"}]}])
         finally:
             self.app.feed.figure_lookup = None
         with self.assertRaises(ValidationError):
             self.post(handle="Ansible", text="x",
-                attachments=[{"type": "figure", "artifact_id": "art_ok", "path": "figures/curve.png"}],
-            )
+                      attachments=[{"type": "figure", "artifact_id": "art_ok", "path": "figures/curve.png"}])
 
     def test_attachment_validation_rejects_bad_shapes(self) -> None:
         self._register()
@@ -637,8 +595,7 @@ class FeedPostModelTest(FeedServiceTest):
         ]
         for attachments in bad:
             with self.assertRaises(ValidationError, msg=str(attachments)):
-                self.post(handle="Ansible", text="x", attachments=attachments
-                )
+                self.post(handle="Ansible", text="x", attachments=attachments)
 
     def test_image_attachment_mints_an_upload_and_the_upload_finalizes_thread_and_quote(self) -> None:
         self._register()
@@ -674,15 +631,10 @@ class FeedPostModelTest(FeedServiceTest):
 
     def test_thread_posts_are_chained_atomically_under_the_root(self) -> None:
         self._register()
-        result = self.post(handle="Ansible",
-            text="Why the floor is 5 ms, in three parts.",
-            kind="direction",
-            thread=[
-                {"text": "Part two, with a table.", "attachments": [{"type": "table", "columns": ["a"], "rows": [["1"]]}]},
-                "Part three, plain text.",
-            ],
-        )
-        root = result
+        root = result = self.post(
+            handle="Ansible", text="Why the floor is 5 ms, in three parts.", kind="direction",
+            thread=[{"text": "Part two, with a table.", "attachments": [{"type": "table", "columns": ["a"], "rows": [["1"]]}]},
+                    "Part three, plain text."])
         self.assertNotIn("thread_root", root)
         self.assertEqual(root["thread_index"], 0)
         self.assertEqual([p["thread_index"] for p in result["thread"]], [1, 2])
@@ -695,27 +647,21 @@ class FeedPostModelTest(FeedServiceTest):
         with self.assertRaises(ValidationError):
             self.post(handle="Ansible", text="x", thread=["y"] * 9)
         with self.assertRaises(ValidationError):
-            self.post(handle="Ansible",
-                text="x",
-                thread=[{"text": "y", "attachments": [{"type": "image", "path": "p.png"}]}],
-            )
+            self.post(handle="Ansible", text="x", thread=[{"text": "y", "attachments": [{"type": "image", "path": "p.png"}]}])
         self.assertEqual(len(self.call("feed.list", project_id=self.pid)["posts"]), 3)
 
     def test_replying_to_your_own_post_continues_the_thread(self) -> None:
         self._register()
         self._register("Cold Equations", role="reviewer")
         root = self.post(handle="Ansible", text="Depth sweep live.")
-        cont = self.post(handle="Ansible", text="Depth 4 leads.", in_reply_to=root["id"]
-        )
+        cont = self.post(handle="Ansible", text="Depth 4 leads.", in_reply_to=root["id"])
         self.assertEqual(cont["thread_root"], root["id"])
         self.assertEqual(cont["thread_index"], 1)
-        again = self.post(handle="Ansible", text="Depth 8 disagrees.", in_reply_to=cont["id"]
-        )
+        again = self.post(handle="Ansible", text="Depth 8 disagrees.", in_reply_to=cont["id"])
         self.assertEqual(again["thread_root"], root["id"])
         self.assertEqual(again["thread_index"], 2)
         # Another voice replying is a reply, not a continuation.
-        reply = self.post(handle="Cold Equations", text="Check the clocks.", in_reply_to=root["id"]
-        )
+        reply = self.post(handle="Cold Equations", text="Check the clocks.", in_reply_to=root["id"])
         self.assertNotIn("thread_root", reply)
         self.assertEqual(reply["in_reply_to"], root["id"])
 
@@ -724,16 +670,10 @@ class FeedPostModelTest(FeedServiceTest):
     def test_quote_of_returns_a_compact_view_and_validates_the_target(self) -> None:
         self._register()
         self._register("Cold Equations", role="reviewer")
-        claim = self.post(handle="Ansible",
-            text="243 tok/s.",
-            kind="finding",
-            attachments=[{"type": "stat", "value": "243.2", "unit": "tok/s"}],
-        )
-        quote = self.post(handle="Cold Equations",
-            text="The 243 holds; the bar does not.",
-            kind="bottleneck",
-            quote_of=claim["id"],
-        )
+        claim = self.post(handle="Ansible", text="243 tok/s.", kind="finding",
+                          attachments=[{"type": "stat", "value": "243.2", "unit": "tok/s"}])
+        quote = self.post(handle="Cold Equations", text="The 243 holds; the bar does not.", kind="bottleneck",
+                          quote_of=claim["id"])
         self.assertEqual(quote["quote_of"], claim["id"])
         listed = self.call("feed.list", project_id=self.pid)["posts"][0]
         self.assertEqual(listed["quoted"]["author_handle"], "Ansible")
@@ -744,13 +684,10 @@ class FeedPostModelTest(FeedServiceTest):
         # One relation: a post follows at most one previous post.
         other = self.post(handle="Ansible", text="another")
         with self.assertRaises(ValidationError):
-            self.post(handle="Ansible", text="x",
-                quote_of=claim["id"], in_reply_to=other["id"],
-            )
+            self.post(handle="Ansible", text="x", quote_of=claim["id"], in_reply_to=other["id"])
         # quote_of alone still sets the reply link, so old and new clients thread alike;
         # a self-quote continues the author's own chain.
-        selfq = self.post(handle="Ansible", text="callback", quote_of=claim["id"]
-        )
+        selfq = self.post(handle="Ansible", text="callback", quote_of=claim["id"])
         self.assertEqual(selfq["in_reply_to"], claim["id"])
         self.assertEqual(selfq["thread_root"], claim["id"])
         self.assertEqual(selfq["thread_index"], 1)
@@ -802,8 +739,7 @@ class FeedPostModelTest(FeedServiceTest):
         self.assertEqual(second["author"]["handle"], "Cold Equations")
         self.assertIn("note", second)
         # The adopting session can post as the shared voice.
-        post = self.post(handle="Cold Equations", text="Round two."
-        )
+        post = self.post(handle="Cold Equations", text="Round two.")
         self.assertEqual(post["author_role"], "reviewer")
         # A deliberate new voice is still possible.
         third = self.call(

@@ -11,7 +11,7 @@ import json
 
 from ..kernel.utils import NotFoundError, WorkflowError
 from ..literature import Literature
-from ..workflows import Binding, Public, research_contracts
+from ..workflows import Binding, Public
 from .models import public_record
 from .records import query
 
@@ -116,7 +116,7 @@ class ProjectSynthesis:
                                    (ref["id"], project_id)).fetchone()
                 item.update(dict(row) if row is not None else {"status": "unavailable"})
             refs.append(item)
-        return {**research_contracts.project_context(project),
+        return {**project,
                 "literature": Literature.summary(conn=conn, project_id=project_id),
                 "methods": snapshot.data.get("methods", ""), "results": snapshot.data.get("results", ""),
                 "references": refs,
