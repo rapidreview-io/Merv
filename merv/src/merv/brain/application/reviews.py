@@ -33,10 +33,11 @@ _REVIEWER_REFLECTION_FIELDS = ("id", "title", "status", "attempt_index", "revisi
 def request_review(research: Research, **kwargs: Any) -> dict[str, Any]:
     """Add delivery instructions to a Research-owned review capability."""
     result = research.reviews.request(**kwargs)
+    kind = research.kinds.get(str(kwargs["target_type"]))
     computed = {}
     if isinstance(result, ReviewRequestCreated):
         computed["reviewer_handoff"] = reviewer_handoff_payload(
-            kind=research.kinds.get(str(kwargs["target_type"])), role=result.role,
+            kind=kind, role=result.role,
             target_type=str(kwargs["target_type"]), target_id=str(kwargs["target_id"]),
             review_request_id=result.review_request_id, reviewer_capability=result.reviewer_capability,
         )
@@ -44,32 +45,19 @@ def request_review(research: Research, **kwargs: Any) -> dict[str, Any]:
             "Spawn the reviewer with reviewer_handoff.spawn_prompt and wait for its report. A pass "
             "moves the target on in the verdict's own transaction (never call the approving "
             "transition yourself); then call workflow.status_and_next.")
-    return public_record(Public(), result, **computed)
+    # Native kinds hydrate their own review context; their receipts leave the pinned snapshot to the queue view.
+    return public_record(Public(hidden=() if kind is None else ("target_snapshot", "target_snapshot_id")), result, **computed)
 
 
 
-def reviewer_handoff_payload(
-    *,
-    kind: RecordKind | None = None,
-    role: str,
-    target_type: str,
-    target_id: str,
-    review_request_id: str = "",
-    reviewer_capability: str = "",
-) -> dict[str, Any]:
+def reviewer_handoff_payload(*, kind: RecordKind | None, role: str, target_type: str, target_id: str,
+                             review_request_id: str, reviewer_capability: str) -> dict[str, Any]:
     gate = None if kind is None else kind.review_gate(role)
     skill = "" if gate is None else gate.skill
-    handoff: dict[str, Any] = {
-        "role": role,
-        "skill": skill,
-        "target_type": target_type,
-        "target_id": target_id,
-        "read_only": True,
-        "start_tool": "review.start",
-        "submit_tool": "review.submit",
-    }
-    if review_request_id and reviewer_capability:
-        handoff["spawn_prompt"] = (
+    return {
+        "role": role, "skill": skill, "target_type": target_type, "target_id": target_id, "read_only": True,
+        "start_tool": "review.start", "submit_tool": "review.submit",
+        "spawn_prompt": (
             f"You are the {role} for {target_type} {target_id}. "
             + (f"Follow the {skill} skill. " if skill else "Use the workflow's pinned brief and exact evidence references. ")
             + "Begin by calling review.start with "
@@ -77,9 +65,8 @@ def reviewer_handoff_payload(
             f"reviewer_capability={reviewer_capability}, and your own "
             "session identity as caller_session_id (required; never the "
             "producer's). You are read-only: your sole permitted mutation "
-            "is review.submit."
-        )
-    return handoff
+            "is review.submit."),
+    }
 
 
 def start_review(
@@ -112,10 +99,8 @@ def start_review(
     target_type = str(result.get("target_type") or "")
     target_id = str(result.get("target_id") or "")
     target_snapshot = result.pop("target_snapshot", {})
-    submitted_artifacts = _submitted_artifacts(
-        artifacts=artifacts,
-        snapshot=target_snapshot,
-    ) if target_type in {"experiment", "task", "reflection"} else []
+    submitted_artifacts = (_submitted_artifacts(artifacts=artifacts, snapshot=target_snapshot)
+                           if target_type in research.kinds else [])
     result["project_context"] = {"project": project_fields(
         research.synthesis.document(project_id=project_id), ("id", "name", "summary"))}
     if target_type == "experiment":

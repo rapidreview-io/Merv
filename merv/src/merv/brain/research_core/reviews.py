@@ -350,7 +350,6 @@ class ReviewService:
                 "role": req["role"],
                 "target_type": req["target_type"],
                 "target_id": req["target_id"],
-                "target_snapshot_id": req["target_snapshot_id"],
                 "target_snapshot": snapshot,
                 "independence": independence,
                 **({"context": context} if context is not None else {}),
