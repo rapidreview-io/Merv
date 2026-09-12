@@ -7,7 +7,7 @@ from merv.brain.application.experiments.presentation import (
     AGENT as EXPERIMENT_AGENT, rich_experiment_state, slim_experiment_state,
 )
 from merv.brain.application.tasks import AGENT as TASK_AGENT, rich_task_state, slim_task_state
-from merv.brain.application.reflections import present_reflection_state, present_agent_reflection_state
+from merv.brain.application.reflections import AGENT as REFLECTION_AGENT, present_reflection_state, present_agent_reflection_state
 from merv.brain.research_core import EXPERIMENT, TASK, REFLECTION, public_record
 from merv.brain.workflows import Public
 from merv.brain.workflows.definitions.research_state import MISSING, ExperimentState, TaskState
@@ -22,7 +22,7 @@ CASES = (
     (task_state, TASK.public, TASK_AGENT,
      COMMON | set("name goal outcome failed_by deliverables dependencies dependents".split()),
      {"results", "report", "caveats"}),
-    (reflection_state, REFLECTION.public, REFLECTION.public,
+    (reflection_state, REFLECTION.public, REFLECTION_AGENT,
      COMMON | set("title published_at published_graph_version_id created_seq roster corpus materialized_claims "
                   "materialized_experiments materialized_tasks consolidation reflection_coverage project_graph_diff".split()),
      {"snapshot_token", "code_sha"}),

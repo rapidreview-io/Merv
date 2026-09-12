@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
 
+from merv.brain.kernel.request_context import begin_request, bind_agent, reset_request
 from merv.brain.kernel.utils import PermissionDeniedError, ValidationError, WorkflowError
 from merv.brain.workflows import REVIEW_KIND
 from merv.brain.workflows.definitions.review import REVIEW, record_verdict
@@ -83,6 +85,13 @@ class RecoveryTest(ReviewLifecycleCase):
                      "reviewer_capability": self.requested["reviewer_capability"],
                      "caller_session_id": "independent-reviewer"}
         self.started = self.call("review.start", **self.args)
+
+    def test_the_reviewer_packet_is_the_pinned_evidence_and_nothing_producer_facing(self) -> None:
+        self.assertEqual(set(self.started) - {"context"}, {"review_session_id", "project_id", "role", "target_type",
+                         "target_id", "target_snapshot_id", "independence", "project_context"})
+        self.assertEqual(set(self.started["project_context"]["project"]), {"id", "name", "summary"})
+        self.assertIn("## Summary", self.started["context"]["plan"]["content"])
+        self.assertLess(len(json.dumps(self.started)), 1500)
 
     def test_retry_returns_same_handle_without_new_history_or_context(self) -> None:
         before = self.instance(self.args["review_request_id"])
@@ -186,6 +195,12 @@ class VerdictTest(ReviewLifecycleCase):
                             synopsis=REVIEW_SYNOPSIS)
         self.assertEqual((verdict["verdict"], verdict["role"], verdict["synopsis"]),
                          ("pass", "design_reviewer", REVIEW_SYNOPSIS))
+        # The producer learns from the receipt that the pass already moved the target.
+        self.assertEqual(verdict["target"], {"type": "experiment", "id": self.experiment_id,
+                                             "status_before": "design_review", "status_after": "running"})
+        self.assertIn("workflow.status_and_next", verdict["next_action"])
+        self.assertLess(len(json.dumps(verdict)), 700)
+        self.assertIn("producer_next", request)
         closed = self.instance(request["review_request_id"])
         self.assertEqual((closed.state, closed.outcome, closed.data["review_id"]),
                          ("submitted", "submitted", verdict["id"]))
@@ -203,6 +218,21 @@ class VerdictTest(ReviewLifecycleCase):
             project_id=self.project_id, experiment_id=self.experiment_id)
         self.assertEqual((state.status, state.attempt_index), ("planned", 2))
         self.assertIn("design_reviewer returned needs_changes", state.revision_context)
+
+    def test_only_the_context_window_that_started_a_session_may_submit(self) -> None:
+        request = self.request()
+        token = begin_request(request_id="reviewer")
+        try:
+            bind_agent(agent_id="reviewer-window")
+            session = self.start(request)
+            bind_agent(agent_id="producer-window")
+            with self.assertRaisesRegex(PermissionDeniedError, "started by agent 'reviewer-window'"):
+                self.call("review.submit", review_session_id=session, verdict="pass", synopsis=REVIEW_SYNOPSIS)
+            bind_agent(agent_id="reviewer-window")
+            self.assertEqual(self.call("review.submit", review_session_id=session, verdict="pass",
+                                       synopsis=REVIEW_SYNOPSIS)["verdict"], "pass")
+        finally:
+            reset_request(token)
 
     def test_the_graph_refuses_a_verdict_from_a_request_nobody_started(self) -> None:
         request = self.request()

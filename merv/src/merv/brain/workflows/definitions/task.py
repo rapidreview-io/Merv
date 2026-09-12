@@ -91,14 +91,11 @@ TASK = Workflow(
     edges=(
         Edge("in_progress", "submit_delivery", "in_review", change=request_delivery_review,
              label="Submit the complete delivery for independent review", tools=("task.transition",)),
-        Edge("in_review", "accept", "done", change=record_verdict,
-             label="Accept the reviewed delivery", tools=("task.transition",)),
+        Edge("in_review", "accept", "done", change=record_verdict, label="Applied by a passing task review", auto=True),
         Edge("in_review", "revise", RETURN_TO_IN_PROGRESS.to_status, check=rejected("task_reviewer", RETURN_TO_IN_PROGRESS.to_status),
-             change=record_verdict,
-             label=RETURN_TO_IN_PROGRESS.choose_when, event_type=RETURN_TO_IN_PROGRESS.event_type),
+             change=record_verdict, label=RETURN_TO_IN_PROGRESS.choose_when, event_type=RETURN_TO_IN_PROGRESS.event_type, auto=True),
         Edge("in_review", "fail_review", FAIL_TO_FAILED.to_status, check=rejected("task_reviewer", FAIL_TO_FAILED.to_status),
-             change=record_verdict,
-             label=FAIL_TO_FAILED.choose_when, event_type=FAIL_TO_FAILED.event_type),
+             change=record_verdict, label=FAIL_TO_FAILED.choose_when, event_type=FAIL_TO_FAILED.event_type, auto=True),
         *(Edge(state, "mark_failed", "failed", label="Withdraw the task with a reason", tools=("task.transition",), suggest=False)
           for state in ("in_progress", "in_review")),
     ),

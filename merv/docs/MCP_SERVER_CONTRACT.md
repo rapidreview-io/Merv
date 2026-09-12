@@ -174,17 +174,21 @@ The agent-facing statuses are:
 planned -> design_review -> running -> experiment_review -> complete
 ```
 
-`failed` and `abandoned` are terminal exits. The typed transitions are:
+`failed` and `abandoned` are terminal exits. The typed transitions an agent
+may call are:
 
 ```text
 submit_design
-approve_design
 retry_running
 submit_results
-complete
 mark_failed
 abandon
 ```
+
+`approve_design`, `complete` and the `revise_*` returns are `auto` edges: a
+review verdict applies them in its own transaction, so they are absent from the
+`experiment.transition` enum (likewise `accept`/`revise`/`fail_review` for
+tasks and `begin_consolidation`/`revise_*`/`publish` for reflections).
 
 The graph in `src/merv/brain/workflows/definitions/experiment.py` drives
 transition enforcement, dispatch prerequisites, node briefs, and allowed actions.
@@ -311,7 +315,7 @@ The current protocol is:
 
 ```text
 review.request(project_id, target_type, target_id, role, reason?, producer_session_id?)
-review.start(review_request_id, reviewer_capability, caller_session_id, declared_agent?)
+review.start(review_request_id, reviewer_capability, caller_session_id)
 review.submit(review_session_id, verdict, synopsis, return_to?, notes?, findings?, evidence?)
 ```
 

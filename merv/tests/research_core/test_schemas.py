@@ -28,8 +28,11 @@ class WorkflowDeclarationTest(unittest.TestCase):
     def test_every_declaration_names_an_edge_the_graph_actually_has(self) -> None:
         for kind in (EXPERIMENT, REFLECTION, TASK):
             with self.subTest(kind=kind.name):
-                self.assertEqual(len(kind.actions), len(set(kind.actions)))
-                self.assertLessEqual(set(kind.metadata.effects), set(kind.actions))
+                edges = {edge.name for edge in kind.workflow.edges}
+                self.assertLessEqual(set(kind.metadata.effects), edges)
+                # Review verdicts and the runner apply auto edges; the agent's enum omits them.
+                self.assertEqual(set(kind.actions), {edge.name for edge in kind.workflow.edges if not edge.auto})
+                self.assertFalse(any(edge.tools for edge in kind.workflow.edges if edge.auto))
                 for node in kind.workflow.nodes:
                     actions = {edge.name for edge in kind.workflow.edges
                                if edge.source == node.name}

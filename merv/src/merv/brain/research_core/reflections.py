@@ -925,7 +925,7 @@ class ReflectionService(RecordHooks):
         if transition in CLOSES_CHILDREN:
             # The final child's guarded join already applied the parent action.
             current = self.runtime.get(project_id=current.project_id, instance_id=reflection_id, conn=conn)
-            if current.state != reflection.status:
+            if REFLECTION.status_of(current.state) != reflection.status:
                 return self.get_state(reflection_id=reflection_id, conn=conn, include_content=True)
         self.runtime.apply_in_transaction(conn=conn, project_id=current.project_id, instance_id=reflection_id,
                                           action=transition, expected_revision=current.revision,

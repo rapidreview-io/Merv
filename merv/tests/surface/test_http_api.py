@@ -994,7 +994,7 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
 
         # The wave detail exposes the pinned artifact id.
         detail = self.request("GET", f"/api/projects/{pid}/reflections/{wave1_id}")
-        graph_row = next(r for r in detail["artifacts"] if r["role"] == "project_graph")
+        graph_row = next(r for r in detail["current_attempt_artifacts"] if r["role"] == "project_graph")
         self.assertEqual(graph_row["id"], wave1_graph["artifact_id"])
 
         # The artifact content endpoint serves the exact submitted bytes.

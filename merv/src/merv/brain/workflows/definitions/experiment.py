@@ -228,13 +228,13 @@ EXPERIMENT = Workflow(
     ),
     edges=(
         Edge("planned", "submit_design", "design_review", change=submit_design, label="Submit the plan for independent review", tools=("experiment.transition",)),
-        Edge("design_review", "approve_design", "running", change=pin_approved_plan, label="Execute the approved plan", tools=("experiment.transition",)),
-        Edge("design_review", "revise_plan", RETURN_TO_PLANNED.to_status, check=rejected("design_reviewer", RETURN_TO_PLANNED.to_status), change=return_plan, label=RETURN_TO_PLANNED.choose_when, event_type=RETURN_TO_PLANNED.event_type),
+        Edge("design_review", "approve_design", "running", change=pin_approved_plan, label="Applied by a passing design review", auto=True),
+        Edge("design_review", "revise_plan", RETURN_TO_PLANNED.to_status, check=rejected("design_reviewer", RETURN_TO_PLANNED.to_status), change=return_plan, label=RETURN_TO_PLANNED.choose_when, event_type=RETURN_TO_PLANNED.event_type, auto=True),
         Edge("running", "submit_results", "experiment_review", change=finish_execution, label="Submit the completed attempt for review", tools=("experiment.transition",)),
         Edge("running", "retry_running", "running", change=retry_execution, label="Recover interrupted execution", tools=("experiment.transition",), suggest=False),
-        Edge("experiment_review", "complete", "complete", change=conclude, label="Accept the reviewed conclusion", tools=("experiment.transition",)),
-        Edge("experiment_review", "revise_plan", RETURN_TO_PLANNED.to_status, check=rejected("experiment_reviewer", RETURN_TO_PLANNED.to_status), change=return_plan, label=RETURN_TO_PLANNED.choose_when, event_type=RETURN_TO_PLANNED.event_type),
-        Edge("experiment_review", "revise_execution", RETURN_TO_RUNNING.to_status, check=rejected("experiment_reviewer", RETURN_TO_RUNNING.to_status), change=return_execution, label=RETURN_TO_RUNNING.choose_when, event_type=RETURN_TO_RUNNING.event_type),
+        Edge("experiment_review", "complete", "complete", change=conclude, label="Applied by a passing experiment review", auto=True),
+        Edge("experiment_review", "revise_plan", RETURN_TO_PLANNED.to_status, check=rejected("experiment_reviewer", RETURN_TO_PLANNED.to_status), change=return_plan, label=RETURN_TO_PLANNED.choose_when, event_type=RETURN_TO_PLANNED.event_type, auto=True),
+        Edge("experiment_review", "revise_execution", RETURN_TO_RUNNING.to_status, check=rejected("experiment_reviewer", RETURN_TO_RUNNING.to_status), change=return_execution, label=RETURN_TO_RUNNING.choose_when, event_type=RETURN_TO_RUNNING.event_type, auto=True),
         *(Edge(state, name, target, label=label, tools=("experiment.transition",), suggest=False)
           for state in ("planned", "design_review", "running", "experiment_review")
           for name, target, label in (("abandon", "abandoned", "Abandon experiment"), ("mark_failed", "failed", "End failed experiment"))),

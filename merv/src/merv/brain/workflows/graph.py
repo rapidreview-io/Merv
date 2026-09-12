@@ -421,6 +421,8 @@ class Edge:
     tools: tuple[str, ...] = ()
     suggest: bool = True
     event_type: str = ""
+    # Applied by a review verdict or the runner, never by the agent's transition tool.
+    auto: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -461,7 +463,8 @@ class Evaluation:
         action = next((action for action in self.actions if action.edge.name == name), None)
         if action is None:
             ending = "terminal state " if self.snapshot.outcome else ""
-            raise WorkflowError(f"action {name!r} is not allowed from {ending}{self.snapshot.state!r}")
+            allowed = ", ".join(action.edge.name for action in self.actions if not action.edge.auto) or "none"
+            raise WorkflowError(f"action {name!r} is not allowed from {ending}{self.snapshot.state!r}; allowed: {allowed}")
         if action.issues:
             raise WorkflowError("; ".join(issue.message for issue in action.issues),
                                 details={"issues": [issue_view(issue) for issue in action.issues]})
@@ -695,7 +698,8 @@ class RecordKind(Generic[S]):
 
     @property
     def actions(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(edge.name for edge in self.workflow.edges))
+        """The transitions an agent may call; auto edges are the graph's own."""
+        return tuple(dict.fromkeys(edge.name for edge in self.workflow.edges if not edge.auto))
 
     def action_with_effect(self, effect: str) -> str:
         return next(edge.name for edge in self.workflow.edges

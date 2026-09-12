@@ -64,7 +64,7 @@ class ReviewPolicyTest(unittest.TestCase):
                          target_id=exp_id, role="design_reviewer", if_current=True)
         created = request_review(self.app.research, **arguments)
         self.assertEqual(set(created), {"review_request_id", "reviewer_capability", "role",
-                                       "target_snapshot_id", "target_snapshot", "expires_at", "reviewer_handoff"})
+                                       "target_snapshot_id", "target_snapshot", "expires_at", "reviewer_handoff", "producer_next"})
         self.assertEqual(request_review(self.app.research, **arguments),
                          {"review_request_id": created["review_request_id"], "reused": True})
         self.assertEqual(request_review(self.app.research, **arguments, expected_revision=-1), {"skipped": True})

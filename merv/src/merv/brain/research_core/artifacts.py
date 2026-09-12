@@ -8,6 +8,7 @@ slots, submission intent, and the association IDs exposed by the research API.
 from __future__ import annotations
 
 from contextlib import closing
+import json
 from typing import Any
 
 from ..workflows import artifact_roles as roles
@@ -172,6 +173,11 @@ class ResearchArtifacts:
     def _link(
         self, tx: Connection, artifact_id, target, role, lens_id="", *, active, association_id=None
     ):
+        if lens_id and target.target_type == "reflection":  # a lens names one roster lens of its wave
+            row = tx.execute("SELECT roster_json FROM reflections WHERE id = ?", (target.target_id,)).fetchone()
+            roster = [str(item.get("id")) for item in json.loads(row["roster_json"] or "[]")] if row else []
+            if lens_id not in roster:
+                raise ValidationError(f"unknown lens_id {lens_id!r}; this reflection's roster is: {', '.join(roster)}")
         association_id = association_id or new_id(prefix="artref")
         tx.execute(
             """INSERT INTO research_artifact_links

@@ -25,6 +25,9 @@ from .reflections import present_agent_reflection_state
 from .tasks import TaskContextQuery
 
 _SUBMITTED_FIELDS = ("role", "lens_id", "path", "submission_id")
+# What a reflection reviewer grades against; the documents ride in submitted_artifacts.
+_REVIEWER_REFLECTION_FIELDS = ("id", "title", "status", "attempt_index", "revision_context", "roster",
+                               "reflection_coverage", "corpus", "consolidation")
 
 
 def request_review(research: Research, **kwargs: Any) -> dict[str, Any]:
@@ -37,6 +40,10 @@ def request_review(research: Research, **kwargs: Any) -> dict[str, Any]:
             target_type=str(kwargs["target_type"]), target_id=str(kwargs["target_id"]),
             review_request_id=result.review_request_id, reviewer_capability=result.reviewer_capability,
         )
+        computed["producer_next"] = (
+            "Spawn the reviewer with reviewer_handoff.spawn_prompt and wait for its report. A pass "
+            "moves the target on in the verdict's own transaction (never call the approving "
+            "transition yourself); then call workflow.status_and_next.")
     return public_record(Public(), result, **computed)
 
 
@@ -82,7 +89,6 @@ def start_review(
     experiment_context: ExperimentContextQuery,
     review_request_id: str,
     reviewer_capability: str,
-    declared_agent: str = "",
     caller_session_id: str = "",
     assigned_agent_session_id: str = "",
     assigned_review_request_id: str = "",
@@ -93,7 +99,6 @@ def start_review(
     result = research.reviews.start(
         review_request_id=review_request_id,
         reviewer_capability=reviewer_capability,
-        declared_agent=declared_agent,
         caller_session_id=caller_session_id,
         assigned_agent_session_id=assigned_agent_session_id,
         assigned_review_request_id=assigned_review_request_id,
@@ -111,15 +116,8 @@ def start_review(
         artifacts=artifacts,
         snapshot=target_snapshot,
     ) if target_type in {"experiment", "task", "reflection"} else []
-    result["read_scope"] = [
-        "claim",
-        "experiment",
-        "task",
-        "reflection",
-        "artifact",
-        "review",
-    ]
-    result["project_context"] = {"project": research.synthesis.document(project_id=project_id)}
+    result["project_context"] = {"project": project_fields(
+        research.synthesis.document(project_id=project_id), ("id", "name", "summary"))}
     if target_type == "experiment":
         live_state = research.experiments.get_state(
             experiment_id=target_id,
@@ -142,17 +140,12 @@ def start_review(
             )
     elif target_type == "reflection":
         result["submitted_artifacts"] = submitted_artifacts
-        result["reflection_context"] = present_agent_reflection_state(
-            research.reflections.get_state(
-                project_id=project_id,
-                reflection_id=target_id,
-                include_content=True,
-            ),
-            include_content=False,
-        )
+        result["reflection_context"] = project_fields(present_agent_reflection_state(
+            research.reflections.get_state(project_id=project_id, reflection_id=target_id, include_content=True),
+        ), _REVIEWER_REFLECTION_FIELDS)
     else:
         result["target_snapshot"] = target_snapshot
-        result["context"] = result.get("workflow_context") or {}
+        result.setdefault("context", {})
         result["submitted_artifacts"] = target_snapshot.get("artifacts") or []
     return result
 

@@ -329,9 +329,12 @@ class ConsolidationSubmitInput(ProjectScopedInput):
 
 
 class ReviewRequestInput(ProjectScopedInput):
-    target_type: str = Field(min_length=1, description="Registered workflow name, such as experiment or replication.")
+    target_type: str = Field(min_length=1, description="experiment, task or reflection, or a plugin workflow's name.")
     target_id: str
-    role: str = Field(min_length=1, max_length=128, description="Role declared by the current read-only workflow node.")
+    role: str = Field(min_length=1, max_length=128, description=(
+        "The reviewer role of the gate the target is waiting at (status names it in review_gate.role): " + ", ".join(
+            f"{gate.role} ({kind.name} {kind.review_state(gate.role)})" for kind in (EXPERIMENT, TASK, REFLECTION)
+            for gate in kind.review_gates) + "; a plugin graph's read-only node declares its own."))
     reason: str = ""
     producer_session_id: str = "main"
 
@@ -341,7 +344,6 @@ class ReviewStartInput(ContractModel):
     reviewer_capability: str = Field(
         description="Use the handoff capability, or 'assigned' in the assigned auto-run reviewer session."
     )
-    declared_agent: str = ""
     caller_session_id: str = Field(
         default="",
         description=(
@@ -715,7 +717,8 @@ TOOLS: dict[str, ToolContract] = {
         telemetry_scope_field="review_request_id",
         binds_capability="review_request_id",
         input_model=ReviewStartInput,
-        description=("Start a session for the pinned request and return its immutable evidence context. "
+        description=("Start a session for the pinned request and return its immutable evidence context: the pinned "
+            "documents inline, other pinned ids (logic graph, metrics exhibit) readable with artifact.read include_content=true. "
             "Assigned reviewers pass assigned for both capability and caller session; manual reviewers use their own identity. Follow the returned review skill."),
     ),
     "review.submit": ToolContract(

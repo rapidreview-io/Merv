@@ -556,7 +556,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         secret = self.secret()
         reviewer = self.claim(secret=secret, runner_id="recovery-reviewer")
         args = {"review_request_id": request["review_request_id"], "reviewer_capability": "assigned",
-                "caller_session_id": "assigned", "declared_agent": "original"}
+                "caller_session_id": "assigned"}
         return request, secret, reviewer, args
 
     def test_review_handle_is_visible_in_truncated_actual_mcp_text_and_retry_is_compact(self) -> None:
@@ -630,7 +630,7 @@ class AgentSessionSurfaceTest(unittest.TestCase):
         with self.brain.store.transaction() as conn:
             self.assertEqual(conn.execute("SELECT status FROM review_sessions WHERE id = ?",
                                           (original_id,)).fetchone()["status"], "started")
-        recovered = self.mcp(secret=successor_secret, name="review.start", arguments={**args, "declared_agent": "successor"})
+        recovered = self.mcp(secret=successor_secret, name="review.start", arguments=args)
         self.assertEqual(recovered.status_code, 200, recovered.text)
         new_id = recovered.json()["result"]["review_session_id"]
         self.assertNotEqual(new_id, original_id)
@@ -718,7 +718,6 @@ class AgentSessionSurfaceTest(unittest.TestCase):
                 "review_request_id": request["review_request_id"],
                 "reviewer_capability": "assigned",
                 "caller_session_id": "assigned",
-                "declared_agent": "claude",
             },
         )
         self.assertEqual(started.status_code, 200, started.text)

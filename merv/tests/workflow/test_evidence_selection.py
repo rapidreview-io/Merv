@@ -273,9 +273,12 @@ class ReflectionEvidenceTest(unittest.TestCase):
             session["project_context"]["project"]["id"], self.project_id
         )
         self.assertEqual(session["reflection_context"]["id"], syn_id)
-        for artifact in session["reflection_context"]["current_attempt_artifacts"]:
-            self.assertNotIn("content", artifact)
-            self.assertTrue(artifact["tldr"])
+        # The reviewer grades against the roster and corpus; the documents
+        # themselves ride once, in submitted_artifacts.
+        self.assertEqual(set(session["reflection_context"]),
+                         {"id", "title", "status", "attempt_index", "revision_context", "roster",
+                          "reflection_coverage", "corpus", "consolidation"})
+        self.assertNotIn("workflow_context", session)
 
         lens_docs = [
             item

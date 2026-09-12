@@ -40,6 +40,7 @@ from .experiments.transition import TransitionExperiment
 from .reflections import (
     consolidation_packet,
     present_agent_reflection_state,
+    reflection_receipt,
     present_reflection_overview,
 )
 from .reviews import (
@@ -567,7 +568,6 @@ class Application:
         *,
         review_request_id: str,
         reviewer_capability: str,
-        declared_agent: str = "",
         caller_session_id: str = "",
         assigned_agent_session_id: str = "",
         assigned_review_request_id: str = "",
@@ -579,7 +579,6 @@ class Application:
             task_context=self._task_context,
             review_request_id=review_request_id,
             reviewer_capability=reviewer_capability,
-            declared_agent=declared_agent,
             caller_session_id=caller_session_id,
             assigned_agent_session_id=assigned_agent_session_id,
             assigned_review_request_id=assigned_review_request_id,
@@ -650,14 +649,10 @@ class Application:
         reflection_id: str,
         transition: str,
     ) -> dict[str, Any]:
-        return present_agent_reflection_state(
-            self.research.reflections.transition(
-                project_id=project_id,
-                reflection_id=reflection_id,
-                transition=transition,
-            ),
-            include_content=False,
-        )
+        before = self.research.reflections.get_state(project_id=project_id, reflection_id=reflection_id).status
+        return reflection_receipt(
+            self.research.reflections.transition(project_id=project_id, reflection_id=reflection_id, transition=transition),
+            transition=transition, from_status=before)
 
     def consolidation(self, *, project_id: str, reflection_id: str) -> dict[str, Any]:
         state = self.research.reflections.get_state(project_id=project_id, reflection_id=reflection_id, include_content=True)
@@ -698,19 +693,17 @@ class Application:
         # agent is never trusted to say which branch head it reviewed.
         decisions = [{**decision, "source_sha": str(workspaces.get(str(decision.get("experiment_id") or ""), {}).get("head_sha") or "")}
                      for decision in decisions]
-        return present_agent_reflection_state(
-            self.research.reflections.submit_consolidation(
-                project_id=project_id,
-                reflection_id=reflection_id,
-                base_sha=base_sha,
-                proposal_sha=proposal_sha,
-                summary=summary,
-                validation=validation,
-                decisions=decisions,
-                producer_session_id=producer_session_id,
-            ),
-            include_content=False,
-        )
+        previous = ((state.consolidation or {}).get("proposal") or {}).get("id")
+        after = self.research.reflections.submit_consolidation(
+            project_id=project_id, reflection_id=reflection_id, base_sha=base_sha, proposal_sha=proposal_sha,
+            summary=summary, validation=validation, decisions=decisions, producer_session_id=producer_session_id)
+        proposal = after.consolidation["proposal"]
+        return reflection_receipt(
+            after, transition="submit_consolidation", from_status=state.status,
+            proposal_id=proposal["id"], proposal_revision=proposal["revision"],
+            **({"superseded_proposal_id": previous} if previous else {}),
+            next_action=("Request the consolidation_reviewer with review.request (auto-run dispatches it for you) and spawn "
+                         "the reviewer with its spawn_prompt; a pass hands the wave to the Merv runner, which publishes."))
 
     def prepare_agent_advance(
         self, *, project_id: str, instance_id: str, runner_id: str
