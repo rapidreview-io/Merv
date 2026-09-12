@@ -121,6 +121,8 @@ Do not create or modify claims, experiments, or tasks directly. Successful publi
 materializes the reviewed change spec. Follow the artifact and reflection tool
 contracts for fields, upload commands, lints, and allowed transitions; after
 editing an artifact, resubmit its bytes before retrying a gate.
+`reflection.transition` answers with a receipt (status, gate checklist, allowed
+transitions), not the wave; read `reflection.get` for content.
 
 ## Coordinate independent review
 
@@ -154,10 +156,13 @@ Account for every experiment as used_as_is, adapted, reviewed_not_used or supers
 with a concrete reason, actual integration kind and any covering experiment.
 Keep reproducibility and useful tests; leave discarded approaches in research history.
 Make the smallest coherent change, run meaningful checks, and use
-`consolidation.submit` to pin the proposal SHA, validation and every decision.
-The independent reviewer grades that exact proposal. Returns repair only code,
-validation or decisions; they cannot reopen research or restart the lenses.
-Only the runner advances central and publishes after approval.
+`consolidation.submit` to pin the proposal SHA, validation and every decision;
+its receipt carries `proposal_id` (and `superseded_proposal_id` when it
+replaces one) and the next action. The independent reviewer grades that exact
+proposal. Returns repair only code, validation or decisions; they cannot reopen
+research or restart the lenses. A passed consolidation review leaves the wave
+in review status: only the runner advances central and publishes, and no
+agent transition follows.
 
 ## Start materialized work after publication
 

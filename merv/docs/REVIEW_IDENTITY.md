@@ -33,26 +33,25 @@ is workflow-level rather than cryptographic identity.
 5. A separate reviewer session presents the capability:
 
    ```text
-   review.start(review_request_id, reviewer_capability, caller_session_id, declared_agent?)
+   review.start(review_request_id, reviewer_capability, caller_session_id)
    ```
 
    `caller_session_id` is required and its declared value must differ from the
-   producer's declared session value.
-6. `review.start` returns bounded project orientation, the target's slim
-   experiment or reflection context, and the current attempt's full submitted
-   gated-role artifacts plus any system metrics exhibit. Ordinary code, input,
-   result, config, model, and note files are not bundled; reviewers obtain any
-   additional context through focused ordinary read-only calls. The reviewer
-   skill imposes a procedural read-only role. The reviewer submits one
-   structured verdict through:
+   producer's declared session value. The session records the verified
+   `agent_id` of the context window that started it.
+6. `review.start` returns the project's `{id, name, summary}`, the target's
+   slim experiment or reflection context, and the current attempt's full
+   submitted gated-role artifacts; other pinned ids (logic graph, metrics
+   exhibit) are read with `artifact.read`. Ordinary code, input, result,
+   config, model, and note files are not bundled. The reviewer skill imposes a
+   procedural read-only role. The reviewer submits one structured verdict
+   through:
 
    ```text
    review.submit(review_session_id, verdict, synopsis, return_to?, notes?, findings?, evidence?)
    ```
 
-The requesting session must not start the review on the reviewer's behalf. The
-server can compare the two declared strings, but cannot prove which client made
-the call.
+The requesting session must not start the review on the reviewer's behalf.
 
 ## Snapshot and capability checks
 
@@ -68,9 +67,11 @@ the request.
 
 At `review.submit`, the caller presents only `review_session_id`. The brain
 rejects a missing/already-submitted session, a request that is no longer open, a
-changed target snapshot, or a payload/`return_to` that violates the role
-contract. It does not receive or recheck the capability, its expiry, or the
-caller session at submission time.
+changed target snapshot, a payload/`return_to` that violates the role
+contract, or a caller whose `agent_id` is not the one that started the session.
+It does not receive or recheck the capability or its expiry at submission
+time. The verdict applies its graph route in the same transaction and the
+receipt reports the target's status before and after.
 
 The request remains startable while its status is `requested` or `started` and
 its capability is unexpired, so a capability is not consumed by the first
@@ -88,12 +89,11 @@ revoke-and-reissue: all prior requested or started sessions for that gate become
 ## What the snapshot pins
 
 The snapshot identifies the target status, attempt, and exact submitted artifact
-versions. `review.start` bundles pinned bytes for the gated artifacts and any
-system metrics exhibit, alongside project and target context read at successful
-review start. Ordinary artifact ids remain snapshot references but their bytes
-are not included in that response. Reviewers judge the bundled submissions
-rather than later working-tree edits. A gated file revision must be
-re-registered and reviewed under a fresh snapshot.
+versions. `review.start` bundles pinned bytes for the gated documents alongside
+project and target context; the logic graph, any metrics exhibit and other
+artifacts remain pinned ids whose bytes come from `artifact.read`. Reviewers
+judge the pinned submissions rather than later working-tree edits. A gated file
+revision must be re-registered and reviewed under a fresh snapshot.
 
 Experiment-attempt rejections must choose:
 
@@ -112,5 +112,5 @@ exists only on legacy rows created before that requirement.
 
 This records only that two caller-supplied strings were non-empty and unequal.
 It does not prove that two clients—or two independent models—performed the
-reasoning, and possession of `review_session_id` is sufficient to submit. The
-current clients do not provide unforgeable per-agent identity metadata.
+reasoning. Submission needs `review_session_id` from the context window whose
+`agent_id` opened the session; that id names a context window, not a model.

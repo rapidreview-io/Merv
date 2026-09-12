@@ -18,8 +18,10 @@ Confirm that the experiment workflow allows execution. Inspect
 `sandbox.options`, choose suitable available hardware, and pass its exact
 `provider` and `instance_type` to `sandbox.request`. Supply a caller-owned
 OpenSSH public key; keep the private key local. A `needs_selection` response
-requires selecting an offer. A `provisioning` response requires polling
-`sandbox.get`, not another request.
+requires selecting an offer; an unknown `instance_type` is refused with the
+nearest offers named. A `provisioning` response is a short poll receipt with
+`poll_after_seconds`: poll `sandbox.get`, never repeat the request. Once
+`running`, `sandbox.get` carries the full facts and an `ssh` block.
 
 A running response includes certificate SSH access. Save `ssh.certificate`
 beside your private key as `<key>-cert.pub`, pin `ssh.host_public_key` in a
@@ -35,27 +37,28 @@ Use `additional=true` only when an experiment needs another machine.
 
 ## Run and observe
 
-Use `sandbox.run` for durable detached work. Give it a readable name, command,
-working directory, timeout and optional output directory. Save its returned
-job ID. An idempotency key can safely retry the same submitted job; reuse it
-only with identical inputs.
+Use `sandbox.run` for durable detached work. Give it a command, working
+directory, timeout and optional output directory (the name defaults to the
+command). It answers with `job_id`, `cursor` and the ready-made `sandbox.job`
+call to wait on. An idempotency key can safely retry the same submitted job;
+reuse it only with identical inputs.
 
-Read `sandbox.job` for state and exit code. Pass the previous `after` cursor
-and `wait_seconds` up to 30 to wait for a change. For output, select
-`stream=stdout` or `stderr` with an offset and bounded limit; use the returned
-extent to detect truncated or expired bytes. `sandbox.runs` lists an
-experiment's jobs, including jobs from released machines. Cancellation is
-`sandbox.job(cancel=true)`.
+To wait, call that `sandbox.job(job_id, after, wait_seconds=30)` and call
+again until `state` is terminal (`succeeded`, `failed`, `cancelled`,
+`timed_out`); 30s is the cap merv-sandboxes honours, so a longer ask would only
+promise a hold nobody keeps. The wait spans one turn — a job that finishes
+after the turn ends is read back on the next call. For output, select
+`stream=stdout` or `stderr` with `tail=4096` (or an offset and limit; the
+default is 4 KB); use the returned extent to detect truncated or expired
+bytes. `sandbox.runs` lists an experiment's jobs as `runs[]`, including jobs
+from released machines, and with `wait_seconds` blocks until any pending job
+changes. `sandbox.terminal` is a fresh bounded tail of the latest job on each
+call, not an increment. Cancellation is `sandbox.job(cancel=true)`.
 
-Plain SSH commands are not automatically durable jobs. The retired
-`merv_run` wrapper is not installed on new machines. To wait for a job, call
-`sandbox.runs` with its label and `wait_seconds=30` and call again until the row
-is `finished`; 30s is the cap merv-sandboxes honours, so a longer ask would only
-promise a hold nobody keeps. The wait spans one turn — a job that finishes after
-the turn ends is read back on the next `sandbox.runs` call.
-Passive SSH terminal transcripts and utilization samples are unavailable;
-use job output and retained results for evidence. Do not infer success from
-a connection closing or from a missing receipt.
+Plain SSH commands are not durable jobs, and passive SSH transcripts and
+utilization samples are unavailable; use job output and retained results for
+evidence. Do not infer success from a connection closing or from a missing
+receipt.
 
 ## Retain and release
 

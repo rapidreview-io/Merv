@@ -304,15 +304,19 @@ Reviews use request-scoped capabilities rather than prompt trust:
    returns the plaintext capability once with a reviewer handoff prompt.
 3. A separate reviewer calls `review.start`. An auto-run credential supplies
    the authenticated session and exact request; an interactive handoff uses its
-   capability and a declared session string distinct from the producer.
-4. `review.start` returns bounded project orientation, the target's slim
-   experiment/reflection context, and full current-attempt gated artifacts plus
-   any system exhibit; the reviewer skill imposes a procedural read-only role
-   whose only intended state-changing call is `review.submit`.
+   capability and a declared session string distinct from the producer. The
+   session binds to the reviewer's `agent_id`.
+4. `review.start` returns the project's name and summary, the target's slim
+   experiment/reflection context, and full current-attempt gated artifacts;
+   other pinned ids are read with `artifact.read`. The reviewer skill imposes a
+   procedural read-only role whose only intended state-changing call is
+   `review.submit`.
 5. Request creation validates a workflow role against the active gate. Start
    rejects invalid/expired/superseded capabilities, equal declared session
-   strings, or stale snapshots. Submit rechecks that the request is open and
-   the snapshot is current, and only the first valid submission is accepted.
+   strings, or stale snapshots. Submit rechecks that the request is open, the
+   snapshot is current and the caller is the starting context window; only the
+   first valid submission is accepted, and it applies the verdict's graph edge
+   itself.
 
 Auto-run reviewer credentials deny unrelated writes, artifacts uploads, and
 arbitrary graph exits. General project keys used for interactive reviews still

@@ -43,30 +43,26 @@ For an interactive session, operate in this loop:
 1. If the project is unknown, call `project(action="list")` and select the one
    the user means. Never guess an id. Use `current` only when the credential is
    known to be bound to exactly one project.
-2. Read the selected project's full summary as the user's background/problem,
-   goal and scope. Judge missing context against your assignment, and ask focused
-   questions in this conversation when needed. Persist only user-grounded
-   clarification with `project.context.update(project_id, summary, expected_summary)`;
-   preserve existing meaning and reread/reconcile if the expected text is stale.
-   Do not invent intent, impose a completeness checklist, or put agent-authored
-   methods/results in this field. Auto-run credentials can read but cannot edit
-   intent; they do not conduct background interviews.
+2. Read the selected project's summary as the user's Introduction: background,
+   goal and scope. When the conversation clarifies it, persist only that with
+   `project.context.update` (its contract carries the rules); auto-run
+   credentials read the Introduction but cannot edit it.
    Call `workflow.status_and_next(project_id, experiment_id?)`.
-3. Read its context, gates, allowed actions, missing evidence, and next action.
+3. Read its `workflow` (state, revision, next action and what blocks it) and
+   `context`. Project scope orients: the project document plus one row per
+   experiment and task; scope to an `experiment_id` or `task_id` for that
+   record's own workflow.
 4. Before starting the current node's work interactively, call
    `workflow.begin(project_id, instance_id, expected_revision)` with the revision
-   from its workflow view. It rechecks prerequisites, records actual start, and
-   returns the starting brief without changing state. Then do that work locally
-   or through the specialist skill it names. Auto-run activates its lease itself.
+   from its workflow view; then do that work locally or through the specialist
+   skill it names. Auto-run activates its lease itself.
 5. Submit mutations and evidence through MCP.
 6. Call `workflow.status_and_next` again after every transition or review.
 
 Pass the selected `project_id` explicitly to every project-scoped operation.
 Read the living project document in your joining context or with
-`project(action="overview", project_id=...)`. Use `project(action="records", project_id=...)`
-to discover evidence or check a proposed claim, experiment, or task against settled work.
-Methods/Results are maintained by the project-author workflow after experiment
-completion and reflection waves; keep detailed findings in the submitted evidence.
+`project(action="overview")`; use `project(action="records")` to check a
+proposed claim, experiment, or task against settled work.
 
 ## Experiment or task?
 
@@ -82,11 +78,10 @@ this work exist to change confidence in a research claim?
   a claim and never move claim status; the reflection reads their outcomes.
 
 Tasks are uncapped; experiments keep their cap. Both may depend on other wave
-nodes (`depends_on`): execution dispatch waits until every dependency succeeds,
-and task delivery rechecks the same condition. An approved experiment is already
-`running` while its prerequisites may still block actual work. A failed dependency shows up as
-`dependency_failed` — end the dependent node with a reason, or leave it for the
-next reflection to replan.
+nodes (`depends_on`): dispatch and task delivery wait until every dependency
+succeeds, so an approved experiment can be `running` while still blocked. A
+failed dependency shows as `dependency_failed` — end the dependent node with a
+reason, or leave it for the next reflection to replan.
 
 ## Run a task
 
@@ -107,7 +102,9 @@ pins `brief.md` from them at creation, and brief submissions are refused. A
 wrong goal is an honest miss in the delivery, or the owner ends the task and
 creates a better one.
 
-1. **Goal and deliverables** are fixed at `task.create`: goal = 2-4 sentences,
+1. **Goal and deliverables** are fixed at `task.create` (it answers `{id, name,
+   status, folder, next}`; `next` names the delivery document and its required
+   sections): goal = 2-4 sentences,
    what needs to be done and why, standalone (name concrete datasets, tools,
    and experiments — never "the wave" or "this reflection"); deliverables =
    one item per thing that must exist, each carrying its own acceptance
@@ -139,9 +136,10 @@ checks, brief, delivery, and dependencies. A closed task refuses new artifacts.
 
 ## Keep one experiment folder
 
-Create the folder returned by `experiment.create`, normally
-`experiments/<name>/`, before writing experiment files. Keep its plan, code,
-configuration, compact results, figures, report, and logic graph together.
+`experiment.create` answers `{id, name, status, folder, next}`. Create `folder`
+(normally `experiments/<name>/`) yourself before writing experiment files, and
+write the document `next` names with its `required_sections`. Keep the plan,
+code, configuration, compact results, figures, report, and logic graph together.
 Choose a short experiment name that distinguishes it from sibling
 experiments. Write the `intent` as the ask, standalone: what this tests and
 why the project needs it, naming the datasets, tasks, and sibling experiments
@@ -170,8 +168,6 @@ robustness checks, then call `candidate.promote` with the observed champion id
 (or `""` when none) and a substantive reason. Refresh and reconsider if the CAS
 fails. A pending workspace nomination is visible but cannot become champion.
 Keep submitting later challengers as they arrive; promotion never ends research.
-Put small candidate files in Artifacts and large model/checkpoint bytes in
-merv-sandboxes storage—never Git.
 
 ## Author the experiment record
 
@@ -232,20 +228,22 @@ Keep CSV evidence and unsuccessful runs even when they are not exhibit sources.
 
 ## Submit artifacts
 
-Follow `artifact_guidance` and the `artifact.upload` tool contract for roles,
-fields, limits, figures, and upload commands. The durable evidence is the
-uploaded content, not the current local file:
+Follow the `artifact.upload` tool contract for roles, fields, limits, figures,
+and upload commands. The durable evidence is the uploaded content, not the
+current local file:
 
 1. Write or update the local file.
 2. Call `artifact.upload` with the file `path` and
    `attach_to: {target_type, target_id, role}` from the workflow. Add `lens_id`
    inside `attach_to` only for `reflection_lens_doc`.
-3. Run every returned upload command, including figure uploads.
+3. Run every returned upload command, including figure uploads. Each prints
+   the receipt on success or the server's reason on failure (an oversized role
+   document, say); until it succeeds the slot reads `pending_upload` in status.
 4. After any edit that should affect a gate, resubmit and upload the file.
 
 Use artifact ids already returned in authoritative context. Batch focused
-reads with `artifact.read`; request full content only when summaries cannot
-answer the question.
+reads with `artifact.read`; request content only when summaries cannot answer
+the question — a read is 16 KB per artifact, page with `offset=next_offset`.
 
 ## Route specialist work
 
@@ -257,11 +255,9 @@ answer the question.
 - Load `project-reflection` when project-level reflection is requested or
   `workflow.status_and_next` reports reflection work or a reflection gate.
 - Keep the living literature review current when a paper materially informs a
-  claim, plan, or conclusion: use `litreview.cite` to link the paper to sections,
-  experiments or claims (arXiv/DOI/URL forms are deduplicated; provide a fallback
-  title for other hosts). Inspect the outline and edit only the relevant section,
-  keeping its TLDR current. Re-read after revision conflicts. Literature guidance
-  is advisory, not an experiment gate; three unreviewed papers trigger a nudge.
+  claim, plan, or conclusion: `litreview.cite` links it to sections, experiments
+  or claims; edit only the relevant section and keep its TLDR current. Literature
+  guidance is advisory, not an experiment gate.
 - With no active work, consider reflection if the project logic has drifted;
   otherwise choose the next experiment. A reflection-required creation gate
   means publish the wave before creating another experiment. Claims and tasks
@@ -282,24 +278,22 @@ to a separate read-only agent:
 - `task-review` after a task's delivery is submitted.
 
 The reviewer owns `review.start` and `review.submit`; the producing agent must
-not review its own work. Preserve the capability long enough to hand it off,
-and do not replace a still-valid request merely because review started.
+not review its own work, and a review session accepts its verdict only from
+the context window that started it. Preserve the capability long enough to
+hand it off, and do not replace a still-valid request merely because review
+started.
 
-Review submission routes the next state atomically: a passing design enters
-execution directly; a passing attempt completes the experiment; a passing task
-review completes the task. Interactive agents refresh `workflow.status_and_next`
-afterward. A dispatched reviewer stops after its verdict, and a fresh assignment
-handles any revisions. Revise and resubmit affected artifacts before retrying a
-rejected gate.
+The verdict moves the target in its own transaction — a passing design to
+`running`, a passing attempt to `complete`, a passing task to `done` — and its
+receipt names the status before and after. `approve_design`, `complete` and
+`accept` are not agent transitions; after the reviewer reports, call
+`workflow.status_and_next` (`review.request` says so in `producer_next`). A
+dispatched reviewer stops after its verdict, and a fresh assignment handles any
+revisions. Revise and resubmit affected artifacts before retrying a rejected gate.
 
 ## Complete only through MCP
 
-Complete an experiment only after:
-
-- the required plan, result, report, and logic-graph evidence is submitted;
-- required reviews have passed;
-- the conclusion is grounded in the submitted record; and
-- MCP records the passing attempt review and the resulting completion.
-
-If MCP rejects an action, follow its reported gate and next action. Do not work
+An experiment completes when its attempt review passes on the submitted plan,
+result, report and logic-graph evidence; no agent call completes it. If MCP
+rejects an action, follow its reported gate and next action. Do not work
 around the state machine.

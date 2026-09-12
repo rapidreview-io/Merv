@@ -32,22 +32,16 @@ If the key is scoped to a single project, `project(action="current")` returns
 it and that is the only project the key can ever act on; a mismatched
 `project_id` is rejected. Omitting `project_id` on a project-scoped tool raises
 "project_id is required" — never guess an id, call `project(action="list")`.
-There is no linking step and no `connect` action. Use
-`project(action="overview")` for the living project document; use
+Use `project(action="overview")` for the living project document; use
 `project(action="records")` to discover the full claim and experiment inventory.
 
 ## Project Introduction
 
 The project's summary is its Introduction: one authoritative paragraph, editable
-by the user in the UI or by an interactive agent. There is no separate brief.
-Ask focused questions about the problem/background, goal, constraints, scope and
-success criteria; follow up where ambiguity affects direction. Then write a
-brief research-paper-style paragraph with an explicit goal and scope, preserving
-uncertainty rather than inventing intent. Use `project.context.update` with the
-full paragraph and exact last-read `expected_summary`. On conflict, reread and
-reconcile. There is no completeness gate. Automatically deployed sessions read
-the Introduction but cannot edit it or interview the user. Research findings
-belong in Methods/Results, not in the project definition.
+by the user in the UI or by an interactive agent through
+`project.context.update` (its contract carries the writing rules). There is no
+separate brief and no completeness gate. Automatically deployed sessions read
+the Introduction but cannot edit it or interview the user.
 
 ## Living Methods and Results
 
@@ -86,16 +80,15 @@ append a wave report. No numerical length budget or additional review gate appli
 ## Operating rules
 
 - Treat the brain state returned through MCP as authoritative. Start or resume
-  work with `workflow.status_and_next`, and follow its gate, allowed actions,
-  missing evidence, and next action. Auto-run assignments own one graph node;
+  work with `workflow.status_and_next`, and follow its gate, allowed actions
+  and next action. Auto-run assignments own one graph node;
   stop after its handoff. Interactive agents call `workflow.begin` with the
   instance id and current revision before beginning node work.
 - Local edits are not research state. Use `artifact.upload` with
-  `attach_to: {target_type, target_id, role}` to contribute research evidence.
-  Run the returned upload command to store bytes and activate the association.
-  Add `lens_id` inside `attach_to` only for `reflection_lens_doc`.
-  Workflow nodes that accept content IDs use `artifact.upload` without an
-  attachment; their submission transition records the association.
+  `attach_to: {target_type, target_id, role}` to contribute research evidence
+  and run the returned upload command; it prints the receipt or the server's
+  reason. Workflow nodes that accept content IDs upload without an attachment;
+  their submission transition records the association.
 - Load `research-workflow` for experiment and task work and
   `project-reflection` for a five-lens reflection wave. Work that tests a
   claim is an experiment; scoped work with a verifiable finish line and no
@@ -122,14 +115,17 @@ must not review its own work.
 An assigned reviewer calls `review.start` for its exact request with
 `reviewer_capability="assigned"` and `caller_session_id="assigned"`; Merv resolves
 the authenticated session. A manual handoff uses its exact capability and the
-reviewer's own declared identity. Review submission rechecks the immutable
-snapshot and applies the verdict's graph route atomically.
+reviewer's own `caller_session_id`; the session binds to the reviewer's
+`agent_id`. Review submission rechecks the immutable snapshot and applies the
+verdict's graph route atomically, reporting the target's status before and after.
 
 Auto-run reviewer credentials enforce read-only access outside their review
 calls. Interactive reviewers using a general project key follow the skill's
 read-only procedure. A passing design enters execution directly; passing attempt
 and task reviews complete work; passing reflection review enters consolidation.
-The assigned agent stops after its verdict.
+`approve_design`, `complete` and `accept` are not agent transitions: the
+producer refreshes `workflow.status_and_next` instead. The assigned agent stops
+after its verdict.
 
 ## Sandbox loop
 
