@@ -451,20 +451,20 @@ class AgentSessions:
         if (execution.get("read_only", True) or policy.get("mode") != "persistent"
                 or not all(row[key] for key in ("workflow_instance_id", "workspace_ref", "base_sha", "head_sha"))):
             return
-        candidates = tx.execute(
+        others = tx.execute(
             "SELECT workflow_instance_id, workflow_revision, created_at, status, execution_json "
             "FROM agent_sessions WHERE project_id = ? AND id <> ? "
             "AND (workflow_instance_id = ? OR workspace_ref = ?)",
             (row["project_id"], row["id"], row["workflow_instance_id"], row["workspace_ref"]),
         ).fetchall()
-        for candidate in candidates:
-            workspace = _json_column(candidate["execution_json"]).get("workspace") or {}
+        for other in others:
+            workspace = _json_column(other["execution_json"]).get("workspace") or {}
             if workspace.get("mode") != "persistent":
                 continue
             # Same-second creation order is ambiguous; never guess from random IDs.
-            if (candidate["status"] in LIVE_STATUSES or candidate["created_at"] >= row["created_at"]
-                    or (candidate["workflow_instance_id"] == row["workflow_instance_id"]
-                        and int(candidate["workflow_revision"]) > int(row["workflow_revision"]))):
+            if (other["status"] in LIVE_STATUSES or other["created_at"] >= row["created_at"]
+                    or (other["workflow_instance_id"] == row["workflow_instance_id"]
+                        and int(other["workflow_revision"]) > int(row["workflow_revision"]))):
                 raise WorkflowError("a newer or concurrent persistent workspace owner fences finalization")
         current = tx.execute(
             "SELECT * FROM agent_workspaces WHERE project_id = ? AND instance_id = ?",
