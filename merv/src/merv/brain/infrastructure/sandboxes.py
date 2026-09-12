@@ -388,6 +388,7 @@ class RemoteSandboxes:
                 raise NotFoundError("job is not attached to this experiment")
         result = self._call("POST" if cancel else "GET", path + ("/cancel" if cancel else ""),
                             project_id=pid, params=None if cancel else {"wait": min(MAX_WAIT_SECONDS, max(0, wait_seconds)), "after": after or ""})
+        result.pop("request", None)  # the row already carries command, cwd and name
         if stream is not None:
             if stream not in {"stdout", "stderr"} or offset < 0 or not 1 <= (tail or limit) <= 1048576:
                 raise ValidationError("output requires stdout/stderr, a nonnegative offset and a limit/tail of 1–1048576 bytes")
