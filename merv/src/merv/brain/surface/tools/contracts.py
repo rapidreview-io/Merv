@@ -21,9 +21,8 @@ from ...kernel.tools import ContractModel, ProjectScopedInput, ToolContract
 from ...programs import INSTALLED
 from ...research_core import (
     ENTITY_REF_VOCABULARY, FEED_ADOPTABLE_ROLES, FEED_AUTHOR_ROLES,
-    PROJECT_OVERVIEW_CONTENTS,
+    PROJECT_OVERVIEW_CONTENTS, review_request_tool,
 )
-from ...research_core.tools import review_request_tool
 from ...workflows import ARTIFACT_TOOL_VOCABULARY, Program
 
 
