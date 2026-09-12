@@ -86,10 +86,13 @@ class LitreviewToolsTest(unittest.TestCase):
             self._call("litreview.edit", op="add", tldr="x")  # missing title
         with self.assertRaises(ToolValidationError):
             self._call("litreview.edit", op="edit", section="s")  # no revision
-        with self.assertRaises(ToolValidationError):
+        with self.assertRaises(ToolValidationError) as ctx:
             self._call(
                 "litreview.edit", op="add", title="Big", tldr="x", body="é" * 8_001
             )
+        # The refusal names the field; it never echoes the body or a docs URL.
+        self.assertEqual(set(ctx.exception.details["errors"][0]), {"loc", "msg", "type"})
+        self.assertLess(len(str(ctx.exception.details)), 400)
         with self.assertRaises(ToolValidationError):
             self._call("litreview.cite")  # no identity
         with self.assertRaises(ToolValidationError):
