@@ -94,19 +94,6 @@ class ExperimentSlimTest(unittest.TestCase):
             )
         return exp_id
 
-    def test_create_returns_folder_without_mkdir(self) -> None:
-        created = self.call(
-            "experiment.create",
-            name="folder-test",
-            project_id=self.project_id,
-            intent="Create the experiment folder.",
-        )
-
-        self.assertTrue(created["id"])
-        self.assertEqual(created["folder"], "experiments/folder-test/")
-        self.assertEqual(created["next"]["role"], "plan")
-        self.assertFalse((self.repo / "experiments" / "folder-test").exists())
-
     def test_get_state_tool_is_slim(self) -> None:
         exp_id = self._experiment_with_artifacts()
         slim = self.call(

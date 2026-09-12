@@ -229,7 +229,6 @@ class TaskWorkflowTest(ResearchCase):
         done = self.call("task.get_state", project_id=self.project_id, task_id=task_id)
         self.assertEqual((done["status"], done["revision_context"]), ("done", ""))
         self.assertNotIn("\n", done["outcome"])
-        self.assertEqual(self.call("task.get_state", project_id=self.project_id, task_id=task_id)["status"], "done")
 
     def test_fail_verdict_ends_the_task(self) -> None:
         task_id = self.create_task()
