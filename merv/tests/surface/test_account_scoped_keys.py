@@ -280,11 +280,12 @@ class AccountKeyOverTheWireTest(unittest.TestCase):
         )
         self.assertEqual(overview["project"]["id"], chosen)
 
-    def test_current_hands_back_the_list_instead_of_a_mint_nudge(self) -> None:
+    def test_current_points_at_the_list_instead_of_a_mint_nudge(self) -> None:
         body = self._result("project", {"action": "current"})
+        self.assertEqual(set(body), {"exists", "hint"})
         self.assertFalse(body["exists"])
         self.assertNotIn("Mint", body["hint"])
-        self.assertEqual(len(body["projects"]), 2)
+        self.assertIn('project(action="list")', body["hint"])
 
     def test_overview_without_a_project_id_fails_closed_naming_the_fix(self) -> None:
         response = self._tool("project", {"action": "overview"})
