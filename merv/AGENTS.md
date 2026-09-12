@@ -39,15 +39,10 @@ There is no linking step and no `connect` action. Use
 ## Project Introduction
 
 The project's summary is its Introduction: one authoritative paragraph, editable
-by the user in the UI or by an interactive agent. There is no separate brief.
-Ask focused questions about the problem/background, goal, constraints, scope and
-success criteria; follow up where ambiguity affects direction. Then write a
-brief research-paper-style paragraph with an explicit goal and scope, preserving
-uncertainty rather than inventing intent. Use `project.context.update` with the
-full paragraph and exact last-read `expected_summary`. On conflict, reread and
-reconcile. There is no completeness gate. Automatically deployed sessions read
-the Introduction but cannot edit it or interview the user. Research findings
-belong in Methods/Results, not in the project definition.
+by the user in the UI or by an interactive agent through
+`project.context.update` (its contract carries the writing rules). There is no
+separate brief and no completeness gate. Automatically deployed sessions read
+the Introduction but cannot edit it or interview the user.
 
 ## Living Methods and Results
 
@@ -86,8 +81,8 @@ append a wave report. No numerical length budget or additional review gate appli
 ## Operating rules
 
 - Treat the brain state returned through MCP as authoritative. Start or resume
-  work with `workflow.status_and_next`, and follow its gate, allowed actions,
-  missing evidence, and next action. Auto-run assignments own one graph node;
+  work with `workflow.status_and_next`, and follow its gate, allowed actions
+  and next action. Auto-run assignments own one graph node;
   stop after its handoff. Interactive agents call `workflow.begin` with the
   instance id and current revision before beginning node work.
 - Local edits are not research state. Use `artifact.upload` with
@@ -122,14 +117,17 @@ must not review its own work.
 An assigned reviewer calls `review.start` for its exact request with
 `reviewer_capability="assigned"` and `caller_session_id="assigned"`; Merv resolves
 the authenticated session. A manual handoff uses its exact capability and the
-reviewer's own declared identity. Review submission rechecks the immutable
-snapshot and applies the verdict's graph route atomically.
+reviewer's own `caller_session_id`; the session binds to the reviewer's
+`agent_id`. Review submission rechecks the immutable snapshot and applies the
+verdict's graph route atomically, reporting the target's status before and after.
 
 Auto-run reviewer credentials enforce read-only access outside their review
 calls. Interactive reviewers using a general project key follow the skill's
 read-only procedure. A passing design enters execution directly; passing attempt
 and task reviews complete work; passing reflection review enters consolidation.
-The assigned agent stops after its verdict.
+`approve_design`, `complete` and `accept` are not agent transitions: the
+producer refreshes `workflow.status_and_next` instead. The assigned agent stops
+after its verdict.
 
 ## Sandbox loop
 

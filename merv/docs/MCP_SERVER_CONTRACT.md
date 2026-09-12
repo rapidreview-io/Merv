@@ -47,9 +47,10 @@ have each subagent call `agent.hello` itself. See `docs/AGENT_IDENTITY.md`.
 
 For a credential confined to one project, `action="current"` returns that
 project without a `project_id`. An account-scoped credential has no single
-current project and receives its reachable list instead. Pass the selected id
-explicitly thereafter. `action="overview"` returns the selected project's
-macro context. `action="create"` is forbidden to a project-bound key.
+current project and receives `{exists: false, hint}` pointing at `list`, whose
+rows are `{id, name, summary, created_at}`. Pass the selected id explicitly
+thereafter. `action="overview"` returns the selected project's macro context.
+`action="create"` is forbidden to a project-bound key.
 
 ## Tool catalog
 
@@ -209,14 +210,17 @@ in `workflow.status_and_next` use the same evaluated graph.
 A result-review rejection must return to `running` when the approved plan still
 stands, or to `planned` with a new attempt when the design is flawed.
 
-`workflow.status_and_next` returns a deliberately slim orientation view:
-project reference, canonical experiment context, gate, allowed/blocked actions,
-missing evidence, review substate, and next action. `experiment.transition`
-returns only a compact state-change acknowledgement plus operation-specific
-side-effect receipts. Agents call `workflow.status_and_next` afterward when
-they need refreshed context. The HTTP UI uses richer service views.
+`workflow.status_and_next` returns a deliberately slim view: `{scope, workflow,
+context}`, where `workflow` states each gate once (`suggested_action` when one
+is open, else `blocked_actions`) beside the revision, review substate and next
+action. Project scope carries the project document and one row per experiment
+and task; experiment scope adds a `sandbox` summary. `experiment.transition`
+returns a compact state-change acknowledgement plus operation-specific
+side-effect receipts. The HTTP UI uses richer service views.
 
-`experiment.create` accepts `depends_on` (exp_/task_ ids). An experiment may be
+`experiment.create` returns `{id, name, status, folder, next}`; `next` names
+the plan document, its role and required sections. It accepts `depends_on`
+(exp_/task_ ids). An experiment may be
 `running` after plan approval while `dependencies_pending` blocks its execution
 lease. The same prerequisites are rechecked in the lease transaction. Actual
 work start is recorded when the execution agent activates its lease, or an
@@ -236,7 +240,6 @@ in_progress -> in_review -> done
 
 ```text
 submit_delivery
-accept
 mark_failed
 ```
 
@@ -245,9 +248,11 @@ enforcement, `allowed_transitions`, gate checklists, review returns, and
 `workflow.status_and_next(task_id=...)`.
 
 - `task.create(name, goal, deliverables, depends_on?)` creates the task
-  straight into `in_progress`; the name becomes the folder `tasks/<name>/`.
-  Goal and deliverables are immutable — Merv renders and pins `brief.md` from
-  them, and brief submissions against tasks are refused.
+  straight into `in_progress` and returns `{id, name, status, folder, next}`;
+  the name becomes the folder `tasks/<name>/` and `next` names the delivery
+  document with its required sections. Goal and deliverables are immutable —
+  Merv renders and pins `brief.md` from them, and brief submissions against
+  tasks are refused.
 - `submit_delivery` requires a `delivery` artifact whose `Confirmations`
   section carries one numbered entry per deliverable, and every dependency
   succeeded.
@@ -295,11 +300,14 @@ identifies the separate reviewer node and its read-only role.
 - A passing `reflection_reviewer` review applies `begin_consolidation` in the
   review transaction, handing work to a separate consolidator.
 - `consolidation.submit` records one immutable proposal with a reasoned decision
-  for every experiment and its declared Git integration kind.
-- `publish` is internal: it requires a passing `consolidation_reviewer` review
-  and the runner's central-ref receipt, then applies claim changes and creates
-  the reviewed wave: tasks (each with its brief pinned from the spec),
-  experiments, and the dependency edges between them.
+  for every experiment and its declared Git integration kind. It and
+  `reflection.transition` answer with a receipt (status, gate checklist,
+  allowed transitions; the proposal id and any `superseded_proposal_id`).
+- `publish` is the runner's: after a passing `consolidation_reviewer` review the
+  wave stays in review status until the central-ref receipt arrives, then
+  publish applies claim changes and creates the reviewed wave: tasks (each
+  with its brief pinned from the spec), experiments, and the dependency edges
+  between them.
 
 A rejection returns to `synthesizing` when the lens documents stand, or to
 `reflecting` with a new attempt when the fan-out must be repeated.
@@ -330,34 +338,30 @@ the capability, and returns the plaintext capability once with
 open requests for the same target and role.
 
 `caller_session_id` is required at `review.start` and must differ from the
-producer session. Start returns the project id, bounded `project_context`, the
-target's canonical experiment `context` or `reflection_context`. Experiment
-context is built only from artifact versions pinned to the immutable request
-snapshot: the plan and report are supplied according to the normal context
-rules, while other artifacts are listed by retrievable id. Reflection reviews
-continue to receive their pinned `submitted_artifacts`. A capability remains startable while the
-request is `requested` or `started` and the capability is unexpired; the first
-accepted submission closes the request and prevents other sessions from
-submitting.
-
-`project_context` is the same five-section macro packet returned by
-`project(action="overview")` and by project-scoped
-`workflow.status_and_next`: project metadata; latest published reflection plus
-only its reflection-document and project-graph references; the literature
-General Summary; every claim; and every experiment with tested claim ids and
-one status-dependent summary. Live experiment rows summarize the latest plan;
-reviewing or terminal rows prefer the latest report. Rich workflow, review,
-artifact, and storage state is excluded.
+producer session; the session also binds to the verified `agent_id` that
+started it, and only that context window may submit. Start returns the project
+id, `project_context` (`{id, name, summary}`), and the target's canonical
+experiment `context` or `reflection_context`. Experiment context is built only
+from artifact versions pinned to the immutable request snapshot: the plan and
+report are supplied according to the normal context rules, while other
+artifacts (logic graph, metrics exhibit) are listed by id for `artifact.read`.
+Reflection reviews receive their pinned `submitted_artifacts`. A capability
+remains startable while the request is `requested` or `started` and the
+capability is unexpired; the first accepted submission closes the request and
+prevents other sessions from submitting.
 
 `review.submit` requires a plain-language `synopsis`. Rejected experiment-attempt
 and reflection reviews require `return_to`; design-review rejections always
-return to `planned`. Rejection immediately routes the target state. A passing
-review satisfies a workflow gate only when its role matches that gate and its
-snapshot is current; `human` and `automated_check` passes do not replace the
-required workflow reviewer. A passing design, attempt, task, or reflection
-review follows its graph's declared verdict edge in the same transaction. A
-passing consolidation review waits for the runner's central-ref receipt before
-publication.
+return to `planned`. The verdict routes the target in its own transaction: a
+passing design, attempt, task, or reflection review follows its graph's `auto`
+verdict edge, a rejection follows the return path, and a passing consolidation
+review leaves the wave for the runner's central-ref receipt. The receipt
+reports `target.status_before`/`status_after` and a `next_action` for the
+producer, who refreshes `workflow.status_and_next` rather than transitioning.
+A passing review satisfies a workflow gate only when its role matches that gate
+and its snapshot is current; `human` and `automated_check` passes do not
+replace the required workflow reviewer. `review.request` returns
+`producer_next` saying the same.
 
 Auto-run reviewer credentials are read-only outside their exact `review.start`
 and `review.submit` capability. In an assigned session, use the assignment's
@@ -384,8 +388,10 @@ multiple active sandboxes.
 
 `sandbox.request` requires a caller-owned OpenSSH public key. The brain records
 and authorizes the public key; caller private-key material never enters brain
-state. The response and `sandbox.get` expose SSH facts such as host, port, and
-user. The agent client constructs and runs SSH commands. `sandbox.pull_outputs`
+state. While provisioning, the response and `sandbox.get` are a short poll
+receipt (`sandbox_uid`, `status`, `poll_after_seconds`); once running they carry
+the full facts and an `ssh` block (host, port, user, certificate, host key).
+The agent client constructs and runs SSH commands. `sandbox.pull_outputs`
 takes no key argument: it returns a filled rsync command with a `<key_path>`
 placeholder the caller substitutes with its own private-key path when running
 the command.
@@ -396,19 +402,21 @@ settings can change the root. Files are not synchronized automatically. Pull
 compact outputs into the local experiment folder before artifact submission,
 and use durable object storage for heavy files.
 
-Provider behavior is capability-shaped:
-
-- Lambda Labs (default) and Thunder Compute expose fixed instance types and may
-  return `needs_selection` with a live hardware menu.
-- Modal composes GPU/CPU/memory directly.
-- `fake` is used by tests.
+`sandbox.options` lists one flat object per offer (`provider`, `instance_type`,
+`region`, `gpu`, `cpu`, `memory`, `price_usd_per_hour`, `available`);
+`sandbox.request` without an `instance_type` returns `needs_selection` with the
+matching offers, and an unknown or ambiguous selection is refused with the
+candidates named.
 
 Provisioning is best-effort synchronous. `sandbox.request` may return
 `provisioning`; poll with `sandbox.get`, never repeated request calls. Long work
-uses `sandbox.run`; `sandbox.runs` reports durable run receipts, and its
-`wait_seconds` long-polls for up to 30s per call — the cap merv-sandboxes
-honours. Transcript and run lookups are sandbox-scoped even when addressed
-through an experiment.
+uses `sandbox.run`, which returns `job_id`, `cursor` and the `sandbox.job` call
+to wait on; `sandbox.job` long-polls one job (`after` + `wait_seconds`, up to
+30s per call — the cap merv-sandboxes honours) and reads output by `tail` or
+offset/limit (default 4 KB). `sandbox.runs` returns `runs[]` and with
+`wait_seconds` blocks until any pending job changes; `sandbox.terminal` is a
+fresh bounded tail of the latest job on every call. Transcript and run lookups
+are sandbox-scoped even when addressed through an experiment.
 
 `sandbox.release` is a two-step destructive operation: the first call returns a
 retention checklist, and `confirm_retained=true` terminates the machine. Release
@@ -418,9 +426,14 @@ or expiry destroys anything not explicitly retained.
 
 - `storage.submit` and `storage.fetch` return a one-line command the agent runs
   to transfer bytes over a presigned URL; `storage.find` and `storage.object`
-  operate on the brain's ledger.
-- `feed.post` returns a one-line command to upload any captured image or HTML
-  embed; feed registration and reads are brain control operations.
+  operate on the brain's ledger. The what-goes-where rule lives in the
+  `storage.find` description, not in its rows.
+- `feed.post` returns `{post_id, thread?}`, or a one-line command to upload a
+  captured image or HTML embed that prints the same receipt; feed registration
+  and reads are brain control operations.
+- Every upload command is `curl -sS --fail-with-body`, so a rejected upload
+  prints the server's reason; `litreview.edit` answers `{section, revision,
+  bytes}`.
 
 ## HTTP transport and errors
 
@@ -430,7 +443,9 @@ payloads do not ride MCP: tools return commands for one-time Artifact/Feed
 endpoints, provider-presigned Storage transfers, or Sandbox `rsync`.
 
 Tool responses are tool-specific dictionaries; there is no universal mutation
-envelope. Domain validation and workflow failures remain MCP protocol errors.
+envelope. Domain validation and workflow failures remain MCP protocol errors;
+argument validation errors carry `loc`, `msg` and `type` only, never the
+input, and a disallowed transition names the allowed ones.
 Transient transport failures are returned as error tool results so clients do
 not disable the entire server:
 

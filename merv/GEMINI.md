@@ -38,8 +38,8 @@ There is no linking step and no `connect` action. Use
 ## Operating rules
 
 - Treat the brain state returned through MCP as authoritative. Start or resume
-  work with `workflow.status_and_next`, and follow its gate, allowed actions,
-  missing evidence, and next action. Auto-run assignments own one graph node;
+  work with `workflow.status_and_next`, and follow its gate, allowed actions
+  and next action. Auto-run assignments own one graph node;
   stop after its handoff. Interactive agents call `workflow.begin` with the
   instance id and current revision before beginning node work.
 - Local edits are not research state. Use `artifact.upload` with
@@ -73,14 +73,17 @@ must not review its own work.
 An assigned reviewer calls `review.start` for its exact request with
 `reviewer_capability="assigned"` and `caller_session_id="assigned"`; Merv resolves
 the authenticated session. A manual handoff uses its exact capability and the
-reviewer's own declared identity. Review submission rechecks the immutable
-snapshot and applies the verdict's graph route atomically.
+reviewer's own `caller_session_id`; the session binds to the reviewer's
+`agent_id`. Review submission rechecks the immutable snapshot and applies the
+verdict's graph route atomically, reporting the target's status before and after.
 
 Auto-run reviewer credentials enforce read-only access outside their review
 calls. Interactive reviewers using a general project key follow the skill's
 read-only procedure. A passing design enters execution directly; passing attempt
 and task reviews complete work; passing reflection review enters consolidation.
-The assigned agent stops after its verdict.
+`approve_design`, `complete` and `accept` are not agent transitions: the
+producer refreshes `workflow.status_and_next` instead. The assigned agent stops
+after its verdict.
 
 ## Sandbox loop
 

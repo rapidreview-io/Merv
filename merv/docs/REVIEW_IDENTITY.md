@@ -33,18 +33,19 @@ is workflow-level rather than cryptographic identity.
 5. A separate reviewer session presents the capability:
 
    ```text
-   review.start(review_request_id, reviewer_capability, caller_session_id, declared_agent?)
+   review.start(review_request_id, reviewer_capability, caller_session_id)
    ```
 
    `caller_session_id` is required and its declared value must differ from the
-   producer's declared session value.
-6. `review.start` returns bounded project orientation, the target's slim
-   experiment or reflection context, and the current attempt's full submitted
-   gated-role artifacts plus any system metrics exhibit. Ordinary code, input,
-   result, config, model, and note files are not bundled; reviewers obtain any
-   additional context through focused ordinary read-only calls. The reviewer
-   skill imposes a procedural read-only role. The reviewer submits one
-   structured verdict through:
+   producer's declared session value. The session records the verified
+   `agent_id` of the context window that started it.
+6. `review.start` returns the project's `{id, name, summary}`, the target's
+   slim experiment or reflection context, and the current attempt's full
+   submitted gated-role artifacts; other pinned ids (logic graph, metrics
+   exhibit) are read with `artifact.read`. Ordinary code, input, result,
+   config, model, and note files are not bundled. The reviewer skill imposes a
+   procedural read-only role. The reviewer submits one structured verdict
+   through:
 
    ```text
    review.submit(review_session_id, verdict, synopsis, return_to?, notes?, findings?, evidence?)
@@ -68,9 +69,11 @@ the request.
 
 At `review.submit`, the caller presents only `review_session_id`. The brain
 rejects a missing/already-submitted session, a request that is no longer open, a
-changed target snapshot, or a payload/`return_to` that violates the role
-contract. It does not receive or recheck the capability, its expiry, or the
-caller session at submission time.
+changed target snapshot, a payload/`return_to` that violates the role
+contract, or a caller whose `agent_id` is not the one that started the session.
+It does not receive or recheck the capability or its expiry at submission
+time. The verdict applies its graph route in the same transaction and the
+receipt reports the target's status before and after.
 
 The request remains startable while its status is `requested` or `started` and
 its capability is unexpired, so a capability is not consumed by the first
@@ -112,5 +115,5 @@ exists only on legacy rows created before that requirement.
 
 This records only that two caller-supplied strings were non-empty and unequal.
 It does not prove that two clients—or two independent models—performed the
-reasoning, and possession of `review_session_id` is sufficient to submit. The
-current clients do not provide unforgeable per-agent identity metadata.
+reasoning. Submission needs `review_session_id` from the context window whose
+`agent_id` opened the session; that id names a context window, not a model.

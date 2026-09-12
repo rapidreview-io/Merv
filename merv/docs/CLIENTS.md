@@ -88,20 +88,19 @@ Shared invariants across all clients:
 
 ## Long runs per client
 
-Waiting for a run is one mechanism everywhere: call `sandbox.runs` with the
-run's label and `wait_seconds=30`. The call blocks until any run finishes or the
-cap elapses, then returns the rows; a row with `status: "finished"` carries the
-`exit_code`. Anything short of terminal means call again. 30s is the cap
-merv-sandboxes honours on the underlying job wait, so asking for more would only
-promise a hold nobody keeps — and it sits well inside the ~60s tool timeout most
-MCP clients enforce. Launch the work with `sandbox.run`, which returns the job
-ID that is the label.
+Waiting for a run is one mechanism everywhere: `sandbox.run` returns the
+`sandbox.job(job_id, after, wait_seconds=30)` call to wait on. It blocks until
+the job changes or the cap elapses; a terminal `state` (`succeeded`, `failed`,
+`cancelled`, `timed_out`) carries the `exit_code`, anything else means call
+again. 30s is the cap merv-sandboxes honours on the underlying job wait, so
+asking for more would only promise a hold nobody keeps — and it sits well inside
+the ~60s tool timeout most MCP clients enforce. `sandbox.runs(wait_seconds=30)`
+does the same across every pending job of a sandbox or experiment.
 
 The loop spans only the current turn. A run that finishes after you end the turn
-is not noticed until you next call `sandbox.runs`, so arm the loop right after
-the launch rather than leaving a box billing with nobody reading the receipts.
-`sandbox.runs` is the authoritative status readback; the compact receipts on
-run-oriented responses are not.
+is not noticed until you next call `sandbox.job` or `sandbox.runs`, so arm the
+loop right after the launch rather than leaving a box billing with nobody
+reading the receipts.
 
 What differs per client is only how long it will let you keep looping:
 
@@ -118,8 +117,8 @@ What differs per client is only how long it will let you keep looping:
 - **No-shell surfaces** (Claude Desktop and similar MCP-only clients): the same
   loop, and the only one they ever needed.
 
-For a run expected to outlast a turn, end the turn and call `sandbox.runs` once
-when you next attend the experiment: the row, its `exit_code`, and its retained
+For a run expected to outlast a turn, end the turn and call `sandbox.job` once
+when you next attend the experiment: the job, its `exit_code`, and its retained
 output survive both the turn and the sandbox's release.
 
 ## Packaging the client bundle (maintainers)
@@ -216,12 +215,15 @@ agent is spawned with that prompt:
 
 The reviewer begins with `review.start`, passing the request id, capability,
 and its own non-empty `caller_session_id`. That id is required and must differ
-from the `producer_session_id` recorded by `review.request`. The brain stores
-only a hash of the capability, pins the request to the target snapshot, rejects
-stale or superseded requests, and rechecks the snapshot at submission. A
-successful start returns bounded project orientation, the target's slim
-experiment/reflection context, and full content for the pinned submission being
-reviewed.
+from the `producer_session_id` recorded by `review.request`; the session also
+binds to the reviewer's `agent_id`, so only that context window can submit. The
+brain stores only a hash of the capability, pins the request to the target
+snapshot, rejects stale or superseded requests, and rechecks the snapshot at
+submission. A successful start returns the project's name and summary, the
+target's slim experiment/reflection context, and full content for the pinned
+submission being reviewed. The verdict moves the target itself; the producer
+refreshes `workflow.status_and_next` afterward and never calls the approving
+transition.
 
 New sessions that pass the distinct-id check are recorded as
 `verified_agent_review`; `attested_agent_review` remains only on legacy rows.

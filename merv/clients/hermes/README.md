@@ -37,9 +37,10 @@ For a project-reflection wave, launch the five independent lens prompts with
 tasks, so five lenses normally run in two waves unless the user changes the
 delegate-task concurrency setting.
 
-For long sandbox work, wait on the run inside the turn: call `sandbox.runs`
-with the job's label and `wait_seconds=30`, and call again until the row is
-`finished`. A delegated child that launched the run waits on it itself.
+For long sandbox work, wait on the run inside the turn: call the `sandbox.job`
+wait that `sandbox.run` hands back (`wait_seconds=30`) and call again until
+its `state` is terminal. A delegated child that launched the run waits on it
+itself.
 
 ## Use with the local agent runner
 
