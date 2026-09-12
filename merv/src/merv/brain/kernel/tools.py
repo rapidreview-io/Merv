@@ -63,4 +63,4 @@ class ToolContract:
 
 
 class ProjectScopedInput(ContractModel):
-    project_id: str = Field(description='Project id, from project(action="list").')
+    project_id: str = Field(description="Project id, from project action=list.")

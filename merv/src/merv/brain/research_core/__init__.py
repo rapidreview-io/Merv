@@ -40,7 +40,7 @@ from .policy import (
 )
 from .objects import STORAGE_KINDS, ProducedObject, ResearchObjects
 from .research import Research
-from .tools import TOOLS
+from .tools import TOOLS, review_request_tool
 
 __all__ = [
     "AGENT_DISPATCH_SETTING",
@@ -77,6 +77,7 @@ __all__ = [
     "SYNOPSIS_MAX_LEN",
     "TASK_TERMINAL_STATUSES",
     "TOOLS",
+    "review_request_tool",
     "TaskState",
     "TaskSummary",
     "agent_dispatch_enabled",

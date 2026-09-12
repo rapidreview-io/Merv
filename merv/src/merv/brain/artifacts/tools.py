@@ -37,59 +37,23 @@ def artifact_tools(*, target_types: Iterable[str], roles: Iterable[str], lens_ro
             return self
 
     class ArtifactUploadInput(ProjectScopedInput):
-        path: str = Field(
-            min_length=1,
-            max_length=1000,
-            description="Local file to send with the returned upload command; also its provenance label.",
-        )
+        path: str = Field(min_length=1, max_length=1000, description="Local file to send with the returned upload command; also its provenance label.")
         title: str = Field(default="", max_length=1000)
-        discover_figures: bool = Field(
-            default=False,
-            description="Discover relative Markdown images for unattached content. Attached documents follow their role's figure policy.",
-        )
-        attach_to: ArtifactAssociationInput | None = Field(
-            default=None,
-            description="Optional research association, activated when the upload completes. Omit to store generic content.",
-        )
+        discover_figures: bool = Field(default=False, description="Also upload the Markdown's relative images (unattached content; attached roles follow their figure policy).")
+        attach_to: ArtifactAssociationInput | None = Field(default=None, description="Research association activated when the upload completes; omit for generic content.")
 
     class ArtifactAttachInput(ProjectScopedInput, ArtifactAssociationInput):
         artifact_id: str = Field(min_length=1)
 
     class ArtifactReadInput(ProjectScopedInput):
-        artifact_id: str = Field(
-            default="",
-            description=(
-                "Resolve one artifact by id. Use artifact_ids for an ordered batch, "
-                "or omit both to list with the filters below."
-            ),
-        )
-        artifact_ids: list[str] = Field(
-            default_factory=list,
-            max_length=50,
-            description=(
-                "Resolve 1-50 artifacts in one call. Duplicate ids are de-duplicated "
-                "in first-seen order. Any missing or cross-project id fails the "
-                "whole request."
-            ),
-        )
-        include_content: bool = Field(
-            default=False,
-            description=(
-                "Opt in to submitted text for id-based reads. Metadata is the slim "
-                "default. Singular reads add a sibling content envelope; plural "
-                "reads add that envelope to each artifact row. It contains content, "
-                "available, is_binary, size_bytes, content_type and truncated (with "
-                "next_offset when more remains); binary or unavailable bytes are "
-                "never injected as text. Invalid when listing by filters."
-            ),
-        )
+        artifact_id: str = Field(default="", description="One artifact; or artifact_ids for a batch; or neither to list by the filters.")
+        artifact_ids: list[str] = Field(default_factory=list, max_length=50, description="1-50 ids in order; any missing or cross-project id fails the whole call.")
+        include_content: bool = Field(default=False, description="Id reads only: add the text envelope (content, available, is_binary, size_bytes, content_type, truncated, next_offset).")
         max_bytes: int = Field(default=16000, ge=1, description="Text bytes per artifact; page with offset=next_offset.")
         offset: int = Field(default=0, ge=0, description="Byte offset the text window starts at.")
-        target_type: str = Field(
-            default="", description="List filter: the target kind of the association."
-        )
-        target_id: str = Field(default="", description="List filter: target id.")
-        role: str = Field(default="", description="List filter: artifact role.")
+        target_type: str = Field(default="", description="List filter.")
+        target_id: str = Field(default="", description="List filter.")
+        role: str = Field(default="", description="List filter.")
 
         @model_validator(mode="after")
         def _check_selector(self) -> "ArtifactReadInput":
@@ -117,12 +81,9 @@ def artifact_tools(*, target_types: Iterable[str], roles: Iterable[str], lens_ro
             needs_base_url=True,
             input_model=ArtifactUploadInput,
             description=(
-                "Write a local file, call upload, then execute the returned run command "
-                "to store immutable content in Merv. Optional attach_to bundles research "
-                "association: specify target_type, target_id, role and lens_id when required. "
-                "Associated evidence is validated and size-capped at 16 KB; uploading a new "
-                "version replaces the current slot while preserving frozen history. "
-                "Run any figure upload commands returned by the upload response too."
+                "Write the file locally, call this, then run the returned command (and any figure upload commands) to "
+                "store it immutably. attach_to binds a research role at once; attached evidence is validated, capped at "
+                "16 KB, and a new version replaces the current slot."
             ),
         ),
         "artifact.read": ToolContract(
@@ -130,17 +91,13 @@ def artifact_tools(*, target_types: Iterable[str], roles: Iterable[str], lens_ro
             needs_base_url=True,
             input_model=ArtifactReadInput,
             description=(
-                "Read one artifact_id, an ordered batch of 1-50 artifact_ids, or list "
-                "complete research evidence using target_type/target_id/role filters. "
-                "IDs may identify generic content or research associations; associations "
-                "include their target, role and history. Missing/cross-project IDs fail the "
-                "whole batch. Opt into text and figure paths with include_content. ID reads "
-                "include download URLs requiring project/account auth (not worker credentials)."
+                "Read one artifact_id, a batch of artifact_ids, or list evidence by target_type/target_id/role; "
+                "include_content adds bounded text. Download URLs need project or account auth."
             ),
         ),
         "artifact.attach": ToolContract(
             handler_identity="artifact_submissions.attach",
             input_model=ArtifactAttachInput,
-            description="Associate existing complete content with a research target and role. Returns an association handle for artifact.read and workflow history; content remains immutable and reusable.",
+            description="Associate stored content with a research target and role; returns the association handle. Content stays immutable and reusable.",
         ),
     }

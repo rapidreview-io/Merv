@@ -43,9 +43,10 @@ def _contract_error_message(*, exc: PydanticValidationError) -> str:
 
 
 def _normalize_tool_schema_for_providers(value: Any) -> None:
-    """Rewrite equivalent JSON Schema constructs for narrower tool providers."""
+    """Rewrite equivalent JSON Schema constructs for narrower tool providers and drop the model titles pydantic adds."""
 
     if isinstance(value, dict):
+        value.pop("title", None)
         if "const" in value:
             value["enum"] = [value.pop("const")]
         for child in value.values():
@@ -110,7 +111,9 @@ class ToolDispatcher:
             if name not in self._tool_names:
                 continue
             schema = contract.input_model.model_json_schema()
-            schema.pop("title", None)
+            # Model docstrings are code documentation; the contract's description is the tool's.
+            for model in (schema, *schema.get("$defs", {}).values()):
+                model.pop("description", None)
             _normalize_tool_schema_for_providers(schema)
             tool: dict[str, Any] = {
                 "name": name,

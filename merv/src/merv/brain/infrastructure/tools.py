@@ -30,28 +30,11 @@ class StoragePutObjectInput(ProjectScopedInput):
 
 
 class StorageSubmitInput(ProjectScopedInput):
-    path: str = Field(
-        description=(
-            "Local file path to upload. Embedded verbatim into the returned "
-            "`curl -T` command (which you run) and the default object name."
-        )
-    )
+    path: str = Field(description="Local file to upload; embedded in the returned `curl -T` command and the default name.")
     kind: Literal["dataset", "model", "other"]
-    sha256: str = Field(
-        description=(
-            "Client-computed SHA-256 (hex) of the file. Feeds name+sha dedup and "
-            "is bound into the presigned checksum; identity is re-verified on "
-            "completion."
-        )
-    )
-    size_bytes: int = Field(
-        ge=0,
-        description="File size in bytes; presigns the upload and enforces the size cap.",
-    )
-    name: str = Field(
-        default="",
-        description="Optional storage object name. Defaults to the path.",
-    )
+    sha256: str = Field(description="Client-computed hex SHA-256 of the file; re-verified on completion.")
+    size_bytes: int = Field(ge=0)
+    name: str = Field(default="", description="Object name; defaults to the path.")
     content_type: str = ""
     producing_experiment_id: str = ""
     producing_run: str = ""
@@ -91,21 +74,12 @@ class StorageCompleteUploadInput(ProjectScopedInput):
 
 
 class StorageFindInput(ProjectScopedInput):
-    """List the project's storage objects, or resolve a single object.
+    """Resolve one object (object_id or name) or, with neither, list the project's objects."""
 
-    A union of the former ``storage.list`` and ``storage.resolve`` inputs.
-    Passing ``object_id`` or ``name`` (with optional ``version`` /
-    ``include_download``) selects resolve mode; omitting both lists the
-    objects merv-sandboxes holds, filtered by ``status`` (available by
-    default) with ``limit`` / ``offset`` / ``compact`` pagination.
-    """
-
-    # Resolve-mode selectors (former storage.resolve).
     object_id: str | None = None
     name: str | None = None
     version: int | None = Field(default=None, ge=1)
     include_download: bool = True
-    # List-mode filters (former storage.list).
     status: (
         Literal["uploading", "completing", "available", "delete_pending", "deleted"]
         | None
@@ -124,12 +98,7 @@ class StorageFindInput(ProjectScopedInput):
 
 
 class StorageFetchInput(ProjectScopedInput):
-    path: str = Field(
-        description=(
-            "Local destination path. Embedded verbatim into the returned "
-            "`curl -o` command, which you run."
-        )
-    )
+    path: str = Field(description="Local destination; embedded in the returned `curl -o` command.")
     object_id: str | None = None
     name: str | None = None
     version: int | None = Field(default=None, ge=1)
@@ -141,16 +110,16 @@ class StorageObjectInput(ProjectScopedInput):
 
 
 class SandboxRequestInput(ProjectScopedInput):
-    experiment_id: str | None = Field(default=None, description="Optional experiment association.")
-    instance_type: str | None = Field(default=None, description="Exact options[].instance_type from sandbox.options.")
-    region: str | None = Field(default=None, description="Optional region filter.")
-    provider: str | None = Field(default=None, description="Provider name returned by sandbox.options.")
-    gpu: str | None = Field(default=None, description="GPU filter for available offers.")
-    cpu: float | None = Field(default=None, gt=0, description="Minimum CPU resources.")
+    experiment_id: str | None = Field(default=None, description="Experiment to associate the machine with.")
+    instance_type: str | None = Field(default=None, description="An offer's instance_type from sandbox.options.")
+    region: str | None = None
+    provider: str | None = Field(default=None, description="The offer's provider from sandbox.options.")
+    gpu: str | None = Field(default=None, description="GPU filter over offers.")
+    cpu: float | None = Field(default=None, gt=0, description="Minimum CPUs.")
     memory: int | None = Field(default=None, ge=512, description="Minimum memory in MiB.")
     time_limit: int | None = Field(default=None, ge=60, le=86400, description="Lease seconds, default 3600.")
-    public_key: str = Field(description="Caller OpenSSH public key for short-lived certificate SSH. Keep the private key local.")
-    additional: bool = Field(default=False, description="Create an additional machine for this experiment instead of reusing one.")
+    public_key: str = Field(description="Your OpenSSH public key; the private key stays local.")
+    additional: bool = Field(default=False, description="Rent another machine instead of reusing the experiment's live one.")
 
     @field_validator("public_key")
     @classmethod
@@ -159,169 +128,73 @@ class SandboxRequestInput(ProjectScopedInput):
 
 
 class SandboxOptionsInput(ProjectScopedInput):
-    gpu: str | None = Field(
-        default=None,
-        description="Optional GPU filter (e.g. 'H100') over the available machines.",
-    )
-    region: str | None = Field(
-        default=None,
-        description="Optional region filter for available capacity.",
-    )
+    gpu: str | None = Field(default=None, description="GPU filter, e.g. 'H100'.")
+    region: str | None = None
 
 
-class SandboxGetInput(ProjectScopedInput):
-    experiment_id: str | None = Field(
-        default=None,
-        description=(
-            "Experiment whose live sandbox association should be read. Omit "
-            "when sandbox_uid is supplied."
-        ),
-    )
-    sandbox_uid: str | None = Field(
-        default=None,
-        description="Optional sandbox_uid to read; omitted targets the primary sandbox.",
-    )
+class SandboxTargetInput(ProjectScopedInput):
+    """One sandbox, named by its experiment (primary sandbox) or its uid."""
+
+    experiment_id: str | None = Field(default=None, description="Experiment whose sandbox to address; omit with sandbox_uid.")
+    sandbox_uid: str | None = Field(default=None, description="One sandbox; omit for the experiment's primary one.")
+
+
+SandboxGetInput = SandboxTargetInput
 
 
 class SandboxAttachInput(ProjectScopedInput):
-    experiment_id: str = Field(
-        description="Target experiment to attach the live sandbox to."
-    )
-    sandbox_uid: str = Field(
-        description="Existing running sandbox_uid to associate with the target experiment."
-    )
+    experiment_id: str = Field(description="Experiment to attach the sandbox to.")
+    sandbox_uid: str = Field(description="A running sandbox rented by another experiment.")
 
 
-class SandboxPullOutputsInput(ProjectScopedInput):
-    experiment_id: str | None = Field(
-        default=None,
-        description=(
-            "Experiment whose running sandbox should be copied from. Omit when "
-            "sandbox_uid is supplied."
-        ),
-    )
-    sandbox_uid: str | None = Field(
-        default=None,
-        description="Optional sandbox_uid to copy from; omitted targets the primary sandbox.",
-    )
+class SandboxPullOutputsInput(SandboxTargetInput):
     paths: list[str] = Field(
         default_factory=list,
-        description=(
-            "Paths under the sandbox experiment_dir to include in the returned "
-            "rsync command. Omit to use common retained outputs: results/, "
-            "figures/, report.md, graph.json, metrics.json, and results.json."
-        ),
+        description="Paths under the sandbox experiment dir to rsync; default results/, figures/, report.md, graph.json, metrics.json, results.json.",
     )
 
 
-class SandboxReleaseInput(ProjectScopedInput):
-    experiment_id: str | None = Field(
-        default=None,
-        description=(
-            "Experiment whose sandbox(es) should be released. Omit when "
-            "terminating a specific sandbox_uid."
-        ),
-    )
-    sandbox_uid: str | None = Field(
-        default=None,
-        description=(
-            "Optional sandbox_uid to terminate just one sandbox. Omit to "
-            "terminate all live sandboxes for the experiment."
-        ),
-    )
+class SandboxReleaseInput(SandboxTargetInput):
     confirm_retained: bool = Field(
         default=False,
-        description=(
-            "Release permanently destroys the sandbox and everything on it. "
-            "The first call without this flag does NOT delete — it returns a "
-            "retention checklist. Set true only after you have retained "
-            "everything you need (rsync files off the box yourself over SSH, "
-            "and use durable heavy-file storage only when that feature is "
-            "enabled) to actually terminate."
-        ),
+        description="False returns a retention checklist; true destroys the sandbox and everything on it.",
     )
 
 
-class SandboxExtendInput(ProjectScopedInput):
-    experiment_id: str | None = Field(
-        default=None,
-        description=(
-            "Experiment whose running sandbox should be extended. Omit when "
-            "sandbox_uid is supplied."
-        ),
-    )
-    sandbox_uid: str | None = Field(
-        default=None,
-        description="Optional sandbox_uid to extend; omitted targets the primary sandbox.",
-    )
-    seconds: int = Field(
-        default=1800,
-        ge=1,
-        le=1800,
-        description="Additional lifetime in seconds. Maximum one 30-minute increment per call.",
-    )
+class SandboxExtendInput(SandboxTargetInput):
+    seconds: int = Field(default=1800, ge=1, le=1800, description="Extra lifetime, at most 1800 per call.")
 
 
-class SandboxRunsInput(ProjectScopedInput):
-    experiment_id: str | None = Field(
-        default=None,
-        description=(
-            "Experiment whose sandbox runs to list (spans every sandbox the "
-            "experiment used, including released ones). Omit with sandbox_uid."
-        ),
-    )
-    sandbox_uid: str | None = Field(
-        default=None,
-        description="Optional sandbox_uid to read; omitted targets the experiment's sandboxes.",
-    )
+class SandboxRunsInput(SandboxTargetInput):
     wait_seconds: int = Field(
-        default=0,
-        ge=0,
-        le=MAX_WAIT_SECONDS,
-        description=(
-            "Long-poll: block up to this many seconds, returning early when "
-            "any run finishes (or nothing is running). 0 answers immediately. "
-            f"{MAX_WAIT_SECONDS}s is the cap merv-sandboxes honours, and it "
-            "sits well inside the ~60s tool timeout most MCP clients enforce. "
-            "This spans only the current turn: a run that finishes after you "
-            "end the turn is not noticed until you next call this."
-        ),
+        default=0, ge=0, le=MAX_WAIT_SECONDS,
+        description=f"Long-poll up to this many seconds (max {MAX_WAIT_SECONDS}) until any run finishes; 0 answers now.",
     )
 
 
-class SandboxRunInput(SandboxGetInput):
-    command: str = Field(min_length=1, max_length=65536, description="Shell command to run as a durable detached job.")
-    name: str = Field(default="", max_length=128, description="Readable job label; derived from the command when empty.")
-    cwd: str = Field(default="/workspace", pattern=r"^/", description="Absolute working directory inside the sandbox.")
-    timeout_seconds: int = Field(default=0, ge=0, description="Job timeout; zero uses the service default.")
-    outputs: str = Field(default="", description="Optional directory to retain as a job output artifact.")
-    idempotency_key: str | None = Field(default=None, max_length=128, description="Stable retry key; reuse only for the same command and inputs.")
-    env: dict[str, str] = Field(default_factory=dict, description="Environment for this job. Avoid secrets in tool-visible inputs.")
+class SandboxRunInput(SandboxTargetInput):
+    command: str = Field(min_length=1, max_length=65536, description="Shell command to run as a detached job.")
+    name: str = Field(default="", max_length=128, description="Job label; derived from the command when empty.")
+    cwd: str = Field(default="/workspace", pattern=r"^/")
+    timeout_seconds: int = Field(default=0, ge=0, description="0 uses the service default.")
+    outputs: str = Field(default="", description="Directory to retain as a job output artifact.")
+    idempotency_key: str | None = Field(default=None, max_length=128, description="Retry key; reuse only for the same command and inputs.")
+    env: dict[str, str] = Field(default_factory=dict, description="Environment for this job; no secrets.")
 
 
 class SandboxJobInput(ProjectScopedInput):
-    job_id: str = Field(description="Job ID returned by sandbox.run or sandbox.runs.")
-    after: str | None = Field(default=None, description="Cursor from the previous status for long-polling.")
+    job_id: str = Field(description="From sandbox.run or sandbox.runs.")
+    after: str | None = Field(default=None, description="Cursor from the previous status, to long-poll for a change.")
     wait_seconds: int = Field(default=0, ge=0, le=MAX_WAIT_SECONDS)
-    cancel: bool = Field(default=False, description="Request cancellation of this job.")
-    stream: Literal["stdout", "stderr"] | None = Field(default=None, description="Optionally read a bounded slice of retained job output.")
+    cancel: bool = False
+    stream: Literal["stdout", "stderr"] | None = Field(default=None, description="Read a bounded slice of this retained stream.")
     offset: int = Field(default=0, ge=0)
     limit: int = Field(default=4096, ge=1, le=1048576, description="Bytes to read from offset.")
-    tail: int | None = Field(default=None, ge=1, le=1048576, description="Read only the last N bytes of the stream instead of offset/limit.")
+    tail: int | None = Field(default=None, ge=1, le=1048576, description="Read only the last N bytes instead of offset/limit.")
 
 
-class SandboxTerminalInput(ProjectScopedInput):
-    experiment_id: str | None = Field(
-        default=None,
-        description="Experiment whose sandbox transcript to read. Omit with sandbox_uid.",
-    )
-    sandbox_uid: str | None = Field(
-        default=None,
-        description="Optional sandbox_uid to read; omitted targets the primary sandbox.",
-    )
-    tail: int | None = Field(
-        default=None, description="Return only the last N bytes of each stream (default 64 KB in total)."
-    )
+class SandboxTerminalInput(SandboxTargetInput):
+    tail: int | None = Field(default=None, description="Last N bytes of each stream (default 64 KB in total).")
 
 
 TOOLS: dict[str, ToolContract] = {
@@ -330,11 +203,7 @@ TOOLS: dict[str, ToolContract] = {
         visibility="internal",
         feature_requirements=("storage",),
         input_model=StoragePutObjectInput,
-        description=(
-            "Create a heavy storage object in merv-sandboxes and return its "
-            "upload target. The service assigns the version. "
-            f"{STORAGE_RULE_OF_THUMB}"
-        ),
+        description=f"Create a heavy storage object and return its upload target; the service assigns the version. {STORAGE_RULE_OF_THUMB}",
     ),
     "storage.submit": ToolContract(
         handler_identity="storage.submit",
@@ -342,12 +211,8 @@ TOOLS: dict[str, ToolContract] = {
         needs_base_url=True,
         input_model=StorageSubmitInput,
         description=(
-            "Register a heavy file and get a one-line `run` command to upload it. "
-            "Compute the file's sha256 and size, call this, then execute the "
-            "returned command verbatim — it PUTs the bytes straight to object "
-            "storage and completes the object once merv-sandboxes verifies them "
-            "(bytes never pass through the agent context or the brain). Omit "
-            "name to use the path; the service assigns the version. "
+            "Register a heavy file and get a one-line `run` command that uploads it straight to object "
+            "storage; compute sha256 and size first, then execute the command verbatim. "
             f"{STORAGE_RULE_OF_THUMB}"
         ),
     ),
@@ -363,86 +228,70 @@ TOOLS: dict[str, ToolContract] = {
         feature_requirements=("storage",),
         input_model=StorageFindInput,
         description=(
-            "Find project storage objects. Pass object_id or name (with optional "
-            "version, include_download) to resolve ONE object and, with "
-            "include_download=true, a presigned download URL that renews its "
-            "retention. Omit both to list objects: filter by status (available "
-            "by default), paginate with limit/offset, and pass compact=true for "
-            f"a lean projection. {STORAGE_RULE_OF_THUMB} Keep plan.md, report.md, "
-            "graph.json, scripts, configs, metrics and plots in the repo; leave "
-            "regenerable caches and scratch downloads in the sandbox."
+            "Resolve one object by object_id or name (include_download adds a presigned URL that renews "
+            "retention), or omit both to list objects by status with limit/offset; compact=true for a lean row. "
+            "Keep plan, report, graph, scripts and metrics in the repo, not here."
         ),
     ),
     "storage.fetch": ToolContract(
         handler_identity="storage.fetch",
         feature_requirements=("storage",),
         input_model=StorageFetchInput,
-        description=(
-            "Resolve a storage object and get a one-line `run` command to "
-            "download it. Pass object_id or name (with optional version), then "
-            "execute the returned command verbatim — it curls the bytes to your "
-            "path and verifies the stored sha256."
-        ),
+        description="Get a one-line `run` command that downloads one object to path and verifies its sha256; execute it verbatim.",
     ),
     "storage.object": ToolContract(
         handler_identity="storage.manage",
         feature_requirements=("storage",),
         input_model=StorageObjectInput,
-        description=(
-            "Apply a lifecycle action to one storage object by object_id: pin "
-            "(retention removed; kept permanently), renew (extend retention by "
-            "the default window), or delete (merv-sandboxes reclaims the bytes). "
-            "Service retention only extends, so a pinned object stays pinned "
-            "until it is deleted."
-        ),
+        description="pin keeps an object permanently, renew extends its retention, delete reclaims the bytes.",
     ),
     "sandbox.request": ToolContract(
         handler_identity="sandboxes.request", input_model=SandboxRequestInput,
-        description="Rent a machine through merv-sandboxes. First call sandbox.options, then pass the selected provider and instance_type. Poll sandbox.get while provisioning. Existing live experiment machines are reused unless additional=true; to share a live box that another experiment rented, call sandbox.attach instead of renting again. Caller SSH access uses a short-lived certificate.",
+        description="Rent a machine: call sandbox.options, pass its provider and instance_type, then poll sandbox.get. An experiment's live machine is reused unless additional=true; to share another experiment's box use sandbox.attach. SSH uses a short-lived certificate.",
     ),
     "sandbox.options": ToolContract(
         handler_identity="sandboxes.options", input_model=SandboxOptionsInput,
-        description="List current rentable offers, one flat object each; pass an available offer's provider and instance_type to sandbox.request.",
+        description="List rentable offers; pass one's provider and instance_type to sandbox.request.",
     ),
     "sandbox.get": ToolContract(
         handler_identity="sandboxes.get", input_model=SandboxGetInput,
-        description="Read sandbox state; while provisioning this is a short poll receipt, once running it carries the full facts and a fresh SSH certificate (save it beside your private key, pin the gateway host key). Work in /workspace; sandbox.run launches durable jobs there.",
+        description="Read one sandbox: a short poll receipt while provisioning, then the full facts and a fresh SSH certificate (save it beside your key, pin the gateway host key). Work in /workspace; launch jobs with sandbox.run.",
     ),
     "sandbox.attach": ToolContract(
         handler_identity="sandboxes.attach", input_model=SandboxAttachInput,
-        description="Associate a running project sandbox with another experiment. This updates research metadata only.",
+        description="Associate a running project sandbox with another experiment; research metadata only.",
     ),
     "sandbox.pull_outputs": ToolContract(
         handler_identity="sandboxes.pull_outputs_command", input_model=SandboxPullOutputsInput,
-        description="Return a certificate-SSH rsync command for retaining selected files under /workspace before sandbox release. Run the command on the caller machine after substituting local key and destination paths.",
+        description="Return the certificate-SSH rsync command for retaining files from /workspace before release; run it on the caller machine with your key and destination paths.",
     ),
     "sandbox.list": ToolContract(
         handler_identity="sandboxes.list_sandboxes", input_model=ProjectScopedInput,
-        description="List project sandboxes and preserved historical research associations.",
+        description="List the project's sandboxes and their research associations.",
     ),
     "sandbox.release": ToolContract(
         handler_identity="sandboxes.release", input_model=SandboxReleaseInput,
-        description="Request deletion after retaining outputs. The first call returns a retention reminder; confirm_retained=true sends deletion to the service. Poll sandbox.get until terminated; cleanup_pending may still bill.",
+        description="Delete a sandbox after retaining outputs: the first call returns a retention reminder, confirm_retained=true terminates. Poll sandbox.get until terminated; cleanup_pending may still bill.",
     ),
     "sandbox.extend": ToolContract(
         handler_identity="sandboxes.extend", input_model=SandboxExtendInput,
-        description="Add up to 30 minutes to the sandbox lease, subject to the service's limits and budget.",
+        description="Add up to 30 minutes to the lease, within the service's limits and budget.",
     ),
     "sandbox.run": ToolContract(
         handler_identity="sandboxes.run", input_model=SandboxRunInput,
-        description="Start a durable detached job through merv-sandboxes (survives SSH disconnection). Returns job_id, cursor and the ready-made sandbox.job call to wait on it.",
+        description="Start a durable detached job (survives SSH disconnects). Returns job_id, a cursor and the sandbox.job call to wait on it.",
     ),
     "sandbox.job": ToolContract(
         handler_identity="sandboxes.job", input_model=SandboxJobInput,
-        description=f"One job: wait for a change (after + wait_seconds, up to {MAX_WAIT_SECONDS}s per call), read bounded output (stream with offset/limit or tail; default 4 KB), or cancel. Status and retained logs stay readable after sandbox release.",
+        description=f"One job: wait for a change (after + wait_seconds, up to {MAX_WAIT_SECONDS}s), read retained output (stream with offset/limit or tail; default 4 KB), or cancel. Readable after release.",
     ),
     "sandbox.runs": ToolContract(
         handler_identity="sandboxes.runs", input_model=SandboxRunsInput,
-        description="List durable jobs launched with sandbox.run for a sandbox or experiment (SSH commands are not jobs). wait_seconds long-polls until any pending job changes, at most 30s per call. Use sandbox.job for one job's output; sandbox.terminal for the latest job's tail.",
+        description="List the jobs sandbox.run launched for a sandbox or experiment; wait_seconds long-polls until one changes. Use sandbox.job for one job's output.",
     ),
     "sandbox.terminal": ToolContract(
         handler_identity="sandboxes.terminal", input_model=SandboxTerminalInput,
-        description="Bounded tail of the latest durable job's stdout and stderr; each call is a fresh snapshot, not an increment. Use sandbox.job for exact byte ranges or older jobs; SSH sessions are not recorded.",
+        description="Fresh bounded tail of the latest job's stdout and stderr; sandbox.job reads exact byte ranges or older jobs.",
     ),
     "sandbox.health": ToolContract(
         handler_identity="sandboxes.health",

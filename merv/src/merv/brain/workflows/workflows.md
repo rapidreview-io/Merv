@@ -81,9 +81,9 @@ native record writes. Common project and immutable artifact readers are composed
 Application delivers review and child-start actions through support-system public roots. Merv
 artifacts remain in Merv-owned R2; the sandbox service owns ML compute and workload storage
 only.
-Generic tools include `tool:workflow.catalog`, `tool:workflow.start`, `tool:workflow.assignment`,
-`tool:workflow.status_and_next`, `tool:workflow.begin`, `tool:workflow.transition` and
-`tool:workflow.history`; `tools.py` owns their contracts and a program carries that table. Auto-run
+Generic tools include `tool:workflow.assignment`, `tool:workflow.status_and_next`,
+`tool:workflow.begin`, `tool:workflow.transition` and `tool:workflow.history`; `tool:workflow.catalog`
+and `tool:workflow.start` are runner-internal. `tools.py` owns their contracts and a program carries that table. Auto-run
 activation and interactive `tool:workflow.begin` start clocks/actions only when work starts;
 merely approving a plan or reading a context does not. Dispatch owns identities and leases,
 then supplies the node's frozen brief, references and execution policy to the runner. The

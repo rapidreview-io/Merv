@@ -194,9 +194,11 @@ and task; experiment scope adds a `sandbox` summary. `experiment.transition`
 returns a compact state-change acknowledgement plus operation-specific
 side-effect receipts. The HTTP UI uses richer service views.
 
-`experiment.create` returns `{id, name, status, folder, next}`; `next` names
-the plan document, its role and required sections. It accepts `depends_on`
-(exp_/task_ ids). An experiment may be
+`experiment.create` takes `name`, `intent`, optional `details`,
+`tested_claim_ids` and `depends_on` (exp_/task_ ids); the older `title`,
+`hypothesis`, `design`, `success_criteria`, `risks`, `claim_id`, `claim_ids` and
+`status` spellings are gone. It returns `{id, name, status, folder, next}`;
+`next` names the plan document, its role and required sections. An experiment may be
 `running` after plan approval while `dependencies_pending` blocks its execution
 lease. The same prerequisites are rechecked in the lease transaction. Actual
 work start is recorded when the execution agent activates its lease, or an
@@ -343,8 +345,10 @@ request id and `reviewer_capability="assigned", caller_session_id="assigned"`;
 Merv resolves the authenticated session identity. Interactive capability handoffs
 still rely on the reviewer skill for calls made with a general project key.
 
-Generic workflow tools are `workflow.catalog`, `workflow.start`,
-`workflow.assignment`, `workflow.begin`, `workflow.history`, and `workflow.transition`.
+Generic workflow tools are `workflow.assignment`, `workflow.begin`,
+`workflow.history`, and `workflow.transition`, for instances without a dedicated
+tool (reflection lenses, project synthesis, plugin workflows); `workflow.catalog`
+and `workflow.start` are internal to the runner.
 Interactive agents call `workflow.begin(project_id, instance_id, expected_revision)`
 when ready to work; auto-run uses its own lease activation instead. Transitions
 name an instance and expected revision. Auto-run credentials can mutate only
@@ -400,7 +404,9 @@ or expiry destroys anything not explicitly retained.
   `storage.find` description, not in its rows.
 - `feed.post` returns `{post_id, thread?}`, or a one-line command to upload a
   captured image or HTML embed that prints the same receipt; feed registration
-  and reads are brain control operations.
+  and reads are brain control operations. Media rides in `attachments`; the
+  older `image_path`, `html_path`, `url` and `quote_of` spellings are still
+  accepted but no longer advertised in the schema.
 - Every upload command is `curl -sS --fail-with-body`, so a rejected upload
   prints the server's reason.
 
