@@ -23,45 +23,17 @@ from ...research_core import (
     ENTITY_REF_VOCABULARY, FEED_ADOPTABLE_ROLES, FEED_AUTHOR_ROLES,
     PROJECT_OVERVIEW_CONTENTS,
 )
+from ...research_core.tools import review_request_tool
 from ...workflows import ARTIFACT_TOOL_VOCABULARY, Program
 
 
 class AgentHelloInput(ContractModel):
-    """Mint (or confirm) the agent_id this context window carries on every call.
+    """Mint (or confirm) the agent_id this context window carries on every call."""
 
-    Kept tiny on purpose: the whole point of the id is that carrying it costs
-    the model a handful of tokens per call.
-    """
-
-    agent_id: str | None = Field(
-        default=None,
-        max_length=64,
-        description=(
-            "Only if this context window already has an agent_id: pass it to "
-            "confirm it instead of minting a second one."
-        ),
-    )
-    role: str = Field(
-        default="",
-        max_length=64,
-        description=(
-            "Optional self-description of what this context is doing: "
-            "main, subagent, worker, or whatever role your assignment names."
-        ),
-    )
-    parent_agent_id: str = Field(
-        default="",
-        max_length=64,
-        description=(
-            "Optional: the agent_id of the context that spawned this one, if "
-            "it told you."
-        ),
-    )
-    note: str = Field(
-        default="",
-        max_length=200,
-        description="Optional one-line note about what this context is doing.",
-    )
+    agent_id: str | None = Field(default=None, max_length=64, description="An agent_id this context already holds, to confirm instead of minting another.")
+    role: str = Field(default="", max_length=64, description="What this context is doing: main, subagent, worker, or the role your assignment names.")
+    parent_agent_id: str = Field(default="", max_length=64, description="The agent_id of the context that spawned this one, if told.")
+    note: str = Field(default="", max_length=200, description="One line on what this context is doing.")
 
 
 class ProjectInput(ContractModel):
@@ -69,31 +41,14 @@ class ProjectInput(ContractModel):
 
     action: Literal["list", "current", "create", "overview", "records"] = Field(
         description=(
-            "list = every project you can work in, with names, summaries, "
-            "and creation dates — start here to pick a project_id; "
-            "current = the project this credential is bound to, if it is "
-            "bound to exactly one; "
-            f"overview = the living project document ({PROJECT_OVERVIEW_CONTENTS}); "
-            "records = explicit full record inventory for evidence discovery; "
-            "create = create a project."
+            "list = every project you can work in (start here for a project_id); current = the credential's bound "
+            f"project; overview = the living project document ({PROJECT_OVERVIEW_CONTENTS}); records = the full "
+            "record inventory; create = a new project."
         )
     )
-    project_id: str = Field(
-        default="",
-        description="Optional explicit project id for action=overview or records.",
-    )
-    name: str = Field(
-        default="",
-        description=(
-            "User-confirmed project name, at least 3 characters. Required for "
-            "action=create. Do not infer a placeholder unless the user "
-            "explicitly asked for it."
-        ),
-    )
-    summary: str = Field(
-        default="",
-        description="Short user-confirmed project purpose or scope.",
-    )
+    project_id: str = Field(default="", description="For action=overview or records.")
+    name: str = Field(default="", description="Required for action=create: user-confirmed, at least 3 characters, never a placeholder.")
+    summary: str = Field(default="", description="Short user-confirmed purpose or scope.")
 
     @model_validator(mode="after")
     def _check_action(self) -> "ProjectInput":
@@ -164,15 +119,8 @@ SURFACE_TOOLS: dict[str, ToolContract] = {
         scope_strategy="none",
         input_model=AgentHelloInput,
         description=(
-            "Call ONCE at the start of a context window, before any other Merv "
-            "call: returns the short agent_id that identifies this context "
-            "window (this conversation, or this subagent) to Merv. Every other "
-            "Merv tool requires that agent_id as an argument, so Merv can "
-            "attribute what each agent did and was told. Never share an "
-            "agent_id across contexts; a subagent must call agent.hello "
-            "itself. If you already have one from earlier in this context, "
-            "keep using it (or pass it here to confirm) instead of minting "
-            "another."
+            "Call once at the start of every context window (subagents too), before any other Merv call: returns "
+            "the agent_id every other tool requires. Never share it across contexts; pass one you already hold to confirm it."
         ),
     ),
     "project": ToolContract(
@@ -182,20 +130,8 @@ SURFACE_TOOLS: dict[str, ToolContract] = {
         external_key_denied_action="create",
         input_model=ProjectInput,
         description=(
-            "Project navigation for this credential, dispatched on 'action'. "
-            "action=list returns every project you can work in — id, name, "
-            "summary, and creation date, minus any the user has stashed — and "
-            "is how you pick the project_id "
-            "that most other tools require; call it first when you do not "
-            "already know which project the user means. "
-            "action=current returns the single project this credential is "
-            "bound to; a credential that reaches several returns exists=false "
-            "and the same list, because there is no one current project. "
-            "action=records retrieves the full inventory for evidence discovery. "
-            "action=overview is the living project document: the same bounded context used by project-"
-            f"scoped workflow and review starts, holding {PROJECT_OVERVIEW_CONTENTS}. "
-            "action=create creates a project from a user-confirmed name and "
-            "summary."
+            "Project navigation by action. list is how you pick the project_id most tools need; call it first unless "
+            "you know the project. current returns exists=false plus the list when the credential reaches several."
         ),
     ),
     "project.update": ToolContract(
@@ -236,6 +172,8 @@ def build_manifest(programs: Iterable[Program]) -> dict[str, ToolContract]:
         if not manifest.keys().isdisjoint(table):
             raise RuntimeError(f"tool names claimed twice: {sorted(manifest.keys() & table.keys())}")
         manifest.update(table)
+    # The one contract written across programs: the reviewer roles it names are every installed workflow's.
+    manifest["review.request"] = review_request_tool([w for program in programs for w in program.workflows])
     return manifest
 
 

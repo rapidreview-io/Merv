@@ -247,7 +247,7 @@ TOOLS: dict[str, ToolContract] = {
     ),
     "sandbox.request": ToolContract(
         handler_identity="sandboxes.request", input_model=SandboxRequestInput,
-        description="Rent a machine: call sandbox.options first, pass its provider and instance_type, then poll sandbox.get. An experiment's live machine is reused unless additional=true; to share another experiment's box call sandbox.attach instead. SSH uses a short-lived certificate.",
+        description="Rent a machine: call sandbox.options, pass its provider and instance_type, then poll sandbox.get. An experiment's live machine is reused unless additional=true; to share another experiment's box use sandbox.attach. SSH uses a short-lived certificate.",
     ),
     "sandbox.options": ToolContract(
         handler_identity="sandboxes.options", input_model=SandboxOptionsInput,

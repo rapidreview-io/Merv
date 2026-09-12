@@ -400,29 +400,10 @@ class ProjectGraph(Declared):
 class ReflectionLens(ContractModel):
     """One lens of a reflection roster: the angle it reads the project from."""
 
-    id: str = Field(
-        description=(
-            "Lens id slug (lowercase letters/digits/'_'/'-'). It doubles as the "
-            "reflection filename: the lens's subagent submits <id>.md."
-        )
-    )
+    id: str = Field(description="Lowercase slug; the lens's subagent submits <id>.md.")
     title: str = ""
-    charter: str = Field(
-        default="",
-        description=(
-            "What angle this lens reads the project from. The core lenses "
-            "(amplify, avoid, entropy) default their charter; the two "
-            "wave-authored lenses must supply one."
-        ),
-    )
-    why_distinct: str = Field(
-        default="",
-        description=(
-            "Required for the two wave-authored lenses: how this lens differs "
-            "from the core three and from the other authored lens. Engineered "
-            "diversity is the point of the roster."
-        ),
-    )
+    charter: str = Field(default="", description="The angle this lens reads the project from; the core three default theirs.")
+    why_distinct: str = Field(default="", description="Authored lenses: how this differs from the core three and the other authored lens.")
 
     @model_validator(mode="after")
     def _slug_doubles_as_a_filename(self) -> "ReflectionLens":

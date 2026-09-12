@@ -53,11 +53,9 @@ TOOLS: dict[str, ToolContract] = {
         handler_identity="application.status_for_agent",
         input_model=WorkflowStatusAndNextInput,
         description=(
-            "Start or resume here. Unscoped: the project's next step plus its context "
-            "(introduction, literature, claims, one row per experiment and task). With "
-            "experiment_id or task_id: that record's state, revision, next action, blockers "
-            "and current documents. With instance_id: any other workflow instance and its "
-            "node brief. Then call the tool the next action names."
+            "Start or resume here. Unscoped: the project's next step and context (introduction, literature, claims, "
+            "one row per experiment and task). With experiment_id or task_id: that record's state, revision, next "
+            "action, blockers and documents. With instance_id: any other instance. Then call the tool the next action names."
         ),
     ),
     "workflow.catalog": ToolContract(

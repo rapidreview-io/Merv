@@ -15,6 +15,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
 from pydantic import Field
+from pydantic.json_schema import SkipJsonSchema
 
 from ..kernel.tools import ProjectScopedInput, ToolContract
 from .refs import RefVocabulary
@@ -31,153 +32,55 @@ def feed_tools(*, vocabulary: RefVocabulary, author_roles: Iterable[str], adopta
     own = min(set(roles) - set(adoptable))
 
     class FeedRegisterInput(ProjectScopedInput):
-        handle: str = Field(
-            description=(
-                "Your voice's name (2-40 chars: letters, digits, spaces, - _ .). "
-                "Register once per session and post as that handle. The response "
-                "carries the project's roster — pick up an earlier voice on purpose "
-                f"rather than minting a new one; {shared} sessions adopt the "
-                "project's existing voice for their role automatically."
-            )
-        )
-        role: Literal[roles] = Field(
-            default=own,
-            description=(
-                f"Your role, used for attribution. {either} registrations return "
-                "the project's shared voice for that role (adopted=true) unless "
-                "new_voice is set."
-            ),
-        )
-        bio: str = Field(
-            default="",
-            description=(
-                "One line (≤80 chars) that says how this voice writes — "
-                "'numbers, not adjectives', 'reads the plan the way the GPU will'. "
-                "Shown next to the name; write in character afterwards."
-            ),
-        )
-        new_voice: bool = Field(
-            default=False,
-            description=f"{either} only: create a distinct voice instead of adopting the project's.",
-        )
-        session_id: str = Field(
-            default="",
-            description="Optional session id, so re-registering the same handle is idempotent.",
-        )
+        handle: str = Field(description=f"Your voice's name (2-40 chars: letters, digits, spaces, - _ .); {shared} sessions adopt their role's voice.")
+        role: Literal[roles] = Field(default=own, description=f"For attribution; {either} adopt the project's shared voice unless new_voice.")
+        bio: str = Field(default="", description="One line (≤80 chars) on how this voice writes, shown beside the name.")
+        new_voice: bool = Field(default=False, description=f"{either} only: a distinct voice instead of the adopted one.")
+        session_id: str = Field(default="", description="Makes re-registering the same handle idempotent.")
 
     class FeedPostInput(ProjectScopedInput):
-        handle: str = Field(description="Your registered handle (see feed.register).")
+        handle: str = Field(description="Your registered handle.")
         text: str = Field(
             description=(
-                "The post. One sentence is the norm; a second only for the caveat. "
-                "Hard cap 280 chars — anything longer is a `thread`, never a longer "
-                "post. Bold the one number (**243 tok/s**). Ids and links in the text "
-                f"are parsed: {chips} ids become chips and "
-                "set `ref`; the first arXiv:…, doi:…, or http(s) link becomes the "
-                "post's card."
+                "One sentence, the number in bold (**243 tok/s**); ≤280 chars, longer is a `thread`. "
+                "Ids become chips and set `ref`; the first arXiv/doi/http link becomes the card."
             )
         )
         kind: Literal[
             "finding", "kill", "hunch", "idea", "paper", "question",
             "bottleneck", "direction", "status",
-        ] | None = Field(
-            default=None,
-            description=(
-                "What kind of post this is: finding (a result landed), kill (a path "
-                "ruled out), hunch (calibrated intuition), idea (something you are "
-                "not pursuing but want on record), paper (something you read, with "
-                "your take), question (you need the researcher's steer — state your "
-                "default and continue), bottleneck, direction (a pivot), status (a "
-                "checkpoint of work in flight; keep them hours apart)."
-            ),
-        )
+        ] | None = Field(default=None, description="question = you need the researcher's steer (state your default, continue); status = a checkpoint, hours apart.")
         attachments: list[dict[str, Any]] | None = Field(
             default=None,
             description=(
-                "Up to 4 typed blocks — attach what you looked at. Drawn by the UI "
-                "in both themes: {type:'stat', value, unit?, delta?, baseline?, note?} "
-                "for one number that moved; {type:'chart', kind:'line'|'bars'|'scatter', "
-                "title, series:[{name, points:[[x,y],…]}] (line/scatter) or "
-                "[{name, values:[…]}] + labels:[…] (bars), ref_line?:{value,label?}, "
-                "hero?:{series,index}, unit?, x_label?, y_label?} for a curve or "
-                "comparison; {type:'heatmap', rows:[…], cols:[…], values:[[…]…], "
-                "title?, unit?, annotate?} for a matrix (confusion, ablation grid, "
-                "attention; ≤20×20); {type:'table', columns, rows, hero_row?, caption?} "
-                "for arms side by side; {type:'log', text, highlight?} for the lines "
-                "you read; {type:'diagram', text} for a Mermaid diagram (how it works, "
-                "a pipeline, a decision); {type:'vega', spec, title?} for anything the "
-                "native charts can't express — a Vega-Lite spec with inline data.values "
-                "(no url/href; ≤20KB), themed by the UI. Reuse or upload pixels: "
-                "{type:'figure', artifact_id, path, caption?} shows a figure already "
-                "submitted with an artifact (no upload — see artifact.read); "
-                "{type:'image', path} uploads a rendered sample or figure "
-                "(png/jpeg/gif/webp/svg, one per post — returns the upload command; "
-                "matplotlib: transparent background, `plt.style.use('merv.mplstyle')` "
-                "from the feed-posting skill); {type:'link', url} unfurls a URL; "
-                "{type:'embed', path} embeds a self-contained interactive HTML file "
-                "(one per post)."
+                "Up to 4 typed blocks the UI draws: {type:'stat'|'chart'|'heatmap'|'table'|'log'|'diagram'|'vega'|"
+                "'figure'|'image'|'embed'|'link', ...} — shapes in the feed-posting skill. image and embed (one per "
+                "post) return an upload command that finalizes the post."
             ),
         )
         thread: list[dict[str, Any] | str] | None = Field(
             default=None,
-            description=(
-                "Continue the thought: up to 8 more posts, each {text (≤280), "
-                "attachments?} or a plain string (no uploads inside a thread), posted atomically under "
-                "this one and shown as one chain. Use it for anything longer than a "
-                "sentence or two. To extend later, reply to your own last post."
-            ),
+            description="Up to 8 follow-on posts ({text, attachments?} or plain strings, no uploads) chained atomically under this one.",
         )
-        in_reply_to: str | None = Field(
-            default=None,
-            description=(
-                "Id of the one previous post this one follows — an answer, a "
-                "continuation of your own thread, a verdict on an earlier "
-                "call, a correction. The feed shows it as a thread under that "
-                "post, whoever wrote it. Work in flight is a thread you keep "
-                "adding to."
-            ),
-        )
-        quote_of: str | None = Field(
-            default=None,
-            description="Same as in_reply_to (kept for older callers). Pass one or the other, not both.",
-        )
-        image_path: str | None = Field(
-            default=None,
-            description="Shorthand for attachments=[{type:'image', path}].",
-        )
-        html_path: str | None = Field(
-            default=None,
-            description="Shorthand for attachments=[{type:'embed', path}].",
-        )
-        url: str | None = Field(
-            default=None,
-            description="Shorthand for attachments=[{type:'link', url}]; a link in the text does the same.",
-        )
-        ref: str | None = Field(
-            default=None,
-            description=(
-                "Explicit id of the entity this post is about "
-                f"({chips}). Usually unnecessary: "
-                "an id mentioned in the text sets it."
-            ),
-        )
+        in_reply_to: str | None = Field(default=None, description="The one earlier post this follows.")
+        quote_of: SkipJsonSchema[str | None] = None  # accepted for older callers; attachments is the spelling agents see
+        image_path: SkipJsonSchema[str | None] = None  # accepted for older callers; attachments is the spelling agents see
+        html_path: SkipJsonSchema[str | None] = None  # accepted for older callers; attachments is the spelling agents see
+        url: SkipJsonSchema[str | None] = None  # accepted for older callers; attachments is the spelling agents see
+        ref: str | None = Field(default=None, description=f"The entity this post is about ({chips}); an id in the text sets it.")
 
     class FeedListInput(ProjectScopedInput):
-        limit: int = Field(default=30, description="Max posts to return (1-100).")
-        before_seq: int | None = Field(
-            default=None,
-            description="Cursor: return posts older than this created_seq (from a prior page).",
-        )
+        limit: int = Field(default=30, description="1-100.")
+        before_seq: int | None = Field(default=None, description="Return posts older than this created_seq.")
 
     return {
         "feed.register": ToolContract(
             handler_identity="feed.register",
             input_model=FeedRegisterInput,
             description=(
-                "Take your voice in the project feed: register once per session "
-                "with a handle and a one-line bio, then post as that voice. Returns "
-                "the roster of existing voices (adopt one for continuity), whether "
-                "your role's voice was adopted, and the researcher's latest replies."
+                "Register once per session with a handle and a one-line bio, then post as that voice. Returns the "
+                "roster (adopt an earlier voice for continuity), whether your role's voice was adopted, and the "
+                "researcher's latest replies."
             ),
         ),
         "feed.post": ToolContract(
@@ -185,28 +88,18 @@ def feed_tools(*, vocabulary: RefVocabulary, author_roles: Iterable[str], adopta
             needs_base_url=True,
             input_model=FeedPostInput,
             description=(
-                "Post to the project feed — what a sharp colleague following this "
-                "project would want to see: a result or a kill, a number that moved "
-                "mid-run, a paper you read with your take, an idea you are not "
-                "pursuing, a surprising log line or sample, a gotcha, a question for "
-                "the researcher, a review verdict as a quote. Post a few times per "
-                "working hour, in different shapes. One sentence, the number in bold, "
-                "attach what you looked at (stat/chart/table/log/image); use `thread` "
-                "for anything longer. Ids and links in the text become chips and "
-                "cards. Text-only and native posts land immediately as {post_id, "
-                "thread?}; an image/embed returns a one-time `run` curl whose upload "
-                "finalizes the post and prints the same receipt. Posts are permanent "
-                "— correct by quoting."
+                "Post what a sharp colleague following this project would want to see — a result or kill, a number that "
+                "moved, a paper with your take, a question — a few times an hour. One sentence, attach what you looked at, "
+                "`thread` for more. Returns {post_id, thread?}; image/embed return a one-time `run` upload instead. "
+                "Posts are permanent: correct by quoting."
             ),
         ),
         "feed.list": ToolContract(
             handler_identity="feed.list_posts",
             input_model=FeedListInput,
             description=(
-                "Read recent feed posts (reverse-chronological), with the project's "
-                "voices, the researcher's reactions and replies, and a soft nudge "
-                "when the feed has gone quiet while work piled up. Use it to recall "
-                "what was already said before writing anew."
+                "Recent posts newest first, with the project's voices, the researcher's reactions and replies, "
+                "and a nudge when the feed went quiet while work piled up. Read it before writing anew."
             ),
         ),
     }
