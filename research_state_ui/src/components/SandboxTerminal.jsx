@@ -64,7 +64,7 @@ export default function SandboxTerminal({
     }
   }, [projectId, experimentId, sandboxUid]);
 
-  const sandboxId = sandbox?.sandbox_id || null;
+  const sandboxId = sandbox?.sandbox_uid || null;
   const isLiveSandbox = sandbox?.status === RUNNING;
 
   const pollTerminal = useCallback(async () => {
@@ -73,13 +73,9 @@ export default function SandboxTerminal({
     try {
       const acc = accRef.current;
       const fresh = acc.sandboxId !== sandboxId || acc.cursor == null;
-      const term = await api.getSandboxTerminal(
-        projectId,
-        experimentId,
-        fresh ? { sandboxUid } : { since: acc.cursor, sandboxUid },
-      );
+      const term = await api.getSandboxTerminal(projectId, experimentId, { sandboxUid });
       setTermMeta({
-        running: term.running,
+        running: term.status === RUNNING,
         status: term.status,
         command_running: term.command_running,
         last_exit_code: term.last_exit_code,
@@ -280,7 +276,7 @@ function SandboxMeta({ sandbox }) {
     <div className="sbx-meta">
       <div className="sbx-meta-row">
         <span className="sbx-meta-key">id</span>
-        <span className="mono">{sandbox.sandbox_id}</span>
+        <span className="mono">{sandbox.sandbox_uid}</span>
       </div>
       {(sandbox.provider || sandbox.region || sandbox.instance_type) && (
         <div className="sbx-meta-row">

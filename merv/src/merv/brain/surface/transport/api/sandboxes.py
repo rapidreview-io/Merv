@@ -71,7 +71,6 @@ def build_router(
         experiment_id: str,
         request: Request,
         tail: int | None = None,
-        since: int | None = None,
         sandbox_uid: str | None = None,
     ) -> dict[str, Any]:
         args: dict[str, Any] = {
@@ -82,8 +81,6 @@ def build_router(
             args["sandbox_uid"] = sandbox_uid
         if tail is not None:
             args["tail"] = tail
-        if since is not None:
-            args["since"] = since
         return gateway.call_http(
             request, name="sandbox.terminal", arguments=args
         )
@@ -94,13 +91,10 @@ def build_router(
         sandbox_uid: str,
         request: Request,
         tail: int | None = None,
-        since: int | None = None,
     ) -> dict[str, Any]:
         args: dict[str, Any] = {"project_id": project_id, "sandbox_uid": sandbox_uid}
         if tail is not None:
             args["tail"] = tail
-        if since is not None:
-            args["since"] = since
         return gateway.call_http(
             request, name="sandbox.terminal", arguments=args
         )

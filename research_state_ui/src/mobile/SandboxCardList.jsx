@@ -70,7 +70,7 @@ export default function SandboxCardList() {
                 sandbox={s}
                 experiment={expById[experimentId]}
                 experimentId={experimentId}
-                parachute={latestParachute(events, experimentId, s.sandbox_id)}
+                parachute={latestParachute(events, experimentId, s.sandbox_uid)}
                 open={expandedId === rowId}
                 onToggle={() => setExpandedId(prev => (prev === rowId ? null : rowId))}
               />
@@ -129,7 +129,7 @@ function SandboxCard({ sandbox: s, experiment, experimentId, parachute, open, on
         {provider && <span>{provider}</span>}
         {up != null && <span>up {fmtDuration(up)}</span>}
         {left != null && <span>expires in {fmtDuration(Math.max(0, left))}</span>}
-        {s.sandbox_id && <span><ObjId id={s.sandbox_id} /></span>}
+        {s.sandbox_uid && <span><ObjId id={s.sandbox_uid} /></span>}
       </div>
       {endpoint && <div className="mcard-meta"><span className="mono">{endpoint}</span></div>}
 

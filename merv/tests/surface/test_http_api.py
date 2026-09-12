@@ -407,7 +407,7 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
             "GET", f"/api/projects/{project_id}/experiments/{exp_id}/sandbox"
         )
         self.assertEqual(sandbox["status"], "running")
-        self.assertTrue(sandbox["sandbox_id"])
+        self.assertEqual(sandbox["sandbox_uid"], sandbox_uid)
         self.assertNotIn("dashboards", sandbox)
         sandbox_by_uid = self.request(
             "GET", f"/api/projects/{project_id}/sandboxes/{sandbox_uid}"

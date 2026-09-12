@@ -89,19 +89,7 @@ _STATUS_EXPERIMENT_FIELDS = ("id", "name", "intent", "status", "attempt_index")
 _PROCESS_EXPERIMENT_FIELDS = ("id", "intent", "status", "attempt_index")
 _STATUS_TASK_FIELDS = ("id", "name", "goal", "status", "attempt_index")
 _TASK_PRIORITY = {"in_review": 0, "in_progress": 1}
-_SANDBOX_SUMMARY_FIELDS = (
-    "sandbox_id",
-    "status",
-    "gpu",
-    "cpu",
-    "memory",
-    "ssh_host",
-    "ssh_port",
-    "ssh_user",
-    "workdir",
-    "sandbox_data_dir",
-    "expires_at",
-)
+_SANDBOX_SUMMARY_FIELDS = ("sandbox_uid", "status", "gpu", "cpu", "memory", "workdir", "expires_at")
 
 
 @dataclass

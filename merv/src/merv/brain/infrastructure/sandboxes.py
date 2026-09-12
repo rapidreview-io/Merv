@@ -13,6 +13,7 @@ import json
 import math
 import re
 import shlex
+import time
 import uuid
 from contextlib import closing
 from datetime import UTC, datetime
@@ -60,14 +61,12 @@ class RemoteSandboxes:
 
     def __init__(
         self, *, client: InfrastructureTransport | None, store: BaseStateStore,
-        attachment_check: ExperimentAttachmentCheck | None = None,
-        storage_enabled: bool = True, **_: Any,
+        attachment_check: ExperimentAttachmentCheck | None = None, **_: Any,
     ) -> None:
         self.client = client
         self._store = store
         self.attachment_check = attachment_check
         store.install(INFRASTRUCTURE_SCHEMA)
-        self.storage_enabled = storage_enabled
 
     def _project(self, project_id: str | None) -> str:
         with closing(self._store.connect()) as conn:
@@ -130,77 +129,59 @@ class RemoteSandboxes:
         experiments = [link["experiment_id"] for link in links if link["experiment_id"]]
         offer = record.get("offer") or {}
         resources = offer.get("resources") or {}
-        error = record.get("last_error") or {}
         state = str(record.get("state", "unknown"))
-        status = _STATUS.get(state, state)
         return {
-            "sandbox_uid": record["id"], "sandbox_id": record["id"],
-            "project_id": project_id, "experiment_id": experiments[0] if experiments else "",
-            "active_experiment_ids": experiments, "status": status,
-            "phase": state, "detail": error.get("message", ""), "error": error.get("message", ""),
-            "provider": record.get("provider", ""), "instance_type": offer.get("instance_type", ""),
+            "sandbox_uid": record["id"], "experiment_id": experiments[0] if experiments else "",
+            "active_experiment_ids": experiments, "status": _STATUS.get(state, state),
+            "phase": state, "detail": (record.get("last_error") or {}).get("message", ""),
+            "provider": record.get("provider", ""), "instance_type": offer.get("offer_id", ""),
             "region": offer.get("region", ""), "gpu": resources.get("gpu") or "",
             "cpu": resources.get("cpu"), "memory": resources.get("memory_mb"),
-            "time_limit": (record.get("request") or {}).get("lease_seconds"),
-            "workdir": "/workspace", "sync_dir": "/workspace", "sandbox_data_dir": "/workspace",
-            "public_key_source": "caller_certificate", "ssh_host": None, "ssh_port": None,
-            "ssh_user": record["id"], "volume_name": None,
-            "requested_at": record.get("created_at"), "created_at": record.get("created_at"),
-            "updated_at": record.get("updated_at"), "expires_at": record.get("lease_expires_at"),
-            "last_seen_at": record.get("agent_seen_at"), "terminated_at": record.get("stopped_at"),
+            "time_limit": (record.get("request") or {}).get("lease_seconds"), "workdir": "/workspace",
+            "requested_at": record.get("created_at"), "updated_at": record.get("updated_at"),
+            "expires_at": record.get("lease_expires_at"), "terminated_at": record.get("stopped_at"),
             "price_usd_per_hour": _usd(record.get("hourly_price") or offer.get("hourly_price")),
-            "cost_usd": _usd(record.get("cost_so_far")), "infrastructure": "merv-sandboxes",
-            "billing_started_at": record.get("ready_at") or record.get("created_at"),
         }
 
     def _facts(self, project_id: str, record: dict[str, Any], *, public_key: str = "") -> dict[str, Any]:
+        """What an agent needs from this box: a poll receipt while provisioning, the full row once it runs."""
         facts = self._snapshot(project_id, record)
-        facts.update(experiment_dir="/workspace", data_dir="/workspace", storage_enabled=self.storage_enabled)
-        facts["ssh"] = {"host": None, "port": None, "user": record["id"]}
-        if not public_key:
-            public_key = next((link["public_key"] for link in reversed(self._links(project_id, record["id"]))
-                               if link["public_key"]), "")
-        if facts["status"] == "running" and public_key:
-            issued = self._call("POST", "/access/certificates", project_id=project_id,
-                                json={"public_key": public_key, "sandbox_id": record["id"]})
-            gateway = issued["gateway"]
-            facts["ssh"] = {
-                "host": gateway["host"], "port": gateway["port"], "user": record["id"],
-                "certificate": issued["certificate"], "certificate_expires_at": issued["expires_at"],
-                "host_public_key": gateway.get("host_public_key"),
-            }
-            facts.update(ssh_host=gateway["host"], ssh_port=gateway["port"])
-        facts["hint"] = (
-            "Work in /workspace. Use sandbox.run for durable jobs, sandbox.runs for their status, "
-            "and sandbox.job for output and results. For SSH, save ssh.certificate beside your "
-            "private key as <key>-cert.pub. Add '[ssh.host]:ssh.port ssh.host_public_key' to your "
-            "known_hosts file (use the plain host instead of brackets when the port is 22); connect as "
-            "ssh.user at ssh.host:ssh.port. Refresh the certificate with sandbox.get when it expires. "
-            "Retain needed files with sandbox.pull_outputs or storage.submit before release or expiry."
-        )
-        if facts["status"] == "provisioning":
-            facts.update(poll_after_seconds=3, hint="Provisioning in merv-sandboxes. Poll sandbox.get; do not repeat sandbox.request.")
-        elif facts["status"] == "cleanup_pending":
+        status = facts["status"]
+        if status == "provisioning":
+            return {key: facts[key] for key in ("sandbox_uid", "status", "phase", "detail", "expires_at")} | {
+                "poll_after_seconds": 3, "hint": "Poll sandbox.get; do not repeat sandbox.request."}
+        if status == "terminated":
+            facts["hint"] = "Released; call sandbox.request for a new box. Job logs stay readable through sandbox.job."
+        elif status == "cleanup_pending":
             facts["hint"] = "Deletion is pending in merv-sandboxes. Billing may continue until its worker confirms the resource is stopped."
-        elif facts["status"] == "running" and not public_key:
-            facts["hint"] += " This sandbox has no caller public key saved; use sandbox.request with public_key and the attached experiment to issue access."
+        elif status == "running":
+            key = public_key or next((link["public_key"] for link in reversed(self._links(project_id, record["id"]))
+                                      if link["public_key"]), "")
+            if not key:
+                facts["hint"] = "No caller public key saved; call sandbox.request with public_key and the attached experiment to issue SSH access."
+                return facts
+            issued = self._call("POST", "/access/certificates", project_id=project_id,
+                                json={"public_key": key, "sandbox_id": record["id"]})
+            gateway = issued["gateway"]
+            facts["ssh"] = {"host": gateway["host"], "port": gateway["port"], "user": record["id"],
+                            "certificate": issued["certificate"], "certificate_expires_at": issued["expires_at"],
+                            "host_public_key": gateway.get("host_public_key")}
+            facts["hint"] = ("Save ssh.certificate beside your private key as <key>-cert.pub, add "
+                             "'[ssh.host]:ssh.port ssh.host_public_key' to known_hosts (plain host when the port is 22), "
+                             "then ssh -p ssh.port ssh.user@ssh.host. sandbox.get refreshes the certificate.")
         return facts
 
     def options(self, *, project_id: str | None = None, gpu: str | None = None,
                 region: str | None = None, **_: Any) -> dict[str, Any]:
         pid = self._project(project_id)
         params = {key: value for key, value in {"gpu": gpu, "region": region}.items() if value}
-        data = self._call("GET", "/options", project_id=pid, params=params)
-        options = []
-        for offer in data.get("offers", []):
-            resources = offer.get("resources") or {}
-            options.append({**offer, "instance_type": offer["offer_id"],
-                            "display_instance_type": offer.get("instance_type"),
-                            "gpu": resources.get("gpu"), "cpu": resources.get("cpu"),
-                            "memory": resources.get("memory_mb"),
-                            "price_usd_per_hour": _usd(offer.get("hourly_price"))})
-        return {"backend": "merv-sandboxes", "options": options, "selection_required": True,
-                "hint": "Choose an available option and pass its provider and instance_type to sandbox.request."}
+        offers = self._call("GET", "/options", project_id=pid, params=params).get("offers", [])
+        return {"options": [{
+            "instance_type": offer["offer_id"], "provider": offer["provider"], "region": offer.get("region"),
+            "gpu": (offer.get("resources") or {}).get("gpu"), "gpu_count": (offer.get("resources") or {}).get("gpu_count"),
+            "cpu": (offer.get("resources") or {}).get("cpu"), "memory": (offer.get("resources") or {}).get("memory_mb"),
+            "price_usd_per_hour": _usd(offer.get("hourly_price")), "available": offer.get("available", True),
+        } for offer in offers]}
 
     def request(self, *, project_id: str | None = None, experiment_id: str | None = None,
                 gpu: str | None = None, cpu: float | None = None, memory: int | None = None,
@@ -235,23 +216,26 @@ class RemoteSandboxes:
             if existing:
                 self._link(pid, existing["id"], experiment_id, key)
                 return {**self._facts(pid, existing, public_key=key), "reused": True}
-        choices = self.options(project_id=pid, gpu=gpu, region=region)
-        candidates = [offer for offer in choices["options"]
-                      if offer.get("available", True)
-                      and (not provider or offer["provider"] == provider)
-                      and (not instance_type or instance_type in {offer["instance_type"], offer["display_instance_type"]})
-                      and (cpu is None or (offer.get("cpu") or 0) >= cpu)
-                      and (memory is None or (offer.get("memory") or 0) >= memory)]
+        offers = [offer for offer in self.options(project_id=pid, gpu=gpu, region=region)["options"] if offer["available"]]
+        candidates = [offer for offer in offers
+                      if (not provider or offer["provider"] == provider)
+                      and (not instance_type or instance_type == offer["instance_type"])
+                      and (cpu is None or (offer["cpu"] or 0) >= cpu)
+                      and (memory is None or (offer["memory"] or 0) >= memory)]
         if not instance_type:
-            return {**choices, "options": candidates, "status": "needs_selection", "project_id": pid}
+            return {"status": "needs_selection", "options": candidates}
         if not candidates:
-            raise ValidationError("selected hardware is unavailable; call sandbox.options for current offers")
+            near = [offer["instance_type"] for offer in offers if instance_type in offer["instance_type"]]
+            raise ValidationError(f"no available offer matches instance_type {instance_type!r}"
+                                  + (f" from provider {provider!r}" if provider else "")
+                                  + (f"; did you mean {', '.join(near)}?" if near else "; call sandbox.options"))
         if len(candidates) != 1:
-            raise ValidationError("hardware selection is ambiguous; pass the provider and complete instance_type from sandbox.options")
+            raise ValidationError(f"instance_type {instance_type!r} is offered by several providers ("
+                                  + ", ".join(offer["provider"] for offer in candidates) + "); pass provider")
         offer = candidates[0]
         generation = sum(row.get("name") == name for row in records)
         idempotency_key = f"{name}-{generation}" if name and not additional else "merv-" + uuid.uuid4().hex
-        body = {"provider": offer["provider"], "offer_id": offer["offer_id"],
+        body = {"provider": offer["provider"], "offer_id": offer["instance_type"],
                 "lease_seconds": lease, "idempotency_key": idempotency_key}
         if name:
             body["name"] = name if not additional else name + "-" + uuid.uuid4().hex[:8]
@@ -268,7 +252,7 @@ class RemoteSandboxes:
         except NotFoundError:
             if sandbox_uid:
                 raise
-            return {"project_id": pid, "experiment_id": experiment_id or "", "status": "none",
+            return {"experiment_id": experiment_id or "", "status": "none",
                     "hint": "No sandbox for this experiment; call sandbox.request."}
         return self._facts(pid, record)
 
@@ -348,7 +332,8 @@ class RemoteSandboxes:
         remaining = max(0, math.ceil((expires - datetime.now(UTC)).total_seconds()))
         renewed = self._call("POST", "/sandboxes/" + _path(record["id"]) + "/renew",
                              project_id=pid, json={"lease_seconds": max(60, remaining + seconds)})
-        return self._facts(pid, renewed)
+        return {"sandbox_uid": record["id"], "expires_at": renewed.get("lease_expires_at"),
+                "time_limit": (renewed.get("request") or {}).get("lease_seconds")}
 
     def pull_outputs_command(self, *, project_id: str | None = None,
                              experiment_id: str | None = None, sandbox_uid: str | None = None,
@@ -366,7 +351,7 @@ class RemoteSandboxes:
         # is independently quoted; private-key and destination remain placeholders.
         sources = " ".join(shlex.quote(f"{ssh['user']}@{ssh['host']}:/workspace/{path}") for path in selected)
         transport = f"ssh -i <key_path> -o CertificateFile=<certificate_path> -o UserKnownHostsFile=<known_hosts_path> -p {int(ssh['port'])}"
-        return {**facts, "paths": selected,
+        return {"sandbox_uid": facts["sandbox_uid"], "ssh": ssh, "paths": selected,
                 "command": f"rsync -az --protect-args --no-links --no-devices --no-specials -e {shlex.quote(transport)} -- {sources} <local-destination>",
                 "hint": "Save ssh.certificate and pin ssh.host_public_key; replace the key, certificate, known_hosts, and destination placeholders before running the command."}
 
@@ -377,16 +362,20 @@ class RemoteSandboxes:
             env: dict[str, str] | None = None) -> dict[str, Any]:
         pid = self._project(project_id)
         record = self._record(pid, sandbox_uid, experiment_id)
-        body = {"command": command, "name": name, "cwd": cwd,
+        body = {"command": command, "name": name or " ".join(command.split())[:64], "cwd": cwd,
                 "timeout_seconds": timeout_seconds, "outputs": outputs, "env": env or {}}
         if idempotency_key:
             body["idempotency_key"] = idempotency_key
-        return self._call("POST", "/sandboxes/" + _path(record["id"]) + "/jobs", project_id=pid, json=body)
+        job = self._call("POST", "/sandboxes/" + _path(record["id"]) + "/jobs", project_id=pid, json=body)
+        return {"job_id": job["id"], "name": job.get("name"), "state": job.get("state"), "cursor": job.get("cursor"),
+                "sandbox_uid": record["id"],
+                "hint": f"Wait with sandbox.job(job_id={job['id']!r}, after={job.get('cursor')!r}, wait_seconds={MAX_WAIT_SECONDS}); "
+                        "then read output with stream='stdout', tail=4096."}
 
     def job(self, *, project_id: str | None = None, job_id: str,
             after: str | None = None, wait_seconds: int = 0, cancel: bool = False,
             experiment_id: str | None = None, stream: str | None = None,
-            offset: int = 0, limit: int = 65536) -> dict[str, Any]:
+            offset: int = 0, limit: int = 4096, tail: int | None = None) -> dict[str, Any]:
         pid = self._project(project_id)
         self._check_experiment(pid, experiment_id)
         path = "/jobs/" + _path(job_id)
@@ -398,8 +387,12 @@ class RemoteSandboxes:
         result = self._call("POST" if cancel else "GET", path + ("/cancel" if cancel else ""),
                             project_id=pid, params=None if cancel else {"wait": min(MAX_WAIT_SECONDS, max(0, wait_seconds)), "after": after or ""})
         if stream is not None:
-            if stream not in {"stdout", "stderr"} or offset < 0 or not 1 <= limit <= 1048576:
-                raise ValidationError("output requires stdout/stderr, a nonnegative offset and a limit of 1–1048576 bytes")
+            if stream not in {"stdout", "stderr"} or offset < 0 or not 1 <= (tail or limit) <= 1048576:
+                raise ValidationError("output requires stdout/stderr, a nonnegative offset and a limit/tail of 1–1048576 bytes")
+            if tail:
+                extent = next((row for row in result.get("outputs", []) if row.get("stream") == stream), {})
+                offset = max(int(extent.get("available_start") or 0), int(extent.get("total_length") or 0) - tail)
+                limit = tail
             data, headers = self.client.request_bytes(
                 "GET", path + "/output", namespace=project_namespace(pid),
                 params={"stream": stream, "start": offset, "max_bytes": limit},
@@ -433,20 +426,24 @@ class RemoteSandboxes:
                 if not next_page or next_page == after:
                     break
                 after = next_page
-        if wait_seconds:
-            pending = next((job for job in jobs if job["state"] not in _TERMINAL_JOBS), None)
-            if pending:
-                changed = self.job(project_id=pid, job_id=pending["id"], after=pending.get("cursor"), wait_seconds=wait_seconds)
-                jobs = [changed if job["id"] == changed["id"] else job for job in jobs]
-        rows = [{**job, "label": job["id"], "sandbox_uid": job["sandbox_id"],
-                 "status": "finished" if job["state"] in _TERMINAL_JOBS else "running",
-                 "log_path": None} for job in jobs]
-        return {"project_id": pid, "experiment_id": experiment_id or "", "sandbox_uid": sandbox_uid or "",
-                "runs": rows, "jobs": jobs, "hint": "These are durable merv-sandboxes jobs started with sandbox.run. SSH commands are not automatically recorded as jobs."}
+        # The service waits on one job at a time, so share the budget round-robin
+        # across every pending job and stop at the first change.
+        pending = [job for job in jobs if job["state"] not in _TERMINAL_JOBS]
+        deadline = time.monotonic() + min(MAX_WAIT_SECONDS, wait_seconds)
+        while pending and (left := deadline - time.monotonic()) > 0:
+            job = pending.pop(0)
+            changed = self.job(project_id=pid, job_id=job["id"], after=job.get("cursor"),
+                               wait_seconds=math.ceil(left / (len(pending) + 1)))
+            if changed["state"] in _TERMINAL_JOBS or changed.get("cursor") != job.get("cursor"):
+                jobs = [changed if row["id"] == changed["id"] else row for row in jobs]
+                break
+            pending.append(job)
+        return {"experiment_id": experiment_id or "", "sandbox_uid": sandbox_uid or "",
+                "runs": [{key: job.get(key) for key in ("id", "name", "state", "exit_code", "cursor", "finished_at")}
+                         for job in jobs]}
 
     def terminal(self, *, project_id: str | None = None, experiment_id: str | None = None,
-                 sandbox_uid: str | None = None, tail: int | None = None,
-                 since: int | None = None) -> dict[str, Any]:
+                 sandbox_uid: str | None = None, tail: int | None = None) -> dict[str, Any]:
         """A bounded snapshot of the latest durable job's two output streams.
 
         The native service keeps separate byte cursors per job and stream.
@@ -455,10 +452,8 @@ class RemoteSandboxes:
         """
         pid = self._project(project_id)
         record = self._record(pid, sandbox_uid, experiment_id)
-        base = {"sandbox_id": record["id"], "sandbox_uid": record["id"],
-                "running": record.get("state") == "ready",
-                "status": _STATUS.get(record.get("state"), record.get("state")),
-                "source": "merv-sandboxes-job", "replace": True, "cursor": 0}
+        base = {"sandbox_uid": record["id"], "status": _STATUS.get(record.get("state"), record.get("state")),
+                "replace": True, "cursor": 0}
         page = self._call("GET", "/jobs", project_id=pid,
                           params={"sandbox_id": record["id"], "limit": 1})
         jobs = page.get("jobs", [])
@@ -492,16 +487,11 @@ class RemoteSandboxes:
             transcript.append(f"[{stream}" + ("; earlier output omitted]" if offset else "]"))
             transcript.append(data.decode("utf-8", errors="replace"))
         text = "\n".join(transcript)
-        running = job.get("state") not in _TERMINAL_JOBS
         return {**base, "available": True, "job_id": job["id"], "job_name": job.get("name"),
                 "job_state": job.get("state"), "transcript": text,
                 "cursor": len(text.encode("utf-8")), "truncated": omitted,
-                "command_running": running, "last_exit_code": job.get("exit_code"),
-                "last_command_finished_at": job.get("finished_at"),
-                "last_command": {"command": job.get("command"), "status": "running" if running else "finished",
-                                 "started_at": job.get("started_at"), "finished_at": job.get("finished_at"),
-                                 "exit_code": job.get("exit_code")},
-                "hint": "Latest durable job output. This bounded snapshot replaces the previous view; use sandbox.job for exact byte ranges or older jobs."}
+                "command_running": job.get("state") not in _TERMINAL_JOBS, "last_exit_code": job.get("exit_code"),
+                "last_command_finished_at": job.get("finished_at")}
 
     def health(self, *, details: bool = False) -> dict[str, Any]:
         if self.client is None:
