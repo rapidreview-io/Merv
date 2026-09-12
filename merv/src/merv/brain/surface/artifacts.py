@@ -6,6 +6,7 @@ commands, and content classification exposed to MCP and HTTP callers.
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import quote
@@ -140,24 +141,18 @@ def content_envelope_v1(
 ) -> dict[str, Any]:
     """Text bytes ``[offset, offset + max_bytes)``; a bound reports ``truncated``."""
     data, text = artifact.data, None
-    is_binary = data is not None and not _is_utf8_text(data, artifact.content_type)
     end = len(data or b"") if max_bytes is None else min(len(data or b""), offset + max_bytes)
-    if data is not None and not is_binary:
-        text = data[offset:end].decode("utf-8", errors="ignore")
+    if data is not None and _is_textual_type(artifact.content_type) and b"\x00" not in data:
+        with suppress(UnicodeDecodeError):
+            data.decode("utf-8")  # the whole document must be text, whatever window is asked for
+            text = data[offset:end].decode("utf-8", errors="ignore")
     envelope = {
-        "content": text, "is_binary": is_binary, "size_bytes": artifact.size_bytes,
+        "content": text, "is_binary": data is not None and text is None, "size_bytes": artifact.size_bytes,
         "content_type": artifact.content_type, "available": data is not None,
     }
     if text is not None and max_bytes is not None:
         envelope.update({"truncated": True, "next_offset": end} if end < len(data) else {"truncated": False})
     return envelope
-
-
-def _is_utf8_text(data: bytes, content_type: str) -> bool:
-    try:
-        return _is_textual_type(content_type) and b"\x00" not in data and data.decode("utf-8") is not None
-    except UnicodeDecodeError:
-        return False
 
 
 def completed_artifact_v1(
