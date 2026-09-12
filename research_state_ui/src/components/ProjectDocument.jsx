@@ -1,9 +1,7 @@
 import { useCallback } from 'react';
 import { api } from '../api';
-import StatusPill from './StatusPill';
-import { expName } from '../utils/experiment';
 import { Link } from 'react-router-dom';
-import { useProjectStore, useProjectHref, selectActiveExperiments } from '../store/useProjectStore';
+import { useProjectStore, useProjectHref } from '../store/useProjectStore';
 import { entityRoute } from '../utils/entityResolve';
 import MarkdownView from './MarkdownView';
 import ProjectIntentEditor from './ProjectIntentEditor';
@@ -12,7 +10,6 @@ import './project-document.css';
 /** The home snapshot is the canonical read; published prose and live states stay distinct. */
 export default function ProjectDocument({ project }) {
   const px = useProjectHref();
-  const experiments = useProjectStore(selectActiveExperiments);
   // Polling changes reference statuses; only changed artifact IDs should remount figures.
   const figureIds = (project?.references || []).filter(ref => ref.kind === 'artifact').map(ref => ref.id).sort().join('\n');
   const projectId = project?.id;
@@ -60,22 +57,9 @@ export default function ProjectDocument({ project }) {
       </div>
       {['methods', 'results'].map(section => <details key={section} className="project-document-section" open>
         <summary>{section === 'methods' ? 'Methods' : 'Results'}</summary>
-        {project[section] ? <MarkdownView text={project[section]} resolveImageSrc={resolveFigure} artifactFigures />
+        {project[section] ? <MarkdownView text={project[section]} resolveImageSrc={resolveFigure} artifactFigures experimentCards={section === 'methods'} />
           : <p className="muted">No {section} published yet.</p>}
-        {section === 'methods' && <div className="project-live-experiments">
-          <h4>Live experiments <span className="muted">({experiments.length})</span></h4>
-          <p className="muted">Current workflow progress; updates independently of the published Methods.</p>
-          {experiments.length ? <ul className="project-document-references">
-            {experiments.map(experiment => <li key={experiment.id}>
-              <div>
-                <Link to={px(`/experiments/${experiment.id}`)}>{expName(experiment)}</Link>
-                {experiment.intent && <p>{experiment.intent}</p>}
-                {experiment.attempt_index != null && <div className="muted">Attempt {experiment.attempt_index}</div>}
-              </div>
-              <StatusPill value={experiment.status} />
-            </li>)}
-          </ul> : <p className="muted">No active experiments.</p>}
-        </div>}
+
       </details>)}
       <details className="project-document-section" open>
         <summary>Selected evidence <span className="muted">({project.references?.length || 0})</span></summary>

@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import CodeBlock from './CodeBlock';
 import EntityChip from './EntityChip';
+import ExperimentCard from './ExperimentCard';
 import rehypeEntityChips from '../utils/rehypeEntityChips';
 import { useAuthedSrc } from './AuthedMedia';
 
@@ -99,11 +100,17 @@ const STATIC_COMPONENTS = {
  *   through untouched. Must be referentially stable (useCallback) — it keys
  *   both the memo below and the `img` component's identity.
  */
-function MarkdownView({ text, resolveImageSrc, artifactFigures = false }) {
+function MarkdownView({ text, resolveImageSrc, artifactFigures = false, experimentCards = false }) {
   // `img` is the only component that closes over a prop, so it alone is
   // rebuilt — and only when resolveImageSrc actually changes.
   const components = useMemo(() => ({
     ...STATIC_COMPONENTS,
+    p({ node, children }) {
+      const child = node?.children?.length === 1 ? node.children[0] : null;
+      const id = child?.tagName === 'entity-chip' ? child.properties?.dataId : null;
+      return experimentCards && id?.startsWith('exp_')
+        ? <ExperimentCard id={id} /> : <p>{children}</p>;
+    },
     img({ src, alt, title }) {
       const passthrough = !src
         || /^(https?:|data:|blob:)/i.test(src)
@@ -112,7 +119,7 @@ function MarkdownView({ text, resolveImageSrc, artifactFigures = false }) {
       const img = <FigureImg src={resolved} alt={alt} title={title} />;
       return artifactFigures ? <span className="md-figure">{img}{alt && <span className="md-figure-caption">{alt}</span>}</span> : img;
     },
-  }), [resolveImageSrc, artifactFigures]);
+  }), [resolveImageSrc, artifactFigures, experimentCards]);
 
   return (
     <div className="markdown-body">

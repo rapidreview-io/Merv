@@ -62,7 +62,13 @@ and evidence references. If a figure helps explain a result, use
 `![Descriptive caption](art_ID)` and include its retained artifact ID in the
 publication's references. Figures are optional; the UI resolves the reference
 and displays the caption. Do not use local paths, temporary URLs or embedded
-bytes. The UI appends current live experiments to Methods automatically.
+bytes. When an experiment enters running, connect it to the Methods story and
+put its bare `exp_ID` in a standalone paragraph where its live card belongs,
+including it in the publication references. Inline citations remain ordinary
+citations. When it reaches a final state, incorporate what happened into Methods
+and update Results if warranted by evidence. Replace cards with concise prose
+and inline citations as appropriate. Do not add a separate live-experiments
+section, inventory or empty state.
 
 A project-author assignment maintains Methods and Results after completed
 experiments and approved/published reflection waves. Read `project.synthesis.read`

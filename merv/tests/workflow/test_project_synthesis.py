@@ -213,15 +213,19 @@ class ProjectSynthesisTest(ResearchCase):
     def test_selected_status_is_live_but_evidence_is_pinned_and_foreign_evidence_is_rejected(self):
         experiment = self.drive_experiment_to_running()
         packet = self.prepare()
+        self.assertTrue(any(e["target_id"] == experiment and e["to"] == "running" for e in packet["source"]["events"]))
+        methods = f"To test generalization, we run a paired comparison:\n\n{experiment}"
         artifact = next(ref for ref in packet["source"]["references"] if ref["kind"] == "artifact")
         refs = [{"kind": "experiment", "id": experiment, "label": "Current approach"}, artifact]
         other = self.call("project", action="create", name="Other scope")
         foreign = self.app.artifacts.contents.create(project_id=other["id"], path="foreign.md", data=b"Unrelated finding")
         with self.assertRaises(WorkflowError):
             self.publish(packet, references=[{"kind": "artifact", "id": foreign.id, "label": "Foreign"}])
-        self.publish(packet, references=refs)
+        self.publish(packet, methods=methods, references=refs)
         self.transition_experiment(experiment, "abandon")
         document = self.document()
+        self.assertEqual(document["methods"], methods)
+        self.assertTrue(document["maintenance"]["pending"])
         self.assertEqual(document["references"][0]["status"], "abandoned")
         self.assertEqual(document["references"][1]["id"], artifact["id"])
         read = self.call("artifact.read", project_id=self.project_id, artifact_id=artifact["id"], include_content=True)
