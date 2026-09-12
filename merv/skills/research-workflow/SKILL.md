@@ -301,12 +301,7 @@ revisions. Revise and resubmit affected artifacts before retrying a rejected gat
 
 ## Complete only through MCP
 
-Complete an experiment only after:
-
-- the required plan, result, report, and logic-graph evidence is submitted;
-- required reviews have passed;
-- the conclusion is grounded in the submitted record; and
-- MCP records the passing attempt review and the resulting completion.
-
-If MCP rejects an action, follow its reported gate and next action. Do not work
+An experiment completes when its attempt review passes on the submitted plan,
+result, report and logic-graph evidence; no agent call completes it. If MCP
+rejects an action, follow its reported gate and next action. Do not work
 around the state machine.

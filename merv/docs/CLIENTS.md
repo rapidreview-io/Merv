@@ -102,20 +102,10 @@ is not noticed until you next call `sandbox.job` or `sandbox.runs`, so arm the
 loop right after the launch rather than leaving a box billing with nobody
 reading the receipts.
 
-What differs per client is only how long it will let you keep looping:
-
-- **Claude Code**: loop in the turn. Each 30s call is well under the tool
-  timeout, and the turn continues until a row goes terminal. Subagents loop the
-  same way.
-- **Cursor (3.0+)**: loop in the turn. If the session is interrupted, re-read
-  `sandbox.runs` once on resume before deciding anything — the row is durable.
-- **Codex CLI**: loop in the turn; no terminal timeout applies, because the wait
-  happens inside the tool call rather than in a shell.
-- **Hermes Agent**: loop in the turn. A delegated child that launched the run
-  waits on it itself and reports the terminal row back.
-- **Kilo**: loop in the turn.
-- **No-shell surfaces** (Claude Desktop and similar MCP-only clients): the same
-  loop, and the only one they ever needed.
+Every client loops in the turn, no-shell surfaces included, because the wait
+happens inside the tool call rather than in a shell. Cursor re-reads the job
+once on resume after an interruption; a Hermes delegated child that launched
+the run waits on it itself and reports the terminal state back.
 
 For a run expected to outlast a turn, end the turn and call `sandbox.job` once
 when you next attend the experiment: the job, its `exit_code`, and its retained

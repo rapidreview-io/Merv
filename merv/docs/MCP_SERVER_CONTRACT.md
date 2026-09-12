@@ -147,15 +147,10 @@ role, attempt, lens, and submission metadata, plus the underlying `artifact_id`;
 legacy IDs that identify both return the association. ID reads include download
 URLs requiring normal project/account authentication, not MCP-only worker
 credentials. `include_content=true` adds figure paths and a content envelope
-(sibling to a singular artifact, inside each batch row). The envelope reports
-`content`, `available`, `is_binary`, `size_bytes`, `content_type` and `truncated`
-(plus `next_offset` when more remains); text is the byte window `[offset,
-offset + max_bytes)` (default 16000 per artifact, batch rows included), and binary
-or unavailable bytes are not injected as text. Content is opt-in and cannot be
-requested in list mode. ID selectors and list filters cannot be mixed.
-
-The former `artifact.store`, `artifact.submit`, and `artifact.find` tools have
-been removed. Use these three tools directly; there are no compatibility aliases.
+whose text is the byte window `[offset, offset + max_bytes)` (default 16000
+per artifact, batch rows included) with `truncated`/`next_offset` for paging;
+the tool description names the envelope's fields. Content cannot be requested
+in list mode, and ID selectors and list filters cannot be mixed.
 
 `workflow.status_and_next(project_id, experiment_id=...)` is the canonical
 experiment read. Its `context` has exactly four sections: experiment, latest
@@ -163,9 +158,8 @@ plan, latest report, and the remaining current-attempt artifact references.
 Live experiments receive the full latest plan; terminal experiments receive
 its bounded Summary; the latest report is full when present. Plan, report, and
 every artifact reference carry their immutable artifact id, local path, and
-submission timestamp. `experiment.get_state` remains an internal compatibility
-reader for UI/service code, stays singular, and does not accept
-`experiment_ids` or `review_ids`.
+submission timestamp; a plan or report whose upload command never succeeded
+reads `pending_upload`.
 
 ## Experiment workflow
 
