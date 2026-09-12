@@ -1,7 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { api } from '../api';
-import { useIntervalPoll, useRecordStatus } from '../store/usePolling';
+import { useReflectionLedger } from '../store/useLedger';
 import { StaleNote } from '../components/LoadState';
 import { useProjectStore, useProjectHref, selectExperiments, selectTasks } from '../store/useProjectStore';
 import StatusPill from '../components/StatusPill';
@@ -65,8 +64,7 @@ export default function Reflection() {
     if (legacy) navigate(px(`/reflection/${legacy}`), { replace: true });
   }, [legacy, navigate, px]);
 
-  const [data, error, fetchReflections] = useRecordStatus(() => api.getReflections(projectId), [projectId]);
-  useIntervalPoll(fetchReflections, 8000);
+  const [data, error] = useReflectionLedger(projectId, 8000);
 
   const waves = data?.reflections || [];
 

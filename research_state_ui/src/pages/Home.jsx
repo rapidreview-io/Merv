@@ -37,63 +37,63 @@ export default function Home() {
   const next = agentPrompt(home?.workflow?.next_action, {
     state: home?.workflow?.state, name: home?.active_experiment?.name,
   });
-  // First run: no agent has ever done anything here. Until the first
-  // experiment exists the connect guide is the page.
+  // First run: no agent has ever done anything here, so the connect guide leads.
   const firstRun = !!home && (stats.claims ?? 0) === 0 && (stats.experiments ?? 0) === 0 && (stats.artifacts ?? 0) === 0;
+
+  const head = (
+    <>
+      {next && <p className="home-next"><span className="gate-banner-meta-key">Next for your agent</span> {next}</p>}
+      {firstRun && <ConnectAgentPanel project={project} />}
+      <ProjectDocument project={project} />
+    </>
+  );
+  // Until the first experiment exists the document (and the guide) is the page.
+  if (!(stats.experiments ?? 0)) return <div className="page-stage">{head}</div>;
 
   return (
     <div className="page-stage">
-      {next && <p className="home-next"><span className="gate-banner-meta-key">Next for your agent</span> {next}</p>}
+      {head}
+      <AutorunStrip project={project} />
 
-      {firstRun && <ConnectAgentPanel project={project} />}
+      <ProjectReflectionPanel projectId={project.id} />
 
-      <ProjectDocument project={project} />
-
-      {(stats.experiments ?? 0) === 0 ? null : (
-        <>
-          <AutorunStrip project={project} />
-
-          <ProjectReflectionPanel projectId={project.id} />
-
-          <section className="section">
-            <div className="section-title">
-              Sandboxes
-              {runningSandboxes > 0 && (
-                <span className="section-title-badge">
-                  <span className="sidebar-live-dot" />{runningSandboxes} running
-                </span>
-              )}
+      <section className="section">
+        <div className="section-title">
+          Sandboxes
+          {runningSandboxes > 0 && (
+            <span className="section-title-badge">
+              <span className="sidebar-live-dot" />{runningSandboxes} running
+            </span>
+          )}
+        </div>
+        <SandboxTable
+          sandboxes={sandboxes}
+          experiments={experiments}
+          events={events}
+          projectId={project.id}
+          empty={(
+            <div className="empty-state empty-state--compact">
+              <p>No sandboxes yet.</p>
             </div>
-            <SandboxTable
-              sandboxes={sandboxes}
-              experiments={experiments}
-              events={events}
-              projectId={project.id}
-              empty={(
-                <div className="empty-state empty-state--compact">
-                  <p>No sandboxes yet.</p>
-                </div>
-              )}
-            />
-          </section>
+          )}
+        />
+      </section>
 
-          <ComputeSpend
-            projectId={project.id}
-            fleetSignal={`${sandboxes.length}:${runningSandboxes}`}
-          />
+      <ComputeSpend
+        projectId={project.id}
+        fleetSignal={`${sandboxes.length}:${runningSandboxes}`}
+      />
 
-          <section className="section">
-            <div className="section-title">Counts</div>
-            <div className="stat-grid">
-              <StatCard to={px('/claims')} label="Claims" value={stats.claims ?? claims.length} sub={countOf(claims, 'status', 'active') + ' active'} />
-              <StatCard to={px('/experiments')} label="Experiments" value={stats.experiments ?? experiments.length} sub={countOf(experiments, 'status', 'running') + ' running'} />
-              <StatCard to={px('/artifacts')} label="Artifacts" value={stats.artifacts ?? 0} />
-              <StatCard to={px('/sandboxes')} label="Sandboxes" value={runningSandboxes} sub="running" />
-              <StatCard to={px('/reviews')} label="Open reviews" value={stats.open_reviews ?? 0} />
-            </div>
-          </section>
-        </>
-      )}
+      <section className="section">
+        <div className="section-title">Counts</div>
+        <div className="stat-grid">
+          <StatCard to={px('/claims')} label="Claims" value={stats.claims ?? claims.length} sub={countOf(claims, 'status', 'active') + ' active'} />
+          <StatCard to={px('/experiments')} label="Experiments" value={stats.experiments ?? experiments.length} sub={countOf(experiments, 'status', 'running') + ' running'} />
+          <StatCard to={px('/artifacts')} label="Artifacts" value={stats.artifacts ?? 0} />
+          <StatCard to={px('/sandboxes')} label="Sandboxes" value={runningSandboxes} sub="running" />
+          <StatCard to={px('/reviews')} label="Open reviews" value={stats.open_reviews ?? 0} />
+        </div>
+      </section>
     </div>
   );
 }

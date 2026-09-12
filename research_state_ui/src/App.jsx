@@ -44,6 +44,20 @@ import AutoRun from './pages/AutoRun';
 import Debug from './pages/Debug';
 import Settings from './pages/Settings';
 
+// The project-scoped pages, one row each: path, desktop page, and the mobile
+// screen where a card/segment version replaces the desktop-physics page.
+const PAGES = [
+  ['', Home, HomeScreen], ['feed', Feed], ['claims', Claims, MobileClaims],
+  ['claims/:claimId', ClaimDetail, MobileClaimDetail], ['litreview', LitReview],
+  ['experiments', Experiments, ExperimentCardList], ['experiments/:experimentId', ExperimentDetail, MobileExperimentDetail],
+  ['tasks', Tasks], ['tasks/:taskId', TaskDetail],
+  ['reflection', Reflection, MobileReflectionScreen], ['reflection/:reflectionId', ReflectionDetail, MobileReflectionScreen],
+  ['artifacts', Artifacts, MobileArtifacts], ['artifacts/:artifactId', Artifacts, MobileArtifacts],
+  ['storage', Storage], ['storage/:objectId', Storage], ['reviews', Reviews, MobileReviews], ['events', Events],
+  ['sandboxes', Sandboxes, SandboxCardList], ['auto-run', AutoRun], ['settings', Settings],
+  ['activity', Debug], ['debug', DebugRedirect],
+];
+
 // /debug merged into /activity. Preserve ?tool= (v6 <Navigate> drops search).
 // Lives under /p/:projectId, so redirect into the same project's /activity.
 function DebugRedirect() {
@@ -190,9 +204,9 @@ export default function App() {
         <p>{bootView.body}</p>
         {bootView.hint && <p className="mono" style={{ fontSize: 'var(--text-xs)', marginTop: 8 }}>{bootView.hint}</p>}
         <div style={{ marginTop: 18 }}>
-          {bootView.reload
-            ? <button className="btn" onClick={() => window.location.reload()}>Reload</button>
-            : <button className="btn" onClick={() => loadProjects()}>Retry</button>}
+          <button className="btn" onClick={bootView.reload ? () => window.location.reload() : loadProjects}>
+            {bootView.reload ? 'Reload' : 'Retry'}
+          </button>
         </div>
         <div className="error-message" style={{ marginTop: 10 }}>{bootError.message}</div>
       </FullPageStatus>
@@ -208,50 +222,35 @@ export default function App() {
     return <FullPageStatus>Selecting project…</FullPageStatus>;
   }
 
-  // Mobile surface: same router, same store — different shell and landing,
-  // with card/segment screens replacing the desktop-physics pages
-  // (min-width tables, hover tooltips, side panels). Desktop is untouched.
-  if (isMobile) {
-    return (
-      <MobileShell onRefresh={refreshHome}>
-        <CompatBanner />
-        <ErrorBoundary key={pathname}>
+  // Same router and store on both surfaces; a mobile shell and landing, with
+  // card/segment screens replacing the desktop-physics pages (min-width
+  // tables, hover tooltips, side panels). Each route's boundary is keyed by
+  // path so navigating away clears a caught render error.
+  const page = (
+    <>
+      <CompatBanner />
+      <ErrorBoundary key={pathname}>
         <Routes>
           {/* Global project picker (unscoped) */}
-          <Route path="/projects" element={<MobileProjects />} />
-          <Route path="/projects/new" element={<MobileProjectCreateNotice />} />
+          <Route path="/projects" element={isMobile ? <MobileProjects /> : <Projects />} />
+          <Route path="/projects/new" element={isMobile ? <MobileProjectCreateNotice /> : <CreateProject />} />
           {/* Project-scoped surface */}
           <Route path="/p/:projectId" element={<ProjectScope />}>
-            <Route index element={<HomeScreen />} />
-            <Route path="feed" element={<Feed />} />
-            <Route path="claims" element={<MobileClaims />} />
-            <Route path="claims/:claimId" element={<MobileClaimDetail />} />
-            <Route path="litreview" element={<LitReview />} />
-            <Route path="experiments" element={<ExperimentCardList />} />
-            <Route path="experiments/:experimentId" element={<MobileExperimentDetail />} />
-            <Route path="tasks" element={<Tasks />} />
-            <Route path="tasks/:taskId" element={<TaskDetail />} />
-            <Route path="reflection" element={<MobileReflectionScreen />} />
-            <Route path="reflection/:reflectionId" element={<MobileReflectionScreen />} />
-            <Route path="artifacts" element={<MobileArtifacts />} />
-            <Route path="artifacts/:artifactId" element={<MobileArtifacts />} />
-            <Route path="storage" element={<Storage />} />
-            <Route path="storage/:objectId" element={<Storage />} />
-            <Route path="reviews" element={<MobileReviews />} />
-            <Route path="events" element={<Events />} />
-            <Route path="sandboxes" element={<SandboxCardList />} />
-            <Route path="auto-run" element={<AutoRun />} />
-            <Route path="settings" element={<Settings />} />
-            <Route path="activity" element={<Debug />} />
-            <Route path="debug" element={<DebugRedirect />} />
+            {PAGES.map(([path, Desktop, Mobile = Desktop]) => {
+              const Page = isMobile ? Mobile : Desktop;
+              return path
+                ? <Route key={path} path={path} element={<Page />} />
+                : <Route key="index" index element={<Page />} />;
+            })}
           </Route>
           <Route path="/" element={<RootRedirect />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
-        </ErrorBoundary>
-      </MobileShell>
-    );
-  }
+      </ErrorBoundary>
+    </>
+  );
+
+  if (isMobile) return <MobileShell onRefresh={refreshHome}>{page}</MobileShell>;
 
   return (
     <>
@@ -269,43 +268,7 @@ export default function App() {
             <span className="sb-edge-glyph" aria-hidden="true"><IconSidebar /></span>
           </button>
         )}
-        <main className="shell-main">
-          <CompatBanner />
-        <ErrorBoundary key={pathname}>
-        <Routes>
-          {/* Global project picker (unscoped) */}
-          <Route path="/projects" element={<Projects />} />
-          <Route path="/projects/new" element={<CreateProject />} />
-          {/* Project-scoped surface */}
-          <Route path="/p/:projectId" element={<ProjectScope />}>
-            <Route index element={<Home />} />
-            <Route path="feed" element={<Feed />} />
-            <Route path="claims" element={<Claims />} />
-            <Route path="claims/:claimId" element={<ClaimDetail />} />
-            <Route path="litreview" element={<LitReview />} />
-            <Route path="experiments" element={<Experiments />} />
-            <Route path="experiments/:experimentId" element={<ExperimentDetail />} />
-            <Route path="tasks" element={<Tasks />} />
-            <Route path="tasks/:taskId" element={<TaskDetail />} />
-            <Route path="reflection" element={<Reflection />} />
-            <Route path="reflection/:reflectionId" element={<ReflectionDetail />} />
-            <Route path="artifacts" element={<Artifacts />} />
-            <Route path="artifacts/:artifactId" element={<Artifacts />} />
-            <Route path="storage" element={<Storage />} />
-            <Route path="storage/:objectId" element={<Storage />} />
-            <Route path="reviews" element={<Reviews />} />
-            <Route path="events" element={<Events />} />
-            <Route path="sandboxes" element={<Sandboxes />} />
-            <Route path="auto-run" element={<AutoRun />} />
-            <Route path="settings" element={<Settings />} />
-            <Route path="activity" element={<Debug />} />
-            <Route path="debug" element={<DebugRedirect />} />
-          </Route>
-          <Route path="/" element={<RootRedirect />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-        </ErrorBoundary>
-        </main>
+        <main className="shell-main">{page}</main>
       </div>
     </>
   );

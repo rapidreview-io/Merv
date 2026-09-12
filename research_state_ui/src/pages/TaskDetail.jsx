@@ -4,8 +4,9 @@ import { api } from '../api';
 import { useRecordStatus } from '../store/usePolling';
 import { useProjectStore, useProjectHref } from '../store/useProjectStore';
 import { useStreamAwarePoll } from '../store/useEventStream';
-import FSMStrip, { stageRows } from '../components/FSMStrip';
-import GateBanner from '../components/GateBanner';
+import { useWorkflowAction } from '../store/useWorkflowAction';
+import { stageRows } from '../components/FSMStrip';
+import StageSection from '../components/StageSection';
 import MarkdownView from '../components/MarkdownView';
 import ReviewCard from '../components/ReviewCard';
 import StatusPill from '../components/StatusPill';
@@ -13,12 +14,13 @@ import ObjId from '../components/ObjId';
 import InlineMd from '../components/InlineMd';
 import { LoadFallback, StaleNote } from '../components/LoadState';
 import DetailsDrawer, {
-  DetailsButton, OpsPosition, OpsTimeline, OpsVersions, useDetailsDrawer,
+  OpsPosition, OpsTimeline, OpsVersions, useDetailsDrawer,
   linkedNodes, orderedTimeline, reviewRows, sortedArtifacts, versionRows,
 } from '../components/DetailsDrawer';
 import { ago } from '../utils/time';
 import { workflowActionButtons } from '../utils/workflowActions';
-import { transitionButton } from '../utils/vocab';
+import { transitionButton, words } from '../utils/vocab';
+
 /*
  * TaskDetail — a task is scoped work with a verifiable finish line, so the
  * page is a ledger, not an essay:
@@ -41,22 +43,17 @@ const TASK_STAGES = stageRows('in_progress', 'in_review', 'done');
 const TASK_GATES = new Set(['in_review']);
 const TASK_TERMINAL = new Set(['done', 'failed']);
 
-const PRIMARY_TRANSITIONS = Object.fromEntries(['submit_delivery', 'accept'].map(id => [id, transitionButton(id)]));
+// `accept` is not here: a passing task review applies it on its own.
+const PRIMARY_TRANSITIONS = { submit_delivery: transitionButton('submit_delivery') };
 const SECONDARY_TRANSITIONS = ['mark_failed'].map(transitionButton);
-
 
 export default function TaskDetail() {
   const { taskId } = useParams();
   const px = useProjectHref();
   const projectId = useProjectStore(s => s.projectId);
-  const refreshHome = useProjectStore(s => s.refreshHome);
 
-  const [busy, setBusy] = useState(new Set());
-  const [actionError, setActionError] = useState(null);
-  const [gateOpen, setGateOpen] = useState(false);
   const [pendingEnd, setPendingEnd] = useState(false);
   const [endReason, setEndReason] = useState('');
-  const [acceptOutcome, setAcceptOutcome] = useState('');
   const { detailsOpen, setDetailsOpen, toggleDetails, closeDetails, detailsBtnRef } = useDetailsDrawer();
 
   useEffect(() => { setPendingEnd(false); setEndReason(''); setDetailsOpen(false); }, [taskId]);
@@ -75,22 +72,8 @@ export default function TaskDetail() {
   const workflow = statusData?.workflow;
   const { primary, secondary } = useMemo(() => workflowActionButtons(workflow, PRIMARY_TRANSITIONS, SECONDARY_TRANSITIONS), [workflow]);
 
-  const onAction = useCallback(async (transition, evidence) => {
-    setBusy(prev => { const n = new Set(prev); n.add(transition); return n; });
-    setActionError(null);
-    let applied = false;
-    try {
-      await api.transitionTask(projectId, taskId, transition, evidence);
-      applied = true;
-      await Promise.all([fetchStatus(), refreshHome()]);
-      return true;
-    } catch (err) {
-      setActionError(`${transition}: ${err.message}`);
-      return applied;
-    } finally {
-      setBusy(prev => { const n = new Set(prev); n.delete(transition); return n; });
-    }
-  }, [projectId, taskId, fetchStatus, refreshHome]);
+  const { act: onAction, busy, error: actionError, setError: setActionError } =
+    useWorkflowAction((transition, evidence) => api.transitionTask(projectId, taskId, transition, evidence), fetchStatus);
 
   const requestAction = useCallback((transition) => {
     if (transition === 'mark_failed') {
@@ -98,12 +81,8 @@ export default function TaskDetail() {
       setPendingEnd(true);
       return;
     }
-    if (transition === 'accept') {
-      onAction('accept', acceptOutcome.trim() ? { outcome: acceptOutcome.trim() } : undefined);
-      return;
-    }
     onAction(transition);
-  }, [onAction, acceptOutcome]);
+  }, [onAction]);
 
   if (!task) {
     return <LoadFallback error={error?.message} fetched={Boolean(statusData)} back={px('/tasks')} label="Tasks" />;
@@ -117,51 +96,17 @@ export default function TaskDetail() {
   return (
     <div className="page-stage">
       {error && <StaleNote error={error.message} />}
-      <section className="exp-fsm">
-        <div className="fsm-row">
-          <div className="fsm-row-strip">
-        <FSMStrip
-          status={task.status}
-          stages={TASK_STAGES}
-          gateStates={TASK_GATES}
-          terminal={TASK_TERMINAL}
-          ariaLabel="Task lifecycle"
-          badge={!isClosed && primary ? 'action' : null}
-          expanded={!isClosed && gateOpen}
-          onToggle={isClosed ? null : () => setGateOpen(v => !v)}
-        >
-          <div className="fsm-gate-panel">
-            <GateBanner
-              workflow={workflow}
-              name={task.name || task.id}
-              primaryAction={primary}
-              secondaryActions={secondary}
-              actionsBusy={busy}
-              onAction={requestAction}
-            />
-            {primary?.transition === 'accept' && (
-              <div className="form-row" style={{ marginTop: 10 }}>
-                <label className="label">Outcome note (optional)</label>
-                <input
-                  className="input"
-                  value={acceptOutcome}
-                  onChange={e => setAcceptOutcome(e.target.value)}
-                  placeholder="What the project can now rely on."
-                />
-              </div>
-            )}
-          </div>
-        </FSMStrip>
-          </div>
-          <DetailsButton
-            open={detailsOpen}
-            onToggle={toggleDetails}
-            controls="task-details"
-            buttonRef={detailsBtnRef}
-          />
-        </div>
-        {actionError && <div className="error-message">{actionError}</div>}
-      </section>
+      <StageSection
+        status={task.status}
+        closed={isClosed}
+        strip={{ stages: TASK_STAGES, gateStates: TASK_GATES, terminal: TASK_TERMINAL, ariaLabel: 'Task lifecycle' }}
+        gate={{
+          workflow, name: task.name || task.id, primaryAction: primary, secondaryActions: secondary,
+          actionsBusy: busy, onAction: requestAction,
+        }}
+        details={{ open: detailsOpen, onToggle: toggleDetails, controls: 'task-details', buttonRef: detailsBtnRef }}
+        actionError={actionError}
+      />
 
       {pendingEnd && (
         <section className="form-card" style={{ marginBottom: 18 }}>
@@ -396,7 +341,7 @@ function buildTimeline(task, reviews) {
     items.push({
       t: r.created_at, rank: 2 * (i + 1) + 1,
       tone: v === 'pass' ? 'ok' : v === 'fail' ? 'bad' : 'warn',
-      label: `review round ${i + 1} · ${v.replace(/_/g, ' ') || 'pending'}`,
+      label: `review round ${i + 1} · ${words(v) || 'pending'}`,
     });
   });
   if (task.status === 'done' && task.updated_at) {

@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
-import { useIntervalPoll, useRecordStatus } from '../store/usePolling';
+import { useReflectionLedger } from '../store/useLedger';
 import { LoadFallback, StaleNote } from '../components/LoadState';
 import { useProjectStore, useProjectHref, selectExperiments, selectTasks } from '../store/useProjectStore';
 import ArtifactContentView from '../components/ArtifactContentView';
@@ -61,8 +61,7 @@ export default function ReflectionDetail() {
   const experiments = useProjectStore(selectExperiments);
   const tasks = useProjectStore(selectTasks);
   const px = useProjectHref();
-  const [data, error, fetchReflections] = useRecordStatus(() => api.getReflections(projectId), [projectId]);
-  useIntervalPoll(fetchReflections, 8000);
+  const [data, error] = useReflectionLedger(projectId, 8000);
 
   const waves = data?.reflections || [];
   const idx = waves.findIndex(w => w.id === reflectionId);

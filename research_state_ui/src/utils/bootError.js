@@ -1,20 +1,20 @@
 // What the boot page says for each way GET /api/projects can fail. Pure so
-// the branches are testable; `dev` gates the local-server hint.
+// the branches are testable; `dev` gates the local-server hint. The typed
+// gates only reload; everything else retries.
+const BY_CODE = {
+  unauthorized: { title: 'Sign-in required', body: 'The backend rejected this session. Reload to sign in again.', reload: true },
+  client_too_old: { title: 'This UI is out of date', body: 'The backend requires a newer client. Reload to pick it up.', reload: true },
+  not_api: {
+    title: 'Backend answered, but not with the Merv API',
+    body: 'Something else is answering at this address — a misrouted proxy, a captive portal, or the wrong host.',
+    retry: true,
+  },
+};
+
 export function bootErrorView(err, dev = false) {
   const { code, status } = err || {};
-  if (code === 'unauthorized') {
-    return { title: 'Sign-in required', body: 'The backend rejected this session. Reload to sign in again.', reload: true };
-  }
-  if (code === 'client_too_old') {
-    return { title: 'This UI is out of date', body: 'The backend requires a newer client. Reload to pick it up.', reload: true };
-  }
-  if (code === 'not_api' || status === 404) {
-    return {
-      title: 'Backend answered, but not with the Merv API',
-      body: 'Something else is answering at this address — a misrouted proxy, a captive portal, or the wrong host.',
-      retry: true,
-    };
-  }
+  if (BY_CODE[code]) return BY_CODE[code];
+  if (status === 404) return BY_CODE.not_api;
   if (status >= 500) {
     return { title: 'Server error', body: `The backend answered ${status}. Retrying…`, retry: true };
   }
