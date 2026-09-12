@@ -1,0 +1,45 @@
+# Merv feed style for matplotlib figures uploaded as `image` attachments.
+# Transparent background so the figure sits on either theme, no top/right
+# spines, a quiet dashed grid, mid-tone ink that reads on light and dark, and
+# the feed's series order (steel, violet, amber, green, red, gray).
+#   plt.style.use('<this skill directory>/merv.mplstyle')
+figure.facecolor: none
+figure.edgecolor: none
+figure.dpi: 130
+figure.figsize: 7.2, 3.6
+savefig.transparent: True
+savefig.bbox: tight
+savefig.pad_inches: 0.15
+axes.facecolor: none
+axes.edgecolor: 8a8c90
+axes.labelcolor: 8a8c90
+axes.titlecolor: 8a8c90
+axes.titlesize: 11
+axes.titleweight: 600
+axes.titlelocation: left
+axes.labelsize: 10
+axes.spines.top: False
+axes.spines.right: False
+axes.linewidth: 0.8
+axes.grid: True
+axes.grid.axis: y
+axes.axisbelow: True
+axes.prop_cycle: cycler('color', ['5A86C1', '9678D8', 'C08A2A', '4FAE64', 'D8655A', '8a8c90'])
+grid.color: 8a8c90
+grid.alpha: 0.35
+grid.linestyle: --
+grid.linewidth: 0.6
+xtick.color: 8a8c90
+ytick.color: 8a8c90
+xtick.labelsize: 9
+ytick.labelsize: 9
+xtick.direction: out
+ytick.direction: out
+lines.linewidth: 2
+lines.markersize: 5
+legend.frameon: False
+legend.fontsize: 9
+legend.labelcolor: 8a8c90
+text.color: 8a8c90
+font.family: sans-serif
+font.sans-serif: Helvetica Neue, Helvetica, Arial, DejaVu Sans

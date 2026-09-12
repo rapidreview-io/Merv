@@ -1,0 +1,4 @@
+interface:
+  display_name: "Consolidation Review"
+  short_description: "Review a reflection code consolidation"
+  default_prompt: "Use $consolidation-review to independently review the proposed code consolidation."
