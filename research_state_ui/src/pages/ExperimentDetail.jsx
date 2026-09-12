@@ -40,9 +40,7 @@ export default function ExperimentDetail() {
     [projectId, experimentId],
   );
 
-  useEffect(() => {
-    setPendingTerminalTransition(null);
-  }, [experimentId]);
+  useEffect(() => { setPendingTerminalTransition(null); }, [experimentId]);
 
   // Cross-page deep links (e.g. /experiments/:id#execution) — once the
   // experiment has loaded and its sections rendered, scroll the matching id
@@ -72,16 +70,6 @@ export default function ExperimentDetail() {
     }
     onAction(transition);
   }, [onAction]);
-
-  const confirmTerminalTransition = useCallback(async () => {
-    if (!pendingTerminalTransition) return;
-    const completed = await onAction(pendingTerminalTransition);
-    if (completed) setPendingTerminalTransition(null);
-  }, [onAction, pendingTerminalTransition]);
-
-  const cancelTerminalTransition = useCallback(() => {
-    setPendingTerminalTransition(null);
-  }, []);
 
   if (!experiment) {
     return <LoadFallback error={error?.message} fetched={Boolean(statusData)} back={px('/experiments')} label="Experiments" />;
@@ -118,8 +106,8 @@ export default function ExperimentDetail() {
         experimentName={expName(experiment)}
         busy={pendingTerminalTransition ? busy.has(pendingTerminalTransition) : false}
         error={actionError}
-        onConfirm={confirmTerminalTransition}
-        onCancel={cancelTerminalTransition}
+        onConfirm={async () => { if (await onAction(pendingTerminalTransition)) setPendingTerminalTransition(null); }}
+        onCancel={() => setPendingTerminalTransition(null)}
       />
 
       {/* ─────────────  ORIENTATION  ────────────────────────────────── */}

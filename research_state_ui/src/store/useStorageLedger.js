@@ -1,8 +1,8 @@
-import { useCallback, useState } from 'react';
 import { api } from '../api';
-import { useAsyncData, useIntervalPoll } from './usePolling';
+import { useAsyncData, useIntervalPoll, useRecordStatus } from './usePolling';
 
 const POLL_MS = 60000;
+const NONE = [];
 
 // Whether this backend serves /storage at all, probed once per project.
 // Unknown reads as supported until the first answer lands.
@@ -26,27 +26,14 @@ export function useStorageSupported(projectId) {
  * the tab is visible; there is no refresh chrome.
  */
 export function useStorageLedger(projectId) {
-  const [objects, setObjects] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [unsupported, setUnsupported] = useState(false);
-
-  const reload = useCallback(async () => {
-    if (!projectId) return;
-    setError(null);
-    try {
-      const data = await api.listStorage(projectId);
-      setObjects(data?.objects || []);
-      setUnsupported(false);
-    } catch (err) {
-      if (err.status === 404) { setUnsupported(true); setObjects([]); }
-      else setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId]);
-
+  const [data, error, reload] = useRecordStatus(() => api.listStorage(projectId), [projectId]);
   useIntervalPoll(reload, POLL_MS);
-
-  return { objects, loading, error, unsupported, reload };
+  const unsupported = error?.status === 404;
+  return {
+    objects: (!unsupported && data?.objects) || NONE,
+    loading: !data && !error,
+    error: error && !unsupported ? error.message : null,
+    unsupported,
+    reload,
+  };
 }
