@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Routes, Route, Navigate, Outlet, useParams, useSearchParams } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet, Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { useProjectStore, projectPath, useProjectHref, selectActiveExperiments, selectSandboxes } from './store/useProjectStore';
 import { usePolling } from './store/usePolling';
 import { useEventStream } from './store/useEventStream';
@@ -7,6 +7,7 @@ import { useViewport } from './store/useViewport';
 import Sidebar, { SIDEBAR_KB, IconSidebar } from './components/Sidebar';
 import CompatBanner from './components/CompatBanner';
 import Connecting, { FullPageStatus } from './components/Connecting';
+import ErrorBoundary from './components/ErrorBoundary';
 import { bootErrorView, retryDelayMs } from './utils/bootError';
 import AppBackdrop from './bg/AppBackdrop';
 import MobileShell from './mobile/MobileShell';
@@ -55,15 +56,17 @@ function DebugRedirect() {
 /**
  * Layout for the /p/:projectId subtree. The URL is the source of truth for the
  * active project: mirror the route param into the store (so every consumer that
- * reads `projectId` keeps working untouched), and bounce unknown/stale ids to
- * the active project. Holds a frame while syncing so children never fetch the
- * previous project.
+ * reads `projectId` keeps working untouched). An id that is not in the
+ * workspace (a link from another workspace, a removed project) says so above
+ * the project picker rather than silently landing on some other project.
+ * Holds a frame while syncing so children never fetch the previous project.
  */
 function ProjectScope() {
   const { projectId: routePid } = useParams();
   const projects = useProjectStore(s => s.projects);
   const storePid = useProjectStore(s => s.projectId);
   const setProjectId = useProjectStore(s => s.setProjectId);
+  const isMobile = useViewport();
   const known = projects.some(p => p.id === routePid);
 
   // Mirror the URL's project into the store. usePolling re-kicks an immediate
@@ -77,10 +80,17 @@ function ProjectScope() {
   }, [known, routePid, storePid, setProjectId]);
 
   if (!known) {
-    const fallback = storePid || projects[0]?.id;
-    return fallback
-      ? <Navigate to={projectPath(fallback)} replace />
-      : <FullPageStatus>Selecting project…</FullPageStatus>;
+    return (
+      <>
+        <div className="page-stage" style={{ paddingBottom: 0 }}>
+          <div className="empty-state" style={{ textAlign: 'left' }}>
+            <h2>Project <span className="mono">{routePid}</span> isn’t in your workspace</h2>
+            <p>It belongs to another workspace or was removed. Open one of yours instead.</p>
+          </div>
+        </div>
+        {isMobile ? <MobileProjects /> : <Projects />}
+      </>
+    );
   }
   if (routePid !== storePid) return <FullPageStatus>Loading project…</FullPageStatus>;
   return <Outlet />;
@@ -96,7 +106,7 @@ function writeSidebarOpen(open) {
   return open;
 }
 
-// Root ("/") and anything unmatched land on the active project's home.
+// Root ("/") lands on the active project's home.
 function RootRedirect() {
   const storePid = useProjectStore(s => s.projectId);
   const projects = useProjectStore(s => s.projects);
@@ -104,6 +114,18 @@ function RootRedirect() {
   return target
     ? <Navigate to={projectPath(target)} replace />
     : <FullPageStatus>Selecting project…</FullPageStatus>;
+}
+
+// Anything unmatched is a real 404, not a quiet bounce to Home.
+function NotFound() {
+  const storePid = useProjectStore(s => s.projectId);
+  return (
+    <FullPageStatus>
+      <h2>Page not found</h2>
+      <p>Nothing lives at <span className="mono">{window.location.pathname}</span>.</p>
+      <p><Link className="btn" to={storePid ? projectPath(storePid) : '/'}>← Home</Link></p>
+    </FullPageStatus>
+  );
 }
 
 export default function App() {
@@ -132,6 +154,7 @@ export default function App() {
   usePolling(interval, { enabled: !streamHealthy });
   const [sidebarOpen, setSidebarOpen] = useState(readSidebarOpen);
   const toggleSidebar = () => setSidebarOpen(v => writeSidebarOpen(!v));
+  const { pathname } = useLocation();
 
   useEffect(() => { loadProjects(); }, [loadProjects]);
 
@@ -192,6 +215,7 @@ export default function App() {
     return (
       <MobileShell onRefresh={refreshHome}>
         <CompatBanner />
+        <ErrorBoundary key={pathname}>
         <Routes>
           {/* Global project picker (unscoped) */}
           <Route path="/projects" element={<MobileProjects />} />
@@ -222,8 +246,9 @@ export default function App() {
             <Route path="debug" element={<DebugRedirect />} />
           </Route>
           <Route path="/" element={<RootRedirect />} />
-          <Route path="*" element={<RootRedirect />} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
+        </ErrorBoundary>
       </MobileShell>
     );
   }
@@ -246,6 +271,7 @@ export default function App() {
         )}
         <main className="shell-main">
           <CompatBanner />
+        <ErrorBoundary key={pathname}>
         <Routes>
           {/* Global project picker (unscoped) */}
           <Route path="/projects" element={<Projects />} />
@@ -276,8 +302,9 @@ export default function App() {
             <Route path="debug" element={<DebugRedirect />} />
           </Route>
           <Route path="/" element={<RootRedirect />} />
-          <Route path="*" element={<RootRedirect />} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
+        </ErrorBoundary>
         </main>
       </div>
     </>

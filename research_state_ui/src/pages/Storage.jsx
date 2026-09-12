@@ -97,6 +97,9 @@ export default function Storage() {
       </header>
 
       {error && <div className="error-message">{error}</div>}
+      {objectId && !loading && !unsupported && !objects.some(o => o.id === objectId) && (
+        <div className="error-message">No object <span className="mono">{objectId}</span> in this project.</div>
+      )}
 
       {unsupported ? (
         <div className="empty-state">

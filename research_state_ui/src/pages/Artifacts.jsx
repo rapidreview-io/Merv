@@ -5,6 +5,7 @@ import { api } from '../api';
 import { RawLink } from '../components/AuthedMedia';
 import ObjId from '../components/ObjId';
 import ArtifactContentView from '../components/ArtifactContentView';
+import { LoadFallback } from '../components/LoadState';
 import { basename, formatBytes, fmtStamp } from '../utils/format';
 import { keepIfUnchanged, useIntervalPoll } from '../store/usePolling';
 import { expName, groupArtifactsByTarget } from '../utils/experiment';
@@ -66,6 +67,9 @@ export default function Artifacts() {
         <ArtifactViewer projectId={projectId} artifact={selected} px={px} />
       </div>
     );
+  }
+  if (artifactId) {
+    return <LoadFallback error={error || (data && `No artifact ${artifactId} in this project.`)} back={px('/artifacts')} label="Artifacts" />;
   }
 
   return (

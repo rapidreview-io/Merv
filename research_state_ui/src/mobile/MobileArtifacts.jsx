@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useProjectStore, useProjectHref, selectExperiments } from '../store/useProjectStore';
 import { api } from '../api';
 import ArtifactContentView from '../components/ArtifactContentView';
+import { LoadFallback } from '../components/LoadState';
 import ObjId from '../components/ObjId';
 import { basename, formatBytes } from '../utils/format';
 import { keepIfUnchanged } from '../store/usePolling';
@@ -67,6 +68,9 @@ export default function MobileArtifacts() {
         />
       </div>
     );
+  }
+  if (artifactId) {
+    return <LoadFallback error={error || (data && `No artifact ${artifactId} in this project.`)} back={px('/artifacts')} label="Artifacts" />;
   }
 
   const ordered = groupArtifactsByTarget(artifacts, experiments);
