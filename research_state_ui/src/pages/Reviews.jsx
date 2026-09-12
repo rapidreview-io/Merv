@@ -1,11 +1,12 @@
 import { Link } from 'react-router-dom';
-import { useProjectStore, selectExperiments, useProjectHref } from '../store/useProjectStore';
+import { useProjectStore, selectExperiments, selectReflections, useProjectHref } from '../store/useProjectStore';
 import { api } from '../api';
 import { useAsyncData } from '../store/usePolling';
 import ObjId from '../components/ObjId';
 import StatusPill from '../components/StatusPill';
 import ReviewCard from '../components/ReviewCard';
-import { expName, reviewQueue } from '../utils/experiment';
+import { expName, reviewQueue, targetPath } from '../utils/experiment';
+import { reviewKind } from '../utils/vocab';
 
 /**
  * Reviews page. Shows:
@@ -21,17 +22,21 @@ export default function Reviews() {
   const px = useProjectHref();
   const [queue, error] = useAsyncData(() => api.listReviews(projectId), [projectId]);
 
+  const reflections = useProjectStore(selectReflections);
   const expById = Object.fromEntries(experiments.map(e => [e.id, e]));
+  const reflById = Object.fromEntries((reflections?.reflections || []).map(r => [r.id, r]));
+  // A target's name: the experiment's, the reflection wave's, else its id.
+  const targetName = (id) => expById[id] ? expName(expById[id]) : reflById[id]?.title || <ObjId id={id} accent />;
 
   if (error) return <div className="page-stage"><div className="error-message">{error}</div></div>;
   if (!queue) return <div className="page-stage"><div className="empty">Loading…</div></div>;
 
-  const { openRequests, byTarget: byExp } = reviewQueue(queue);
+  const { openRequests, byTarget } = reviewQueue(queue);
 
   return (
     <div className="page-stage">
       <header className="page-header page-header--lg">
-        <h1 className="page-title">Review history</h1>
+        <h1 className="page-title">Reviews</h1>
       </header>
 
       <section className="section">
@@ -42,20 +47,20 @@ export default function Reviews() {
           <div className="list card card--flush">
             {openRequests.map(req => {
               const exp = expById[req.target_id];
+              const to = targetPath(req.target_type, req.target_id);
               return (
                 <div key={req.id} className="list-row">
                   <div className="list-row-main">
                     <div className="list-row-title">
-                      {req.role.replace(/_/g, ' ')} · {exp?.intent || req.target_id}
+                      {reviewKind(req.role)} · {targetName(req.target_id)}
                     </div>
                     <div className="list-row-sub">
-                      <ObjId id={req.id} /> · target: {exp ? expName(exp) : <ObjId id={req.target_id} />}
-                      {req.reason && <> · {req.reason}</>}
+                      <ObjId id={req.id} />{exp?.intent && <> · {exp.intent}</>}{req.reason && <> · {req.reason}</>}
                     </div>
                   </div>
                   <div className="list-row-aside">
                     <StatusPill value={req.status || 'requested'} />
-                    {exp && <Link to={px(`/experiments/${exp.id}`)} className="btn btn--sm btn--ghost">Open →</Link>}
+                    {to && <Link to={px(to)} className="btn btn--sm btn--ghost">Open →</Link>}
                   </div>
                 </div>
               );
@@ -66,20 +71,21 @@ export default function Reviews() {
 
       <section className="section">
         <div className="section-title">Submitted</div>
-        {byExp.size === 0 ? (
+        {byTarget.size === 0 ? (
           <div className="empty">No reviews submitted yet.</div>
         ) : (
           <div className="stack stack--lg">
-            {Array.from(byExp.entries()).map(([eid, reviews]) => {
-              const exp = expById[eid];
+            {Array.from(byTarget.entries()).map(([id, reviews]) => {
+              const exp = expById[id];
+              const to = targetPath(reviews[0].target_type, id);
               return (
-                <div key={eid}>
+                <div key={id}>
                   <div className="cluster--between" style={{ marginBottom: 10 }}>
                     <div className="cluster">
-                      {exp ? <span style={{ fontWeight: 600 }}>{expName(exp)}</span> : <ObjId id={eid} accent />}
+                      <span style={{ fontWeight: 600 }}>{targetName(id)}</span>
                       {exp && <span style={{ fontSize: 'var(--text-base)' }}>{exp.intent}</span>}
                     </div>
-                    {exp && <Link to={px(`/experiments/${eid}`)} className="btn btn--sm btn--ghost">Open experiment →</Link>}
+                    {to && <Link to={px(to)} className="btn btn--sm btn--ghost">Open →</Link>}
                   </div>
                   <div className="stack stack--sm">
                     {reviews.map(r => <ReviewCard key={r.id || r.created_at} review={r} />)}
