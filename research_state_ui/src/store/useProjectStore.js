@@ -181,6 +181,8 @@ export const useProjectStore = create((set, get) => ({
       // one the URL now points at (the project id lives in the URL; switching
       // leaves the prior poll outstanding).
       if (get().projectId !== pid) return null;
+      // A 200 with no project in it is not the snapshot — keep the last one.
+      if (!home.notModified && !home.data?.project) throw new Error('Unexpected response from server');
       const patch = { lastSyncedAt: Date.now(), lastSyncError: null };
       if (!home.notModified) {
         patch.home = home.data;

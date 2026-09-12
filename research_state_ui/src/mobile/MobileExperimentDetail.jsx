@@ -35,7 +35,7 @@ export default function MobileExperimentDetail() {
 
   const [statusData, error, fetchStatus, resetStatus] = useRecordStatus(
     () => api.getExperimentStatus(projectId, experimentId),
-    [projectId, experimentId],
+    [projectId, experimentId], 'experiment',
   );
 
   // Run only exists while a sandbox is attached — a terminal with nothing
@@ -56,8 +56,8 @@ export default function MobileExperimentDetail() {
   const workflow = statusData?.workflow;
 
   if (!experiment) {
-    return error || statusData ? (
-      <LoadFallback error={error?.message} fetched back={px('/experiments')} label="Experiments" className="mdetail" />
+    return error ? (
+      <LoadFallback error={error?.message} back={px('/experiments')} label="Experiments" className="mdetail" />
     ) : (
       <div className="mdetail">
         <header className="page-header"><Skeleton lines={1} /></header>

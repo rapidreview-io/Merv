@@ -109,15 +109,18 @@ export function useAsyncData(fetcher, deps) {
  * `[data, error, refetch, reset]`: `data` survives a failed refetch so the
  * page can keep its last-good content behind a note, `error` is the Error
  * (its `.status` lets a poll stop on 404), and `reset` blanks it when the
- * caller moves to another record without unmounting.
+ * caller moves to another record without unmounting. A 200 whose body lacks
+ * `key` (schema drift, a proxy answering `{}`) is a failed refetch too, never
+ * an empty record.
  */
-export function useRecordStatus(fetcher, deps) {
+export function useRecordStatus(fetcher, deps, key) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const lastJson = useRef(null);
   const refetch = useCallback(async () => {
     try {
       const next = await fetcher();
+      if (key && !(key in Object(next))) throw new Error('Unexpected response from server');
       const json = JSON.stringify(next);
       if (lastJson.current !== json) {
         lastJson.current = json;

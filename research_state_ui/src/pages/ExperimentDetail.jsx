@@ -33,11 +33,11 @@ export default function ExperimentDetail() {
   const projectId = useProjectStore(s => s.projectId);
 
   const [pendingTerminalTransition, setPendingTerminalTransition] = useState(null);
-  const { detailsOpen, setDetailsOpen, toggleDetails, closeDetails, detailsBtnRef } = useDetailsDrawer();
+  const { detailsOpen, toggleDetails, closeDetails, detailsBtnRef } = useDetailsDrawer();
 
   const [statusData, error, fetchStatus] = useRecordStatus(
     () => api.getExperimentStatus(projectId, experimentId),
-    [projectId, experimentId],
+    [projectId, experimentId], 'experiment',
   );
 
   useEffect(() => { setPendingTerminalTransition(null); }, [experimentId]);
@@ -72,7 +72,7 @@ export default function ExperimentDetail() {
   }, [onAction]);
 
   if (!experiment) {
-    return <LoadFallback error={error?.message} fetched={Boolean(statusData)} back={px('/experiments')} label="Experiments" />;
+    return <LoadFallback error={error?.message} back={px('/experiments')} label="Experiments" />;
   }
 
   const currentAttempt = experiment.attempt_index;
