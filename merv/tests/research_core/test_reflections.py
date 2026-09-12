@@ -149,7 +149,7 @@ class ReflectionWorkflowTest(ResearchCase):
 
     def test_lens_and_reconciliation_gates_require_the_declared_evidence(self) -> None:
         reflection_id = self.create_reflection()
-        with self.assertRaises(WorkflowError):
+        with self.assertRaisesRegex(WorkflowError, "'amplify' lens's reflection_lens_doc"):
             self.call(
                 "reflection.transition",
                 project_id=self.project_id,
@@ -1236,6 +1236,9 @@ class ReflectionWorkflowTest(ResearchCase):
             "reflecting",
             {transition["leads_to"] for transition in state["allowed_transitions"]},
         )
+        # Only what reflection.transition accepts; publish and the revise_* returns are the graph's own.
+        self.assertEqual({transition["transition"] for transition in state["allowed_transitions"]},
+                         {"submit_consolidation", "abandon"})
         replaced = self.app.application.submit_consolidation(
             project_id=self.project_id,
             reflection_id=reflection_id,

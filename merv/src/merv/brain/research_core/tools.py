@@ -135,7 +135,7 @@ class ExperimentCreateInput(ProjectScopedInput):
         default="",
         description="Advice for whoever writes the plan (givens, boundaries, budgets); immutable, superseded by the approved plan.",
     )
-    tested_claim_ids: documents.WrittenList = Field(default_factory=list)
+    tested_claim_ids: documents.WrittenList = Field(default_factory=list, description="claim_ ids this experiment tests.")
     depends_on: documents.WrittenList = Field(
         default_factory=list,
         description="exp_/task_ ids this experiment must not start before; they become wave DAG edges.",
@@ -295,7 +295,7 @@ class ReviewSubmitInput(ContractModel):
             f"{_TASK_REVIEW_RETURN.to_status!r} (omit); fail ends the task ({_TASK_FAIL_STATUS!r})."
         ),
     )
-    notes: str = ""
+    notes: str = Field(default="", description="Free-text summary of the review.")
     findings: list[dict[str, Any]] = Field(
         default_factory=list,
         description='Issue objects, e.g. [{"issue": "no held-out test set", "severity": "high"}].',
@@ -315,7 +315,7 @@ class LitreviewViewInput(ProjectScopedInput):
     section: str = Field(default="", max_length=200, description="A section id or exact title ('summary' = General Summary); empty = the outline.")
     papers: bool = Field(default=False, description="Return the papers ledger instead of the document.")
     cursor: int = Field(default=0, ge=0, description="papers=true: next_cursor from the previous page.")
-    limit: int = Field(default=20, ge=1, le=50)
+    limit: int = Field(default=20, ge=1, le=50, description="papers=true: page size.")
 
 
 class LitreviewOrderPair(ContractModel):

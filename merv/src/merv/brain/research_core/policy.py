@@ -72,8 +72,7 @@ ACTIVITY_VOCABULARY: dict[str, tuple[Any, ...]] = {
 # reads. Research owns the contents, so the tool registry quotes this instead
 # of listing research records itself.
 PROJECT_OVERVIEW_CONTENTS = (
-    "canonical user intent, the literature General Summary with citations, "
-    "synthesized Methods and Results, and selected evidence with current work status"
+    "user intent, literature summary, synthesized Methods and Results, current work"
 )
 
 # Agent voices on the project feed. Adoptable roles share one persistent voice
@@ -195,7 +194,8 @@ class GateEvaluation:
 
     @property
     def legal_transitions(self) -> tuple[dict[str, str], ...]:
-        return tuple({"transition": action.edge.name, "leads_to": action.edge.target} for action in self.decision.actions)
+        return tuple({"transition": action.edge.name, "leads_to": action.edge.target}
+                     for action in self.decision.actions if not action.edge.auto)
 
     @property
     def ready(self) -> bool:

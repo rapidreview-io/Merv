@@ -279,6 +279,7 @@ class RemoteSandboxesTest(unittest.TestCase):
         self.assertIn("sandbox.job(job_id='job_2'", ran["hint"])
         self.assertEqual([run["id"] for run in self.engine.runs(project_id="p1", experiment_id="e1")["runs"]], ["job_1", "job_2"])
         self.assertEqual(tailed["output"]["start"], 6)  # tail=4 of 10 retained bytes
+        self.assertNotIn("request", tailed)  # the command is not echoed a second time
         with self.assertRaises(ValidationError) as ambiguous:
             self.engine.request(project_id="p1", public_key=PUBLIC_KEY, instance_type="cpu:eu")
         self.assertIn("'cpu:eu'", str(ambiguous.exception))
