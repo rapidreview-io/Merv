@@ -171,8 +171,6 @@ robustness checks, then call `candidate.promote` with the observed champion id
 (or `""` when none) and a substantive reason. Refresh and reconsider if the CAS
 fails. A pending workspace nomination is visible but cannot become champion.
 Keep submitting later challengers as they arrive; promotion never ends research.
-Put small candidate files in Artifacts and large model/checkpoint bytes in
-merv-sandboxes storage—never Git.
 
 ## Author the experiment record
 
@@ -260,11 +258,9 @@ the question — a read is 16 KB per artifact, page with `offset=next_offset`.
 - Load `project-reflection` when project-level reflection is requested or
   `workflow.status_and_next` reports reflection work or a reflection gate.
 - Keep the living literature review current when a paper materially informs a
-  claim, plan, or conclusion: use `litreview.cite` to link the paper to sections,
-  experiments or claims (arXiv/DOI/URL forms are deduplicated; provide a fallback
-  title for other hosts). Inspect the outline and edit only the relevant section,
-  keeping its TLDR current. Re-read after revision conflicts. Literature guidance
-  is advisory, not an experiment gate; three unreviewed papers trigger a nudge.
+  claim, plan, or conclusion: `litreview.cite` links it to sections, experiments
+  or claims; edit only the relevant section and keep its TLDR current. Literature
+  guidance is advisory, not an experiment gate.
 - With no active work, consider reflection if the project logic has drifted;
   otherwise choose the next experiment. A reflection-required creation gate
   means publish the wave before creating another experiment. Claims and tasks

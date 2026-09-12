@@ -103,29 +103,15 @@ own `agent.hello` and `project` — and
 is exposed via `tools/list`; there is no checked-in catalog JSON file. Because every tool is brain-served, `tools/list`
 is unavailable until the brain responds.
 
-## Project scope
-
-The project is fixed by the bearer key, so a project-scoped call can never target
-another project. Agents pass the key-bound `project_id` on every project-scoped
-tool; supplying a different `project_id` does not switch projects — the gateway
-rejects it as outside the key's scope.
-
-Core services never infer an active project. Scope enforcement exists only at the
-gateway.
-
 ## Artifact submissions
 
 `artifact.upload {project_id, path, title?, discover_figures?, attach_to?}`
-returns `{artifact_id, run}`. Write the local file first, then execute `run` to
-send its bytes through a one-time-token PUT to Merv's R2-backed artifact API.
-Upload tokens expire after about 15 minutes. Generic content needs no target.
-To submit research evidence in the same operation, pass
-`attach_to: {target_type, target_id, role, lens_id?}`. Research validates the
-association and activates it atomically when the upload completes; existing
-role limits (16 KB) and attempt guards apply. `lens_id` is required only for
-`reflection_lens_doc`. Attached documents follow their role's figure policy;
-for generic Markdown, opt in with `discover_figures=true`. Execute any figure
-upload commands returned by the PUT response too.
+returns `{artifact_id, run}`: a one-time-token PUT (about 15 minutes) that
+prints the receipt, or the rejection reason, and any figure upload commands to
+run next. `attach_to: {target_type, target_id, role, lens_id?}` activates the
+research association atomically when the upload completes, under the role's
+16 KB limit, attempt guards and figure policy; generic Markdown opts into
+figures with `discover_figures=true`.
 
 `artifact.attach {project_id, artifact_id, target_type, target_id, role, lens_id?}`
 associates already uploaded content, returning `{artifact_id, association}`.
@@ -279,13 +265,11 @@ identifies the separate reviewer node and its read-only role.
 
 - `reflection.create` snapshots the corpus and requires exactly five lenses:
   `amplify`, `avoid`, `entropy`, and two project-specific lenses.
-- Each roster lens runs as a `reflection_lens` child workflow. It stores its
-  Markdown document with `artifact.upload(project_id, path)`, executes the
-  returned upload command, and submits that content id through
-  `workflow.transition` for the child. The child records its roster association.
-  Each document needs a non-empty `Summary`.
-  Once all five children finish, the parent joins their exact contributions and
-  applies `submit_reflections` automatically.
+- Each roster lens is a `reflection_lens` child workflow that uploads its
+  document (non-empty `Summary`) and submits the content id through
+  `workflow.transition`; a `lens_id` outside the roster is refused with the
+  roster named. Once all five children finish, the parent joins their exact
+  contributions and applies `submit_reflections` automatically.
 - `submit_reflection_artifacts` requires a valid `project_graph`, concise
   `reflection_doc`, and materializable `change_spec`. The spec's `decision`
   names the next wave: at most three `experiments` plus any number of `tasks`
@@ -429,9 +413,7 @@ or expiry destroys anything not explicitly retained.
 ## HTTP transport and errors
 
 The brain exposes `/mcp/tools` and `/mcp/call`, plus the stateless `/mcp`
-endpoint every agent client connects to. It rejects `repo_root` context. Byte
-payloads do not ride MCP: tools return commands for one-time Artifact/Feed
-endpoints, provider-presigned Storage transfers, or Sandbox `rsync`.
+endpoint every agent client connects to. It rejects `repo_root` context.
 
 Tool responses are tool-specific dictionaries; there is no universal mutation
 envelope. Domain validation and workflow failures remain MCP protocol errors;
