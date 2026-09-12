@@ -29,11 +29,9 @@ include_content=true` when a load-bearing detail needs it. On a revised plan,
 inspect previous findings and reused evidence before demanding new work;
 identify what evidence would disprove the claim and whether the plan can produce it.
 
-Operate read-only. Auto-run credentials enforce this boundary; interactive
-reviewers must follow it when using a general project key. Do not mutate the
-work, its artifacts, sandboxes, or workflow directly. Use only `review.start`
-and `review.submit` for review mutations. `review.submit` applies the verdict's
-route itself and ends your assignment.
+Operate read-only: auto-run credentials enforce it, a general project key
+relies on you. Only `review.start` and `review.submit` mutate anything; the
+verdict's route ends your assignment.
 
 ## Judge the design
 
@@ -90,6 +88,5 @@ design returns to planning automatically.
 
 Each finding should name the issue, cite the exact plan section or missing
 evidence, assign severity when useful, and recommend the smallest correction.
-The receipt carries `target.status_before`/`status_after` and a `next_action`;
-report those with a brief verdict summary. The producer never applies the
-approval itself.
+Report the receipt's `target.status_before`/`status_after` and `next_action`
+with a brief verdict summary; the producer never applies the approval itself.

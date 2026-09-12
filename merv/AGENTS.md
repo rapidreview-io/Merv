@@ -86,11 +86,10 @@ append a wave report. No numerical length budget or additional review gate appli
   stop after its handoff. Interactive agents call `workflow.begin` with the
   instance id and current revision before beginning node work.
 - Local edits are not research state. Use `artifact.upload` with
-  `attach_to: {target_type, target_id, role}` to contribute research evidence.
-  Run the returned upload command to store bytes and activate the association.
-  Add `lens_id` inside `attach_to` only for `reflection_lens_doc`.
-  Workflow nodes that accept content IDs use `artifact.upload` without an
-  attachment; their submission transition records the association.
+  `attach_to: {target_type, target_id, role}` to contribute research evidence
+  and run the returned upload command; it prints the receipt or the server's
+  reason. Workflow nodes that accept content IDs upload without an attachment;
+  their submission transition records the association.
 - Load `research-workflow` for experiment and task work and
   `project-reflection` for a five-lens reflection wave. Work that tests a
   claim is an experiment; scoped work with a verifiable finish line and no

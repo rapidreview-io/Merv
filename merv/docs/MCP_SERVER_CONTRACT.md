@@ -366,9 +366,7 @@ still rely on the reviewer skill for calls made with a general project key.
 Generic workflow tools are `workflow.catalog`, `workflow.start`,
 `workflow.assignment`, `workflow.begin`, `workflow.history`, and `workflow.transition`.
 Interactive agents call `workflow.begin(project_id, instance_id, expected_revision)`
-when ready to work: it returns the assignment and records actual start once per
-revision, checking prerequisites in the same transaction. It creates no lease and
-does not change state. Auto-run uses its own lease activation instead. Transitions
+when ready to work; auto-run uses its own lease activation instead. Transitions
 name an instance and expected revision. Auto-run credentials can mutate only
 their assigned instance and revision, and become invalid when that node changes.
 Assignments freeze the node-owned brief and exact evidence references at lease
@@ -390,11 +388,10 @@ takes no key argument: it returns a filled rsync command with a `<key_path>`
 placeholder the caller substitutes with its own private-key path when running
 the command.
 
-The sandbox workdir is machine-owned, independent of experiment attachment, and
-defaults under `/workspace`; provider-specific `MERV_*_WORKDIR`
-settings can change the root. Files are not synchronized automatically. Pull
-compact outputs into the local experiment folder before artifact submission,
-and use durable object storage for heavy files.
+The sandbox workdir is `/workspace`, machine-owned and independent of
+experiment attachment. Files are not synchronized automatically. Pull compact
+outputs into the local experiment folder before artifact submission, and use
+durable object storage for heavy files.
 
 `sandbox.options` lists one flat object per offer (`provider`, `instance_type`,
 `region`, `gpu`, `cpu`, `memory`, `price_usd_per_hour`, `available`);

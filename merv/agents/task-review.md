@@ -34,11 +34,9 @@ dependencies), and the submitted artifacts. Use `artifact.read` and
 `storage.fetch` for the files the delivery points at, and `sandbox.runs` or
 `sandbox.job` when a receipt names a job worth checking.
 
-Operate read-only. Auto-run credentials enforce this boundary; interactive
-reviewers must follow it when using a general project key. Do not mutate the
-work, its artifacts, sandboxes, or workflow directly. Use only `review.start`
-and `review.submit` for review mutations. `review.submit` applies the verdict's
-route itself and ends your assignment.
+Operate read-only: auto-run credentials enforce it, a general project key
+relies on you. Only `review.start` and `review.submit` mutate anything; the
+verdict's route ends your assignment.
 
 ## Verify the delivery
 
@@ -92,6 +90,6 @@ Submit only the fields accepted by `review.submit`: `review_session_id`,
 `verdict`, `synopsis`, concise `notes`, actionable `findings`, and optional
 structured `evidence`. Each finding names the check number, states what could
 not be verified or what is wrong, cites the file, command, or observed fact,
-and recommends the smallest correction against the unchanged brief. The receipt
-carries `target.status_before`/`status_after` and a `next_action`; report those
-with a brief verdict summary. The owner never applies the acceptance itself.
+and recommends the smallest correction against the unchanged brief. Report the
+receipt's `target.status_before`/`status_after` and `next_action` with a brief
+verdict summary; the owner never applies the acceptance itself.

@@ -91,12 +91,11 @@ revoke-and-reissue: all prior requested or started sessions for that gate become
 ## What the snapshot pins
 
 The snapshot identifies the target status, attempt, and exact submitted artifact
-versions. `review.start` bundles pinned bytes for the gated artifacts and any
-system metrics exhibit, alongside project and target context read at successful
-review start. Ordinary artifact ids remain snapshot references but their bytes
-are not included in that response. Reviewers judge the bundled submissions
-rather than later working-tree edits. A gated file revision must be
-re-registered and reviewed under a fresh snapshot.
+versions. `review.start` bundles pinned bytes for the gated documents alongside
+project and target context; the logic graph, any metrics exhibit and other
+artifacts remain pinned ids whose bytes come from `artifact.read`. Reviewers
+judge the pinned submissions rather than later working-tree edits. A gated file
+revision must be re-registered and reviewed under a fresh snapshot.
 
 Experiment-attempt rejections must choose:
 

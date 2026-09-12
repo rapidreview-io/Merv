@@ -29,11 +29,9 @@ snapshots rather than live experiment state. Read a listed artifact id with
 `artifact.read include_content=true` only when a load-bearing summary needs
 exact verification.
 
-Operate read-only. Auto-run credentials enforce this boundary; interactive
-reviewers must follow it when using a general project key. Do not mutate the
-work, its artifacts, sandboxes, or workflow directly. Use only `review.start`
-and `review.submit` for review mutations. `review.submit` applies the verdict's
-route itself and ends your assignment.
+Operate read-only: auto-run credentials enforce it, a general project key
+relies on you. Only `review.start` and `review.submit` mutate anything; the
+verdict's route ends your assignment.
 
 ## Review the four evidence layers
 
@@ -103,6 +101,6 @@ Submit only the fields accepted by `review.submit`:
 `evidence` naming what was checked.
 
 Each finding should identify the specific graph node, claim, lens document, or
-record that demonstrates the issue and recommend the smallest correction. The
-receipt carries `target.status_before`/`status_after` and a `next_action`;
-report those with a brief verdict summary.
+record that demonstrates the issue and recommend the smallest correction. Report
+the receipt's `target.status_before`/`status_after` and `next_action` with a
+brief verdict summary.

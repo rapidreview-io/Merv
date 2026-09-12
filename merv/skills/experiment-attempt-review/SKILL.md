@@ -29,11 +29,9 @@ include_content=true` when their submitted evidence is needed; a read is
 durable run receipts before reproducing work; a fresh review is not a reason to
 rerun completed jobs.
 
-Operate read-only. Auto-run credentials enforce this boundary; interactive
-reviewers must follow it when using a general project key. Do not mutate the
-work, its artifacts, sandboxes, or workflow directly. Use only `review.start`
-and `review.submit` for review mutations. `review.submit` applies the verdict's
-route itself and ends your assignment.
+Operate read-only: auto-run credentials enforce it, a general project key
+relies on you. Only `review.start` and `review.submit` mutate anything; the
+verdict's route ends your assignment.
 
 ## Verify the attempt
 
@@ -93,6 +91,6 @@ Submit only the fields accepted by `review.submit`:
 `evidence`. Use evidence to state what a next attempt should reuse and change.
 
 Each finding should name the concrete issue, cite the submitted file, metric,
-command, or observed fact, and recommend the smallest correction. The receipt
-carries `target.status_before`/`status_after` and a `next_action`; report those
-with a brief verdict summary. The producer never applies the completion itself.
+command, or observed fact, and recommend the smallest correction. Report the
+receipt's `target.status_before`/`status_after` and `next_action` with a brief
+verdict summary; the producer never applies the completion itself.

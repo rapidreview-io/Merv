@@ -54,9 +54,8 @@ For an interactive session, operate in this loop:
    record's own workflow.
 4. Before starting the current node's work interactively, call
    `workflow.begin(project_id, instance_id, expected_revision)` with the revision
-   from its workflow view. It rechecks prerequisites, records actual start, and
-   returns the starting brief without changing state. Then do that work locally
-   or through the specialist skill it names. Auto-run activates its lease itself.
+   from its workflow view; then do that work locally or through the specialist
+   skill it names. Auto-run activates its lease itself.
 5. Submit mutations and evidence through MCP.
 6. Call `workflow.status_and_next` again after every transition or review.
 
