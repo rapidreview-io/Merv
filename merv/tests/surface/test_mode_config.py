@@ -262,10 +262,8 @@ class HostedControlSurfaceTest(unittest.TestCase):
 
         primary = _get(sandbox_uid="uid_primary")
         extra = _get(sandbox_uid="uid_extra")
-        self.assertEqual(primary["sandbox_id"], "uid_primary")
-        self.assertEqual(extra["sandbox_id"], "uid_extra")
-        # The two uids must not collapse to the same sandbox (the hosted bug).
-        self.assertNotEqual(primary["sandbox_id"], extra["sandbox_id"])
+        self.assertEqual(primary["sandbox_uid"], "uid_primary")
+        self.assertEqual(extra["sandbox_uid"], "uid_extra")
 
     def test_data_plane_http_mutation_route_is_deleted(self) -> None:
         project = self.client.post("/api/projects", json={"name": "Hosted Project"})

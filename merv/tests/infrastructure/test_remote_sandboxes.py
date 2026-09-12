@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import json
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -70,6 +71,11 @@ class RemoteClient:
             row = next((row for row in rows if row["id"] == uid), None)
             if not row:
                 raise NotFoundError("sandbox not found")
+            if path.endswith("/jobs") and method == "POST":
+                job = {"id": f"job_{len(self.jobs) + 1}", "namespace": namespace, "sandbox_id": uid,
+                       "state": "running", "cursor": "c1", **json}
+                self.jobs[job["id"]] = job
+                return copy.deepcopy(job)
             if method == "DELETE":
                 row["state"] = "deleting"
             if path.endswith("/renew"):
@@ -195,7 +201,7 @@ class RemoteSandboxesTest(unittest.TestCase):
                                        "sandbox_id": facts["sandbox_uid"], "state": "running", "command": "python train.py",
                                        "outputs": [{"stream": "stdout", "total_length": 100000, "available_start": 0},
                                                    {"stream": "stderr", "total_length": 200, "available_start": 0}]}
-        result = self.engine.terminal(project_id="p1", sandbox_uid=facts["sandbox_uid"], tail=1000, since=800)
+        result = self.engine.terminal(project_id="p1", sandbox_uid=facts["sandbox_uid"], tail=1000)
         self.assertTrue(result["replace"])
         self.assertTrue(result["available"])
         self.assertEqual(result["job_id"], "job_1")
@@ -240,6 +246,45 @@ class RemoteSandboxesTest(unittest.TestCase):
             self.engine.project_spend(project_id="p1")
         with self.assertRaises(ValidationError):
             RemoteSandboxes(client=None, store=self.store).project_spend(project_id="p1")
+
+    def test_trimmed_responses_stay_under_their_byte_ceilings(self):
+        # One ceiling per trimmed tool so bloat cannot creep back (json bytes, single sandbox/job).
+        rows = self.client.records["p1"]
+        provisioning = self.create()
+        rows[0]["state"] = "provisioning"
+        polled = self.engine.get(project_id="p1", experiment_id="e1")
+        self.assertEqual(set(polled), {"sandbox_uid", "status", "phase", "detail", "expires_at", "poll_after_seconds", "hint"})
+        rows[0]["state"] = "ready"
+        uid = provisioning["sandbox_uid"]
+        self.client.jobs["job_1"] = {"id": "job_1", "name": "train", "namespace": "p1", "sandbox_id": uid,
+                                       "state": "succeeded", "exit_code": 0, "command": "python train.py",
+                                       "request": {"command": "python train.py", "cwd": "/workspace"},
+                                       "outputs": [{"stream": "stdout", "total_length": 10, "available_start": 0}]}
+        ran = self.engine.run(project_id="p1", sandbox_uid=uid, command="python eval.py --split test")
+        tailed = self.engine.job(project_id="p1", job_id="job_1", stream="stdout", tail=4)
+        for name, ceiling, result in (
+            ("options", 300, self.engine.options(project_id="p1")),
+            ("get.provisioning", 230, polled),
+            ("get.running", 1100, self.engine.get(project_id="p1", sandbox_uid=uid)),
+            ("extend", 150, self.engine.extend(project_id="p1", sandbox_uid=uid)),
+            ("pull_outputs", 1100, self.engine.pull_outputs_command(project_id="p1", sandbox_uid=uid)),
+            ("run", 400, ran),
+            ("runs", 320, self.engine.runs(project_id="p1", sandbox_uid=uid)),
+            ("job.tail", 600, tailed),
+            ("terminal", 500, self.engine.terminal(project_id="p1", sandbox_uid=uid)),
+        ):
+            with self.subTest(name):
+                self.assertLess(len(json.dumps(result)), ceiling, result)
+        self.assertEqual(ran["name"], "python eval.py --split test")
+        self.assertIn("sandbox.job(job_id='job_2'", ran["hint"])
+        self.assertEqual([run["id"] for run in self.engine.runs(project_id="p1", experiment_id="e1")["runs"]], ["job_1", "job_2"])
+        self.assertEqual(tailed["output"]["start"], 6)  # tail=4 of 10 retained bytes
+        with self.assertRaises(ValidationError) as ambiguous:
+            self.engine.request(project_id="p1", public_key=PUBLIC_KEY, instance_type="cpu:eu")
+        self.assertIn("'cpu:eu'", str(ambiguous.exception))
+        self.engine.release(project_id="p1", sandbox_uid=uid, confirm_retained=True)
+        rows[0]["state"] = "stopped"
+        self.assertIn("sandbox.request", self.engine.get(project_id="p1", sandbox_uid=uid)["hint"])
 
     def test_provider_overview_is_read_only(self):
         providers = RemoteProviders(client=self.client, store=self.store)

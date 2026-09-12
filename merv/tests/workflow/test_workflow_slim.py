@@ -230,8 +230,8 @@ class WorkflowSlimTest(unittest.TestCase):
         )
         sandbox = slim["sandbox"]
         self.assertTrue(sandbox["active"])
-        self.assertTrue(sandbox["sandbox_id"])
-        self.assertIsNone(sandbox["ssh_host"])  # certificates are issued by sandbox.get
+        self.assertTrue(sandbox["sandbox_uid"])
+        self.assertNotIn("ssh", sandbox)  # certificates are issued by sandbox.get
         self.assertEqual(sandbox["status"], "running")
         # SSH key material / raw command are NOT here — that's sandbox.request's job.
         self.assertNotIn("key_path", sandbox)

@@ -142,7 +142,7 @@ class StorageObjectInput(ProjectScopedInput):
 
 class SandboxRequestInput(ProjectScopedInput):
     experiment_id: str | None = Field(default=None, description="Optional experiment association.")
-    instance_type: str | None = Field(default=None, description="Exact options[].instance_type offer ID from sandbox.options.")
+    instance_type: str | None = Field(default=None, description="Exact options[].instance_type from sandbox.options.")
     region: str | None = Field(default=None, description="Optional region filter.")
     provider: str | None = Field(default=None, description="Provider name returned by sandbox.options.")
     gpu: str | None = Field(default=None, description="GPU filter for available offers.")
@@ -291,8 +291,8 @@ class SandboxRunsInput(ProjectScopedInput):
 
 class SandboxRunInput(SandboxGetInput):
     command: str = Field(min_length=1, max_length=65536, description="Shell command to run as a durable detached job.")
-    name: str = Field(default="", max_length=128, description="Readable job label.")
-    cwd: str = Field(default="/workspace", description="Absolute working directory inside the sandbox.")
+    name: str = Field(default="", max_length=128, description="Readable job label; derived from the command when empty.")
+    cwd: str = Field(default="/workspace", pattern=r"^/", description="Absolute working directory inside the sandbox.")
     timeout_seconds: int = Field(default=0, ge=0, description="Job timeout; zero uses the service default.")
     outputs: str = Field(default="", description="Optional directory to retain as a job output artifact.")
     idempotency_key: str | None = Field(default=None, max_length=128, description="Stable retry key; reuse only for the same command and inputs.")
@@ -306,7 +306,8 @@ class SandboxJobInput(ProjectScopedInput):
     cancel: bool = Field(default=False, description="Request cancellation of this job.")
     stream: Literal["stdout", "stderr"] | None = Field(default=None, description="Optionally read a bounded slice of retained job output.")
     offset: int = Field(default=0, ge=0)
-    limit: int = Field(default=65536, ge=1, le=1048576)
+    limit: int = Field(default=4096, ge=1, le=1048576, description="Bytes to read from offset.")
+    tail: int | None = Field(default=None, ge=1, le=1048576, description="Read only the last N bytes of the stream instead of offset/limit.")
 
 
 class SandboxTerminalInput(ProjectScopedInput):
@@ -319,16 +320,7 @@ class SandboxTerminalInput(ProjectScopedInput):
         description="Optional sandbox_uid to read; omitted targets the primary sandbox.",
     )
     tail: int | None = Field(
-        default=None, description="Return only the last N characters of the transcript."
-    )
-    since: int | None = Field(
-        default=None,
-        ge=0,
-        description=(
-            "Incremental poll: return only transcript characters AFTER this "
-            "cursor offset. Pass the 'cursor' from the previous response to get "
-            "only new output instead of re-pulling the whole tail."
-        ),
+        default=None, description="Return only the last N bytes of each stream (default 64 KB in total)."
     )
 
 
@@ -404,15 +396,15 @@ TOOLS: dict[str, ToolContract] = {
     ),
     "sandbox.request": ToolContract(
         handler_identity="sandboxes.request", input_model=SandboxRequestInput,
-        description="Rent a machine through merv-sandboxes. First call sandbox.options, then pass the selected provider and instance_type. Poll sandbox.get while provisioning. Existing live experiment machines are reused unless additional=true. Caller SSH access uses a short-lived certificate.",
+        description="Rent a machine through merv-sandboxes. First call sandbox.options, then pass the selected provider and instance_type. Poll sandbox.get while provisioning. Existing live experiment machines are reused unless additional=true; to share a live box that another experiment rented, call sandbox.attach instead of renting again. Caller SSH access uses a short-lived certificate.",
     ),
     "sandbox.options": ToolContract(
         handler_identity="sandboxes.options", input_model=SandboxOptionsInput,
-        description="List current rentable offers from the project's configured infrastructure providers.",
+        description="List current rentable offers, one flat object each; pass an available offer's provider and instance_type to sandbox.request.",
     ),
     "sandbox.get": ToolContract(
         handler_identity="sandboxes.get", input_model=SandboxGetInput,
-        description="Read sandbox state and refresh caller certificate SSH access. Save the returned certificate beside your local private key and pin the gateway host key. The independent service owns lease and lifecycle state.",
+        description="Read sandbox state; while provisioning this is a short poll receipt, once running it carries the full facts and a fresh SSH certificate (save it beside your private key, pin the gateway host key). Work in /workspace; sandbox.run launches durable jobs there.",
     ),
     "sandbox.attach": ToolContract(
         handler_identity="sandboxes.attach", input_model=SandboxAttachInput,
@@ -436,19 +428,19 @@ TOOLS: dict[str, ToolContract] = {
     ),
     "sandbox.run": ToolContract(
         handler_identity="sandboxes.run", input_model=SandboxRunInput,
-        description="Start a durable detached job through merv-sandboxes. Returns a job ID. Poll sandbox.job for status, bounded stdout/stderr, exit code, and retained results; jobs survive SSH disconnection.",
+        description="Start a durable detached job through merv-sandboxes (survives SSH disconnection). Returns job_id, cursor and the ready-made sandbox.job call to wait on it.",
     ),
     "sandbox.job": ToolContract(
         handler_identity="sandboxes.job", input_model=SandboxJobInput,
-        description=f"Read or cancel a project job. Use after plus wait_seconds (up to {MAX_WAIT_SECONDS}s per call) to wait for a change, or stream with offset/limit to read bounded retained output. Job status and retained logs remain available after sandbox release.",
+        description=f"One job: wait for a change (after + wait_seconds, up to {MAX_WAIT_SECONDS}s per call), read bounded output (stream with offset/limit or tail; default 4 KB), or cancel. Status and retained logs stay readable after sandbox release.",
     ),
     "sandbox.runs": ToolContract(
         handler_identity="sandboxes.runs", input_model=SandboxRunsInput,
-        description="List durable jobs launched with sandbox.run for a sandbox or experiment. SSH commands are not automatically jobs. Pass wait_seconds to long-poll: one call blocks at most 30s, which is what merv-sandboxes honours. Use sandbox.job to inspect output or wait for status changes.",
+        description="List durable jobs launched with sandbox.run for a sandbox or experiment (SSH commands are not jobs). wait_seconds long-polls until any pending job changes, at most 30s per call. Use sandbox.job for one job's output; sandbox.terminal for the latest job's tail.",
     ),
     "sandbox.terminal": ToolContract(
         handler_identity="sandboxes.terminal", input_model=SandboxTerminalInput,
-        description="Read a bounded stdout/stderr snapshot of the latest durable job. replace=true means replace the previous snapshot. Use sandbox.job for exact byte ranges or older jobs; SSH sessions are not recorded.",
+        description="Bounded tail of the latest durable job's stdout and stderr; each call is a fresh snapshot, not an increment. Use sandbox.job for exact byte ranges or older jobs; SSH sessions are not recorded.",
     ),
     "sandbox.health": ToolContract(
         handler_identity="sandboxes.health",

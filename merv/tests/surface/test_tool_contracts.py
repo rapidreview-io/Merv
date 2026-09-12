@@ -176,10 +176,10 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "sandbox.pull_outputs": "a8148c40cb5190cb11fc65a92bc6e434a01ca8e0ba05eb0909c2a3343bf20cba",
     "sandbox.release": "785249e6607ce1907def30e2243f73f1100cd4a7d5ed9bc67898018a2ebee38a",
     "sandbox.request": "55578273540e8aff3fd503bbf69ccd3808c9aa4015c78284ad0f0c139c14be90",
-    "sandbox.run": "2f2694a45cbe2c1b5a5623b27d4012c64631c211f52b31408f08491779dfb2bb",
-    "sandbox.job": "4eff6735e1ee77b4dd0cabd9f136b4a1e523b96cb968bfdf1cd03a9c12c2dbbf",
+    "sandbox.run": "9eb58636ba23129f5d865e29b9fcd063da86af8bff24ce210634ec557123fc53",
+    "sandbox.job": "06cc8ac6ea0666bcb3f9a7238898758b985f4ccc6e346286917753d1c3982c57",
     "sandbox.runs": "77ffc5d671133be302ac63343bd68533c0aaef124e94b98b25f3ad8a85a964d3",
-    "sandbox.terminal": "4140817916c31f3a3694a4197281f8196c6e718971529ae790eadaf639addbf1",
+    "sandbox.terminal": "2cfd80ededc678a7fa4c537b3d80a70445342c06a45f079c3bf9ba2c6c934018",
     "storage.complete_upload": "25c9c4e741c2c3c0e284b60213dc18e67eb8751c2fcd0498d4fa60d47d60a879",
     "storage.fetch": "8c6547f9b6845f29addb6c7388fe39eee144a7ff5ce8f17ebd83fa300317bec4",
     "storage.find": "47228bc70ae51084bbbaad6ad31b86f839db7d26fd483e0791d74ec30ce3e672",
@@ -373,11 +373,11 @@ class ToolContractRegistryTest(unittest.TestCase):
         tools = {tool["name"]: tool for tool in self.app.list_tools()}
         for name, guidance in {
             "sandbox.request": ("sandbox.options", "provider", "certificate"),
-            "sandbox.get": ("refresh", "certificate", "gateway host key"),
+            "sandbox.get": ("poll", "certificate", "gateway host key"),
             "sandbox.release": ("confirm_retained", "cleanup_pending", "bill"),
             "sandbox.pull_outputs": ("rsync", "caller machine", "retaining"),
-            "sandbox.run": ("durable", "job ID", "sandbox.job"),
-            "sandbox.job": ("retained", "wait_seconds", "offset/limit"),
+            "sandbox.run": ("durable", "job_id", "sandbox.job"),
+            "sandbox.job": ("retained", "wait_seconds", "tail"),
         }.items():
             for word in guidance:
                 self.assertIn(word, tools[name]["description"])
