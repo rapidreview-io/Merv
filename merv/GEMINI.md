@@ -32,8 +32,7 @@ If the key is scoped to a single project, `project(action="current")` returns
 it and that is the only project the key can ever act on; a mismatched
 `project_id` is rejected. Omitting `project_id` on a project-scoped tool raises
 "project_id is required" — never guess an id, call `project(action="list")`.
-There is no linking step and no `connect` action. Use
-`project(action="overview")` for the full claim and experiment history.
+Use `project(action="overview")` for the full claim and experiment history.
 
 ## Operating rules
 

@@ -172,9 +172,8 @@ review verdict applies them in its own transaction, so they are absent from the
 tasks and `begin_consolidation`/`revise_*`/`publish` for reflections).
 
 The graph in `src/merv/brain/workflows/definitions/experiment.py` drives
-transition enforcement, dispatch prerequisites, node briefs, and allowed actions.
-Research Core binds its state and evidence to the graph. The compatibility views
-in `workflow.status_and_next` use the same evaluated graph.
+enforcement, dispatch prerequisites, node briefs, allowed actions and the
+`workflow.status_and_next` view.
 
 - `submit_design` requires a pinned `plan` artifact with the required section
   spine.
@@ -186,9 +185,6 @@ in `workflow.status_and_next` use the same evaluated graph.
 - A passing experiment review applies `complete` for the current snapshot in
   the same transaction.
 - `retry_running` is a same-attempt infrastructure retry and remains `running`.
-
-A result-review rejection must return to `running` when the approved plan still
-stands, or to `planned` with a new attempt when the design is flawed.
 
 `workflow.status_and_next` returns a deliberately slim view: `{scope, workflow,
 context}`, where `workflow` states each gate once (`suggested_action` when one
@@ -367,10 +363,9 @@ and authorizes the public key; caller private-key material never enters brain
 state. While provisioning, the response and `sandbox.get` are a short poll
 receipt (`sandbox_uid`, `status`, `poll_after_seconds`); once running they carry
 the full facts and an `ssh` block (host, port, user, certificate, host key).
-The agent client constructs and runs SSH commands. `sandbox.pull_outputs`
-takes no key argument: it returns a filled rsync command with a `<key_path>`
-placeholder the caller substitutes with its own private-key path when running
-the command.
+The agent client constructs and runs SSH commands; `sandbox.pull_outputs`
+returns a filled rsync command with key, certificate, known-hosts and
+destination placeholders.
 
 The sandbox workdir is `/workspace`, machine-owned and independent of
 experiment attachment. Files are not synchronized automatically. Pull compact

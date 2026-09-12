@@ -61,10 +61,8 @@ For an interactive session, operate in this loop:
 
 Pass the selected `project_id` explicitly to every project-scoped operation.
 Read the living project document in your joining context or with
-`project(action="overview", project_id=...)`. Use `project(action="records", project_id=...)`
-to discover evidence or check a proposed claim, experiment, or task against settled work.
-Methods/Results are maintained by the project-author workflow after experiment
-completion and reflection waves; keep detailed findings in the submitted evidence.
+`project(action="overview")`; use `project(action="records")` to check a
+proposed claim, experiment, or task against settled work.
 
 ## Experiment or task?
 
@@ -80,11 +78,10 @@ this work exist to change confidence in a research claim?
   a claim and never move claim status; the reflection reads their outcomes.
 
 Tasks are uncapped; experiments keep their cap. Both may depend on other wave
-nodes (`depends_on`): execution dispatch waits until every dependency succeeds,
-and task delivery rechecks the same condition. An approved experiment is already
-`running` while its prerequisites may still block actual work. A failed dependency shows up as
-`dependency_failed` — end the dependent node with a reason, or leave it for the
-next reflection to replan.
+nodes (`depends_on`): dispatch and task delivery wait until every dependency
+succeeds, so an approved experiment can be `running` while still blocked. A
+failed dependency shows as `dependency_failed` — end the dependent node with a
+reason, or leave it for the next reflection to replan.
 
 ## Run a task
 
