@@ -1,5 +1,6 @@
-import { fmtDuration } from './format';
-import { classifyExperiment, outcomeLabel } from './evidence';
+import { fmtDuration } from './format.js';
+import { classifyExperiment, outcomeLabel } from './evidence.js';
+import { stateLine } from './vocab.js';
 
 // The experiment's display identity: the short unique name (also its folder
 // name under experiments/). Experiments that predate the name requirement
@@ -41,13 +42,22 @@ export function groupArtifactsByTarget(artifacts, experiments) {
   return out;
 }
 
+// A review request nobody has answered yet: asked for, or a reviewer mid-read.
+export const isOpenRequest = (r) => r.status === 'requested' || r.status === 'started';
+
+// Where a review's target lives.
+export function targetPath(targetType, targetId) {
+  const base = { experiment: '/experiments', task: '/tasks', reflection: '/reflection' }[targetType];
+  return base ? `${base}/${targetId}` : null;
+}
+
 /**
  * The /reviews payload as the two lists both review screens show, plus the
  * submitted reviews grouped by the record they judged.
  */
 export function reviewQueue(payload) {
-  const openRequests = payload.requests || payload.open_requests || payload.openRequests || [];
-  const submitted = payload.reviews || payload.submitted || [];
+  const openRequests = (payload.requests || []).filter(isOpenRequest);
+  const submitted = payload.reviews || [];
   const byTarget = new Map();
   for (const r of submitted) {
     const id = r.target_id || r.experiment_id;
@@ -114,18 +124,14 @@ export function statusColor(status) {
 // matters — for how long or with what outcome.
 export function statusLine(e, status, now) {
   switch (status) {
-    case 'design_review': return 'design review · awaiting you';
-    case 'experiment_review': return 'experiment review · awaiting you';
     case 'running': {
       const since = e.updated_at ? now - Date.parse(e.updated_at) : NaN;
       return Number.isFinite(since) ? `running · ${fmtDuration(since)}` : 'running';
     }
-    case 'ready_to_run': return 'ready to run';
     case 'complete': {
       const outcome = classifyExperiment(e);
       return outcome === 'supports' ? 'complete · supports claim' : `complete · ${outcomeLabel(outcome)}`;
     }
-    case 'failed': return 'failed';
-    default: return status.replace(/_/g, ' ');
+    default: return stateLine(status);
   }
 }

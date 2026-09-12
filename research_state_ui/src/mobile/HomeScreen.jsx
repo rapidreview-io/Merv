@@ -8,7 +8,6 @@ import {
   selectProject,
   selectStats,
   selectActiveExperiments,
-  selectReviewRequests,
   selectSandboxes,
   selectExperiments,
 } from '../store/useProjectStore';
@@ -19,7 +18,6 @@ import { fmtDuration, fmtUsd, fmtHrs } from '../utils/format';
 import { DAY_MS } from '../utils/time';
 import { densifyDaily } from '../utils/spend';
 
-const REVIEW_STATES = new Set(['design_review', 'experiment_review']);
 const SOON_MS = 30 * 60 * 1000;
 
 // "8×H100" / "8x H100" → 8; bare "H100" → 1; no gpu → 0.
@@ -74,7 +72,6 @@ export default function HomeScreen() {
   const stats = useProjectStore(selectStats);
   const lastSyncError = useProjectStore(s => s.lastSyncError);
   const activeExperiments = useProjectStore(selectActiveExperiments);
-  const reviewRequests = useProjectStore(selectReviewRequests);
   const sandboxes = useProjectStore(selectSandboxes);
   const experiments = useProjectStore(selectExperiments);
   const needsRef = useRef(null);
@@ -111,7 +108,8 @@ export default function HomeScreen() {
     };
   }, [experiments, sandboxes, running.length, liveSandbox, stats.open_reviews, now]);
 
-  // ── Needs-you items, most urgent first (same derivation as before) ──
+  // ── Needs-you: only what a person can do from here. Reviews and gates are
+  // the agent's work and live in the experiment's status line instead. ──
   const items = [];
   const expById = Object.fromEntries(experiments.map(e => [e.id, e]));
   for (const s of running) {
@@ -126,26 +124,6 @@ export default function HomeScreen() {
         sub: `expiring ${left <= 0 ? 'now' : `in ${fmtDuration(left)}`} · release or extend`,
       });
     }
-  }
-  for (const e of activeExperiments) {
-    if (!REVIEW_STATES.has(e.status)) continue;
-    items.push({
-      key: `rev-${e.id}`,
-      to: px(`/experiments/${e.id}`),
-      title: expName(e),
-      sub: e.status === 'design_review'
-        ? 'design review · approve the plan'
-        : 'experiment review · read the outcome',
-    });
-  }
-  for (const r of reviewRequests.filter(r => r.status === 'requested' || r.status === 'started')) {
-    const exp = r.target_type === 'experiment' ? expById[r.target_id] : null;
-    items.push({
-      key: `req-${r.id}`,
-      to: exp ? px(`/experiments/${exp.id}`) : px('/reviews'),
-      title: exp ? expName(exp) : r.target_id,
-      sub: `${(r.role || 'review').replace(/_/g, ' ')} · ${r.status}`,
-    });
   }
 
   if (!project) {
@@ -231,7 +209,7 @@ export default function HomeScreen() {
             </Link>
           ))}
           {items.length > 2 && (
-            <Link to={px('/reviews')} className="mprow mprow--more">
+            <Link to={px('/sandboxes')} className="mprow mprow--more">
               <span className="mprow-ix mprow-ix--faint" aria-hidden="true" />
               <span className="mprow-s">{items.length - 2} more →</span>
             </Link>

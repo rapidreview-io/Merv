@@ -5,7 +5,8 @@ import { useAsyncData } from '../store/usePolling';
 import ObjId from '../components/ObjId';
 import StatusPill from '../components/StatusPill';
 import ReviewCard from '../components/ReviewCard';
-import { expName, reviewQueue } from '../utils/experiment';
+import { expName, reviewQueue, targetPath } from '../utils/experiment';
+import { reviewKind } from '../utils/vocab';
 import { SkeletonCards } from './Skeleton';
 
 /**
@@ -45,9 +46,9 @@ export default function MobileReviews() {
             {openRequests.map(req => {
               const exp = expById[req.target_id];
               return (
-                <Link key={req.id} to={exp ? px(`/experiments/${exp.id}`) : px('/reviews')} className="mcard mcard--attn">
+                <Link key={req.id} to={px(targetPath(req.target_type, req.target_id) || '/reviews')} className="mcard mcard--attn">
                   <div className="mcard-head">
-                    <div className="mcard-title">{(req.role || 'review').replace(/_/g, ' ')}</div>
+                    <div className="mcard-title">{reviewKind(req.role)}</div>
                     <StatusPill value={req.status || 'requested'} />
                   </div>
                   <div className="mcard-sub">

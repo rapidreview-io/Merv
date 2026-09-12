@@ -22,11 +22,11 @@ export default function ProjectDocument({ project }) {
       : <p role="status">Loading project document…</p>}
   </section>;
 
-  const maintenance = project.maintenance;
   const hasNarrative = Boolean(project.methods || project.results);
+  // Maintenance only means something once a narrative exists to maintain.
+  const maintenance = hasNarrative ? project.maintenance : null;
   const status = maintenance?.state === 'writing' ? 'Revision pending'
-    : maintenance?.pending ? 'Update pending'
-      : hasNarrative ? 'No pending updates' : 'Awaiting first publication';
+    : maintenance?.pending ? 'Update pending' : 'No pending updates';
   return (
     <section className="project-document" aria-label="Project document">
       <header className="project-document-heading">
@@ -53,7 +53,7 @@ export default function ProjectDocument({ project }) {
         <strong>Agent-authored research</strong>
         <p>{hasNarrative ? 'Methods and Results are the latest published synthesis. Findings, limitations and provisional work are described in the authors’ own words.' : 'Agents maintain Methods and Results as research progresses. No narrative has been published yet.'}</p>
         {maintenance?.pending && <p role="status">Newer changes have not yet been incorporated. The last publication remains visible until an agent publishes an update.</p>}
-        {!maintenance && <p>Document maintenance status is unavailable.</p>}
+        {hasNarrative && !maintenance && <p>Document maintenance status is unavailable.</p>}
       </div>
       {['methods', 'results'].map(section => <details key={section} className="project-document-section" open>
         <summary>{section === 'methods' ? 'Methods' : 'Results'}</summary>

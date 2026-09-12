@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useProjectStore, useProjectHref, selectStats, selectSandboxes } from '../store/useProjectStore';
 import { useAutorunStatus } from '../store/useAutorunStatus';
+import { useStorageSupported } from '../store/useStorageLedger';
 import { NEXT_THEME_MODE, useTheme } from '../store/useTheme';
 import { useBackdrop, setBackdrop } from '../store/useBackdrop';
 import { setSurfaceOverride } from '../store/useViewport';
@@ -109,6 +110,7 @@ export default function Sidebar({ onHide }) {
   const px = useProjectHref();
   const projectId = useProjectStore(s => s.projectId);
   const autorun = useAutorunStatus(projectId);
+  const storage = useStorageSupported(projectId);
 
   const artifactsCount = stats.artifacts ?? home?.artifacts?.length ?? 0;
 
@@ -158,6 +160,10 @@ export default function Sidebar({ onHide }) {
           <span>Tasks</span>
           <span className="sidebar-link-count">{stats.tasks ?? home?.tasks?.length ?? 0}</span>
         </NavLink>
+        <NavLink to={px('/reviews')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
+          <span>Reviews</span>
+          <span className="sidebar-link-count">{stats.open_reviews ?? 0}</span>
+        </NavLink>
         <NavLink to={px('/reflection')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
           Reflection
         </NavLink>
@@ -171,9 +177,11 @@ export default function Sidebar({ onHide }) {
           <span>Artifacts</span>
           <span className="sidebar-link-count">{artifactsCount}</span>
         </NavLink>
-        <NavLink to={px('/storage')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          Storage
-        </NavLink>
+        {storage && (
+          <NavLink to={px('/storage')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
+            Storage
+          </NavLink>
+        )}
         <NavLink to={px('/sandboxes')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
           <span>Sandboxes</span>
           {runningSandboxes > 0 && (

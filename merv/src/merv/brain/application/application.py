@@ -845,7 +845,7 @@ class Application:
                 "active_tasks": len(active_tasks),
                 "active_processes": len(active_processes),
                 "artifacts": len(artifacts),
-                "open_reviews": len(reviews["requests"]),
+                "open_reviews": sum(request["status"] in ("requested", "started") for request in reviews["requests"]),
             },
             "workflow": active.get("workflow") if active else status["workflow"],
             "active_experiment": active,

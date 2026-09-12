@@ -72,7 +72,7 @@ export default function Experiments() {
       <header className="page-header page-header--lg">
         <div className="page-head-row">
           <div className="xmap-title-row">
-            <h1 className="page-title">What we try</h1>
+            <h1 className="page-title">Experiments</h1>
             <span className="fig-title-tabs" role="tablist" aria-label="Experiments view">
               <button
                 type="button"

@@ -131,28 +131,6 @@ export function clip(s, n) {
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 }
 
-// A reviewer role as words: 'design_reviewer' -> 'design review'. A role that
-// already ends in "review" is left alone rather than doubled.
-const ROLE_WORD = {
-  design_reviewer: 'design review',
-  experiment_reviewer: 'experiment review',
-  task_reviewer: 'task review',
-  reflection_reviewer: 'reflection review',
-  consolidation_reviewer: 'consolidation review',
-  human: 'human review',
-};
-
-export function roleWord(role) {
-  if (ROLE_WORD[role]) return ROLE_WORD[role];
-  const r = String(role || 'review').replace(/_reviewer$/, '').replace(/_/g, ' ');
-  return /review$/.test(r) ? r : `${r} review`;
-}
-
-// A snake_case status as words: 'ready_to_run' -> 'ready to run'.
-export function statusWord(s) {
-  return String(s || '').replace(/_/g, ' ');
-}
-
 // A typed-in pairing / device code: upper case, digits and letters only, the
 // eight characters the backend issues.
 export function normalizeCode(value) {

@@ -82,7 +82,7 @@ export default function Claims() {
   return (
     <div className="page-stage">
       <header className="page-header page-header--lg">
-        <h1 className="page-title">What we think</h1>
+        <h1 className="page-title">Claims</h1>
         <p className="page-summary">Durable statements about the domain, shelved by what the evidence says.</p>
       </header>
 

@@ -10,7 +10,8 @@ import GraphExpandButton from '../GraphExpandButton';
 import GraphDrawer from '../GraphDrawer';
 import { usePanelWidth } from '../../store/usePanelWidth';
 import { useProjectHref } from '../../store/useProjectStore';
-import { cx, fmtSpan, statusWord } from '../../utils/format';
+import { cx, fmtSpan } from '../../utils/format';
+import { words } from '../../utils/vocab';
 import { buildBraid } from './braidModel.js';
 import WaveFlowPanel from './WaveFlowPanel';
 
@@ -108,9 +109,9 @@ export function buildFlowModel(braid, signal, expMeta = {}) {
         label: `R${e.ordinal}`,
         isOpen: e.isOpen,
         sub: e.isOpen
-          ? statusWord(e.status)
+          ? words(e.status)
           : (e.attemptIndex > 1 ? `attempt ${e.attemptIndex}` : 'published'),
-        title: `${e.title} · ${statusWord(e.status)}`
+        title: `${e.title} · ${words(e.status)}`
           + (e.revisionContext ? ` · ↩ ${e.revisionContext}` : ''),
       },
     });
@@ -207,7 +208,7 @@ export function buildFlowModel(braid, signal, expMeta = {}) {
           kind: s.kind || 'experiment',
           name: s.name,
           tone: s.tone,
-          sub: (s.kind === 'task' ? 'task · ' : '') + statusWord(s.status)
+          sub: (s.kind === 'task' ? 'task · ' : '') + words(s.status)
             + (s.attemptIndex > 1 ? ` · attempt ${s.attemptIndex}` : ''),
           createdAt: s.createdAt || null,
           updatedAt: meta.updatedAt || null,

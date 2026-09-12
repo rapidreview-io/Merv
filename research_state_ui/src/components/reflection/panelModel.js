@@ -7,7 +7,7 @@
  * derivations can be unit-tested without a DOM.
  */
 
-import { roleWord, statusWord } from '../../utils/format.js';
+import { reviewKind, words } from '../../utils/vocab.js';
 
 export const TERMINAL_TONES = new Set(['done', 'failed', 'abandoned']);
 
@@ -34,16 +34,16 @@ export function latestReview(reviews, roles = null) {
 /** Every review as a display row, oldest first. */
 export function reviewHistory(reviews) {
   return (reviews || []).filter(Boolean).slice().sort(byCreated).map((r, i) => {
-    const v = VERDICT[r.verdict] || { word: statusWord(r.verdict) || 'pending', tone: 'qualifies', glyph: '·' };
+    const v = VERDICT[r.verdict] || { word: words(r.verdict) || 'pending', tone: 'qualifies', glyph: '·' };
     return {
       id: r.id || `${r.role}:${r.created_at || i}`,
       role: r.role,
-      roleWord: roleWord(r.role),
+      roleWord: reviewKind(r.role),
       verdict: r.verdict,
       verdictWord: v.word,
       tone: v.tone,
       glyph: v.glyph,
-      returnTo: r.return_to ? statusWord(r.return_to) : '',
+      returnTo: r.return_to ? words(r.return_to) : '',
       synopsis: String(r.synopsis || '').trim(),
       when: r.created_at || null,
     };
@@ -89,10 +89,10 @@ export function outcomeOf(strand, row) {
   }
   const rv = latestReview(reviews);
   if (!rv) return null;
-  const v = VERDICT[rv.verdict] || { word: statusWord(rv.verdict), tone: 'qualifies', glyph: '·' };
+  const v = VERDICT[rv.verdict] || { word: words(rv.verdict), tone: 'qualifies', glyph: '·' };
   return {
     eyebrow: 'Latest review',
-    line: `${roleWord(rv.role)} · ${v.word}${rv.return_to ? ` to ${statusWord(rv.return_to)}` : ''}`,
+    line: `${reviewKind(rv.role)} · ${v.word}${rv.return_to ? ` to ${words(rv.return_to)}` : ''}`,
     tone: v.tone, glyph: v.glyph,
     text: String(rv.synopsis || '').trim(),
     when: rv.created_at || null,
@@ -169,8 +169,8 @@ export function gateSummary(gate) {
   const rows = items.filter(it => it.kind !== 'reflection_lens');
   rows.sort((a, b) => Number(a.satisfied) - Number(b.satisfied));
   return {
-    transition: gate.transition ? statusWord(gate.transition) : '',
-    leadsTo: gate.leads_to ? statusWord(gate.leads_to) : '',
+    transition: gate.transition ? words(gate.transition) : '',
+    leadsTo: gate.leads_to ? words(gate.leads_to) : '',
     ready: Boolean(gate.ready),
     items: rows,
     missing: rows.filter(it => !it.satisfied).length,
@@ -222,7 +222,7 @@ export function consolidationSummary(wave) {
   const summary = String(cons.proposal?.summary || '').trim();
   const promoted = (cons.decisions || [])
     .filter(d => d && (d.disposition === 'used_as_is' || d.disposition === 'adapted'))
-    .map(d => ({ name: d.experiment_name || d.experiment_id, disposition: statusWord(d.disposition) }));
+    .map(d => ({ name: d.experiment_name || d.experiment_id, disposition: words(d.disposition) }));
   if (!summary && !promoted.length) return null;
   return { summary, promoted };
 }

@@ -6,7 +6,6 @@ import {
   consolidationSummary, debtMeter, expTimeline, gateSummary, hasGhost,
   lineageOf, outcomeOf, reviewHistory, seedStrands, waveLenses, waveStory,
 } from './panelModel.js';
-import { roleWord } from '../../utils/format.js';
 
 const wave = (id, status, extra = {}) => ({
   id, status, title: id, attempt_index: 1,
@@ -42,13 +41,6 @@ function braidFixture({ open = true } = {}) {
   ];
   return buildBraid([w1, w2], experiments);
 }
-
-test('roleWord humanizes known and unknown reviewer roles', () => {
-  assert.equal(roleWord('experiment_reviewer'), 'experiment review');
-  assert.equal(roleWord('human'), 'human review');
-  assert.equal(roleWord('safety_reviewer'), 'safety review');
-  assert.equal(roleWord('peer_review'), 'peer review');
-});
 
 test('reviewHistory sorts oldest first and words the verdict as an event', () => {
   const rows = reviewHistory([

@@ -5,7 +5,8 @@ import { classifyExperiment } from '../utils/evidence';
 import { ENTITY_ID_RE, entityPrefix, resolveEntity } from '../utils/entityResolve';
 import { expName, TERMINAL_STATUSES } from '../utils/experiment';
 import { sizeLabel } from '../utils/fleet';
-import { clip, fmtStamp, roleWord } from '../utils/format';
+import { clip, fmtStamp } from '../utils/format';
+import { reviewKind } from '../utils/vocab';
 import { extractPaperCitations } from '../utils/paperCitations';
 import { computeLayout, nowX as clampNowX } from './mapLayout';
 
@@ -124,7 +125,7 @@ function gatesFor(e) {
     .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
     .map((r) => {
       const v = VERDICT[r.verdict] || { result: r.verdict || 'pending', tone: 'qualifies' };
-      return { label: roleWord(r.role), result: v.result, tone: v.tone };
+      return { label: reviewKind(r.role), result: v.result, tone: v.tone };
     });
   const gc = e.gate_checklist;
   const unsatisfied = (gc?.items || []).some((i) => !i.satisfied);

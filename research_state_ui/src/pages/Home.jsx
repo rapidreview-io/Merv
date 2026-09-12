@@ -1,6 +1,8 @@
+import { Link } from 'react-router-dom';
 import ProjectDocument from '../components/ProjectDocument';
 import {
   useProjectStore,
+  useProjectHref,
   selectProject,
   selectStats,
   selectClaims,
@@ -13,8 +15,10 @@ import ComputeSpend from '../components/ComputeSpend';
 import ConnectAgentPanel from '../components/ConnectAgentPanel';
 import AutorunStrip from '../components/AutorunStrip';
 import ProjectReflectionPanel from '../components/ProjectReflectionPanel';
+import { agentPrompt } from '../utils/vocab';
 
 export default function Home() {
+  const px = useProjectHref();
   const project = useProjectStore(selectProject);
   const home = useProjectStore((s) => s.home);
   const stats = useProjectStore(selectStats);
@@ -28,75 +32,79 @@ export default function Home() {
     return <div className="page-stage"><ProjectDocument /></div>;
   }
 
-  // First run: the home snapshot has loaded and no agent has ever done
-  // anything here — no claims, experiments, or artifacts, and no events
-  // beyond the project's own metadata (every project is born with
-  // project.created). Until then the connect guide leads the page; the first
-  // recorded research event retires it for good.
-  const firstRun = !!home
-    && (stats.claims ?? 0) === 0
-    && (stats.experiments ?? 0) === 0
-    && (stats.artifacts ?? 0) === 0
-    && events.every((e) => typeof e.type === 'string' && e.type.startsWith('project.'));
+  // The home workflow is the active experiment's, or the project's own before
+  // anything exists; either way its next action is the agent's next sentence.
+  const next = agentPrompt(home?.workflow?.next_action, {
+    state: home?.workflow?.state, name: home?.active_experiment?.name,
+  });
+  // First run: no agent has ever done anything here. Until the first
+  // experiment exists the connect guide is the page.
+  const firstRun = !!home && (stats.claims ?? 0) === 0 && (stats.experiments ?? 0) === 0 && (stats.artifacts ?? 0) === 0;
 
   return (
     <div className="page-stage">
-      <ProjectDocument project={project} />
+      {next && <p className="home-next"><span className="gate-banner-meta-key">Next for your agent</span> {next}</p>}
 
       {firstRun && <ConnectAgentPanel project={project} />}
 
-      <AutorunStrip project={project} />
+      <ProjectDocument project={project} />
 
-      <ProjectReflectionPanel projectId={project.id} />
+      {(stats.experiments ?? 0) === 0 ? null : (
+        <>
+          <AutorunStrip project={project} />
 
-      <section className="section">
-        <div className="section-title">
-          Sandboxes
-          {runningSandboxes > 0 && (
-            <span className="section-title-badge">
-              <span className="sidebar-live-dot" />{runningSandboxes} running
-            </span>
-          )}
-        </div>
-        <SandboxTable
-          sandboxes={sandboxes}
-          experiments={experiments}
-          events={events}
-          projectId={project.id}
-          empty={(
-            <div className="empty-state empty-state--compact">
-              <p>No sandboxes yet.</p>
+          <ProjectReflectionPanel projectId={project.id} />
+
+          <section className="section">
+            <div className="section-title">
+              Sandboxes
+              {runningSandboxes > 0 && (
+                <span className="section-title-badge">
+                  <span className="sidebar-live-dot" />{runningSandboxes} running
+                </span>
+              )}
             </div>
-          )}
-        />
-      </section>
+            <SandboxTable
+              sandboxes={sandboxes}
+              experiments={experiments}
+              events={events}
+              projectId={project.id}
+              empty={(
+                <div className="empty-state empty-state--compact">
+                  <p>No sandboxes yet.</p>
+                </div>
+              )}
+            />
+          </section>
 
-      <ComputeSpend
-        projectId={project.id}
-        fleetSignal={`${sandboxes.length}:${runningSandboxes}`}
-      />
+          <ComputeSpend
+            projectId={project.id}
+            fleetSignal={`${sandboxes.length}:${runningSandboxes}`}
+          />
 
-      <section className="section">
-        <div className="section-title">Counts</div>
-        <div className="stat-grid">
-          <StatCard label="Claims" value={stats.claims ?? claims.length} sub={countOf(claims, 'status', 'active') + ' active'} />
-          <StatCard label="Experiments" value={stats.experiments ?? experiments.length} sub={countOf(experiments, 'status', 'running') + ' running'} />
-          <StatCard label="Artifacts" value={stats.artifacts ?? 0} />
-          <StatCard label="Sandboxes" value={runningSandboxes} sub="running" />
-          <StatCard label="Open reviews" value={stats.open_reviews ?? stats.reviews ?? 0} />
-        </div>
-      </section>
+          <section className="section">
+            <div className="section-title">Counts</div>
+            <div className="stat-grid">
+              <StatCard to={px('/claims')} label="Claims" value={stats.claims ?? claims.length} sub={countOf(claims, 'status', 'active') + ' active'} />
+              <StatCard to={px('/experiments')} label="Experiments" value={stats.experiments ?? experiments.length} sub={countOf(experiments, 'status', 'running') + ' running'} />
+              <StatCard to={px('/artifacts')} label="Artifacts" value={stats.artifacts ?? 0} />
+              <StatCard to={px('/sandboxes')} label="Sandboxes" value={runningSandboxes} sub="running" />
+              <StatCard to={px('/reviews')} label="Open reviews" value={stats.open_reviews ?? 0} />
+            </div>
+          </section>
+        </>
+      )}
     </div>
   );
 }
 
-function StatCard({ label, value, sub }) {
+function StatCard({ to, label, value, sub }) {
   return (
-    <div className="stat-card">
+    <Link to={to} className="stat-card">
       <div className="stat-card-key">{label}</div>
       <div className="stat-card-value tabular">{value}</div>
       {sub && <div className="stat-card-sub">{sub}</div>}
-    </div>
+    </Link>
   );
 }
 

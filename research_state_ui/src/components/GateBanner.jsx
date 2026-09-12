@@ -1,127 +1,73 @@
 import { Link } from 'react-router-dom';
+import { agentPrompt, gateLabel } from '../utils/vocab';
 
 /**
- * GateBanner — surfaces the server's `workflow` block for a live experiment.
- *
- * Rendered as the disclosure panel under the FSM strip's current step (the
- * strip itself shows status, including terminal states — the caller skips
- * this component entirely once the experiment is complete/failed/abandoned).
- *
- * The UI never computes the state machine — it renders what the server says
- * is the current_gate + next_action and offers transition buttons derived
- * from the same authority (see workflowActionButtons).
+ * GateBanner — the server's `workflow` block for a live record, split by who
+ * acts: the connected agent's move (one pasteable sentence) and yours (the
+ * transitions the graph lets a person fire here). Transitions the workflow
+ * marks blocked or applies itself are never rendered; the destructive pair
+ * sits behind "More".
  *
  * Props:
- *   workflow:           { current_gate, next_action, allowed_actions, blocked_actions, missing_evidence }
- *   primaryAction:      { transition, label } | null  (the main button — fires onAction(transition))
- *   secondaryActions:   Array<{transition, label}>    (subtle "abandon" / "mark failed" buttons)
+ *   workflow:           { current_gate, next_action, state, ... }
+ *   name:               the record's display name, used in the agent's move
+ *   primaryAction:      { transition, label } | null
+ *   secondaryActions:   Array<{transition, label}>  (abandon / mark failed)
  *   onAction:           (transition) => void
- *   actionsBusy:        Set<string>  (transition currently in flight → disable + show "…")
+ *   actionsBusy:        Set<string>
  *   linkTo:             route/hash of the page section this gate is about
  */
 export default function GateBanner({
-  workflow,
-  primaryAction = null,
-  secondaryActions = [],
-  onAction,
-  actionsBusy = new Set(),
-  linkTo = null,
+  workflow, name = '', primaryAction = null, secondaryActions = [], onAction, actionsBusy = new Set(), linkTo = null,
 }) {
   if (!workflow) return null;
-  const { current_gate, next_action, blocked_actions = [], missing_evidence = [] } = workflow;
-
-  // Pulse when the system is actively waiting on something external — a
-  // sandbox provisioning, a reviewer that's been launched, etc. The `wait_`
-  // prefix is the backend's signal for "you don't need to do anything; we're
-  // in motion".
+  const { current_gate, next_action, state } = workflow;
+  // `wait_` is the backend's "in motion, nothing needed from anyone".
   const isWaiting = /^wait[_-]/.test(next_action || '');
+  const prompt = agentPrompt(next_action, { state, name });
 
-  const hasButtons = (primaryAction && onAction) || (secondaryActions.length > 0 && onAction);
-
-  const titleInner = (
-    <>
-      {isWaiting && <span className="gate-live-dot" aria-hidden="true" />}
-      {prettyGate(current_gate)}
-    </>
-  );
-  // If linkTo is just a hash, we're already on the target page — scroll
-  // in place instead of navigating (a no-op hash change wouldn't re-trigger
-  // useScrollToHash on the destination).
+  const titleInner = <>{isWaiting && <span className="gate-live-dot" aria-hidden="true" />}{gateLabel(current_gate, state)}</>;
+  // A hash-only link means we're on the target page — scroll in place.
   const handleTitleClick = (e) => {
     if (typeof linkTo === 'string' && linkTo.startsWith('#')) {
       e.preventDefault();
-      const id = linkTo.slice(1);
-      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById(linkTo.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   };
+  const button = (a, cls) => (
+    <button key={a.transition} className={cls} disabled={actionsBusy.has(a.transition)} onClick={() => onAction(a.transition)}>
+      {actionsBusy.has(a.transition) ? '…' : a.label}
+    </button>
+  );
 
   return (
     <div className={`gate-banner${isWaiting ? ' gate-banner--live' : ''}`}>
       <div className="gate-banner-body">
-        {linkTo ? (
-          <Link to={linkTo} onClick={handleTitleClick} className="gate-banner-title gate-banner-title--link">
-            {titleInner}
-          </Link>
-        ) : (
-          <div className="gate-banner-title">{titleInner}</div>
-        )}
-        {next_action && next_action !== 'none' && (
-          <div className="gate-banner-action">
-            <span className="gate-banner-meta-key">next:</span>
-            {next_action}
+        {linkTo
+          ? <Link to={linkTo} onClick={handleTitleClick} className="gate-banner-title gate-banner-title--link">{titleInner}</Link>
+          : <div className="gate-banner-title">{titleInner}</div>}
+
+        {prompt && (
+          <div className="gate-banner-move">
+            <span className="gate-banner-meta-key">Agent’s move</span>
+            <code className="gate-banner-prompt">{prompt}</code>
+            <button type="button" className="btn btn--sm btn--ghost" onClick={() => navigator.clipboard?.writeText(prompt)}>Copy</button>
           </div>
         )}
 
-        {missing_evidence.length > 0 && (
-          <div className="gate-banner-missing">
-            {missing_evidence.map((m, i) => (
-              <div key={i}>
-                <span className="gate-banner-missing-key">missing</span>
-                {m}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {hasButtons && (
-          <div className="gate-banner-actions">
-            {primaryAction && onAction && (
-              <button
-                className="btn btn--primary"
-                disabled={actionsBusy.has(primaryAction.transition)}
-                onClick={() => onAction(primaryAction.transition)}
-              >
-                {actionsBusy.has(primaryAction.transition) ? '…' : primaryAction.label}
-              </button>
+        {onAction && (primaryAction || secondaryActions.length > 0) && (
+          <div className="gate-banner-move">
+            <span className="gate-banner-meta-key">Your move</span>
+            {primaryAction ? button(primaryAction, 'btn btn--primary') : <span className="muted">nothing until the agent moves</span>}
+            {secondaryActions.length > 0 && (
+              <details className="gate-banner-more">
+                <summary className="btn btn--sm btn--ghost">More</summary>
+                <div className="gate-banner-actions">{secondaryActions.map(a => button(a, 'btn btn--sm btn--ghost'))}</div>
+              </details>
             )}
-            {secondaryActions.map(a => (
-              <button
-                key={a.transition}
-                className="btn btn--sm btn--ghost"
-                disabled={actionsBusy.has(a.transition)}
-                onClick={() => onAction(a.transition)}
-              >
-                {actionsBusy.has(a.transition) ? '…' : a.label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {blocked_actions.length > 0 && (
-          <div className="gate-banner-blocked">
-            {blocked_actions.map((b, i) => (
-              <div key={i} className="gate-banner-blocked-item">
-                blocked: {b.action} — {b.reason || (b.blockers || []).map(issue => issue.reason).join('; ')}
-              </div>
-            ))}
           </div>
         )}
       </div>
     </div>
   );
-}
-
-function prettyGate(g) {
-  if (!g) return 'No gate';
-  return String(g).replace(/_/g, ' ');
 }

@@ -4,7 +4,7 @@ import { api } from '../api';
 import { useRecordStatus } from '../store/usePolling';
 import { useProjectStore, useProjectHref } from '../store/useProjectStore';
 import { useStreamAwarePoll } from '../store/useEventStream';
-import FSMStrip from '../components/FSMStrip';
+import FSMStrip, { stageRows } from '../components/FSMStrip';
 import GateBanner from '../components/GateBanner';
 import MarkdownView from '../components/MarkdownView';
 import ReviewCard from '../components/ReviewCard';
@@ -17,7 +17,7 @@ import DetailsDrawer, {
 } from '../components/DetailsDrawer';
 import { ago } from '../utils/time';
 import { workflowActionButtons } from '../utils/workflowActions';
-
+import { transitionButton } from '../utils/vocab';
 /*
  * TaskDetail — a task is scoped work with a verifiable finish line, so the
  * page is a ledger, not an essay:
@@ -36,21 +36,12 @@ import { workflowActionButtons } from '../utils/workflowActions';
 
 // The task lifecycle rendered through the shared strip: two working states,
 // two endings (mirrors task_workflow.py; `failed` lands on the last cell).
-const TASK_STAGES = [
-  { id: 'in_progress', label: 'In progress' },
-  { id: 'in_review',   label: 'Review' },
-  { id: 'done',        label: 'Done' },
-];
+const TASK_STAGES = stageRows('in_progress', 'in_review', 'done');
 const TASK_GATES = new Set(['in_review']);
 const TASK_TERMINAL = new Set(['done', 'failed']);
 
-const PRIMARY_TRANSITIONS = {
-  submit_delivery: { transition: 'submit_delivery', label: 'Submit delivery for review' },
-  accept:          { transition: 'accept',          label: 'Accept task' },
-};
-const SECONDARY_TRANSITIONS = [
-  { transition: 'mark_failed', label: 'End task (mark failed)' },
-];
+const PRIMARY_TRANSITIONS = Object.fromEntries(['submit_delivery', 'accept'].map(id => [id, transitionButton(id)]));
+const SECONDARY_TRANSITIONS = ['mark_failed'].map(transitionButton);
 
 
 export default function TaskDetail() {
@@ -147,6 +138,7 @@ export default function TaskDetail() {
           <div className="fsm-gate-panel">
             <GateBanner
               workflow={workflow}
+              name={task.name || task.id}
               primaryAction={primary}
               secondaryActions={secondary}
               actionsBusy={busy}
