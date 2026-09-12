@@ -98,17 +98,17 @@ export default function MobileReflectionScreen() {
   const reflectionDoc = resolveReflectionDoc(waveArtifacts);
   const secondary = secondaryDocs(waveArtifacts);
 
+  const unknownId = data && linkedId && !waves.some(w => w.id === linkedId);
   const header = (
     <header className="page-header msyn-head">
       <div className="page-eyebrow">
         <Link to={px('')}>Now</Link>
-        {wave && waves.length > 1 && <> · wave {selectedIndex + 1} of {waves.length}</>}
+        {wave && !unknownId && waves.length > 1 && <> · wave {selectedIndex + 1} of {waves.length}</>}
       </div>
       <h1 className="page-title">Project reflection</h1>
     </header>
   );
 
-  const unknownId = data && linkedId && !waves.some(w => w.id === linkedId);
   if (!hasAnyWave || unknownId) {
     return (
       <div className="page-stage">
