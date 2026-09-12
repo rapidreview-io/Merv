@@ -227,8 +227,9 @@ class ReviewPolicyTest(unittest.TestCase):
         self.assertEqual(workflow["current_gate"], "review_not_requested")
         self.assertEqual(workflow["review_gate"]["status"], "attested_blocked")
         self.assertTrue(
-            any("require_verified_reviews" in item for item in workflow["missing_evidence"])
+            any("require_verified_reviews" in item["reason"] for item in workflow["suggested_action"]["blockers"])
         )
+        self.assertNotIn("blocked_actions", workflow)
         # The remedy is a fresh, verified review — review.request stays allowed.
         self.assertIn("review.request", workflow["allowed_actions"])
 

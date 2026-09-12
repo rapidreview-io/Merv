@@ -3,6 +3,7 @@ the service method still returns the full shape the UI depends on."""
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -76,10 +77,10 @@ class WorkflowSlimTest(unittest.TestCase):
         raw.commit()
         raw.close()
 
-    def _experiment_with_plan(self, *, valid: bool = False) -> str:
+    def _experiment_with_plan(self, name: str = "the-thing", *, valid: bool = False) -> str:
         exp_id = self.call(
             "experiment.create",
-            name="the-thing",
+            name=name,
             project_id=self.project_id,
             intent="Do the thing on the staged subset.\n\nTitle: The Thing",
         )["id"]
@@ -121,8 +122,12 @@ class WorkflowSlimTest(unittest.TestCase):
         self.assertEqual(context["report"], {"status": "missing"})
         self.assertEqual(context["artifacts"], [])
 
-        # Project intent is complete; other experiments stay outside this scoped context.
-        self.assertEqual(set(slim["project"]), {"id", "name", "summary", "intent_guidance", "literature", "methods", "results", "references", "maintenance"})
+        # The project document and other experiments stay outside this scoped context,
+        # and the gate is stated once: the suggested action carries its blockers.
+        self.assertEqual(set(slim), {"scope", "workflow", "context", "sandbox"})
+        self.assertNotIn("blocked_actions", slim["workflow"])
+        self.assertNotIn("missing_evidence", slim["workflow"])
+        self.assertLess(len(json.dumps(slim)) - len(plan["content"]), 1_700)
 
         # No sandbox yet → explicitly says so.
         self.assertFalse(slim["sandbox"]["active"])
@@ -237,17 +242,26 @@ class WorkflowSlimTest(unittest.TestCase):
         self.assertNotIn("key_path", sandbox)
 
     def test_project_scope_is_compact(self) -> None:
-        # With no experiment yet, the tool orients at the project level
-        # (`_resolve_scope` only auto-picks an experiment once one exists).
+        # Project scope orients at the project level; it never adopts one experiment's workflow.
         self.call(
             "claim.create", project_id=self.project_id, statement="Bigger batches help."
         )
         slim = self.call("workflow.status_and_next", project_id=self.project_id)
 
+        self.assertEqual(set(slim), {"scope", "workflow", "context"})
         self.assertEqual(slim["scope"], "project")
-        self.assertIsNone(slim["experiment"])
         self.assertEqual(set(slim["context"]), {"project"})
         self.assertEqual(slim["workflow"]["current_gate"], "project_setup")
+        self.assertEqual(len(slim["context"]["project"]["active_claims"]), 1)
+        self.assertLess(len(json.dumps(slim)), 1_500)
+        for name in ("first", "second"):
+            self._experiment_with_plan(name)
+        roster = self.call("workflow.status_and_next", project_id=self.project_id)
+        self.assertEqual(roster["workflow"]["current_gate"], "live_experiments")
+        self.assertNotIn("instance_id", roster["workflow"])
+        self.assertEqual(sorted((row["name"], row["status"]) for row in roster["context"]["project"]["active_experiments"]),
+                         [("first", "planned"), ("second", "planned")])
+        self.assertLess(len(json.dumps(roster)), 2_000)
         claim = self.call("project", action="records", project_id=self.project_id)["claims"][0]
         self.assertEqual(
             set(claim), {"id", "statement", "scope", "status", "confidence"}

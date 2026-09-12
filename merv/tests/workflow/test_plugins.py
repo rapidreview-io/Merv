@@ -102,7 +102,7 @@ class WorkflowPluginTest(ResearchCase):
         self.assertEqual(description["workflow"]["state"], "in_progress")
         self.assertIn("Prepare the common dataset", description["context"]["brief"])
         self.assertTrue(any(reference["label"] == "brief" for reference in description["context"]["references"]))
-        blocked = description["workflow"]["blocked_actions"][0]["blockers"][0]
+        blocked = description["workflow"]["suggested_action"]["blockers"][0]
         with self.assertRaisesRegex(WorkflowError, "delivery artifact"):
             self.call("workflow.transition", project_id=self.project_id, instance_id=task_id,
                       action="submit_delivery", expected_revision=0, request_id="submit", payload={"delivery_present": True})
@@ -263,12 +263,12 @@ class ProgramInstallationTest(unittest.TestCase):
         self.assertEqual(context["brief"], "Calibrate the instrument.")
         self.assertEqual(context["skill"], "instrument-operation")
         self.assertEqual(context["handoff"], "Leave the reading for the operator.")
-        self.assertEqual(context["messages"], {"setup": "Zero the sensor."})
+        self.assertNotIn("messages", context)
         self.workflows.transition(**arguments, action="record", expected_revision=0, request_id="reading", payload={"reading": 7})
         self.workflows.transition(**arguments, action="publish", expected_revision=1, request_id="publish")
         described = self.workflows.describe(**arguments)
-        self.assertFalse(described["workflow"]["dispatchable"])
-        self.assertEqual(described["context"]["messages"], {"summary": "Instrument ready."})
+        self.assertTrue(described["workflow"]["outcome"])
+        self.assertEqual(set(described["context"]), {"skill", "handoff"})
         self.assertIsNone(CALIBRATION.workflows[0].node("published"))
 
     def test_guidance_is_immutable_and_outcomes_are_declared(self):

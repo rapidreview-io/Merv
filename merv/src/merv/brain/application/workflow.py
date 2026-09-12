@@ -20,6 +20,7 @@ from ..research_core import (
     project_rows,
 )
 from ..infrastructure import RemoteSandboxes as SandboxEngine
+from ..workflows import agent_workflow
 from .experiments.presentation import ProducedObjectCatalog, rich_experiment_state
 from .experiments.context import ExperimentContextQuery
 from .tasks import TaskContextQuery, rich_task_state, slim_task_state
@@ -112,7 +113,7 @@ class StatusAndNextQuery:
     sandboxes: SandboxEngine
     objects: ProducedObjectCatalog
     context: ExperimentContextQuery
-    task_context: TaskContextQuery | None = None
+    task_context: TaskContextQuery
 
     def _selection(self, *, project_id, experiment_id, task_id):
         """The snapshot plus the one record the caller scoped to, and that experiment's sandboxes."""
@@ -144,12 +145,14 @@ class StatusAndNextQuery:
         task_id: str | None = None,
     ) -> Record:
         snapshot, experiment, task, sandboxes = self._selection(project_id=project_id, experiment_id=experiment_id, task_id=task_id)
+        if experiment_id is None:
+            # Project scope orients; it never adopts the last-created experiment's workflow.
+            experiment, sandboxes = None, []
         full = self._status(snapshot=snapshot, experiment=experiment, sandboxes=sandboxes, task=task, agent=True)
         return _slim_status(
             full,
-            experiment_context=self.context.build(state=experiment, project_id=project_id) if experiment_id else None,
-            task_context=self.task_context.build(state=task, project_id=project_id) if task and self.task_context else None,
-            project_context={"project": self.research.synthesis.document(project_id=project_id)} if not experiment_id and not task_id else None,
+            experiment_context=self.context.build(state=experiment, project_id=project_id) if experiment else None,
+            task_context=self.task_context.build(state=task, project_id=project_id) if task else None,
         )
 
     def project_models(
@@ -332,50 +335,20 @@ def _process_view(
     }
 
 
-def _slim_status(
-    full: Record,
-    *,
-    experiment_context: Record | None = None,
-    project_context: Record | None = None,
-    task_context: Record | None = None,
-) -> Record:
-    workflow = full.get("workflow") or {}
-    project = full.get("project") or {}
-    experiment = full.get("experiment")
-    if task_context is not None or full.get("task") is not None:
-        task = full.get("task")
-        if task is None:
-            raise RuntimeError("task state is required for task scope")
-        result: Record = {
-            "scope": "task",
-            "task": task,
-            "workflow": workflow,
-            "context": task_context or {},
-            "project": {key: value for key, value in project.items() if key not in {"active_claims", "active_experiments", "active_tasks"}},
-        }
-    elif project_context is not None:
-        result = {
-            "scope": "project",
-            "experiment": None,
-            "workflow": workflow,
-            "context": project_context,
-        }
+def _slim_status(full: Record, *, experiment_context: Record | None, task_context: Record | None) -> Record:
+    """One scope's context beside its workflow; the project roster only at project scope."""
+    result: Record = {"workflow": agent_workflow(full.get("workflow") or {})}
+    if task_context is not None:
+        result.update(scope="task", context=task_context)
+    elif experiment_context is not None:
+        result.update(scope="experiment", context=experiment_context, sandbox=_sandbox_summary(full.get("sandboxes", [])))
     else:
-        if experiment is None:
-            raise RuntimeError("experiment state is required for experiment scope")
-        if experiment_context is None:
-            raise RuntimeError("experiment context is required for experiment scope")
-        result = {
-            "scope": "experiment",
-            "workflow": workflow,
-            "context": experiment_context,
-            "sandbox": _sandbox_summary(full.get("sandboxes", [])),
-            "project": {key: value for key, value in project.items() if key not in {"active_claims", "active_experiments", "active_tasks"}},
-        }
-    if full.get("project_reflection"):
-        result["project_reflection"] = full["project_reflection"]
-    if full.get("litreview"):
-        result["litreview"] = full["litreview"]
+        result.update(scope="project", context={"project": full["project"]})
+    for key in ("project_reflection", "litreview"):
+        if full.get(key):
+            result[key] = full[key]
+    if "workflow" in result.get("project_reflection", {}):
+        result["project_reflection"]["workflow"] = agent_workflow(result["project_reflection"]["workflow"])
     return result
 
 

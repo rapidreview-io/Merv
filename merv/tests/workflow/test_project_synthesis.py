@@ -110,9 +110,10 @@ class ProjectSynthesisTest(ResearchCase):
         self.assertEqual(assignment["brief"].count("## Methods"), 1)
         task = self.call("task.create", project_id=self.project_id, name="check-dataset",
                         goal="Retain the prepared dataset", deliverables=["A retained dataset"])
+        status = self.call("workflow.status_and_next", project_id=self.project_id)
+        self.assertEqual({key: status["context"]["project"][key] for key in document}, document)
         status = self.call("workflow.status_and_next", project_id=self.project_id, task_id=task["id"])
-        self.assertEqual(status["project"], document)
-        self.assertIn("task", status["context"])
+        self.assertEqual(set(status), {"scope", "workflow", "context"})
 
     def test_only_publication_advances_pinned_coverage_and_concurrent_arrivals_survive(self):
         first = self.create_experiment("first-approach")

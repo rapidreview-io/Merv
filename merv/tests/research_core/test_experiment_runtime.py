@@ -37,7 +37,8 @@ class ExperimentRuntimeTest(ResearchCase):
         self.assertEqual(submitted["state"], "design_review")
         self.call("review.request", project_id=self.project_id, target_type="experiment", target_id=experiment_id, role="design_reviewer")
         packet = self.call("workflow.assignment", project_id=self.project_id, instance_id=experiment_id)
-        self.assertTrue(packet["execution"]["read_only"])
+        self.assertEqual(packet["role"], "design_reviewer")
+        self.assertNotIn("execution", packet)
         self.assertIn(plan, {reference["id"] for reference in packet["references"]})
         self.pass_review(target_type="experiment", target_id=experiment_id, role="design_reviewer")
         accepted = self.app.research.workflows.runtime.get(project_id=self.project_id, instance_id=experiment_id)
@@ -63,7 +64,6 @@ class ExperimentRuntimeTest(ResearchCase):
         self.pass_review(target_type="experiment", target_id=experiment_id, role="design_reviewer")
         status = self.call("workflow.status_and_next", project_id=self.project_id, instance_id=experiment_id)["workflow"]
         self.assertEqual(status["state"], "running")
-        self.assertFalse(status["dispatchable"])
         self.assertEqual(status["dispatch_blockers"][0]["code"], "dependencies_pending")
         with self.assertRaisesRegex(WorkflowError, "dependencies"):
             self.call("workflow.assignment", project_id=self.project_id, instance_id=experiment_id)

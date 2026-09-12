@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..research_core import TOOLS as RESEARCH_TOOLS, project_rows
+from ..research_core import TOOLS as RESEARCH_TOOLS
 from ..workflows import (
     TOOLS as WORKFLOW_TOOLS, ArtifactNeed, DependenciesDone, Guidance, Program, RecordNeed, ReviewGate,
 )
@@ -88,14 +88,12 @@ def orient_project(snapshot, *, selected, workflow, reflection, reflection_workf
             workflow = _next(gate="reflection_suggested", action="consider_project_reflection",
                 allowed=["reflection.create", "claim.create", "experiment.create", "task.create"], missing=[hint] if hint else [])
     elif not scoped and ((selected is not None and selected.status in EXPERIMENT_KIND.terminal_statuses)
-                         or (selected is None and tasks)):
+                         or (selected is None and not idle)):
         # A hidden signal never changes the released live-work follow-up fields.
         blocked = bool(advice and advice["signal"].get("experiment_create_blocked"))
         workflow = _next(gate="live_experiments", action="tend_live_work",
             allowed=["workflow.status_and_next", "task.create", *([] if blocked else ["experiment.create"])],
-            blocked=[{"action": "experiment.create", "reason": advice.get("hint") or reason}] if blocked else [],
-            live_experiments=project_rows(live, ("id", "name", "status", "attempt_index", "intent")),
-            live_tasks=project_rows(tasks, ("id", "name", "status", "goal")))
+            blocked=[{"action": "experiment.create", "reason": advice.get("hint") or reason}] if blocked else [])
     hint = literature_hint(signal=snapshot.literature_signal)
     return {"workflow": workflow, **({"project_reflection": advice} if advice is not None else {}),
             **({"litreview": {**snapshot.literature_signal, "hint": hint}} if hint is not None else {})}

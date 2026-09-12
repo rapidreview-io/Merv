@@ -105,11 +105,13 @@ class TaskWorkflowTest(ResearchCase):
         self.assertNotIn("tested_claims", state)
 
         status = self.task_status(task_id)
+        self.assertEqual(set(status), {"scope", "workflow", "context"})
         self.assertEqual(status["scope"], "task")
+        self.assertLess(len(json.dumps(status)), 2_000)
         # The brief is rendered and pinned at create — the first gate is the
         # delivery, and the goal is immutable: brief submissions are refused.
         self.assertEqual(status["workflow"]["current_gate"], "delivery_required")
-        self.assertEqual(status["task"]["deliverables"], DELIVERABLES)
+        self.assertEqual(status["context"]["deliverables"], DELIVERABLES)
         rendered = status["context"]["brief"]["content"]
         self.assertIn("## Goal", rendered)
         self.assertIn("## Deliverables", rendered)
@@ -279,7 +281,7 @@ class TaskWorkflowTest(ResearchCase):
         self.assertEqual(status["scope"], "project")
         self.assertEqual(status["workflow"]["current_gate"], "live_experiments")
         self.assertEqual(
-            [row["id"] for row in status["workflow"]["live_tasks"]], [task_id]
+            [(row["id"], row["status"]) for row in status["context"]["project"]["active_tasks"]], [(task_id, "in_progress")]
         )
         self.assertIn("task.create", status["workflow"]["allowed_actions"])
         records = self.call("project", action="records", project_id=self.project_id)
@@ -297,7 +299,7 @@ class TaskWorkflowTest(ResearchCase):
         status = self.task_status(downstream)
         self.assertEqual(status["workflow"]["current_gate"], "dependencies_pending")
         self.assertIn("wait_for_dependencies", status["workflow"]["next_action"])
-        self.assertEqual(status["task"]["dependencies"][0]["id"], upstream)
+        self.assertEqual(status["context"]["dependencies"][0]["id"], upstream)
         with self.assertRaisesRegex(WorkflowError, "waiting on unfinished dependencies"):
             self.transition_task(downstream, "submit_delivery")
 
@@ -440,7 +442,7 @@ class TaskWorkflowTest(ResearchCase):
         # slim status does not pay for it.
         status = self.app.application.status(project_id=self.project_id, task_id=task_id)
         self.assertEqual([r["state"] for r in status["task"]["results"]], ["met", "met", "met"])
-        self.assertNotIn("results", self.task_status(task_id)["task"])
+        self.assertNotIn("results", self.task_status(task_id)["context"]["task"])
         slim = self.call("task.get_state", project_id=self.project_id, task_id=task_id)
         self.assertEqual(slim["deliverables"], DELIVERABLES)
         self.assertEqual([d["id"] for d in slim["dependents"]], [downstream])

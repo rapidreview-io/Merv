@@ -59,21 +59,18 @@ TOOLS: dict[str, ToolContract] = {
         handler_identity="application.status_for_agent",
         input_model=WorkflowStatusAndNextInput,
         description=(
-            "With instance_id, return any registered workflow's current state, "
-            "available and blocked actions, revision, and the current node's agent brief. "
             "The canonical entrypoint for starting or resuming work. Without "
-            "experiment_id or task_id, returns workflow guidance plus the "
-            "bounded project context: project metadata, latest published "
-            "reflection, General Summary of the literature, every claim, and "
-            "one status-dependent summary for every experiment and task. With "
-            "experiment_id, returns the four-section experiment context: "
-            "experiment, latest plan, latest report, and all other "
-            "current-attempt artifact references. Live experiments receive the "
-            "full latest plan; terminal experiments receive its Summary; the "
-            "latest report is full when present. With task_id, returns the "
-            "task's guidance, brief, delivery, checks, and dependencies. Use "
-            "artifact.read with one id or an ordered id batch for deeper "
-            "artifact reads."
+            "experiment_id or task_id: the project-level orientation gate (what to do "
+            "next for the project as a whole) plus the project context — Introduction, "
+            "literature summary, Methods/Results, every claim, and one row per "
+            "experiment and task with id, name and status; scope to one of those ids "
+            "for its own workflow. With experiment_id: that experiment's workflow "
+            "(state, revision, next action and what blocks it) and context — "
+            "experiment, latest plan, latest report, other current-attempt artifact "
+            "references; live experiments get the full plan, terminal ones its Summary. "
+            "With task_id: the task's workflow plus brief, delivery, deliverables and "
+            "dependencies. With instance_id: any registered workflow instance's state "
+            "and its current node's brief. Use artifact.read for deeper artifact reads."
         ),
     ),
     "workflow.catalog": ToolContract(
