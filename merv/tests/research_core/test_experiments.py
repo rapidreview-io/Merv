@@ -15,7 +15,6 @@ class ExperimentWorkflowTest(ResearchCase):
             intent="Establish whether weight decay moves grokking timing.",
             details=ask,
         )
-        self.assertEqual(created["details"], ask)
         state = self.call(
             "experiment.get_state",
             project_id=self.project_id,
@@ -28,7 +27,7 @@ class ExperimentWorkflowTest(ResearchCase):
             name="width-sweep",
             intent="Establish whether width moves grokking timing.",
         )
-        self.assertEqual(bare["details"], "")
+        self.assertEqual(self.call("experiment.get_state", project_id=self.project_id, experiment_id=bare["id"])["details"], "")
 
     def test_reflection_sourced_create_dedupes_tested_claims(self) -> None:
         # Two refs (a change-spec key and a literal id) can resolve to one

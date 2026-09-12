@@ -261,6 +261,18 @@ class TaskWorkflowTest(ResearchCase):
 
     # ---- creation rules ----
 
+    def test_create_is_a_receipt_naming_the_delivery(self) -> None:
+        task = self.call("task.create", project_id=self.project_id, name="prep-data",
+                         goal="Prepare the dataset.", deliverables=DELIVERABLES)
+        self.assertEqual(set(task), {"id", "name", "status", "folder", "next"})
+        self.assertEqual((task["status"], task["folder"]), ("in_progress", "tasks/prep-data/"))
+        self.assertEqual(task["next"], {"action": "write_and_submit_delivery", "tool": "artifact.upload",
+                                        "role": "delivery", "required_sections": ["Confirmations"]})
+        self.assertLess(len(json.dumps(task)), 300)
+        blocked = self.call("task.create", project_id=self.project_id, name="downstream",
+                            goal="Use the dataset.", deliverables=DELIVERABLES, depends_on=[task["id"]])
+        self.assertEqual(blocked["next"], {"action": "wait_for_dependencies", "role": "dependencies"})
+
     def test_names_are_folder_safe_and_claims_are_not_a_field(self) -> None:
         with self.assertRaisesRegex(ValidationError, "folder name"):
             self.create_task("bad name!")

@@ -28,7 +28,7 @@ from ..research_core import (
 )
 from ..infrastructure import RemoteObjects, RemoteSandboxes as SandboxEngine
 from .experiments.context import ExperimentContextQuery
-from .experiments.create import create_experiment
+from .experiments.create import create_experiment, creation_receipt
 from .experiments.exhibits import ExperimentExhibits
 from .experiments.presentation import (
     ProducedObjectCatalog,
@@ -53,6 +53,7 @@ from .tasks import (
     TransitionTask,
     rich_task_state,
     slim_task_state,
+    task_folder,
 )
 from .workflow import StatusAndNextQuery
 from .workflow_actions import Handler, WorkflowDeliveries
@@ -492,8 +493,9 @@ class Application:
         depends_on: list[str] | str | None = None,
         project_id: str | None = None,
     ) -> dict[str, Any]:
-        return slim_task_state(self.research.tasks.create(
-            name=name, goal=goal, deliverables=deliverables, depends_on=depends_on, project_id=project_id))
+        state = self.research.tasks.create(
+            name=name, goal=goal, deliverables=deliverables, depends_on=depends_on, project_id=project_id)
+        return creation_receipt(state, folder=task_folder(task_id=state.id, name=state.name))
 
     def tasks(
         self, *, project_id: str | None = None, rich: bool = False

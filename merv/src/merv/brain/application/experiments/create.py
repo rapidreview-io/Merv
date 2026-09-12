@@ -9,9 +9,10 @@ from ...kernel.utils import ValidationError
 from ...research_core import (
     EXPERIMENT,
     Research,
+    project_fields,
     safe_experiment_dirname,
 )
-from .presentation import rich_experiment_state
+from ...workflows import documents
 
 
 class ExperimentCreateArgs(TypedDict, total=False):
@@ -85,16 +86,24 @@ def create_experiment(
         raise ValidationError(
             "unexpected experiment.create fields: " + ", ".join(sorted(kwargs))
         )
-    folder = experiment_folder(
-        experiment_id=state.id,
-        name=state.name,
-    )
-    folder_guidance = EXPERIMENT.workflow.node(initial).guidance.messages["folder"].format(folder=folder)
-    return rich_experiment_state(state, storage_objects=(), folder=folder, folder_guidance=folder_guidance)
+    return creation_receipt(state, folder=experiment_folder(experiment_id=state.id, name=state.name))
+
+
+_SECTIONS = {"plan": documents.REQUIRED_PLAN_SECTIONS, "delivery": documents.REQUIRED_DELIVERY_SECTIONS}
+
+
+def creation_receipt(state, *, folder: str) -> dict[str, Any]:
+    """What a fresh record's creator needs next: its identity, its folder, and the first document to write."""
+    item = next(item for item in state.gate_checklist.items if not item.satisfied)
+    step = {"action": item.action, "role": item.role}
+    if item.role in _SECTIONS:
+        step.update(tool="artifact.upload", required_sections=[title for title, _ in _SECTIONS[item.role]])
+    return {**project_fields(state, ("id", "name", "status")), "folder": folder, "next": step}
 
 
 __all__ = [
     "ExperimentCreateArgs",
     "create_experiment",
+    "creation_receipt",
     "experiment_folder",
 ]

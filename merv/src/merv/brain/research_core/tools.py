@@ -616,7 +616,10 @@ TOOLS: dict[str, ToolContract] = {
     "experiment.create": ToolContract(
         handler_identity="application.create_experiment",
         input_model=ExperimentCreateInput,
-        description=f"Create a {EXPERIMENT.workflow.initial} experiment with a unique folder-safe name, standalone intent and optional planner details. See research-workflow.",
+        description=(f"Create a {EXPERIMENT.workflow.initial} experiment with a unique folder-safe name, standalone intent and optional planner details. "
+            "Returns {id, name, status, folder, next}: create the folder experiments/<name>/ locally yourself — plan.md, scripts, retained results, "
+            "report and graph live there, and nothing in it reaches a sandbox unless you transfer it; `next` names the first document to write and its "
+            "required sections. See research-workflow."),
     ),
     "experiment.list": ToolContract(
         handler_identity="application.experiments",
@@ -644,7 +647,8 @@ TOOLS: dict[str, ToolContract] = {
     "task.create": ToolContract(
         handler_identity="application.create_task",
         input_model=TaskCreateInput,
-        description=f"Create an {TASK.workflow.initial} task with a unique folder-safe name, immutable goal and verifiable deliverables; pins brief.md. See research-workflow.",
+        description=(f"Create an {TASK.workflow.initial} task with a unique folder-safe name, immutable goal and verifiable deliverables; pins brief.md. "
+            "Returns {id, name, status, folder, next}: `next` names the delivery document to write in tasks/<name>/ and its required sections. See research-workflow."),
     ),
     "task.list": ToolContract(
         handler_identity="application.tasks",

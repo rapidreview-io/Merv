@@ -94,7 +94,7 @@ class ExperimentSlimTest(unittest.TestCase):
             )
         return exp_id
 
-    def test_create_returns_folder_guidance_without_mkdir(self) -> None:
+    def test_create_returns_folder_without_mkdir(self) -> None:
         created = self.call(
             "experiment.create",
             name="folder-test",
@@ -104,7 +104,7 @@ class ExperimentSlimTest(unittest.TestCase):
 
         self.assertTrue(created["id"])
         self.assertEqual(created["folder"], "experiments/folder-test/")
-        self.assertIn("experiments/folder-test/", created["folder_guidance"])
+        self.assertEqual(created["next"]["role"], "plan")
         self.assertFalse((self.repo / "experiments" / "folder-test").exists())
 
     def test_get_state_tool_is_slim(self) -> None:

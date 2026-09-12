@@ -3,6 +3,7 @@ and the source of the experiment folder name (experiments/<name>/)."""
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -49,12 +50,13 @@ class ExperimentNamingTest(unittest.TestCase):
         self.assertFalse((self.repo / "experiments" / "lora-rank-sweep").exists())
         self.assertFalse((self.repo / "experiments" / exp["id"]).exists())
 
-    def test_create_response_announces_the_folder(self) -> None:
+    def test_create_response_is_a_receipt_naming_the_next_document(self) -> None:
         exp = self._create(name="lora-rank-sweep", intent="Sweep LoRA ranks.")
-        self.assertEqual(exp["folder"], "experiments/lora-rank-sweep/")
-        # The directive tells the agent to work inside the folder.
-        self.assertIn("experiments/lora-rank-sweep/", exp["folder_guidance"])
-        self.assertIn("sandbox", exp["folder_guidance"])
+        self.assertEqual(set(exp), {"id", "name", "status", "folder", "next"})
+        self.assertEqual(exp["status"], "planned")
+        self.assertEqual(exp["next"], {"action": "write_and_submit_plan", "tool": "artifact.upload", "role": "plan",
+                                       "required_sections": ["Summary", "Objective & hypothesis", "Evaluation"]})
+        self.assertLess(len(json.dumps(exp)), 400)
 
     def test_duplicate_name_is_rejected(self) -> None:
         self._create(name="baseline", intent="First baseline.")
