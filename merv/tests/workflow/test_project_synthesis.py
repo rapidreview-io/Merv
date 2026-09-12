@@ -4,7 +4,7 @@ from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
-from merv.brain.kernel.utils import WorkflowError
+from merv.brain.kernel.utils import NotFoundError, WorkflowError
 from merv.brain.workflows import research_contracts
 from tests.research_core.scenarios import ResearchCase, VALID_REPORT, VALID_GRAPH
 from tests.support.brain import TestBrain
@@ -110,9 +110,10 @@ class ProjectSynthesisTest(ResearchCase):
         self.assertEqual(assignment["brief"].count("## Methods"), 1)
         task = self.call("task.create", project_id=self.project_id, name="check-dataset",
                         goal="Retain the prepared dataset", deliverables=["A retained dataset"])
+        status = self.call("workflow.status_and_next", project_id=self.project_id)
+        self.assertEqual({key: status["context"]["project"][key] for key in document}, document)
         status = self.call("workflow.status_and_next", project_id=self.project_id, task_id=task["id"])
-        self.assertEqual(status["project"], document)
-        self.assertIn("task", status["context"])
+        self.assertEqual(set(status), {"scope", "workflow", "context"})
 
     def test_only_publication_advances_pinned_coverage_and_concurrent_arrivals_survive(self):
         first = self.create_experiment("first-approach")
@@ -161,6 +162,11 @@ class ProjectSynthesisTest(ResearchCase):
                                   instance_id=packet["instance_id"])["source"], packet["source"])
         self.publish(packet, methods="Recovered account.")
         self.assertEqual(self.document()["methods"], "Recovered account.")
+        # A wrong id and a wrong state are told apart, and the state is named.
+        with self.assertRaisesRegex(NotFoundError, "psyn_nope.*this project's is " + packet["instance_id"]):
+            self.call("project.synthesis.read", project_id=self.project_id, instance_id="psyn_nope")
+        with self.assertRaisesRegex(WorkflowError, "is 'waiting', not writing"):
+            self.call("project.synthesis.read", project_id=self.project_id, instance_id=packet["instance_id"])
 
     def test_canonical_sources_are_composed_and_context_changes_require_refresh(self):
         self.create_experiment()

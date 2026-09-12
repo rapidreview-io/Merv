@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -123,6 +124,12 @@ class CandidateLifecycleTest(unittest.TestCase):
         listed = self.call("candidate.list", project_id=self.project_id)
         self.assertEqual(listed["champion_id"], candidate_id)
         self.assertEqual(len(listed["promotions"]), 1)
+        # The champion appears once, as the flagged row; never as a second copy.
+        self.assertEqual(set(listed), {"champion_id", "candidates", "promotions"})
+        self.assertEqual([row["id"] for row in listed["candidates"] if row["is_champion"]], [candidate_id])
+        records = self.call("project", action="records", project_id=self.project_id)["candidates"]
+        self.assertEqual(set(records), {"champion_id", "recent", "count", "pending_staging_count"})
+        self.assertLess(len(json.dumps(listed)) + len(json.dumps(records)), 2_200)
 
     def test_artifact_source_is_resolved_and_stale_promotion_is_rejected(self) -> None:
         artifact_id = self.app.submit_artifact(

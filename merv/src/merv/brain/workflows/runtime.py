@@ -13,7 +13,7 @@ from ..kernel.events import StoredEvent, freeze_json_object
 from ..kernel.state.store import BaseStateStore, Connection
 from ..kernel.utils import NotFoundError, WorkflowError, new_id, now_iso
 from .composition import ChildResult
-from .graph import Change, Data, Evaluation, Knowledge, Reference, Registry, Snapshot
+from .graph import Change, Data, Evaluation, Knowledge, Reference, Registry, Snapshot, agent_workflow
 
 
 def _plain(value: Any) -> Any:
@@ -478,11 +478,11 @@ class Runtime:
         with closing(self.store.connect()) as conn:
             evaluation = self.evaluate(project_id=project_id, instance_id=instance_id, conn=conn)
             packet = self._assignment(evaluation, conn) if evaluation.dispatchable else {}
-            context = {key: packet[key] for key in ("role", "label", "brief", "references", "handoff", "skill", "messages") if key in packet}
+            context = {key: packet[key] for key in ("role", "label", "brief", "references", "handoff", "skill") if key in packet}
             guidance = self.registry.get(evaluation.snapshot.workflow, evaluation.snapshot.version).outcome_guidance.get(evaluation.snapshot.outcome)
             if guidance is not None:
-                context = {"skill": guidance.skill, "handoff": guidance.handoff, "messages": dict(guidance.messages)}
-            return {"scope": "workflow", "workflow": evaluation.public(), "context": context}
+                context = {"skill": guidance.skill, "handoff": guidance.handoff}
+            return {"scope": "workflow", "workflow": agent_workflow(evaluation.public()), "context": context}
 
     def require_assignment(self, *, conn: Connection, project_id: str, instance_id: str, revision: int) -> None:
         """The dispatcher calls this in the transaction that issues the lease."""

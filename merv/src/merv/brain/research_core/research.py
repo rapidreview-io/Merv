@@ -226,8 +226,10 @@ class Research:
             ).fetchone()
             if updated is None:
                 raise ValidationError(
-                    "Project intent changed. Reread the project and reconcile the user's clarification before retrying.",
-                    details={"field": "expected_summary", "reason": "stale_project_context"},
+                    "Project intent changed. Reconcile the user's clarification with details.current_summary, "
+                    "then retry with that exact text as expected_summary.",
+                    details={"field": "expected_summary", "reason": "stale_project_context",
+                             "current_summary": current["summary"]},
                 )
             self.store.record_event(conn=conn, project_id=project_id, event_type="project.context.updated",
                                     target_type="project", target_id=project_id,
@@ -522,12 +524,7 @@ class Research:
             )
             for row in rows
         ]
-        return {
-            "champion": next((c for c in candidates if c["is_champion"]), None),
-            "champion_id": champion_id,
-            "candidates": candidates,
-            "promotions": promotions,
-        }
+        return {"champion_id": champion_id, "candidates": candidates, "promotions": promotions}
 
     @staticmethod
     def _candidate_view(
@@ -565,12 +562,9 @@ class Research:
         cls, *, conn: Connection, project_id: str
     ) -> dict[str, Any]:
         state = cls._candidate_state(conn=conn, project_id=project_id)
-        recent = state["candidates"][:3]
         return {
-            "champion": state["champion"],
             "champion_id": state["champion_id"],
-            "latest": recent[0] if recent else None,
-            "recent": recent,
+            "recent": state["candidates"][:3],
             "count": len(state["candidates"]),
             "pending_staging_count": sum(
                 not candidate["staged"] for candidate in state["candidates"]

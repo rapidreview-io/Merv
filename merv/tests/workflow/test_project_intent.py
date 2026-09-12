@@ -54,8 +54,6 @@ class ProjectIntentRolesTest(unittest.TestCase):
                     assert "Causal methods account." in full.summary
                     assert "Established and contrary findings." in full.summary
                     assert INTENT in full.summary, (workflow.name, node.name)
-                    assert "ask the user focused questions" in full.summary
-                    assert "never invent intent" in full.summary
                     assert "## Introduction\n" + INTENT in full.summary
                     assert full.summary.index("## Introduction") < full.summary.index("## Literature")
                     assert full.references == empty.references
@@ -86,10 +84,12 @@ class ProjectIntentDeliveryTest(ResearchCase):
         after = self.call("workflow.status_and_next", **args)
         self.assertEqual(before["workflow"], after["workflow"])
         self.assertIn(INTENT, after["context"]["brief"])
+        status = self.call("workflow.status_and_next", project_id=self.project_id)
+        self.assertEqual(status["context"]["project"]["summary"], INTENT)
         for fields, child in (({"experiment_id": experiment["id"]}, "experiment"),
                               ({"task_id": task["id"]}, "task")):
             status = self.call("workflow.status_and_next", project_id=self.project_id, **fields)
-            self.assertEqual(status["project"]["summary"], INTENT)
+            self.assertNotIn("project", status)
             self.assertIn(child, status["context"])
         for tool, extra in (("workflow.assignment", {}),
                             ("workflow.begin", {"expected_revision": after["workflow"]["revision"]})):

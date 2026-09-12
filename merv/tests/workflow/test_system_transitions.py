@@ -104,7 +104,8 @@ class WorkflowDeclarationTest(SystemTransitionTestBase):
         self.assertEqual(workflow["current_gate"], plan_req.gate)
         self.assertEqual(workflow["next_action"], plan_req.action)
         self.assertEqual(workflow["allowed_actions"], list(plan_req.tools))
-        self.assertEqual(workflow["missing_evidence"], [plan_req.error])
+        self.assertEqual([item["reason"] for item in workflow["suggested_action"]["blockers"]], [plan_req.error])
+        self.assertNotIn("missing_evidence", workflow)
 
 
 if __name__ == "__main__":

@@ -499,6 +499,19 @@ def issue_view(issue: Issue) -> dict[str, Any]:
     return {"code": issue.code, "reason": issue.message, "action": issue.action, "tools": list(issue.tools)}
 
 
+_AGENT_HIDDEN = ("version", "dispatchable", "missing_evidence", "execution", "messages")
+
+
+def agent_workflow(view: dict[str, Any]) -> dict[str, Any]:
+    """What an agent reads of a workflow view: each gate said once, nothing this state leaves empty."""
+    suggested = view.get("suggested_action")
+    hidden = {*_AGENT_HIDDEN, "blocked_actions" if suggested and suggested["blockers"] else "suggested_action"}
+    view = {**view, "available_actions": [{key: value for key, value in action.items() if key != "blockers"}
+                                          for action in view.get("available_actions", ())]}
+    return {key: value for key, value in view.items()
+            if key not in hidden and (value or key in ("revision", "state", "current_gate", "next_action"))}
+
+
 @dataclass(frozen=True, slots=True)
 class Workflow:
     name: str

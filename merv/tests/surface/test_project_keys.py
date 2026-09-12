@@ -143,7 +143,7 @@ class ProjectKeySurfaceTest(unittest.TestCase):
         current = self.client.post("/mcp/call", headers=_bearer(self.key), json={
             "name": "project", "arguments": {"action": "current"}}).json()["result"]["project"]
         self.assertEqual(current["summary"], args["summary"])
-        self.assertIn("ask the user focused questions", current["intent_guidance"])
+        self.assertNotIn("intent_guidance", current)
         for secret, project_id, status in ((self.key, self.project_b, 403), (self.jwt_b, self.project_a, 404)):
             denied = self.client.post("/mcp/call", headers=_bearer(secret), json={
                 "name": "project.context.update", "arguments": {**args, "project_id": project_id}})

@@ -207,13 +207,6 @@ EXPERIMENT = Workflow(
     nodes=(
         Node("planned", "Design experiment", "experiment_owner", build_plan_context,
              guidance=Guidance("research-workflow", RESEARCH_HANDOFF, messages={
-                 "folder": ("Use {folder} as the experiment's one local folder. "
-                     "Create it yourself before working in it: plan.md, scripts, configs, "
-                     "retained results, report, and graph all live there. This local folder "
-                     "is not uploaded to a sandbox automatically: create, fetch, or explicitly "
-                     "transfer sandbox inputs after provisioning. Pull selected light outputs "
-                     "back with sandbox.pull_outputs, or upload heavy outputs to configured "
-                     "object storage, before the sandbox is released."),
                  "feed_update": "{entity} just had a workflow update"}), execution=EXPERIMENT_EXECUTION,
              requires=(ARTIFACTS["plan"],)),
         Node("design_review", "Review experiment design", "design_reviewer", build_design_review_context, guidance=Guidance(DESIGN_REVIEW.skill, RESEARCH_HANDOFF),

@@ -8,7 +8,7 @@ from typing import Protocol
 
 from ..kernel.state.store import BaseStateStore, Connection
 from ..kernel.utils import NotFoundError
-from .graph import Data, Knowledge, Program, Registry, Snapshot
+from .graph import Data, Knowledge, Program, Registry, Snapshot, agent_workflow
 from .delivery import Deliveries
 from .runtime import CommitRecord, CreateRecord, EmptyKnowledge, KnowledgeFactory, Runtime, TransactionalHandler, snapshot_view
 from .persistence import WORKFLOW_SCHEMA
@@ -117,7 +117,7 @@ class Workflows:
         return self.runtime.describe(project_id=project_id, instance_id=instance_id)
 
     def assignment(self, *, project_id: str, instance_id: str):
-        return self.runtime.assignment(project_id=project_id, instance_id=instance_id)
+        return agent_workflow(self.runtime.assignment(project_id=project_id, instance_id=instance_id))
 
     def candidates(self, *, project_id: str):
         return self.runtime.candidates(project_id=project_id)
@@ -132,7 +132,7 @@ class Workflows:
                 conn=conn, project_id=project_id, instance_id=instance_id,
                 revision=expected_revision, session_id="interactive",
             )
-            return self.runtime.assignment(conn=conn, project_id=project_id, instance_id=instance_id)
+            return agent_workflow(self.runtime.assignment(conn=conn, project_id=project_id, instance_id=instance_id))
 
     def history(self, *, project_id: str, instance_id: str):
         return {

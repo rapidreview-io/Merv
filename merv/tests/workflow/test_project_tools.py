@@ -43,8 +43,9 @@ class ProjectToolTest(unittest.TestCase):
         changed = self.call("project.context.update", summary=revised, **args)
         self.assertEqual(changed["settings"], project["settings"])
         self.assertEqual(changed["name"], project["name"])
-        with self.assertRaisesRegex(ValidationError, "intent changed"):
+        with self.assertRaisesRegex(ValidationError, "intent changed") as stale:
             self.call("project.context.update", summary="Stale replacement", **args)
+        self.assertEqual(stale.exception.details["current_summary"], revised)
         self.app.shutdown()
         self.app = TestBrain(repo_root=self.repo, db_path=self.app.db_path,
                              env={"MERV_AGENT_IDENTITY": "optional"})

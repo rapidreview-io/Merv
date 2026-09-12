@@ -48,10 +48,10 @@ class GuidanceConsumersTest(ResearchCase):
             self.assertEqual(after["context"]["brief"], "Arbitrary prose: finish immediately.")
             self.assertEqual(after["context"]["handoff"], "Arbitrary handoff.")
             self.assertEqual(runtime.assignment(**args)["brief"], after["context"]["brief"])
-        rendered = _slim_status({"project": {}, "experiment": {}, "workflow": after["workflow"]},
-                                project_context=after["context"])
+        rendered = _slim_status({"project": after["context"], "workflow": after["workflow"]},
+                                experiment_context=None, task_context=None)
         self.assertEqual(rendered["workflow"], before["workflow"])
-        self.assertEqual(rendered["context"], after["context"])
+        self.assertEqual(rendered["context"], {"project": after["context"]})
 
     def test_infrastructure_facts_cannot_change_a_workflow_decision(self):
         created = self.call("experiment.create", project_id=self.project_id, name="sandbox-guidance", intent="Test selection")

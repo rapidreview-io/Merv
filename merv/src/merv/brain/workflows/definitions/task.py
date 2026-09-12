@@ -47,8 +47,8 @@ def request_delivery_review(snapshot, payload, knowledge):
 def record_verdict(snapshot, payload, knowledge):
     fact = knowledge.read(Reference("review", "task_reviewer"))
     if fact.get("verdict") == "pass":
-        outcome = (fact.get("evidence") or {}).get("outcome") or fact.get("notes") or fact.get("synopsis") or ""
-        return Change(data={"outcome": str(outcome)})
+        outcome = (fact.get("evidence") or {}).get("outcome") or fact.get("synopsis") or fact.get("notes") or ""
+        return Change(data={"outcome": str(outcome), "revision_context": ""})
     return Change(data={"revision_context": review_summary(fact) + "\nRevise the delivery against the brief's Done-when checks; the goal stands."})
 
 
@@ -117,5 +117,5 @@ KIND = RecordKind(
     columns=("name", "goal", "deliverables_json"), json_columns={"deliverables_json": ("deliverables", "[]")},
     dependencies=True, seal_exempt_actions=frozenset({"revise", "fail_review", "migrate"}),
     commit_columns={"revise": ("revision_context",), "fail_review": ("revision_context",),
-                    "accept": ("outcome",)},
+                    "accept": ("outcome", "revision_context")},
 )

@@ -105,11 +105,13 @@ class TaskWorkflowTest(ResearchCase):
         self.assertNotIn("tested_claims", state)
 
         status = self.task_status(task_id)
+        self.assertEqual(set(status), {"scope", "workflow", "context"})
         self.assertEqual(status["scope"], "task")
+        self.assertLess(len(json.dumps(status)), 2_000)
         # The brief is rendered and pinned at create — the first gate is the
         # delivery, and the goal is immutable: brief submissions are refused.
         self.assertEqual(status["workflow"]["current_gate"], "delivery_required")
-        self.assertEqual(status["task"]["deliverables"], DELIVERABLES)
+        self.assertEqual(status["context"]["deliverables"], DELIVERABLES)
         rendered = status["context"]["brief"]["content"]
         self.assertIn("## Goal", rendered)
         self.assertIn("## Deliverables", rendered)
@@ -222,6 +224,10 @@ class TaskWorkflowTest(ResearchCase):
         )
         self.transition_task(task_id, "submit_delivery")
         self.pass_review(target_type="task", target_id=task_id, role="task_reviewer")
+        # Acceptance retires the revision request; the outcome is the reviewer's synopsis.
+        done = self.call("task.get_state", project_id=self.project_id, task_id=task_id)
+        self.assertEqual((done["status"], done["revision_context"]), ("done", ""))
+        self.assertNotIn("\n", done["outcome"])
         self.assertEqual(self.call("task.get_state", project_id=self.project_id, task_id=task_id)["status"], "done")
 
     def test_fail_verdict_ends_the_task(self) -> None:
@@ -249,6 +255,8 @@ class TaskWorkflowTest(ResearchCase):
 
     def test_owner_can_withdraw_with_a_reason(self) -> None:
         task_id = self.create_task()
+        with self.assertRaisesRegex(ValidationError, "mark_failed requires evidence.reason"):
+            self.transition_task(task_id, "mark_failed")
         receipt = self.transition_task(
             task_id, "mark_failed", reason="The dataset license forbids this use."
         )
@@ -258,6 +266,18 @@ class TaskWorkflowTest(ResearchCase):
         self.assertEqual(state["outcome"], "The dataset license forbids this use.")
 
     # ---- creation rules ----
+
+    def test_create_is_a_receipt_naming_the_delivery(self) -> None:
+        task = self.call("task.create", project_id=self.project_id, name="prep-data",
+                         goal="Prepare the dataset.", deliverables=DELIVERABLES)
+        self.assertEqual(set(task), {"id", "name", "status", "folder", "next"})
+        self.assertEqual((task["status"], task["folder"]), ("in_progress", "tasks/prep-data/"))
+        self.assertEqual(task["next"], {"action": "write_and_submit_delivery", "tool": "artifact.upload",
+                                        "role": "delivery", "required_sections": ["Confirmations"]})
+        self.assertLess(len(json.dumps(task)), 300)
+        blocked = self.call("task.create", project_id=self.project_id, name="downstream",
+                            goal="Use the dataset.", deliverables=DELIVERABLES, depends_on=[task["id"]])
+        self.assertEqual(blocked["next"], {"action": "wait_for_dependencies", "role": "dependencies"})
 
     def test_names_are_folder_safe_and_claims_are_not_a_field(self) -> None:
         with self.assertRaisesRegex(ValidationError, "folder name"):
@@ -279,7 +299,7 @@ class TaskWorkflowTest(ResearchCase):
         self.assertEqual(status["scope"], "project")
         self.assertEqual(status["workflow"]["current_gate"], "live_experiments")
         self.assertEqual(
-            [row["id"] for row in status["workflow"]["live_tasks"]], [task_id]
+            [(row["id"], row["status"]) for row in status["context"]["project"]["active_tasks"]], [(task_id, "in_progress")]
         )
         self.assertIn("task.create", status["workflow"]["allowed_actions"])
         records = self.call("project", action="records", project_id=self.project_id)
@@ -297,7 +317,7 @@ class TaskWorkflowTest(ResearchCase):
         status = self.task_status(downstream)
         self.assertEqual(status["workflow"]["current_gate"], "dependencies_pending")
         self.assertIn("wait_for_dependencies", status["workflow"]["next_action"])
-        self.assertEqual(status["task"]["dependencies"][0]["id"], upstream)
+        self.assertEqual(status["context"]["dependencies"][0]["id"], upstream)
         with self.assertRaisesRegex(WorkflowError, "waiting on unfinished dependencies"):
             self.transition_task(downstream, "submit_delivery")
 
@@ -440,7 +460,7 @@ class TaskWorkflowTest(ResearchCase):
         # slim status does not pay for it.
         status = self.app.application.status(project_id=self.project_id, task_id=task_id)
         self.assertEqual([r["state"] for r in status["task"]["results"]], ["met", "met", "met"])
-        self.assertNotIn("results", self.task_status(task_id)["task"])
+        self.assertNotIn("results", self.task_status(task_id)["context"]["task"])
         slim = self.call("task.get_state", project_id=self.project_id, task_id=task_id)
         self.assertEqual(slim["deliverables"], DELIVERABLES)
         self.assertEqual([d["id"] for d in slim["dependents"]], [downstream])

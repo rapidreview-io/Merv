@@ -29,7 +29,7 @@ from .delivery import Deliveries, Delivery
 from .graph import (
     Action, ArtifactNeed, Brief, Change, CreationRequirement, DependenciesDone, Edge, Evaluation, Execution, Guidance, Issue,
     Knowledge, Metadata, Node, Program, Public, RecordKind, RecordNeed, Reference, Registry, Requirement,
-    ReviewGate, ReviewReturn, Scope, Snapshot, TransactionalEffect, Workflow, WorkspacePolicy, all_of,
+    ReviewGate, ReviewReturn, Scope, Snapshot, TransactionalEffect, Workflow, WorkspacePolicy, agent_workflow, all_of,
 )
 from .runtime import EmptyKnowledge, InstanceFact, Runtime, snapshot_view
 from .tools import TOOLS
@@ -55,5 +55,5 @@ __all__ = [
     "Edge", "Evaluation", "Execution", "Guidance", "InstanceFact", "Issue", "Knowledge", "Metadata", "Node", "Program", "Public", "RecordKind",
     "RecordNeed", "Reference", "Registry", "Requirement", "ReviewGate", "ReviewReturn", "Scope",
     "Snapshot", "TransactionalEffect", "Workflow", "WorkspacePolicy",
-    "Binding", "Deliveries", "Delivery", "EmptyKnowledge", "Runtime", "TOOLS", "Workflows", "snapshot_view", "all_of", "wait_for_all",
+    "Binding", "Deliveries", "Delivery", "EmptyKnowledge", "Runtime", "TOOLS", "Workflows", "snapshot_view", "agent_workflow", "all_of", "wait_for_all",
 ]

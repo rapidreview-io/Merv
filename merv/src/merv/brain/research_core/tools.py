@@ -277,8 +277,8 @@ class TaskTransitionInput(ProjectScopedInput):
     evidence: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Optional. On accept, {'outcome': ...} is the accepted outcome note; "
-            "on mark_failed, {'reason': ...} says why the owner ended it."
+            "On accept, {'outcome': ...} optionally overrides the accepted outcome note; "
+            "mark_failed REQUIRES {'reason': ...}: why the owner ended it."
         ),
     )
 
@@ -572,7 +572,10 @@ TOOLS: dict[str, ToolContract] = {
     "project.context.update": ToolContract(
         handler_identity="research.update_project_context",
         input_model=ProjectContextUpdateInput,
-        description="Persist user-grounded project intent from the interactive conversation. Ask focused questions when needed for your assignment; never invent intent or replace it with research findings. Reread and reconcile on a stale expected_summary.",
+        description=("Write the project Introduction: one research-paper-style paragraph with an explicit goal and scope, "
+            "grounded in what the user said (ask focused questions where ambiguity affects direction; never invent intent). "
+            "Pass the exact last-read summary as expected_summary and reread on a conflict. "
+            "Findings and conclusions belong in Methods/Results, not here."),
     ),
     "candidate.submit": ToolContract(
         handler_identity="application.submit_candidate",
@@ -613,7 +616,10 @@ TOOLS: dict[str, ToolContract] = {
     "experiment.create": ToolContract(
         handler_identity="application.create_experiment",
         input_model=ExperimentCreateInput,
-        description=f"Create a {EXPERIMENT.workflow.initial} experiment with a unique folder-safe name, standalone intent and optional planner details. See research-workflow.",
+        description=(f"Create a {EXPERIMENT.workflow.initial} experiment with a unique folder-safe name, standalone intent and optional planner details. "
+            "Returns {id, name, status, folder, next}: create the folder experiments/<name>/ locally yourself — plan.md, scripts, retained results, "
+            "report and graph live there, and nothing in it reaches a sandbox unless you transfer it; `next` names the first document to write and its "
+            "required sections. See research-workflow."),
     ),
     "experiment.list": ToolContract(
         handler_identity="application.experiments",
@@ -641,7 +647,8 @@ TOOLS: dict[str, ToolContract] = {
     "task.create": ToolContract(
         handler_identity="application.create_task",
         input_model=TaskCreateInput,
-        description=f"Create an {TASK.workflow.initial} task with a unique folder-safe name, immutable goal and verifiable deliverables; pins brief.md. See research-workflow.",
+        description=(f"Create an {TASK.workflow.initial} task with a unique folder-safe name, immutable goal and verifiable deliverables; pins brief.md. "
+            "Returns {id, name, status, folder, next}: `next` names the delivery document to write in tasks/<name>/ and its required sections. See research-workflow."),
     ),
     "task.list": ToolContract(
         handler_identity="application.tasks",
