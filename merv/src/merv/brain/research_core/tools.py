@@ -572,7 +572,10 @@ TOOLS: dict[str, ToolContract] = {
     "project.context.update": ToolContract(
         handler_identity="research.update_project_context",
         input_model=ProjectContextUpdateInput,
-        description="Persist user-grounded project intent from the interactive conversation. Ask focused questions when needed for your assignment; never invent intent or replace it with research findings. Reread and reconcile on a stale expected_summary.",
+        description=("Write the project Introduction: one research-paper-style paragraph with an explicit goal and scope, "
+            "grounded in what the user said (ask focused questions where ambiguity affects direction; never invent intent). "
+            "Pass the exact last-read summary as expected_summary and reread on a conflict. "
+            "Findings and conclusions belong in Methods/Results, not here."),
     ),
     "candidate.submit": ToolContract(
         handler_identity="application.submit_candidate",

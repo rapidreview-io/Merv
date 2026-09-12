@@ -7,21 +7,11 @@ import re
 from ...kernel.utils import ValidationError
 
 
-PROJECT_INTENT_GUIDANCE = (
-    "The Introduction (summary) is the project's single authoritative definition, editable by the user or an interactive agent. "
-    "In an interactive conversation, ask the user focused questions about the problem/background, goal, constraints, "
-    "scope and what success means; follow up where ambiguity affects direction. Then write one brief research-paper-style "
-    "paragraph with an explicit goal and scope. Preserve uncertainty; never invent intent or maintain a separate brief. "
-    "Create or revise this same paragraph with project.context.update, using the exact last-read summary as expected_summary. "
-    "On a conflict, reread and reconcile before retrying. There is no completeness gate. "
-    "Automatically deployed sessions read this paragraph but cannot edit it or interview the user. "
-    "Keep research findings and evolving conclusions in Methods/Results, not the Introduction."
-)
+PROJECT_FIELDS = ("id", "name", "summary", "created_at")
 
 
 def project_context(project):
-    return {"id": project.get("id"), "name": project.get("name"),
-            "summary": project.get("summary", ""), "intent_guidance": PROJECT_INTENT_GUIDANCE}
+    return {"id": project.get("id"), "name": project.get("name"), "summary": project.get("summary", "")}
 
 
 def render_project_document(project):
@@ -38,7 +28,6 @@ def render_project_document(project):
         pending = "Newer research awaits incorporation into Methods/Results.\n\n"
     return (
         f"# {project.get('name', 'Project')}\n\n## Introduction\n{project.get('summary', '')}\n\n"
-        f"{project.get('intent_guidance', PROJECT_INTENT_GUIDANCE)}\n\n"
         f"## Literature\n{literature.get('body') or 'No literature summary yet.'}\n{papers}\n\n"
         f"{pending}## Methods\n{project.get('methods') or 'Not yet synthesized.'}\n\n"
         f"## Results\n{project.get('results') or 'Not yet synthesized.'}\n\n"
