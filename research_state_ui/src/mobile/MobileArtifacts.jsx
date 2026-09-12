@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useProjectStore, useProjectHref, selectExperiments } from '../store/useProjectStore';
 import { api } from '../api';
@@ -6,7 +6,7 @@ import ArtifactContentView from '../components/ArtifactContentView';
 import { LoadFallback } from '../components/LoadState';
 import ObjId from '../components/ObjId';
 import { basename, formatBytes } from '../utils/format';
-import { keepIfUnchanged } from '../store/usePolling';
+import { useRecordStatus } from '../store/usePolling';
 import { expName, groupArtifactsByTarget } from '../utils/experiment';
 
 /**
@@ -19,23 +19,8 @@ export default function MobileArtifacts() {
   const projectId = useProjectStore(s => s.projectId);
   const experiments = useProjectStore(selectExperiments);
 
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
-
-  const fetchArtifacts = useCallback(async () => {
-    try {
-      const d = await api.listArtifacts(projectId);
-      setData(keepIfUnchanged(d));
-      setError(null);
-    } catch (err) {
-      setError(err.message);
-    }
-  }, [projectId]);
-
-  useEffect(() => {
-    setData(null);
-    fetchArtifacts();
-  }, [fetchArtifacts]);
+  const [data, error, fetchArtifacts, reset] = useRecordStatus(() => api.listArtifacts(projectId), [projectId]);
+  useEffect(() => { reset(); fetchArtifacts(); }, [fetchArtifacts, reset]);
 
   // Pending rows are half-born (upload token outstanding); show complete only.
   const artifacts = useMemo(
@@ -70,7 +55,7 @@ export default function MobileArtifacts() {
     );
   }
   if (artifactId) {
-    return <LoadFallback error={error || (data && `No artifact ${artifactId} in this project.`)} back={px('/artifacts')} label="Artifacts" />;
+    return <LoadFallback error={error?.message || (data && `No artifact ${artifactId} in this project.`)} back={px('/artifacts')} label="Artifacts" />;
   }
 
   const ordered = groupArtifactsByTarget(artifacts, experiments);
@@ -81,7 +66,7 @@ export default function MobileArtifacts() {
         <h1 className="page-title">Artifacts</h1>
       </header>
 
-      {error && <div className="error-message">{error}</div>}
+      {error && <div className="error-message">{error.message}</div>}
       {!data && !error && <div className="mquiet">loading…</div>}
       {data && artifacts.length === 0 && (
         <div className="empty-state empty-state--compact">

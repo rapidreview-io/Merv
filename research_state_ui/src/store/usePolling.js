@@ -82,14 +82,6 @@ export function useIntervalPoll(fn, intervalMs, { enabled = true, immediate = tr
 }
 
 /**
- * setState updater that keeps the previous value when the poll returned the
- * same thing, so an unchanged payload re-renders nothing downstream.
- */
-export const keepIfUnchanged = (next) => (prev) => (
-  JSON.stringify(prev) === JSON.stringify(next) ? prev : next
-);
-
-/**
  * One fetch per key change, with the in-flight answer dropped when the key
  * moves first. Returns `[data, error]` — both null while the fetch is in
  * flight, so a caller shows its loading state on `!data && !error`. A null
