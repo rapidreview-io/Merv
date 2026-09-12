@@ -1,4 +1,5 @@
 import ProjectDocument from '../components/ProjectDocument';
+import ConnectAgentPanel from '../components/ConnectAgentPanel';
 import { useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
@@ -142,6 +143,7 @@ export default function HomeScreen() {
         <div className="mbanner">Backend unreachable — showing last known state. {lastSyncError}</div>
       )}
       {next && <p className="home-next"><span className="gate-banner-meta-key">Next for your agent</span> {next}</p>}
+      {(stats.claims ?? 0) + (stats.experiments ?? 0) + (stats.artifacts ?? 0) === 0 && <ConnectAgentPanel project={project} />}
 
       <ProjectDocument project={project} />
 

@@ -108,12 +108,13 @@ export default function MobileReflectionScreen() {
     </header>
   );
 
-  if (!hasAnyWave) {
+  const unknownId = data && linkedId && !waves.some(w => w.id === linkedId);
+  if (!hasAnyWave || unknownId) {
     return (
       <div className="page-stage">
         {header}
         <div className="empty-state empty-state--compact">
-          <p>{error && !data ? error.message : 'No reflection waves yet.'}</p>
+          <p>{unknownId ? `Reflection ${linkedId} not found.` : error && !data ? error.message : 'No reflection waves yet.'}</p>
         </div>
         {signal?.hint && <div className="syn-hint">{signal.hint}</div>}
       </div>
