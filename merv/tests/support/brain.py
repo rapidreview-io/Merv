@@ -227,8 +227,7 @@ class TestBrain:
         if html_path is not None:
             args["html_path"] = html_path
         pending = self.call_tool("feed.post", args)
-        result = self.upload_feed_bytes(token=upload_token(pending["run"]), data=data)
-        return {**result, "post_id": pending["post_id"]}
+        return self.upload_feed_bytes(token=upload_token(pending["run"]), data=data)
 
     def upload_feed_bytes(self, *, token: str, data: bytes) -> dict[str, Any]:
         response = self._client.put(f"/api/feed/u/{token}", content=data)

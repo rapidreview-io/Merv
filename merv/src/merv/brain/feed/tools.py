@@ -193,9 +193,10 @@ def feed_tools(*, vocabulary: RefVocabulary, author_roles: Iterable[str], adopta
                 "working hour, in different shapes. One sentence, the number in bold, "
                 "attach what you looked at (stat/chart/table/log/image); use `thread` "
                 "for anything longer. Ids and links in the text become chips and "
-                "cards. Text-only and native posts land immediately; an image/embed "
-                "returns a one-time `run` curl whose upload finalizes the post. Posts "
-                "are permanent — correct by quoting."
+                "cards. Text-only and native posts land immediately as {post_id, "
+                "thread?}; an image/embed returns a one-time `run` curl whose upload "
+                "finalizes the post and prints the same receipt. Posts are permanent "
+                "— correct by quoting."
             ),
         ),
         "feed.list": ToolContract(

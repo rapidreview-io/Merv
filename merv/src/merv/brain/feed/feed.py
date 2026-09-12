@@ -137,6 +137,14 @@ class MediaInput:
 
 # -- Feed operations --------------------------------------------------------
 
+def _receipt(created: dict[str, Any]) -> dict[str, Any]:
+    """What an agent gets back from a write: ids, never the post it just wrote."""
+    receipt = {"post_id": created["post"]["id"]}
+    if created.get("thread"):
+        receipt["thread"] = [item["id"] for item in created["thread"]]
+    return receipt
+
+
 def feed_upload_command(*, base_url: str, path: str, token: str) -> str:
     return curl_upload_command(
         base_url=base_url, path=path, route=f"/api/feed/u/{token}"
@@ -364,13 +372,13 @@ class FeedService:
         are not given explicitly. ``attachments`` are validated typed blocks;
         ``thread`` chains continuation posts under this one, atomically.
 
-        A post without an upload lands immediately (shape ``{"post": …}``,
-        plus ``"thread"`` when continuations were created). A post carrying an
-        image or embed instead mints a one-time upload token and returns
-        ``{"post_id", "run"}``: the agent runs the ``run`` curl to PUT the local
-        file's bytes to ``/api/feed/u/<token>``, which finalizes the post (and
-        its thread) — the bytes travel over the agent's own curl, never through
-        MCP (the artifact.upload discipline)."""
+        A post without an upload lands immediately as ``{"post_id"}`` (plus
+        ``"thread"``, the continuation ids). A post carrying an image or embed
+        instead mints a one-time upload token and returns ``{"post_id", "run"}``:
+        the agent runs the ``run`` curl to PUT the local file's bytes to
+        ``/api/feed/u/<token>``, which finalizes the post (and its thread) and
+        prints the same receipt — the bytes travel over the agent's own curl,
+        never through MCP (the artifact.upload discipline)."""
         if image_path and html_path:
             raise ValidationError("a post may carry an image or an embed, not both")
         normalized = normalize_attachments(
@@ -400,7 +408,7 @@ class FeedService:
                 media_path=normalized.media_path,
                 base_url=base_url,
             )
-        return self._create_post(intent=intent)
+        return _receipt(self._create_post(intent=intent))
 
     def _validate_thread(self, thread: Any) -> tuple[dict[str, Any], ...]:
         """Continuation posts: text plus native attachments and at most one link.
@@ -574,12 +582,12 @@ class FeedService:
             path=str(row["media_path"] or ""),
             data=data,
         )
-        return self._create_post(
+        return _receipt(self._create_post(
             intent=intent,
             media=media,
             post_id=str(row["post_id"]),
             consume_token=token,
-        )
+        ))
 
     def _pending_upload(self, *, token: str, columns: str = "*") -> Any:
         with closing(self.store.connect()) as conn:
@@ -1210,7 +1218,7 @@ class FeedService:
             }
         handle = str(item.get("author_handle") or "")
         quote_of = str(item.get("quote_of") or "")
-        return {
+        view = {
             "id": item.get("id"),
             "author_handle": item.get("author_handle"),
             "author_role": item.get("author_role"),
@@ -1234,6 +1242,7 @@ class FeedService:
             "created_at": item.get("created_at"),
             "created_seq": item.get("created_seq"),
         }
+        return {key: value for key, value in view.items() if value is not None}
 
     def _reaction_kinds_for_posts(
         self, *, conn: Any, project_id: str, post_ids: list[str]
