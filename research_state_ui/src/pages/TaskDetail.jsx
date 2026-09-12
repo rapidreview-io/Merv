@@ -11,6 +11,7 @@ import ReviewCard from '../components/ReviewCard';
 import StatusPill from '../components/StatusPill';
 import ObjId from '../components/ObjId';
 import InlineMd from '../components/InlineMd';
+import { LoadFallback, StaleNote } from '../components/LoadState';
 import DetailsDrawer, {
   DetailsButton, OpsPosition, OpsTimeline, OpsVersions, useDetailsDrawer,
   linkedNodes, orderedTimeline, reviewRows, sortedArtifacts, versionRows,
@@ -76,6 +77,7 @@ export default function TaskDetail() {
 
   useStreamAwarePoll(fetchStatus, {
     matches: (row) => row.target_id === taskId || row.payload?.task_id === taskId,
+    enabled: error?.status !== 404,
   });
 
   const task = statusData?.task;
@@ -112,16 +114,8 @@ export default function TaskDetail() {
     onAction(transition);
   }, [onAction, acceptOutcome]);
 
-  if (error) {
-    return (
-      <div className="page-stage">
-        <div className="error-message">{error}</div>
-        <Link className="btn" to={px('/tasks')} style={{ marginTop: 12 }}>← Tasks</Link>
-      </div>
-    );
-  }
   if (!task) {
-    return <div className="page-stage"><div className="empty">Loading…</div></div>;
+    return <LoadFallback error={error?.message} fetched={Boolean(statusData)} back={px('/tasks')} label="Tasks" />;
   }
 
   const isClosed = TASK_TERMINAL.has(task.status);
@@ -131,6 +125,7 @@ export default function TaskDetail() {
 
   return (
     <div className="page-stage">
+      {error && <StaleNote error={error.message} />}
       <section className="exp-fsm">
         <div className="fsm-row">
           <div className="fsm-row-strip">

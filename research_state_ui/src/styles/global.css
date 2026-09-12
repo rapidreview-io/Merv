@@ -5202,11 +5202,11 @@ a.spend-row-name:hover { color: var(--active); }
   font-variant-numeric: tabular-nums;
 }
 /* Last-good data on screen, refresh failing behind it. */
-.litreview-stale {
+.stale-note {
   display: flex; align-items: baseline; gap: 7px;
   margin: 8px 0 0; color: var(--qualifies); font-size: var(--text-sm);
 }
-.litreview-stale::before {
+.stale-note::before {
   content: ''; flex: none; align-self: center;
   width: 5px; height: 5px; border-radius: var(--radius-pill);
   background: currentColor;

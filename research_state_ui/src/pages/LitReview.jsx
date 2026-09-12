@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useProjectStore } from '../store/useProjectStore';
 import { useStreamAwarePoll } from '../store/useEventStream';
+import { StaleNote } from '../components/LoadState';
 import { api } from '../api';
 import MarkdownView from '../components/MarkdownView';
 import EntityChip from '../components/EntityChip';
@@ -211,11 +212,7 @@ export default function LitReview() {
             <span aria-hidden="true">·</span>
             <span>{countLabel(papers.length, 'paper')}</span>
           </p>
-          {error ? (
-            <p className="litreview-stale" role="status">
-              Couldn’t refresh — showing the last loaded version.
-            </p>
-          ) : null}
+          {error && <StaleNote error={error} />}
         </header>
 
         <EntityRefScope value={refScope}>

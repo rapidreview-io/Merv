@@ -7,6 +7,7 @@ import SandboxTerminal from '../components/SandboxTerminal';
 import MobileGraphSection from './MobileGraphSection';
 import MobileDoc from './MobileDoc';
 import { Skeleton } from './Skeleton';
+import { LoadFallback, StaleNote } from '../components/LoadState';
 import { expName, experimentDocs, statusColor, statusLine, TERMINAL_STATUSES } from '../utils/experiment';
 
 /**
@@ -48,21 +49,15 @@ export default function MobileExperimentDetail() {
     setGraphOpen(false);
   }, [experimentId]);
 
-  useIntervalPoll(fetchStatus, 5000);
+  useIntervalPoll(fetchStatus, 5000, { enabled: error?.status !== 404 });
 
   const experiment = statusData?.experiment;
   const workflow = statusData?.workflow;
 
-  if (error) {
-    return (
-      <div className="mdetail">
-        <div className="error-message">{error}</div>
-        <Link className="btn" to={px('/experiments')} style={{ marginTop: 12 }}>← Experiments</Link>
-      </div>
-    );
-  }
   if (!experiment) {
-    return (
+    return error || statusData ? (
+      <LoadFallback error={error?.message} fetched back={px('/experiments')} label="Experiments" className="mdetail" />
+    ) : (
       <div className="mdetail">
         <header className="page-header"><Skeleton lines={1} /></header>
         <Skeleton lines={5} />
@@ -82,6 +77,7 @@ export default function MobileExperimentDetail() {
 
   return (
     <div className="mdetail">
+      {error && <StaleNote error={error.message} />}
       <header className="page-header">
         <div className="page-eyebrow">
           <Link to={px('/experiments')}>‹ Experiments</Link>

@@ -20,6 +20,7 @@ import { expName, experimentDocs } from '../utils/experiment';
 import { gateToSectionId, useScrollToHash } from '../utils/useScrollToHash';
 import { workflowActionButtons } from '../utils/workflowActions';
 import InlineMd from '../components/InlineMd';
+import { LoadFallback, StaleNote } from '../components/LoadState';
 
 const PRIMARY_TRANSITIONS = {
   submit_design:  { transition: 'submit_design',  label: 'Submit for design review' },
@@ -65,6 +66,7 @@ export default function ExperimentDetail() {
   // event touches this experiment (safety poll catches event-less changes).
   useStreamAwarePoll(fetchStatus, {
     matches: (row) => row.target_id === experimentId || row.payload?.experiment_id === experimentId,
+    enabled: error?.status !== 404,
   });
 
   const experiment = statusData?.experiment;
@@ -111,16 +113,8 @@ export default function ExperimentDetail() {
     setPendingTerminalTransition(null);
   }, []);
 
-  if (error) {
-    return (
-      <div className="page-stage">
-        <div className="error-message">{error}</div>
-        <Link className="btn" to={px('/experiments')} style={{ marginTop: 12 }}>← Experiments</Link>
-      </div>
-    );
-  }
   if (!experiment) {
-    return <div className="page-stage"><div className="empty">Loading…</div></div>;
+    return <LoadFallback error={error?.message} fetched={Boolean(statusData)} back={px('/experiments')} label="Experiments" />;
   }
 
   const currentAttempt = experiment.attempt_index;
@@ -133,6 +127,7 @@ export default function ExperimentDetail() {
 
   return (
     <div className="page-stage">
+      {error && <StaleNote error={error.message} />}
       {/* ─────────────  STAGE  ──────────────────────────────────────── */}
       {/* The strip is the page's status truth. For a live experiment the
           current step discloses the gate panel (details + transitions);

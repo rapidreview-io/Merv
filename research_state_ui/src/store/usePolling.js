@@ -114,8 +114,10 @@ export function useAsyncData(fetcher, deps) {
  * A workflow record's status document, refetched on demand. An unchanged
  * payload keeps its state identity, so an idle poll tick re-renders nothing
  * (the same guard the figure uses on its own document). Returns
- * `[data, error, refetch, reset]`; `reset` blanks it when the caller moves to
- * another record without unmounting.
+ * `[data, error, refetch, reset]`: `data` survives a failed refetch so the
+ * page can keep its last-good content behind a note, `error` is the Error
+ * (its `.status` lets a poll stop on 404), and `reset` blanks it when the
+ * caller moves to another record without unmounting.
  */
 export function useRecordStatus(fetcher, deps) {
   const [data, setData] = useState(null);
@@ -131,9 +133,9 @@ export function useRecordStatus(fetcher, deps) {
       }
       setError(null);
     } catch (err) {
-      setError(err.message);
+      setError(err);
     }
   }, deps);
-  const reset = useCallback(() => { lastJson.current = null; setData(null); }, []);
+  const reset = useCallback(() => { lastJson.current = null; setData(null); setError(null); }, []);
   return [data, error, refetch, reset];
 }
