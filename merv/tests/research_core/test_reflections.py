@@ -236,7 +236,7 @@ class ReflectionWorkflowTest(ResearchCase):
             reflection_id=reflection_id,
             transition="submit_reflection_artifacts",
         )
-        with self.assertRaises(WorkflowError):
+        with self.assertRaisesRegex(ValidationError, "transition: Input should be"):
             self.call(
                 "reflection.transition",
                 project_id=self.project_id,

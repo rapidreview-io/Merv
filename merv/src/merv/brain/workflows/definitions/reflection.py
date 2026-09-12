@@ -60,7 +60,7 @@ ARTIFACTS = {
 PROPOSAL_NEED = RecordNeed("consolidation_proposal", "The consolidation agent must submit one proposal that accounts for every experiment in the reflection corpus.",
                            "consolidation_proposal_required", "submit_consolidation_proposal", ("consolidation.submit",),
                            label="Every experiment reviewed for consolidation", missing="a complete consolidation proposal")
-CENTRAL_ADVANCE_NEED = RecordNeed("central_advance", "The Merv runner must bind the reviewed proposal to the central Git ref before the reflection can publish.",
+CENTRAL_ADVANCE_NEED = RecordNeed("central_advance", "The Merv runner binds the reviewed proposal to the central Git ref and publishes the wave; no agent transition does this.",
                                  "central_advance_required", "wait_for_central_advance", label="Reviewed proposal bound to central", missing="the runner's central-advance receipt")
 RETURN_TO_REFLECTING = ReviewReturn("reflecting", "new", event_type="reflection.returned_to_reflecting",
                                    choose_when="The lens reflections or coverage require a fresh attempt.",
@@ -229,7 +229,10 @@ def proposal_ready(snapshot, knowledge):
     if missing:
         return missing
     if ((_wave(snapshot, knowledge).get("consolidation") or {}).get("proposal") or {}).get("id") == snapshot.data.get("proposal_id"):
-        return Issue("new_consolidation_proposal_required", "Submit a revised proposal before requesting another consolidation review.",
+        if knowledge.read(Reference("review", "consolidation_reviewer")).get("passed"):
+            return Issue("consolidation_already_reviewed", "The pinned proposal already passed consolidation review; the Merv runner publishes after central advance.",
+                         "wait_for_central_advance")
+        return Issue("new_consolidation_proposal_required", "This exact proposal is already under consolidation review: wait for its verdict, or submit a revised one with consolidation.submit.",
                      "submit_consolidation_proposal", ("consolidation.submit",))
 
 
@@ -287,19 +290,20 @@ REFLECTION = Workflow(
              label="Reconcile the completed lens contributions", tools=("reflection.transition",)),
         Edge("synthesizing", "submit_reflection_artifacts", "reflection_review", change=request_reflection_review,
              label="Submit the reflection for independent review", tools=("reflection.transition",)),
-        Edge("reflection_review", "begin_consolidation", "consolidating",
-             label="Consolidate code from the approved reflection", tools=("reflection.transition",)),
+        Edge("reflection_review", "begin_consolidation", "consolidating", label="Applied by a passing reflection review", auto=True),
         Edge("reflection_review", "revise_lenses", RETURN_TO_REFLECTING.to_status, check=rejected("reflection_reviewer", RETURN_TO_REFLECTING.to_status), change=_new_attempt,
-             label=RETURN_TO_REFLECTING.choose_when, event_type=RETURN_TO_REFLECTING.event_type),
+             label=RETURN_TO_REFLECTING.choose_when, event_type=RETURN_TO_REFLECTING.event_type, auto=True),
         Edge("reflection_review", "revise_synthesis", RETURN_TO_SYNTHESIZING.to_status, check=rejected("reflection_reviewer", RETURN_TO_SYNTHESIZING.to_status), change=_revision,
-             label=RETURN_TO_SYNTHESIZING.choose_when, event_type=RETURN_TO_SYNTHESIZING.event_type),
+             label=RETURN_TO_SYNTHESIZING.choose_when, event_type=RETURN_TO_SYNTHESIZING.event_type, auto=True),
+        # Publish leads the review node's edges so a passed review suggests the
+        # runner's step, not another proposal.
+        Edge("consolidation_review", "publish", "published", change=publish_wave,
+             label="Applied by the Merv runner once central has advanced", auto=True),
         *(Edge(state, "submit_consolidation", "consolidation_review", check=proposal_ready, change=pin_proposal,
                label="Review the exact code proposal", tools=("consolidation.submit",))
           for state in ("consolidating", "consolidation_review")),
         Edge("consolidation_review", "revise_consolidation", RETURN_TO_CONSOLIDATING.to_status, check=rejected("consolidation_reviewer", RETURN_TO_CONSOLIDATING.to_status), change=_revision,
-             label=RETURN_TO_CONSOLIDATING.choose_when, event_type=RETURN_TO_CONSOLIDATING.event_type),
-        Edge("consolidation_review", "publish", "published",
-             change=publish_wave, label="Publish the reviewed wave after the runner advances central"),
+             label=RETURN_TO_CONSOLIDATING.choose_when, event_type=RETURN_TO_CONSOLIDATING.event_type, auto=True),
         *(Edge(state, "abandon", "abandoned", check=can_abandon, label="Abandon this reflection wave", suggest=False, tools=("reflection.transition",))
           for state in ("reflecting", "synthesizing", "reflection_review", "consolidating", "consolidation_review")),
     ),
