@@ -73,13 +73,9 @@ class RemoteObjectsTest(unittest.TestCase):
     def test_submit_creates_service_object_and_completion_finalizes_it(self) -> None:
         data = b"bytes for the service"
         submitted = self._submit(data, kind="dataset", notes="kept")
-        obj = submitted["object"]
-        self.assertEqual(obj["name"], "datasets/train.bin")
-        self.assertEqual(obj["version"], 1)
-        self.assertEqual(obj["status"], "uploading")
-        self.assertEqual(obj["content_sha256"], hashlib.sha256(data).hexdigest())
-        self.assertEqual(submitted["upload_id"], obj["id"])
-        self.assertFalse(submitted["uploaded"])
+        # The receipt names the object and carries the command; the row is read back through storage.object.
+        self.assertEqual(set(submitted), {"object_id", "name", "version", "run"})
+        self.assertEqual((submitted["name"], submitted["version"]), ("datasets/train.bin", 1))
         # The service was asked for Merv's retention window, nothing research.
         create = next(call for call in self.client.calls if call[:2] == ("POST", "/storage/objects"))
         self.assertEqual(create[3]["expires_in_seconds"], STORAGE_DEFAULT_TTL_SECONDS)
@@ -96,7 +92,7 @@ class RemoteObjectsTest(unittest.TestCase):
         self.assertEqual(completed["status"], "available")
         self.assertIsNotNone(completed["expires_at"])
         self.assertEqual(self.lifecycle.calls[-1][0], "completed")
-        self.assertEqual(self.lifecycle.calls[-1][1]["record"]["id"], obj["id"])
+        self.assertEqual(self.lifecycle.calls[-1][1]["record"]["id"], submitted["object_id"])
         # Single-use token.
         with self.assertRaises(NotFoundError):
             self.objects.complete_via_token(token=token)
@@ -117,7 +113,7 @@ class RemoteObjectsTest(unittest.TestCase):
         self.assertEqual([part["part_number"] for part in target["parts"]], [1, 2, 3])
         self.assertEqual(target["part_count"], 3)
         self.assertNotIn("url", target)
-        self.client.upload_bytes(submitted["object"]["id"], data)
+        self.client.upload_bytes(submitted["object_id"], data)
         completed = self.objects.complete_via_token(
             token=token, parts=[{"part_number": 2, "etag": "b"}, {"part_number": 1, "etag": "a"}]
         )
