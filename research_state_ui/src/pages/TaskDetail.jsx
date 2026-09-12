@@ -60,7 +60,7 @@ export default function TaskDetail() {
 
   const [statusData, error, fetchStatus] = useRecordStatus(
     () => api.getTaskStatus(projectId, taskId),
-    [projectId, taskId],
+    [projectId, taskId], 'task',
   );
 
   useStreamAwarePoll(fetchStatus, {
@@ -85,7 +85,7 @@ export default function TaskDetail() {
   }, [onAction]);
 
   if (!task) {
-    return <LoadFallback error={error?.message} fetched={Boolean(statusData)} back={px('/tasks')} label="Tasks" />;
+    return <LoadFallback error={error?.message} back={px('/tasks')} label="Tasks" />;
   }
 
   const isClosed = TASK_TERMINAL.has(task.status);

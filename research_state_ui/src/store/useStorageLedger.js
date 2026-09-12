@@ -26,7 +26,7 @@ export function useStorageSupported(projectId) {
  * the tab is visible; there is no refresh chrome.
  */
 export function useStorageLedger(projectId) {
-  const [data, error, reload] = useRecordStatus(() => api.listStorage(projectId), [projectId]);
+  const [data, error, reload] = useRecordStatus(() => api.listStorage(projectId), [projectId], 'objects');
   useIntervalPoll(reload, POLL_MS);
   const unsupported = error?.status === 404;
   return {

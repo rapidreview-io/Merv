@@ -5,7 +5,7 @@ import { api } from '../api';
 import { RawLink } from '../components/AuthedMedia';
 import ObjId from '../components/ObjId';
 import ArtifactContentView from '../components/ArtifactContentView';
-import { LoadFallback } from '../components/LoadState';
+import { LoadFallback, StaleNote } from '../components/LoadState';
 import { basename, formatBytes, fmtStamp } from '../utils/format';
 import { useArtifactLedger } from '../store/useLedger';
 import { expName, groupArtifactsByTarget } from '../utils/experiment';
@@ -59,9 +59,9 @@ export default function Artifacts() {
         <p className="page-summary">What the agents submitted, by experiment and reflection.</p>
       </header>
 
-      {error && <div className="error-message">{error.message}</div>}
+      {error && (data ? <StaleNote error={error.message} /> : <div className="error-message">{error.message}</div>)}
 
-      {!error && data && artifacts.length === 0 && (
+      {data && artifacts.length === 0 && (
         <div className="empty-state">
           <h2>No artifacts submitted yet</h2>
         </div>

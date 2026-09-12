@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
-import { useProjectStore, selectProject, useProjectHref } from '../store/useProjectStore';
+import { useProjectStore, useProjectHref } from '../store/useProjectStore';
 import ArtifactContentView from '../components/ArtifactContentView';
 import ReviewCard from '../components/ReviewCard';
 import GraphOutline from './GraphOutline';
@@ -42,8 +42,7 @@ function shortDate(iso) {
 }
 
 export default function MobileReflectionScreen() {
-  const project = useProjectStore(selectProject);
-  const projectId = project?.id;
+  const projectId = useProjectStore(s => s.projectId);
   const px = useProjectHref();
 
   const [graph, setGraph] = useState(null);

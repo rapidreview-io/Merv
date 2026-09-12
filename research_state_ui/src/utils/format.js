@@ -1,12 +1,5 @@
 // Shared display formatters. Keep these dumb and dependency-free.
 
-// Up to 4 significant digits; integers stay integers; non-numbers pass through.
-export function fmtNum(v) {
-  if (typeof v !== 'number' || !Number.isFinite(v)) return String(v ?? '');
-  if (Number.isInteger(v)) return String(v);
-  return Number(v.toPrecision(4)).toString();
-}
-
 // Money reads at cents until $100, whole dollars after — the jitter of live
 // billing isn't worth two decimals at that magnitude.
 export function fmtUsd(v) {

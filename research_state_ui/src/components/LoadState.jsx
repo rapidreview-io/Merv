@@ -10,9 +10,9 @@ export function StaleNote({ error }) {
   );
 }
 
-// A record page with nothing to show: a fetch error (message + a way back),
-// a 200 that carried no record, or still loading.
-export function LoadFallback({ error, fetched = false, back, label, className = 'page-stage' }) {
+// A record page with nothing to show: a fetch error (message + a way back)
+// or still loading.
+export function LoadFallback({ error, back, label, className = 'page-stage' }) {
   return (
     <div className={className}>
       {error ? (
@@ -21,7 +21,7 @@ export function LoadFallback({ error, fetched = false, back, label, className = 
           <Link className="btn" to={back} style={{ marginTop: 12 }}>← {label}</Link>
         </>
       ) : (
-        <div className="empty">{fetched ? 'Unexpected response from server.' : 'Loading…'}</div>
+        <div className="empty">Loading…</div>
       )}
     </div>
   );
