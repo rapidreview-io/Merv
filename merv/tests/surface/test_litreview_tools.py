@@ -61,7 +61,8 @@ class LitreviewToolsTest(unittest.TestCase):
             tldr="What we know about SFT.",
             body="Long-form notes.",
         )
-        section_id = added["section"]["id"]
+        section_id = added["section"]
+        self.assertEqual(set(added), {"section", "revision", "bytes"})
 
         cited = self._call(
             "litreview.cite",
@@ -135,7 +136,7 @@ class LitreviewNudgeTest(LitreviewToolsTest):
         )["section"]
         self._call(
             "litreview.cite", url="https://example.com/p2",
-            targets=[{"type": "litreview_section", "id": section["id"]}],
+            targets=[{"type": "litreview_section", "id": section}],
         )
         status = self._call("workflow.status_and_next")
         self.assertNotIn("litreview", status)

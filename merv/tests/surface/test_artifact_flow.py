@@ -504,11 +504,11 @@ class ArtifactFlowTest(unittest.TestCase):
         self.assertEqual(set(pending), {"artifact_id", "run"})
         self.assertTrue(pending["artifact_id"].startswith("art_"))
         upload = shlex.split(pending["run"])
-        self.assertEqual(upload[:3], ["curl", "-sf", "-T"])
-        self.assertEqual(upload[3], "plans/plan.md")
-        self.assertIn("/api/artifacts/u/", upload[4])
+        self.assertEqual(upload[:4], ["curl", "-sS", "--fail-with-body", "-T"])
+        self.assertEqual(upload[4], "plans/plan.md")
+        self.assertIn("/api/artifacts/u/", upload[5])
 
-        token = upload[4].rsplit("/", 1)[-1]
+        token = upload[5].rsplit("/", 1)[-1]
         completed_response = self.app._client.put(
             f"/api/artifacts/u/{token}", content=body
         )
@@ -530,9 +530,9 @@ class ArtifactFlowTest(unittest.TestCase):
 
         figure_bytes = b"\x89PNG contract"
         figure_upload = shlex.split(figure_instruction["run"])
-        self.assertEqual(figure_upload[:3], ["curl", "-sf", "-T"])
-        self.assertEqual(figure_upload[3], "plans/figures/curve.png")
-        figure_token = figure_upload[4].rsplit("/", 1)[-1]
+        self.assertEqual(figure_upload[:4], ["curl", "-sS", "--fail-with-body", "-T"])
+        self.assertEqual(figure_upload[4], "plans/figures/curve.png")
+        figure_token = figure_upload[5].rsplit("/", 1)[-1]
         figure_response = self.app._client.put(
             f"/api/artifacts/f/{figure_token}", content=figure_bytes
         )

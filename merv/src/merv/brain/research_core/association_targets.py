@@ -100,9 +100,8 @@ class AssociationTargets:
             # Evidence added after the experiment ends would remain unsealed
             # while still winning latest-per-slot for an already closed round.
             raise ValidationError(
-                f"experiment {target_id} is {row['status']} — it is not "
-                "accepting artifact submissions right now; wait for the "
-                "review verdict, then submit against the next round"
+                f"experiment {target_id} is {row['status']} — a terminal "
+                "state; it no longer accepts artifact submissions"
             )
         if kind == "task" and str(row["status"]) in _CLOSED_TASK_STATUSES:
             raise ValidationError(

@@ -343,6 +343,7 @@ class ReviewStartInput(ContractModel):
     )
     declared_agent: str = ""
     caller_session_id: str = Field(
+        default="",
         description=(
             "The reviewer's OWN session identity (any stable identifier for "
             "the reviewing agent's session). Required: it must be non-empty "
