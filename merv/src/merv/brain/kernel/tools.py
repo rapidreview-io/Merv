@@ -63,12 +63,4 @@ class ToolContract:
 
 
 class ProjectScopedInput(ContractModel):
-    project_id: str = Field(
-        description=(
-            "Explicit project scope. Discover the id with "
-            'project(action="list"), which returns the projects you can work '
-            "in with names and dates. A credential bound to a single "
-            "project may only pass that one; otherwise pass whichever project "
-            "the user is asking about."
-        )
-    )
+    project_id: str = Field(description='Project id, from project(action="list").')
