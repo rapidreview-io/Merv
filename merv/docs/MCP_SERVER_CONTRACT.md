@@ -343,8 +343,10 @@ request id and `reviewer_capability="assigned", caller_session_id="assigned"`;
 Merv resolves the authenticated session identity. Interactive capability handoffs
 still rely on the reviewer skill for calls made with a general project key.
 
-Generic workflow tools are `workflow.catalog`, `workflow.start`,
-`workflow.assignment`, `workflow.begin`, `workflow.history`, and `workflow.transition`.
+Generic workflow tools are `workflow.assignment`, `workflow.begin`,
+`workflow.history`, and `workflow.transition`, for instances without a dedicated
+tool (reflection lenses, project synthesis, plugin workflows); `workflow.catalog`
+and `workflow.start` are internal to the runner.
 Interactive agents call `workflow.begin(project_id, instance_id, expected_revision)`
 when ready to work; auto-run uses its own lease activation instead. Transitions
 name an instance and expected revision. Auto-run credentials can mutate only

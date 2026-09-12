@@ -90,8 +90,6 @@ BASE_PUBLIC_TOOLS = frozenset(
         "task.create",
         "task.transition",
         "workflow.status_and_next",
-        "workflow.catalog",
-        "workflow.start",
         "workflow.transition",
         "workflow.assignment",
         "workflow.begin",
@@ -111,6 +109,8 @@ BASE_INTERNAL_TOOLS = frozenset(
         "sandbox.health",
         "task.get_state",
         "task.list",
+        "workflow.catalog",
+        "workflow.start",
     }
 )
 STORAGE_PUBLIC_TOOLS = frozenset(

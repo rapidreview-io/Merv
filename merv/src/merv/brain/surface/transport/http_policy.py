@@ -21,7 +21,6 @@ SESSION_READ_BASELINE = frozenset(
         "project.get",
         "project.list",
         "workflow.status_and_next",
-        "workflow.catalog",
         "workflow.assignment",
         "workflow.history",
         "artifact.read",
