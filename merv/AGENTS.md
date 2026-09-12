@@ -57,6 +57,13 @@ short by rewriting and consolidating earlier material; detailed records remain
 available on demand. A pending update means newer research has not yet been
 incorporated; keep established findings separate from provisional work.
 
+Write Results tables directly in Markdown, with clear metrics, units, uncertainty
+and evidence references. If a figure helps explain a result, use
+`![Descriptive caption](art_ID)` and include its retained artifact ID in the
+publication's references. Figures are optional; the UI resolves the reference
+and displays the caption. Do not use local paths, temporary URLs or embedded
+bytes. The UI appends current live experiments to Methods automatically.
+
 A project-author assignment maintains Methods and Results after completed
 experiments and approved/published reflection waves. Read `project.synthesis.read`
 for its frozen source packet, inspect the evidence, and follow the assignment's

@@ -50,6 +50,19 @@ class ProjectSynthesisTest(ResearchCase):
         self.publish(packet)
         self.assertFalse(self.document()["maintenance"]["pending"])
 
+    def test_markdown_table_and_figure_preserve_evidence_references(self):
+        experiment = self.create_experiment()
+        figure = self.submit(target_type="experiment", target_id=experiment,
+                             role="report", path="comparison.svg", body='<svg xmlns="http://www.w3.org/2000/svg"/>')
+        packet = self.prepare()
+        results = f"| Approach | Accuracy |\n| --- | --- |\n| Baseline | 0.65 |\n\n![Baseline comparison]({figure})"
+        with self.assertRaisesRegex(WorkflowError, "every figure artifact"):
+            self.publish(packet, results=results, references=[])
+        reference = next(ref for ref in packet["source"]["references"] if ref["id"] == figure)
+        self.publish(packet, results=results, references=[reference])
+        self.assertEqual(self.document()["results"], results)
+        self.assertIn(results, research_contracts.render_project_document(self.document()))
+
     def test_existing_project_is_initialized_and_concurrent_preparation_coalesces(self):
         experiment = self.create_experiment()
         instance = self.document()["maintenance"]["instance_id"]

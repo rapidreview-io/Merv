@@ -1,6 +1,7 @@
 """One project-wide author, using workflow revisions for publication and recovery."""
 
 import json
+import re
 from typing import Literal
 
 from pydantic import Field, ValidationError as InputError
@@ -30,6 +31,12 @@ AUTHORING = (
     "Read project.synthesis.read for this assignment's immutable input snapshot and fetch the cited evidence. "
     "Methods must connect approaches tried, lessons, the rationale for changes, and current or awaited work. "
     "Results selectively retain important supporting AND contrary findings with their uncertainty. "
+    "Write comparison tables directly in Results using Markdown pipe tables, with metric names, units, "
+    "uncertainty and evidence references; compare only compatible measurements. "
+    "If a figure helps explain a result, reference its retained image artifact as ![Descriptive caption](art_ID) "
+    "and include that artifact ID in references. The UI renders the figure and caption; do not embed bytes "
+    "or use local paths or temporary URLs. Figures are optional. "
+    "The UI appends live experiments to Methods automatically; do not duplicate that status inventory. "
     "Distinguish established findings from ongoing/provisional work; completion alone is not evidence of success. "
     "After a reflection wave, reconcile conclusions across experiments with the reviewed synthesis. "
     "Revise and compress the existing account: replace superseded explanations, merge repeated findings, "
@@ -73,6 +80,10 @@ def publish(snapshot, payload, knowledge):
     basis = knowledge.read(Reference("synthesis_basis", snapshot.project_id))
     if basis != source["basis"]:
         raise WorkflowError("User intent or literature changed; refresh before synthesizing again.")
+    figures = set(re.findall(r"!\[[^\]]*\]\(\s*(art_\w+)(?=[\s)])", publication.methods + "\n" + publication.results))
+    cited_artifacts = {ref.id for ref in publication.references if ref.kind == "artifact"}
+    if figures - cited_artifacts:
+        raise WorkflowError("Include every figure artifact in references.")
     allowed = {(ref["kind"], ref["id"]) for ref in source["references"]}
     for ref in publication.references:
         if (ref.kind, ref.id) not in allowed:

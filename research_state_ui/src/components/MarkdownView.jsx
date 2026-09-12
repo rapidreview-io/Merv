@@ -20,7 +20,7 @@ function FigureImg({ src, alt, title }) {
   // locally. Covers every markdown consumer (reports, plans, mobile docs).
   const authedSrc = useAuthedSrc(src);
   const filename = ((src || alt || '').split('/').pop()) || 'figure';
-  if (failedSrc === src) {
+  if (!src || failedSrc === src) {
     return (
       <span className="figure-missing">
         <span>Figure not available</span>
@@ -93,12 +93,13 @@ const STATIC_COMPONENTS = {
  * - remark-gfm adds tables, strikethrough, task lists, autolinks.
  * - Fenced code with a language hint renders through CodeBlock (Prism).
  * - External links open in a new tab; in-document anchors stay in place.
+ * - artifactFigures: resolve every image as an artifact reference and show its caption.
  * - resolveImageSrc (optional): maps a relative image src (e.g. a report's
  *   `figures/loss.png`) to a fetchable URL. Absolute/data/http srcs pass
  *   through untouched. Must be referentially stable (useCallback) — it keys
  *   both the memo below and the `img` component's identity.
  */
-function MarkdownView({ text, resolveImageSrc }) {
+function MarkdownView({ text, resolveImageSrc, artifactFigures = false }) {
   // `img` is the only component that closes over a prop, so it alone is
   // rebuilt — and only when resolveImageSrc actually changes.
   const components = useMemo(() => ({
@@ -107,10 +108,11 @@ function MarkdownView({ text, resolveImageSrc }) {
       const passthrough = !src
         || /^(https?:|data:|blob:)/i.test(src)
         || src.startsWith('/');
-      const resolved = passthrough || !resolveImageSrc ? src : resolveImageSrc(src);
-      return <FigureImg src={resolved} alt={alt} title={title} />;
+      const resolved = resolveImageSrc && (artifactFigures || !passthrough) ? resolveImageSrc(src) : src;
+      const img = <FigureImg src={resolved} alt={alt} title={title} />;
+      return artifactFigures ? <span className="md-figure">{img}{alt && <span className="md-figure-caption">{alt}</span>}</span> : img;
     },
-  }), [resolveImageSrc]);
+  }), [resolveImageSrc, artifactFigures]);
 
   return (
     <div className="markdown-body">
