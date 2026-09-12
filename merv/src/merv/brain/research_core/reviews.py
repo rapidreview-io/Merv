@@ -19,6 +19,7 @@ from typing import Any, TYPE_CHECKING
 from ..kernel.secret_tokens import hash_secret, mint_secret, secret_digest_matches
 from ..kernel.events import StoredEvent, freeze_json_object
 from ..kernel.identity import LOCAL_TENANT_ID
+from ..kernel.request_context import current_request_context
 from ..kernel.utils import (
     NotFoundError,
     PermissionDeniedError,
@@ -227,7 +228,6 @@ class ReviewService:
         *,
         review_request_id: str,
         reviewer_capability: str,
-        declared_agent: str = "",
         caller_session_id: str = "",
         tenant_id: str | None = None,
         assigned_agent_session_id: str = "",
@@ -317,7 +317,8 @@ class ReviewService:
                 raise PermissionDeniedError("review request has inconsistent session history")
             session_id = new_id(prefix="rvs")
             # caller_session_id is mandatory, so every new session is verified;
-            # 'attested_agent_review' survives only on legacy rows.
+            # 'attested_agent_review' survives only on legacy rows. The session
+            # also binds to the verified context window that opened it.
             independence = "verified_agent_review"
             if req["status"] == "requested":
                 self._apply(conn=conn, request_id=review_request_id, action="start",
@@ -333,7 +334,7 @@ class ReviewService:
                 (
                     session_id,
                     review_request_id,
-                    declared_agent,
+                    current_request_context().agent_id,
                     caller_session_id,
                     tenant_id if tenant_id is not None else LOCAL_TENANT_ID,
                     independence,
@@ -343,8 +344,11 @@ class ReviewService:
             snapshot = snapshot_from_id(snapshot_id=str(req["target_snapshot_id"]))
             current = self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
             node = self.runtime.registry.get(current.workflow, current.version).node(current.state)
+            # Native kinds hydrate their own reviewer context; a plugin graph's
+            # reviewer reads the node's assignment.
+            generic = req["target_type"] not in self.records.kinds
             context = (self.runtime.assignment(conn=conn, project_id=current.project_id, instance_id=current.id)
-                       if node is not None and node.execution.read_only and node.role == req["role"] else None)
+                       if generic and node is not None and node.execution.read_only and node.role == req["role"] else None)
             return {
                 "review_session_id": session_id,
                 "project_id": req["project_id"],
@@ -354,7 +358,7 @@ class ReviewService:
                 "target_snapshot_id": req["target_snapshot_id"],
                 "target_snapshot": snapshot,
                 "independence": independence,
-                **({"workflow_context": context} if context is not None else {}),
+                **({"context": context} if context is not None else {}),
             }
 
     def submit(
@@ -380,6 +384,11 @@ class ReviewService:
                 raise PermissionDeniedError("review session is no longer started (submitted or superseded)")
             if caller_session_id and session["caller_session_id"] != caller_session_id:
                 raise PermissionDeniedError("review session belongs to another reviewer")
+            agent_id = current_request_context().agent_id
+            if agent_id and session["declared_agent"] and session["declared_agent"] != agent_id:
+                raise PermissionDeniedError(
+                    f"review session {review_session_id} was started by agent {session['declared_agent']!r}; "
+                    "only that context window may submit its verdict")
             req = conn.execute(
                 "SELECT * FROM review_requests WHERE id = ?", (session["request_id"],)
             ).fetchone()
@@ -408,6 +417,7 @@ class ReviewService:
                     "longer applies — request a fresh review"
                 )
             current = self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
+            kind = self.records.kinds.get(str(req["target_type"]))
             if caller_session_id and (permits_successor is None or not permits_successor(
                 conn=conn, project_id=req["project_id"], instance_id=req["target_id"],
                 revision=current.revision, role=req["role"], reference_kind="review_request",
@@ -415,7 +425,7 @@ class ReviewService:
             )):
                 raise PermissionDeniedError("reviewer assignment is no longer current")
             route = resolve_review_return(
-                kind=self.records.kinds.get(str(req["target_type"])) if current.version == 1 else None,
+                kind=kind if current.version == 1 else None,
                 role=req["role"], verdict=verdict, return_to=return_to, state=current.state,
                 definition=self.runtime.registry.get(current.workflow, current.version))
             return_to = return_to if route is None else route.to_status
@@ -428,10 +438,21 @@ class ReviewService:
                     target_type=req["target_type"], role=req["role"], verdict=verdict,
                     notes=notes, findings=findings or [], route=route),
             })
-            review = conn.execute(
-                "SELECT * FROM reviews WHERE id = ?", (review_id,)
-            ).fetchone()
-            return self._hydrate_review(row=review)
+            status = lambda state: state if kind is None else kind.status_of(state)
+            before = status(current.state)
+            after = status(self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"]).state)
+            target = f"{req['target_type']} {req['target_id']}"
+            return {
+                "id": review_id, "role": req["role"], "verdict": verdict, "return_to": return_to, "synopsis": synopsis,
+                "target": {"type": req["target_type"], "id": req["target_id"], "status_before": before, "status_after": after},
+                "next_action": (
+                    f"Report the verdict to the producer: {target} moved from {before!r} to {after!r} on this verdict, "
+                    "so it must call workflow.status_and_next, not a transition."
+                    if after != before else
+                    f"Report the verdict to the producer: {target} stays {before!r}; "
+                    + ("the Merv runner publishes the wave after central advance, no agent transition follows."
+                       if verdict == "pass" else "it should call workflow.status_and_next for the next step.")),
+            }
 
     def status(
         self, *, target_type: str, target_id: str, project_id: str | None = None

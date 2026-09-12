@@ -37,6 +37,10 @@ def request_review(research: Research, **kwargs: Any) -> dict[str, Any]:
             target_type=str(kwargs["target_type"]), target_id=str(kwargs["target_id"]),
             review_request_id=result.review_request_id, reviewer_capability=result.reviewer_capability,
         )
+        computed["producer_next"] = (
+            "Spawn the reviewer with reviewer_handoff.spawn_prompt and wait for its report. A pass "
+            "moves the target on in the verdict's own transaction (never call the approving "
+            "transition yourself); then call workflow.status_and_next.")
     return public_record(Public(), result, **computed)
 
 
@@ -82,7 +86,6 @@ def start_review(
     experiment_context: ExperimentContextQuery,
     review_request_id: str,
     reviewer_capability: str,
-    declared_agent: str = "",
     caller_session_id: str = "",
     assigned_agent_session_id: str = "",
     assigned_review_request_id: str = "",
@@ -93,7 +96,6 @@ def start_review(
     result = research.reviews.start(
         review_request_id=review_request_id,
         reviewer_capability=reviewer_capability,
-        declared_agent=declared_agent,
         caller_session_id=caller_session_id,
         assigned_agent_session_id=assigned_agent_session_id,
         assigned_review_request_id=assigned_review_request_id,
@@ -152,7 +154,7 @@ def start_review(
         )
     else:
         result["target_snapshot"] = target_snapshot
-        result["context"] = result.get("workflow_context") or {}
+        result.setdefault("context", {})
         result["submitted_artifacts"] = target_snapshot.get("artifacts") or []
     return result
 

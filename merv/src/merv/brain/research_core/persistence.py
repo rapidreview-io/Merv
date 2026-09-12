@@ -113,6 +113,8 @@ CREATE TABLE IF NOT EXISTS review_requests (
 CREATE TABLE IF NOT EXISTS review_sessions (
   id TEXT PRIMARY KEY,
   request_id TEXT NOT NULL,
+  -- The verified agent_id of the context window that started the session;
+  -- only that window may submit its verdict. Empty when the caller had none.
   declared_agent TEXT NOT NULL DEFAULT '',
   caller_session_id TEXT NOT NULL DEFAULT '',
   -- Principal binding (cloud plan Phase 7): the authenticated tenant that

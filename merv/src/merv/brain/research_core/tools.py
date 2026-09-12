@@ -341,7 +341,6 @@ class ReviewStartInput(ContractModel):
     reviewer_capability: str = Field(
         description="Use the handoff capability, or 'assigned' in the assigned auto-run reviewer session."
     )
-    declared_agent: str = ""
     caller_session_id: str = Field(
         description=(
             "The reviewer's OWN session identity (any stable identifier for "

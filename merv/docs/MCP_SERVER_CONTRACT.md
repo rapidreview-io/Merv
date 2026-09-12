@@ -313,7 +313,7 @@ The current protocol is:
 
 ```text
 review.request(project_id, target_type, target_id, role, reason?, producer_session_id?)
-review.start(review_request_id, reviewer_capability, caller_session_id, declared_agent?)
+review.start(review_request_id, reviewer_capability, caller_session_id)
 review.submit(review_session_id, verdict, synopsis, return_to?, notes?, findings?, evidence?)
 ```
 
