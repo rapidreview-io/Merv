@@ -475,7 +475,6 @@ class Evaluation:
             return {
                 "action": action.edge.name,
                 "leads_to": action.edge.target,
-                "label": action.edge.label,
                 "tools": list(action.edge.tools),
                 "blockers": [issue_view(issue) for issue in action.issues],
             }
@@ -509,8 +508,13 @@ def agent_workflow(view: dict[str, Any]) -> dict[str, Any]:
     """What an agent reads of a workflow view: each gate said once, nothing this state leaves empty."""
     suggested = view.get("suggested_action")
     hidden = {*_AGENT_HIDDEN, "blocked_actions" if suggested and suggested["blockers"] else "suggested_action"}
+    if "current_gate" in view:  # it and next_action already carry the first dispatch blocker
+        hidden.add("dispatch_blockers")
     view = {**view, "available_actions": [{key: value for key, value in action.items() if key != "blockers"}
                                           for action in view.get("available_actions", ())]}
+    if suggested:
+        view["suggested_action"] = {**suggested, "blockers": [{key: value for key, value in issue.items() if key != "tools"}
+                                                              for issue in suggested["blockers"]]}
     return {key: value for key, value in view.items()
             if key not in hidden and (value or key in ("revision", "state", "current_gate", "next_action"))}
 

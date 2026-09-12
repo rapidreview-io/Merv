@@ -154,8 +154,7 @@ class TaskWorkflowTest(ResearchCase):
         self.assertEqual(receipt["from_status"], "in_progress")
         status = self.task_status(task_id)
         self.assertEqual(status["workflow"]["next_action"], "request_review")
-        self.assertEqual(status["workflow"]["review_gate"]["skill"], "task-review")
-        self.assertEqual(status["workflow"]["review_gate"]["role"], "task_reviewer")
+        self.assertEqual(status["workflow"]["review_gate"], {"status": "pending", "skill": "task-review"})
 
         # The passing review applies accept; the agent's enum does not offer it.
         with self.assertRaisesRegex(ValidationError, "transition: Input should be"):

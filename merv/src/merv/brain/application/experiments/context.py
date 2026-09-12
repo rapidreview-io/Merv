@@ -104,46 +104,12 @@ class ExperimentContextQuery:
         current = state.current_attempt_artifacts
         if pinned_artifacts is None:
             return current, {}
-
-        by_id = {
-            str(artifact.get("id") or ""): artifact
-            for artifact in current
-            if artifact.get("id")
-        }
-        rows: list[Record] = []
-        content: dict[str, str | None] = {}
-        for artifact in pinned_artifacts:
-            artifact_id = str(artifact.get("artifact_id") or artifact.get("id") or "")
-            if not artifact_id:
-                continue
-            merged = {
-                **by_id.get(artifact_id, {}),
-                "id": artifact_id,
-                "role": artifact.get("role") or by_id.get(artifact_id, {}).get("role"),
-                "lens_id": artifact.get("lens_id")
-                or by_id.get(artifact_id, {}).get("lens_id")
-                or "",
-                "path": artifact.get("path") or by_id.get(artifact_id, {}).get("path"),
-                "attempt_index": (
-                    artifact.get("attempt_index")
-                    or by_id.get(artifact_id, {}).get("attempt_index")
-                    or state.attempt_index
-                ),
-                "updated_at": (
-                    artifact.get("submitted_at")
-                    or artifact.get("updated_at")
-                    or by_id.get(artifact_id, {}).get("updated_at")
-                    or by_id.get(artifact_id, {}).get("created_at")
-                    or ""
-                ),
-            }
-            rows.append(merged)
-            content[artifact_id] = artifact.get("content")
-
-        # Keep the snapshot order supplied by Review, which is the submitted
-        # artifact order. Filtering exclusively through that list also ensures
-        # a post-start resubmission cannot leak into this review context.
-        return rows, content
+        # The snapshot's rows, in its submitted order, overlay the current rows they name; walking only
+        # the pinned list keeps a post-start resubmission out of the review context.
+        by_id = {str(artifact.get("id") or ""): artifact for artifact in current}
+        rows = [{**by_id.get(str(artifact.get("artifact_id") or ""), {}), **artifact, "id": str(artifact["artifact_id"])}
+                for artifact in pinned_artifacts if artifact.get("artifact_id")]
+        return rows, {row["id"]: row.pop("content", None) for row in rows}
 
     def _plan(
         self,
@@ -169,7 +135,8 @@ class ExperimentContextQuery:
             pinned_content=pinned_content,
             project_id=project_id,
         )
-        if status in EXPERIMENT_TERMINAL_STATUSES:
+        # An approved plan rides as its summary (the runner's brief names the artifact); reviewers still get the pinned text.
+        if status in EXPERIMENT_TERMINAL_STATUSES or (result["status"] == "approved" and not pinned_content):
             result["summary"] = str(artifact.get("tldr") or "").strip() or content_tldr(
                 content,
                 role="plan",
