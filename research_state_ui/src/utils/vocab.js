@@ -32,7 +32,7 @@ export function reviewKind(role) {
 const TRANSITIONS = {
   submit_design: 'Submit for design review', submit_results: 'Submit results for review',
   complete: 'Complete experiment', retry_running: 'Retry execution', abandon: 'Abandon', mark_failed: 'Mark failed',
-  submit_delivery: 'Submit delivery for review', accept: 'Accept task',
+  submit_delivery: 'Submit delivery for review',
 };
 export const transitionLabel = (id) => TRANSITIONS[id] || words(id);
 export const transitionButton = (id) => ({ transition: id, label: transitionLabel(id) });

@@ -18,7 +18,8 @@ import DetailsDrawer, {
 } from '../components/DetailsDrawer';
 import { ago } from '../utils/time';
 import { workflowActionButtons } from '../utils/workflowActions';
-import { transitionButton } from '../utils/vocab';
+import { transitionButton, words } from '../utils/vocab';
+
 /*
  * TaskDetail — a task is scoped work with a verifiable finish line, so the
  * page is a ledger, not an essay:
@@ -41,9 +42,9 @@ const TASK_STAGES = stageRows('in_progress', 'in_review', 'done');
 const TASK_GATES = new Set(['in_review']);
 const TASK_TERMINAL = new Set(['done', 'failed']);
 
-const PRIMARY_TRANSITIONS = Object.fromEntries(['submit_delivery', 'accept'].map(id => [id, transitionButton(id)]));
+// `accept` is not here: a passing task review applies it on its own.
+const PRIMARY_TRANSITIONS = { submit_delivery: transitionButton('submit_delivery') };
 const SECONDARY_TRANSITIONS = ['mark_failed'].map(transitionButton);
-
 
 export default function TaskDetail() {
   const { taskId } = useParams();
@@ -56,7 +57,6 @@ export default function TaskDetail() {
   const [gateOpen, setGateOpen] = useState(false);
   const [pendingEnd, setPendingEnd] = useState(false);
   const [endReason, setEndReason] = useState('');
-  const [acceptOutcome, setAcceptOutcome] = useState('');
   const { detailsOpen, setDetailsOpen, toggleDetails, closeDetails, detailsBtnRef } = useDetailsDrawer();
 
   useEffect(() => { setPendingEnd(false); setEndReason(''); setDetailsOpen(false); }, [taskId]);
@@ -98,12 +98,8 @@ export default function TaskDetail() {
       setPendingEnd(true);
       return;
     }
-    if (transition === 'accept') {
-      onAction('accept', acceptOutcome.trim() ? { outcome: acceptOutcome.trim() } : undefined);
-      return;
-    }
     onAction(transition);
-  }, [onAction, acceptOutcome]);
+  }, [onAction]);
 
   if (!task) {
     return <LoadFallback error={error?.message} fetched={Boolean(statusData)} back={px('/tasks')} label="Tasks" />;
@@ -139,17 +135,6 @@ export default function TaskDetail() {
               actionsBusy={busy}
               onAction={requestAction}
             />
-            {primary?.transition === 'accept' && (
-              <div className="form-row" style={{ marginTop: 10 }}>
-                <label className="label">Outcome note (optional)</label>
-                <input
-                  className="input"
-                  value={acceptOutcome}
-                  onChange={e => setAcceptOutcome(e.target.value)}
-                  placeholder="What the project can now rely on."
-                />
-              </div>
-            )}
           </div>
         </FSMStrip>
           </div>
@@ -396,7 +381,7 @@ function buildTimeline(task, reviews) {
     items.push({
       t: r.created_at, rank: 2 * (i + 1) + 1,
       tone: v === 'pass' ? 'ok' : v === 'fail' ? 'bad' : 'warn',
-      label: `review round ${i + 1} · ${v.replace(/_/g, ' ') || 'pending'}`,
+      label: `review round ${i + 1} · ${words(v) || 'pending'}`,
     });
   });
   if (task.status === 'done' && task.updated_at) {
