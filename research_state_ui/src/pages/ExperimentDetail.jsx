@@ -19,16 +19,13 @@ import DetailsDrawer, {
 import { expName, experimentDocs } from '../utils/experiment';
 import { gateToSectionId, useScrollToHash } from '../utils/useScrollToHash';
 import { workflowActionButtons } from '../utils/workflowActions';
-import { transitionButton } from '../utils/vocab';
+import { transitionButton, words } from '../utils/vocab';
 import InlineMd from '../components/InlineMd';
 import { LoadFallback, StaleNote } from '../components/LoadState';
 
 const PRIMARY_TRANSITIONS = Object.fromEntries(['submit_design', 'submit_results', 'complete'].map(id => [id, transitionButton(id)]));
 const SECONDARY_TRANSITIONS = ['mark_failed', 'abandon'].map(transitionButton);
-const TERMINAL_TRANSITIONS = new Set([
-  'complete',
-  ...SECONDARY_TRANSITIONS.map(a => a.transition),
-]);
+const TERMINAL_TRANSITIONS = new Set(['complete', ...SECONDARY_TRANSITIONS.map(a => a.transition)]);
 
 export default function ExperimentDetail() {
   const { experimentId } = useParams();
@@ -305,7 +302,7 @@ function buildExperimentTimeline(experiment, designReviews, experimentReviews) {
     items.push({
       t: r.created_at, rank: 2 * (i + 1) + 1,
       tone: v === 'pass' ? 'ok' : 'warn',
-      label: `design review ${designReviews.length > 1 ? `round ${i + 1} ` : ''}· ${v.replace(/_/g, ' ') || 'pending'}`,
+      label: `design review ${designReviews.length > 1 ? `round ${i + 1} ` : ''}· ${words(v) || 'pending'}`,
     });
   });
   experimentReviews.forEach((r, i) => {
@@ -313,7 +310,7 @@ function buildExperimentTimeline(experiment, designReviews, experimentReviews) {
     items.push({
       t: r.created_at, rank: 60 + i,
       tone: v === 'pass' ? 'ok' : v === 'fail' ? 'bad' : 'warn',
-      label: `experiment review ${experimentReviews.length > 1 ? `round ${i + 1} ` : ''}· ${v.replace(/_/g, ' ') || 'pending'}`,
+      label: `experiment review ${experimentReviews.length > 1 ? `round ${i + 1} ` : ''}· ${words(v) || 'pending'}`,
     });
   });
   const status = experiment.status;

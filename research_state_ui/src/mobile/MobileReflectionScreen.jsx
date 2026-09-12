@@ -8,7 +8,8 @@ import GraphOutline from './GraphOutline';
 import { normalizeLogic, makeLogicDetail } from './graphModel';
 import { TERMINAL_WAVE, reflectionsByLens, secondaryDocs, resolveReflectionDoc } from '../components/reflection/waveModel';
 import ConsolidationLedger from '../components/reflection/ConsolidationLedger';
-import { useIntervalPoll, useRecordStatus } from '../store/usePolling';
+import { useIntervalPoll } from '../store/usePolling';
+import { useReflectionLedger } from '../store/useLedger';
 import { StaleNote } from '../components/LoadState';
 
 const GraphCanvasOverlay = lazy(() => import('./GraphCanvasOverlay'));
@@ -53,9 +54,7 @@ export default function MobileReflectionScreen() {
   const [pinnedId, setPinnedId] = useState(linkedId || null); // null = follow the live wave
   const [showCanvas, setShowCanvas] = useState(false);
 
-  const [data, error, fetchReflections] = useRecordStatus(() => api.getReflections(projectId), [projectId]);
-
-  useEffect(() => { fetchReflections(); }, [fetchReflections]);
+  const [data, error, fetchReflections] = useReflectionLedger(projectId);
 
   const waves = data?.reflections || [];
   const signal = data?.signal || null;

@@ -1,12 +1,10 @@
-import { useEffect, useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useProjectStore, useProjectHref, selectExperiments } from '../store/useProjectStore';
-import { api } from '../api';
 import ArtifactContentView from '../components/ArtifactContentView';
 import { LoadFallback } from '../components/LoadState';
 import ObjId from '../components/ObjId';
 import { basename, formatBytes } from '../utils/format';
-import { useRecordStatus } from '../store/usePolling';
+import { useArtifactLedger } from '../store/useLedger';
 import { expName, groupArtifactsByTarget } from '../utils/experiment';
 
 /**
@@ -19,14 +17,7 @@ export default function MobileArtifacts() {
   const projectId = useProjectStore(s => s.projectId);
   const experiments = useProjectStore(selectExperiments);
 
-  const [data, error, fetchArtifacts, reset] = useRecordStatus(() => api.listArtifacts(projectId), [projectId]);
-  useEffect(() => { reset(); fetchArtifacts(); }, [fetchArtifacts, reset]);
-
-  // Pending rows are half-born (upload token outstanding); show complete only.
-  const artifacts = useMemo(
-    () => (data?.artifacts || []).filter(a => a.status === 'complete'),
-    [data],
-  );
+  const [data, error, artifacts] = useArtifactLedger(projectId);
   const selected = artifactId ? artifacts.find(a => a.id === artifactId) : null;
 
   if (selected) {

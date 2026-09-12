@@ -1,26 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { api } from '../api';
-import { useIntervalPoll } from './usePolling';
+import { useAsyncData, useIntervalPoll } from './usePolling';
 
 const POLL_MS = 60000;
 
-// Whether this backend serves /storage at all, asked once per project (the
-// answer, or the one probe in flight). Unknown reads as supported until the
-// first answer lands.
-const supported = new Map();
-const remember = (projectId, err) => supported.set(projectId, !err || err.status !== 404);
-
+// Whether this backend serves /storage at all, probed once per project.
+// Unknown reads as supported until the first answer lands.
+const probes = new Map();
 export function useStorageSupported(projectId) {
-  const known = supported.get(projectId);
-  const [ok, setOk] = useState(typeof known === 'boolean' ? known : true);
-  useEffect(() => {
-    if (!projectId) return;
-    if (!supported.has(projectId)) {
-      supported.set(projectId, api.listStorage(projectId).then(() => remember(projectId), err => remember(projectId, err)));
-    }
-    Promise.resolve(supported.get(projectId)).then(() => setOk(supported.get(projectId)));
-  }, [projectId]);
-  return ok;
+  if (projectId && !probes.has(projectId)) {
+    probes.set(projectId, api.listStorage(projectId).then(() => true, err => err.status !== 404));
+  }
+  const [known] = useAsyncData(projectId ? () => probes.get(projectId) : null, [projectId]);
+  return known ?? true;
 }
 
 /**
@@ -44,11 +36,9 @@ export function useStorageLedger(projectId) {
     setError(null);
     try {
       const data = await api.listStorage(projectId);
-      remember(projectId);
       setObjects(data?.objects || []);
       setUnsupported(false);
     } catch (err) {
-      remember(projectId, err);
       if (err.status === 404) { setUnsupported(true); setObjects([]); }
       else setError(err.message);
     } finally {

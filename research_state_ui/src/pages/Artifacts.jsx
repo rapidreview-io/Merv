@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useProjectStore, useProjectHref, selectExperiments } from '../store/useProjectStore';
 import { api } from '../api';
@@ -7,7 +7,7 @@ import ObjId from '../components/ObjId';
 import ArtifactContentView from '../components/ArtifactContentView';
 import { LoadFallback } from '../components/LoadState';
 import { basename, formatBytes, fmtStamp } from '../utils/format';
-import { useIntervalPoll, useRecordStatus } from '../store/usePolling';
+import { useArtifactLedger } from '../store/useLedger';
 import { expName, groupArtifactsByTarget } from '../utils/experiment';
 
 /**
@@ -37,15 +37,7 @@ export default function Artifacts() {
   const projectId = useProjectStore(s => s.projectId);
   const experiments = useProjectStore(selectExperiments);
 
-  const [data, error, fetchArtifacts, reset] = useRecordStatus(() => api.listArtifacts(projectId), [projectId]);
-  useEffect(() => { reset(); }, [projectId, reset]);
-  useIntervalPoll(fetchArtifacts, 10000);
-
-  // Pending rows are half-born (upload token outstanding); show complete only.
-  const artifacts = useMemo(
-    () => (data?.artifacts || []).filter(a => a.status === 'complete'),
-    [data],
-  );
+  const [data, error, artifacts] = useArtifactLedger(projectId, 10000);
   const groups = useMemo(() => groupArtifactsByTarget(artifacts, experiments), [artifacts, experiments]);
   const selected = artifactId ? artifacts.find(a => a.id === artifactId) : null;
 
