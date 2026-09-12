@@ -7,6 +7,7 @@ slots, submission intent, and the association IDs exposed by the research API.
 
 from __future__ import annotations
 
+import hashlib
 from contextlib import closing
 import json
 from typing import Any
@@ -334,6 +335,14 @@ class ResearchArtifacts:
                 )
                 return
         target = self._resolve_target(tx=tx, target=target)
+        held = tx.execute(
+            "SELECT id FROM research_artifacts WHERE project_id=? AND target_type=? AND target_id=? AND attempt_index=? "
+            "AND role=? AND status='complete' AND content_sha256=? ORDER BY created_seq DESC",
+            (target.project_id, target.target_type, target.target_id, target.attempt_index, role,
+             hashlib.sha256(data).hexdigest())).fetchone()
+        if held is not None:  # the attempt already holds these bytes in this slot
+            tx.execute("UPDATE research_artifact_links SET active=1 WHERE id=?", (held["id"],))
+            return
         content = self.contents.create(
             project_id=str(target.project_id),
             path=path,

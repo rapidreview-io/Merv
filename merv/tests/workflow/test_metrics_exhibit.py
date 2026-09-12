@@ -130,7 +130,7 @@ class ExhibitFlowTest(unittest.TestCase):
             body=body,
         )
 
-    def _pass_review(self, *, exp_id: str, role: str) -> None:
+    def _pass_review(self, *, exp_id: str, role: str, **verdict) -> None:
         req = self.call(
             "review.request",
             project_id=self.project_id,
@@ -147,8 +147,7 @@ class ExhibitFlowTest(unittest.TestCase):
         self.call(
             "review.submit",
             review_session_id=session["review_session_id"],
-            verdict="pass",
-            synopsis="The attempt checks out against the exhibit, so it stands.",
+            **{"verdict": "pass", "synopsis": "The attempt checks out against the exhibit, so it stands.", **verdict},
         )
 
     def _drive_to_running(self, *, name: str = "exp-1") -> str:
@@ -245,6 +244,23 @@ class ExhibitFlowTest(unittest.TestCase):
         association = self._exhibit_association(exp_id)
         self.assertEqual(association["created_by"], "system")
         self.assertTrue(str(association["path"]).endswith("metrics_exhibit.json"))
+
+    def test_resubmitting_unchanged_results_keeps_the_one_exhibit(self) -> None:
+        # needs_changes -> running -> submit_results regenerates the same bytes:
+        # the attempt keeps its pinned exhibit instead of gaining a twin row.
+        exp_id = self._drive_to_running()
+        self._submit_ready(exp_id)
+        args = dict(project_id=self.project_id, experiment_id=exp_id, transition="submit_results")
+        self.call("experiment.transition", **args)
+        first = self._exhibit_association(exp_id)
+        self._pass_review(exp_id=exp_id, role="experiment_reviewer", verdict="needs_changes", return_to="running",
+                          synopsis="The number holds but the report never states the seed set, so say it.")
+        self._submit(exp_id=exp_id, path="report.md", role="report", body=REPORT_WITH_REFERENCE + "\nSeeds: 1-5.\n")
+        self.call("experiment.transition", **args)
+        rows = self.call("artifact.read", project_id=self.project_id, target_type="experiment", target_id=exp_id)["artifacts"]
+        exhibits = [row for row in rows if row["role"] == "exhibit"]
+        self.assertEqual([row["id"] for row in exhibits], [first["id"]])
+        self.assertEqual(self._exhibit_association(exp_id)["id"], first["id"])
 
     def test_files_submitted_after_the_transition_are_outside_the_record(self) -> None:
         exp_id = self._drive_to_running()
