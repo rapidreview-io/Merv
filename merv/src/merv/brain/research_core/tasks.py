@@ -134,8 +134,10 @@ class TaskService(RecordHooks):
             conn.execute("UPDATE tasks SET outcome = ?, failed_by = 'reviewer' WHERE id = ?",
                          (str(after.data.get("revision_context") or ""), before.id))
         elif action == "mark_failed":
-            conn.execute("UPDATE tasks SET outcome = ?, failed_by = 'owner' WHERE id = ?",
-                         (_note_from_evidence(dict(payload)), before.id))
+            note = _note_from_evidence(dict(payload))
+            if not note:
+                raise ValidationError("mark_failed requires evidence.reason: why the owner ended the task")
+            conn.execute("UPDATE tasks SET outcome = ?, failed_by = 'owner' WHERE id = ?", (note, before.id))
 
     def _document(self, *, task: dict[str, Any], role: str, what: str) -> ArtifactDocument | None:
         artifact = preferred_artifact(artifacts=task.get("current_attempt_artifacts") or [], roles=(role,))

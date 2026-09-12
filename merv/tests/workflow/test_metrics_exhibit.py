@@ -391,10 +391,15 @@ class ExhibitFlowTest(unittest.TestCase):
             project_id=self.project_id,
             intent="Preview gate.",
         )["id"]
-        with self.assertRaises(WorkflowError):
+        with self.assertRaisesRegex(WorkflowError, "this one is planned. The exhibit is generated at submit_results"):
             self.call(
                 "experiment.exhibit", project_id=self.project_id, experiment_id=exp_id
             )
+        running = self._drive_to_running()
+        self._submit_ready(running)
+        self.call("experiment.transition", project_id=self.project_id, experiment_id=running, transition="submit_results")
+        with self.assertRaisesRegex(WorkflowError, "this one is experiment_review. Read the pinned exhibit artifact art_"):
+            self.call("experiment.exhibit", project_id=self.project_id, experiment_id=running)
 
     # ---- agent immutability ----
 

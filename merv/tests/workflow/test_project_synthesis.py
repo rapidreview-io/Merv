@@ -4,7 +4,7 @@ from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
-from merv.brain.kernel.utils import WorkflowError
+from merv.brain.kernel.utils import NotFoundError, WorkflowError
 from merv.brain.workflows import research_contracts
 from tests.research_core.scenarios import ResearchCase, VALID_REPORT, VALID_GRAPH
 from tests.support.brain import TestBrain
@@ -162,6 +162,11 @@ class ProjectSynthesisTest(ResearchCase):
                                   instance_id=packet["instance_id"])["source"], packet["source"])
         self.publish(packet, methods="Recovered account.")
         self.assertEqual(self.document()["methods"], "Recovered account.")
+        # A wrong id and a wrong state are told apart, and the state is named.
+        with self.assertRaisesRegex(NotFoundError, "psyn_nope.*this project's is " + packet["instance_id"]):
+            self.call("project.synthesis.read", project_id=self.project_id, instance_id="psyn_nope")
+        with self.assertRaisesRegex(WorkflowError, "is 'waiting', not writing"):
+            self.call("project.synthesis.read", project_id=self.project_id, instance_id=packet["instance_id"])
 
     def test_canonical_sources_are_composed_and_context_changes_require_refresh(self):
         self.create_experiment()

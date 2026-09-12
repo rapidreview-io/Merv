@@ -277,8 +277,8 @@ class TaskTransitionInput(ProjectScopedInput):
     evidence: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Optional. On accept, {'outcome': ...} is the accepted outcome note; "
-            "on mark_failed, {'reason': ...} says why the owner ended it."
+            "On accept, {'outcome': ...} optionally overrides the accepted outcome note; "
+            "mark_failed REQUIRES {'reason': ...}: why the owner ended it."
         ),
     )
 

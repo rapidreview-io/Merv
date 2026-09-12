@@ -9,6 +9,7 @@ from typing import Protocol
 from ...research_core import Artifact, ResearchArtifacts as Artifacts
 from ...kernel.utils import WorkflowError
 from ...research_core import EXPERIMENT, ExperimentState, Research
+from ...workflows import EXHIBIT_ROLE, preferred_artifact
 from .create import experiment_folder
 from .metrics_exhibit import METRICS_EXHIBIT_FILENAME, build_metrics_exhibit
 
@@ -51,10 +52,11 @@ class ExperimentExhibits:
         if state.status not in EXPERIMENT.effect_sources(
             "result_submission"
         ):
+            pinned = preferred_artifact(artifacts=state.current_attempt_artifacts, roles=(EXHIBIT_ROLE,))
             raise WorkflowError(
-                "experiment.exhibit previews a running experiment; this one is "
-                f"{state.status!r}. After submit_results, read the pinned "
-                "exhibit artifact instead (artifact.read)."
+                f"experiment.exhibit previews a running experiment; this one is {state.status.value}. "
+                + (f"Read the pinned exhibit artifact {pinned['id']} instead (artifact.read)." if pinned
+                   else "The exhibit is generated at submit_results.")
             )
         exhibit = self.generate(state=state)
         path = (

@@ -224,6 +224,10 @@ class TaskWorkflowTest(ResearchCase):
         )
         self.transition_task(task_id, "submit_delivery")
         self.pass_review(target_type="task", target_id=task_id, role="task_reviewer")
+        # Acceptance retires the revision request; the outcome is the reviewer's synopsis.
+        done = self.call("task.get_state", project_id=self.project_id, task_id=task_id)
+        self.assertEqual((done["status"], done["revision_context"]), ("done", ""))
+        self.assertNotIn("\n", done["outcome"])
         self.assertEqual(self.call("task.get_state", project_id=self.project_id, task_id=task_id)["status"], "done")
 
     def test_fail_verdict_ends_the_task(self) -> None:
@@ -251,6 +255,8 @@ class TaskWorkflowTest(ResearchCase):
 
     def test_owner_can_withdraw_with_a_reason(self) -> None:
         task_id = self.create_task()
+        with self.assertRaisesRegex(ValidationError, "mark_failed requires evidence.reason"):
+            self.transition_task(task_id, "mark_failed")
         receipt = self.transition_task(
             task_id, "mark_failed", reason="The dataset license forbids this use."
         )

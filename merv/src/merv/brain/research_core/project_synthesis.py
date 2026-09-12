@@ -93,8 +93,10 @@ class ProjectSynthesis:
     def inputs(self, *, project_id, instance_id):
         with closing(self.store.connect()) as conn:
             snapshot = self.state(conn=conn, project_id=project_id)
-            if snapshot.id != instance_id or snapshot.state != "writing":
-                raise WorkflowError("Read the current project's writing assignment")
+            if snapshot.id != instance_id:
+                raise NotFoundError(f"synthesis instance not found: {instance_id}; this project's is {snapshot.id}")
+            if snapshot.state != "writing":
+                raise WorkflowError(f"synthesis {snapshot.id} is {snapshot.state!r}, not writing: there is no writing assignment to read")
             return {"instance_id": snapshot.id, "revision": snapshot.revision,
                     "source": public_record(Public(), snapshot.data["source"]), "document": self.document(project_id=project_id, conn=conn)}
 
