@@ -23,15 +23,16 @@ export default function ProjectDocument({ project }) {
   return (
     <section className="project-document" aria-label="Project document">
       <header className="project-document-heading">
-        <div><h2>Project document</h2><p className="muted">Your intent and the research so far.</p></div>
+        <div><h2>Project document</h2><p className="muted">The project and the research so far.</p></div>
         {maintenance && <span className="project-document-status" role="status">{status}</span>}
       </header>
       {error && <div className="project-document-notice" role="alert">
         Could not refresh. Showing the last loaded document. <button className="btn btn--ghost btn--sm" onClick={refresh}>Retry</button>
       </div>}
       <section className="project-document-section">
-        <h3>User intent</h3>
-        <p className="project-intent-text">{project.summary || 'No intent provided yet. You can add context whenever it is useful.'}</p>
+        <h3>Introduction</h3>
+        {project.summary ? <MarkdownView text={project.summary} />
+          : <p className="muted">No Introduction yet. Write one here or develop it with an agent.</p>}
         <ProjectIntentEditor key={project.id} project={project} />
       </section>
       <details className="project-document-section" open>

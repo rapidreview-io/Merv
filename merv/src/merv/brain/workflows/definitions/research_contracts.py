@@ -8,14 +8,14 @@ from ...kernel.utils import ValidationError
 
 
 PROJECT_INTENT_GUIDANCE = (
-    "Use this user-defined background/problem, goal and scope to orient your assignment. "
-    "Judge whether missing or ambiguous intent matters for the work at hand; there is no completeness gate. "
-    "In an interactive conversation, ask the user focused questions when needed. "
-    "If project.context.update is available, persist only faithful user-grounded clarification, "
-    "preserving existing intent and using the last-read summary as expected_summary. "
-    "On a conflict, reread and reconcile before retrying. Never invent the user's intent. "
-    "Automatically deployed sessions can read this context but cannot edit it; do not start a background interview. "
-    "Agent-authored methods, results and evolving research conclusions belong in Methods/Results and research evidence, not user intent."
+    "The Introduction (summary) is the project's single authoritative definition, editable by the user or an interactive agent. "
+    "In an interactive conversation, ask the user focused questions about the problem/background, goal, constraints, "
+    "scope and what success means; follow up where ambiguity affects direction. Then write one brief research-paper-style "
+    "paragraph with an explicit goal and scope. Preserve uncertainty; never invent intent or maintain a separate brief. "
+    "Create or revise this same paragraph with project.context.update, using the exact last-read summary as expected_summary. "
+    "On a conflict, reread and reconcile before retrying. There is no completeness gate. "
+    "Automatically deployed sessions read this paragraph but cannot edit it or interview the user. "
+    "Keep research findings and evolving conclusions in Methods/Results, not the Introduction."
 )
 
 
@@ -37,7 +37,7 @@ def render_project_document(project):
     if (project.get("maintenance") or {}).get("pending"):
         pending = "Newer research awaits incorporation into Methods/Results.\n\n"
     return (
-        f"# {project.get('name', 'Project')}\n\n## User-defined intent\n{project.get('summary', '')}\n\n"
+        f"# {project.get('name', 'Project')}\n\n## Introduction\n{project.get('summary', '')}\n\n"
         f"{project.get('intent_guidance', PROJECT_INTENT_GUIDANCE)}\n\n"
         f"## Literature\n{literature.get('body') or 'No literature summary yet.'}\n{papers}\n\n"
         f"{pending}## Methods\n{project.get('methods') or 'Not yet synthesized.'}\n\n"

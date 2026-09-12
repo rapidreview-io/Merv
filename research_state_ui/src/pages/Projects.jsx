@@ -120,7 +120,7 @@ function ProjectCard({ project, isActive, onSwitch, onRename }) {
               </div>
               {project.summary
                 ? <p className="proj-card-sum">{project.summary}</p>
-                : <p className="proj-card-sum faint">No intent provided yet.</p>}
+                : <p className="proj-card-sum faint">No Introduction yet.</p>}
               <div className="cluster" style={{ marginTop: 10, fontSize: 'var(--text-xs)', color: 'var(--faint)' }}>
                 <ObjId id={project.id} strong />
                 {project.created_at && <span className="mono">· created {fmtDate(project.created_at)}</span>}

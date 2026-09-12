@@ -110,6 +110,11 @@ Create projects with `name` and `summary`. Do not send a repo path: projects are
 never tied to a checkout; each agent key carries an immutable scope (one
 project, or the owner's whole account).
 
+`project.summary` is the Introduction: the single project-definition paragraph,
+editable by the user or an interactive agent. There is no separate introduction
+field, source brief, or synthesis-owned copy. It opens the paper before Literature;
+Methods and Results remain agent-authored research synthesis.
+
 `PATCH /context` delegates to `project.context.update`: it conditionally replaces
 user intent and emits the canonical context event used by document maintenance.
 On `reason: stale_project_context`, reread and reconcile before retrying. Keep

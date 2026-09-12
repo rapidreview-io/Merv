@@ -36,23 +36,22 @@ There is no linking step and no `connect` action. Use
 `project(action="overview")` for the living project document; use
 `project(action="records")` to discover the full claim and experiment inventory.
 
-## User-defined project intent
+## Project Introduction
 
-After selecting a project, read its full summary: the user's background/problem,
-goal and scope. Judge whether it is sufficient for your own assignment. In an
-interactive conversation, ask focused questions when missing context matters;
-there is no required outline, completeness score or workflow gate. Preserve the
-user's meaning and unresolved uncertainty. Use `project.context.update` with the
-full revised summary and the exact last-read `expected_summary` to persist a
-user-grounded clarification. On a conflict, reread and reconcile before retrying.
-Never fill gaps by inventing intent. Automatically deployed sessions have read
-access but cannot edit intent or conduct background interviews. Keep agent-authored
-methods, results and evolving conclusions in the research narrative and evidence,
-separate from this user-defined prose.
+The project's summary is its Introduction: one authoritative paragraph, editable
+by the user in the UI or by an interactive agent. There is no separate brief.
+Ask focused questions about the problem/background, goal, constraints, scope and
+success criteria; follow up where ambiguity affects direction. Then write a
+brief research-paper-style paragraph with an explicit goal and scope, preserving
+uncertainty rather than inventing intent. Use `project.context.update` with the
+full paragraph and exact last-read `expected_summary`. On conflict, reread and
+reconcile. There is no completeness gate. Automatically deployed sessions read
+the Introduction but cannot edit it or interview the user. Research findings
+belong in Methods/Results, not in the project definition.
 
 ## Living Methods and Results
 
-Joining briefs include the current project document: user intent, the existing
+Joining briefs include the current project document: Introduction, the existing
 literature summary, Methods, Results and selected evidence. The narrative stays
 short by rewriting and consolidating earlier material; detailed records remain
 available on demand. A pending update means newer research has not yet been

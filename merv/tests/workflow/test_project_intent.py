@@ -55,7 +55,9 @@ class ProjectIntentRolesTest(unittest.TestCase):
                     assert "Established and contrary findings." in full.summary
                     assert INTENT in full.summary, (workflow.name, node.name)
                     assert "ask the user focused questions" in full.summary
-                    assert "Never invent the user's intent" in full.summary
+                    assert "never invent intent" in full.summary
+                    assert "## Introduction\n" + INTENT in full.summary
+                    assert full.summary.index("## Introduction") < full.summary.index("## Literature")
                     assert full.references == empty.references
                     assert full.references, (workflow.name, node.name)
                     policy = SessionExecution.from_packet(node.execution.public())
