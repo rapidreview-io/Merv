@@ -4,8 +4,8 @@ import { api } from '../api';
 import { useRecordStatus } from '../store/usePolling';
 import { useProjectStore, useProjectHref } from '../store/useProjectStore';
 import { useStreamAwarePoll } from '../store/useEventStream';
-import FSMStrip from '../components/FSMStrip';
-import GateBanner from '../components/GateBanner';
+import { useWorkflowAction } from '../store/useWorkflowAction';
+import StageSection from '../components/StageSection';
 import PlanSpotlight from '../components/PlanSpotlight';
 import ReportSpotlight from '../components/ReportSpotlight';
 import ExperimentGraphs from '../components/ExperimentGraphs';
@@ -13,7 +13,7 @@ import SandboxTerminal from '../components/SandboxTerminal';
 import ArtifactList from '../components/ArtifactList';
 import TerminalTransitionConfirm from '../components/TerminalTransitionConfirm';
 import DetailsDrawer, {
-  DetailsButton, OpsPosition, OpsTimeline, OpsVersions, useDetailsDrawer,
+  OpsPosition, OpsTimeline, OpsVersions, useDetailsDrawer,
   linkedNodes, orderedTimeline, reviewRows, sortedArtifacts, versionRows,
 } from '../components/DetailsDrawer';
 import { expName, experimentDocs } from '../utils/experiment';
@@ -31,11 +31,7 @@ export default function ExperimentDetail() {
   const { experimentId } = useParams();
   const px = useProjectHref();
   const projectId = useProjectStore(s => s.projectId);
-  const refreshHome = useProjectStore(s => s.refreshHome);
 
-  const [busy, setBusy] = useState(new Set());
-  const [actionError, setActionError] = useState(null);
-  const [gateOpen, setGateOpen] = useState(false);
   const [pendingTerminalTransition, setPendingTerminalTransition] = useState(null);
   const { detailsOpen, setDetailsOpen, toggleDetails, closeDetails, detailsBtnRef } = useDetailsDrawer();
 
@@ -65,25 +61,8 @@ export default function ExperimentDetail() {
 
   const { primary, secondary } = useMemo(() => workflowActionButtons(workflow, PRIMARY_TRANSITIONS, SECONDARY_TRANSITIONS), [workflow]);
 
-  const onAction = useCallback(async (transition) => {
-    setBusy(prev => { const n = new Set(prev); n.add(transition); return n; });
-    setActionError(null);
-    let transitionApplied = false;
-    try {
-      await api.transitionExperiment(projectId, experimentId, transition);
-      transitionApplied = true;
-      await Promise.all([fetchStatus(), refreshHome()]);
-      return true;
-    } catch (err) {
-      setActionError(`${transition}: ${err.message}`);
-      // If only a follow-up refresh failed, the irreversible transition still
-      // landed. Close the confirmation rather than offering a dangerous retry;
-      // stream/poll reconciliation will refresh the page state.
-      return transitionApplied;
-    } finally {
-      setBusy(prev => { const n = new Set(prev); n.delete(transition); return n; });
-    }
-  }, [projectId, experimentId, fetchStatus, refreshHome]);
+  const { act: onAction, busy, error: actionError, setError: setActionError } =
+    useWorkflowAction((transition) => api.transitionExperiment(projectId, experimentId, transition), fetchStatus);
 
   const requestAction = useCallback((transition) => {
     if (TERMINAL_TRANSITIONS.has(transition)) {
@@ -110,6 +89,7 @@ export default function ExperimentDetail() {
 
   const currentAttempt = experiment.attempt_index;
   const isClosed = ['complete', 'failed', 'abandoned'].includes(experiment.status);
+  const gateSection = gateToSectionId(workflow?.current_gate);
 
   // Partition artifacts by role.
   const {
@@ -120,43 +100,18 @@ export default function ExperimentDetail() {
     <div className="page-stage">
       {error && <StaleNote error={error.message} />}
       {/* ─────────────  STAGE  ──────────────────────────────────────── */}
-      {/* The strip is the page's status truth. For a live experiment the
-          current step discloses the gate panel (details + transitions);
-          closed experiments need no panel — the strip already says it. */}
-      <section className="exp-fsm">
-        <div className="fsm-row">
-          <div className="fsm-row-strip">
-        <FSMStrip
-          status={experiment.status}
-          badge={!isClosed && primary ? 'action' : null}
-          expanded={!isClosed && gateOpen}
-          onToggle={isClosed ? null : () => setGateOpen(v => !v)}
-        >
-          <div className="fsm-gate-panel">
-            <GateBanner
-              workflow={workflow}
-              name={expName(experiment)}
-              primaryAction={primary}
-              secondaryActions={secondary}
-              actionsBusy={busy}
-              onAction={requestAction}
-              linkTo={(() => {
-                const section = gateToSectionId(workflow?.current_gate);
-                return section ? `#${section}` : null;
-              })()}
-            />
-          </div>
-        </FSMStrip>
-          </div>
-          <DetailsButton
-            open={detailsOpen}
-            onToggle={toggleDetails}
-            controls="experiment-details"
-            buttonRef={detailsBtnRef}
-          />
-        </div>
-        {actionError && <div className="error-message">{actionError}</div>}
-      </section>
+      {/* The strip is the page's status truth; its gate links to the
+          section the gate is about. */}
+      <StageSection
+        status={experiment.status}
+        closed={isClosed}
+        gate={{
+          workflow, name: expName(experiment), primaryAction: primary, secondaryActions: secondary,
+          actionsBusy: busy, onAction: requestAction, linkTo: gateSection ? `#${gateSection}` : null,
+        }}
+        details={{ open: detailsOpen, onToggle: toggleDetails, controls: 'experiment-details', buttonRef: detailsBtnRef }}
+        actionError={actionError}
+      />
 
       <TerminalTransitionConfirm
         transition={pendingTerminalTransition}

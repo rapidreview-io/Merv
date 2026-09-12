@@ -4,8 +4,9 @@ import { api } from '../api';
 import { useRecordStatus } from '../store/usePolling';
 import { useProjectStore, useProjectHref } from '../store/useProjectStore';
 import { useStreamAwarePoll } from '../store/useEventStream';
-import FSMStrip, { stageRows } from '../components/FSMStrip';
-import GateBanner from '../components/GateBanner';
+import { useWorkflowAction } from '../store/useWorkflowAction';
+import { stageRows } from '../components/FSMStrip';
+import StageSection from '../components/StageSection';
 import MarkdownView from '../components/MarkdownView';
 import ReviewCard from '../components/ReviewCard';
 import StatusPill from '../components/StatusPill';
@@ -13,7 +14,7 @@ import ObjId from '../components/ObjId';
 import InlineMd from '../components/InlineMd';
 import { LoadFallback, StaleNote } from '../components/LoadState';
 import DetailsDrawer, {
-  DetailsButton, OpsPosition, OpsTimeline, OpsVersions, useDetailsDrawer,
+  OpsPosition, OpsTimeline, OpsVersions, useDetailsDrawer,
   linkedNodes, orderedTimeline, reviewRows, sortedArtifacts, versionRows,
 } from '../components/DetailsDrawer';
 import { ago } from '../utils/time';
@@ -50,11 +51,7 @@ export default function TaskDetail() {
   const { taskId } = useParams();
   const px = useProjectHref();
   const projectId = useProjectStore(s => s.projectId);
-  const refreshHome = useProjectStore(s => s.refreshHome);
 
-  const [busy, setBusy] = useState(new Set());
-  const [actionError, setActionError] = useState(null);
-  const [gateOpen, setGateOpen] = useState(false);
   const [pendingEnd, setPendingEnd] = useState(false);
   const [endReason, setEndReason] = useState('');
   const { detailsOpen, setDetailsOpen, toggleDetails, closeDetails, detailsBtnRef } = useDetailsDrawer();
@@ -75,22 +72,8 @@ export default function TaskDetail() {
   const workflow = statusData?.workflow;
   const { primary, secondary } = useMemo(() => workflowActionButtons(workflow, PRIMARY_TRANSITIONS, SECONDARY_TRANSITIONS), [workflow]);
 
-  const onAction = useCallback(async (transition, evidence) => {
-    setBusy(prev => { const n = new Set(prev); n.add(transition); return n; });
-    setActionError(null);
-    let applied = false;
-    try {
-      await api.transitionTask(projectId, taskId, transition, evidence);
-      applied = true;
-      await Promise.all([fetchStatus(), refreshHome()]);
-      return true;
-    } catch (err) {
-      setActionError(`${transition}: ${err.message}`);
-      return applied;
-    } finally {
-      setBusy(prev => { const n = new Set(prev); n.delete(transition); return n; });
-    }
-  }, [projectId, taskId, fetchStatus, refreshHome]);
+  const { act: onAction, busy, error: actionError, setError: setActionError } =
+    useWorkflowAction((transition, evidence) => api.transitionTask(projectId, taskId, transition, evidence), fetchStatus);
 
   const requestAction = useCallback((transition) => {
     if (transition === 'mark_failed') {
@@ -113,40 +96,17 @@ export default function TaskDetail() {
   return (
     <div className="page-stage">
       {error && <StaleNote error={error.message} />}
-      <section className="exp-fsm">
-        <div className="fsm-row">
-          <div className="fsm-row-strip">
-        <FSMStrip
-          status={task.status}
-          stages={TASK_STAGES}
-          gateStates={TASK_GATES}
-          terminal={TASK_TERMINAL}
-          ariaLabel="Task lifecycle"
-          badge={!isClosed && primary ? 'action' : null}
-          expanded={!isClosed && gateOpen}
-          onToggle={isClosed ? null : () => setGateOpen(v => !v)}
-        >
-          <div className="fsm-gate-panel">
-            <GateBanner
-              workflow={workflow}
-              name={task.name || task.id}
-              primaryAction={primary}
-              secondaryActions={secondary}
-              actionsBusy={busy}
-              onAction={requestAction}
-            />
-          </div>
-        </FSMStrip>
-          </div>
-          <DetailsButton
-            open={detailsOpen}
-            onToggle={toggleDetails}
-            controls="task-details"
-            buttonRef={detailsBtnRef}
-          />
-        </div>
-        {actionError && <div className="error-message">{actionError}</div>}
-      </section>
+      <StageSection
+        status={task.status}
+        closed={isClosed}
+        strip={{ stages: TASK_STAGES, gateStates: TASK_GATES, terminal: TASK_TERMINAL, ariaLabel: 'Task lifecycle' }}
+        gate={{
+          workflow, name: task.name || task.id, primaryAction: primary, secondaryActions: secondary,
+          actionsBusy: busy, onAction: requestAction,
+        }}
+        details={{ open: detailsOpen, onToggle: toggleDetails, controls: 'task-details', buttonRef: detailsBtnRef }}
+        actionError={actionError}
+      />
 
       {pendingEnd && (
         <section className="form-card" style={{ marginBottom: 18 }}>

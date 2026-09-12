@@ -37,8 +37,7 @@ export default function Home() {
   const next = agentPrompt(home?.workflow?.next_action, {
     state: home?.workflow?.state, name: home?.active_experiment?.name,
   });
-  // First run: no agent has ever done anything here. Until the first
-  // experiment exists the connect guide is the page.
+  // First run: no agent has ever done anything here, so the connect guide leads.
   const firstRun = !!home && (stats.claims ?? 0) === 0 && (stats.experiments ?? 0) === 0 && (stats.artifacts ?? 0) === 0;
 
   const head = (
