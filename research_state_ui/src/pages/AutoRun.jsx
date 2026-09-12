@@ -133,16 +133,14 @@ export default function AutoRun() {
     )));
   }
 
+  // Queued work is counted as waiting, never as active: with no machine it
+  // is not running anywhere, and the tab says so.
   const counts = useMemo(() => {
     const out = { active: 0, done: 0, failed: 0, all: (sessions || []).length };
     for (const session of sessions || []) out[jobBucket(session)] += 1;
-    if (queue) {
-      const waiting = queueTotal ?? queue.length;
-      out.active += waiting;
-      out.all += waiting;
-    }
     return out;
-  }, [sessions, queue, queueTotal]);
+  }, [sessions]);
+  const waiting = queue ? (queueTotal ?? queue.length) : 0;
 
   // Say nothing until the first answer lands: an empty runner list before
   // the fetch is not "no machine paired".
@@ -191,7 +189,7 @@ export default function AutoRun() {
             >
               {key === 'active' && running > 0 && <span className="arun-tab-dot" aria-hidden="true" />}
               {label}
-              <span className="tab-count">{counts[key]}</span>
+              <span className="tab-count">{counts[key]}{key === 'active' && waiting > 0 ? ` · ${waiting} waiting` : ''}</span>
             </button>
           ))}
         </div>
