@@ -11,7 +11,8 @@
  * called on hover-intent only and memoised per project.
  */
 import { api } from '../api';
-import { basename, clip, roleWord } from './format';
+import { basename, clip } from './format';
+import { reviewKind } from './vocab';
 import { expName } from './experiment';
 import { citedSections, paperRoute, paperSeed, sectionRoute, sectionSeed } from './litreview';
 
@@ -148,7 +149,7 @@ function headlineMetric(e) {
 }
 
 function reviewLabel(rv) {
-  const role = roleWord(rv.role);
+  const role = reviewKind(rv.role);
   return rv.verdict ? `${role} · ${rv.verdict}` : role;
 }
 

@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import DetailPanelShell from '../DetailPanelShell';
 import StatusPill from '../StatusPill';
 import { useProjectHref } from '../../store/useProjectStore';
-import { fmtSpan, statusWord } from '../../utils/format';
+import { fmtSpan } from '../../utils/format';
+import { words } from '../../utils/vocab';
 import { dayAgo, fmtDay } from '../../utils/time';
 import {
   buildIntentIndex, consolidationSummary, debtMeter, expTimeline, gateSummary,
@@ -79,7 +80,7 @@ function StrandRow({ strand, intent, onSelectNode }) {
       lead={<span className={`wflow-item-dot wflow-item-dot--${strand.tone}`} />}
       name={strand.name}
       sub={intent}
-      meta={(isTask ? 'task · ' : '') + (statusWord(strand.status) || '')}
+      meta={(isTask ? 'task · ' : '') + (words(strand.status) || '')}
       onClick={() => onSelectNode({ kind: isTask ? 'task' : 'exp', id: strand.id })}
     />
   );
@@ -304,7 +305,7 @@ function ExpPanel({ strand, row, braid, intents, onClose, onOpenExp, onSelectNod
       <MetaRow label="created" value={dayAgo(tl.created)} />
       {tl.ended
         ? <MetaRow label={tl.endWord} value={`${fmtDay(tl.ended)}${tl.spanMs != null ? ` · after ${fmtSpan(tl.spanMs)}` : ''}`} />
-        : <MetaRow label={statusWord(strand.status) || 'status'} value={tl.sinceMs != null ? `for ${fmtSpan(tl.sinceMs)}` : null} />}
+        : <MetaRow label={words(strand.status) || 'status'} value={tl.sinceMs != null ? `for ${fmtSpan(tl.sinceMs)}` : null} />}
       {strand.attemptIndex > 1 && <MetaRow label="attempt" value={strand.attemptIndex} />}
     </DetailPanelShell>
   );
@@ -348,7 +349,7 @@ function TaskPanel({ strand, row, braid, intents, onClose, onOpenTask, onSelectN
               key={d.id}
               lead={<span className={`wflow-item-dot wflow-item-dot--${d.settled ? 'done' : d.failed ? 'failed' : 'queued'}`} />}
               name={d.name || d.id}
-              meta={`${d.node_type} · ${statusWord(d.status)}`}
+              meta={`${d.node_type} · ${words(d.status)}`}
               onClick={() => onSelectNode({ kind: d.node_type === 'task' ? 'task' : 'exp', id: d.id })}
             />
           ))}
@@ -367,7 +368,7 @@ function TaskPanel({ strand, row, braid, intents, onClose, onOpenTask, onSelectN
       <MetaRow label="created" value={dayAgo(tl.created)} />
       {tl.ended
         ? <MetaRow label={tl.endWord} value={`${fmtDay(tl.ended)}${tl.spanMs != null ? ` · after ${fmtSpan(tl.spanMs)}` : ''}`} />
-        : <MetaRow label={statusWord(strand.status) || 'status'} value={tl.sinceMs != null ? `for ${fmtSpan(tl.sinceMs)}` : null} />}
+        : <MetaRow label={words(strand.status) || 'status'} value={tl.sinceMs != null ? `for ${fmtSpan(tl.sinceMs)}` : null} />}
     </DetailPanelShell>
   );
 }

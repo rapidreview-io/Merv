@@ -50,7 +50,7 @@ export default function MobileClaims() {
   if (!home) {
     return (
       <div className="mlist">
-        <h1 className="mtitle-lg">What we think</h1>
+        <h1 className="mtitle-lg">Claims</h1>
         <SkeletonCards />
       </div>
     );
@@ -58,7 +58,7 @@ export default function MobileClaims() {
 
   return (
     <div className="mlist">
-      <h1 className="mtitle-lg">What we think</h1>
+      <h1 className="mtitle-lg">Claims</h1>
 
       <div className="mefilt" role="tablist" aria-label="Filter by status">
         {chips.map(s => (

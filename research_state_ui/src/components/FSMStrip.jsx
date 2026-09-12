@@ -12,26 +12,19 @@
  * render the gate panel as `children` — it appears attached under the strip.
  */
 
-const STAGES = [
-  { id: 'planned',           label: 'Planned' },
-  { id: 'design_review',     label: 'Design review' },
-  { id: 'running',           label: 'Running' },
-  { id: 'experiment_review', label: 'Exp. review' },
-  { id: 'complete',          label: 'Complete' },
-];
+import { stateLabel } from '../utils/vocab';
+
+// Stage rows for any lifecycle: ids in order, labels from the one vocabulary.
+export const stageRows = (...ids) => ids.map(id => ({ id, label: stateLabel(id) }));
+
+const STAGES = stageRows('planned', 'design_review', 'running', 'experiment_review', 'complete');
 
 const GATE_STATES = new Set(['design_review', 'experiment_review']);
 const TERMINAL = new Set(['complete', 'failed', 'abandoned']);
 
 // The reflection-wave lifecycle, renderable through the
 // same strip: pass stages={REFLECTION_STAGES} gateStates={REFLECTION_GATES}.
-export const REFLECTION_STAGES = [
-  { id: 'reflecting',       label: 'Reflecting' },
-  { id: 'synthesizing',     label: 'Synthesizing' },
-  { id: 'reflection_review', label: 'Refl. review' },
-  { id: 'consolidating',    label: 'Consolidating' },
-  { id: 'published',        label: 'Published' },
-];
+export const REFLECTION_STAGES = stageRows('reflecting', 'synthesizing', 'reflection_review', 'consolidating', 'published');
 export const REFLECTION_GATES = new Set(['reflection_review', 'consolidating']);
 export const REFLECTION_TERMINAL = new Set(['published', 'abandoned']);
 
@@ -69,7 +62,7 @@ export default function FSMStrip({
             i === idx && !TERMINAL_SET.has(s)
               ? state === 'gate' ? 'awaiting review' : 'in progress'
               : null;
-          const label = state === 'failed' ? (isFailed ? s : 'Failed') : stage.label;
+          const label = state === 'failed' ? stateLabel(isFailed ? s : 'failed') : stage.label;
           const head = (
             <span className="fsm-step-head">
               <span className="fsm-step-dot" />

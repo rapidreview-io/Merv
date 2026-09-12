@@ -2,6 +2,7 @@ import StatusPill from './StatusPill';
 import ObjId from './ObjId';
 import { shortDateTime } from '../utils/time';
 import { cx } from '../utils/format';
+import { roleLabel, stateLabel } from '../utils/vocab';
 
 export default function ReviewCard({ review, bare = false }) {
   if (!review) return null;
@@ -19,7 +20,7 @@ export default function ReviewCard({ review, bare = false }) {
               artifact's status badge — show only a quiet who·when provenance. */}
           {!bare && <StatusPill value={verdict} />}
           <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>
-            {review.role}
+            {roleLabel(review.role)}
           </span>
           {!bare && review.attempt_index != null && (
             <span className="faint" style={{ fontSize: 'var(--text-xs)' }}>
@@ -37,7 +38,7 @@ export default function ReviewCard({ review, bare = false }) {
           reviews leave this unset, so it renders only when present. */}
       {review.return_to && (verdict === 'needs_changes' || verdict === 'fail') && (
         <div className="review-card-return">
-          ↩ returns to {String(review.return_to).replace(/_/g, ' ')}
+          ↩ returns to {stateLabel(review.return_to)}
         </div>
       )}
       {findings.length > 0 && (

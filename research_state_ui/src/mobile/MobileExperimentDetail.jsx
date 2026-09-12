@@ -8,6 +8,7 @@ import MobileGraphSection from './MobileGraphSection';
 import MobileDoc from './MobileDoc';
 import { Skeleton } from './Skeleton';
 import { expName, experimentDocs, statusColor, statusLine, TERMINAL_STATUSES } from '../utils/experiment';
+import { agentPrompt } from '../utils/vocab';
 
 /**
  * Mobile experiment detail — one continuous scroll. Status → Plan → Run →
@@ -165,17 +166,14 @@ export default function MobileExperimentDetail() {
 
 // The entire workflow apparatus as one statement: a 3px index in the state's
 // color (the same facet language as the list rows), the state sentence, and
-// — only while live — the server's next move, humanized from its snake_case.
+// — only while live — the agent's next move in the shared vocabulary.
 // FSM enumeration, gate cards, and counts are deliberately omitted.
 // Renders on the shared .mstatus* grammar (mobile.css) — any mobile detail
 // page can reuse it for its own one-line lifecycle statement.
 function StatusStatement({ experiment, workflow }) {
   const status = (experiment.status || 'planned').toLowerCase();
   const color = statusColor(status);
-  const next = workflow?.next_action && workflow.next_action !== 'none'
-    ? humanizeAction(workflow.next_action)
-    : null;
-  const missing = workflow?.missing_evidence || [];
+  const next = agentPrompt(workflow?.next_action, { state: status, name: expName(experiment) });
 
   return (
     <div className="mstatus">
@@ -184,22 +182,10 @@ function StatusStatement({ experiment, workflow }) {
         <div className="mstatus-line" style={{ color }}>
           {statusLine(experiment, status, Date.now())}
         </div>
-        {next && <div className="mstatus-next">{next}</div>}
-        {missing.map((m, i) => (
-          <div key={i} className="mstatus-next">missing · {String(m).replace(/_/g, ' ')}</div>
-        ))}
+        {next && <div className="mstatus-next">agent’s move · {next}</div>}
       </div>
     </div>
   );
-}
-
-// "wait_for_reviewer" → "waiting on reviewer"; "launch_design_reviewer" →
-// "next · launch design reviewer". The wait_ prefix is the backend's "in
-// motion, nothing needed from you".
-function humanizeAction(action) {
-  const a = String(action);
-  if (/^wait[_-]/.test(a)) return `waiting on ${a.replace(/^wait[_-](for[_-])?/, '').replace(/_/g, ' ')}`;
-  return `next · ${a.replace(/_/g, ' ')}`;
 }
 
 // A heavy pane folded into the surface: a quiet disclosure row that mounts

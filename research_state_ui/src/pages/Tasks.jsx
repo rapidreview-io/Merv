@@ -55,7 +55,7 @@ export default function Tasks() {
       <header className="page-header page-header--lg">
         <div className="page-head-row">
           <div>
-            <h1 className="page-title">What we build</h1>
+            <h1 className="page-title">Tasks</h1>
             <p className="page-lede">
               Scoped work with a verifiable finish line and no claim — a literature
               sweep, data preparation, a harness, a memo. A brief of checks goes in,

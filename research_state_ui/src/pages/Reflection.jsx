@@ -12,7 +12,7 @@ import { TERMINAL_WAVE } from '../components/reflection/waveModel';
 import { fmtDayTime } from '../utils/format';
 
 /**
- * Reflection list — "What we learned": one row per reflection wave, in the
+ * Reflection list: one row per reflection wave, in the
  * experiments-table console dialect. Rows click through to the wave's own
  * page (/reflection/<id>); the graph lives on Home, not here.
  */
@@ -91,7 +91,7 @@ export default function Reflection() {
   return (
     <div className="page-stage">
       <header className="page-header page-header--lg">
-        <h1 className="page-title">What we learned</h1>
+        <h1 className="page-title">Reflection</h1>
       </header>
 
       {data && rows.length === 0 ? (
