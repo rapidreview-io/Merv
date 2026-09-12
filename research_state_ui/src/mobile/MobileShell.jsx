@@ -3,24 +3,13 @@ import { NavLink, Link, useLocation } from 'react-router-dom';
 import { useProjectStore, useProjectHref, selectStats, selectSandboxes } from '../store/useProjectStore';
 import { useAutorunStatus } from '../store/useAutorunStatus';
 import { NEXT_THEME_MODE, useTheme } from '../store/useTheme';
-import { useNow } from '../store/useNow';
 import ProjectSwitcher from '../components/ProjectSwitcher';
+import SyncChip from '../components/SyncChip';
 import { setSurfaceOverride } from '../store/useViewport';
 import BottomSheet from './BottomSheet';
 import ToastHost from './Toast';
 import { usePullToRefresh } from './usePullToRefresh';
 import { IconFeed, IconHome, IconExperiments, IconActivity, IconMore } from './icons';
-
-
-function fmtSyncedAgo(ms, now) {
-  if (!ms) return 'never';
-  const s = Math.max(0, Math.floor((now - ms) / 1000));
-  if (s < 5) return 'now';
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  return `${Math.floor(m / 60)}h`;
-}
 
 /**
  * Mobile app shell: top bar (project · freshness · theme), pull-to-refresh,
@@ -32,16 +21,9 @@ function fmtSyncedAgo(ms, now) {
 export default function MobileShell({ children, onRefresh }) {
   const location = useLocation();
   const home = useProjectStore(s => s.home);
-  const lastSyncedAt = useProjectStore(s => s.lastSyncedAt);
-  const lastSyncError = useProjectStore(s => s.lastSyncError);
-  const isPolling = useProjectStore(s => s.isPolling);
   const [sheetOpen, setSheetOpen] = useState(false);
   const { distance, refreshing } = usePullToRefresh(onRefresh);
   const px = useProjectHref();
-  // 10s tick so the "synced Xs" label and staleness stay honest even when
-  // polling has stopped delivering new store state (unreachable daemon).
-  const now = useNow(10000);
-
   useEffect(() => {
     document.documentElement.dataset.surface = 'mobile';
     return () => { delete document.documentElement.dataset.surface; };
@@ -51,17 +33,12 @@ export default function MobileShell({ children, onRefresh }) {
   useEffect(() => { setSheetOpen(false); }, [location.pathname]);
 
   const projectName = home?.project?.name || 'Merv';
-  const stale = lastSyncError || (lastSyncedAt && now - lastSyncedAt > 30000);
-  const dotClass = stale ? 'sync-dot stale' : (isPolling ? 'sync-dot' : 'sync-dot paused');
 
   return (
     <div className="mshell">
       <header className="mbar">
         <div className="mbar-title">{projectName}</div>
-        <div className="mbar-sync" aria-label={stale ? 'data stale' : 'data live'}>
-          <span className={dotClass} />
-          synced {fmtSyncedAgo(lastSyncedAt, now)}
-        </div>
+        <SyncChip className="mbar-sync" />
         <ThemeButton />
       </header>
 

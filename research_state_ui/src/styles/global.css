@@ -698,6 +698,8 @@ html[data-theme="dark"] .product-tab--active {
   flex-direction: column;
   gap: 4px;
 }
+/* Freshness chip: same dot + "synced Ns" grammar as the mobile bar. */
+.sidebar-sync { display: flex; align-items: center; gap: 6px; padding: 2px 10px 4px; color: var(--muted); }
 /* Account chip: the sidebar's bottommost row (reference grammar) — avatar
    initial + label above its own hairline; clicking opens a small upward
    menu with the sign-in/out action. Always rendered, even on localhost. */

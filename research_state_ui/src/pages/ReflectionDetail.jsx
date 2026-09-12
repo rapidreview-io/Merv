@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
-import { keepIfUnchanged, useIntervalPoll } from '../store/usePolling';
+import { useIntervalPoll, useRecordStatus } from '../store/usePolling';
+import { LoadFallback, StaleNote } from '../components/LoadState';
 import { useProjectStore, useProjectHref, selectExperiments, selectTasks } from '../store/useProjectStore';
 import ArtifactContentView from '../components/ArtifactContentView';
 import FSMStrip, { REFLECTION_STAGES, REFLECTION_GATES, REFLECTION_TERMINAL } from '../components/FSMStrip';
@@ -60,14 +61,7 @@ export default function ReflectionDetail() {
   const experiments = useProjectStore(selectExperiments);
   const tasks = useProjectStore(selectTasks);
   const px = useProjectHref();
-  const [data, setData] = useState(null);
-
-  const fetchReflections = useCallback(async () => {
-    try {
-      const payload = await api.getReflections(projectId);
-      setData(keepIfUnchanged(payload));
-    } catch { /* keep the last good payload */ }
-  }, [projectId]);
+  const [data, error, fetchReflections] = useRecordStatus(() => api.getReflections(projectId), [projectId]);
   useIntervalPoll(fetchReflections, 8000);
 
   const waves = data?.reflections || [];
@@ -91,9 +85,7 @@ export default function ReflectionDetail() {
   const reviews = wave?.reviews || [];
   const reflectionDoc = resolveReflectionDoc(waveArtifacts);
 
-  if (!data) {
-    return <div className="page-stage"><div className="empty-state">Loading reflection…</div></div>;
-  }
+  if (!data) return <LoadFallback error={error?.message} back={px('/reflection')} label="Reflections" />;
   if (!wave) {
     return (
       <div className="page-stage">
@@ -107,6 +99,7 @@ export default function ReflectionDetail() {
 
   return (
     <div className="page-stage">
+      {error && <StaleNote error={error.message} />}
       {/* ─────────────  STAGE  ──────────────────────────────────────── */}
       <section className="exp-fsm">
         <FSMStrip

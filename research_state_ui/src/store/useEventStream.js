@@ -27,6 +27,7 @@ export function useEventStream() {
   const projectId = useProjectStore(s => s.projectId);
   const refreshHome = useProjectStore(s => s.refreshHome);
   const setStreamHealthy = useProjectStore(s => s.setStreamHealthy);
+  const touchSync = useProjectStore(s => s.touchSync);
 
   useEffect(() => {
     if (!projectId || typeof EventSource === 'undefined') return undefined;
@@ -42,7 +43,7 @@ export function useEventStream() {
 
     const connect = () => {
       es = new EventSource(api.eventStreamUrl(projectId));
-      const beat = () => { lastBeat = Date.now(); };
+      const beat = () => { lastBeat = Date.now(); touchSync(); };
       // On (re)connect, resync once — anything missed while disconnected.
       es.onopen = () => { beat(); setStreamHealthy(true); refreshHome(); };
       es.onerror = () => { setStreamHealthy(false); };
@@ -60,17 +61,17 @@ export function useEventStream() {
 
     // Liveness watchdog. onerror alone is not enough: a dev/reverse proxy can
     // hold the browser side half-open after the upstream dies, so a stream
-    // that outlives 3 missed server heartbeats (15s cadence) is declared dead,
+    // that outlives 2 missed server heartbeats (15s cadence) is declared dead,
     // polling takes back over, and we reconnect from scratch (also the only
     // retry path once EventSource goes CLOSED on a non-200, e.g. hosted 401).
-    const STALL_MS = 45000;
+    const STALL_MS = 30000;
     const watchdog = setInterval(() => {
       if (Date.now() - lastBeat <= STALL_MS) return;
       setStreamHealthy(false);
       es.close();
       lastBeat = Date.now();
       connect();
-    }, 15000);
+    }, 5000);
 
     return () => {
       clearInterval(watchdog);
@@ -78,7 +79,7 @@ export function useEventStream() {
       setStreamHealthy(false);
       es.close();
     };
-  }, [projectId, refreshHome, setStreamHealthy]);
+  }, [projectId, refreshHome, setStreamHealthy, touchSync]);
 }
 
 /**
