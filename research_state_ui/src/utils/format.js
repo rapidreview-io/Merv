@@ -168,3 +168,12 @@ export function shortSha(sha) {
 export function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 }
+
+// Copy for a /content envelope with `available: false`. A complete row whose
+// bytes are gone (blob store lost the file) is a different fact from a role
+// nobody has submitted yet; the recorded size tells them apart.
+export function unavailableCopy(content, what = 'this artifact') {
+  return content?.size_bytes
+    ? `Stored bytes for ${what} are missing (${formatBytes(content.size_bytes)} recorded).`
+    : `No submitted content is available for ${what} yet.`;
+}

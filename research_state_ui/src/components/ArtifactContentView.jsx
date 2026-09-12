@@ -3,7 +3,7 @@ import { api } from '../api';
 import { AuthedImg, RawLink } from './AuthedMedia';
 import FileRenderer from './FileRenderer';
 import PdfView from './PdfView';
-import { extOf, formatBytes, isMarkdown } from '../utils/format';
+import { extOf, formatBytes, isMarkdown, unavailableCopy } from '../utils/format';
 import { useAsyncData } from '../store/usePolling';
 
 // Drop a leading "# <title>" from markdown when it just repeats a name already
@@ -140,13 +140,7 @@ export default function ArtifactContentView({
   if (!content) return null;
 
   // Canonical wire shape: { content, is_binary, size_bytes, content_type, available }.
-  if (content.available === false) {
-    return (
-      <div className="empty">
-        No submitted content is available for this artifact yet.
-      </div>
-    );
-  }
+  if (content.available === false) return <div className="empty">{unavailableCopy(content)}</div>;
 
   const isBinary = Boolean(content.is_binary);
   const fullText = content.content ?? '';
