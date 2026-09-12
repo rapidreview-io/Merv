@@ -6,6 +6,8 @@ import { useEventStream } from './store/useEventStream';
 import { useViewport } from './store/useViewport';
 import Sidebar, { SIDEBAR_KB, IconSidebar } from './components/Sidebar';
 import CompatBanner from './components/CompatBanner';
+import Connecting, { FullPageStatus } from './components/Connecting';
+import { bootErrorView, retryDelayMs } from './utils/bootError';
 import AppBackdrop from './bg/AppBackdrop';
 import MobileShell from './mobile/MobileShell';
 import HomeScreen from './mobile/HomeScreen';
@@ -133,6 +135,15 @@ export default function App() {
 
   useEffect(() => { loadProjects(); }, [loadProjects]);
 
+  // A failed boot retries on its own with backoff, so a backend that comes
+  // back is noticed without a click; the typed gates (401/426) only reload.
+  const bootView = bootError && bootErrorView(bootError, import.meta.env.DEV);
+  useEffect(() => {
+    if (!bootView?.retry) return undefined;
+    const t = setTimeout(loadProjects, retryDelayMs(bootError.tries));
+    return () => clearTimeout(t);
+  }, [bootError, bootView?.retry, loadProjects]);
+
   // ⌘B / Ctrl+B toggles the sidebar (desktop shell only) — skipped while
   // typing so contenteditable bold and terminal input stay untouched.
   useEffect(() => {
@@ -148,21 +159,19 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [isMobile]);
 
-  if (!projectsLoaded) {
-    return <FullPageStatus>Loading…</FullPageStatus>;
-  }
+  if (!projectsLoaded) return <Connecting />;
   if (bootError) {
     return (
       <FullPageStatus>
-        <h2>Backend not reachable</h2>
-        <p>Is the Merv HTTP server running on <code>127.0.0.1:8787</code>?</p>
-        <p className="mono" style={{ fontSize: 'var(--text-xs)', marginTop: 8 }}>
-          python3 scripts/dev_http_reload.py --host 127.0.0.1 --port 8787
-        </p>
+        <h2>{bootView.title}</h2>
+        <p>{bootView.body}</p>
+        {bootView.hint && <p className="mono" style={{ fontSize: 'var(--text-xs)', marginTop: 8 }}>{bootView.hint}</p>}
         <div style={{ marginTop: 18 }}>
-          <button className="btn" onClick={() => loadProjects()}>Retry</button>
+          {bootView.reload
+            ? <button className="btn" onClick={() => window.location.reload()}>Reload</button>
+            : <button className="btn" onClick={() => loadProjects()}>Retry</button>}
         </div>
-        <div className="error-message" style={{ marginTop: 10 }}>{bootError}</div>
+        <div className="error-message" style={{ marginTop: 10 }}>{bootError.message}</div>
       </FullPageStatus>
     );
   }
@@ -272,13 +281,5 @@ export default function App() {
         </main>
       </div>
     </>
-  );
-}
-
-function FullPageStatus({ children }) {
-  return (
-    <div className="page-stage" style={{ display: 'flex', alignItems: 'center', minHeight: '80vh' }}>
-      <div className="empty-state" style={{ textAlign: 'left' }}>{children}</div>
-    </div>
   );
 }
