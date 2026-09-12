@@ -20,7 +20,8 @@ the returned `agent_id` in every Merv call that follows.
 Use the assigned `review_request_id` with `review.start`. In an assigned agent
 session, pass `reviewer_capability="assigned"` and
 `caller_session_id="assigned"`. Otherwise use the exact handoff values and a
-reviewer identity distinct from the producer.
+`caller_session_id` distinct from the producer's. The session binds to your
+`agent_id`: only this context window can submit its verdict.
 
 Work from the returned proposal snapshot and `consolidation.get`. Do not edit,
 commit, submit artifacts, change research state, or advance Git. Running
@@ -64,4 +65,6 @@ smallest code, validation, or decision correction required. Never return to
 
 Submit through `review.submit` with a concise researcher-facing synopsis,
 specific findings, and optional structured evidence. Stop after submission.
+A pass leaves the wave in review status; the receipt's `next_action` says the
+Merv runner publishes after central advance, and no agent transition follows.
 The runner—not the reviewer—performs the central compare-and-swap.

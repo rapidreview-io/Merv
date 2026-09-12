@@ -25,18 +25,21 @@ the returned `agent_id` in every Merv call that follows.
 Use the assigned `experiment_id` and `review_request_id`. In an auto-run session,
 call `review.start` with `reviewer_capability="assigned"` and
 `caller_session_id="assigned"`; Merv resolves your authenticated identity.
-For an interactive handoff, require its exact capability and use your own stable
-`caller_session_id`, distinct from the producer, with optional `declared_agent`. Begin
-with its pinned project context, plan, report, and artifact references. Batch
-the listed result, graph, and exhibit ids through `artifact.read` only when
-their full submitted evidence is needed. Inspect retained outputs and durable run
-receipts before reproducing work; a fresh review is not a reason to rerun completed jobs.
+For an interactive handoff, use its exact capability and your own stable
+`caller_session_id`, distinct from the producer's. The session binds to your
+`agent_id`: only this context window can submit its verdict. Begin with the
+returned project context, plan, report, and artifact references. Batch the
+listed result, graph, and exhibit ids through `artifact.read
+include_content=true` when their submitted evidence is needed; a read is
+16 KB per artifact, page with `offset=next_offset`. Inspect retained outputs and
+durable run receipts before reproducing work; a fresh review is not a reason to
+rerun completed jobs.
 
 Operate read-only. Auto-run credentials enforce this boundary; interactive
 reviewers must follow it when using a general project key. Do not mutate the
 work, its artifacts, sandboxes, or workflow directly. Use only `review.start`
-and `review.submit` for review mutations. Submission applies the graph's verdict
-route and ends your assignment.
+and `review.submit` for review mutations. `review.submit` applies the verdict's
+route itself and ends your assignment.
 
 ## Verify the attempt
 
@@ -69,8 +72,8 @@ conclusion.
 
 ## Choose the verdict and return
 
-- `pass`: the attempt supports the conclusion at its claimed scope; Merv
-  completes the experiment.
+- `pass`: the attempt supports the conclusion at its claimed scope; the verdict
+  moves the experiment to `complete`.
 - `needs_changes`: the attempt needs repair, rerun, or a narrower conclusion.
 - `fail`: the attempt is invalid or cannot support its conclusion.
 
@@ -96,4 +99,6 @@ Submit only the fields accepted by `review.submit`:
 `evidence`. Use evidence to state what a next attempt should reuse and change.
 
 Each finding should name the concrete issue, cite the submitted file, metric,
-command, or observed fact, and recommend the smallest correction. Return a brief verdict summary after submission.
+command, or observed fact, and recommend the smallest correction. The receipt
+carries `target.status_before`/`status_after` and a `next_action`; report those
+with a brief verdict summary. The producer never applies the completion itself.
