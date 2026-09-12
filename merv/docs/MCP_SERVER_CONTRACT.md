@@ -402,8 +402,7 @@ or expiry destroys anything not explicitly retained.
   captured image or HTML embed that prints the same receipt; feed registration
   and reads are brain control operations.
 - Every upload command is `curl -sS --fail-with-body`, so a rejected upload
-  prints the server's reason; `litreview.edit` answers `{section, revision,
-  bytes}`.
+  prints the server's reason.
 
 ## HTTP transport and errors
 

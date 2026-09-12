@@ -212,8 +212,7 @@ snapshot, rejects stale or superseded requests, and rechecks the snapshot at
 submission. A successful start returns the project's name and summary, the
 target's slim experiment/reflection context, and full content for the pinned
 submission being reviewed. The verdict moves the target itself; the producer
-refreshes `workflow.status_and_next` afterward and never calls the approving
-transition.
+refreshes `workflow.status_and_next` afterward.
 
 New sessions that pass the distinct-id check are recorded as
 `verified_agent_review`; `attested_agent_review` remains only on legacy rows.

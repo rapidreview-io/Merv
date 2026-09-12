@@ -51,9 +51,7 @@ is workflow-level rather than cryptographic identity.
    review.submit(review_session_id, verdict, synopsis, return_to?, notes?, findings?, evidence?)
    ```
 
-The requesting session must not start the review on the reviewer's behalf. The
-server can compare the two declared strings, but cannot prove which client made
-the call.
+The requesting session must not start the review on the reviewer's behalf.
 
 ## Snapshot and capability checks
 
