@@ -11,7 +11,7 @@ an independently operated machine, the one-time upload completion tokens, and
 
 from __future__ import annotations
 
-from ..kernel.state.schema import Connection, Migration, SchemaModule
+from ..kernel.state.schema import Connection, Migration, SchemaModule, has_column
 
 
 INFRASTRUCTURE_DDL = """\
@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS remote_sandbox_links (
   sandbox_uid TEXT NOT NULL,
   experiment_id TEXT NOT NULL DEFAULT '',
   public_key TEXT NOT NULL DEFAULT '',
+  certificate_expires_at TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   PRIMARY KEY (project_id, sandbox_uid, experiment_id),
   FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -105,14 +106,17 @@ def _drop_legacy_infrastructure_tables(conn: Connection) -> None:
         conn.execute(f"DROP TABLE IF EXISTS {table}")
 
 
+def _remember_certificate_expiry(conn: Connection) -> None:
+    """Migration 81: a link remembers when the certificate it last issued expires."""
+    if not has_column(conn, "remote_sandbox_links", "certificate_expires_at"):
+        conn.execute("ALTER TABLE remote_sandbox_links ADD COLUMN certificate_expires_at TEXT NOT NULL DEFAULT ''")
+
+
 INFRASTRUCTURE_SCHEMA = SchemaModule(
     name="infrastructure",
     ddl=INFRASTRUCTURE_DDL,
     migrations=(
-        Migration(
-            65,
-            "drop_legacy_infrastructure_tables",
-            _drop_legacy_infrastructure_tables,
-        ),
+        Migration(65, "drop_legacy_infrastructure_tables", _drop_legacy_infrastructure_tables),
+        Migration(81, "remember_certificate_expiry", _remember_certificate_expiry),
     ),
 )

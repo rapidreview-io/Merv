@@ -439,12 +439,8 @@ class ArtifactFlowTest(unittest.TestCase):
             if artifact["role"] == "reflection_lens_doc"
         ]
         self.assertEqual(len(default_lenses), 5)
-        for artifact in default_lenses:
-            self.assertNotIn("content", artifact)
-            self.assertEqual(
-                artifact["tldr"],
-                f"Findings through this lens.",
-            )
+        # A status read names the documents; their bytes come with include_content.
+        self.assertEqual({tuple(artifact) for artifact in default_lenses}, {("id", "role", "lens_id", "path", "size_bytes")})
 
         deep_dive = self.call(
             "reflection.get",

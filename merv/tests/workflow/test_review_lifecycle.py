@@ -88,10 +88,11 @@ class RecoveryTest(ReviewLifecycleCase):
 
     def test_the_reviewer_packet_is_the_pinned_evidence_and_nothing_producer_facing(self) -> None:
         self.assertEqual(set(self.started) - {"context"}, {"review_session_id", "project_id", "role", "target_type",
-                         "target_id", "target_snapshot_id", "independence", "project_context"})
+                         "target_id", "independence", "project_context"})
         self.assertEqual(set(self.started["project_context"]["project"]), {"id", "name", "summary"})
         self.assertIn("## Summary", self.started["context"]["plan"]["content"])
-        self.assertLess(len(json.dumps(self.started)), 1500)
+        self.assertLess(len(json.dumps(self.started)) - len(self.started["context"]["plan"]["content"]), 800)
+        self.assertLess(len(json.dumps(self.requested)), 1100)
 
     def test_retry_returns_same_handle_without_new_history_or_context(self) -> None:
         before = self.instance(self.args["review_request_id"])

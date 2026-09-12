@@ -255,7 +255,7 @@ TOOLS: dict[str, ToolContract] = {
     ),
     "sandbox.get": ToolContract(
         handler_identity="sandboxes.get", input_model=SandboxGetInput,
-        description="Read one sandbox: a short poll receipt while provisioning, then the full facts and a fresh SSH certificate (save it beside your key, pin the gateway host key). Work in /workspace; launch jobs with sandbox.run.",
+        description="Read one sandbox: a poll receipt while provisioning, then the facts; ssh{} rides only with a newly issued certificate (save it beside your key, pin the gateway host key). Jobs run in /workspace.",
     ),
     "sandbox.attach": ToolContract(
         handler_identity="sandboxes.attach", input_model=SandboxAttachInput,

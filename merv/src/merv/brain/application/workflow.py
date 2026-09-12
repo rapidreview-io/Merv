@@ -53,12 +53,7 @@ def present_workflow(*, revision_context, evaluation: GateEvaluation):
     if review is not None and decision.node is not None and decision.node.execution.read_only:
         item = next(iter(review.items), {})
         status = "attested_blocked" if review.problems and review.status == "pending" else review.status
-        result["review_gate"] = {
-            "role": decision.node.role, "target_type": decision.snapshot.workflow,
-            "target_id": decision.snapshot.id, "status": status,
-            "read_only": True,
-            **{name: item[name] for name in ("request_id", "expires_at", "skill", "label") if item.get(name)},
-        }
+        result["review_gate"] = {"status": status, **{name: item[name] for name in ("request_id", "expires_at", "skill") if item.get(name)}}
     return result
 
 
@@ -329,7 +324,9 @@ def _slim_status(full: Record, *, experiment_context: Record | None, task_contex
     if task_context is not None:
         result.update(scope="task", context=task_context)
     elif experiment_context is not None:
-        result.update(scope="experiment", context=experiment_context, sandbox=_sandbox_summary(full.get("sandboxes", [])))
+        result.update(scope="experiment", context=experiment_context)
+        if experiment_context["experiment"]["status"] == "running":
+            result["sandbox"] = _sandbox_summary(full.get("sandboxes", []))
     else:
         result.update(scope="project", context={"project": full["project"]})
     for key in ("project_reflection", "litreview"):

@@ -58,9 +58,8 @@ class StatusGuidanceContractTest(unittest.TestCase):
         gate = evaluation(state="audit", read_only=True, review=review,
                           blockers=(Issue("review_required", "Review required.", "request_review", ("review.request",)),))
         result = present_workflow(revision_context=self.target["revision_context"], evaluation=gate)
-        self.assertEqual(result["review_gate"]["request_id"], "request_1")
-        self.assertEqual(result["review_gate"]["target_type"], "custom_plugin")
-        self.assertEqual(result["review_gate"]["role"], "independent_reviewer")
+        self.assertEqual(result["review_gate"], {"status": "requested", "request_id": "request_1",
+                                                 "expires_at": "2026-09-10T00:00:00Z", "skill": "plugin-review"})
         self.assertEqual(result["next_action"], "request_review")
         self.assertEqual(result["allowed_actions"], ["review.request"])
 

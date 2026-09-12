@@ -123,12 +123,8 @@ class StorageHttpApiTest(unittest.TestCase):
         )
         # The service created the object; the compound command is a signed
         # PUT followed by the completion POST.
-        self.assertFalse(submitted["uploaded"])
-        self.assertEqual(
-            submitted["object"]["name"], "experiments/storage_demo/run.log"
-        )
-        self.assertEqual(submitted["object"]["status"], "uploading")
-        self.assertEqual(submitted["upload_id"], submitted["object"]["id"])
+        self.assertEqual(set(submitted), {"object_id", "name", "version", "run"})
+        self.assertEqual(submitted["name"], "experiments/storage_demo/run.log")
         run = submitted["run"]
         self.assertIn("-H 'Content-Type: ", run)
         self.assertIn("-T 'experiments/storage_demo/run.log'", run)
@@ -162,8 +158,8 @@ class StorageHttpApiTest(unittest.TestCase):
             {"project_id": self.project_id, "path": "experiments/storage_demo/run.log",
              "kind": "other", "sha256": sha, "size_bytes": len(data)},
         )
-        self.assertEqual(again["object"]["version"], 2)
-        self.assertNotEqual(again["object"]["id"], obj["id"])
+        self.assertEqual(again["version"], 2)
+        self.assertNotEqual(again["object_id"], obj["id"])
 
     def test_storage_submit_rejects_control_chars_in_content_type(self) -> None:
         with self.assertRaises(ValidationError):
@@ -196,7 +192,7 @@ class StorageHttpApiTest(unittest.TestCase):
         target = self.client.get(f"/api/storage/u/{token}").json()["upload"]
         self.assertEqual(len(target["parts"]), 3)
         self.assertEqual(base64.b64decode(target["checksum_sha256"]).hex(), hashlib.sha256(data).hexdigest())
-        self.sandboxes.upload_bytes(submitted["object"]["id"], data)
+        self.sandboxes.upload_bytes(submitted["object_id"], data)
         completed = self.client.post(
             f"/api/storage/u/{token}/complete",
             json={"parts": [{"part_number": 2, "etag": '"two"'}, {"part_number": 1, "etag": '"one"'}]},

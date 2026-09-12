@@ -132,15 +132,12 @@ class WorkflowSlimTest(unittest.TestCase):
         self.assertTrue(report["expires_at"])
 
         # The project document and other experiments stay outside this scoped context,
-        # and the gate is stated once: the suggested action carries its blockers.
-        self.assertEqual(set(slim), {"scope", "workflow", "context", "sandbox"})
+        # the gate is stated once (the suggested action carries its blockers), and a
+        # sandbox block appears only once the experiment runs.
+        self.assertEqual(set(slim), {"scope", "workflow", "context"})
         self.assertNotIn("blocked_actions", slim["workflow"])
         self.assertNotIn("missing_evidence", slim["workflow"])
-        self.assertLess(len(json.dumps(slim)) - len(plan["content"]), 1_700)
-
-        # No sandbox yet → explicitly says so.
-        self.assertFalse(slim["sandbox"]["active"])
-        self.assertIn("note", slim["sandbox"])
+        self.assertLess(len(json.dumps(slim)) - len(plan["content"]), 1_500)
 
     def test_review_history_is_not_dumped_into_experiment_context(self) -> None:
         exp_id = self._experiment_with_plan()
@@ -168,6 +165,12 @@ class WorkflowSlimTest(unittest.TestCase):
                             reviewer_capability=request["reviewer_capability"], caller_session_id="design-reviewer")
         self.call("review.submit", review_session_id=session["review_session_id"], verdict="pass",
                   synopsis="The plan can test the registered claim with its fixed comparison and clear decision rule.")
+        # Once approved, the plan rides as its summary; the running status stays small.
+        running = self.call("workflow.status_and_next", project_id=self.project_id, experiment_id=exp_id)
+        self.assertEqual((running["workflow"]["state"], running["context"]["plan"]["status"]), ("running", "approved"))
+        self.assertNotIn("content", running["context"]["plan"])
+        self.assertFalse(running["sandbox"]["active"])
+        self.assertLess(len(json.dumps(running)), 1_800)
         report = self.app.submit_artifact(
             project_id=self.project_id,
             target_type="experiment",
@@ -244,6 +247,7 @@ class WorkflowSlimTest(unittest.TestCase):
         )
         sandbox = slim["sandbox"]
         self.assertTrue(sandbox["active"])
+        self.assertLess(len(json.dumps(slim)) - len(slim["context"]["plan"]["content"]), 1_800)
         self.assertTrue(sandbox["sandbox_uid"])
         self.assertNotIn("ssh", sandbox)  # certificates are issued by sandbox.get
         self.assertEqual(sandbox["status"], "running")

@@ -124,14 +124,30 @@ class RemoteSandboxesTest(unittest.TestCase):
         return self.engine.request(project_id="p1", experiment_id="e1", public_key=PUBLIC_KEY,
                                    instance_type="cpu:us", provider="cloud", **kwargs)
 
-    def test_gateway_certificate_and_association_survive_reconstruction(self):
+    def issued(self):
+        return sum(call[1] == "/access/certificates" for call in self.client.calls)
+
+    def test_a_certificate_is_issued_once_and_again_after_it_expires(self):
         facts = self.create()
+        self.assertEqual((facts["ssh"]["host"], self.issued()), ("ssh.sandboxes.test", 1))
         again = RemoteSandboxes(client=self.client, store=self.store, attachment_check=self.check_experiment)
-        result = again.get(project_id="p1", experiment_id="e1")
-        self.assertEqual(result["sandbox_uid"], facts["sandbox_uid"])
-        self.assertEqual(result["ssh"]["host"], "ssh.sandboxes.test")
-        self.assertIn("certificate", result["ssh"])
-        self.assertNotIn("do-not-expose-provider", str(result))
+        polled = again.get(project_id="p1", experiment_id="e1")
+        # The association and the live certificate survive reconstruction: a poll re-issues nothing.
+        self.assertEqual((polled["sandbox_uid"], self.issued()), (facts["sandbox_uid"], 1))
+        self.assertFalse({"ssh", "hint"} & set(polled))
+        self.assertNotIn("do-not-expose-provider", str(polled))
+        with self.store.transaction() as conn:
+            conn.execute("UPDATE remote_sandbox_links SET certificate_expires_at = '2000-01-01T00:00:00Z'")
+        renewed = again.get(project_id="p1", experiment_id="e1")
+        self.assertEqual((renewed["ssh"]["certificate_expires_at"], self.issued()), ("2099-01-01T00:00:00Z", 2))
+        self.assertIn("known_hosts", renewed["hint"])
+        # attach records the association and nothing else; a request with a new key issues afresh.
+        attached = self.engine.attach(project_id="p1", experiment_id="e2", sandbox_uid=facts["sandbox_uid"])
+        self.assertEqual(set(attached), {"sandbox_uid", "experiment_id", "status", "reused", "hint"})
+        self.assertNotIn("ssh", self.engine.get(project_id="p1", experiment_id="e2"))
+        self.engine.request(project_id="p1", experiment_id="e2", public_key=PUBLIC_KEY.replace("AAAA", "BBBB", 1),
+                            instance_type="cpu:us", provider="cloud")
+        self.assertEqual(self.issued(), 3)
 
     def test_hardware_public_keys_follow_the_shared_supported_key_contract(self):
         fields = [b"sk-ssh-ed25519@openssh.com", b"f" * 32, b"ssh:test"]
@@ -265,7 +281,7 @@ class RemoteSandboxesTest(unittest.TestCase):
         for name, ceiling, result in (
             ("options", 300, self.engine.options(project_id="p1")),
             ("get.provisioning", 230, polled),
-            ("get.running", 1100, self.engine.get(project_id="p1", sandbox_uid=uid)),
+            ("get.running", 520, self.engine.get(project_id="p1", sandbox_uid=uid)),  # no ssh while the certificate lives
             ("extend", 150, self.engine.extend(project_id="p1", sandbox_uid=uid)),
             ("pull_outputs", 1100, self.engine.pull_outputs_command(project_id="p1", sandbox_uid=uid)),
             ("run", 400, ran),

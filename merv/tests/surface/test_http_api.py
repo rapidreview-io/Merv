@@ -200,10 +200,7 @@ class ResearchPluginHttpApiTest(unittest.TestCase):
             },
         )
         self.assertEqual(review_request["role"], "design_reviewer")
-        self.assertEqual(
-            review_request["target_snapshot"]["artifacts"][0]["artifact_id"],
-            artifact_id,
-        )
+        self.assertNotIn("target_snapshot", review_request)  # the queue view below carries it
         reviews = self.request(
             "GET",
             f"/api/projects/{project_id}/reviews?target_type=experiment&target_id={exp_id}",

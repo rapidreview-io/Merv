@@ -418,6 +418,7 @@
       "updated_at"
     ],
     "remote_sandbox_links": [
+      "certificate_expires_at",
       "created_at",
       "experiment_id",
       "project_id",

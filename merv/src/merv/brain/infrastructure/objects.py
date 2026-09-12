@@ -230,7 +230,7 @@ class RemoteObjects:
             if "url" in upload
             else storage_multipart_submit_command(base_url=base_url, path=str(path), token=token)
         )
-        return {"object": obj, "upload_id": str(obj["id"]), "uploaded": False, "run": run}
+        return {"object_id": str(obj["id"]), "name": obj["name"], "version": obj["version"], "run": run}
 
     def complete_upload(
         self, *, project_id: str | None, upload_id: str,
