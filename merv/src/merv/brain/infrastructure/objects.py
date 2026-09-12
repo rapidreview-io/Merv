@@ -13,7 +13,7 @@ import secrets
 from contextlib import closing, suppress
 from typing import Any, Mapping, Protocol
 
-from merv.shared.storage_guidance import DEFAULT_STORAGE_MAX_UPLOAD_BYTES, storage_guidance
+from merv.shared.storage_guidance import DEFAULT_STORAGE_MAX_UPLOAD_BYTES
 
 from ..kernel.ports.blob_store import validate_blob_keys
 from ..kernel.state import BaseStateStore
@@ -377,7 +377,6 @@ class RemoteObjects:
             "objects": objects, "count": len(objects), "returned": len(objects),
             "total": len(rows), "offset": start, "compact": bool(compact),
             "has_more": (start + len(objects)) < len(rows),
-            "guidance": storage_guidance(enabled=True),
         }
 
     def get_object(self, *, project_id: str | None, object_id: str) -> dict[str, Any]:
@@ -395,6 +394,7 @@ class RemoteObjects:
             raise ValidationError("path is required (the local destination file)")
         resolved = self.find(
             project_id=project_id, object_id=object_id, name=name, version=version,
+            select_one=True,
         )
         obj = resolved["object"]
         return {

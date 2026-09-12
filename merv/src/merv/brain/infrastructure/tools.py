@@ -376,7 +376,9 @@ TOOLS: dict[str, ToolContract] = {
             "include_download=true, a presigned download URL that renews its "
             "retention. Omit both to list objects: filter by status (available "
             "by default), paginate with limit/offset, and pass compact=true for "
-            "a lean projection."
+            f"a lean projection. {STORAGE_RULE_OF_THUMB} Keep plan.md, report.md, "
+            "graph.json, scripts, configs, metrics and plots in the repo; leave "
+            "regenerable caches and scratch downloads in the sandbox."
         ),
     ),
     "storage.fetch": ToolContract(
