@@ -52,7 +52,6 @@ class ResearchArtifacts:
         )
         with self._store.transaction() as tx:
             target = self._resolve_target(tx=tx, target=target, for_submission=True)
-            _require_roster_lens(tx, target, lens_id)
             pending = self.contents.submit(
                 project_id=str(target.project_id),
                 path=path,
@@ -139,7 +138,6 @@ class ResearchArtifacts:
                     tx=tx,
                 )
         target = self._resolve_target(tx=tx, target=target, for_submission=True)
-        _require_roster_lens(tx, target, lens_id)
         project_id = str(target.project_id)
         self.contents.assert_complete(
             artifact_ids=(artifact_id,), project_id=project_id, tx=tx
@@ -175,6 +173,11 @@ class ResearchArtifacts:
     def _link(
         self, tx: Connection, artifact_id, target, role, lens_id="", *, active, association_id=None
     ):
+        if lens_id and target.target_type == "reflection":  # a lens names one roster lens of its wave
+            row = tx.execute("SELECT roster_json FROM reflections WHERE id = ?", (target.target_id,)).fetchone()
+            roster = [str(item.get("id")) for item in json.loads(row["roster_json"] or "[]")] if row else []
+            if lens_id not in roster:
+                raise ValidationError(f"unknown lens_id {lens_id!r}; this reflection's roster is: {', '.join(roster)}")
         association_id = association_id or new_id(prefix="artref")
         tx.execute(
             """INSERT INTO research_artifact_links
@@ -552,16 +555,6 @@ class ResearchArtifacts:
             target_id=str(row["target_id"]),
             payload=payload,
         )
-
-
-def _require_roster_lens(tx: Connection, target, lens_id: str) -> None:
-    """A lens document names one lens of its wave's fixed roster."""
-    if not lens_id or target.target_type != "reflection":
-        return
-    row = tx.execute("SELECT roster_json FROM reflections WHERE id = ?", (target.target_id,)).fetchone()
-    roster = [str(item.get("id")) for item in json.loads(row["roster_json"] or "[]")] if row else []
-    if lens_id not in roster:
-        raise ValidationError(f"unknown lens_id {lens_id!r}; this reflection's roster is: {', '.join(roster)}")
 
 
 def _validate_association(*, target_type: str, role: str, lens_id: str = "") -> None:

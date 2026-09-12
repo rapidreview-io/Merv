@@ -332,10 +332,9 @@ class ReviewRequestInput(ProjectScopedInput):
     target_type: str = Field(min_length=1, description="experiment, task or reflection, or a plugin workflow's name.")
     target_id: str
     role: str = Field(min_length=1, max_length=128, description=(
-        "The reviewer role of the gate the target is waiting at, as status names it in review_gate.role: "
-        + ", ".join(f"{gate.role} ({kind.name} {kind.review_state(gate.role)})" for kind in (EXPERIMENT, TASK, REFLECTION)
-                    for gate in kind.review_gates)
-        + "; a plugin graph's read-only node declares its own."))
+        "The reviewer role of the gate the target is waiting at (status names it in review_gate.role): " + ", ".join(
+            f"{gate.role} ({kind.name} {kind.review_state(gate.role)})" for kind in (EXPERIMENT, TASK, REFLECTION)
+            for gate in kind.review_gates) + "; a plugin graph's read-only node declares its own."))
     reason: str = ""
     producer_session_id: str = "main"
 

@@ -19,8 +19,7 @@ from ..workflows import Public, present_reflection_signal, published_followups
 Record = dict[str, Any]
 
 AUTHORITATIVE_ROLES = frozenset({"project_graph", "reflection_doc", "change_spec"})
-# The agent reads sealed rounds through current_attempt_artifacts and gate_checklist.
-AGENT = Public(hidden=(*REFLECTION.public.hidden, "submissions"))
+AGENT = Public(hidden=(*REFLECTION.public.hidden, "submissions"))  # rounds read through the gate checklist
 _RECEIPT_FIELDS = ("status", "attempt_index", "gate_checklist", "allowed_transitions")
 _PACKET_REFLECTION = ("id", "title", "status", "attempt_index", "created_at", "published_at")
 _PACKET_ARTIFACT = ("id", "artifact_id", "role", "path", "content", "tldr")
@@ -106,8 +105,7 @@ def present_agent_reflection_state(
         state, AGENT,
         reviews=slim_review_rows(state.reviews),
         current_attempt_artifacts=[_tldr_only(artifact) for artifact in state.current_attempt_artifacts],
-        # Only earlier attempts' documents; the current round is listed once above.
-        artifacts=[_tldr_only(artifact) for artifact in state.artifacts if artifact.get("id") not in current],
+        artifacts=[_tldr_only(artifact) for artifact in state.artifacts if artifact.get("id") not in current],  # earlier attempts
         corpus=corpus,
     )
 

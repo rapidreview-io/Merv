@@ -295,8 +295,7 @@ REFLECTION = Workflow(
              label=RETURN_TO_REFLECTING.choose_when, event_type=RETURN_TO_REFLECTING.event_type, auto=True),
         Edge("reflection_review", "revise_synthesis", RETURN_TO_SYNTHESIZING.to_status, check=rejected("reflection_reviewer", RETURN_TO_SYNTHESIZING.to_status), change=_revision,
              label=RETURN_TO_SYNTHESIZING.choose_when, event_type=RETURN_TO_SYNTHESIZING.event_type, auto=True),
-        # Publish leads the review node's edges so a passed review suggests the
-        # runner's step, not another proposal.
+        # Publish leads the review node's edges: a passed review suggests the runner's step, not another proposal.
         Edge("consolidation_review", "publish", "published", change=publish_wave,
              label="Applied by the Merv runner once central has advanced", auto=True),
         *(Edge(state, "submit_consolidation", "consolidation_review", check=proposal_ready, change=pin_proposal,

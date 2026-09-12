@@ -712,9 +712,8 @@ class Application:
             after, transition="submit_consolidation", from_status=state.status,
             proposal_id=proposal["id"], proposal_revision=proposal["revision"],
             **({"superseded_proposal_id": previous} if previous else {}),
-            next_action=("Request the consolidation_reviewer with review.request (an auto-run wave dispatches it "
-                         "for you) and spawn the reviewer with the returned spawn_prompt; a pass hands the wave to "
-                         "the Merv runner, which publishes after central advance."))
+            next_action=("Request the consolidation_reviewer with review.request (auto-run dispatches it for you) and spawn "
+                         "the reviewer with its spawn_prompt; a pass hands the wave to the Merv runner, which publishes."))
 
     def prepare_agent_advance(
         self, *, project_id: str, instance_id: str, runner_id: str

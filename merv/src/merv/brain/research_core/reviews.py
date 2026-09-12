@@ -341,9 +341,7 @@ class ReviewService:
             snapshot = snapshot_from_id(snapshot_id=str(req["target_snapshot_id"]))
             current = self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"])
             node = self.runtime.registry.get(current.workflow, current.version).node(current.state)
-            # Native kinds hydrate their own reviewer context; a plugin graph's
-            # reviewer reads the node's assignment.
-            generic = req["target_type"] not in self.records.kinds
+            generic = req["target_type"] not in self.records.kinds  # native kinds hydrate their own context
             context = (self.runtime.assignment(conn=conn, project_id=current.project_id, instance_id=current.id)
                        if generic and node is not None and node.execution.read_only and node.role == req["role"] else None)
             return {
@@ -442,13 +440,11 @@ class ReviewService:
             return {
                 "id": review_id, "role": req["role"], "verdict": verdict, "return_to": return_to, "synopsis": synopsis,
                 "target": {"type": req["target_type"], "id": req["target_id"], "status_before": before, "status_after": after},
-                "next_action": (
-                    f"Report the verdict to the producer: {target} moved from {before!r} to {after!r} on this verdict, "
-                    "so it must call workflow.status_and_next, not a transition."
-                    if after != before else
-                    f"Report the verdict to the producer: {target} stays {before!r}; "
-                    + ("the Merv runner publishes the wave after central advance, no agent transition follows."
-                       if verdict == "pass" else "it should call workflow.status_and_next for the next step.")),
+                "next_action": f"Report the verdict to the producer: {target} " + (
+                    f"moved from {before!r} to {after!r} on this verdict; it must call workflow.status_and_next, not a transition."
+                    if after != before else f"stays {before!r}; " + (
+                        "the Merv runner publishes after central advance, no agent transition follows." if verdict == "pass"
+                        else "it should call workflow.status_and_next for the next step.")),
             }
 
     def status(
