@@ -380,17 +380,9 @@ export const api = {
     request(`/api/projects/${encodeURIComponent(pid)}/sandbox-providers`),
   getSandbox: (pid, eid, { sandboxUid = null } = {}) =>
     request(sandboxPath(pid, eid, sandboxUid)),
-  // Terminal transcript. Pass { since: cursor } (from the previous response's
-  // `cursor`) to fetch only new bytes — the cheap incremental poll. Without
-  // `since`, returns the last `tail` bytes (the initial full pull).
-  getSandboxTerminal: (pid, eid, { tail = 200000, since = null, sandboxUid = null } = {}) => {
-    const p = new URLSearchParams();
-    if (since != null) p.set('since', String(since));
-    else p.set('tail', String(tail));
-    return request(
-      `${sandboxPath(pid, eid, sandboxUid, '/terminal')}?${p.toString()}`,
-    );
-  },
+  // Terminal transcript: a fresh bounded snapshot (the last `tail` bytes) each call.
+  getSandboxTerminal: (pid, eid, { tail = 200000, sandboxUid = null } = {}) =>
+    request(`${sandboxPath(pid, eid, sandboxUid, '/terminal')}?tail=${tail}`),
   releaseSandbox: (pid, eid, { sandboxUid = null } = {}) =>
     request(sandboxPath(pid, eid, sandboxUid, '/release'), { method: 'POST' }),
   // Project compute spend, as merv-sandboxes reports it for the authorized

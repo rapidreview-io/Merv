@@ -98,7 +98,7 @@ export default function SandboxTable({ sandboxes, experiments, events, projectId
               experimentId={experimentId}
               projectId={projectId}
               now={now}
-              parachute={latestParachute(events, experimentId, s.sandbox_id)}
+              parachute={latestParachute(events, experimentId, s.sandbox_uid)}
               open={expanded === rowId}
               onToggle={() => setExpanded(expanded === rowId ? null : rowId)}
             />
