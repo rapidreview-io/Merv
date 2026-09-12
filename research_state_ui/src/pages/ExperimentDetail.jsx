@@ -19,17 +19,11 @@ import DetailsDrawer, {
 import { expName, experimentDocs } from '../utils/experiment';
 import { gateToSectionId, useScrollToHash } from '../utils/useScrollToHash';
 import { workflowActionButtons } from '../utils/workflowActions';
+import { transitionButton } from '../utils/vocab';
 import InlineMd from '../components/InlineMd';
 
-const PRIMARY_TRANSITIONS = {
-  submit_design:  { transition: 'submit_design',  label: 'Submit for design review' },
-  submit_results: { transition: 'submit_results', label: 'Submit results for review' },
-  complete:       { transition: 'complete',       label: 'Complete experiment' },
-};
-const SECONDARY_TRANSITIONS = [
-  { transition: 'mark_failed', label: 'Mark failed' },
-  { transition: 'abandon',     label: 'Abandon' },
-];
+const PRIMARY_TRANSITIONS = Object.fromEntries(['submit_design', 'submit_results', 'complete'].map(id => [id, transitionButton(id)]));
+const SECONDARY_TRANSITIONS = ['mark_failed', 'abandon'].map(transitionButton);
 const TERMINAL_TRANSITIONS = new Set([
   'complete',
   ...SECONDARY_TRANSITIONS.map(a => a.transition),
@@ -149,6 +143,7 @@ export default function ExperimentDetail() {
           <div className="fsm-gate-panel">
             <GateBanner
               workflow={workflow}
+              name={expName(experiment)}
               primaryAction={primary}
               secondaryActions={secondary}
               actionsBusy={busy}
@@ -220,13 +215,15 @@ export default function ExperimentDetail() {
       )}
 
       {/* ═════════════  EXECUTION  ══════════════════════════════════════
-          The sandbox: expanded while a run is live/provisioning, collapsed to
-          its header once the run has ended (collapsible). */}
-      <SandboxTerminal
-        projectId={projectId}
-        experimentId={experimentId}
-        collapsible
-      />
+          The sandbox, only once one is attached: expanded while a run is
+          live/provisioning, collapsed to its header once the run has ended. */}
+      {(statusData.sandboxes || []).length > 0 && (
+        <SandboxTerminal
+          projectId={projectId}
+          experimentId={experimentId}
+          collapsible
+        />
+      )}
 
       {/* ═════════════  DESIGN  ═════════════════════════════════════════
           The framing document, oldest so it anchors the bottom. Its design
