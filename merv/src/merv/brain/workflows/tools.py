@@ -15,8 +15,8 @@ from ..kernel.tools import ContractModel, ProjectScopedInput, ToolContract
 
 class WorkflowStatusAndNextInput(ProjectScopedInput):
     instance_id: str | None = Field(default=None, description="Any workflow instance id (lens, synthesis, plugin workflow).")
-    experiment_id: str | None = None
-    task_id: str | None = None
+    experiment_id: str | None = Field(default=None, description="Scope to one experiment (exp_ id).")
+    task_id: str | None = Field(default=None, description="Scope to one task (task_ id).")
 
     @model_validator(mode="after")
     def _one_scope(self) -> "WorkflowStatusAndNextInput":

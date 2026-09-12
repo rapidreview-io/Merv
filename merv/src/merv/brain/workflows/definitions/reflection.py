@@ -352,7 +352,7 @@ def submit_lens(snapshot, payload, knowledge):
     artifact = _artifact(_wave(snapshot, knowledge), "reflection_lens_doc", str(snapshot.data["lens_id"]))
     artifact_id = str(payload.get("artifact_id") or (artifact or {}).get("artifact_id") or (artifact or {}).get("id") or "")
     if not artifact_id:
-        raise WorkflowError("Submit this lens's reflection_lens_doc, or upload it with artifact.upload and pass artifact_id to this action.")
+        raise WorkflowError(f"Submit the {snapshot.data['lens_id']!r} lens's reflection_lens_doc, or upload it with artifact.upload and pass artifact_id to this action.")
     document = knowledge.read(Reference("artifact", artifact_id))
     problems = reflection_lens_doc_problems(document["text"])
     if problems:

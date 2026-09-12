@@ -112,7 +112,7 @@ class StorageObjectInput(ProjectScopedInput):
 class SandboxRequestInput(ProjectScopedInput):
     experiment_id: str | None = Field(default=None, description="Experiment to associate the machine with.")
     instance_type: str | None = Field(default=None, description="An offer's instance_type from sandbox.options.")
-    region: str | None = None
+    region: str | None = Field(default=None, description="Region filter, e.g. 'east'.")
     provider: str | None = Field(default=None, description="The offer's provider from sandbox.options.")
     gpu: str | None = Field(default=None, description="GPU filter over offers.")
     cpu: float | None = Field(default=None, gt=0, description="Minimum CPUs.")
@@ -129,7 +129,7 @@ class SandboxRequestInput(ProjectScopedInput):
 
 class SandboxOptionsInput(ProjectScopedInput):
     gpu: str | None = Field(default=None, description="GPU filter, e.g. 'H100'.")
-    region: str | None = None
+    region: str | None = Field(default=None, description="Region filter, e.g. 'east'.")
 
 
 class SandboxTargetInput(ProjectScopedInput):
@@ -175,7 +175,7 @@ class SandboxRunsInput(SandboxTargetInput):
 class SandboxRunInput(SandboxTargetInput):
     command: str = Field(min_length=1, max_length=65536, description="Shell command to run as a detached job.")
     name: str = Field(default="", max_length=128, description="Job label; derived from the command when empty.")
-    cwd: str = Field(default="/workspace", pattern=r"^/")
+    cwd: str = Field(default="/workspace", pattern=r"^/", description="Absolute working directory inside the sandbox.")
     timeout_seconds: int = Field(default=0, ge=0, description="0 uses the service default.")
     outputs: str = Field(default="", description="Directory to retain as a job output artifact.")
     idempotency_key: str | None = Field(default=None, max_length=128, description="Retry key; reuse only for the same command and inputs.")
@@ -186,7 +186,7 @@ class SandboxJobInput(ProjectScopedInput):
     job_id: str = Field(description="From sandbox.run or sandbox.runs.")
     after: str | None = Field(default=None, description="Cursor from the previous status, to long-poll for a change.")
     wait_seconds: int = Field(default=0, ge=0, le=MAX_WAIT_SECONDS)
-    cancel: bool = False
+    cancel: bool = Field(default=False, description="Request cancellation of this job.")
     stream: Literal["stdout", "stderr"] | None = Field(default=None, description="Read a bounded slice of this retained stream.")
     offset: int = Field(default=0, ge=0)
     limit: int = Field(default=4096, ge=1, le=1048576, description="Bytes to read from offset.")
@@ -211,8 +211,8 @@ TOOLS: dict[str, ToolContract] = {
         needs_base_url=True,
         input_model=StorageSubmitInput,
         description=(
-            "Register a heavy file and get a one-line `run` command that uploads it straight to object "
-            "storage; compute sha256 and size first, then execute the command verbatim. "
+            "Register a heavy file and get the one-line `run` command that uploads it; "
+            "compute sha256 and size first, then run it verbatim. "
             f"{STORAGE_RULE_OF_THUMB}"
         ),
     ),
