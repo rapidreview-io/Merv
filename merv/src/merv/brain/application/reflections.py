@@ -14,11 +14,14 @@ from ..research_core import (
 )
 from ..workflows.definitions.research_state import ReflectionState
 from .experiments.presentation import slim_review_rows
-from ..workflows import present_reflection_signal, published_followups
+from ..workflows import Public, present_reflection_signal, published_followups
 
 Record = dict[str, Any]
 
 AUTHORITATIVE_ROLES = frozenset({"project_graph", "reflection_doc", "change_spec"})
+# The agent reads sealed rounds through current_attempt_artifacts and gate_checklist.
+AGENT = Public(hidden=(*REFLECTION.public.hidden, "submissions"))
+_RECEIPT_FIELDS = ("status", "attempt_index", "gate_checklist", "allowed_transitions")
 _PACKET_REFLECTION = ("id", "title", "status", "attempt_index", "created_at", "published_at")
 _PACKET_ARTIFACT = ("id", "artifact_id", "role", "path", "content", "tldr")
 _PACKET_CORPUS_ARTIFACT = ("artifact_id", "id", "role", "path", "tldr")
@@ -67,8 +70,8 @@ def post_publish_guidance(
     }
 
 
-def present_reflection_state(state: ReflectionState, **computed: Any) -> Record:
-    result = public_record(REFLECTION.public, state, **computed)
+def present_reflection_state(state: ReflectionState, public: Public = REFLECTION.public, **computed: Any) -> Record:
+    result = public_record(public, state, **computed)
     if state.status == REFLECTION.success_status and state.materialized_experiments:
         # The follow-up answers the experiments it names, so it sits right after them.
         items = list(result.items())
@@ -98,15 +101,21 @@ def present_agent_reflection_state(
         for experiment in corpus.get("terminal_experiments", [])
         if isinstance(experiment, dict)
     ]
+    current = {artifact.get("id") for artifact in state.current_attempt_artifacts}
     return present_reflection_state(
-        state,
+        state, AGENT,
         reviews=slim_review_rows(state.reviews),
-        current_attempt_artifacts=[
-            _tldr_only(artifact)
-            for artifact in state.current_attempt_artifacts
-        ],
+        current_attempt_artifacts=[_tldr_only(artifact) for artifact in state.current_attempt_artifacts],
+        # Only earlier attempts' documents; the current round is listed once above.
+        artifacts=[_tldr_only(artifact) for artifact in state.artifacts if artifact.get("id") not in current],
         corpus=corpus,
     )
+
+
+def reflection_receipt(state: ReflectionState, *, transition: str, from_status: str, **extra: Any) -> Record:
+    """The compact acknowledgement of one committed reflection transition."""
+    return {"reflection_id": state.id, "transition": transition, "from_status": from_status,
+            **project_fields(state, _RECEIPT_FIELDS), **extra}
 
 
 def present_reflection_overview(overview: Record) -> Record:
@@ -160,6 +169,7 @@ def consolidation_packet(state: ReflectionState, *, workspaces: dict[str, Record
 
 __all__ = [
     "present_agent_reflection_state",
+    "reflection_receipt",
     "consolidation_packet",
     "present_reflection_overview",
     "present_reflection_state",

@@ -18,6 +18,7 @@ from merv.brain.research_core.policy import (
 
 from .scenarios import (
     LENSES,
+    REVIEW_SYNOPSIS,
     VALID_CHANGE_SPEC,
     VALID_PROJECT_GRAPH,
     VALID_REFLECTION,
@@ -156,6 +157,9 @@ class ReflectionWorkflowTest(ResearchCase):
                 transition="submit_reflections",
             )
 
+        with self.assertRaisesRegex(ValidationError, "unknown lens_id 'zzz'"):
+            self.submit(target_type="reflection", target_id=reflection_id, role="reflection_lens_doc",
+                        path="reflections/zzz.md", lens_id="zzz", body="# zzz\n\n## Summary\nNot on the roster.")
         self.submit_lenses(reflection_id)
         synthesizing = self.call(
             "reflection.transition",
@@ -163,6 +167,9 @@ class ReflectionWorkflowTest(ResearchCase):
             reflection_id=reflection_id,
             transition="submit_reflections",
         )
+        # A transition answers with a receipt, not the whole wave.
+        self.assertEqual((synthesizing["from_status"], synthesizing["transition"]), ("reflecting", "submit_reflections"))
+        self.assertLess(len(json.dumps(synthesizing)), 2000)
         self.assertEqual(synthesizing["status"], "synthesizing")
 
         roles = (
@@ -1007,7 +1014,9 @@ class ReflectionWorkflowTest(ResearchCase):
             ],
             producer_session_id="consolidator",
         )
-        decision = proposed["consolidation"]["decisions"][0]
+        self.assertEqual(proposed["proposal_revision"], 1)
+        decision = self.call("reflection.get", project_id=self.project_id,
+                             reflection_id=reflection_id)["consolidation"]["decisions"][0]
         self.assertEqual(decision["source_sha"], "a" * 40)
         self.assertEqual(decision["integration_outcome"], "applied")
 
@@ -1239,8 +1248,56 @@ class ReflectionWorkflowTest(ResearchCase):
         )
         # Submitting the repair answers the revision request, so the wave stops
         # asking for it: the transition's declared commit column clears it.
-        self.assertEqual(replaced["revision_context"], "")
-        self.assertEqual(replaced["consolidation"]["proposal"]["revision"], 2)
+        self.assertEqual((replaced["proposal_revision"], replaced["from_status"], replaced["status"]),
+                         (2, "consolidating", "consolidating"))
+        self.assertEqual(replaced["superseded_proposal_id"], state["consolidation"]["proposal"]["id"])
+        self.assertEqual(self.call("reflection.get", project_id=self.project_id,
+                                   reflection_id=reflection_id)["revision_context"], "")
+
+
+class ConsolidationHandoffTest(ResearchCase):
+    """After the code review passes, the wave belongs to the runner — and every
+    message in the loop stays within its byte budget."""
+
+    def test_a_passed_consolidation_review_hands_the_wave_to_the_runner(self) -> None:
+        reflection_id = self.drive_reflection_to_review()
+        request = self.call("review.request", project_id=self.project_id, target_type="reflection",
+                            target_id=reflection_id, role="reflection_reviewer", producer_session_id="producer")
+        session = self.call("review.start", review_request_id=request["review_request_id"],
+                            reviewer_capability=request["reviewer_capability"], caller_session_id="reviewer")
+        self.assertLess(len(json.dumps(session)) - len(json.dumps(session["submitted_artifacts"])), 3600)
+        self.call("review.submit", review_session_id=session["review_session_id"], verdict="pass",
+                  synopsis=REVIEW_SYNOPSIS)
+        packet = self.app.application.consolidation(project_id=self.project_id, reflection_id=reflection_id)
+        proposal = dict(base_sha="1" * 40, summary="No tracked source changed.", validation={},
+                        producer_session_id="consolidator", decisions=[
+                            {"experiment_id": item["id"], "disposition": "reviewed_not_used",
+                             "rationale": "No promotable change.", "integration_kind": "none"}
+                            for item in packet["experiments"]])
+        submitted = self.app.application.submit_consolidation(
+            project_id=self.project_id, reflection_id=reflection_id, proposal_sha="2" * 40, **proposal)
+        self.assertEqual((submitted["status"], submitted["proposal_revision"]), ("consolidating", 1))
+        self.assertNotIn("superseded_proposal_id", submitted)
+        self.assertIn("review.request", submitted["next_action"])
+        self.assertLess(len(json.dumps(submitted)), 2200)
+
+        verdict = self.review(target_type="reflection", target_id=reflection_id,
+                              role="consolidation_reviewer", verdict="pass", producer_session_id="consolidator")
+        self.assertEqual(verdict["target"]["status_after"], "consolidating")
+        self.assertIn("runner publishes", verdict["next_action"])
+        state = self.call("reflection.get", project_id=self.project_id, reflection_id=reflection_id)
+        checklist = state["gate_checklist"]
+        self.assertTrue(next(item for item in checklist["items"] if item["role"] == "consolidation_reviewer")["satisfied"])
+        self.assertEqual(checklist["transition"], "publish")
+        self.assertNotIn("submissions", state)
+        self.assertEqual(state["artifacts"], [])
+        self.assertLess(len(json.dumps(state)), 11000)
+        with self.assertRaisesRegex(WorkflowError, "already passed consolidation review"):
+            self.call("reflection.transition", project_id=self.project_id, reflection_id=reflection_id,
+                      transition="submit_consolidation")
+        with self.assertRaisesRegex(WorkflowError, "not allowed from 'consolidation_review'; allowed: submit_consolidation, abandon"):
+            self.call("reflection.transition", project_id=self.project_id, reflection_id=reflection_id,
+                      transition="submit_reflections")
 
 
 class ChangeSpecWaveDagTest(unittest.TestCase):
