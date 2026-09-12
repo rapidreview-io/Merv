@@ -25,6 +25,9 @@ from .reflections import present_agent_reflection_state
 from .tasks import TaskContextQuery
 
 _SUBMITTED_FIELDS = ("role", "lens_id", "path", "submission_id")
+# What a reflection reviewer grades against; the documents ride in submitted_artifacts.
+_REVIEWER_REFLECTION_FIELDS = ("id", "title", "status", "attempt_index", "revision_context", "roster",
+                               "reflection_coverage", "corpus", "consolidation")
 
 
 def request_review(research: Research, **kwargs: Any) -> dict[str, Any]:
@@ -113,15 +116,8 @@ def start_review(
         artifacts=artifacts,
         snapshot=target_snapshot,
     ) if target_type in {"experiment", "task", "reflection"} else []
-    result["read_scope"] = [
-        "claim",
-        "experiment",
-        "task",
-        "reflection",
-        "artifact",
-        "review",
-    ]
-    result["project_context"] = {"project": research.synthesis.document(project_id=project_id)}
+    result["project_context"] = {"project": project_fields(
+        research.synthesis.document(project_id=project_id), ("id", "name", "summary"))}
     if target_type == "experiment":
         live_state = research.experiments.get_state(
             experiment_id=target_id,
@@ -144,14 +140,9 @@ def start_review(
             )
     elif target_type == "reflection":
         result["submitted_artifacts"] = submitted_artifacts
-        result["reflection_context"] = present_agent_reflection_state(
-            research.reflections.get_state(
-                project_id=project_id,
-                reflection_id=target_id,
-                include_content=True,
-            ),
-            include_content=False,
-        )
+        result["reflection_context"] = project_fields(present_agent_reflection_state(
+            research.reflections.get_state(project_id=project_id, reflection_id=target_id, include_content=True),
+        ), _REVIEWER_REFLECTION_FIELDS)
     else:
         result["target_snapshot"] = target_snapshot
         result.setdefault("context", {})

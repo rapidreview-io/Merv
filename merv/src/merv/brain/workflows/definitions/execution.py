@@ -29,7 +29,7 @@ SANDBOX_BOUND_TOOLS = frozenset({
 })
 SANDBOX_TOOLS = SANDBOX_BOUND_TOOLS | {"sandbox.health", "sandbox.options"}
 
-REVIEW_TOOLS = KNOWLEDGE_TOOLS | {"consolidation.get", "review.start", "review.status", "review.submit"}
+REVIEW_TOOLS = KNOWLEDGE_TOOLS | {"artifact.read", "consolidation.get", "review.start", "review.status", "review.submit"}
 
 REVIEW_WORKSPACE = WorkspacePolicy(mode="ephemeral", namespace="reviews", base="reference:code", retain=False)
 
