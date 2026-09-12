@@ -259,12 +259,6 @@ export const selectStats = (s) => s.home?.stats || EMPTY_OBJ;
 export const selectClaims = (s) => s.home?.claims || EMPTY_ARR;
 export const selectExperiments = (s) => s.home?.experiments || EMPTY_ARR;
 export const selectTasks = (s) => s.home?.tasks || EMPTY_ARR;
-// Server returns reviews as { requests, reviews } on /home and on /reviews.
-export const selectReviewRequests = (s) => {
-  const r = s.home?.reviews;
-  if (r && !Array.isArray(r) && typeof r === 'object') return r.requests || EMPTY_ARR;
-  return EMPTY_ARR;
-};
 export const selectActiveExperiments = (s) => s.home?.active_experiments || EMPTY_ARR;
 export const selectSandboxes = (s) => s.sandboxes || EMPTY_ARR;
 export const selectEventsAll = (s) => s.events || EMPTY_ARR;

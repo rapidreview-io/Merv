@@ -14,6 +14,7 @@ import {
 import { useNow } from '../store/useNow';
 import { useAsyncData } from '../store/usePolling';
 import { expName } from '../utils/experiment';
+import { agentPrompt } from '../utils/vocab';
 import { fmtDuration, fmtUsd, fmtHrs } from '../utils/format';
 import { DAY_MS } from '../utils/time';
 import { densifyDaily } from '../utils/spend';
@@ -68,6 +69,7 @@ function gpuHours24(sandboxes, now) {
 export default function HomeScreen() {
   const px = useProjectHref();
   const project = useProjectStore(selectProject);
+  const home = useProjectStore(s => s.home);
   const projectId = useProjectStore(s => s.projectId);
   const stats = useProjectStore(selectStats);
   const lastSyncError = useProjectStore(s => s.lastSyncError);
@@ -130,6 +132,7 @@ export default function HomeScreen() {
     return <div className="page-stage"><ProjectDocument /></div>;
   }
 
+  const next = agentPrompt(home?.workflow?.next_action, { state: home?.workflow?.state, name: home?.active_experiment?.name });
   const liveElapsed = liveSandbox?.requested_at
     ? now - Date.parse(liveSandbox.requested_at)
     : (liveExp?.updated_at ? now - Date.parse(liveExp.updated_at) : null);
@@ -138,6 +141,7 @@ export default function HomeScreen() {
       {lastSyncError && (
         <div className="mbanner">Backend unreachable — showing last known state. {lastSyncError}</div>
       )}
+      {next && <p className="home-next"><span className="gate-banner-meta-key">Next for your agent</span> {next}</p>}
 
       <ProjectDocument project={project} />
 
@@ -169,11 +173,11 @@ export default function HomeScreen() {
         </div>
         <div className="mtile">
           <div className="mtile-v tabular">{tiles.live}</div>
-          <div className="mtile-l">live now{tiles.gpuLabel ? ` · ${tiles.gpuLabel}` : ''}</div>
+          <div className="mtile-l">sandbox{tiles.live === 1 ? '' : 'es'} live{tiles.gpuLabel ? ` · ${tiles.gpuLabel}` : ''}</div>
         </div>
         <div className="mtile">
           <div className="mtile-v tabular">{tiles.reviews}</div>
-          <div className="mtile-l">reviews open</div>
+          <div className="mtile-l">review{tiles.reviews === 1 ? '' : 's'} open</div>
         </div>
       </div>
 
