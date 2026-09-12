@@ -120,6 +120,15 @@ class WorkflowSlimTest(unittest.TestCase):
         self.assertTrue(plan["submitted_at"])
         self.assertEqual(context["report"], {"status": "missing"})
         self.assertEqual(context["artifacts"], [])
+        # A minted upload whose curl never ran is pending, not missing.
+        minted = self.call(
+            "artifact.upload", project_id=self.project_id, path="report.md",
+            attach_to={"target_type": "experiment", "target_id": exp_id, "role": "report"},
+        )
+        report = self.call("workflow.status_and_next", project_id=self.project_id, experiment_id=exp_id)["context"]["report"]
+        self.assertEqual(report["status"], "pending_upload")
+        self.assertEqual(report["id"], minted["artifact_id"])
+        self.assertTrue(report["expires_at"])
 
         # Project intent is complete; other experiments stay outside this scoped context.
         self.assertEqual(set(slim["project"]), {"id", "name", "summary", "intent_guidance", "literature", "methods", "results", "references", "maintenance"})

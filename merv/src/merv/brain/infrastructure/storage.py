@@ -45,11 +45,11 @@ def storage_submit_command(
         f"-H {shell_quote(f'{key}: {value}')}" for key, value in signed_headers.items()
     )
     put = (
-        f"curl -sf -X PUT {header_flags} "
+        f"curl -sS --fail-with-body -X PUT {header_flags} "
         f"-T {shell_quote(path)} {shell_quote(presigned_url)}"
     )
     complete = (
-        f"curl -sf -X POST {shell_quote(f'{base}/api/storage/u/{token}/complete')}"
+        f"curl -sS --fail-with-body -X POST {shell_quote(f'{base}/api/storage/u/{token}/complete')}"
     )
     return f"{put} && {complete}"
 
@@ -71,7 +71,7 @@ def storage_multipart_submit_command(*, base_url: str, path: str, token: str) ->
 
 def storage_fetch_command(*, path: str, presigned_url: str, sha256: str) -> str:
     """Build a direct download with checksum verification."""
-    fetch = f"curl -sf -o {shell_quote(path)} {shell_quote(presigned_url)}"
+    fetch = f"curl -sSf -o {shell_quote(path)} {shell_quote(presigned_url)}"
     verify = f"printf '%s  %s\\n' {sha256} {shell_quote(path)} | shasum -a 256 -c"
     return f"{fetch} && {verify}"
 

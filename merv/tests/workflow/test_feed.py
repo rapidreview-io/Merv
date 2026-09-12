@@ -140,7 +140,7 @@ class FeedServiceTest(unittest.TestCase):
         self.assertIn("post_id", pending)
         self.assertNotIn("post", pending)
         self.assertIn("/api/feed/u/", pending["run"])
-        self.assertIn("curl -sf -T", pending["run"])
+        self.assertIn("curl -sS --fail-with-body -T", pending["run"])
         # The path label rides into the curl verbatim (the agent runs it as-is).
         self.assertIn("figures/plot.png", pending["run"])
         self.assertEqual(self.call("feed.list", project_id=self.pid)["posts"], [])

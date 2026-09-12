@@ -90,7 +90,7 @@ class RemoteObjectsTest(unittest.TestCase):
         self.assertEqual(self.lifecycle.calls[0][1]["attributes"], {"kind": "dataset", "notes": "kept"})
 
         presigned, token = _presigned_and_token(submitted["run"])
-        self.assertRegex(submitted["run"], r"^curl -sf -X PUT .* && curl -sf -X POST 'http://[^']+/api/storage/u/[^/']+/complete'$")
+        self.assertRegex(submitted["run"], r"^curl -sS --fail-with-body -X PUT .* && curl -sS --fail-with-body -X POST 'http://[^']+/api/storage/u/[^/']+/complete'$")
         Path(url2pathname(urlsplit(presigned).path)).write_bytes(data)
         completed = self.objects.complete_via_token(token=token)["object"]
         self.assertEqual(completed["status"], "available")
@@ -194,7 +194,7 @@ class RemoteObjectsTest(unittest.TestCase):
         obj = self._submit_and_complete(data, kind="dataset")
         fetched = self.objects.fetch(project_id=self.project_id, object_id=obj["id"], path="local/copy.bin")
         self.assertEqual(fetched["object"]["id"], obj["id"])
-        self.assertRegex(fetched["run"], r"^curl -sf -o 'local/copy\.bin' 'file://[^']+' && ")
+        self.assertRegex(fetched["run"], r"^curl -sSf -o 'local/copy\.bin' 'file://[^']+' && ")
         self.assertIn(f"printf '%s  %s\\n' {hashlib.sha256(data).hexdigest()} 'local/copy.bin' | shasum -a 256 -c", fetched["run"])
 
     def test_pin_renew_and_delete(self) -> None:

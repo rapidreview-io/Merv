@@ -155,7 +155,7 @@ class ExperimentContextQuery:
         project_id: str | None,
     ) -> Record:
         if artifact is None:
-            return {"status": "missing"}
+            return self._absent(state, "plan", project_id)
         result = {
             **self._document_identity(artifact),
             "attempt_index": artifact.get("attempt_index")
@@ -189,7 +189,7 @@ class ExperimentContextQuery:
         project_id: str | None,
     ) -> Record:
         if artifact is None:
-            return {"status": "missing"}
+            return self._absent(state, "report", project_id)
         return {
             **self._document_identity(artifact),
             "status": self._report_status(
@@ -204,6 +204,16 @@ class ExperimentContextQuery:
             )
             or "",
         }
+
+    def _absent(self, state: ExperimentState, role: str, project_id: str | None) -> Record:
+        """An upload whose curl never ran is pending, not missing."""
+        pending = self.artifacts.scan(
+            project_id=project_id, target_type="experiment", target_ids=(state.id,),
+            roles=(role,), status="pending",
+        )
+        if not pending:
+            return {"status": "missing"}
+        return {"status": "pending_upload", "id": pending[-1].id, "expires_at": pending[-1].expires_at}
 
     def _content(
         self,

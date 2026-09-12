@@ -134,7 +134,7 @@ class StorageHttpApiTest(unittest.TestCase):
         self.assertIn("-T 'experiments/storage_demo/run.log'", run)
         self.assertRegex(
             run,
-            r"^curl -sf -X PUT .* && curl -sf -X POST "
+            r"^curl -sS --fail-with-body -X PUT .* && curl -sS --fail-with-body -X POST "
             r"'http://[^']+/api/storage/u/[^/']+/complete'$",
         )
         create = next(call for call in self.sandboxes.calls if call[:2] == ("POST", "/storage/objects"))
@@ -232,7 +232,7 @@ class StorageHttpApiTest(unittest.TestCase):
         )
         self.assertEqual(fetched["object"]["id"], obj["id"])
         run = fetched["run"]
-        self.assertRegex(run, r"^curl -sf -o 'local/copy\.bin' '[^']+' && ")
+        self.assertRegex(run, r"^curl -sSf -o 'local/copy\.bin' '[^']+' && ")
         self.assertIn(f"printf '%s  %s\\n' {sha} 'local/copy.bin' | shasum -a 256 -c", run)
 
     def test_experiment_state_surfaces_objects_and_hides_deleted_rows(self) -> None:
