@@ -102,6 +102,22 @@ export function IconSidebar(props) {
   );
 }
 
+// One nav row: the label, an optional count, or — for machines — the pulsing
+// light plus how many are running right now (nothing when idle).
+function SideLink({ label, count = null, live = 0, ...rest }) {
+  return (
+    <NavLink className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')} {...rest}>
+      <span>{label}</span>
+      {count != null && <span className="sidebar-link-count">{count}</span>}
+      {live > 0 && (
+        <span className="sidebar-link-count sidebar-link-count--live" title={`${live} running`}>
+          <span className="sidebar-live-dot" />{live}
+        </span>
+      )}
+    </NavLink>
+  );
+}
+
 export default function Sidebar({ onHide }) {
   const home = useProjectStore(s => s.home);
   const stats = useProjectStore(selectStats);
@@ -111,8 +127,6 @@ export default function Sidebar({ onHide }) {
   const projectId = useProjectStore(s => s.projectId);
   const autorun = useAutorunStatus(projectId);
   const storage = useStorageSupported(projectId);
-
-  const artifactsCount = stats.artifacts ?? home?.artifacts?.length ?? 0;
 
   return (
     <aside className="sidebar">
@@ -139,90 +153,39 @@ export default function Sidebar({ onHide }) {
       </div>
 
       <nav className="sidebar-nav">
-        <NavLink to={px('')} end className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          Home
-        </NavLink>
-        <NavLink to={px('/feed')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          Feed
-        </NavLink>
+        <SideLink to={px('')} end label="Home" />
+        <SideLink to={px('/feed')} label="Feed" />
 
         {/* The epistemic core: what we know and the evidence behind it. */}
         <div className="sidebar-section">Research</div>
-        <NavLink to={px('/claims')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          <span>Claims</span>
-          <span className="sidebar-link-count">{stats.claims ?? home?.claims?.length ?? 0}</span>
-        </NavLink>
-        <NavLink to={px('/experiments')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          <span>Experiments</span>
-          <span className="sidebar-link-count">{stats.experiments ?? home?.experiments?.length ?? 0}</span>
-        </NavLink>
-        <NavLink to={px('/tasks')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          <span>Tasks</span>
-          <span className="sidebar-link-count">{stats.tasks ?? home?.tasks?.length ?? 0}</span>
-        </NavLink>
-        <NavLink to={px('/reviews')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          <span>Reviews</span>
-          <span className="sidebar-link-count">{stats.open_reviews ?? 0}</span>
-        </NavLink>
-        <NavLink to={px('/reflection')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          Reflection
-        </NavLink>
-        <NavLink to={px('/litreview')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          Lit Review
-        </NavLink>
+        <SideLink to={px('/claims')} label="Claims" count={stats.claims ?? home?.claims?.length ?? 0} />
+        <SideLink to={px('/experiments')} label="Experiments" count={stats.experiments ?? home?.experiments?.length ?? 0} />
+        <SideLink to={px('/tasks')} label="Tasks" count={stats.tasks ?? home?.tasks?.length ?? 0} />
+        <SideLink to={px('/reviews')} label="Reviews" count={stats.open_reviews ?? 0} />
+        <SideLink to={px('/reflection')} label="Reflection" />
+        <SideLink to={px('/litreview')} label="Lit Review" />
+
         {/* The substrate research runs on: files, objects, machines. */}
         <div className="sidebar-section">Operations</div>
-
-        <NavLink to={px('/artifacts')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          <span>Artifacts</span>
-          <span className="sidebar-link-count">{artifactsCount}</span>
-        </NavLink>
-        {storage && (
-          <NavLink to={px('/storage')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-            Storage
-          </NavLink>
-        )}
-        <NavLink to={px('/sandboxes')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          <span>Sandboxes</span>
-          {runningSandboxes > 0 && (
-            <span className="sidebar-link-count sidebar-link-count--live" title={`${runningSandboxes} running`}>
-              <span className="sidebar-live-dot" />{runningSandboxes}
-            </span>
-          )}
-        </NavLink>
+        <SideLink to={px('/artifacts')} label="Artifacts" count={stats.artifacts ?? home?.artifacts?.length ?? 0} />
+        {storage && <SideLink to={px('/storage')} label="Storage" />}
+        <SideLink to={px('/sandboxes')} label="Sandboxes" live={runningSandboxes} />
         {/* Auto-run: same grammar as Sandboxes — the pulsing light plus how
             many jobs are running right now. A connected-but-idle machine
             shows nothing; the page says the rest. */}
-        <NavLink
-          to={px('/auto-run')}
-          className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}
-          title={autorun.running > 0 ? `${autorun.running} running` : 'Auto-run'}
-        >
-          <span>Auto-run</span>
-          {autorun.running > 0 && (
-            <span className="sidebar-link-count sidebar-link-count--live" title={`${autorun.running} running`}>
-              <span className="sidebar-live-dot" />{autorun.running}
-            </span>
-          )}
-        </NavLink>
+        <SideLink to={px('/auto-run')} label="Auto-run" live={autorun.running} title={autorun.running > 0 ? `${autorun.running} running` : 'Auto-run'} />
 
         {/* Projects intentionally has no link here — scope switching lives in
             the project chip's popover ("Manage projects →"). */}
         <div className="sidebar-section">Activity</div>
-        <NavLink to={px('/events')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          Events
-        </NavLink>
-        <NavLink to={px('/activity')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          Traffic &amp; Tool I/O
-        </NavLink>
+        <SideLink to={px('/events')} label="Events" />
+        <SideLink to={px('/activity')} label="Traffic & Tool I/O" />
       </nav>
 
       <div className="sidebar-foot">
         <SandboxRetentionIndicator />
         <SyncChip className="sidebar-sync" />
-        <NavLink to={px('/settings')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
-          Settings
-        </NavLink>
+        <SideLink to={px('/settings')} label="Settings" />
         <AccountFoot />
       </div>
     </aside>
