@@ -160,12 +160,9 @@ class ReviewService:
                     return ReviewRequestSkipped()
             self.runtime.lock(conn=conn, project_id=project_id, instance_id=target_id, revision=current.revision)
             target = self._target(conn=conn, target_type=target_type, target_id=target_id, project_id=project_id)
-            node = self.runtime.registry.get(current.workflow, current.version).node(current.state)
             self._validate_role_matches_gate(
-                target_type=target_type,
-                expected=node.role if node is not None and node.execution.read_only else None,
-                role=role,
-            )
+                target_type=target_type, role=role, current=current,
+                definition=self.runtime.registry.get(current.workflow, current.version))
             snapshot_id = review_snapshot_id(target_type=target_type, target=target, snapshot=current)
             if if_current:
                 fact = read_review_fact(conn=conn, project_id=project_id, target_type=target_type, target_id=target_id,
@@ -570,15 +567,17 @@ class ReviewService:
         if expires is None or datetime.now(UTC) > expires:
             raise PermissionDeniedError("reviewer capability expired")
 
-    def _validate_role_matches_gate(
-        self, *, target_type: str, expected: str | None, role: str
-    ) -> None:
+    def _validate_role_matches_gate(self, *, target_type: str, role: str, current: Snapshot, definition) -> None:
         if role in REVIEW_GATE_EXEMPT_ROLES:
             return
+        node = definition.node(current.state)
+        expected = node.role if node is not None and node.execution.read_only else None
         if expected is None:
+            opening = next((edge.name for edge in definition.edges if edge.source == current.state
+                            and getattr(definition.node(edge.target), "role", "") == role), "")
             raise PermissionDeniedError(
-                f"{target_type} is not currently awaiting {role}"
-            )
+                f"{target_type} {current.id} is {current.state!r}, not awaiting {role}"
+                + (f"; the {opening!r} transition opens that gate" if opening else ""))
         if role != expected:
             raise PermissionDeniedError(f"active gate requires {expected}, not {role}")
 

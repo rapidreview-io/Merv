@@ -8,6 +8,7 @@ slots, submission intent, and the association IDs exposed by the research API.
 from __future__ import annotations
 
 from contextlib import closing
+import json
 from typing import Any
 
 from ..workflows import artifact_roles as roles
@@ -51,6 +52,7 @@ class ResearchArtifacts:
         )
         with self._store.transaction() as tx:
             target = self._resolve_target(tx=tx, target=target, for_submission=True)
+            _require_roster_lens(tx, target, lens_id)
             pending = self.contents.submit(
                 project_id=str(target.project_id),
                 path=path,
@@ -137,6 +139,7 @@ class ResearchArtifacts:
                     tx=tx,
                 )
         target = self._resolve_target(tx=tx, target=target, for_submission=True)
+        _require_roster_lens(tx, target, lens_id)
         project_id = str(target.project_id)
         self.contents.assert_complete(
             artifact_ids=(artifact_id,), project_id=project_id, tx=tx
@@ -549,6 +552,16 @@ class ResearchArtifacts:
             target_id=str(row["target_id"]),
             payload=payload,
         )
+
+
+def _require_roster_lens(tx: Connection, target, lens_id: str) -> None:
+    """A lens document names one lens of its wave's fixed roster."""
+    if not lens_id or target.target_type != "reflection":
+        return
+    row = tx.execute("SELECT roster_json FROM reflections WHERE id = ?", (target.target_id,)).fetchone()
+    roster = [str(item.get("id")) for item in json.loads(row["roster_json"] or "[]")] if row else []
+    if lens_id not in roster:
+        raise ValidationError(f"unknown lens_id {lens_id!r}; this reflection's roster is: {', '.join(roster)}")
 
 
 def _validate_association(*, target_type: str, role: str, lens_id: str = "") -> None:
