@@ -83,11 +83,7 @@ def artifact_tools(*, target_types: Iterable[str], roles: Iterable[str], lens_ro
                 "never injected as text. Invalid when listing by filters."
             ),
         )
-        max_bytes: int = Field(
-            default=16000,
-            ge=1,
-            description="Text bytes per artifact (default 16000); page with offset=next_offset.",
-        )
+        max_bytes: int = Field(default=16000, ge=1, description="Text bytes per artifact; page with offset=next_offset.")
         offset: int = Field(default=0, ge=0, description="Byte offset the text window starts at.")
         target_type: str = Field(
             default="", description="List filter: the target kind of the association."

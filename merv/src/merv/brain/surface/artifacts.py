@@ -139,34 +139,25 @@ def content_envelope_v1(
     artifact: Artifact, *, offset: int = 0, max_bytes: int | None = None
 ) -> dict[str, Any]:
     """Text bytes ``[offset, offset + max_bytes)``; a bound reports ``truncated``."""
-    content_type = artifact.content_type
-    data = artifact.data
-    text: str | None = None
-    is_binary = False
-    end = len(data or b"")
-    if data is not None:
-        try:
-            if not _is_textual_type(content_type) or b"\x00" in data:
-                raise ValueError
-            data.decode("utf-8")
-        except ValueError:
-            is_binary = True
-        else:
-            if max_bytes is not None:
-                end = min(end, offset + max_bytes)
-            text = data[offset:end].decode("utf-8", errors="ignore")
+    data, text = artifact.data, None
+    is_binary = data is not None and not _is_utf8_text(data, artifact.content_type)
+    end = len(data or b"") if max_bytes is None else min(len(data or b""), offset + max_bytes)
+    if data is not None and not is_binary:
+        text = data[offset:end].decode("utf-8", errors="ignore")
     envelope = {
-        "content": text,
-        "is_binary": is_binary,
-        "size_bytes": artifact.size_bytes,
-        "content_type": content_type,
-        "available": data is not None,
+        "content": text, "is_binary": is_binary, "size_bytes": artifact.size_bytes,
+        "content_type": artifact.content_type, "available": data is not None,
     }
     if text is not None and max_bytes is not None:
-        envelope["truncated"] = end < len(data)
-        if envelope["truncated"]:
-            envelope["next_offset"] = end
+        envelope.update({"truncated": True, "next_offset": end} if end < len(data) else {"truncated": False})
     return envelope
+
+
+def _is_utf8_text(data: bytes, content_type: str) -> bool:
+    try:
+        return _is_textual_type(content_type) and b"\x00" not in data and data.decode("utf-8") is not None
+    except UnicodeDecodeError:
+        return False
 
 
 def completed_artifact_v1(

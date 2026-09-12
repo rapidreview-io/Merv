@@ -139,10 +139,8 @@ class MediaInput:
 
 def _receipt(created: dict[str, Any]) -> dict[str, Any]:
     """What an agent gets back from a write: ids, never the post it just wrote."""
-    receipt = {"post_id": created["post"]["id"]}
-    if created.get("thread"):
-        receipt["thread"] = [item["id"] for item in created["thread"]]
-    return receipt
+    thread = [item["id"] for item in created.get("thread", ())]
+    return {"post_id": created["post"]["id"], **({"thread": thread} if thread else {})}
 
 
 def feed_upload_command(*, base_url: str, path: str, token: str) -> str:

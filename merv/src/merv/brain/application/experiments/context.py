@@ -207,10 +207,7 @@ class ExperimentContextQuery:
 
     def _absent(self, state: ExperimentState, role: str, project_id: str | None) -> Record:
         """An upload whose curl never ran is pending, not missing."""
-        pending = self.artifacts.scan(
-            project_id=project_id, target_type="experiment", target_ids=(state.id,),
-            roles=(role,), status="pending",
-        )
+        pending = self.artifacts.scan(project_id=project_id, target_type="experiment", target_ids=(state.id,), roles=(role,), status="pending")
         if not pending:
             return {"status": "missing"}
         return {"status": "pending_upload", "id": pending[-1].id, "expires_at": pending[-1].expires_at}
