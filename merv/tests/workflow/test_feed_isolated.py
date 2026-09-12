@@ -97,7 +97,8 @@ class FeedIsolatedTests(unittest.TestCase):
             handle="Nova-7",
             text="A useful result",
             kind="finding",
-        )["post"]
+        )
+        parent = service.list_posts(project_id=project_id)["posts"][0]
         assert parent["kind"] == "finding"
         assert not any(parent["reactions"].values())
 
@@ -153,7 +154,8 @@ class FeedIsolatedTests(unittest.TestCase):
             project_id=project_id,
             handle="Nova-7",
             text="gizmo_0badf00d beat exp_c0ffee12 by a hair",
-        )["post"]
+        )
+        parsed = service.list_posts(project_id=project_id)["posts"][0]
         assert parsed["ref"] == "gizmo_0badf00d"
 
         explicit = service.post(
@@ -161,7 +163,8 @@ class FeedIsolatedTests(unittest.TestCase):
             handle="Nova-7",
             text="on the record",
             ref="gizmo_000000",
-        )["post"]
+        )
+        explicit = service.list_posts(project_id=project_id)["posts"][0]
         assert explicit["ref"] == "gizmo_000000"
 
         with self.assertRaisesRegex(ValidationError, "gizmo gizmo_"):
@@ -250,9 +253,10 @@ class FeedIsolatedTests(unittest.TestCase):
 
         result = service.complete_upload(token=token, data=_PNG)
 
-        assert result["post"]["id"] == pending["post_id"]
-        assert result["post"]["has_image"] is True
-        assert "image_sha256" not in result["post"]
+        assert result == {"post_id": pending["post_id"]}
+        posted = service.list_posts(project_id=project_id)["posts"][0]
+        assert posted["has_image"] is True
+        assert "image_sha256" not in posted
         assert service.get_image(
             project_id=project_id, post_id=pending["post_id"]
         ) == (_PNG, "image/png")
@@ -274,7 +278,7 @@ class FeedIsolatedTests(unittest.TestCase):
 
         assert service.list_posts(project_id=project_id)["posts"] == []
         completed = service.complete_upload(token=token, data=_PNG)
-        assert completed["post"]["id"] == pending["post_id"]
+        assert completed["post_id"] == pending["post_id"]
 
     def test_token_post_and_event_commit_in_one_transaction(self):
         service, project_id, _store = self.feed
@@ -298,7 +302,7 @@ class FeedIsolatedTests(unittest.TestCase):
 
         assert service.list_posts(project_id=project_id)["posts"] == []
         completed = service.complete_upload(token=token, data=_PNG)
-        assert completed["post"]["id"] == pending["post_id"]
+        assert completed["post_id"] == pending["post_id"]
 
     def test_non_web_link_is_never_stored_as_clickable(self):
         service, project_id, _store = self.feed
@@ -308,9 +312,10 @@ class FeedIsolatedTests(unittest.TestCase):
             handle="Nova-7",
             text="Do not click",
             url="javascript:alert(1)",
-        )["post"]
+        )
+        post = service.list_posts(project_id=project_id)["posts"][0]
 
-        assert post["link_url"] is None
+        assert "link_url" not in post
         assert post["link_preview"]["url"] == ""
         assert post["link_preview"]["error"]
 
@@ -370,7 +375,7 @@ class FeedIsolatedTests(unittest.TestCase):
 
         completed = client.put(f"/api/feed/u/{token}", content=_PNG)
         assert completed.status_code == 200
-        post_id = completed.json()["post"]["id"]
+        post_id = completed.json()["post_id"]
         listing = client.get(f"/api/projects/{project_id}/feed")
         assert listing.status_code == 200
         assert listing.json()["posts"][0]["image_url"].endswith(f"/{post_id}/image")

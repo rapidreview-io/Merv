@@ -280,10 +280,10 @@ class ResearchArtifacts:
         return tuple(found[item] for item in ids)
 
     def scan(
-        self, *, project_id=None, target_type="", target_ids=(), roles=()
+        self, *, project_id=None, target_type="", target_ids=(), roles=(), status="complete"
     ) -> tuple[Artifact, ...]:
         with closing(self._store.connect()) as tx:
-            where, params = ["status = 'complete'", _VISIBLE], []
+            where, params = ["status = ?", _VISIBLE], [status]
             if project_id is not None:
                 where.append("project_id = ?")
                 params.append(

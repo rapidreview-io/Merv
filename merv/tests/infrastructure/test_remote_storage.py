@@ -101,7 +101,7 @@ class RemoteStorageTests(unittest.TestCase):
         tokens = shlex.split(put_cmd)
         assert "touch" not in tokens and ";" not in tokens
         assert f"Content-Type: {payload}" in tokens
-        assert complete_cmd == "curl -sf -X POST 'https://x/api/storage/u/tok/complete'"
+        assert complete_cmd == "curl -sS --fail-with-body -X POST 'https://x/api/storage/u/tok/complete'"
         # Signed headers from the service replace the default checksum headers.
         signed = storage_submit_command(
             base_url="", path="f.bin", presigned_url="https://s3/put", checksum_b64="YWJj",
@@ -114,7 +114,7 @@ class RemoteStorageTests(unittest.TestCase):
         multipart = storage_multipart_submit_command(base_url="https://x/", path="big bin", token="tok")
         assert multipart == "merv-client storage-upload --path 'big bin' --target-url 'https://x/api/storage/u/tok'"
         fetch = storage_fetch_command(path="out.bin", presigned_url="https://s3/get", sha256=SHA)
-        assert fetch == f"curl -sf -o 'out.bin' 'https://s3/get' && printf '%s  %s\\n' {SHA} 'out.bin' | shasum -a 256 -c"
+        assert fetch == f"curl -sSf -o 'out.bin' 'https://s3/get' && printf '%s  %s\\n' {SHA} 'out.bin' | shasum -a 256 -c"
 
     def test_token_loop_names_the_service_object_and_consumes_the_token(self):
         tmp_path = self.tmp_path

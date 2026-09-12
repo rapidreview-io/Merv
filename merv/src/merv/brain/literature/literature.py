@@ -304,7 +304,7 @@ class Literature:
         section_id = self._insert_section(conn=conn, project_id=project_id, kind="section", title=title, tldr=tldr,
                                           body=body, position=int(position["p"]) + 1, created_by=created_by)
         self._section_event(conn=conn, project_id=project_id, event="litreview.section_added", section_id=section_id)
-        return {"section": self._read_section(conn=conn, project_id=project_id, section_id=section_id)}
+        return _receipt(section_id, revision=1, body=body)
 
     def _insert_section(self, *, conn: Any, project_id: str, kind: str, title: str, tldr: str, body: str,
                         position: int, created_by: str) -> str:
@@ -337,7 +337,7 @@ class Literature:
                 section_id = self._insert_section(conn=conn, project_id=project_id, kind="summary", title=SUMMARY_TITLE,
                                                   tldr=tldr, body=body, position=0, created_by=created_by)
                 self._section_event(conn=conn, project_id=project_id, event="litreview.section_edited", section_id=section_id)
-                return {"section": self._read_section(conn=conn, project_id=project_id, section_id=section_id)}
+                return _receipt(section_id, revision=1, body=body)
             row = existing
         else:
             row = self._resolve_section(conn=conn, project_id=project_id, address=address)
@@ -377,11 +377,7 @@ class Literature:
             conn=conn, project_id=project_id, event="litreview.section_edited",
             section_id=str(row["id"]),
         )
-        return {
-            "section": self._read_section(
-                conn=conn, project_id=project_id, section_id=str(row["id"])
-            )
-        }
+        return _receipt(str(row["id"]), revision=expected_revision + 1, body=next_body)
 
     def _delete(
         self, *, conn: Any, project_id: str, address: str, expected_revision: int
@@ -711,6 +707,11 @@ class Literature:
                 conn=conn, project_id=project_id, section_id=section_id
             ),
         )
+
+
+def _receipt(section_id: str, *, revision: int, body: str) -> dict[str, Any]:
+    """What a write returns: enough to chain the next CAS, never the body back."""
+    return {"section": section_id, "revision": revision, "bytes": len(body.encode())}
 
 
 def _paper(row: Any, links: list[dict[str, Any]] | None = None) -> dict[str, Any]:

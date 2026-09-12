@@ -195,6 +195,8 @@ class AgentIdentityOverMcpTest(unittest.TestCase):
         fresh = _result(self.mcp.call("agent.hello", {"agent_id": "nope42"}))
         self.assertTrue(fresh["created"])
         self.assertNotEqual(fresh["agent_id"], "nope42")
+        self.assertIn("'nope42' was not issued to you", fresh["note"])
+        self.assertNotIn("note", minted)
         # The identity row remembers the client the transport session declared.
         identity = self.brain.agent_identities.get(agent_id=agent_id)
         self.assertEqual(identity["client_name"], "claude-code")

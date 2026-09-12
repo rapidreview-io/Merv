@@ -167,7 +167,7 @@ class ToolDispatcher:
                     _contract_error_message(exc=exc),
                     details={
                         "tool": name,
-                        "errors": exc.errors(include_context=False),
+                        "errors": exc.errors(include_context=False, include_input=False, include_url=False),
                     },
                 ) from exc
             self._log(

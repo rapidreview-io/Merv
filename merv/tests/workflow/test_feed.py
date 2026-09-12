@@ -87,6 +87,17 @@ class FeedServiceTest(unittest.TestCase):
     def call(self, tool: str, **kwargs):
         return self.app.call_tool(tool, kwargs)
 
+    def post(self, **kwargs):
+        """feed.post, then the written post as feed.list shows it (thread views too)."""
+        receipt = self.call("feed.post", project_id=self.pid, **kwargs)
+        view = self.view(receipt["post_id"])
+        view["thread"] = [self.view(post_id) for post_id in receipt.get("thread", [])]
+        return view
+
+    def view(self, post_id: str):
+        posts = self.app.feed.list_posts(project_id=self.pid, limit=100)["posts"]
+        return next(post for post in posts if post["id"] == post_id)
+
     # -- identity -----------------------------------------------------------
 
     def test_register_is_idempotent_per_session(self) -> None:
@@ -110,7 +121,7 @@ class FeedServiceTest(unittest.TestCase):
 
     def test_post_requires_registered_handle(self) -> None:
         with self.assertRaises(ValidationError):
-            self.call("feed.post", project_id=self.pid, handle="Ghost", text="hi")
+            self.post(handle="Ghost", text="hi")
 
     # -- writing ------------------------------------------------------------
 
@@ -119,10 +130,7 @@ class FeedServiceTest(unittest.TestCase):
         for text in ("   ", "x" * (POST_TEXT_MAX + 1)):
             with self.subTest(text_length=len(text)):
                 with self.assertRaises(ValidationError):
-                    self.call(
-                        "feed.post",
-                        project_id=self.pid,
-                        handle="Nova-7",
+                    self.post(handle="Nova-7",
                         text=text,
                     )
 
@@ -140,16 +148,16 @@ class FeedServiceTest(unittest.TestCase):
         self.assertIn("post_id", pending)
         self.assertNotIn("post", pending)
         self.assertIn("/api/feed/u/", pending["run"])
-        self.assertIn("curl -sf -T", pending["run"])
+        self.assertIn("curl -sS --fail-with-body -T", pending["run"])
         # The path label rides into the curl verbatim (the agent runs it as-is).
         self.assertIn("figures/plot.png", pending["run"])
         self.assertEqual(self.call("feed.list", project_id=self.pid)["posts"], [])
 
         token = pending["run"].rsplit("/", 1)[-1].rstrip("'")
         first = self.app.upload_feed_bytes(token=token, data=_PNG)
-        self.assertEqual(first["post"]["id"], pending["post_id"])
-        self.assertTrue(first["post"]["has_image"])
-        self.assertNotIn("image_sha256", first["post"])
+        self.assertEqual(first, {"post_id": pending["post_id"]})
+        self.assertTrue(self.view(first["post_id"])["has_image"])
+        self.assertNotIn("image_sha256", self.view(first["post_id"]))
         self.assertEqual(
             self.app.feed.get_image(
                 project_id=self.pid, post_id=pending["post_id"]
@@ -185,9 +193,9 @@ class FeedServiceTest(unittest.TestCase):
             image_path="chart.svg",
             data=_SVG,
         )
-        self.assertTrue(result["post"]["has_image"])
+        self.assertTrue(self.view(result["post_id"])["has_image"])
         data, ctype = self.app.feed.get_image(
-            project_id=self.pid, post_id=result["post"]["id"]
+            project_id=self.pid, post_id=result["post_id"]
         )
         self.assertEqual(data, _SVG)
         self.assertEqual(ctype, "image/svg+xml")
@@ -229,10 +237,7 @@ class FeedServiceTest(unittest.TestCase):
         # The mint validates the handle up front, so an unregistered author is
         # rejected before any token is minted (the image path is never read).
         with self.assertRaisesRegex(ValidationError, "not registered"):
-            self.call(
-                "feed.post",
-                project_id=self.pid,
-                handle="Ghost",
+            self.post(handle="Ghost",
                 text="plot",
                 image_path="missing.png",
             )
@@ -240,14 +245,11 @@ class FeedServiceTest(unittest.TestCase):
     def test_bad_link_degrades_to_plain_chip(self) -> None:
         # An unreachable/disallowed URL must NOT fail the post (PRD edge case).
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
-        result = self.call(
-            "feed.post",
-            project_id=self.pid,
-            handle="Nova-7",
+        result = self.post(handle="Nova-7",
             text="see",
             url="http://127.0.0.1/secret",
         )
-        preview = result["post"]["link_preview"]
+        preview = result["link_preview"]
         self.assertTrue(preview and preview.get("error"))
 
     def test_non_web_scheme_never_stores_a_clickable_link(self) -> None:
@@ -260,30 +262,24 @@ class FeedServiceTest(unittest.TestCase):
             "file:///etc/passwd",
         ):
             with self.subTest(url=url):
-                result = self.call(
-                    "feed.post",
-                    project_id=self.pid,
-                    handle="Nova-7",
+                result = self.post(handle="Nova-7",
                     text="see",
                     url=url,
                 )
-                post = result["post"]
-                self.assertIsNone(post["link_url"])
+                post = result
+                self.assertNotIn("link_url", post)
                 self.assertFalse(post["link_preview"]["url"])
                 self.assertTrue(post["link_preview"]["error"])
 
     def test_post_kind_is_optional_persisted_and_validated(self) -> None:
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
-        plain = self.call("feed.post", project_id=self.pid, handle="Nova-7", text="hi")
-        self.assertIsNone(plain["post"]["kind"])
+        plain = self.post(handle="Nova-7", text="hi")
+        self.assertNotIn("kind", plain)
 
-        status = self.call(
-            "feed.post",
-            project_id=self.pid,
-            handle="Nova-7",
+        status = self.post(handle="Nova-7",
             text="40% through training",
             kind="status",
-        )["post"]
+        )
         self.assertEqual(status["kind"], "status")
         self.assertEqual(
             self.call("feed.list", project_id=self.pid)["posts"][0]["kind"],
@@ -299,9 +295,8 @@ class FeedServiceTest(unittest.TestCase):
 
     def test_reaction_validation_distinguishes_kind_and_post(self) -> None:
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
-        post_id = self.call(
-            "feed.post", project_id=self.pid, handle="Nova-7", text="hi"
-        )["post"]["id"]
+        post_id = self.post(handle="Nova-7", text="hi"
+        )["id"]
         with self.assertRaises(ValidationError):
             self.app.feed.set_reaction(
                 project_id=self.pid, post_id=post_id, kind="love", on=True
@@ -316,13 +311,11 @@ class FeedServiceTest(unittest.TestCase):
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
         reacted = []
         for i in range(5):
-            post_id = self.call(
-                "feed.post", project_id=self.pid, handle="Nova-7", text=f"post {i}"
-            )["post"]["id"]
+            post_id = self.post(handle="Nova-7", text=f"post {i}"
+            )["id"]
             reacted.append(post_id)
-        long_post = self.call(
-            "feed.post", project_id=self.pid, handle="Nova-7", text="a" * 100
-        )["post"]["id"]
+        long_post = self.post(handle="Nova-7", text="a" * 100
+        )["id"]
         reacted.append(long_post)
         self.assertNotIn(
             "researcher_attention",
@@ -354,9 +347,8 @@ class FeedServiceTest(unittest.TestCase):
 
     def test_researcher_reply_enforces_char_cap(self) -> None:
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
-        original = self.call(
-            "feed.post", project_id=self.pid, handle="Nova-7", text="finding"
-        )["post"]["id"]
+        original = self.post(handle="Nova-7", text="finding"
+        )["id"]
         with self.assertRaises(ValidationError):
             self.app.feed.researcher_reply(
                 project_id=self.pid, post_id=original, text="x" * (POST_TEXT_MAX + 1)
@@ -364,25 +356,18 @@ class FeedServiceTest(unittest.TestCase):
 
     def test_agent_post_can_thread_via_in_reply_to(self) -> None:
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
-        original = self.call(
-            "feed.post", project_id=self.pid, handle="Nova-7", text="finding"
-        )["post"]["id"]
-        result = self.call(
-            "feed.post",
-            project_id=self.pid,
-            handle="Nova-7",
+        original = self.post(handle="Nova-7", text="finding"
+        )["id"]
+        result = self.post(handle="Nova-7",
             text="follow-up",
             in_reply_to=original,
         )
-        self.assertEqual(result["post"]["in_reply_to"], original)
+        self.assertEqual(result["in_reply_to"], original)
 
     def test_in_reply_to_validates_target_exists(self) -> None:
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
         with self.assertRaisesRegex(ValidationError, "in_reply_to"):
-            self.call(
-                "feed.post",
-                project_id=self.pid,
-                handle="Nova-7",
+            self.post(handle="Nova-7",
                 text="follow-up",
                 in_reply_to="post_missing",
             )
@@ -422,9 +407,9 @@ class FeedServiceTest(unittest.TestCase):
             html_path="chart.html",
             data=fragment,
         )
-        self.assertTrue(result["post"]["has_embed"])
+        self.assertTrue(self.view(result["post_id"])["has_embed"])
         wrapped = self.app.feed.get_embed(
-            project_id=self.pid, post_id=result["post"]["id"]
+            project_id=self.pid, post_id=result["post_id"]
         )
         self.assertIn("<div>hello</div>", wrapped)
         self.assertIn("Content-Security-Policy", wrapped)
@@ -432,10 +417,7 @@ class FeedServiceTest(unittest.TestCase):
     def test_image_and_html_path_together_rejected_at_mint(self) -> None:
         self.call("feed.register", project_id=self.pid, handle="Nova-7")
         with self.assertRaisesRegex(ValidationError, "image or an embed"):
-            self.call(
-                "feed.post",
-                project_id=self.pid,
-                handle="Nova-7",
+            self.post(handle="Nova-7",
                 text="both",
                 image_path="p.png",
                 html_path="c.html",
@@ -448,9 +430,8 @@ class FeedServiceTest(unittest.TestCase):
         with unittest.mock.patch.object(
             feed_module, "now_iso", return_value="2020-01-01T00:00:00Z"
         ):
-            post_id = self.call(
-                "feed.post", project_id=self.pid, handle="Nova-7", text="hello"
-            )["post"]["id"]
+            post_id = self.post(handle="Nova-7", text="hello"
+            )["id"]
         orig = feed_module.NUDGE_AFTER_EVENTS, feed_module.NUDGE_AFTER_HOURS
         feed_module.NUDGE_AFTER_EVENTS, feed_module.NUDGE_AFTER_HOURS = 3, 0.0
         try:
@@ -546,23 +527,17 @@ class FeedPostModelTest(FeedServiceTest):
             "unfurl",
             return_value={"url": "https://arxiv.org/abs/2401.10774", "title": "Medusa"},
         ):
-            post = self.call(
-                "feed.post",
-                project_id=self.pid,
-                handle="Ansible",
+            post = self.post(handle="Ansible",
                 text=f"243 tok/s on {exp_id}, see arXiv:2401.10774",
-            )["post"]
+            )
         self.assertEqual(post["ref"], exp_id)
         self.assertEqual(post["link_url"], "https://arxiv.org/abs/2401.10774")
         self.assertEqual(post["link_preview"]["title"], "Medusa")
         # An explicit ref wins over the parsed one.
-        explicit = self.call(
-            "feed.post",
-            project_id=self.pid,
-            handle="Ansible",
+        explicit = self.post(handle="Ansible",
             text=f"mentions {exp_id}",
             ref="claim_000000000000",
-        )["post"]
+        )
         self.assertEqual(explicit["ref"], "claim_000000000000")
 
     # -- attachments -----------------------------------------------------------
@@ -582,9 +557,8 @@ class FeedPostModelTest(FeedServiceTest):
             {"type": "table", "columns": ["arm", "tok/s"], "rows": [["bf16", 82.4], ["W4A16", "125.8"]], "hero_row": 1},
             {"type": "log", "text": "line one\nRuntimeError: boom\nline three", "highlight": [1]},
         ]
-        post = self.call(
-            "feed.post", project_id=self.pid, handle="Ansible", text="numbers", attachments=attachments
-        )["post"]
+        post = self.post(handle="Ansible", text="numbers", attachments=attachments
+        )
         kinds = [a["type"] for a in post["attachments"]]
         self.assertEqual(kinds, ["stat", "chart", "table", "log"])
         self.assertEqual(post["attachments"][0]["value"], "243.2")
@@ -601,7 +575,7 @@ class FeedPostModelTest(FeedServiceTest):
             {"type": "diagram", "text": "flowchart LR\n  A[prompt] --> B[drafter]\n  B --> C[verify]"},
             {"type": "vega", "title": "loss", "spec": {"$schema": "https://vega.github.io/schema/vega-lite/v6.json", "data": {"values": [{"x": 1, "y": 2}]}, "mark": "line", "encoding": {"x": {"field": "x", "type": "quantitative"}, "y": {"field": "y", "type": "quantitative"}}}},
         ]
-        post = self.call("feed.post", project_id=self.pid, handle="Ansible", text="four ways to see it", attachments=attachments)["post"]
+        post = self.post(handle="Ansible", text="four ways to see it", attachments=attachments)
         self.assertEqual([a["type"] for a in post["attachments"]], ["heatmap", "chart", "diagram", "vega"])
         self.assertEqual(post["attachments"][0]["values"][1], [0.5, 0.2])
         self.assertEqual(post["attachments"][1]["kind"], "scatter")
@@ -618,7 +592,7 @@ class FeedPostModelTest(FeedServiceTest):
         ]
         for attachments in bad:
             with self.assertRaises(ValidationError, msg=str(attachments)[:80]):
-                self.call("feed.post", project_id=self.pid, handle="Ansible", text="x", attachments=attachments)
+                self.post(handle="Ansible", text="x", attachments=attachments)
 
     def test_figure_attachment_must_name_a_figure_in_the_project(self) -> None:
         self._register()
@@ -628,28 +602,24 @@ class FeedPostModelTest(FeedServiceTest):
             return artifact_id == "art_ok" and path == "figures/curve.png"
         self.app.feed.figure_lookup = lookup
         try:
-            post = self.call(
-                "feed.post", project_id=self.pid, handle="Ansible", text="the curve I already made",
+            post = self.post(handle="Ansible", text="the curve I already made",
                 attachments=[{"type": "figure", "artifact_id": "art_ok", "path": "figures/curve.png", "caption": "val loss"}],
-            )["post"]
+            )
             self.assertEqual(post["attachments"][0], {"type": "figure", "artifact_id": "art_ok", "path": "figures/curve.png", "caption": "val loss"})
             self.assertEqual(seen[-1], (self.pid, "art_ok", "figures/curve.png"))
             with self.assertRaises(ValidationError):
-                self.call(
-                    "feed.post", project_id=self.pid, handle="Ansible", text="x",
+                self.post(handle="Ansible", text="x",
                     attachments=[{"type": "figure", "artifact_id": "art_missing", "path": "figures/curve.png"}],
                 )
             # Inside a thread too.
             with self.assertRaises(ValidationError):
-                self.call(
-                    "feed.post", project_id=self.pid, handle="Ansible", text="x",
+                self.post(handle="Ansible", text="x",
                     thread=[{"text": "y", "attachments": [{"type": "figure", "artifact_id": "nope", "path": "p.png"}]}],
                 )
         finally:
             self.app.feed.figure_lookup = None
         with self.assertRaises(ValidationError):
-            self.call(
-                "feed.post", project_id=self.pid, handle="Ansible", text="x",
+            self.post(handle="Ansible", text="x",
                 attachments=[{"type": "figure", "artifact_id": "art_ok", "path": "figures/curve.png"}],
             )
 
@@ -667,13 +637,12 @@ class FeedPostModelTest(FeedServiceTest):
         ]
         for attachments in bad:
             with self.assertRaises(ValidationError, msg=str(attachments)):
-                self.call(
-                    "feed.post", project_id=self.pid, handle="Ansible", text="x", attachments=attachments
+                self.post(handle="Ansible", text="x", attachments=attachments
                 )
 
     def test_image_attachment_mints_an_upload_and_the_upload_finalizes_thread_and_quote(self) -> None:
         self._register()
-        quoted = self.call("feed.post", project_id=self.pid, handle="Ansible", text="first")["post"]
+        quoted = self.post(handle="Ansible", text="first")
         pending = self.call(
             "feed.post",
             project_id=self.pid,
@@ -686,7 +655,9 @@ class FeedPostModelTest(FeedServiceTest):
         self.assertIn("run", pending)
         token = pending["run"].rsplit("/", 1)[-1].rstrip("'")
         done = self.app.upload_feed_bytes(token=token, data=_PNG)
-        root = done["post"]
+        self.assertEqual(set(done), {"post_id", "thread"})
+        root = self.view(done["post_id"])
+        done["thread"] = [self.view(post_id) for post_id in done["thread"]]
         self.assertTrue(root["has_image"])
         self.assertEqual([a["type"] for a in root["attachments"]], ["stat"])
         self.assertEqual(root["quote_of"], quoted["id"])
@@ -703,10 +674,7 @@ class FeedPostModelTest(FeedServiceTest):
 
     def test_thread_posts_are_chained_atomically_under_the_root(self) -> None:
         self._register()
-        result = self.call(
-            "feed.post",
-            project_id=self.pid,
-            handle="Ansible",
+        result = self.post(handle="Ansible",
             text="Why the floor is 5 ms, in three parts.",
             kind="direction",
             thread=[
@@ -714,8 +682,8 @@ class FeedPostModelTest(FeedServiceTest):
                 "Part three, plain text.",
             ],
         )
-        root = result["post"]
-        self.assertEqual(root["thread_root"], None)
+        root = result
+        self.assertNotIn("thread_root", root)
         self.assertEqual(root["thread_index"], 0)
         self.assertEqual([p["thread_index"] for p in result["thread"]], [1, 2])
         self.assertTrue(all(p["thread_root"] == root["id"] for p in result["thread"]))
@@ -725,12 +693,9 @@ class FeedPostModelTest(FeedServiceTest):
         self.assertEqual(len(listed), 3)
         # Too long a thread, or an upload inside one, is rejected before anything lands.
         with self.assertRaises(ValidationError):
-            self.call("feed.post", project_id=self.pid, handle="Ansible", text="x", thread=["y"] * 9)
+            self.post(handle="Ansible", text="x", thread=["y"] * 9)
         with self.assertRaises(ValidationError):
-            self.call(
-                "feed.post",
-                project_id=self.pid,
-                handle="Ansible",
+            self.post(handle="Ansible",
                 text="x",
                 thread=[{"text": "y", "attachments": [{"type": "image", "path": "p.png"}]}],
             )
@@ -739,22 +704,19 @@ class FeedPostModelTest(FeedServiceTest):
     def test_replying_to_your_own_post_continues_the_thread(self) -> None:
         self._register()
         self._register("Cold Equations", role="reviewer")
-        root = self.call("feed.post", project_id=self.pid, handle="Ansible", text="Depth sweep live.")["post"]
-        cont = self.call(
-            "feed.post", project_id=self.pid, handle="Ansible", text="Depth 4 leads.", in_reply_to=root["id"]
-        )["post"]
+        root = self.post(handle="Ansible", text="Depth sweep live.")
+        cont = self.post(handle="Ansible", text="Depth 4 leads.", in_reply_to=root["id"]
+        )
         self.assertEqual(cont["thread_root"], root["id"])
         self.assertEqual(cont["thread_index"], 1)
-        again = self.call(
-            "feed.post", project_id=self.pid, handle="Ansible", text="Depth 8 disagrees.", in_reply_to=cont["id"]
-        )["post"]
+        again = self.post(handle="Ansible", text="Depth 8 disagrees.", in_reply_to=cont["id"]
+        )
         self.assertEqual(again["thread_root"], root["id"])
         self.assertEqual(again["thread_index"], 2)
         # Another voice replying is a reply, not a continuation.
-        reply = self.call(
-            "feed.post", project_id=self.pid, handle="Cold Equations", text="Check the clocks.", in_reply_to=root["id"]
-        )["post"]
-        self.assertIsNone(reply["thread_root"])
+        reply = self.post(handle="Cold Equations", text="Check the clocks.", in_reply_to=root["id"]
+        )
+        self.assertNotIn("thread_root", reply)
         self.assertEqual(reply["in_reply_to"], root["id"])
 
     # -- quotes and kinds -------------------------------------------------------
@@ -762,41 +724,33 @@ class FeedPostModelTest(FeedServiceTest):
     def test_quote_of_returns_a_compact_view_and_validates_the_target(self) -> None:
         self._register()
         self._register("Cold Equations", role="reviewer")
-        claim = self.call(
-            "feed.post",
-            project_id=self.pid,
-            handle="Ansible",
+        claim = self.post(handle="Ansible",
             text="243 tok/s.",
             kind="finding",
             attachments=[{"type": "stat", "value": "243.2", "unit": "tok/s"}],
-        )["post"]
-        quote = self.call(
-            "feed.post",
-            project_id=self.pid,
-            handle="Cold Equations",
+        )
+        quote = self.post(handle="Cold Equations",
             text="The 243 holds; the bar does not.",
             kind="bottleneck",
             quote_of=claim["id"],
-        )["post"]
+        )
         self.assertEqual(quote["quote_of"], claim["id"])
         listed = self.call("feed.list", project_id=self.pid)["posts"][0]
         self.assertEqual(listed["quoted"]["author_handle"], "Ansible")
         self.assertEqual(listed["quoted"]["stat"]["value"], "243.2")
         self.assertEqual(listed["quoted"]["kind"], "finding")
         with self.assertRaises(ValidationError):
-            self.call("feed.post", project_id=self.pid, handle="Ansible", text="x", quote_of="post_nope")
+            self.post(handle="Ansible", text="x", quote_of="post_nope")
         # One relation: a post follows at most one previous post.
-        other = self.call("feed.post", project_id=self.pid, handle="Ansible", text="another")["post"]
+        other = self.post(handle="Ansible", text="another")
         with self.assertRaises(ValidationError):
-            self.call(
-                "feed.post", project_id=self.pid, handle="Ansible", text="x",
+            self.post(handle="Ansible", text="x",
                 quote_of=claim["id"], in_reply_to=other["id"],
             )
         # quote_of alone still sets the reply link, so old and new clients thread alike;
         # a self-quote continues the author's own chain.
-        selfq = self.call(
-            "feed.post", project_id=self.pid, handle="Ansible", text="callback", quote_of=claim["id"]
-        )["post"]
+        selfq = self.post(handle="Ansible", text="callback", quote_of=claim["id"]
+        )
         self.assertEqual(selfq["in_reply_to"], claim["id"])
         self.assertEqual(selfq["thread_root"], claim["id"])
         self.assertEqual(selfq["thread_index"], 1)
@@ -804,7 +758,7 @@ class FeedPostModelTest(FeedServiceTest):
     def test_new_kinds_are_accepted(self) -> None:
         self._register()
         for kind in ("idea", "paper", "question"):
-            post = self.call("feed.post", project_id=self.pid, handle="Ansible", text=kind, kind=kind)["post"]
+            post = self.post(handle="Ansible", text=kind, kind=kind)
             self.assertEqual(post["kind"], kind)
 
     # -- voices ----------------------------------------------------------------
@@ -815,7 +769,7 @@ class FeedPostModelTest(FeedServiceTest):
         self.assertFalse(first["adopted"])
         self.assertEqual(first["author"]["bio"], "numbers, not adjectives")
         self.assertNotIn("session_id", first["author"])
-        self.call("feed.post", project_id=self.pid, handle="Ansible", text="hello")
+        self.post(handle="Ansible", text="hello")
         second = self._register("Kestrel-9", bio="runs the ladder")
         handles = {v["handle"]: v for v in second["roster"]}
         self.assertEqual(set(handles), {"Ansible", "Kestrel-9"})
@@ -848,9 +802,8 @@ class FeedPostModelTest(FeedServiceTest):
         self.assertEqual(second["author"]["handle"], "Cold Equations")
         self.assertIn("note", second)
         # The adopting session can post as the shared voice.
-        post = self.call(
-            "feed.post", project_id=self.pid, handle="Cold Equations", text="Round two."
-        )["post"]
+        post = self.post(handle="Cold Equations", text="Round two."
+        )
         self.assertEqual(post["author_role"], "reviewer")
         # A deliberate new voice is still possible.
         third = self.call(
@@ -870,7 +823,7 @@ class FeedPostModelTest(FeedServiceTest):
 
     def test_register_surfaces_the_researchers_latest_replies(self) -> None:
         self._register()
-        post = self.call("feed.post", project_id=self.pid, handle="Ansible", text="bs=1 or bs=8?", kind="question")["post"]
+        post = self.post(handle="Ansible", text="bs=1 or bs=8?", kind="question")
         self.app.feed.researcher_reply(project_id=self.pid, post_id=post["id"], text="bs=1 is the record.")
         again = self._register()
         self.assertEqual(again["researcher_replies"][0]["in_reply_to"], post["id"])
@@ -933,9 +886,9 @@ class FeedHttpTest(unittest.TestCase):
                 "project_id": self.pid, "handle": "Nova-7", "text": "the curve I already made",
                 "attachments": [{"type": "figure", "artifact_id": plan["artifact_id"], "path": "figures/curve.png"}],
             },
-        )["post"]
+        )
         listed = self.client.get(f"/api/projects/{self.pid}/feed").json()["posts"][0]
-        self.assertEqual(listed["id"], post["id"])
+        self.assertEqual(listed["id"], post["post_id"])
         url = listed["attachments"][0]["url"]
         self.assertEqual(
             url, f"/api/projects/{self.pid}/artifacts/{plan['artifact_id']}/figure?rel=figures%2Fcurve.png"
@@ -947,7 +900,7 @@ class FeedHttpTest(unittest.TestCase):
     def test_reaction_endpoint_returns_updated_post_view(self) -> None:
         post_id = self.app.call_tool(
             "feed.post", {"project_id": self.pid, "handle": "Nova-7", "text": "hi"}
-        )["post"]["id"]
+        )["post_id"]
         response = self.client.post(
             f"/api/projects/{self.pid}/feed/{post_id}/reactions",
             json={"kind": "fire", "on": True},
@@ -958,7 +911,7 @@ class FeedHttpTest(unittest.TestCase):
     def test_reply_endpoint_creates_researcher_post(self) -> None:
         post_id = self.app.call_tool(
             "feed.post", {"project_id": self.pid, "handle": "Nova-7", "text": "hi"}
-        )["post"]["id"]
+        )["post_id"]
         response = self.client.post(
             f"/api/projects/{self.pid}/feed/{post_id}/reply",
             json={"text": "nice"},
@@ -975,7 +928,7 @@ class FeedHttpTest(unittest.TestCase):
             text="chart",
             html_path="chart.html",
             data=b"<html><body>x</body></html>",
-        )["post"]["id"]
+        )["post_id"]
         response = self.client.get(f"/api/projects/{self.pid}/feed")
         self.assertEqual(response.status_code, 200)
         posts = {p["id"]: p for p in response.json()["posts"]}
@@ -991,7 +944,7 @@ class FeedHttpTest(unittest.TestCase):
             text="chart",
             html_path="chart.html",
             data=b"<html><body><script>1</script></body></html>",
-        )["post"]["id"]
+        )["post_id"]
         response = self.client.get(f"/api/projects/{self.pid}/feed/{post_id}/embed")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["content-type"], "text/html; charset=utf-8")

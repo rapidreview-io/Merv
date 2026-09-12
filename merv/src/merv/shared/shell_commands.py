@@ -16,6 +16,8 @@ def api_base(base_url: str) -> str:
 
 
 def curl_upload_command(*, base_url: str, path: str, route: str) -> str:
-    """``curl -T`` a local file at one of this brain's one-time upload routes."""
+    """``curl -T`` a local file at one of this brain's one-time upload routes.
+
+    The reply body prints either way: the receipt on success, the reason on failure."""
     url = api_base(base_url) + route
-    return f"curl -sf -T {shell_quote(path)} {shell_quote(url)}"
+    return f"curl -sS --fail-with-body -T {shell_quote(path)} {shell_quote(url)}"

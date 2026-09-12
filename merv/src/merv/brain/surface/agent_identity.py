@@ -181,11 +181,14 @@ class AgentIdentities:
         )
         # The hello call is the first row of the new trace: attribute it too.
         bind_agent(agent_id=row["agent_id"])
-        return {
+        minted = {
             "agent_id": row["agent_id"],
             "created": True,
             "message": _hello_message(row["agent_id"]),
         }
+        if supplied:
+            minted["note"] = f"agent_id '{supplied}' was not issued to you; a fresh id was minted"
+        return minted
 
     def peek(self, *, agent_id: str, caller: CallerFacts) -> str:
         """``agent_id`` if this caller may use it, else "". Never raises."""

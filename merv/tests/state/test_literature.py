@@ -164,8 +164,7 @@ class LiteratureTest(unittest.TestCase):
             tldr="The field in one line.", body="Longer prose.",
             expected_revision=0,
         )
-        self.assertEqual(result["section"]["kind"], "summary")
-        self.assertEqual(result["section"]["revision"], 1)
+        self.assertEqual((result["revision"], result["bytes"]), (1, len("Longer prose.")))
         # Second create attempt is stale.
         with self.assertRaises(ValidationError):
             self.svc.edit(
@@ -176,9 +175,9 @@ class LiteratureTest(unittest.TestCase):
             project_id=self.project_id, op="edit", section="summary",
             tldr="Refined.", expected_revision=1,
         )
-        self.assertEqual(updated["section"]["revision"], 2)
-        self.assertEqual(updated["section"]["body"], "Longer prose.")
-        self.assertEqual(updated["section"]["title"], "General Summary")
+        self.assertEqual(updated["revision"], 2)
+        summary = self.svc.view(project_id=self.project_id, section="summary")["section"]
+        self.assertEqual((summary["body"], summary["title"]), ("Longer prose.", "General Summary"))
 
     def test_summary_cannot_be_deleted(self) -> None:
         self.svc.edit(
@@ -197,28 +196,28 @@ class LiteratureTest(unittest.TestCase):
         return self.svc.edit(
             project_id=self.project_id, op="add", title=title, tldr=tldr,
             body=f"Body of {title}.",
-        )["section"]
+        )
 
     def test_add_edit_delete_roundtrip_with_cas(self) -> None:
         section = self._add("SFT best practices")
         self.assertEqual(section["revision"], 1)
-        self.assertEqual(section["position"], 1)
+        self.assertEqual(self.svc.view(project_id=self.project_id, section=section["section"])["section"]["position"], 1)
         with self.assertRaises(ValidationError):
             self.svc.edit(
-                project_id=self.project_id, op="edit", section=section["id"],
+                project_id=self.project_id, op="edit", section=section["section"],
                 tldr="new", expected_revision=99,
             )
         edited = self.svc.edit(
             project_id=self.project_id, op="edit", section="sft best PRACTICES",
             tldr="Updated tldr.", expected_revision=1,
-        )["section"]
+        )
         self.assertEqual(edited["revision"], 2)
-        self.assertEqual(edited["tldr"], "Updated tldr.")
+        self.assertEqual(self.svc.view(project_id=self.project_id, section=edited["section"])["section"]["tldr"], "Updated tldr.")
         deleted = self.svc.edit(
-            project_id=self.project_id, op="delete", section=edited["id"],
+            project_id=self.project_id, op="delete", section=edited["section"],
             expected_revision=2,
         )
-        self.assertEqual(deleted["deleted"], edited["id"])
+        self.assertEqual(deleted["deleted"], edited["section"])
         self.assertEqual(self._section_rows(), 0)
 
     def test_summary_presents_exists_true_once_written(self) -> None:
@@ -238,10 +237,10 @@ class LiteratureTest(unittest.TestCase):
                 )
         section = self.svc.edit(
             project_id=self.project_id, op="add", title="Ok", tldr="t"
-        )["section"]
+        )
         with self.assertRaises(ValidationError):
             self.svc.edit(
-                project_id=self.project_id, op="edit", section=str(section["id"]),
+                project_id=self.project_id, op="edit", section=str(section["section"]),
                 title="Summary", expected_revision=1,
             )
 
@@ -277,22 +276,22 @@ class LiteratureTest(unittest.TestCase):
         first = self._add("First")
         second = self._add("Second")
         stale = [
-            {"id": second["id"], "revision": 99},
-            {"id": first["id"], "revision": first["revision"]},
+            {"id": second["section"], "revision": 99},
+            {"id": first["section"], "revision": first["revision"]},
         ]
         with self.assertRaises(ValidationError):
             self.svc.edit(project_id=self.project_id, op="reorder", order=stale)
         result = self.svc.edit(
             project_id=self.project_id, op="reorder",
             order=[
-                {"id": second["id"], "revision": second["revision"]},
-                {"id": first["id"], "revision": first["revision"]},
+                {"id": second["section"], "revision": second["revision"]},
+                {"id": first["section"], "revision": first["revision"]},
             ],
         )
-        self.assertEqual(result["order"], [second["id"], first["id"]])
+        self.assertEqual(result["order"], [second["section"], first["section"]])
         view = self.svc.view(project_id=self.project_id)
         self.assertEqual(
-            [s["id"] for s in view["sections"]], [second["id"], first["id"]]
+            [s["id"] for s in view["sections"]], [second["section"], first["section"]]
         )
         self.assertTrue(all(s["revision"] == 2 for s in view["sections"]))
         # The old pairs are now stale — a concurrent reorder loses cleanly.
@@ -300,8 +299,8 @@ class LiteratureTest(unittest.TestCase):
             self.svc.edit(
                 project_id=self.project_id, op="reorder",
                 order=[
-                    {"id": first["id"], "revision": 1},
-                    {"id": second["id"], "revision": 1},
+                    {"id": first["section"], "revision": 1},
+                    {"id": second["section"], "revision": 1},
                 ],
             )
 
@@ -311,7 +310,7 @@ class LiteratureTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self.svc.edit(
                 project_id=self.project_id, op="reorder",
-                order=[{"id": first["id"], "revision": 1}],
+                order=[{"id": first["section"], "revision": 1}],
             )
 
     # -------------------------------------------------------------- papers
@@ -380,7 +379,7 @@ class LiteratureTest(unittest.TestCase):
             ],
         )
         self.assertEqual(len(result["new_links"]), 2)
-        self.assertEqual(result["new_links"][1]["id"], section["id"])
+        self.assertEqual(result["new_links"][1]["id"], section["section"])
         # Re-citing the same targets is idempotent.
         again = self.svc.cite(
             project_id=self.project_id, arxiv_id="2107.03374",
@@ -407,10 +406,10 @@ class LiteratureTest(unittest.TestCase):
         section = self._add("Doomed")
         self.svc.cite(
             project_id=self.project_id, arxiv_id="2107.03374",
-            targets=[{"type": "litreview_section", "id": section["id"]}],
+            targets=[{"type": "litreview_section", "id": section["section"]}],
         )
         self.svc.edit(
-            project_id=self.project_id, op="delete", section=section["id"],
+            project_id=self.project_id, op="delete", section=section["section"],
             expected_revision=1,
         )
         with closing(self.store.connect()) as conn:
@@ -446,7 +445,7 @@ class LiteratureTest(unittest.TestCase):
         types = [row["type"] for row in rows]
         self.assertEqual(types, ["litreview.section_added", "litreview.paper_cited"])
         self.assertIn('"title": "Evented"', rows[0]["payload_json"])
-        self.assertEqual(rows[0]["target_id"], section["id"])
+        self.assertEqual(rows[0]["target_id"], section["section"])
         self.assertIn('"norm_key": "arxiv:2107.03374"', rows[1]["payload_json"])
 
 

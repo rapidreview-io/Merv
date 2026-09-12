@@ -50,8 +50,9 @@ reply to one's own post continues the author's chain (`thread_root`,
    author must be registered in that project, `kind` and entity-reference
    prefixes are allowlisted, `in_reply_to`/`quote_of` must exist in the same
    project, and refs are parsed from the text.
-3. Posts without an upload call `_create_post` immediately. A post carrying an
-   image or embed instead persists a 15-minute one-use upload token (with the
+3. Posts without an upload call `_create_post` immediately and return a
+   `{post_id, thread?}` receipt (the researcher's reply keeps the full view for
+   the UI). A post carrying an image or embed instead persists a 15-minute one-use upload token (with the
    attachments, thread, and quote in `extra_json`) and returns a shell-quoted
    `curl` command; the transport asks `get_upload_limit` before buffering and
    passes bytes to `complete_upload`.

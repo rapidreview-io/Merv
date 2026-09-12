@@ -135,26 +135,29 @@ def _is_textual_type(content_type: str) -> bool:
     )
 
 
-def content_envelope_v1(artifact: Artifact) -> dict[str, Any]:
-    content_type = artifact.content_type
-    data = artifact.data
-    text: str | None = None
-    is_binary = False
-    if data is not None:
-        if not _is_textual_type(content_type) or b"\x00" in data:
-            is_binary = True
-        else:
-            try:
-                text = data.decode("utf-8")
-            except UnicodeDecodeError:
-                is_binary = True
-    return {
-        "content": text,
-        "is_binary": is_binary,
-        "size_bytes": artifact.size_bytes,
-        "content_type": content_type,
-        "available": data is not None,
+def content_envelope_v1(
+    artifact: Artifact, *, offset: int = 0, max_bytes: int | None = None
+) -> dict[str, Any]:
+    """Text bytes ``[offset, offset + max_bytes)``; a bound reports ``truncated``."""
+    data, text = artifact.data, None
+    is_binary = data is not None and not _is_utf8_text(data, artifact.content_type)
+    end = len(data or b"") if max_bytes is None else min(len(data or b""), offset + max_bytes)
+    if data is not None and not is_binary:
+        text = data[offset:end].decode("utf-8", errors="ignore")
+    envelope = {
+        "content": text, "is_binary": is_binary, "size_bytes": artifact.size_bytes,
+        "content_type": artifact.content_type, "available": data is not None,
     }
+    if text is not None and max_bytes is not None:
+        envelope.update({"truncated": True, "next_offset": end} if end < len(data) else {"truncated": False})
+    return envelope
+
+
+def _is_utf8_text(data: bytes, content_type: str) -> bool:
+    try:
+        return _is_textual_type(content_type) and b"\x00" not in data and data.decode("utf-8") is not None
+    except UnicodeDecodeError:
+        return False
 
 
 def completed_artifact_v1(
@@ -259,6 +262,8 @@ class ArtifactTools:
         artifact_id: str = "",
         artifact_ids: list[str] | None = None,
         include_content: bool = False,
+        max_bytes: int = 16000,
+        offset: int = 0,
         target_type: str = "",
         target_id: str = "",
         role: str = "",
@@ -278,7 +283,9 @@ class ArtifactTools:
                 )
                 if include_content:
                     row["figures"] = list(artifact.figures)
-                    row["content"] = content_envelope_v1(artifact)
+                    row["content"] = content_envelope_v1(
+                        artifact, offset=offset, max_bytes=max_bytes
+                    )
                 rows.append(row)
             if artifact_id:
                 row = rows[0]

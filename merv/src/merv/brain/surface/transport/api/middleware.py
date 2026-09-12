@@ -76,9 +76,8 @@ def install_error_handlers(http: FastAPI) -> None:
     async def validation_error_handler(
         _request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        return JSONResponse(
-            {"detail": "invalid HTTP request", "errors": exc.errors()}, status_code=400
-        )
+        errors = [{k: e[k] for k in ("loc", "msg", "type") if k in e} for e in exc.errors()]
+        return JSONResponse({"detail": "invalid HTTP request", "errors": errors}, status_code=400)
 
 
 __all__ = ["install_activity_middleware", "install_cors", "install_error_handlers"]

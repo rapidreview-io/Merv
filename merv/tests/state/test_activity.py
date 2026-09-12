@@ -76,8 +76,8 @@ class CapResultTest(unittest.TestCase):
         # replayable credential; its SigV4 signature params must never reach the
         # activity log even when embedded in a string value like `run`.
         run = (
-            "curl -sf -X PUT -H 'x-amz-checksum-sha256:aGVsbG8=' -T 'model.bin' "
-            f"'{_PRESIGNED}' && curl -sf -X POST "
+            "curl -sS --fail-with-body -X PUT -H 'x-amz-checksum-sha256:aGVsbG8=' -T 'model.bin' "
+            f"'{_PRESIGNED}' && curl -sS --fail-with-body -X POST "
             "'http://127.0.0.1:8787/api/storage/u/tok_SECRET/complete'"
         )
         value = {"object": {"id": "sto_1"}, "run": run, "upload_id": "upload_1"}
