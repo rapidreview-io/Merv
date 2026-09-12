@@ -433,18 +433,19 @@ class ReviewService:
                     target_type=req["target_type"], role=req["role"], verdict=verdict,
                     notes=notes, findings=findings or [], route=route),
             })
-            status = lambda state: state if kind is None else kind.status_of(state)
-            before = status(current.state)
-            after = status(self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"]).state)
-            target = f"{req['target_type']} {req['target_id']}"
+            status_of = str if kind is None else kind.status_of
+            before = status_of(current.state)
+            after = status_of(self.runtime.get(conn=conn, project_id=req["project_id"], instance_id=req["target_id"]).state)
+            if after != before:
+                moved = f"moved from {before!r} to {after!r} on this verdict; it must call workflow.status_and_next, not a transition."
+            elif verdict == "pass":
+                moved = f"stays {before!r}; the Merv runner publishes after central advance, no agent transition follows."
+            else:
+                moved = f"stays {before!r}; it should call workflow.status_and_next for the next step."
             return {
                 "id": review_id, "role": req["role"], "verdict": verdict, "return_to": return_to, "synopsis": synopsis,
                 "target": {"type": req["target_type"], "id": req["target_id"], "status_before": before, "status_after": after},
-                "next_action": f"Report the verdict to the producer: {target} " + (
-                    f"moved from {before!r} to {after!r} on this verdict; it must call workflow.status_and_next, not a transition."
-                    if after != before else f"stays {before!r}; " + (
-                        "the Merv runner publishes after central advance, no agent transition follows." if verdict == "pass"
-                        else "it should call workflow.status_and_next for the next step.")),
+                "next_action": f"Report the verdict to the producer: {req['target_type']} {req['target_id']} {moved}",
             }
 
     def status(
