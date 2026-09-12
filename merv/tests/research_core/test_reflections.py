@@ -1294,7 +1294,7 @@ class ConsolidationHandoffTest(ResearchCase):
         self.assertEqual(checklist["transition"], "publish")
         self.assertNotIn("submissions", state)
         self.assertEqual(state["artifacts"], [])
-        self.assertLess(len(json.dumps(state)), 11000)
+        self.assertLess(len(json.dumps(state)), 5000)  # lean rows, roster by name, no corpus after writing
         with self.assertRaisesRegex(WorkflowError, "already passed consolidation review"):
             self.call("reflection.transition", project_id=self.project_id, reflection_id=reflection_id,
                       transition="submit_consolidation")

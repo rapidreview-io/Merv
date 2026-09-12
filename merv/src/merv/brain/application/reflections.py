@@ -10,8 +10,10 @@ from ..research_core import (
     REFLECTION,
     content_tldr,
     project_fields,
+    project_rows,
     public_record,
 )
+from ..workflows.definitions.research_state import MISSING
 from ..workflows.definitions.research_state import ReflectionState
 from .experiments.presentation import slim_review_rows
 from ..workflows import Public, present_reflection_signal, published_followups
@@ -25,6 +27,8 @@ _PACKET_REFLECTION = ("id", "title", "status", "attempt_index", "created_at", "p
 _PACKET_ARTIFACT = ("id", "artifact_id", "role", "path", "content", "tldr")
 _PACKET_CORPUS_ARTIFACT = ("artifact_id", "id", "role", "path", "tldr")
 _PACKET_EXPERIMENT = ("id", "name", "status", "attempt_index")
+_WRITING = frozenset({"reflecting", "synthesizing"})  # the corpus and coverage steer these states
+_AGENT_ARTIFACT = ("id", "role", "lens_id", "path", "size_bytes")
 
 
 def _kept(record: Record, fields: tuple[str, ...]) -> Record:
@@ -81,11 +85,18 @@ def present_reflection_state(state: ReflectionState, public: Public = REFLECTION
 
 
 def present_agent_reflection_state(
-    state: ReflectionState, *, include_content: bool = False
+    state: ReflectionState, *, include_content: bool = False, working: bool | None = None
 ) -> Record:
-    """Agent reflection state: TLDRs by default, exact documents on opt-in."""
+    """Lean rows by default, exact documents on opt-in; charters, corpus and coverage only while working."""
     if include_content:
         return present_reflection_state(state)
+    current = {artifact.get("id") for artifact in state.current_attempt_artifacts}
+    rows = {"reviews": slim_review_rows(state.reviews),
+            "current_attempt_artifacts": project_rows(state.current_attempt_artifacts, _AGENT_ARTIFACT),
+            "artifacts": project_rows((a for a in state.artifacts if a.get("id") not in current), _AGENT_ARTIFACT)}
+    if not (state.status in _WRITING if working is None else working):
+        return present_reflection_state(state, AGENT, roster=project_rows(state.roster, ("id", "title")),
+                                        corpus=MISSING, reflection_coverage=MISSING, **rows)
     corpus = dict(state.corpus)
     for key in ("previous_lens_reflections", "previous_published_artifacts"):
         corpus[key] = {
@@ -100,14 +111,7 @@ def present_agent_reflection_state(
         for experiment in corpus.get("terminal_experiments", [])
         if isinstance(experiment, dict)
     ]
-    current = {artifact.get("id") for artifact in state.current_attempt_artifacts}
-    return present_reflection_state(
-        state, AGENT,
-        reviews=slim_review_rows(state.reviews),
-        current_attempt_artifacts=[_tldr_only(artifact) for artifact in state.current_attempt_artifacts],
-        artifacts=[_tldr_only(artifact) for artifact in state.artifacts if artifact.get("id") not in current],  # earlier attempts
-        corpus=corpus,
-    )
+    return present_reflection_state(state, AGENT, corpus=corpus, **rows)
 
 
 def reflection_receipt(state: ReflectionState, *, transition: str, from_status: str, **extra: Any) -> Record:

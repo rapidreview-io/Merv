@@ -127,7 +127,7 @@ def start_review(
         result["submitted_artifacts"] = submitted_artifacts
         result["reflection_context"] = project_fields(present_agent_reflection_state(
             research.reflections.get_state(project_id=project_id, reflection_id=target_id, include_content=True),
-        ), _REVIEWER_REFLECTION_FIELDS)
+            working=True), _REVIEWER_REFLECTION_FIELDS)
     else:
         result["target_snapshot"] = target_snapshot
         result.setdefault("context", {})
