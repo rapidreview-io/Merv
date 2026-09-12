@@ -81,6 +81,22 @@ class ArtifactBatchReadTest(unittest.TestCase):
             [artifact["content"]["content"] for artifact in hydrated["artifacts"]],
             ["Report body.", "Plan body."],
         )
+        self.assertFalse(hydrated["artifacts"][0]["content"]["truncated"])
+        # The text window is bounded per artifact, batch rows included, and
+        # pages by next_offset — a 200 KB document never lands whole.
+        page = self.app.call_tool("artifact.read", {
+            "project_id": self.project_id, "artifact_ids": [report, plan],
+            "include_content": True, "max_bytes": 7, "offset": 0,
+        })["artifacts"]
+        self.assertEqual([row["content"]["content"] for row in page], ["Report ", "Plan bo"])
+        self.assertEqual([row["content"]["next_offset"] for row in page], [7, 7])
+        rest = self.app.call_tool("artifact.read", {
+            "project_id": self.project_id, "artifact_id": report,
+            "include_content": True, "max_bytes": 7, "offset": 7,
+        })["content"]
+        self.assertEqual((rest["content"], rest["truncated"]), ("body.", False))
+        self.assertNotIn("next_offset", rest)
+        self.assertEqual(ArtifactReadInput.model_fields["max_bytes"].default, 16000)
 
     def test_missing_id_fails_the_batch_atomically(self) -> None:
         existing = self._submit(role="plan", path="plan.md", body="Plan body.")

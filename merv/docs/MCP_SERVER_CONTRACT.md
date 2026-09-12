@@ -133,7 +133,7 @@ submitted versions; a later upload can replace the current slot without
 changing frozen history. There is no background checkout scan.
 
 `artifact.read {project_id, artifact_id?, artifact_ids?, include_content?,
-target_type?, target_id?, role?}` supports three selections:
+max_bytes?, offset?, target_type?, target_id?, role?}` supports three selections:
 
 - One ID returns `{artifact, download_url}`.
 - A batch of up to 50 IDs returns `{artifacts, count}`, preserving first-seen
@@ -147,8 +147,10 @@ legacy IDs that identify both return the association. ID reads include download
 URLs requiring normal project/account authentication, not MCP-only worker
 credentials. `include_content=true` adds figure paths and a content envelope
 (sibling to a singular artifact, inside each batch row). The envelope reports
-`content`, `available`, `is_binary`, `size_bytes`, and `content_type`; binary or
-unavailable bytes are not injected as text. Content is opt-in and cannot be
+`content`, `available`, `is_binary`, `size_bytes`, `content_type` and `truncated`
+(plus `next_offset` when more remains); text is the byte window `[offset,
+offset + max_bytes)` (default 16000 per artifact, batch rows included), and binary
+or unavailable bytes are not injected as text. Content is opt-in and cannot be
 requested in list mode. ID selectors and list filters cannot be mixed.
 
 The former `artifact.store`, `artifact.submit`, and `artifact.find` tools have

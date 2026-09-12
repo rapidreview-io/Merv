@@ -135,26 +135,38 @@ def _is_textual_type(content_type: str) -> bool:
     )
 
 
-def content_envelope_v1(artifact: Artifact) -> dict[str, Any]:
+def content_envelope_v1(
+    artifact: Artifact, *, offset: int = 0, max_bytes: int | None = None
+) -> dict[str, Any]:
+    """Text bytes ``[offset, offset + max_bytes)``; a bound reports ``truncated``."""
     content_type = artifact.content_type
     data = artifact.data
     text: str | None = None
     is_binary = False
+    end = len(data or b"")
     if data is not None:
-        if not _is_textual_type(content_type) or b"\x00" in data:
+        try:
+            if not _is_textual_type(content_type) or b"\x00" in data:
+                raise ValueError
+            data.decode("utf-8")
+        except ValueError:
             is_binary = True
         else:
-            try:
-                text = data.decode("utf-8")
-            except UnicodeDecodeError:
-                is_binary = True
-    return {
+            if max_bytes is not None:
+                end = min(end, offset + max_bytes)
+            text = data[offset:end].decode("utf-8", errors="ignore")
+    envelope = {
         "content": text,
         "is_binary": is_binary,
         "size_bytes": artifact.size_bytes,
         "content_type": content_type,
         "available": data is not None,
     }
+    if text is not None and max_bytes is not None:
+        envelope["truncated"] = end < len(data)
+        if envelope["truncated"]:
+            envelope["next_offset"] = end
+    return envelope
 
 
 def completed_artifact_v1(
@@ -259,6 +271,8 @@ class ArtifactTools:
         artifact_id: str = "",
         artifact_ids: list[str] | None = None,
         include_content: bool = False,
+        max_bytes: int = 16000,
+        offset: int = 0,
         target_type: str = "",
         target_id: str = "",
         role: str = "",
@@ -278,7 +292,9 @@ class ArtifactTools:
                 )
                 if include_content:
                     row["figures"] = list(artifact.figures)
-                    row["content"] = content_envelope_v1(artifact)
+                    row["content"] = content_envelope_v1(
+                        artifact, offset=offset, max_bytes=max_bytes
+                    )
                 rows.append(row)
             if artifact_id:
                 row = rows[0]
