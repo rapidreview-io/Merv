@@ -94,7 +94,7 @@ BASELINE_VERSION = 64
 # not installed is skipped, not refused: every handler is guarded on the
 # tables it touches, so the next install converges it.
 # 71-79 are research's numbers and 80-89 support's, so parallel work never collides.
-MIGRATION_ORDER: tuple[int, ...] = (65, 66, 67, 68, 69, 70, 71, 72, 80)
+MIGRATION_ORDER: tuple[int, ...] = (65, 66, 67, 68, 69, 70, 71, 72, 80, 81)
 
 
 def declared_tables(ddl: str) -> tuple[str, ...]:

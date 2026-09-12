@@ -91,12 +91,15 @@ class RemoteSandboxes:
         return [dict(row) for row in rows]
 
     def _link(self, project_id: str, sandbox_uid: str, experiment_id: str = "", public_key: str = "") -> None:
+        """Record the association; a new public key forgets the certificate issued for the old one."""
         with self._store.transaction() as conn:
             conn.execute(
                 "INSERT INTO remote_sandbox_links (project_id,sandbox_uid,experiment_id,public_key,created_at) "
                 "VALUES (?,?,?,?,?) ON CONFLICT (project_id,sandbox_uid,experiment_id) "
                 "DO UPDATE SET public_key = CASE WHEN excluded.public_key <> '' "
-                "THEN excluded.public_key ELSE remote_sandbox_links.public_key END",
+                "THEN excluded.public_key ELSE remote_sandbox_links.public_key END, "
+                "certificate_expires_at = CASE WHEN excluded.public_key IN ('', remote_sandbox_links.public_key) "
+                "THEN remote_sandbox_links.certificate_expires_at ELSE '' END",
                 (project_id, sandbox_uid, experiment_id, public_key, now_iso()),
             )
 
@@ -143,8 +146,8 @@ class RemoteSandboxes:
             "price_usd_per_hour": _usd(record.get("hourly_price") or offer.get("hourly_price")),
         }
 
-    def _facts(self, project_id: str, record: dict[str, Any], *, public_key: str = "") -> dict[str, Any]:
-        """What an agent needs from this box: a poll receipt while provisioning, the full row once it runs."""
+    def _facts(self, project_id: str, record: dict[str, Any], *, issue: bool = False) -> dict[str, Any]:
+        """A poll receipt while provisioning, the row once it runs; ssh{} only when a certificate is issued."""
         facts = self._snapshot(project_id, record)
         status = facts["status"]
         if status == "provisioning":
@@ -155,20 +158,25 @@ class RemoteSandboxes:
         elif status == "cleanup_pending":
             facts["hint"] = "Deletion is pending in merv-sandboxes. Billing may continue until its worker confirms the resource is stopped."
         elif status == "running":
-            key = public_key or next((link["public_key"] for link in reversed(self._links(project_id, record["id"]))
-                                      if link["public_key"]), "")
-            if not key:
+            link = next((link for link in reversed(self._links(project_id, record["id"])) if link["public_key"]), None)
+            if link is None:
                 facts["hint"] = "No caller public key saved; call sandbox.request with public_key and the attached experiment to issue SSH access."
                 return facts
-            issued = self._call("POST", "/access/certificates", project_id=project_id,
-                                json={"public_key": key, "sandbox_id": record["id"]})
-            gateway = issued["gateway"]
-            facts["ssh"] = {"host": gateway["host"], "port": gateway["port"], "user": record["id"],
-                            "certificate": issued["certificate"], "certificate_expires_at": issued["expires_at"],
-                            "host_public_key": gateway.get("host_public_key")}
-            facts["hint"] = ("Save ssh.certificate beside your private key as <key>-cert.pub, add "
-                             "'[ssh.host]:ssh.port ssh.host_public_key' to known_hosts (plain host when the port is 22), "
-                             "then ssh -p ssh.port ssh.user@ssh.host. sandbox.get refreshes the certificate.")
+            live = parse_iso(link["certificate_expires_at"])
+            if issue or live is None or live <= datetime.now(UTC):
+                issued = self._call("POST", "/access/certificates", project_id=project_id,
+                                    json={"public_key": link["public_key"], "sandbox_id": record["id"]})
+                with self._store.transaction() as conn:
+                    conn.execute("UPDATE remote_sandbox_links SET certificate_expires_at = ? "
+                                 "WHERE project_id = ? AND sandbox_uid = ? AND public_key = ?",
+                                 (issued["expires_at"], project_id, record["id"], link["public_key"]))
+                gateway = issued["gateway"]
+                facts["ssh"] = {"host": gateway["host"], "port": gateway["port"], "user": record["id"],
+                                "certificate": issued["certificate"], "certificate_expires_at": issued["expires_at"],
+                                "host_public_key": gateway.get("host_public_key")}
+                facts["hint"] = ("Save ssh.certificate beside your private key as <key>-cert.pub, add "
+                                 "'[ssh.host]:ssh.port ssh.host_public_key' to known_hosts (plain host when the port is 22), "
+                                 "then ssh -p ssh.port ssh.user@ssh.host. sandbox.get issues a new certificate once this one expires.")
         return facts
 
     def options(self, *, project_id: str | None = None, gpu: str | None = None,
@@ -189,15 +197,14 @@ class RemoteSandboxes:
                 gpu: str | None = None, cpu: float | None = None, memory: int | None = None,
                 time_limit: int | None = None, instance_type: str | None = None,
                 region: str | None = None, provider: str | None = None,
-                public_key: str | None = None, public_key_override: str | None = None,
-                additional: bool = False, sandbox_uid: str | None = None,
+                public_key: str | None = None, additional: bool = False, sandbox_uid: str | None = None,
                 **_: Any) -> dict[str, Any]:
         if sandbox_uid:
             raise ValidationError("sandbox.request does not accept sandbox_uid; use sandbox.get or sandbox.attach")
         pid = self._project(project_id)
         self._check_experiment(pid, experiment_id)
         try:
-            key = validate_openssh_public_key(public_key_override or public_key)
+            key = validate_openssh_public_key(public_key)
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc
         if not key:
@@ -217,7 +224,7 @@ class RemoteSandboxes:
                              and (row["id"] in ids or row.get("name") == name)), None)
             if existing:
                 self._link(pid, existing["id"], experiment_id, key)
-                return {**self._facts(pid, existing, public_key=key), "reused": True}
+                return {**self._facts(pid, existing, issue=True), "reused": True}
         offers = [offer for offer in self.options(project_id=pid, gpu=gpu, region=region)["options"] if offer["available"]]
         candidates = [offer for offer in offers
                       if (not provider or offer["provider"] == provider)
@@ -243,7 +250,7 @@ class RemoteSandboxes:
             body["name"] = name if not additional else name + "-" + uuid.uuid4().hex[:8]
         record = self._call("POST", "/sandboxes", project_id=pid, json=body)
         self._link(pid, record["id"], experiment_id or "", key)
-        return {**self._facts(pid, record, public_key=key), "reused": False}
+        return {**self._facts(pid, record, issue=True), "reused": False}
 
     def get(self, *, project_id: str | None = None, experiment_id: str | None = None,
             sandbox_uid: str | None = None, **_: Any) -> dict[str, Any]:
@@ -258,15 +265,15 @@ class RemoteSandboxes:
                     "hint": "No sandbox for this experiment; call sandbox.request."}
         return self._facts(pid, record)
 
-    def attach(self, *, project_id: str | None = None, experiment_id: str, sandbox_uid: str,
-               public_key_override: str | None = None) -> dict[str, Any]:
+    def attach(self, *, project_id: str | None = None, experiment_id: str, sandbox_uid: str) -> dict[str, Any]:
         pid = self._project(project_id)
         self._check_experiment(pid, experiment_id)
         record = self._record(pid, sandbox_uid, None)
         if record.get("state") != "ready":
             raise ValidationError("sandbox.attach requires a running sandbox")
-        self._link(pid, sandbox_uid, experiment_id, public_key_override or "")
-        return {**self._facts(pid, record, public_key=public_key_override or ""), "reused": True}
+        self._link(pid, sandbox_uid, experiment_id)
+        return {"sandbox_uid": sandbox_uid, "experiment_id": experiment_id, "status": "running", "reused": True,
+                "hint": "Attached; sandbox.get carries SSH access when a certificate is issued."}
 
     def snapshot(self, *, project_id: str | None = None, experiment_id: str | None = None,
                  sandbox_uid: str | None = None) -> dict[str, Any] | None:
@@ -340,9 +347,10 @@ class RemoteSandboxes:
     def pull_outputs_command(self, *, project_id: str | None = None,
                              experiment_id: str | None = None, sandbox_uid: str | None = None,
                              paths: list[str] | None = None) -> dict[str, Any]:
-        facts = self.get(project_id=project_id, experiment_id=experiment_id, sandbox_uid=sandbox_uid)
+        pid = self._project(project_id)
+        facts = self._facts(pid, self._record(pid, sandbox_uid, experiment_id), issue=True)
         ssh = facts.get("ssh") or {}
-        if facts.get("status") != "running" or not ssh.get("host"):
+        if not ssh.get("host"):
             raise ValidationError("sandbox.pull_outputs requires a running sandbox with caller SSH access")
         selected = list(paths or _DEFAULT_OUTPUTS)
         for path in selected:

@@ -4,8 +4,9 @@
 reached by replaying the whole 1..64 ladder, minus the eight sandbox-fleet
 tables migration 65 drops, the three OAuth exchange tables migration 66 drops,
 the six experiment tracking columns migration 68 drops, the delivery-barrier
-table migration 69 drops and the three record-spine columns migration 72 adds
-to `review_requests`. Squashing that ladder into the DDL is a move, not a
+table migration 69 drops, the three record-spine columns migration 72 adds
+to `review_requests` and the certificate expiry migration 81 adds to
+`remote_sandbox_links`. Squashing that ladder into the DDL is a move, not a
 change: installing
 every component on an empty database — SQLite here, Postgres in
 ``test_postgres_dialect`` — must land on exactly this shape.
