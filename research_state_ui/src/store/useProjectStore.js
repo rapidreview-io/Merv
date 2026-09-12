@@ -158,6 +158,7 @@ export const useProjectStore = create((set, get) => ({
     // /home's recent_events is capped at ~25, too few for the Events page;
     // the deeper window powers anything that needs ≥1h of history.
     const tags = etagsFor(pid);
+    const startedAt = Date.now();
     try {
       // A failed side-fetch must read as "unchanged", not "changed to empty":
       // notModified:false here would blank the last-good list and drop its ETag.
@@ -201,7 +202,9 @@ export const useProjectStore = create((set, get) => ({
       set(patch);
       return patch.home ?? get().home;
     } catch (err) {
-      if (get().projectId !== pid) return null;
+      // A stale failure (a request that hung through an outage and timed out
+      // after a newer refresh succeeded) must not mark fresh data stale.
+      if (get().projectId !== pid || get().lastSyncedAt > startedAt) return null;
       set({ lastSyncError: err.message });
       return null;
     }
