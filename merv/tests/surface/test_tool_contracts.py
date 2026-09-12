@@ -159,7 +159,6 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "reflection.transition": "1ba7a15ce6643aca548f6e6ed5f334d39abf8856aefcd4dcffa246adca03b4b9",
     "consolidation.get": "63fa52f5081d1395c21ec85a8204d01e96213724b5f226ab7f0adc61edcd0025",
     "consolidation.submit": "47d8d676b8d6c69af8e2ec9c803678f50de826c5e7e5e9449f5f16596370ea37",
-    "review.request": "485c8eb3a9228e08a4cd74ac89044a95d221014625d984cf2ad20825a626baaa",
     "review.start": "bff14fc86b1a8a05fa84cb40a4dbe4f462e7f039e36dac8991ff505a899fe311",
     "review.submit": "6545cf3024c46ffb5bb26517093a4a5b50b2c8b84e900f8cfd22c26427aeb208",
     "review.status": "f77236c493e0a6d6c270c2d6beee060596bbf8b7c51b587b74887e9c29830a95",
@@ -170,7 +169,7 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "artifact.read": "6380ea926858892f59ad5d0777e571caae2565022528462dcc57181f57902198",
     "artifact.attach": "72ae3c651f7499b1cbc4b7875e794635f365b0e29fc94539b89393f4a15535ba",
     "feed.register": "664d9d0e70bbb1ac315788acae97e73febf07be2b803fe533f82fecefc7ea326",
-    "feed.post": "4ae8d1aa5565a69ffabdb443bc760a8981b9eb022757c41d0ab58d6a35eda850",
+    "feed.post": "4b83c188d29a795c6bceff8ffdb2dd91cc490d0ad5cc398503b05384140721a3",
     "feed.list": "83fa2eef2ba251fe37e4ebe81810765c7015b82f17ecc08ea2bd2e1ee4bfc55a",
     "storage.put_object": "550c3f55aa135821f658eba9800d062f4e37b4ad3956af523b105be96d7da15a",
     "storage.submit": "074879ce62d47c893a33b707fb7e307d7bb58c9d3aaccf3da66812f52c7e5fe9",
@@ -191,6 +190,7 @@ TOOL_INPUT_SCHEMA_SHA256 = {
     "sandbox.runs": "77ffc5d671133be302ac63343bd68533c0aaef124e94b98b25f3ad8a85a964d3",
     "sandbox.terminal": "2cfd80ededc678a7fa4c537b3d80a70445342c06a45f079c3bf9ba2c6c934018",
     "sandbox.health": "99334726611ccf58a148b0814696bfa6fe08c1b2d027e946beccf5a74331c9aa",
+    "review.request": "485c8eb3a9228e08a4cd74ac89044a95d221014625d984cf2ad20825a626baaa",
 }
 
 
@@ -304,6 +304,16 @@ class ToolContractRegistryTest(unittest.TestCase):
             ).encode()
             actual[name] = hashlib.sha256(encoded).hexdigest()
         self.assertEqual(actual, TOOL_INPUT_SCHEMA_SHA256)
+
+    def test_public_manifest_stays_under_the_byte_ceiling(self) -> None:
+        # Every session starts by reading tools/list; this is the whole public
+        # catalog (storage included) as the dispatcher serves it, so prose
+        # cannot creep back into the schemas one field at a time.
+        served = ToolDispatcher.__new__(ToolDispatcher)
+        served._tool_names = frozenset(TOOL_MANIFEST)
+        public = [tool for tool in served.list_tools() if not tool.get("hidden")]
+        size = len(json.dumps(public, separators=(",", ":")))
+        self.assertLessEqual(size, 48_000, f"public tools/list is {size} bytes")
 
     def test_live_app_serves_every_available_manifest_tool(self) -> None:
         dispatched = set(self.app._app.tools._tools)
