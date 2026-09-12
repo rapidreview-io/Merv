@@ -7,7 +7,6 @@ import unittest
 from pathlib import Path
 
 from tests.support.brain import TestBrain
-from merv.brain.research_core.tools import ReviewStartInput
 from merv.brain.kernel.utils import ValidationError
 
 VALID_PLAN = (
@@ -62,10 +61,9 @@ class ReviewIdentityTest(unittest.TestCase):
             role="design_reviewer",
         )
 
-    def test_contract_marks_caller_session_id_required(self) -> None:
-        self.assertTrue(ReviewStartInput.model_fields["caller_session_id"].is_required())
-
     def test_review_start_rejects_omitted_caller_session_id(self) -> None:
+        # The contract leaves it blank so the handler's sentence, not a bare
+        # "field required", tells the reviewer what to pass.
         req = self._request_design_review()
         with self.assertRaises(ValidationError) as ctx:
             self.call(
@@ -73,7 +71,7 @@ class ReviewIdentityTest(unittest.TestCase):
                 review_request_id=req["review_request_id"],
                 reviewer_capability=req["reviewer_capability"],
             )
-        self.assertIn("caller_session_id", str(ctx.exception))
+        self.assertIn("caller_session_id is required: pass the reviewer's own", str(ctx.exception))
 
     def test_review_start_rejects_whitespace_caller_session_id(self) -> None:
         req = self._request_design_review()
