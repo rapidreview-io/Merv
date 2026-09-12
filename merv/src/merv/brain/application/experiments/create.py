@@ -5,9 +5,7 @@ from __future__ import annotations
 
 from typing import Any, TypedDict, Unpack
 
-from ...kernel.utils import ValidationError
 from ...research_core import (
-    EXPERIMENT,
     Research,
     project_fields,
     safe_experiment_dirname,
@@ -16,20 +14,10 @@ from ...workflows import documents
 
 
 class ExperimentCreateArgs(TypedDict, total=False):
-    """Public compatibility fields translated before Research sees them."""
-
     name: str
     intent: str
     details: str
     tested_claim_ids: list[str] | str | None
-    claim_id: str | None
-    claim_ids: list[str] | str | None
-    title: str
-    hypothesis: str
-    design: str
-    success_criteria: str
-    risks: str
-    status: str
     depends_on: list[str] | str | None
     project_id: str | None
 
@@ -42,50 +30,8 @@ def experiment_folder(*, experiment_id: str, name: str = "") -> str:
 def create_experiment(
     research: Research, **kwargs: Unpack[ExperimentCreateArgs]
 ) -> dict[str, Any]:
-    """Translate released aliases, create in Research, and add folder guidance."""
-    initial = EXPERIMENT.workflow.initial
-    status = str(kwargs.pop("status", initial) or initial)
-    if status != initial:
-        raise ValidationError(
-            f"experiment.create only supports status={initial!r}; use "
-            "experiment.transition for workflow changes"
-        )
-    legacy_intent = [
-        str(kwargs.pop(field, "") or "").strip()
-        for field in ("title", "hypothesis", "design", "success_criteria", "risks")
-    ]
-    intent = str(kwargs.pop("intent", "") or "").strip() or next(
-        (value for value in legacy_intent if value),
-        "",
-    )
-    claim_values: list[str] = []
-    for value in (
-        kwargs.pop("tested_claim_ids", None),
-        kwargs.pop("claim_id", None),
-        kwargs.pop("claim_ids", None),
-    ):
-        if isinstance(value, str):
-            claim_values.append(value)
-        elif value:
-            claim_values.extend(value)
-    claim_ids: list[str] = []
-    for claim_id in claim_values:
-        if not isinstance(claim_id, str) or not claim_id.strip():
-            raise ValidationError("claim ids must be non-empty strings")
-        if claim_id not in claim_ids:
-            claim_ids.append(claim_id)
-    state = research.experiments.create(
-        name=str(kwargs.pop("name", "") or ""),
-        intent=intent,
-        details=str(kwargs.pop("details", "") or "").strip(),
-        tested_claim_ids=claim_ids,
-        depends_on=kwargs.pop("depends_on", None),
-        project_id=kwargs.pop("project_id", None),
-    )
-    if kwargs:
-        raise ValidationError(
-            "unexpected experiment.create fields: " + ", ".join(sorted(kwargs))
-        )
+    """Create in Research and add folder guidance."""
+    state = research.experiments.create(**kwargs)
     return creation_receipt(state, folder=experiment_folder(experiment_id=state.id, name=state.name))
 
 

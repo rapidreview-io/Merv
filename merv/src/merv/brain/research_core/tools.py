@@ -144,54 +144,20 @@ class ClaimUpdateInput(ProjectScopedInput):
 class ExperimentCreateInput(ProjectScopedInput):
     name: str = Field(
         default="",
-        description="REQUIRED. Short folder-safe name, unique within the project — it becomes the experiment folder experiments/<name>/. Letters, digits, '.', '_', '-' only; 3-48 characters. The project supplies the shared context, so name the contrast: lead with what distinguishes this experiment from its siblings and do not repeat the project topic (next to 'released_adapters', prefer 'scratch_training' over 'lora_glue_scratch'). See the siblings — including terminal ones you should not recreate — via the project tool with action=\"overview\".",
+        description="Required. Folder-safe (letters, digits, . _ -), unique in the project; becomes experiments/<name>/. Name the contrast with sibling experiments, not the project topic.",
     )
     intent: str = Field(
         default="",
-        description="REQUIRED. The ask, in one standalone line: what this experiment tests and why the project needs it — written so a stranger plans the experiment you meant. Name the datasets, harness tasks, and sibling experiments involved by their own names; never 'the wave' or 'this reflection'. Doubles as the UI title. How to test it — method, metrics, thresholds — belongs in the plan.md artifact.",
+        description="Required. The ask in one standalone line: what this tests and why the project needs it, naming datasets, tasks and siblings by their own names. Method belongs in plan.md.",
     )
     details: str = Field(
         default="",
-        description="Optional free prose addressed to whoever writes the plan: givens, boundaries with sibling experiments, preferences, budgets, warnings — up to a full design sketch. Immutable once created, and advice rather than contract: the approved plan supersedes it on anything about how. Empty is fine — the intent alone is a complete create.",
+        description="Optional advice for whoever writes the plan (givens, boundaries, budgets); immutable, superseded by the approved plan.",
     )
     tested_claim_ids: documents.WrittenList = Field(default_factory=list)
-    claim_id: str | None = Field(
-        default=None, description="Alias for a single tested claim id."
-    )
-    claim_ids: documents.WrittenList = Field(
-        default=None, description="Alias for tested_claim_ids."
-    )
     depends_on: documents.WrittenList = Field(
         default_factory=list,
-        description=(
-            "Optional exp_/task_ ids of the same project this experiment must "
-            "not start running before (e.g. the data-preparation task it "
-            "trains on); they become wave DAG edges."
-        ),
-    )
-    title: str = Field(
-        default="",
-        description="Deprecated; back-compat fallback for intent. Put design detail in plan.md.",
-    )
-    hypothesis: str = Field(
-        default="",
-        description="Deprecated; put the hypothesis in plan.md's 'Objective & hypothesis' section.",
-    )
-    design: str = Field(
-        default="",
-        description="Deprecated; put the method in plan.md's 'Method' section.",
-    )
-    success_criteria: str = Field(
-        default="",
-        description="Deprecated; put success criteria in plan.md's 'Evaluation' section.",
-    )
-    risks: str = Field(
-        default="",
-        description="Deprecated; put risks in plan.md's 'Risks & confounders' section.",
-    )
-    status: Literal[*EXPERIMENT_INITIAL_VALUES] = Field(
-        default=EXPERIMENT.workflow.initial,
-        description=f"Create always starts {EXPERIMENT.workflow.initial}.",
+        description="exp_/task_ ids this experiment must not start before; they become wave DAG edges.",
     )
 
 
