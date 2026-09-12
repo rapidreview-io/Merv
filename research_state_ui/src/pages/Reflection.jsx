@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
-import { keepIfUnchanged, useIntervalPoll } from '../store/usePolling';
+import { useIntervalPoll, useRecordStatus } from '../store/usePolling';
+import { StaleNote } from '../components/LoadState';
 import { useProjectStore, useProjectHref, selectExperiments, selectTasks } from '../store/useProjectStore';
 import StatusPill from '../components/StatusPill';
 import ConsoleTable, {
@@ -55,7 +56,6 @@ export default function Reflection() {
   const tasks = useProjectStore(selectTasks);
   const navigate = useNavigate();
   const px = useProjectHref();
-  const [data, setData] = useState(null);
   const sort = useTableSort('wave');
 
   // Legacy deep links (?wave=<id>) predate per-wave pages — forward them.
@@ -65,12 +65,7 @@ export default function Reflection() {
     if (legacy) navigate(px(`/reflection/${legacy}`), { replace: true });
   }, [legacy, navigate, px]);
 
-  const fetchReflections = useCallback(async () => {
-    try {
-      const payload = await api.getReflections(projectId);
-      setData(keepIfUnchanged(payload));
-    } catch { /* keep the last good list */ }
-  }, [projectId]);
+  const [data, error, fetchReflections] = useRecordStatus(() => api.getReflections(projectId), [projectId]);
   useIntervalPoll(fetchReflections, 8000);
 
   const waves = data?.reflections || [];
@@ -92,6 +87,7 @@ export default function Reflection() {
     <div className="page-stage">
       <header className="page-header page-header--lg">
         <h1 className="page-title">Reflection</h1>
+        {error && (data ? <StaleNote error={error.message} /> : <div className="error-message">{error.message}</div>)}
       </header>
 
       {data && rows.length === 0 ? (

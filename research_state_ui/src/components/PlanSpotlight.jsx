@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { api } from '../api';
 import { useAsyncData } from '../store/usePolling';
+import { unavailableCopy } from '../utils/format';
 import PlanBody from './PlanBody';
 import ReviewEvolutionStepper from './ReviewEvolutionStepper';
 
@@ -101,7 +102,7 @@ export default function PlanSpotlight({
             <div className="error-message">{error}</div>
           ) : content ? (
             content.available === false ? (
-              <div className="empty">No submitted plan content is available.</div>
+              <div className="empty">{unavailableCopy(content, 'the plan')}</div>
             ) : content.is_binary ? (
               <div className="empty">Binary plan file</div>
             ) : (

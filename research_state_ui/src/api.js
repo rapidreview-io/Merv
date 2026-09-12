@@ -100,8 +100,23 @@ export async function fetchAuthedText(relPath, { signal } = {}) {
   return (await fetchAuthed(relPath, { signal })).text();
 }
 
+// A 200 whose body is not JSON is not the Merv API answering (SPA fallback,
+// captive portal, misrouted proxy). Named so boot can refuse to treat it as
+// "no projects" and post a new project to whatever replied.
+export const notApiError = (status) =>
+  Object.assign(new Error('Backend answered, but not with the Merv API'), { code: 'not_api', status });
+
+// No request outlives this without a caller-supplied signal: a backend that
+// accepts the socket and never answers must surface as an error, not a
+// spinner. Pollers and boot both rely on it.
+const TIMEOUT_MS = 20_000;
+
 async function send(path, { method = 'GET', body, signal, headers = {} } = {}, retried = false) {
-  const init = { method, signal, headers: { 'X-RP-Client-Version': CLIENT_VERSION, ...headers } };
+  const init = {
+    method,
+    signal: signal || AbortSignal.timeout(TIMEOUT_MS),
+    headers: { 'X-RP-Client-Version': CLIENT_VERSION, ...headers },
+  };
   const token = authToken();
   if (token) init.headers['Authorization'] = `Bearer ${token}`;
   if (body !== undefined) {
@@ -111,9 +126,7 @@ async function send(path, { method = 'GET', body, signal, headers = {} } = {}, r
   const res = await fetch(`${BASE}${path}`, init);
   const text = res.status === 304 ? '' : await res.text();
   let data = null;
-  if (text) {
-    try { data = JSON.parse(text); } catch { data = { raw: text }; }
-  }
+  try { data = text ? JSON.parse(text) : null; } catch { if (res.ok) throw notApiError(res.status); }
   if (!res.ok && res.status !== 304) {
     // A 401 on a Supabase-session request usually just means the access token
     // aged out (tab closed or backgrounded past the ~1h TTL). Refresh the
@@ -173,7 +186,7 @@ function sandboxPath(pid, eid, sandboxUid, suffix = '') {
 
 export const api = {
   // Server identity + compat floor (version handshake).
-  getMeta: () => request('/api/meta'),
+  getMeta: () => request('/api/meta', { signal: AbortSignal.timeout(8_000) }),
 
   // Projects
   listProjects: () => request('/api/projects'),

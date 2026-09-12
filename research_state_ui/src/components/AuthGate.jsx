@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { api } from '../api';
+import { useProjectStore } from '../store/useProjectStore';
 import OAuthConsent from './OAuthConsent';
+import Connecting from './Connecting';
 import {
   getAuthToken,
   initAuth,
@@ -27,9 +28,9 @@ export default function AuthGate({ children }) {
     let disposed = false;
     let unsubscribe = null;
     (async () => {
-      // Meta is auth-exempt; a dead backend falls through to the app's own
-      // boot-error surface rather than a misleading login wall.
-      const meta = await api.getMeta().catch(() => null);
+      // Meta is auth-exempt; a dead backend (checkMeta → null) falls through
+      // to the app's own boot-error surface rather than a misleading login wall.
+      const meta = await useProjectStore.getState().checkMeta();
       const active = await initAuth(meta?.auth).catch(() => false);
       if (disposed) return;
       if (!active) {
@@ -56,7 +57,7 @@ export default function AuthGate({ children }) {
   }, []);
 
   const location = useLocation();
-  if (!state.checked) return null;
+  if (!state.checked) return <Connecting />;
   if (state.required && !state.authed) return <SignIn />;
   // OAuth consent: a signed-in owner picks the one project this MCP client may
   // access (the lane that mints the project key). Sits above the router — the

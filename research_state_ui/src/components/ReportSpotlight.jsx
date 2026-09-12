@@ -4,7 +4,7 @@ import { useAsyncData } from '../store/usePolling';
 import MarkdownView from './MarkdownView';
 import FileRenderer from './FileRenderer';
 import ExperimentReviewStepper from './ExperimentReviewStepper';
-import { isMarkdown } from '../utils/format';
+import { isMarkdown, unavailableCopy } from '../utils/format';
 
 /**
  * ReportSpotlight — the results artifact.
@@ -102,7 +102,7 @@ export default function ReportSpotlight({
             <div className="error-message">{error}</div>
           ) : content ? (
             content.available === false ? (
-              <div className="empty">No submitted report content is available.</div>
+              <div className="empty">{unavailableCopy(content, 'the report')}</div>
             ) : content.is_binary ? (
               <div className="empty">Binary report file</div>
             ) : isMarkdown(reportArtifact.path) ? (

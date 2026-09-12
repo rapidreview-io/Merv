@@ -698,6 +698,8 @@ html[data-theme="dark"] .product-tab--active {
   flex-direction: column;
   gap: 4px;
 }
+/* Freshness chip: same dot + "synced Ns" grammar as the mobile bar. */
+.sidebar-sync { display: flex; align-items: center; gap: 6px; padding: 2px 10px 4px; color: var(--muted); }
 /* Account chip: the sidebar's bottommost row (reference grammar) — avatar
    initial + label above its own hairline; clicking opens a small upward
    menu with the sign-in/out action. Always rendered, even on localhost. */
@@ -5199,11 +5201,11 @@ a.spend-row-name:hover { color: var(--active); }
   font-variant-numeric: tabular-nums;
 }
 /* Last-good data on screen, refresh failing behind it. */
-.litreview-stale {
+.stale-note {
   display: flex; align-items: baseline; gap: 7px;
   margin: 8px 0 0; color: var(--qualifies); font-size: var(--text-sm);
 }
-.litreview-stale::before {
+.stale-note::before {
   content: ''; flex: none; align-self: center;
   width: 5px; height: 5px; border-radius: var(--radius-pill);
   background: currentColor;

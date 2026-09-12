@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useProjectStore, useProjectHref, selectExperiments } from '../store/useProjectStore';
 import { api } from '../api';
 import { RawLink } from '../components/AuthedMedia';
 import ObjId from '../components/ObjId';
 import ArtifactContentView from '../components/ArtifactContentView';
+import { LoadFallback } from '../components/LoadState';
 import { basename, formatBytes, fmtStamp } from '../utils/format';
-import { keepIfUnchanged, useIntervalPoll } from '../store/usePolling';
+import { useIntervalPoll, useRecordStatus } from '../store/usePolling';
 import { expName, groupArtifactsByTarget } from '../utils/experiment';
 
 /**
@@ -36,20 +37,8 @@ export default function Artifacts() {
   const projectId = useProjectStore(s => s.projectId);
   const experiments = useProjectStore(selectExperiments);
 
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
-
-  const fetchArtifacts = useCallback(async () => {
-    try {
-      const d = await api.listArtifacts(projectId);
-      setData(keepIfUnchanged(d));
-      setError(null);
-    } catch (err) {
-      setError(err.message);
-    }
-  }, [projectId]);
-
-  useEffect(() => { setData(null); }, [projectId]);
+  const [data, error, fetchArtifacts, reset] = useRecordStatus(() => api.listArtifacts(projectId), [projectId]);
+  useEffect(() => { reset(); }, [projectId, reset]);
   useIntervalPoll(fetchArtifacts, 10000);
 
   // Pending rows are half-born (upload token outstanding); show complete only.
@@ -67,6 +56,9 @@ export default function Artifacts() {
       </div>
     );
   }
+  if (artifactId) {
+    return <LoadFallback error={error?.message || (data && `No artifact ${artifactId} in this project.`)} back={px('/artifacts')} label="Artifacts" />;
+  }
 
   return (
     <div className="page-stage">
@@ -75,7 +67,7 @@ export default function Artifacts() {
         <p className="page-summary">What the agents submitted, by experiment and reflection.</p>
       </header>
 
-      {error && <div className="error-message">{error}</div>}
+      {error && <div className="error-message">{error.message}</div>}
 
       {!error && data && artifacts.length === 0 && (
         <div className="empty-state">

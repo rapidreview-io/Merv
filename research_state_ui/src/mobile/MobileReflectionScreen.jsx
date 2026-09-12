@@ -8,7 +8,8 @@ import GraphOutline from './GraphOutline';
 import { normalizeLogic, makeLogicDetail } from './graphModel';
 import { TERMINAL_WAVE, reflectionsByLens, secondaryDocs, resolveReflectionDoc } from '../components/reflection/waveModel';
 import ConsolidationLedger from '../components/reflection/ConsolidationLedger';
-import { keepIfUnchanged, useIntervalPoll } from '../store/usePolling';
+import { useIntervalPoll, useRecordStatus } from '../store/usePolling';
+import { StaleNote } from '../components/LoadState';
 
 const GraphCanvasOverlay = lazy(() => import('./GraphCanvasOverlay'));
 
@@ -44,7 +45,6 @@ export default function MobileReflectionScreen() {
   const projectId = project?.id;
   const px = useProjectHref();
 
-  const [data, setData] = useState(null);
   const [graph, setGraph] = useState(null);
   // A deep link (/reflection/:reflectionId — the desktop detail route, also
   // what auto-run's job and queue rows produce) pins that wave; otherwise
@@ -53,11 +53,7 @@ export default function MobileReflectionScreen() {
   const [pinnedId, setPinnedId] = useState(linkedId || null); // null = follow the live wave
   const [showCanvas, setShowCanvas] = useState(false);
 
-  const fetchReflections = useCallback(async () => {
-    if (!projectId) return;
-    const d = await api.getReflections(projectId).catch(() => null);
-    if (d) setData(keepIfUnchanged(d));
-  }, [projectId]);
+  const [data, error, fetchReflections] = useRecordStatus(() => api.getReflections(projectId), [projectId]);
 
   useEffect(() => { fetchReflections(); }, [fetchReflections]);
 
@@ -119,7 +115,7 @@ export default function MobileReflectionScreen() {
       <div className="page-stage">
         {header}
         <div className="empty-state empty-state--compact">
-          <p>No reflection waves yet.</p>
+          <p>{error && !data ? error.message : 'No reflection waves yet.'}</p>
         </div>
         {signal?.hint && <div className="syn-hint">{signal.hint}</div>}
       </div>
@@ -129,6 +125,7 @@ export default function MobileReflectionScreen() {
   return (
     <div className="page-stage msyn">
       {header}
+      {error && <StaleNote error={error.message} />}
 
       {wave && !isCurrent && (
         <div className="msyn-histbanner">

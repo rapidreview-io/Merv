@@ -9,6 +9,7 @@ import { setSurfaceOverride } from '../store/useViewport';
 import ProductSwitch from './ProductSwitch';
 import ProjectSwitcher from './ProjectSwitcher';
 import SandboxRetentionIndicator from './SandboxRetentionIndicator';
+import SyncChip from './SyncChip';
 import { getAuthEmail, isAuthEnabled, onAuthChange, signOut } from '../auth';
 
 // Account chip: the sidebar's bottommost row, always present. Opens an upward
@@ -104,7 +105,6 @@ export function IconSidebar(props) {
 export default function Sidebar({ onHide }) {
   const home = useProjectStore(s => s.home);
   const stats = useProjectStore(selectStats);
-  const lastSyncError = useProjectStore(s => s.lastSyncError);
   const sandboxes = useProjectStore(selectSandboxes);
   const runningSandboxes = sandboxes.filter(s => s.status === 'running').length;
   const px = useProjectHref();
@@ -219,7 +219,7 @@ export default function Sidebar({ onHide }) {
 
       <div className="sidebar-foot">
         <SandboxRetentionIndicator />
-        {lastSyncError && <div className="error-message" style={{ fontSize: 11 }}>{lastSyncError}</div>}
+        <SyncChip className="sidebar-sync" />
         <NavLink to={px('/settings')} className={({ isActive }) => 'sidebar-link' + (isActive ? ' active' : '')}>
           Settings
         </NavLink>

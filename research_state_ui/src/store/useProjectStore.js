@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { api, CLIENT_VERSION } from '../api';
+import { api, CLIENT_VERSION, notApiError } from '../api';
 
 const PROJECT_KEY = 'rsui:projectId';
 
@@ -23,7 +23,7 @@ export const useProjectStore = create((set, get) => ({
   projects: [],          // [{id, name, summary, created_at}]
   projectsLoaded: false,
 
-  // Bootstrap state
+  // Bootstrap state: null, or {message, code, status, tries} from loadProjects.
   bootError: null,
 
   // Version/compat handshake (GET /api/meta). serverMeta holds the backend's
@@ -43,7 +43,7 @@ export const useProjectStore = create((set, get) => ({
   // an experiments-only braid and reflowing when the waves land; kept fresh
   // afterwards by refreshReflections at the panel's own slow cadence.
   reflections: null,     // {reflections, signal} — null until the first fetch for this project settles
-  lastSyncedAt: null,    // epoch ms of last successful refresh
+  lastSyncedAt: null,    // epoch ms the backend last answered (refresh or stream heartbeat)
   lastSyncError: null,
   isPolling: false,
 
@@ -83,12 +83,14 @@ export const useProjectStore = create((set, get) => ({
     }
   },
 
+  // AuthGate has already fetched /api/meta by the time this runs.
   async loadProjects() {
-    // Fetch version metadata before the first project render.
-    await get().checkMeta();
     try {
-      const data = await api.listProjects();
-      const list = data.projects || [];
+      const list = (await api.listProjects())?.projects;
+      // Only an explicit empty list means "no projects yet" — anything else
+      // (HTML, {}) is something other than the API answering, and must not
+      // reach the create-project bootstrap.
+      if (!Array.isArray(list)) throw notApiError(200);
       // Clear any prior boot failure so Retry (or a recovered backend) can
       // actually leave the error page.
       set({ projects: list, projectsLoaded: true, bootError: null });
@@ -101,19 +103,19 @@ export const useProjectStore = create((set, get) => ({
       }
       return list;
     } catch (err) {
-      // Distinguish the control-plane auth/version gates from a dead backend
-      // so the banner can say something actionable instead of "not reachable".
-      if (err.code === 'unauthorized') {
-        set({ compat: { level: 'error', message: 'The backend requires sign-in. Set an API token to continue.', action: null } });
-      } else if (err.code === 'client_too_old') {
-        set({ compat: { level: 'error', message: err.message, action: 'reload' } });
-      }
-      set({ bootError: err.message, projectsLoaded: true });
+      // Kept as {message, code, status, tries}: App branches the boot page on
+      // the code and backs off its auto-retry on the attempt count.
+      const { message, code, status } = err;
+      set({ bootError: { message, code, status, tries: (get().bootError?.tries || 0) + 1 }, projectsLoaded: true });
       return [];
     }
   },
 
   dismissCompat() { set({ compat: null, compatDismissed: true }); },
+
+  // A stream heartbeat is proof of life too — without it a quiet project on a
+  // healthy stream would read as stale after the poller stands down.
+  touchSync() { set({ lastSyncedAt: Date.now() }); },
 
   async createProject({ name, summary }) {
     const created = await api.createProject({ name, summary });
@@ -156,6 +158,7 @@ export const useProjectStore = create((set, get) => ({
     // /home's recent_events is capped at ~25, too few for the Events page;
     // the deeper window powers anything that needs ≥1h of history.
     const tags = etagsFor(pid);
+    const startedAt = Date.now();
     try {
       // A failed side-fetch must read as "unchanged", not "changed to empty":
       // notModified:false here would blank the last-good list and drop its ETag.
@@ -199,7 +202,9 @@ export const useProjectStore = create((set, get) => ({
       set(patch);
       return patch.home ?? get().home;
     } catch (err) {
-      if (get().projectId !== pid) return null;
+      // A stale failure (a request that hung through an outage and timed out
+      // after a newer refresh succeeded) must not mark fresh data stale.
+      if (get().projectId !== pid || get().lastSyncedAt > startedAt) return null;
       set({ lastSyncError: err.message });
       return null;
     }
