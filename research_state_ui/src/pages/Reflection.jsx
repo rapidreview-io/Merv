@@ -88,7 +88,7 @@ export default function Reflection() {
         {error && (data ? <StaleNote error={error.message} /> : <div className="error-message">{error.message}</div>)}
       </header>
 
-      {data && rows.length === 0 ? (
+      {rows.length === 0 ? data && (
         <div className="empty-state">
           <h2>No reflections yet</h2>
           <p>The first wave grows from the project graph on Home.</p>

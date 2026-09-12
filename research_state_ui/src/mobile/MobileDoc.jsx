@@ -6,7 +6,7 @@ import MarkdownView from '../components/MarkdownView';
 import FileRenderer from '../components/FileRenderer';
 import ReviewEvolutionStepper from '../components/ReviewEvolutionStepper';
 import ExperimentReviewStepper from '../components/ExperimentReviewStepper';
-import { isMarkdown } from '../utils/format';
+import { isMarkdown, unavailableCopy } from '../utils/format';
 
 /**
  * MobileDoc — a plan or report artifact as pure content. The document is the
@@ -75,7 +75,7 @@ export default function MobileDoc({
       ) : !content ? (
         <div className="mquiet">loading…</div>
       ) : content.available === false ? (
-        <div className="mquiet">no submitted content available</div>
+        <div className="mquiet">{unavailableCopy(content, `the ${kind}`)}</div>
       ) : content.is_binary ? (
         <div className="mquiet">binary file</div>
       ) : kind === 'plan' ? (

@@ -208,7 +208,7 @@ export default function App() {
             {bootView.reload ? 'Reload' : 'Retry'}
           </button>
         </div>
-        <div className="error-message" style={{ marginTop: 10 }}>{bootError.message}</div>
+        {bootError.message !== bootView.title && <div className="error-message" style={{ marginTop: 10 }}>{bootError.message}</div>}
       </FullPageStatus>
     );
   }
