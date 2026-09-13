@@ -1,0 +1,17 @@
+{
+  "name": "@merv/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.0",
+    "zod-to-json-schema": "^3.25.0",
+    "cordis": "4.0.0-rc.10",
+    "zod": "^3.25.0",
+    "@merv/contracts": "0.1.0"
+  }
+}

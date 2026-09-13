@@ -1,0 +1,32 @@
+{
+  "name": "merv-typescript",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "start": "node --import tsx src/cli.ts serve",
+    "init": "node --import tsx src/cli.ts init",
+    "cli": "node --import tsx src/cli.ts",
+    "test:live": "node --import tsx scripts/live-codex.ts",
+    "test:feed-unload": "node --import tsx scripts/feed-unload.ts"
+  },
+  "dependencies": {
+    "cordis": "4.0.0-rc.10",
+    "@modelcontextprotocol/sdk": "^1.17.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
