@@ -6,6 +6,7 @@ dist/
 live-runs/
 credentials.json
 credentials/
+.cordis/
 package-lock.json
 *.sqlite*
 *.log

@@ -3,7 +3,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { FiberState } from 'cordis';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { feedPlugin } from '@merv/feed';
 import { createApp } from '../src/app.js';
 
 async function until(check: () => boolean, message: string) {
@@ -92,8 +91,8 @@ export async function runFeedUnloadScenario(
       tools: app.ctx.tools,
       api: app.ctx.api,
     };
-    const provider = app.components.get('feed')!,
-      adapter = app.adapters.get('feed')!;
+    const provider = app.getFiber('feed')!,
+      adapter = app.getFiber('feed-tools')!;
     assert.equal(provider.state, FiberState.ACTIVE);
     assert.equal(adapter.state, FiberState.ACTIVE);
     checkpoint('feed-active', { toolCount: beforeTools.length, taskId: task.id, postId: post.id });
@@ -118,8 +117,8 @@ export async function runFeedUnloadScenario(
     });
     await until(() => admitted, 'Feed request did not enter the handler');
     let disposed = false;
-    // The only removal action. Cordis must suspend and drain the adapter itself.
-    unloading = provider.dispose().then(() => {
+    // Disable only the provider entry. Cordis suspends and drains its adapter.
+    unloading = app.setEnabled('feed', false).then(() => {
       disposed = true;
     });
     await until(
@@ -191,9 +190,11 @@ export async function runFeedUnloadScenario(
       revision: done.workflow.revision,
     });
 
-    // Reinstall only the provider; the original adapter must reactivate itself.
-    const replacement = await app.ctx.plugin(feedPlugin);
-    await replacement.await();
+    // Re-enable only the provider; the original adapter must reactivate itself.
+    await app.setEnabled('feed', true);
+    const replacement = app.getFiber('feed')!;
+    assert.notEqual(replacement, provider);
+    assert.equal(replacement.state, FiberState.ACTIVE);
     await until(() => adapter.state === FiberState.ACTIVE, 'Feed adapter did not reactivate');
     const restoredTools = (await p.listTools()).tools.map((tool) => tool.name);
     assert.deepEqual(restoredTools, beforeTools);
@@ -226,6 +227,8 @@ export async function runFeedUnloadScenario(
     return {
       status: 'passed',
       cordisVersion: '4.0.0-rc.10',
+      loaderVersion: '1.0.0-rc.7',
+      removal: 'Disable and re-enable the feed loader entry',
       pid: process.pid,
       url,
       taskId: task.id,
@@ -244,6 +247,7 @@ export async function runFeedUnloadScenario(
         postsRetained: true,
         activityRecovered: true,
         noDuplicateTools: true,
+        currentProviderHandleUpdated: replacement !== provider,
       },
     };
   } finally {

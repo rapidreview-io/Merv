@@ -46,6 +46,24 @@ Use `npm run format` before committing. Prettier is version-pinned and uses the 
 
 Dependencies, build output, caches, default runtime directories, SQLite files, and credential files are ignored. Custom `--dir` locations also have `credentials.json` and `credentials/` ignored; keep their artifact bytes private and outside source control. See [the execution plan](EXECUTION_PLAN.md) and [execution evidence](EXECUTION_LOG.md) for the ongoing component integration work.
 
+### Configure plugins
+
+The application uses upstream `@cordisjs/plugin-loader@1.0.0-rc.7`. Its default composition is [config/default.json](config/default.json). To run an explicit plugin list:
+
+```sh
+npm start -- --dir .merv --config config/default.json --host 127.0.0.1 --port 3081
+```
+
+A JSON configuration has a `plugins` array. Each entry has a stable `id`, a module `name`, an optional `config` object, and optional `disabled` and `required` flags. Module names can be installed packages or relative file paths. Relative paths resolve beside the configuration file; programmatic `config` objects resolve them from this workspace root. New plugins are added here without editing `src/app.ts`.
+
+`${directory}`, `${host}`, and `${port}` are the supported substitutions inside configuration values. An exact `${port}` retains its numeric type. Command-line host/port values supply substitutions; literal plugin values stay literal. State, blobs, registry, and API also validate their own configuration before acquiring resources or publishing services. `init` and `actor` keep their minimal State/Scope composition and do not accept `--config`.
+
+Cordis's loader waits for the whole dependency tree. Merv then checks required entries and their activation errors before reporting readiness. An entry defaults to required; disabled entries are intentional absences. Feed and its tool adapter are optional in the default configuration, so disabling only the feed provider lets the rest of the application start. Other custom optional failures remain visible in status. Dependencies are never silently installed to repair an invalid composition.
+
+Startup JSON includes `plugins` status without configuration values. In an embedded application, `app.status()` returns current entry IDs, module names, lifecycle states, readiness requirements, and missing dependencies; `app.getFiber(id)` resolves the current Cordis handle. `app.setEnabled(id, false)` and `app.setEnabled(id, true)` operate through the loader and await completion. Runtime toggles are in-memory; edit the JSON configuration to retain a choice across restarts. Source-file watching and automatic code reload are not enabled by this step.
+
+Feature contracts can live in their owning package. Feed now owns `@merv/feed/types`, including its Context declaration. Consumers use `import type` for that entry and declare their runtime `inject` dependency. Boundary tests verify public type modules contain no executable implementation or hidden implementation reexports.
+
 Roles:
 
 | Role       | Capability                                                         |
@@ -179,7 +197,7 @@ flowchart TB
 | `@merv/feed`      | Immutable project posts, artifact attachments, cursor reads and durable activity      | State, scope, artifacts                     |
 | `@merv/api`       | Generic tool registry, runtime argument validation, HTTP/MCP transport and draining   | Registry: scope. Transport: scope, registry |
 
-`@merv/contracts` is a shared interface package. Domain packages import its interfaces rather than sibling implementations. Each feature's `tools.ts` is an optional adapter depending on the generic registry and its own service. `src/app.ts` is the composition root; services also work through explicit constructor injection without HTTP, MCP, or the task program.
+`@merv/contracts` contains shared interfaces and runtime helpers. Domain packages import those contracts or type-only public contracts such as `@merv/feed/types`, rather than sibling implementations. Each feature's `tools.ts` is an optional adapter depending on the generic registry and its own service. `src/app.ts` is the composition root; services also work through explicit constructor injection without HTTP, MCP, or the task program.
 
 For example, an artifacts-only Cordis application can install `statePlugin`, `blobsPlugin`, `scopePlugin`, and `artifactsPlugin`. It does not need workflows, reviews, tasks, or API. `createApp({ directory, components: ['state', 'blobs', 'scope', 'artifacts'] })` builds that composition and rejects missing dependencies. All packages are currently local npm workspaces; publishing and deployment packaging remain separate work.
 
@@ -211,22 +229,21 @@ This release includes no model provider, agent scheduler/session manager, sandbo
 
 `feed.post` takes `{ body, requestId, artifactIds? }`: a nonblank message of at most 8,000 characters and at most ten distinct artifact attachments. Reusing the same request ID and exact input returns the original post. `feed.list` reads posts in ascending sequence order (`after`, `limit`, default 50 and maximum 100). `feed.activity` reads the project's durable events, including work performed while feed was absent. Actor-management events are visible only to operators; other actors can page past hidden events to later project activity.
 
-The application exposes its initial component and adapter Cordis fibers for direct lifecycle operations:
+The application controls configured plugins by stable loader entry ID:
 
 ```ts
-import { feedPlugin } from '@merv/feed';
-
-await app.components.get('feed')!.dispose();
+const originalProvider = app.getFiber('feed');
+await app.setEnabled('feed', false);
 // Cordis withdraws feed and suspends its existing tool adapter.
 // Tasks, reviews, state, scope, artifacts and HTTP/MCP keep running.
 
-const replacement = await app.ctx.plugin(feedPlugin);
-await replacement.await();
-await app.adapters.get('feed')!.await();
-// Cordis reactivates the existing adapter; retain replacement for its next disposal.
+await app.setEnabled('feed', true);
+const replacement = app.getFiber('feed');
+// A new provider handle, with the original dependent adapter reactivated.
+console.log(app.status());
 ```
 
-`components` contains the initial handles; directly installing another plugin returns a new handle. Runtime removal leaves durable records intact. MCP clients can refresh `tools/list` to see the current catalog; a cached call to an absent feed tool returns `unknown_tool`.
+`getFiber` and the compatibility `components`/`adapters` views read the current loader entries. Retain a specific fiber only to observe that particular instance's disposal; use the entry ID for the next operation. Runtime removal leaves durable records intact. MCP clients can refresh `tools/list` to see the current catalog; a cached call to an absent feed tool returns `unknown_tool`.
 
 Run the repeatable removal experiment with the official MCP SDK client:
 
@@ -234,7 +251,7 @@ Run the repeatable removal experiment with the official MCP SDK client:
 npm run test:feed-unload
 ```
 
-It pauses an admitted `feed.post` at a test barrier, disposes **only the feed provider**, checks that Cordis removes the four tools and waits for the call, then finishes a task/review loop while feed is absent. Reinstalling only the provider restores the original adapter, posts, and durable activity. The same process, listener, client connections, and unrelated service instances remain throughout. The barrier makes removal overlap the otherwise synchronous feed call; it does not replace Cordis, SQLite, or the MCP transport. The command retains a synthetic database and `report.json` under a new `live-runs/feed-unload-<timestamp>/` directory.
+It pauses an admitted `feed.post` at a test barrier, disables **only the feed provider entry**, checks that Cordis removes the four tools and waits for the call, then finishes a task/review loop while feed is absent. Re-enabling only the provider restores the original adapter, posts, and durable activity. The same process, listener, client connections, and unrelated service instances remain throughout. The barrier makes removal overlap the otherwise synchronous feed call; it does not replace Cordis, SQLite, or the MCP transport. The command retains a synthetic database and `report.json` under a new `live-runs/feed-unload-<timestamp>/` directory.
 
 ## Verification
 
@@ -246,17 +263,23 @@ npm test
 
 `build` emits JavaScript and declarations under `dist`; the supplied launch commands execute the workspace TypeScript with `tsx`. The tests use temporary data directories and actual SQLite. HTTP/MCP tests bind loopback sockets, so environments that restrict networking must permit local listeners for those tests.
 
-| Test file                     | Coverage                                                                                                                                                               |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/foundations.test.ts`   | Migration immutability/rollback, durable events, role/project access, revocation, artifact immutability/corruption, real Cordis activation/disposal                    |
-| `tests/workflows.test.ts`     | Exact replay, pinned versions across restart, competing revisions, atomic rollback, managed mutation ownership, graph validation and provider withdrawal               |
-| `tests/tasks.test.ts`         | Delivery/review loop, revision and replay handling, evidence and UTF-8 gates, verdict rollback, generic reviews, restart recovery, review reissue authority/rollback   |
-| `tests/api.test.ts`           | Strict schemas, authenticated identity/scope, duplicate registration, awaited disposal, HTTP limits, official MCP client roundtrip, shutdown after disconnection       |
-| `tests/boundaries.test.ts`    | Package import boundaries, declared Cordis dependencies, feature adapter ownership, exported paths, independent service boot with only its dependency closure          |
-| `tests/app.test.ts`           | Fully assembled MCP task/review loop across two server restarts, credentials and retained evidence, invalid composition cleanup                                        |
-| `tests/live-evidence.test.ts` | Live acceptance rejects unrelated tasks, missing pinned documents, and evidence read only after a verdict                                                              |
-| `tests/feed.test.ts`          | Independent feed, reviewer communication, project/attachment permissions, immutable posts, atomic deduplication, cursor reads and persistence                          |
-| `tests/feed-unload.test.ts`   | Real Cordis provider removal during an admitted MCP call, automatic adapter suspension/reactivation, task completion while feed is absent, retained posts and activity |
+| Test file                       | Coverage                                                                                                                                                               |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/config.test.ts`          | Validated plugin declarations, substitutions, explicit module bases, default selections, optional feed                                                                 |
+| `tests/plugin-config.test.ts`   | Cordis resource configuration validation, invalid inputs before acquisition, valid API defaults                                                                        |
+| `tests/loader.test.ts`          | Config-only extension, asynchronous dependencies, current entry handles, failure readiness, optional absence                                                           |
+| `tests/cli-config.test.ts`      | Explicit config startup, safe status, argument validation, missing API cleanup, signal shutdown                                                                        |
+| `tests/state-lifecycle.test.ts` | Native SQLite handle closure on initialization failure and failed Cordis activation                                                                                    |
+| `tests/workflow-unload.test.ts` | Immediate tool withdrawal, held-call draining, independent services, and restoration through loader entries                                                            |
+| `tests/foundations.test.ts`     | Migration immutability/rollback, durable events, role/project access, revocation, artifact immutability/corruption, real Cordis activation/disposal                    |
+| `tests/workflows.test.ts`       | Exact replay, pinned versions across restart, competing revisions, atomic rollback, managed mutation ownership, graph validation and provider withdrawal               |
+| `tests/tasks.test.ts`           | Delivery/review loop, revision and replay handling, evidence and UTF-8 gates, verdict rollback, generic reviews, restart recovery, review reissue authority/rollback   |
+| `tests/api.test.ts`             | Strict schemas, authenticated identity/scope, duplicate registration, awaited disposal, HTTP limits, official MCP client roundtrip, shutdown after disconnection       |
+| `tests/boundaries.test.ts`      | Package import boundaries, declared Cordis dependencies, feature adapter ownership, exported paths, independent service boot with only its dependency closure          |
+| `tests/app.test.ts`             | Fully assembled MCP task/review loop across two server restarts, credentials and retained evidence, invalid composition cleanup                                        |
+| `tests/live-evidence.test.ts`   | Live acceptance rejects unrelated tasks, missing pinned documents, and evidence read only after a verdict                                                              |
+| `tests/feed.test.ts`            | Independent feed, reviewer communication, project/attachment permissions, immutable posts, atomic deduplication, cursor reads and persistence                          |
+| `tests/feed-unload.test.ts`     | Real Cordis provider removal during an admitted MCP call, automatic adapter suspension/reactivation, task completion while feed is absent, retained posts and activity |
 
 The separate live acceptance runner launches **three new Codex CLI processes** with synthetic data and separate producer, reviewer, and reader credentials:
 

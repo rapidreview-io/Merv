@@ -7,7 +7,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { FiberState } from 'cordis';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { workflowsPlugin } from '@merv/workflows';
 import { createApp } from '../src/app.js';
 
 function latch() {
@@ -85,8 +84,8 @@ test('workflow withdrawal removes every tool before draining a held catalog call
       title: 'Independent evidence',
       content: 'Retained during workflow removal.',
     });
-    const provider = app.components.get('workflows')!;
-    const adapter = app.adapters.get('workflows')!;
+    const provider = app.getFiber('workflows')!;
+    const adapter = app.getFiber('workflows-tools')!;
     const original = {
       state: app.ctx.state,
       scope: app.ctx.scope,
@@ -116,7 +115,7 @@ test('workflow withdrawal removes every tool before draining a held catalog call
     void pending.catch(() => undefined);
     await bounded(entered.promise, 'Catalog handler was not admitted');
     let disposed = false;
-    unloading = provider.dispose().then(() => {
+    unloading = app.setEnabled('workflows', false).then(() => {
       disposed = true;
     });
     void unloading.catch(() => undefined);
@@ -171,8 +170,8 @@ test('workflow withdrawal removes every tool before draining a held catalog call
     assert.equal(provider.state, FiberState.DISPOSED);
     assert.equal(adapter.state, FiberState.PENDING);
 
-    const replacement = await app.ctx.plugin(workflowsPlugin);
-    await bounded(replacement.await(), 'Workflow replacement did not activate');
+    await bounded(app.setEnabled('workflows', true), 'Workflow replacement did not activate');
+    assert.notEqual(app.getFiber('workflows'), provider);
     await until(
       () => adapter.state === FiberState.ACTIVE,
       'Existing workflow adapter did not reactivate',

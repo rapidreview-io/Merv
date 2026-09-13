@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { Context } from 'cordis';
+import { z } from 'zod';
 import {
   check,
   digest,
@@ -205,6 +206,11 @@ export class SqliteState implements State {
 }
 export const statePlugin = {
   name: 'merv-state',
+  Config: z
+    .object({
+      path: z.string().refine((path) => path.trim().length > 0, 'State path must be nonblank'),
+    })
+    .strict(),
   apply(ctx: Context, config: { path: string }) {
     ctx.effect(function* () {
       const state = new SqliteState(config.path);

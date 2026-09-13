@@ -1,6 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -65,22 +74,49 @@ const capabilities: Record<string, readonly string[]> = {
 const sorted = (values: readonly string[]) => [...values].sort();
 const ownerOf = (path: string) => relative(packagesRoot, path).split(sep)[0];
 
-function references(source: ts.SourceFile): string[] {
-  const result: string[] = [];
+interface ModuleReference {
+  specifier: string;
+  typeOnly: boolean;
+}
+function moduleReferences(source: ts.SourceFile): ModuleReference[] {
+  const result: ModuleReference[] = [];
   visit(source, (node) => {
     if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
       assert.ok(
         ts.isStringLiteral(node.moduleSpecifier),
         `${source.fileName}: module path must be static`,
       );
-      result.push(node.moduleSpecifier.text);
+      const clause = ts.isImportDeclaration(node) ? node.importClause : undefined;
+      const bindings = clause?.namedBindings;
+      const typeOnly = ts.isImportDeclaration(node)
+        ? !!clause &&
+          (clause.isTypeOnly ||
+            (!clause.name &&
+              !!bindings &&
+              ts.isNamedImports(bindings) &&
+              bindings.elements.length > 0 &&
+              bindings.elements.every((element) => element.isTypeOnly)))
+        : node.isTypeOnly ||
+          (!!node.exportClause &&
+            ts.isNamedExports(node.exportClause) &&
+            node.exportClause.elements.length > 0 &&
+            node.exportClause.elements.every((element) => element.isTypeOnly));
+      result.push({ specifier: node.moduleSpecifier.text, typeOnly });
     }
-    if (
-      ts.isImportTypeNode(node) &&
-      ts.isLiteralTypeNode(node.argument) &&
-      ts.isStringLiteral(node.argument.literal)
-    )
-      result.push(node.argument.literal.text);
+    if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      assert.ok(
+        node.moduleReference.expression && ts.isStringLiteral(node.moduleReference.expression),
+        `${source.fileName}: import-equals must have a static path`,
+      );
+      result.push({ specifier: node.moduleReference.expression.text, typeOnly: node.isTypeOnly });
+    }
+    if (ts.isImportTypeNode(node)) {
+      assert.ok(
+        ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal),
+        `${source.fileName}: imported types must have a static path`,
+      );
+      result.push({ specifier: node.argument.literal.text, typeOnly: true });
+    }
     if (
       ts.isCallExpression(node) &&
       (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
@@ -95,46 +131,247 @@ function references(source: ts.SourceFile): string[] {
         ts.isStringLiteral(node.arguments[0]),
         `${source.fileName}: computed imports defeat component boundaries`,
       );
-      result.push(node.arguments[0].text);
+      result.push({ specifier: node.arguments[0].text, typeOnly: false });
     }
   });
   return result;
 }
 
-test('implementation imports remain inside their component and away from transport adapters', () => {
-  for (const path of sourceFiles) {
-    const owner = ownerOf(path);
-    const isAdapter = path.endsWith(`${sep}tools.ts`);
-    for (const specifier of references(parse(path))) {
-      if (specifier.startsWith('@merv/')) {
-        assert.equal(
-          specifier,
-          '@merv/contracts',
-          `${relative(root, path)} imports another component implementation: ${specifier}; inject its contract`,
-        );
-      }
-      if (specifier.startsWith('.')) {
-        const target = resolve(dirname(path), specifier);
-        assert.equal(
-          ownerOf(target),
-          owner,
-          `${relative(root, path)} crosses a component using a relative path`,
-        );
-        if (!isAdapter && owner !== 'api')
-          assert.ok(
-            !/(?:^|[/\\])(tools|http|registry)\.[cm]?[jt]s$/.test(specifier),
-            `${relative(root, path)} loads a transport adapter from its core entrypoint`,
-          );
-      }
-      if (owner !== 'api') {
+function publicTypesTarget(specifier: string, base: string): string {
+  const match = /^@merv\/([^/]+)\/types$/.exec(specifier);
+  assert.ok(match, `${specifier}: cross-component imports must use the public /types contract`);
+  const directory = join(base, match[1]);
+  const manifestPath = join(directory, 'package.json');
+  assert.ok(existsSync(manifestPath), `${specifier}: package manifest is missing`);
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    name: string;
+    exports: Record<string, unknown>;
+  };
+  assert.equal(manifest.name, `@merv/${match[1]}`, `${specifier}: package identity mismatch`);
+  const wildcard = manifest.exports['./*'];
+  const target =
+    manifest.exports['./types'] ??
+    (typeof wildcard === 'string' ? wildcard.replace('*', 'types') : undefined);
+  assert.ok(
+    typeof target === 'string' && target.startsWith('./') && !target.includes('..'),
+    `${specifier}: missing or escaping /types export`,
+  );
+  const path = resolve(directory, target);
+  assert.ok(existsSync(path), `${specifier}: /types export has no file`);
+  const actual = realpathSync(path);
+  assert.ok(
+    actual.startsWith(`${realpathSync(directory)}${sep}`),
+    `${specifier}: /types export escapes its package`,
+  );
+  return actual;
+}
+
+function relativeTypeTarget(path: string, specifier: string): string {
+  const target = resolve(dirname(path), specifier);
+  const candidates = [
+    target,
+    target
+      .replace(/\.js$/, '.ts')
+      .replace(/\.mjs$/, '.mts')
+      .replace(/\.cjs$/, '.cts'),
+    `${target}.ts`,
+    join(target, 'index.ts'),
+  ];
+  const resolved = candidates.find((candidate) => existsSync(candidate));
+  assert.ok(resolved, `${path}: type dependency does not resolve: ${specifier}`);
+  return realpathSync(resolved);
+}
+
+function assertTypeOnlyModule(path: string, base: string, seen: Set<string>): void {
+  if (seen.has(path)) return;
+  seen.add(path);
+  const source = parse(path);
+  const statementsAreTypes = (statements: readonly ts.Statement[]) => {
+    for (const statement of statements) {
+      if (
+        ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement) ||
+        ts.isEmptyStatement(statement)
+      )
+        continue;
+      if (ts.isImportDeclaration(statement) || ts.isImportEqualsDeclaration(statement)) {
         assert.ok(
-          !specifier.startsWith('@modelcontextprotocol/') &&
-            !['node:http', 'node:https', 'express', 'fastify'].includes(specifier),
-          `${relative(root, path)} embeds an API transport`,
+          !ts.isImportEqualsDeclaration(statement) || statement.isTypeOnly,
+          `${path}: a public type module cannot import runtime aliases`,
         );
+        assert.ok(
+          moduleReferences(
+            ts.createSourceFile(path, statement.getText(source), ts.ScriptTarget.Latest, true),
+          ).every((reference) => reference.typeOnly),
+          `${path}: a public type module cannot import runtime values`,
+        );
+        continue;
       }
+      if (ts.isExportDeclaration(statement)) {
+        const typeOnly =
+          statement.isTypeOnly ||
+          (!!statement.exportClause &&
+            ts.isNamedExports(statement.exportClause) &&
+            statement.exportClause.elements.length > 0 &&
+            statement.exportClause.elements.every((element) => element.isTypeOnly));
+        assert.ok(typeOnly, `${path}: a public type module cannot export runtime values`);
+        continue;
+      }
+      if (ts.isModuleDeclaration(statement)) {
+        assert.ok(
+          (ts.getCombinedModifierFlags(statement) & ts.ModifierFlags.Ambient) !== 0 &&
+            (ts.isStringLiteral(statement.name) ||
+              (statement.flags & ts.NodeFlags.GlobalAugmentation) !== 0) &&
+            statement.body &&
+            ts.isModuleBlock(statement.body),
+          `${path}: only ambient interface augmentation is allowed`,
+        );
+        statementsAreTypes(statement.body.statements);
+        continue;
+      }
+      assert.fail(
+        `${path}: a public type module contains a runtime declaration (${ts.SyntaxKind[statement.kind]})`,
+      );
+    }
+  };
+  statementsAreTypes(source.statements);
+  assertComponentReferences(path, source, base, seen);
+  for (const reference of moduleReferences(source)) {
+    if (reference.specifier.startsWith('.')) {
+      const target = relativeTypeTarget(path, reference.specifier);
+      assert.equal(
+        relative(base, target).split(sep)[0],
+        relative(base, path).split(sep)[0],
+        `${path}: a type dependency escapes its component`,
+      );
+      assertTypeOnlyModule(target, base, seen);
     }
   }
+}
+
+function assertComponentReferences(
+  path: string,
+  source: ts.SourceFile,
+  base = packagesRoot,
+  seen = new Set<string>(),
+): void {
+  const owner = relative(base, path).split(sep)[0];
+  const isAdapter = path.endsWith(`${sep}tools.ts`);
+  for (const reference of moduleReferences(source)) {
+    const { specifier, typeOnly } = reference;
+    if (specifier.startsWith('@merv/') && specifier !== '@merv/contracts') {
+      assert.ok(
+        typeOnly,
+        `${path}: importing another component requires an explicit type-only import: ${specifier}`,
+      );
+      assertTypeOnlyModule(publicTypesTarget(specifier, base), base, seen);
+    }
+    if (specifier.startsWith('.')) {
+      const target = resolve(dirname(path), specifier);
+      assert.equal(
+        relative(base, target).split(sep)[0],
+        owner,
+        `${path} crosses a component using a relative path`,
+      );
+      if (!isAdapter && owner !== 'api')
+        assert.ok(
+          !/(?:^|[/\\])(tools|http|registry)\.[cm]?[jt]s$/.test(specifier),
+          `${path} loads a transport adapter from its core entrypoint`,
+        );
+    }
+    if (owner !== 'api') {
+      assert.ok(
+        !specifier.startsWith('@modelcontextprotocol/') &&
+          !['node:http', 'node:https', 'express', 'fastify'].includes(specifier),
+        `${path} embeds an API transport`,
+      );
+    }
+  }
+}
+
+test('implementation imports remain inside their component and away from transport adapters', () => {
+  for (const path of sourceFiles) assertComponentReferences(path, parse(path));
+});
+
+test('public contract imports resolve genuine type-only modules without runtime or implementation bypasses', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-contract-boundaries-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const base = join(directory, 'packages');
+  const supplier = join(base, 'supplier');
+  const consumerPath = join(base, 'consumer', 'src', 'index.ts');
+  mkdirSync(join(supplier, 'src'), { recursive: true });
+  mkdirSync(dirname(consumerPath), { recursive: true });
+  const manifest = {
+    name: '@merv/supplier',
+    exports: { '.': './src/index.ts', './*': './src/*.ts' },
+  };
+  const manifestPath = join(supplier, 'package.json');
+  writeFileSync(manifestPath, JSON.stringify(manifest));
+  writeFileSync(join(supplier, 'src', 'index.ts'), 'export class Implementation {}');
+  const typesPath = join(supplier, 'src', 'types.ts');
+  const valid =
+    "import type { Caller } from '@merv/contracts'; export interface Contract { caller: Caller }; declare module 'cordis' { interface Context { example: Contract } }";
+  writeFileSync(typesPath, valid);
+  const verify = (code: string) =>
+    assertComponentReferences(
+      consumerPath,
+      ts.createSourceFile(consumerPath, code, ts.ScriptTarget.Latest, true),
+      base,
+    );
+  for (const code of [
+    "import type { Contract } from '@merv/supplier/types';",
+    "import { type Contract } from '@merv/supplier/types';",
+    "export type { Contract } from '@merv/supplier/types';",
+    "type Local = import('@merv/supplier/types').Contract;",
+  ])
+    assert.doesNotThrow(() => verify(code));
+  for (const code of [
+    "import { Contract } from '@merv/supplier/types';",
+    "import { type Contract, Implementation } from '@merv/supplier/types';",
+    "import '@merv/supplier/types';",
+    "export { Contract } from '@merv/supplier/types';",
+    "const implementation = import('@merv/supplier/types');",
+    "const implementation = require('@merv/supplier/types');",
+    "import implementation = require('@merv/supplier/types');",
+    "import type { Implementation } from '@merv/supplier';",
+    "import type { Contract } from '../../supplier/src/types.js';",
+  ])
+    assert.throws(() => verify(code), /type-only|public \/types|relative path/);
+  for (const disguised of [
+    'export const implementation = 1;',
+    'export declare const implementation: number;',
+    'export class Implementation {}',
+    'export function implementation() {}',
+    'export enum Implementation { Value }',
+    "import './index.js'; export interface Contract {}",
+    'import Implementation = Global.Factory; export interface Contract {}',
+    "export type { Implementation } from './index.js';",
+    "export type { Implementation } from '@merv/supplier';",
+    "declare module 'cordis' { export const implementation: number }",
+  ]) {
+    writeFileSync(typesPath, disguised);
+    assert.throws(
+      () => verify("import type { Contract } from '@merv/supplier/types';"),
+      /runtime|public \/types/,
+    );
+  }
+  writeFileSync(typesPath, valid);
+  writeFileSync(
+    manifestPath,
+    JSON.stringify({ ...manifest, exports: { ...manifest.exports, './types': './src/index.ts' } }),
+  );
+  assert.throws(
+    () => verify("import type { Contract } from '@merv/supplier/types';"),
+    /runtime declaration/,
+  );
+  writeFileSync(
+    manifestPath,
+    JSON.stringify({
+      ...manifest,
+      exports: { ...manifest.exports, './types': '../consumer/src/index.ts' },
+    }),
+  );
+  assert.throws(() => verify("import type { Contract } from '@merv/supplier/types';"), /escaping/);
 });
 
 test('Cordis service requirements match the architecture and every accessed capability is declared', () => {
@@ -302,12 +539,20 @@ test('workspace exports and imported export subpaths resolve to real implementat
     ...walkFiles(join(root, 'tests')),
   ].filter((path) => path.endsWith('.ts'));
   for (const path of consumers)
-    for (const specifier of references(parse(path))) {
+    for (const reference of moduleReferences(parse(path))) {
+      const { specifier } = reference;
       if (!specifier.startsWith('@merv/')) continue;
       const [, name, ...segments] = specifier.split('/');
       const manifest = manifests.get(name);
       assert.ok(manifest, `${relative(root, path)} references absent package ${name}`);
       const subpath = segments.length ? `./${segments.join('/')}` : '.';
+      if (subpath === './types') {
+        assert.ok(
+          reference.typeOnly,
+          `${path}: a public /types contract cannot be imported as a runtime value`,
+        );
+        assertTypeOnlyModule(publicTypesTarget(specifier, packagesRoot), packagesRoot, new Set());
+      }
       const target =
         manifest.exports[subpath] ??
         (manifest.exports['./*'] && manifest.exports['./*'].replace('*', segments.join('/')));

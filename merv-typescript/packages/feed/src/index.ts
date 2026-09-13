@@ -7,17 +7,15 @@ import {
   now,
   type Artifacts,
   type Caller,
-  type Feed,
-  type FeedInput,
-  type FeedListInput,
-  type FeedPost,
   type Scope,
   type State,
   type StoredEvent,
   type Transaction,
 } from '@merv/contracts';
 
-export type { Feed, FeedInput, FeedListInput, FeedPost } from '@merv/contracts';
+import type { Feed, FeedInput, FeedListInput, FeedPost } from './types.js';
+
+export type { Feed, FeedInput, FeedListInput, FeedPost } from './types.js';
 
 interface PostRow {
   id: string;

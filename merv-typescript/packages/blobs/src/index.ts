@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, linkSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Context } from 'cordis';
+import { z } from 'zod';
 import { check, MervError, type Blobs } from '@merv/contracts';
 
 export class DiskBlobs implements Blobs {
@@ -52,6 +53,11 @@ export class DiskBlobs implements Blobs {
 }
 export const blobsPlugin = {
   name: 'merv-blobs',
+  Config: z
+    .object({
+      root: z.string().refine((root) => root.trim().length > 0, 'Blob root must be nonblank'),
+    })
+    .strict(),
   apply(ctx: Context, config: { root: string }) {
     ctx.provide('blobs', new DiskBlobs(config.root));
   },

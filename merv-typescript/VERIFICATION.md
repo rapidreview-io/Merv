@@ -1,15 +1,19 @@
 # Verification — 13 September 2026
 
-The TypeScript build passes. After the lifecycle repairs, the automated suite passes **60 checks** (52 top-level tests and eight component-boot subtests), with zero failures or skips. It uses upstream `cordis@4.0.0-rc.10`, native SQLite, real loopback HTTP, and the official MCP SDK client. [Execution evidence](EXECUTION_LOG.md) records clean-checkout verification and the added regressions; historical runs below retain their original results.
+The TypeScript build passes. After lifecycle repairs and loader integration, the automated suite passes **86 checks** (78 top-level tests and eight component-boot subtests), with zero failures or skips. It uses upstream `cordis@4.0.0-rc.10`, native SQLite, real loopback HTTP, and the official MCP SDK client. [Execution evidence](EXECUTION_LOG.md) records clean-checkout verification and the added regressions; historical runs below retain their original results.
 
 ```sh
 npm run build
 npm test
 ```
 
-## Feed removal during an active run
+## Feed removal through the loader
 
-`npm run test:feed-unload` passed using the official MCP SDK client against the running application. The only removal action was the feed provider's Cordis `Fiber.dispose()`. No tools or dependent plugins were manually removed.
+The current `npm run test:feed-unload` uses `app.setEnabled('feed', false/true)` and the pinned upstream loader. It again verifies 26 → 22 → 26 tools, draining of an admitted post, a completed task/review while feed is absent, retained posts/activity, and a refreshed provider handle. [Committed report](verification/step-03-feed-unload.json).
+
+## Earlier feed removal during an active run
+
+The original `npm run test:feed-unload` passed using the official MCP SDK client against the running application. The only removal action was the feed provider's Cordis `Fiber.dispose()`. No tools or dependent plugins were manually removed.
 
 | Phase         | Observed result                                                                                                                                                      |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

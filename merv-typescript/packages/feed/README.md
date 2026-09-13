@@ -9,3 +9,5 @@ Operators, producers, and reviewers can post. Readers can inspect posts and acti
 `list` returns posts in ascending sequence order, with an exclusive `after` cursor and a default page size of 50 (maximum 100). `activity` exposes project-scoped durable events using their separate event ID cursor. Actor administration events (`actor.*`) are visible only to project operators, matching the actor-directory access boundary. For other actors, activity skips complete pages containing only hidden administration events so pagination can still reach subsequent visible events.
 
 The optional `feedToolsPlugin` contributes `feed.post`, `feed.get`, `feed.list`, and `feed.activity`. Unloading the service removes its runtime consumers and tools; SQLite posts and artifact content remain for a later reinstall.
+
+Public interfaces and the Cordis `Context.feed` declaration are owned by `@merv/feed/types`. Consumers import this entry with `import type`; the core reexports the same public types for convenience. The shared contracts package has no dependency back to Feed.

@@ -8,7 +8,8 @@ import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { FeedService } from '../packages/feed/src/index.js';
-import { MervError, type Caller, type FeedInput, type FeedListInput } from '@merv/contracts';
+import { MervError, type Caller } from '@merv/contracts';
+import type { FeedInput, FeedListInput } from '@merv/feed/types';
 
 function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-feed-'));

@@ -1,0 +1,20 @@
+{
+  "plugins": [
+    { "id": "api", "name": "@merv/api", "config": { "host": "${host}", "port": "${port}" } },
+    { "id": "feed-tools", "name": "@merv/feed/tools", "required": false },
+    { "id": "tasks-tools", "name": "@merv/tasks/tools" },
+    { "id": "reviews-tools", "name": "@merv/reviews/tools" },
+    { "id": "workflows-tools", "name": "@merv/workflows/tools" },
+    { "id": "artifacts-tools", "name": "@merv/artifacts/tools" },
+    { "id": "scope-tools", "name": "@merv/scope/tools" },
+    { "id": "tools", "name": "@merv/api/tools-plugin" },
+    { "id": "feed", "name": "@merv/feed", "required": false },
+    { "id": "tasks", "name": "@merv/tasks" },
+    { "id": "reviews", "name": "@merv/reviews" },
+    { "id": "artifacts", "name": "@merv/artifacts" },
+    { "id": "workflows", "name": "@merv/workflows" },
+    { "id": "scope", "name": "@merv/scope" },
+    { "id": "blobs", "name": "@merv/blobs", "config": { "root": "${directory}/blobs" } },
+    { "id": "state", "name": "@merv/state", "config": { "path": "${directory}/state.sqlite" } }
+  ]
+}

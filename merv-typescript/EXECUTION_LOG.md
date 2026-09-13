@@ -6,8 +6,9 @@ The acceptance criteria and ordering are in [EXECUTION_PLAN.md](EXECUTION_PLAN.m
 
 - Step 1: complete; clean-checkout installation, tests, CLI, authentication, restart, and cleanup verified.
 - Step 2: complete; lifecycle fixes pass the full 60-check suite, feed-removal scenario, and independent review.
-- Step 3: next — configuration and the upstream Cordis loader.
-- Steps 4–15: not started.
+- Step 3: complete; upstream loader configuration, replacement, diagnostics, and public plugin contracts verified.
+- Step 4: next — external-tool transport compatibility.
+- Steps 5–15: not started.
 - Subsequent experiment, reflection, hosted access, and migration work: not started.
 
 ## Step 1 — reproducible baseline
@@ -34,3 +35,15 @@ Independent clean-checkout verification passed at exact commit `3bc7d446b0df36b2
 - Independent review passed. The reviewer reran all four new checks and independently reproduced the baseline constructor leaving its native handle usable after initialization failure.
 
 [Feed removal report](verification/step-02-feed-unload.json) retains the synthetic integration evidence without credentials.
+
+## Step 3 — upstream loader and configuration
+
+- Pinned `@cordisjs/plugin-loader@1.0.0-rc.7`, compatible with the installed Cordis `4.0.0-rc.10`. The full sixteen-entry composition now comes from validated configuration. `serve --config PATH` resolves relative plugins beside that file and reports safe lifecycle fields without configuration values.
+- The upstream loader joins asynchronous tree initialization. Application readiness separately rejects failed or pending required entries, including the upstream case where configuration validation rejects but the fiber still reports `PENDING`. Missing dependencies are reported by capability name. Optional unavailable plugins remain visible without preventing unrelated work.
+- A separately configured fixture provider and consumer load without bootstrap edits. Two disable/restore cycles verify current provider handles, dependency reactivation, and resource cleanup. Failed activation releases its resource; malformed plugin configuration fails before resource acquisition.
+- Feed owns its public types and Context declaration. Boundary checks permit verified type-only public contract imports while rejecting runtime implementation imports and disguised reexports.
+- Both workflow and feed removal scenarios now use the loader's stable entry IDs. All exposed tools withdraw before admitted calls drain. Feed restoration uses a new provider fiber, reactivates its adapter, retains three posts and activity, and restores 26 unique tools after a task and independent review complete during its absence.
+- Formatting, typecheck, build, and all **86 checks** passed (78 top-level tests and eight component-boot subtests), with no failures or skips. The separate feed-removal integration also passed. Independent review found no new material correctness issues.
+- Configuration changes are administrative in-memory operations; source-file watching is not introduced. Cordis itself currently logs/swallows some disposer exceptions, so these checks do not establish propagation of every possible cleanup failure.
+
+[Loader feed-removal report](verification/step-03-feed-unload.json) records synthetic integration evidence without credentials.

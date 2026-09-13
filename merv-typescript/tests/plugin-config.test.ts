@@ -1,0 +1,197 @@
+import test, { type TestContext } from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { Context, FiberState, ValidationError, type Plugin } from 'cordis';
+import { statePlugin } from '@merv/state';
+import { blobsPlugin } from '@merv/blobs';
+import { scopePlugin } from '@merv/scope';
+import { apiPlugin, toolsPlugin } from '@merv/api';
+
+function folder(t: TestContext) {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-plugin-config-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  return directory;
+}
+
+async function dependencies(ctx: Context, service: string) {
+  if (service !== 'tools' && service !== 'api') return;
+  await ctx.plugin(statePlugin, { path: ':memory:' });
+  await ctx.plugin(scopePlugin);
+  if (service === 'api') await ctx.plugin(toolsPlugin);
+}
+
+async function rejectsBeforePublication(plugin: Plugin, service: string, config: unknown) {
+  const ctx = new Context();
+  try {
+    await dependencies(ctx, service);
+    const fiber = ctx.plugin(plugin, config);
+    // Cordis currently leaves state=PENDING after schema rejection. Its await()
+    // rejection is authoritative; no apply() effect or service may be published.
+    await assert.rejects(fiber.await(), ValidationError);
+    assert.equal(ctx.get(service), undefined);
+    assert.deepEqual(fiber.getEffects(), []);
+  } finally {
+    await ctx.fiber.dispose();
+  }
+}
+
+test('State Config rejects missing, blank, wrong-type and extra options before opening SQLite', async (t) => {
+  const directory = folder(t),
+    path = join(directory, 'must-not-exist', 'state.sqlite');
+  for (const config of [
+    undefined,
+    null,
+    {},
+    { path: '' },
+    { path: ' \t' },
+    { path: 42 },
+    { path, extra: true },
+  ]) {
+    await rejectsBeforePublication(statePlugin, 'state', config);
+    assert.equal(existsSync(join(directory, 'must-not-exist')), false);
+  }
+});
+
+test('Blobs Config rejects missing, blank, wrong-type and extra options before making directories', async (t) => {
+  const directory = folder(t),
+    root = join(directory, 'must-not-exist');
+  for (const config of [
+    undefined,
+    null,
+    {},
+    { root: '' },
+    { root: ' \n' },
+    { root: false },
+    { root, extra: true },
+  ]) {
+    await rejectsBeforePublication(blobsPlugin, 'blobs', config);
+    assert.equal(existsSync(root), false);
+  }
+});
+
+test('Tools Config defaults to an empty object and rejects accidental resource options', async () => {
+  for (const config of [null, [], 'wrong', { port: 3000 }]) {
+    await rejectsBeforePublication(toolsPlugin, 'tools', config);
+  }
+  const ctx = new Context();
+  try {
+    await dependencies(ctx, 'tools');
+    const fiber = await ctx.plugin(toolsPlugin);
+    assert.equal(fiber.state, FiberState.ACTIVE);
+    assert.deepEqual(fiber.config, {});
+    assert.deepEqual(ctx.tools.list(), []);
+    const credential = ctx.scope.bootstrap({
+      projectName: 'Registry defaults',
+      actorName: 'Operator',
+    });
+    await assert.rejects(
+      ctx.tools.call(
+        'missing',
+        { actorId: credential.actor.id, projectId: credential.project.id },
+        {},
+      ),
+      { code: 'unknown_tool' },
+    );
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});
+
+test('API Config validates options before publishing or listening', async () => {
+  const malformed = [
+    null,
+    [],
+    { extra: true },
+    { host: '' },
+    { host: ' ' },
+    { host: false },
+    { port: -1 },
+    { port: 65536 },
+    { port: 0.5 },
+    { port: '3081' },
+    { maxBodyBytes: 0 },
+    { maxBodyBytes: 1.5 },
+    { maxBodyBytes: Number.MAX_SAFE_INTEGER + 1 },
+    { allowedOrigins: 'https://example.com' },
+    { allowedOrigins: [null] },
+    { allowedOrigins: [''] },
+    { allowedOrigins: ['https://example.com/path'] },
+    { allowedOrigins: ['https://user:password@example.com'] },
+    { allowedOrigins: ['file:///tmp'] },
+  ];
+  for (const config of malformed) await rejectsBeforePublication(apiPlugin, 'api', config);
+});
+
+test('valid resource paths are preserved and Cordis owns their published services', async (t) => {
+  const directory = folder(t),
+    path = join(directory, 'space in path.sqlite'),
+    root = join(directory, 'blob directory');
+  const ctx = new Context();
+  try {
+    const state = await ctx.plugin(statePlugin, { path });
+    const blobs = await ctx.plugin(blobsPlugin, { root });
+    assert.equal(state.state, FiberState.ACTIVE);
+    assert.equal(blobs.state, FiberState.ACTIVE);
+    assert.equal(state.config.path, path);
+    assert.equal(blobs.config.root, root);
+    assert.equal(existsSync(path), true);
+    const stored = ctx.blobs.put('config-test', Buffer.from('Configuration preserved bytes.'));
+    assert.equal(
+      ctx.blobs.get('config-test', stored.hash).toString(),
+      'Configuration preserved bytes.',
+    );
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});
+
+test('API no-config defaults remain loopback and ephemeral with a working registry', async () => {
+  const ctx = new Context();
+  try {
+    await dependencies(ctx, 'api');
+    const fiber = await ctx.plugin(apiPlugin);
+    assert.equal(fiber.state, FiberState.ACTIVE);
+    assert.deepEqual(fiber.config, {});
+    const url = new URL(ctx.api.url!);
+    assert.equal(url.hostname, '127.0.0.1');
+    assert.ok(Number(url.port) > 0);
+    const credentials = ctx.scope.bootstrap({ projectName: 'API defaults', actorName: 'Operator' });
+    assert.equal((await fetch(new URL('/health', url))).status, 200);
+    const response = await fetch(new URL('/tools', url), {
+      headers: { authorization: `Bearer ${credentials.token}` },
+    });
+    assert.deepEqual(await response.json(), { tools: [] });
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});
+
+test('API accepts explicit zero port, byte limit and exact allowed origins without changing them', async () => {
+  const ctx = new Context();
+  try {
+    await dependencies(ctx, 'api');
+    const config = {
+      host: '127.0.0.1',
+      port: 0,
+      maxBodyBytes: 1024,
+      allowedOrigins: ['https://example.com', 'http://localhost:4000', 'null'],
+    };
+    const fiber = await ctx.plugin(apiPlugin, config);
+    assert.equal(fiber.state, FiberState.ACTIVE);
+    assert.deepEqual(fiber.config, config);
+    assert.equal(
+      (await fetch(ctx.api.url! + '/health', { headers: { origin: 'https://example.com' } }))
+        .status,
+      200,
+    );
+    assert.equal(
+      (await fetch(ctx.api.url! + '/health', { headers: { origin: 'https://unlisted.example' } }))
+        .status,
+      403,
+    );
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});

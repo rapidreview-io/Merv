@@ -1,0 +1,72 @@
+{
+  "status": "passed",
+  "cordisVersion": "4.0.0-rc.10",
+  "loaderVersion": "1.0.0-rc.7",
+  "removal": "Disable and re-enable the feed loader entry",
+  "pid": 1143,
+  "url": "http://127.0.0.1:63672",
+  "taskId": "wf_34588b0483254c41b98a2a7de75b7da8",
+  "reviewId": "review_c831fa70cc82497191272d0d29971dc0",
+  "postIds": [
+    "post_8660b0bd60304b61b991931258da5ac8",
+    "post_7c3994cbc82648a19ec764525ba4cfb5",
+    "post_c0debfa0fc924ae79f136d296af0375a"
+  ],
+  "checkpoints": [
+    {
+      "phase": "feed-active",
+      "pid": 1143,
+      "url": "http://127.0.0.1:63672",
+      "toolCount": 26,
+      "taskId": "wf_34588b0483254c41b98a2a7de75b7da8",
+      "postId": "post_8660b0bd60304b61b991931258da5ac8"
+    },
+    {
+      "phase": "feed-draining",
+      "pid": 1143,
+      "url": "http://127.0.0.1:63672",
+      "toolCount": 22,
+      "adapterState": "UNLOADING",
+      "newFeedCall": "unknown_tool",
+      "taskStillAvailable": true
+    },
+    {
+      "phase": "feed-removed",
+      "pid": 1143,
+      "url": "http://127.0.0.1:63672",
+      "admittedPostId": "post_7c3994cbc82648a19ec764525ba4cfb5",
+      "adapterState": "PENDING"
+    },
+    {
+      "phase": "task-completed-without-feed",
+      "pid": 1143,
+      "url": "http://127.0.0.1:63672",
+      "taskId": "wf_34588b0483254c41b98a2a7de75b7da8",
+      "revision": 2
+    },
+    {
+      "phase": "feed-restored",
+      "pid": 1143,
+      "url": "http://127.0.0.1:63672",
+      "toolCount": 26,
+      "adapterState": "ACTIVE",
+      "retainedPosts": 3,
+      "offlineActivityRecovered": true
+    }
+  ],
+  "checks": {
+    "actualProviderDisposed": true,
+    "adapterSuspendedAutomatically": true,
+    "admittedCallDrained": true,
+    "newFeedCallsRejected": true,
+    "taskCompletedWhileFeedAbsent": true,
+    "unrelatedServicesUnchanged": true,
+    "sameServerAndClients": true,
+    "adapterReactivatedAutomatically": true,
+    "postsRetained": true,
+    "activityRecovered": true,
+    "noDuplicateTools": true,
+    "currentProviderHandleUpdated": true
+  },
+  "completedAt": "2026-09-13T16:53:30.459Z"
+}
