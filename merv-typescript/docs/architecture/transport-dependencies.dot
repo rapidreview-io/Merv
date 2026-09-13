@@ -1,0 +1,21 @@
+digraph G { graph [rankdir=TB, bgcolor="transparent", fontname="Arial", pad="0.18", nodesep="0.25", ranksep="0.75", splines=polyline, outputorder=edgesfirst]; node [shape=box,style="rounded,filled",fontname="Arial",margin="0.18,0.14",penwidth=1.6]; edge [penwidth=1.6, arrowsize=0.65];
+access [id="node-access", color="#9356A6",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="21"><B>Access</B></FONT><BR/><FONT POINT-SIZE="12">Exact tool grants</FONT><BR/><BR/><FONT POINT-SIZE="12">Requires: Scope</FONT>>];
+credentials [id="node-credentials", color="#62738F",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="21"><B>Credentials</B></FONT><BR/><FONT POINT-SIZE="12">Scoped upstream credentials</FONT><BR/><BR/><FONT POINT-SIZE="12">Requires: Scope</FONT>>];
+tools [id="node-tools", color="#5B40BD",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="21"><B>Tools</B></FONT><BR/><FONT POINT-SIZE="12">Tool registry</FONT><BR/><BR/><FONT POINT-SIZE="12">Requires: Scope, Access</FONT>>];
+api [id="node-api", color="#4A70BC",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="21"><B>API</B></FONT><BR/><FONT POINT-SIZE="12">HTTP + MCP</FONT><BR/><BR/><FONT POINT-SIZE="12">Requires: Scope, Tools</FONT>>];
+mounts [id="node-mounts", color="#6650AA",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="21"><B>Mounts</B></FONT><BR/><FONT POINT-SIZE="12">Remote MCP connections</FONT><BR/><BR/><FONT POINT-SIZE="12">Requires: Tools, Credentials, Access</FONT><BR/><FONT COLOR="#65539B" POINT-SIZE="11">OPTIONAL</FONT>>];
+nisa [id="node-nisa", color="#C96E23",fillcolor="#FFF6EB",style="rounded,dashed,filled",label=<<FONT POINT-SIZE="21"><B>Nisa</B></FONT><BR/><FONT POINT-SIZE="12">Search + paper via REST</FONT><BR/><BR/><FONT POINT-SIZE="12">Requires: Tools, Credentials, Access</FONT><BR/><FONT COLOR="#B86016" POINT-SIZE="11"><B>UNDER VERIFICATION</B></FONT>>];
+scope [id="node-scope", color="#A76013",fillcolor="#FFF9ED",label=<<FONT POINT-SIZE="21"><B>Scope</B></FONT><BR/><FONT POINT-SIZE="12">Shared identity service</FONT><BR/><BR/><FONT POINT-SIZE="12">Same Scope service as left panel</FONT>>];
+access -> scope [id="edge-access-scope",color="#A76013"];
+credentials -> scope [id="edge-credentials-scope",color="#A76013"];
+tools -> scope [id="edge-tools-scope",color="#A76013"];
+tools -> access [id="edge-tools-access",color="#9356A6"];
+api -> scope [id="edge-api-scope",color="#A76013"];
+api -> tools [id="edge-api-tools",color="#5B40BD"];
+mounts -> tools [id="edge-mounts-tools",color="#5B40BD"];
+mounts -> credentials [id="edge-mounts-credentials",color="#62738F"];
+mounts -> access [id="edge-mounts-access",color="#9356A6"];
+nisa -> tools [id="edge-nisa-tools",color="#5B40BD"];
+nisa -> credentials [id="edge-nisa-credentials",color="#62738F"];
+nisa -> access [id="edge-nisa-access",color="#9356A6"];
+{rank=same;api;mounts;nisa;}{rank=same;access;credentials;}}

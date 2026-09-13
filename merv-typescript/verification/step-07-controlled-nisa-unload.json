@@ -1,0 +1,63 @@
+{
+  "status": "passed",
+  "evidence": "controlled Nisa REST and authenticated sandbox MCP fixtures",
+  "realNisaServiceVerified": false,
+  "realSandboxServiceVerified": false,
+  "cordisVersion": "4.0.0-rc.10",
+  "loaderVersion": "1.0.0-rc.7",
+  "removal": "Disable and re-enable the literature loader entry",
+  "toolCounts": [29, 27, 29],
+  "nisaRequests": 3,
+  "sandboxCalls": 4,
+  "sandboxConnections": 2,
+  "checkpoints": [
+    {
+      "phase": "nisa-active",
+      "pid": 78246,
+      "toolCount": 29,
+      "sandboxConnections": 2
+    },
+    {
+      "phase": "nisa-draining",
+      "pid": 78246,
+      "toolCount": 27,
+      "newNisaCalls": "unknown_tool",
+      "sandboxConnectionRetained": true,
+      "nativeFeedAvailable": true
+    },
+    {
+      "phase": "native-work-completed-without-nisa",
+      "pid": 78246,
+      "taskState": "done",
+      "revision": 2,
+      "feedPosts": 3,
+      "sandboxConnectionRetained": true
+    },
+    {
+      "phase": "nisa-restored",
+      "pid": 78246,
+      "toolCount": 29,
+      "retainedPosts": 3,
+      "nisaRequests": 3,
+      "sandboxConnections": 2
+    }
+  ],
+  "checks": {
+    "ungrantedCallerRefused": true,
+    "newNisaCallsRefused": true,
+    "bothToolsWithdrawnBeforeDrain": true,
+    "actualProviderDisposed": true,
+    "admittedSearchDrained": true,
+    "taskReviewFeedCompletedWhileNisaAbsent": true,
+    "noDuplicateTools": true,
+    "durableWorkRetained": true,
+    "sameServerAndClients": true,
+    "unrelatedServicesUnchanged": true,
+    "sandboxIdentityAndConnectionsRetained": true,
+    "searchEnrichmentDisabled": true,
+    "sourceRecordsPreserved": true,
+    "freshNisaProvider": true,
+    "resourcesClosed": true
+  },
+  "completedAt": "2026-09-13T18:45:26.630Z"
+}

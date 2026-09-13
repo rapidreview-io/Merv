@@ -1,0 +1,187 @@
+{
+  "snapshot": "2026-09-13",
+  "lastCompletedImplementationCommit": "76132640",
+  "definition": "A requires B: declared Cordis inject dependency; this is not a call graph or upstream-health guarantee.",
+  "pluginCount": 20,
+  "serviceProviders": 14,
+  "toolAdapters": 6,
+  "directDependencyCount": 42,
+  "directConsumers": {
+    "scope": 11,
+    "tools": 9,
+    "state": 6,
+    "artifacts": 4,
+    "access": 3,
+    "credentials": 2,
+    "reviews": 2,
+    "workflows": 2,
+    "blobs": 1,
+    "feed": 1,
+    "tasks": 1,
+    "api": 0,
+    "mounts": 0,
+    "nisa": 0
+  },
+  "plugins": [
+    {
+      "plugin": "merv-access",
+      "source": "packages/access/src/index.ts",
+      "provides": ["access"],
+      "requires": ["scope"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-tools",
+      "source": "packages/api/src/index.ts",
+      "provides": ["tools"],
+      "requires": ["scope", "access"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-api",
+      "source": "packages/api/src/index.ts",
+      "provides": ["api"],
+      "requires": ["scope", "tools"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-artifacts",
+      "source": "packages/artifacts/src/index.ts",
+      "provides": ["artifacts"],
+      "requires": ["state", "scope", "blobs"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-artifact-tools",
+      "source": "packages/artifacts/src/tools.ts",
+      "provides": [],
+      "requires": ["artifacts", "tools"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-blobs",
+      "source": "packages/blobs/src/index.ts",
+      "provides": ["blobs"],
+      "requires": [],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-credentials",
+      "source": "packages/credentials/src/index.ts",
+      "provides": ["credentials"],
+      "requires": ["scope"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-feed",
+      "source": "packages/feed/src/index.ts",
+      "provides": ["feed"],
+      "requires": ["state", "scope", "artifacts"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-feed-tools",
+      "source": "packages/feed/src/tools.ts",
+      "provides": [],
+      "requires": ["feed", "tools"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-mounts",
+      "source": "packages/mounts/src/index.ts",
+      "provides": ["mounts"],
+      "requires": ["tools", "credentials", "access"],
+      "status": "verified",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-nisa",
+      "source": "packages/nisa/src/index.ts",
+      "provides": ["nisa"],
+      "requires": ["tools", "credentials", "access"],
+      "status": "under-verification",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-reviews",
+      "source": "packages/reviews/src/index.ts",
+      "provides": ["reviews"],
+      "requires": ["state", "scope", "artifacts"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-review-tools",
+      "source": "packages/reviews/src/tools.ts",
+      "provides": [],
+      "requires": ["tools", "reviews"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-scope",
+      "source": "packages/scope/src/index.ts",
+      "provides": ["scope"],
+      "requires": ["state"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-scope-tools",
+      "source": "packages/scope/src/tools.ts",
+      "provides": [],
+      "requires": ["scope", "tools"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-state",
+      "source": "packages/state/src/index.ts",
+      "provides": ["state"],
+      "requires": [],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-tasks",
+      "source": "packages/tasks/src/index.ts",
+      "provides": ["tasks"],
+      "requires": ["state", "scope", "artifacts", "workflows", "reviews"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-task-tools",
+      "source": "packages/tasks/src/tools.ts",
+      "provides": [],
+      "requires": ["tools", "tasks"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-workflows",
+      "source": "packages/workflows/src/index.ts",
+      "provides": ["workflows"],
+      "requires": ["state", "scope"],
+      "status": "verified",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-workflow-tools",
+      "source": "packages/workflows/src/tools.ts",
+      "provides": [],
+      "requires": ["workflows", "tools", "scope"],
+      "status": "verified",
+      "defaultConfiguration": true
+    }
+  ]
+}

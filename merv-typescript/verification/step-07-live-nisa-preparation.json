@@ -1,0 +1,22 @@
+{
+  "status": "awaiting_renewed_login",
+  "origin": "https://api.rapidreview.io",
+  "intendedTools": ["mount__nisa__search", "mount__nisa__paper"],
+  "plannedSearch": { "query": "flash attention", "max_results": 3, "offset": 0, "enrich": false },
+  "harnessAttempts": 2,
+  "harnessResult": "nisa_saved_token_expired",
+  "harnessNetworkRequests": 0,
+  "nisaSearchesThroughMerv": 0,
+  "nisaPapersThroughMerv": 0,
+  "authenticatedSandboxCallsRepeated": 0,
+  "cliPreflight": {
+    "command": "nisa --api-url https://api.rapidreview.io --headless paper 1706.03762",
+    "attempts": 1,
+    "exitCode": 1,
+    "payloadSuppressed": true,
+    "rawTranscriptRetained": false,
+    "networkRequestCount": null,
+    "refreshOutcome": "not established; saved access token remained expired"
+  },
+  "realServiceGateComplete": false
+}

@@ -1,0 +1,27 @@
+digraph G { graph [rankdir=TB, bgcolor="transparent", fontname="Arial", pad="0.18", nodesep="0.25", ranksep="0.75", splines=polyline, outputorder=edgesfirst]; node [shape=box,style="rounded,filled",fontname="Arial",margin="0.18,0.14",penwidth=1.6]; edge [penwidth=1.6, arrowsize=0.65];
+state [id="node-state", color="#2365B5",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="21"><B>State</B></FONT><BR/><FONT POINT-SIZE="12">SQLite transactions + events</FONT><BR/><BR/><FONT POINT-SIZE="12">Requires: none</FONT>>];
+blobs [id="node-blobs", color="#718096",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="21"><B>Blobs</B></FONT><BR/><FONT POINT-SIZE="12">Local evidence bytes</FONT><BR/><BR/><FONT POINT-SIZE="12">Requires: none</FONT>>];
+scope [id="node-scope", color="#A76013",fillcolor="#FFF9ED",label=<<FONT POINT-SIZE="21"><B>Scope</B></FONT><BR/><FONT POINT-SIZE="12">Projects, actors + roles</FONT><BR/><BR/><FONT POINT-SIZE="12">Requires: State</FONT>>];
+artifacts [id="node-artifacts", color="#1C8480",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="21"><B>Artifacts</B></FONT><BR/><FONT POINT-SIZE="12">Evidence metadata</FONT><BR/><BR/><FONT POINT-SIZE="12">Requires: State, Scope, Blobs</FONT>>];
+workflows [id="node-workflows", color="#326B90",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="21"><B>Workflows</B></FONT><BR/><FONT POINT-SIZE="12">States + transitions</FONT><BR/><BR/><FONT POINT-SIZE="12">Requires: State, Scope</FONT>>];
+reviews [id="node-reviews", color="#4A7793",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="21"><B>Reviews</B></FONT><BR/><FONT POINT-SIZE="12">Independent verdicts</FONT><BR/><BR/><FONT POINT-SIZE="12">Requires: State, Scope, Artifacts</FONT>>];
+tasks [id="node-tasks", color="#246E78",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="21"><B>Tasks</B></FONT><BR/><FONT POINT-SIZE="12">Task program</FONT><BR/><BR/><FONT POINT-SIZE="12">Requires: State, Scope, Artifacts,<BR/>Workflows, Reviews</FONT>>];
+feed [id="node-feed", color="#2D8F84",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="21"><B>Feed</B></FONT><BR/><FONT POINT-SIZE="12">Project posts + activity</FONT><BR/><BR/><FONT POINT-SIZE="12">Requires: State, Scope, Artifacts</FONT><BR/><FONT COLOR="#65539B" POINT-SIZE="11">OPTIONAL</FONT>>];
+scope -> state [id="edge-scope-state",color="#2365B5"];
+artifacts -> state [id="edge-artifacts-state",color="#2365B5"];
+artifacts -> scope [id="edge-artifacts-scope",color="#A76013"];
+artifacts -> blobs [id="edge-artifacts-blobs",color="#718096"];
+workflows -> state [id="edge-workflows-state",color="#2365B5"];
+workflows -> scope [id="edge-workflows-scope",color="#A76013"];
+reviews -> state [id="edge-reviews-state",color="#2365B5"];
+reviews -> scope [id="edge-reviews-scope",color="#A76013"];
+reviews -> artifacts [id="edge-reviews-artifacts",color="#1C8480"];
+tasks -> state [id="edge-tasks-state",color="#2365B5"];
+tasks -> scope [id="edge-tasks-scope",color="#A76013"];
+tasks -> artifacts [id="edge-tasks-artifacts",color="#1C8480"];
+tasks -> workflows [id="edge-tasks-workflows",color="#326B90"];
+tasks -> reviews [id="edge-tasks-reviews",color="#4A7793"];
+feed -> state [id="edge-feed-state",color="#2365B5"];
+feed -> scope [id="edge-feed-scope",color="#A76013"];
+feed -> artifacts [id="edge-feed-artifacts",color="#1C8480"];
+{rank=same;reviews;feed;}{rank=sink;state;blobs;}}

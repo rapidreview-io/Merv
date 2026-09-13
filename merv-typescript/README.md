@@ -382,6 +382,8 @@ Results go to a new `live-runs/<timestamp>/` directory by default. Inspect each 
 
 ## Optional upstream mounts
 
+The current complete plugin network is available as a [PNG diagram](docs/architecture/current-dependencies.png), [zoomable SVG](docs/architecture/current-dependencies.svg), and [extracted dependency list](docs/architecture/current-dependencies.json). It distinguishes the eighteen default entries from optional Mounts and the Nisa integration under verification.
+
 Add a `@merv/mounts` entry to your explicit application config alongside the default entries. No bootstrap implementation changes are needed. The default eighteen-entry config remains local and exposes 26 native tools. For the intended sandbox connection, the additional entry is:
 
 ```json
@@ -413,3 +415,9 @@ npm run test:mount-unload
 ```
 
 These commands use an independent local MCP server with synthetic credentials. The whole-application scenario verifies 27 → 26 → 27 tools, an actual admitted upstream call during removal, a completed task and independent review with feed posts while the mount is absent, and fresh connections after restoration. This controlled proof does **not** complete the real sandbox-service gate.
+
+## Optional Nisa literature retrieval
+
+Add `@merv/nisa` to an explicit configuration to expose `mount__nisa__search` and `mount__nisa__paper`. The plugin uses Nisa's supported REST API, reuses exact Access grants and scoped Credentials, and has no task/experiment dependency. It preserves upstream records and arXiv references while bounding requests and disabling background enrichment. See [configuration, supported interface, and verification](docs/NISA_PLUGIN.md).
+
+`npm run test:nisa` exercises the permission, response, timeout, and lifecycle boundaries. `npm run test:nisa-unload` runs the whole application with independent REST/MCP fixtures: 29 → 27 → 29 tools, admitted search drain, retained sandbox connection, and completed task/review/feed work during absence. `npm run test:nisa-live -- --check` prepares the bounded real-service proof without reading credentials or making requests. The real-service gate and Fable review are currently pending; see [the execution ledger](EXECUTION_LOG.md).

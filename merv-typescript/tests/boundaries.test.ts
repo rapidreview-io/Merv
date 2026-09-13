@@ -75,6 +75,7 @@ const capabilities: Record<string, readonly string[]> = {
   tools: ['scope', 'access'],
   api: ['scope', 'tools'],
   mounts: ['tools', 'credentials', 'access'],
+  nisa: ['tools', 'credentials', 'access'],
 };
 const sorted = (values: readonly string[]) => [...values].sort();
 const ownerOf = (path: string) => relative(packagesRoot, path).split(sep)[0];
