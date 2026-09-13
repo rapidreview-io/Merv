@@ -1,6 +1,6 @@
 # Verification — 13 September 2026
 
-The TypeScript build passes. After lifecycle, loader, remote transport, and credential/grant integration, the automated suite passes **160 checks** (150 top-level tests and ten component-boot subtests), with zero failures or skips. It uses upstream `cordis@4.0.0-rc.10`, native SQLite, real loopback HTTP, and the official MCP SDK client. [Execution evidence](EXECUTION_LOG.md) records clean-checkout verification and the added regressions; historical runs below retain their original results.
+The TypeScript build passes. After lifecycle, loader, remote transport, and credential/grant integration, the automated suite passes **165 checks** (155 top-level tests and ten component-boot subtests), with zero failures or skips. It uses upstream `cordis@4.0.0-rc.10`, native SQLite, real loopback HTTP, and the official MCP SDK client. [Execution evidence](EXECUTION_LOG.md) records clean-checkout verification and the added regressions; historical runs below retain their original results.
 
 ```sh
 npm run build
@@ -13,7 +13,7 @@ npm test
 
 Additional fixtures verify unavailable optional mounts, selected schemas, notifications, bounded discovery timeout, physical TCP loss, automatic recovery, explicit reconnection, separate discovery/caller authority, revocation, dependent-consumer draining, and cleanup failure reporting. The [feed removal regression](verification/step-06-feed-unload.json) also passes. All fixture credentials are synthetic.
 
-After explicit user authorization, the prepared harness verified a consumer identity and one real `usage_report` call at the sandbox origin through Merv. A fresh ephemeral Codex session received the result with matching account, namespace, and member fields. There was exactly one upstream tool dispatch, no blocked request, and successful child/application shutdown, environment restoration, and temporary-state removal. [Sanitized live report](verification/step-06-live-sandbox.json). This proof covers a real permitted read; the separately retained fixture proof controls call overlap during removal and connection faults. The Fable milestone consultation remains in progress.
+After explicit user authorization, the prepared harness verified a consumer identity and one real `usage_report` call at the sandbox origin through Merv. A fresh ephemeral Codex session received the result with matching account, namespace, and member fields. There was exactly one upstream tool dispatch, no blocked request, and successful child/application shutdown, environment restoration, and temporary-state removal. [Sanitized live report](verification/step-06-live-sandbox.json). This proof covers a real permitted read; the separately retained fixture proof controls call overlap during removal and connection faults. The [Fable milestone consultation](docs/reviews/step-06-fable.md) is complete. Both behavior findings were independently reproduced and fixed: established notification streams survive the ordinary request deadline, and explicit reconnect waits for its own attempt. The final 165-check suite also verifies partial-constructor cleanup and queued reconnect failure/stop behavior.
 
 ## Credential and permission integration
 

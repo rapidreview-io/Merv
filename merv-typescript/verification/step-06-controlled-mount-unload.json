@@ -8,27 +8,27 @@
   "checkpoints": [
     {
       "phase": "mount-active",
-      "pid": 43516,
+      "pid": 66738,
       "toolCount": 27,
       "selectedTools": 1
     },
     {
       "phase": "mount-draining",
-      "pid": 43516,
+      "pid": 66738,
       "toolCount": 26,
       "newRemoteCall": "unknown_tool",
       "nativeFeedAvailable": true
     },
     {
       "phase": "native-work-completed-without-mount",
-      "pid": 43516,
+      "pid": 66738,
       "taskState": "done",
       "revision": 2,
       "feedPosts": 3
     },
     {
       "phase": "mount-restored",
-      "pid": 43516,
+      "pid": 66738,
       "toolCount": 27,
       "retainedPosts": 3
     }
@@ -45,5 +45,5 @@
     "unrelatedServicesUnchanged": true,
     "freshRemoteConnection": true
   },
-  "completedAt": "2026-09-13T17:51:40.702Z"
+  "completedAt": "2026-09-13T18:29:05.485Z"
 }

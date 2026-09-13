@@ -80,6 +80,153 @@ async function mounted(t: TestContext, services: ReturnType<typeof local>, mount
 const names = (registry: ToolRegistry) => registry.describe().map((tool) => tool.name);
 
 test(
+  'queued explicit reconnect retries discovery after the preceding refresh fails',
+  { timeout: 10000 },
+  async (t) => {
+    const services = local(t);
+    let fail = false;
+    const upstream = await remote(t, {
+      page: () => {
+        if (fail) {
+          fail = false;
+          throw new Error('Synthetic catalog failure');
+        }
+        return { tools: structuredClone(representativeTools) };
+      },
+    });
+    const { manager } = await mounted(t, services, [
+      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
+    ]);
+    const held = upstream.holdNextList();
+    const refreshing = manager.reconnect('fixture');
+    const failed = assert.rejects(refreshing);
+    await held.entered;
+    fail = true;
+    const requested = manager.reconnect('fixture');
+    try {
+      held.release();
+      await failed;
+      await requested;
+      assert.equal(manager.status()[0].state, 'ready');
+      assert.deepEqual(names(services.registry), ['mount__fixture__media', 'native']);
+    } finally {
+      held.release();
+      await Promise.allSettled([refreshing, requested]);
+    }
+  },
+);
+
+test(
+  'stopping while an explicit reconnect is queued rejects it without another connection',
+  { timeout: 10000 },
+  async (t) => {
+    const services = local(t);
+    const upstream = await remote(t, { pageSize: 10 });
+    const originalConnect = Client.prototype.connect;
+    let connects = 0;
+    t.mock.method(
+      Client.prototype,
+      'connect',
+      function (this: Client, ...args: Parameters<Client['connect']>) {
+        connects++;
+        return originalConnect.apply(this, args);
+      },
+    );
+    const { manager, fiber } = await mounted(t, services, [
+      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
+    ]);
+    const held = upstream.holdNextList();
+    const refreshing = manager.reconnect('fixture');
+    const activeRejected = assert.rejects(refreshing);
+    await held.entered;
+    const before = connects;
+    const requested = manager.reconnect('fixture');
+    const queuedRejected = assert.rejects(requested, { code: 'mounts_stopped' });
+    try {
+      await fiber.dispose();
+      await Promise.all([activeRejected, queuedRejected]);
+      assert.equal(connects, before);
+      assert.equal(manager.status()[0].state, 'stopped');
+    } finally {
+      held.release();
+      await Promise.allSettled([refreshing, requested]);
+    }
+  },
+);
+
+test(
+  'explicit reconnect during a coalesced second refresh waits for its own new connection attempt',
+  { timeout: 10000 },
+  async (t) => {
+    const services = local(t);
+    const upstream = await remote(t, { pageSize: 10 });
+    const originalConnect = Client.prototype.connect;
+    let connects = 0;
+    t.mock.method(
+      Client.prototype,
+      'connect',
+      function (this: Client, ...args: Parameters<Client['connect']>) {
+        connects++;
+        return originalConnect.apply(this, args);
+      },
+    );
+    const install = Client.prototype.setNotificationHandler;
+    let receive!: () => void;
+    const notificationReceived = new Promise<void>((resolve) => {
+      receive = resolve;
+    });
+    const observe: Client['setNotificationHandler'] = function (this: Client, schema, handler) {
+      return install.call(this, schema, (notification) => {
+        receive();
+        return handler(notification);
+      });
+    };
+    t.mock.method(Client.prototype, 'setNotificationHandler', observe);
+    const { manager } = await mounted(t, services, [
+      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
+    ]);
+    const firstHeld = upstream.holdNextList();
+    const secondHeld = upstream.holdNextList();
+    const ownAttemptHeld = upstream.holdNextList();
+    const refreshing = manager.reconnect('fixture');
+    await firstHeld.entered;
+    await upstream.notifyToolsChanged();
+    await notificationReceived;
+    firstHeld.release();
+    await secondHeld.entered;
+    const before = connects;
+    let settled = false;
+    const requested = manager.reconnect('fixture').then(() => {
+      settled = true;
+    });
+    try {
+      secondHeld.release();
+      await refreshing;
+      await until(
+        () => settled || connects > before,
+        'Explicit reconnect did not start after the active refresh',
+      );
+      assert.equal(
+        settled,
+        false,
+        'Reconnect cannot resolve before its own forced attempt finishes',
+      );
+      assert.equal(connects, before + 1, 'Reconnect must create a new discovery connection');
+      await ownAttemptHeld.entered;
+      assert.equal(settled, false);
+      ownAttemptHeld.release();
+      await requested;
+      assert.equal(manager.status()[0].state, 'ready');
+    } finally {
+      firstHeld.release();
+      secondHeld.release();
+      ownAttemptHeld.release();
+      await Promise.allSettled([refreshing, requested]);
+    }
+  },
+);
+
+test(
   'optional mounts select explicit tools before schema compilation and preserve native tools',
   { timeout: 10000 },
   async (t) => {
@@ -198,6 +345,55 @@ test(
     }
     await manager.reconnect('fixture');
     assert.equal(manager.status()[0].state, 'ready');
+  },
+);
+
+test(
+  'notification streams remain live beyond the ordinary request timeout',
+  { timeout: 10000 },
+  async (t) => {
+    const services = local(t);
+    const upstream = await remote(t);
+    const actualFetch = globalThis.fetch;
+    const streamSignals: AbortSignal[] = [];
+    t.mock.method(globalThis, 'fetch', (address: RequestInfo | URL, init?: RequestInit) => {
+      if (String(address) === upstream.url && init?.method === 'GET' && init.signal)
+        streamSignals.push(init.signal);
+      return actualFetch(address, init);
+    });
+    const { manager, fiber } = await mounted(t, services, [
+      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 250, reconnectMs: 60000 },
+    ]);
+    assert.equal(manager.status()[0].state, 'ready');
+    await upstream.waitForNotificationStream();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.equal(streamSignals.length, 1);
+    assert.equal(
+      streamSignals[0].aborted,
+      false,
+      'Established SSE stream must outlive request timeout',
+    );
+    const before = upstream.requests.filter((request) => request.method === 'tools/list').length;
+    const changed = structuredClone(representativeTools);
+    changed.find((tool) => tool.name === 'media')!.description =
+      'Catalog changed after request timeout';
+    upstream.setTools(changed);
+    await upstream.notifyToolsChanged();
+    await until(
+      () =>
+        services.registry.describe().find((tool) => tool.name === 'mount__fixture__media')
+          ?.description === 'Catalog changed after request timeout',
+      'Notification was lost after the request timeout while the long poll interval had not elapsed',
+    );
+    assert.ok(
+      upstream.requests.filter((request) => request.method === 'tools/list').length > before,
+    );
+    assert.equal(manager.status()[0].state, 'ready');
+    await fiber.dispose();
+    assert.ok(
+      streamSignals.every((signal) => signal.aborted),
+      'Stopping the mount must abort its SSE stream',
+    );
   },
 );
 

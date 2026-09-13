@@ -96,6 +96,8 @@ export class MountRuntime {
   refresh(force = false): Promise<void> {
     if (this.stopping)
       return Promise.reject(new MervError('mounts_stopped', 'Mounts are stopped', 503));
+    if (force && this.current)
+      return this.current.catch(() => undefined).then(() => this.refresh(true));
     this.clearTimer();
     if (force) this.forceNext = true;
     else this.refreshAgain = true;
@@ -205,15 +207,26 @@ export class MountRuntime {
     };
     const transport = new StreamableHTTPClientTransport(new URL(this.config.url), {
       ...(credential ? { requestInit: { headers: { ...credential.headers() } } } : {}),
-      fetch: (address, init) =>
-        fetch(address, {
-          ...init,
-          signal: AbortSignal.any([
-            controller.signal,
-            ...(init?.signal ? [init.signal] : []),
-            AbortSignal.timeout(this.timeoutMs),
-          ]),
-        }),
+      fetch: async (address, init) => {
+        const lifetime = [controller.signal, ...(init?.signal ? [init.signal] : [])];
+        if (init?.method?.toUpperCase() !== 'GET')
+          return fetch(address, {
+            ...init,
+            signal: AbortSignal.any([...lifetime, AbortSignal.timeout(this.timeoutMs)]),
+          });
+        // Bound opening the notification stream, not its lifetime. Timing out an
+        // established SSE body creates gaps that can permanently lose notifications.
+        const opening = new AbortController();
+        const timer = setTimeout(() => opening.abort(), this.timeoutMs);
+        try {
+          return await fetch(address, {
+            ...init,
+            signal: AbortSignal.any([...lifetime, opening.signal]),
+          });
+        } finally {
+          clearTimeout(timer);
+        }
+      },
     });
     try {
       await bounded(

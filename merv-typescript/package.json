@@ -22,7 +22,7 @@
     "format:check": "prettier --check .",
     "test:credentials": "node --import tsx --test tests/remote-permissions.test.ts tests/credential-http.test.ts tests/credential-client.test.ts",
     "test:mount-unload": "node --import tsx scripts/mount-unload.ts",
-    "test:mounts": "node --import tsx --test tests/mounts.test.ts tests/mount-unload.test.ts"
+    "test:mounts": "node --import tsx --test tests/mounts.test.ts tests/mount-config.test.ts tests/mount-unload.test.ts"
   },
   "dependencies": {
     "@cordisjs/plugin-loader": "1.0.0-rc.7",

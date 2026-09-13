@@ -1,0 +1,23 @@
+{
+  "status": "passed",
+  "verifiedAt": "2026-09-13T18:29:38.187498+00:00",
+  "reviewer": "claude-fable-5",
+  "reviewedWave": "3bf8caf7..43b1bc32",
+  "checks": {
+    "format": true,
+    "typecheck": true,
+    "build": true,
+    "tests": 165,
+    "passed": 165,
+    "failed": 0,
+    "skipped": 0
+  },
+  "resolved": [
+    "Notification loss during short-timeout SSE reconnection gaps",
+    "Explicit reconnect resolving before its own forced attempt",
+    "Missing constructor partial-allocation ownership regression"
+  ],
+  "liveProof": "step-06-live-sandbox.json",
+  "controlledProof": "step-06-controlled-mount-unload.json",
+  "newLiveSandboxCallsAfterFixes": 0
+}

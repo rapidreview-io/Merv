@@ -2,7 +2,7 @@
 
 Mounts owns upstream MCP discovery and connections. API owns the downstream HTTP/MCP transport and tool registry; Mounts consumes that registry through the public `@merv/api/types` contract. Access and Credentials independently supply caller grants and server-side credential selection.
 
-The public `@merv/mounts/types` contract defines `Context.mounts`, `Mounts`, `MountConfig`, `MountsConfig`, and `MountStatus`. `status()` reports each mount's ID, endpoint origin, state, published tool count, and an optional error code. Status never includes endpoint paths, query strings, headers, or credentials. `reconnect(id)` requests another connection attempt for a configured mount.
+The public `@merv/mounts/types` contract defines `Context.mounts`, `Mounts`, `MountConfig`, `MountsConfig`, and `MountStatus`. `status()` reports each mount's ID, endpoint origin, state, published tool count, and an optional error code. Status never includes endpoint paths, query strings, headers, or credentials. `reconnect(id)` waits for a new forced discovery attempt for a configured mount. It queues behind an active refresh and rejects if the mount stops before that attempt.
 
 Configuration explicitly selects raw upstream tool names:
 
@@ -33,7 +33,7 @@ The following helper modules now belong to this package:
 
 These helpers were relocated from API without changing their tool transport behavior. Pool shutdown also retains earlier retirement cleanup failures so a later close cannot incorrectly report success. They contain upstream SDK transport ownership, while the public types module remains free of runtime code.
 
-A configured mount refreshes its catalog when notified and by bounded polling. A failed connection or unusable selected catalog withdraws its tools; exponential backoff is capped at 60 seconds. Successful polling uses `reconnectMs`; `timeoutMs` bounds connection, catalog, call, and cleanup operations. No remote operation is retried. Discovery checks current grants and credentials before and after asynchronous work. A configured discovery credential that changes causes a new discovery connection.
+A configured mount refreshes its catalog when notified and by bounded polling. A failed connection or unusable selected catalog withdraws its tools; exponential backoff is capped at 60 seconds. Successful polling uses `reconnectMs`; `timeoutMs` bounds connection, catalog, call, and cleanup operations. Opening the notification GET is bounded, but an established stream stays open until lifecycle cancellation so catalog notifications are not lost at each request deadline. No remote operation is retried. Discovery checks current grants and credentials before and after asynchronous work. A configured discovery credential that changes causes a new discovery connection.
 
 Shutdown starts withdrawal for every namespace synchronously, including when another plugin is still draining a call to Mounts' status service. Admitted calls finish before invocation clients close. All client cleanups are attempted; failures produce fixed error codes. The upstream Cordis loader may log rather than propagate disposer failures, so use the direct manager result/status when diagnosing cleanup errors.
 

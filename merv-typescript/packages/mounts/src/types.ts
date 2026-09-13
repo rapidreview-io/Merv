@@ -27,6 +27,7 @@ export interface MountStatus {
 
 export interface Mounts {
   status(): MountStatus[];
+  /** Wait for a new forced discovery attempt, queued after any active refresh. */
   reconnect(id: string): Promise<void>;
 }
 
