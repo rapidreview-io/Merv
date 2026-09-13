@@ -1,0 +1,69 @@
+{
+  "status": "passed",
+  "cordisVersion": "4.0.0-rc.10",
+  "pid": 88294,
+  "url": "http://127.0.0.1:61379",
+  "taskId": "wf_8ecf8dd43d5a4f31ba09d1743baad065",
+  "reviewId": "review_00723cf42bd34b629844f5ee8931cefb",
+  "postIds": [
+    "post_3d332ec6951e4d79a49f9ac61ff3e11d",
+    "post_21a3dd171ff74ebcb62ab4479ca73be4",
+    "post_8bafab806dad4cbc83463d4009a5a60c"
+  ],
+  "checkpoints": [
+    {
+      "phase": "feed-active",
+      "pid": 88294,
+      "url": "http://127.0.0.1:61379",
+      "toolCount": 26,
+      "taskId": "wf_8ecf8dd43d5a4f31ba09d1743baad065",
+      "postId": "post_3d332ec6951e4d79a49f9ac61ff3e11d"
+    },
+    {
+      "phase": "feed-draining",
+      "pid": 88294,
+      "url": "http://127.0.0.1:61379",
+      "toolCount": 22,
+      "adapterState": "UNLOADING",
+      "newFeedCall": "unknown_tool",
+      "taskStillAvailable": true
+    },
+    {
+      "phase": "feed-removed",
+      "pid": 88294,
+      "url": "http://127.0.0.1:61379",
+      "admittedPostId": "post_21a3dd171ff74ebcb62ab4479ca73be4",
+      "adapterState": "PENDING"
+    },
+    {
+      "phase": "task-completed-without-feed",
+      "pid": 88294,
+      "url": "http://127.0.0.1:61379",
+      "taskId": "wf_8ecf8dd43d5a4f31ba09d1743baad065",
+      "revision": 2
+    },
+    {
+      "phase": "feed-restored",
+      "pid": 88294,
+      "url": "http://127.0.0.1:61379",
+      "toolCount": 26,
+      "adapterState": "ACTIVE",
+      "retainedPosts": 3,
+      "offlineActivityRecovered": true
+    }
+  ],
+  "checks": {
+    "actualProviderDisposed": true,
+    "adapterSuspendedAutomatically": true,
+    "admittedCallDrained": true,
+    "newFeedCallsRejected": true,
+    "taskCompletedWhileFeedAbsent": true,
+    "unrelatedServicesUnchanged": true,
+    "sameServerAndClients": true,
+    "adapterReactivatedAutomatically": true,
+    "postsRetained": true,
+    "activityRecovered": true,
+    "noDuplicateTools": true
+  },
+  "completedAt": "2026-09-13T16:36:01.417Z"
+}

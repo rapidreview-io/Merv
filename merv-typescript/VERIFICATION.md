@@ -1,6 +1,6 @@
 # Verification — 13 September 2026
 
-The TypeScript build passes. The automated suite passes **56 checks** (48 top-level tests and eight component-boot subtests), with zero failures or skips. It uses upstream `cordis@4.0.0-rc.10`, native SQLite, real loopback HTTP, and the official MCP SDK client.
+The TypeScript build passes. After the lifecycle repairs, the automated suite passes **60 checks** (52 top-level tests and eight component-boot subtests), with zero failures or skips. It uses upstream `cordis@4.0.0-rc.10`, native SQLite, real loopback HTTP, and the official MCP SDK client. [Execution evidence](EXECUTION_LOG.md) records clean-checkout verification and the added regressions; historical runs below retain their original results.
 
 ```sh
 npm run build

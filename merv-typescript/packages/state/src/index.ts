@@ -21,13 +21,23 @@ export class SqliteState implements State {
   constructor(path: string) {
     if (path !== ':memory:') mkdirSync(dirname(resolve(path)), { recursive: true });
     this.db = new DatabaseSync(path);
-    this.db.exec(
-      'PRAGMA foreign_keys=ON; PRAGMA recursive_triggers=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;',
-    );
-    this.db
-      .exec(`CREATE TABLE IF NOT EXISTS component_migrations(component TEXT NOT NULL, version INTEGER NOT NULL, hash TEXT NOT NULL, PRIMARY KEY(component,version));
+    try {
+      this.db.exec(
+        'PRAGMA foreign_keys=ON; PRAGMA recursive_triggers=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;',
+      );
+      this.db
+        .exec(`CREATE TABLE IF NOT EXISTS component_migrations(component TEXT NOT NULL, version INTEGER NOT NULL, hash TEXT NOT NULL, PRIMARY KEY(component,version));
       CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, actor_id TEXT NOT NULL, type TEXT NOT NULL, subject_id TEXT NOT NULL, data_json TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS events_project ON events(project_id,id);`);
+    } catch (error) {
+      // A constructor failure happens before Cordis can register its resource disposer.
+      try {
+        this.db.close();
+      } catch {
+        // Keep the initialization failure as the caller's original diagnostic.
+      }
+      throw error;
+    }
   }
   private sql(valid: () => void): Sql {
     return {
