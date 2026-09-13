@@ -1,11 +1,17 @@
 # Verification — 13 September 2026
 
-The TypeScript build passes. After lifecycle, loader, and remote-transport integration, the automated suite passes **111 checks** (103 top-level tests and eight component-boot subtests), with zero failures or skips. It uses upstream `cordis@4.0.0-rc.10`, native SQLite, real loopback HTTP, and the official MCP SDK client. [Execution evidence](EXECUTION_LOG.md) records clean-checkout verification and the added regressions; historical runs below retain their original results.
+The TypeScript build passes. After lifecycle, loader, remote transport, and credential/grant integration, the automated suite passes **141 checks** (131 top-level tests and ten component-boot subtests), with zero failures or skips. It uses upstream `cordis@4.0.0-rc.10`, native SQLite, real loopback HTTP, and the official MCP SDK client. [Execution evidence](EXECUTION_LOG.md) records clean-checkout verification and the added regressions; historical runs below retain their original results.
 
 ```sh
 npm run build
 npm test
 ```
+
+## Credential and permission integration
+
+The current suite includes two-project authenticated HTTP/MCP scenarios with separate upstream identities and connections. Hidden tool names remain denied on direct invocation, and actor/grant/binding revocation and credential rotation take effect without restarting Merv. Focused tests cover changes during connection setup, admitted-call draining, timeout/failure cleanup, secret exclusion, and unchanged native role checks. Run `npm run test:credentials`. The default composition grants no remote access and mounts no live service yet.
+
+The full 141-check suite, typecheck, build, formatting, and independent reviews pass. The latest [feed-removal report](verification/step-05-feed-unload.json) also passes against the new dependency graph. The earlier live-agent run below remains the last model-driven acceptance; this credential gate uses controlled authenticated MCP fixtures.
 
 ## Remote transport and fresh-agent acceptance
 

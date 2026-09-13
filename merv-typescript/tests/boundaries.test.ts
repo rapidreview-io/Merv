@@ -23,6 +23,8 @@ import { workflowsPlugin } from '@merv/workflows';
 import { reviewsPlugin } from '@merv/reviews';
 import { tasksPlugin } from '@merv/tasks';
 import { feedPlugin } from '@merv/feed';
+import { accessPlugin } from '@merv/access';
+import { credentialsPlugin } from '@merv/credentials';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packagesRoot = join(root, 'packages');
@@ -68,7 +70,9 @@ const capabilities: Record<string, readonly string[]> = {
   reviews: ['state', 'scope', 'artifacts'],
   tasks: ['state', 'scope', 'workflows', 'artifacts', 'reviews'],
   feed: ['state', 'scope', 'artifacts'],
-  tools: ['scope'],
+  access: ['scope'],
+  credentials: ['scope'],
+  tools: ['scope', 'access'],
   api: ['scope', 'tools'],
 };
 const sorted = (values: readonly string[]) => [...values].sort();
@@ -575,6 +579,8 @@ test('each service boots with only its declared dependency closure and without A
     reviews: { plugin: reviewsPlugin },
     tasks: { plugin: tasksPlugin },
     feed: { plugin: feedPlugin },
+    access: { plugin: accessPlugin },
+    credentials: { plugin: credentialsPlugin },
   };
   for (const target of Object.keys(plugins))
     await t.test(target, async () => {

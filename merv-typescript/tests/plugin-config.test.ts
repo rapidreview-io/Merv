@@ -7,6 +7,7 @@ import { Context, FiberState, ValidationError, type Plugin } from 'cordis';
 import { statePlugin } from '@merv/state';
 import { blobsPlugin } from '@merv/blobs';
 import { scopePlugin } from '@merv/scope';
+import { accessPlugin } from '@merv/access';
 import { apiPlugin, toolsPlugin } from '@merv/api';
 
 function folder(t: TestContext) {
@@ -19,6 +20,7 @@ async function dependencies(ctx: Context, service: string) {
   if (service !== 'tools' && service !== 'api') return;
   await ctx.plugin(statePlugin, { path: ':memory:' });
   await ctx.plugin(scopePlugin);
+  await ctx.plugin(accessPlugin);
   if (service === 'api') await ctx.plugin(toolsPlugin);
 }
 

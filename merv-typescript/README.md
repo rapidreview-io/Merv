@@ -48,7 +48,7 @@ Dependencies, build output, caches, default runtime directories, SQLite files, a
 
 ### Configure plugins
 
-The application uses upstream `@cordisjs/plugin-loader@1.0.0-rc.7`. Its default composition is [config/default.json](config/default.json). To run an explicit plugin list:
+The full API composition now has eighteen plugin entries, including empty access and credential providers. The application uses upstream `@cordisjs/plugin-loader@1.0.0-rc.7`. Its default composition is [config/default.json](config/default.json). To run an explicit plugin list:
 
 ```sh
 npm start -- --dir .merv --config config/default.json --host 127.0.0.1 --port 3081
@@ -158,9 +158,63 @@ A catalog replacement validates every tool first, publishes the complete new gen
 
 Remote `content`, `structuredContent`, `isError`, annotations, and metadata survive MCP forwarding. HTTP wraps that complete MCP result in its usual `{ "result": ... }` envelope. Native results retain their existing JSON-text MCP format.
 
-A remote tool's arguments are untouched, including its own `projectId`. Select the **Merv** project separately using the HTTP `X-Merv-Project-Id` header or MCP call `params._meta["merv/projectId"]`; selection defaults to the authenticated actor's project and is checked by Scope. Native tools continue to accept their existing `projectId` argument. This transport groundwork does not install a live mount or lend upstream credentials; those are the next integrated steps in the execution plan.
+A remote tool's arguments are untouched, including its own `projectId`. Select the **Merv** project separately using the HTTP `X-Merv-Project-Id` header or MCP call `params._meta["merv/projectId"]`; selection defaults to the authenticated actor's project and is checked by Scope. Native tools continue to accept their existing `projectId` argument. A live mount is not installed by the default composition; credentials and grants are supplied through the independent providers described below.
 
 The installed SDK supports the legacy protocol family through `2025-11-25`. Unsupported request versions in the HTTP header or MCP metadata are refused explicitly. A legacy `initialize` request can negotiate a different supported version; Merv does not implement `server/discover` or claim the `2026-07-28` protocol. The intended sandbox endpoint was separately verified to accept the current SDK. See the [tested compatibility matrix](docs/TRANSPORT_COMPATIBILITY.md).
+
+## Remote credentials and grants
+
+`@merv/access` and `@merv/credentials` each depend only on Scope. Their public contracts live in their own `/types` entries. Both default to empty configuration. Native roles retain their existing permissions; every remote tool requires an explicit actor/project/mount/tool grant, including for operators. Discovery filters by the authenticated caller, and invocation checks the current grant again. Calling a hidden name directly does not bypass this check.
+
+Configure the two entries in the plugin list using actual Merv actor/project IDs and an upstream-issued credential reference:
+
+```json
+[
+  {
+    "id": "access",
+    "name": "@merv/access",
+    "config": {
+      "grants": [
+        {
+          "actorId": "actor_example",
+          "projectId": "project_example",
+          "mountId": "sandboxes",
+          "tools": ["inspect"]
+        }
+      ]
+    }
+  },
+  {
+    "id": "credentials",
+    "name": "@merv/credentials",
+    "config": {
+      "bindings": [
+        {
+          "id": "sandbox-example",
+          "actorId": "actor_example",
+          "projectId": "project_example",
+          "mountId": "sandboxes",
+          "secretRef": "env:MERV_SANDBOX_TOKEN"
+        }
+      ]
+    }
+  }
+]
+```
+
+The example tool name is illustrative; select actual names when configuring a mount. Secrets stay in the server environment. Optional fixed `x-*` selector headers are for nonsecret upstream namespace/subject values; authentication comes from the secret reference. The provider reads the environment reference on every resolution, rejects known active local Merv bearer tokens, and returns an opaque snapshot with explicit server-only header access. JSON and diagnostic inspection of the snapshot omit its secret.
+
+`replace(...)` on either provider is trusted in-process configuration administration: it validates the complete replacement before changing state. Removing a grant or binding affects new calls immediately. This initial configuration is in memory; persist changes in the plugin configuration for restart. Neither provider exposes management tools to agents.
+
+`ScopedRemoteClients` supplies the transport consumer for these contracts. It uses a separate upstream bearer and isolates connections by mount, endpoint, actor, project, and resolved credential identity. It rechecks authority after asynchronous connection setup, retires old connections on rotation/revocation, drains admitted calls, bounds connection/call time, and does not retry operations. SDK errors are returned as fixed messages without upstream error text. The actual configurable live mount is the next execution step.
+
+Run the integrated two-project demonstration and connection regressions:
+
+```sh
+npm run test:credentials
+```
+
+It uses real local HTTP/MCP servers with different upstream identities. It verifies scoped discovery, direct-call denial, native role checks, credential isolation, revocation, rotation, sanitized results/errors, and cleanup. No cloud resources are created.
 
 ## Nine plugin packages
 
@@ -190,6 +244,9 @@ flowchart TB
   end
   HTTP --> Scope
   Tools --> Scope
+  Tools --> Access["@merv/access"]
+  Access --> Scope
+  Credentials["@merv/credentials"] --> Scope
   Adapters["Feature-owned tool adapters"] -.-> Tools
   Adapters -.-> Task
   Adapters -.-> Artifacts
@@ -199,17 +256,19 @@ flowchart TB
   Adapters -.-> Feed
 ```
 
-| Package           | Owns                                                                                  | Required capabilities                       |
-| ----------------- | ------------------------------------------------------------------------------------- | ------------------------------------------- |
-| `@merv/state`     | Synchronous SQLite transactions, per-component migrations, durable events             | None                                        |
-| `@merv/blobs`     | Immutable bytes on disk, project namespaces, content hashes                           | None                                        |
-| `@merv/scope`     | Projects, actor identities, bearer credentials, roles and access checks               | State                                       |
-| `@merv/artifacts` | Completed immutable documents/files, metadata and authorship                          | State, scope, blobs                         |
-| `@merv/workflows` | Versioned graphs, durable instances, transitions, revisions and request deduplication | State, scope                                |
-| `@merv/reviews`   | Pinned evidence/criteria snapshots, independent claims and immutable verdicts         | State, scope, artifacts                     |
-| `@merv/tasks`     | Brief/delivery rules, task records, installed task graph and atomic review routing    | State, scope, workflows, artifacts, reviews |
-| `@merv/feed`      | Immutable project posts, artifact attachments, cursor reads and durable activity      | State, scope, artifacts                     |
-| `@merv/api`       | Generic tool registry, runtime argument validation, HTTP/MCP transport and draining   | Registry: scope. Transport: scope, registry |
+| Package             | Owns                                                                                  | Required capabilities                               |
+| ------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `@merv/state`       | Synchronous SQLite transactions, per-component migrations, durable events             | None                                                |
+| `@merv/blobs`       | Immutable bytes on disk, project namespaces, content hashes                           | None                                                |
+| `@merv/scope`       | Projects, actor identities, bearer credentials, roles and access checks               | State                                               |
+| `@merv/artifacts`   | Completed immutable documents/files, metadata and authorship                          | State, scope, blobs                                 |
+| `@merv/workflows`   | Versioned graphs, durable instances, transitions, revisions and request deduplication | State, scope                                        |
+| `@merv/reviews`     | Pinned evidence/criteria snapshots, independent claims and immutable verdicts         | State, scope, artifacts                             |
+| `@merv/tasks`       | Brief/delivery rules, task records, installed task graph and atomic review routing    | State, scope, workflows, artifacts, reviews         |
+| `@merv/feed`        | Immutable project posts, artifact attachments, cursor reads and durable activity      | State, scope, artifacts                             |
+| `@merv/access`      | Exact remote tool grants and current identity checks                                  | Scope                                               |
+| `@merv/credentials` | Exact upstream credential bindings and private secret snapshots                       | Scope                                               |
+| `@merv/api`         | Generic tool registry, runtime argument validation, HTTP/MCP transport and draining   | Registry: scope, access. Transport: scope, registry |
 
 `@merv/contracts` contains shared interfaces and runtime helpers. Domain packages import those contracts or type-only public contracts such as `@merv/feed/types`, rather than sibling implementations. Each feature's `tools.ts` is an optional adapter depending on the generic registry and its own service. `src/app.ts` is the composition root; services also work through explicit constructor injection without HTTP, MCP, or the task program.
 
@@ -277,28 +336,33 @@ npm test
 
 `build` emits JavaScript and declarations under `dist`; the supplied launch commands execute the workspace TypeScript with `tsx`. The tests use temporary data directories and actual SQLite. HTTP/MCP tests bind loopback sockets, so environments that restrict networking must permit local listeners for those tests.
 
-| Test file                       | Coverage                                                                                                                                                               |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/config.test.ts`          | Validated plugin declarations, substitutions, explicit module bases, default selections, optional feed                                                                 |
-| `tests/plugin-config.test.ts`   | Cordis resource configuration validation, invalid inputs before acquisition, valid API defaults                                                                        |
-| `tests/loader.test.ts`          | Config-only extension, asynchronous dependencies, current entry handles, failure readiness, optional absence                                                           |
-| `tests/cli-config.test.ts`      | Explicit config startup, safe status, argument validation, missing API cleanup, signal shutdown                                                                        |
-| `tests/state-lifecycle.test.ts` | Native SQLite handle closure on initialization failure and failed Cordis activation                                                                                    |
-| `tests/workflow-unload.test.ts` | Immediate tool withdrawal, held-call draining, independent services, and restoration through loader entries                                                            |
-| `tests/foundations.test.ts`     | Migration immutability/rollback, durable events, role/project access, revocation, artifact immutability/corruption, real Cordis activation/disposal                    |
-| `tests/workflows.test.ts`       | Exact replay, pinned versions across restart, competing revisions, atomic rollback, managed mutation ownership, graph validation and provider withdrawal               |
-| `tests/tasks.test.ts`           | Delivery/review loop, revision and replay handling, evidence and UTF-8 gates, verdict rollback, generic reviews, restart recovery, review reissue authority/rollback   |
-| `tests/remote-registry.test.ts` | Remote schema validation, namespace collisions, atomic replacement, result validation, and draining                                                                    |
-| `tests/remote-catalog.test.ts`  | Independent MCP pagination, catalog refresh notifications, limits, failures, and cleanup                                                                               |
-| `tests/remote-http.test.ts`     | Lossless remote HTTP/MCP results, separate project selection, and withdrawal during a held call                                                                        |
-| `tests/protocol.test.ts`        | Actual legacy negotiation/list/call and explicit unsupported version behavior                                                                                          |
-| `tests/protocol-proxy.test.ts`  | Safe metadata capture and transparent JSON/SSE forwarding for live-agent evidence                                                                                      |
-| `tests/api.test.ts`             | Strict schemas, authenticated identity/scope, duplicate registration, awaited disposal, HTTP limits, official MCP client roundtrip, shutdown after disconnection       |
-| `tests/boundaries.test.ts`      | Package import boundaries, declared Cordis dependencies, feature adapter ownership, exported paths, independent service boot with only its dependency closure          |
-| `tests/app.test.ts`             | Fully assembled MCP task/review loop across two server restarts, credentials and retained evidence, invalid composition cleanup                                        |
-| `tests/live-evidence.test.ts`   | Live acceptance rejects unrelated tasks, missing pinned documents, and evidence read only after a verdict                                                              |
-| `tests/feed.test.ts`            | Independent feed, reviewer communication, project/attachment permissions, immutable posts, atomic deduplication, cursor reads and persistence                          |
-| `tests/feed-unload.test.ts`     | Real Cordis provider removal during an admitted MCP call, automatic adapter suspension/reactivation, task completion while feed is absent, retained posts and activity |
+| Test file                          | Coverage                                                                                                                                                               |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/access.test.ts`             | Exact grants, Scope checks, revocation, default denial, atomic configuration                                                                                           |
+| `tests/credentials.test.ts`        | Binding isolation, rotation, secret references, private snapshots, sanitized errors                                                                                    |
+| `tests/credential-client.test.ts`  | Scoped connections, authority rechecks, timeout/failure cleanup and draining                                                                                           |
+| `tests/remote-permissions.test.ts` | HTTP/MCP caller-filtered discovery, direct calls to hidden tools, current grants and native roles                                                                      |
+| `tests/credential-http.test.ts`    | Two-project HTTP/MCP credential isolation, connection reuse, revocation, rotation and secret exclusion                                                                 |
+| `tests/config.test.ts`             | Validated plugin declarations, substitutions, explicit module bases, default selections, optional feed                                                                 |
+| `tests/plugin-config.test.ts`      | Cordis resource configuration validation, invalid inputs before acquisition, valid API defaults                                                                        |
+| `tests/loader.test.ts`             | Config-only extension, asynchronous dependencies, current entry handles, failure readiness, optional absence                                                           |
+| `tests/cli-config.test.ts`         | Explicit config startup, safe status, argument validation, missing API cleanup, signal shutdown                                                                        |
+| `tests/state-lifecycle.test.ts`    | Native SQLite handle closure on initialization failure and failed Cordis activation                                                                                    |
+| `tests/workflow-unload.test.ts`    | Immediate tool withdrawal, held-call draining, independent services, and restoration through loader entries                                                            |
+| `tests/foundations.test.ts`        | Migration immutability/rollback, durable events, role/project access, revocation, artifact immutability/corruption, real Cordis activation/disposal                    |
+| `tests/workflows.test.ts`          | Exact replay, pinned versions across restart, competing revisions, atomic rollback, managed mutation ownership, graph validation and provider withdrawal               |
+| `tests/tasks.test.ts`              | Delivery/review loop, revision and replay handling, evidence and UTF-8 gates, verdict rollback, generic reviews, restart recovery, review reissue authority/rollback   |
+| `tests/remote-registry.test.ts`    | Remote schema validation, namespace collisions, atomic replacement, result validation, and draining                                                                    |
+| `tests/remote-catalog.test.ts`     | Independent MCP pagination, catalog refresh notifications, limits, failures, and cleanup                                                                               |
+| `tests/remote-http.test.ts`        | Lossless remote HTTP/MCP results, separate project selection, and withdrawal during a held call                                                                        |
+| `tests/protocol.test.ts`           | Actual legacy negotiation/list/call and explicit unsupported version behavior                                                                                          |
+| `tests/protocol-proxy.test.ts`     | Safe metadata capture and transparent JSON/SSE forwarding for live-agent evidence                                                                                      |
+| `tests/api.test.ts`                | Strict schemas, authenticated identity/scope, duplicate registration, awaited disposal, HTTP limits, official MCP client roundtrip, shutdown after disconnection       |
+| `tests/boundaries.test.ts`         | Package import boundaries, declared Cordis dependencies, feature adapter ownership, exported paths, independent service boot with only its dependency closure          |
+| `tests/app.test.ts`                | Fully assembled MCP task/review loop across two server restarts, credentials and retained evidence, invalid composition cleanup                                        |
+| `tests/live-evidence.test.ts`      | Live acceptance rejects unrelated tasks, missing pinned documents, and evidence read only after a verdict                                                              |
+| `tests/feed.test.ts`               | Independent feed, reviewer communication, project/attachment permissions, immutable posts, atomic deduplication, cursor reads and persistence                          |
+| `tests/feed-unload.test.ts`        | Real Cordis provider removal during an admitted MCP call, automatic adapter suspension/reactivation, task completion while feed is absent, retained posts and activity |
 
 The separate live acceptance runner launches **three new Codex CLI processes** with synthetic data and separate producer, reviewer, and reader credentials:
 

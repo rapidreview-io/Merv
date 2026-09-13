@@ -28,7 +28,8 @@ export interface ToolCatalog {
 }
 export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;
-  list(): AnyToolDefinition[];
+  /** Omitting caller is trusted in-process inspection; transports must always supply it. */
+  list(caller?: Caller): AnyToolDefinition[];
   call(name: string, caller: Caller, input: unknown): Promise<unknown>;
   invoke(name: string, caller: Caller, input: unknown): Promise<ToolInvocation>;
   createCatalog(mountId: string): ToolCatalog;

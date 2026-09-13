@@ -8,6 +8,8 @@
     { "id": "artifacts-tools", "name": "@merv/artifacts/tools" },
     { "id": "scope-tools", "name": "@merv/scope/tools" },
     { "id": "tools", "name": "@merv/api/tools-plugin" },
+    { "id": "access", "name": "@merv/access" },
+    { "id": "credentials", "name": "@merv/credentials" },
     { "id": "feed", "name": "@merv/feed", "required": false },
     { "id": "tasks", "name": "@merv/tasks" },
     { "id": "reviews", "name": "@merv/reviews" },

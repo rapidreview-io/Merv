@@ -37,6 +37,14 @@ async function fixture(t: test.TestContext) {
     projectName: 'Transport test',
     actorName: 'Operator',
   });
+  app.ctx.access.replace([
+    {
+      actorId: identity.actor.id,
+      projectId: identity.project.id,
+      mountId: 'fixture',
+      tools: representativeTools.map((tool) => tool.name),
+    },
+  ]);
   await downstream.connect(
     new StreamableHTTPClientTransport(new URL(`${app.ctx.api.url}/mcp`), {
       requestInit: { headers: { authorization: `Bearer ${identity.token}` } },

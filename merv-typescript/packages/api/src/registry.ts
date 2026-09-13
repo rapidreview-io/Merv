@@ -11,6 +11,7 @@ import type {
   Tools,
 } from './types.js';
 import { cloneJson, compileSchema } from './schema.js';
+import type { AccessPolicy } from '@merv/access/types';
 
 export class ApiError extends MervError {
   constructor(
@@ -36,6 +37,7 @@ interface Entry {
   parse(input: unknown): unknown;
   complete(value: unknown): ToolInvocation;
   running: Set<Promise<ToolInvocation>>;
+  remote?: { mountId: string; toolName: string };
 }
 interface CatalogState {
   active: boolean;
@@ -53,7 +55,10 @@ export class ToolRegistry implements Tools {
   private readonly catalogs = new Map<string, CatalogState>();
   private stopping = false;
 
-  constructor(private readonly scope: Pick<Scope, 'require'>) {}
+  constructor(
+    private readonly scope: Pick<Scope, 'require'>,
+    private readonly access?: Pick<AccessPolicy, 'allows' | 'require'>,
+  ) {}
 
   private open(): void {
     if (this.stopping) throw new ApiError('unavailable', 'Tool registry is stopping', 503);
@@ -119,6 +124,10 @@ export class ToolRegistry implements Tools {
       name: definition.name,
       definition,
       description,
+      remote: {
+        mountId: definition.name.slice(namespace.length).split('__')[0]!,
+        toolName: definition.name.slice(definition.name.indexOf('__', namespace.length) + 2),
+      },
       running: new Set(),
       parse(input) {
         let data: unknown;
@@ -257,14 +266,24 @@ export class ToolRegistry implements Tools {
     };
   }
 
-  describe(): ToolDescription[] {
-    return [...this.entries.values()]
+  private visible(caller?: Caller): Entry[] {
+    if (caller) this.scope.require(caller, 'read');
+    return [...this.entries.values()].filter(
+      (entry) =>
+        !caller ||
+        !entry.remote ||
+        this.access?.allows(caller, entry.remote.mountId, entry.remote.toolName) === true,
+    );
+  }
+
+  describe(caller?: Caller): ToolDescription[] {
+    return this.visible(caller)
       .map((entry) => structuredClone(entry.description))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  list(): AnyToolDefinition[] {
-    return [...this.entries.values()]
+  list(caller?: Caller): AnyToolDefinition[] {
+    return this.visible(caller)
       .map(({ definition, description }) =>
         isRemoteTool(definition)
           ? { ...structuredClone(description), kind: 'mcp' as const, handler: definition.handler }
@@ -278,6 +297,11 @@ export class ToolRegistry implements Tools {
     const entry = this.entries.get(name);
     if (!entry) throw new ApiError('unknown_tool', `Unknown tool: ${name}`, 404);
     this.scope.require(caller, 'read');
+    if (entry.remote) {
+      if (!this.access)
+        throw new ApiError('tool_forbidden', 'Remote tools require an explicit access policy', 403);
+      this.access.require(caller, entry.remote.mountId, entry.remote.toolName);
+    }
     const parsed = entry.parse(input);
     const operation = Promise.resolve().then(async () =>
       entry.complete(await entry.definition.handler(caller, parsed)),

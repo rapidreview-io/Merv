@@ -1,3 +1,4 @@
+import { fixtureAccess } from './fixtures/access.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
@@ -40,7 +41,7 @@ function latch() {
 }
 
 test('native invocation remains JSON even when its value resembles MCP, while remote results retain all content and metadata', async () => {
-  const registry = new ToolRegistry(scope);
+  const registry = new ToolRegistry(scope, fixtureAccess);
   const result = {
     content: [
       {
@@ -116,7 +117,7 @@ test('native invocation remains JSON even when its value resembles MCP, while re
 });
 
 test('remote JSON Schema validates without coercion, defaults, argument stripping, or consuming remote projectId', async () => {
-  const registry = new ToolRegistry(scope);
+  const registry = new ToolRegistry(scope, fixtureAccess);
   let seen: unknown;
   const catalog = registry.createCatalog('schema');
   await catalog.replace([
@@ -185,7 +186,7 @@ test('remote JSON Schema validates without coercion, defaults, argument strippin
 });
 
 test('catalog compilation is atomic and unsupported schemas or execution modes never replace a working catalog', async () => {
-  const registry = new ToolRegistry(scope),
+  const registry = new ToolRegistry(scope, fixtureAccess),
     catalog = registry.createCatalog('atomic');
   await catalog.replace([remote('original')]);
   const unsupported = [
@@ -223,7 +224,7 @@ test('catalog compilation is atomic and unsupported schemas or execution modes n
 });
 
 test('mounted namespaces are unique and reserved, and catalog descriptions are defensive snapshots', async () => {
-  const registry = new ToolRegistry(scope);
+  const registry = new ToolRegistry(scope, fixtureAccess);
   assert.throws(() => registry.register(remote('unprefixed')), { code: 'catalog_required' });
   for (const mount of ['Uppercase', 'has__separator', '', 'x'.repeat(65)])
     assert.throws(() => registry.createCatalog(mount), { code: 'invalid_mount' });
@@ -268,7 +269,7 @@ test('mounted namespaces are unique and reserved, and catalog descriptions are d
 });
 
 test('replacement publishes immediately, drains old calls, and disposal tracks both generations', async () => {
-  const registry = new ToolRegistry(scope),
+  const registry = new ToolRegistry(scope, fixtureAccess),
     catalog = registry.createCatalog('generations');
   const oldEntered = latch(),
     oldRelease = latch(),
@@ -323,7 +324,7 @@ test('replacement publishes immediately, drains old calls, and disposal tracks b
 });
 
 test('a stale catalog disposer cannot delete a replacement mount while its original call drains', async () => {
-  const registry = new ToolRegistry(scope),
+  const registry = new ToolRegistry(scope, fixtureAccess),
     entered = latch(),
     release = latch();
   const old = registry.createCatalog('reused');
@@ -358,7 +359,7 @@ test('a stale catalog disposer cannot delete a replacement mount while its origi
 });
 
 test('remote error results stay MCP errors and successful structured results honor their declared schema', async () => {
-  const registry = new ToolRegistry(scope),
+  const registry = new ToolRegistry(scope, fixtureAccess),
     catalog = registry.createCatalog('results');
   const outputSchema = {
     type: 'object' as const,
@@ -392,7 +393,7 @@ test('remote error results stay MCP errors and successful structured results hon
 });
 
 test('registry close withdraws admission and drains retired catalog calls', async () => {
-  const registry = new ToolRegistry(scope),
+  const registry = new ToolRegistry(scope, fixtureAccess),
     catalog = registry.createCatalog('closing'),
     entered = latch(),
     release = latch();

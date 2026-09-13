@@ -2,6 +2,7 @@ import type { Context } from 'cordis';
 import type {} from './types.js';
 import { z } from 'zod';
 import '@merv/contracts';
+import type {} from '@merv/access/types';
 import { ApiServer, type HttpOptions } from './http.js';
 import { ToolRegistry } from './registry.js';
 
@@ -19,10 +20,10 @@ declare module 'cordis' {
 export const toolsPlugin = {
   name: 'merv-tools',
   Config: z.object({}).strict().default({}),
-  inject: ['scope'],
+  inject: ['scope', 'access'],
   apply(ctx: Context) {
     ctx.effect(function* () {
-      const tools = new ToolRegistry(ctx.scope);
+      const tools = new ToolRegistry(ctx.scope, ctx.access);
       yield () => tools.close();
       // The group disposes the service and drains consumers before closing its resource.
       yield ctx.provide('tools', tools);

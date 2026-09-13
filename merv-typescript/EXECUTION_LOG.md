@@ -8,8 +8,9 @@ The acceptance criteria and ordering are in [EXECUTION_PLAN.md](EXECUTION_PLAN.m
 - Step 2: complete; lifecycle fixes pass the full 60-check suite, feed-removal scenario, and independent review.
 - Step 3: complete; upstream loader configuration, replacement, diagnostics, and public plugin contracts verified.
 - Step 4: complete; remote catalogs/results, protocol compatibility, full integration checks, and fresh agents verified.
-- Step 5: next — credentials and tool grants.
-- Steps 6–15: not started.
+- Step 5: complete; independent Access/Credentials providers and scoped upstream clients pass the integration gate.
+- Step 6: next — a configured read-only mounts plugin and real sandbox-service demonstration.
+- Steps 7–15: not started.
 - Subsequent experiment, reflection, hosted access, and migration work: not started.
 
 ## Step 1 — reproducible baseline
@@ -62,3 +63,15 @@ Independent clean-checkout verification passed at exact commit `3bc7d446b0df36b2
 [Compatibility matrix](docs/TRANSPORT_COMPATIBILITY.md), [public endpoint discovery evidence](docs/transport-discovery-2026-09-13.json), and [sanitized live-agent report](verification/step-04-live-agents.json) retain the observations. The default application still installs only its 26 native tools; credential selection, grants, and the live mount are subsequent steps.
 
 [Step 4 feed-removal report](verification/step-04-feed-unload.json) records the final regression demonstration.
+
+## Step 5 — credentials and explicit tool grants
+
+- Added independent `@merv/access` and `@merv/credentials` plugins, each depending only on Scope and owning its public `/types` contract. The full API composition installs eighteen entries; both new providers default to empty configuration. Domain-only default composition and CLI initialization retain their small provider sets.
+- Grants name an exact actor, project, mount, and raw remote tool. HTTP and MCP discovery pass the authenticated Caller to the registry; invocation checks current Scope and grants before admission. Operators and `readOnlyHint` gain no implicit remote authority. A registry without a policy denies remote discovery/invocation while retaining native behavior.
+- Credential bindings select an exact actor/project/mount and an `env:NAME` secret reference, with optional nonsecret selector headers. Resolution rechecks Scope and current configuration, reads the environment anew, and rejects a recognized active Merv token. Private immutable snapshots expose only an opaque key through JSON/inspection; explicit header access stays server-side.
+- The scoped MCP client consumer separates identities, deduplicates same-identity connection setup, checks authority again after asynchronous setup, retires connections on changed/revoked credentials, and drains admitted calls before closing. Connection/call/cleanup have bounds; failed transport errors are sanitized and operations are not retried.
+- Real local HTTP/MCP integration verifies two Merv projects reach distinct upstream identities, direct calls to hidden tools are refused, native role checks remain enforced, actor/grant/binding revocation takes effect without restart, and rotation selects a new connection. Focused tests also cover revocation during a held initialize, rotation during a held call, failure cleanup, timeouts, and secret exclusion.
+- Formatting, typecheck, build, and all **141 checks** passed (131 top-level tests and ten independent component subtests), with no failures or skips. The separate feed-removal scenario passed again, completing its task/review during feed absence and restoring 26 unique tools with retained posts. Independent reviews found no credential-isolation or access bypass.
+- `npm run test:credentials` is the focused runnable integration demonstration. It uses controlled authenticated upstream fixtures; no cloud resource operation was made. Live service mounting follows this gate. Runtime grant/binding replacement is trusted in-process administration; persistence and user-facing session administration remain later steps.
+
+[Step 5 feed-removal report](verification/step-05-feed-unload.json) records the final lifecycle regression. The credential source package is explicitly included in version control while runtime credential directories, credential JSON files, and dependencies remain ignored.

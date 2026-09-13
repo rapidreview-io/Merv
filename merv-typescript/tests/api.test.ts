@@ -1,3 +1,4 @@
+import { fixtureAccess } from './fixtures/access.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
@@ -118,6 +119,7 @@ test('Cordis dependency disposal drains a feature tool before closing its scope 
       });
     },
   });
+  ctx.provide('access', fixtureAccess);
   await ctx.plugin(toolsPlugin);
   let release!: () => void;
   let entered!: () => void;

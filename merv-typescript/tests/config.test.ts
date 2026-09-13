@@ -19,7 +19,7 @@ function folder(t: TestContext) {
   return directory;
 }
 
-test('default configuration selects eight providers and API adds all six adapters and two services', () => {
+test('default configuration selects eight providers and API adds six adapters, registry/transport, access, and credentials', () => {
   const core = loadConfiguration({ directory: './data' });
   assert.deepEqual(
     core.entries.map((entry) => entry.id),
@@ -37,7 +37,7 @@ test('default configuration selects eight providers and API adds all six adapter
     root: join(resolve('./data'), 'blobs'),
   });
   const full = loadConfiguration({ directory: './data', api: true });
-  assert.equal(full.entries.length, 16);
+  assert.equal(full.entries.length, 18);
   assert.equal(full.entries.find((entry) => entry.id === 'tools')?.name, '@merv/api/tools-plugin');
   assert.deepEqual(full.entries.find((entry) => entry.id === 'api')?.config, {
     host: '127.0.0.1',
@@ -47,7 +47,9 @@ test('default configuration selects eight providers and API adds all six adapter
   const order = (id: string) => full.entries.findIndex((entry) => entry.id === id);
   const requirements: Record<string, string[]> = {
     api: ['tools', 'scope'],
-    tools: ['scope'],
+    tools: ['scope', 'access'],
+    access: ['scope'],
+    credentials: ['scope'],
     feed: ['state', 'scope', 'artifacts'],
     tasks: ['state', 'scope', 'artifacts', 'workflows', 'reviews'],
     reviews: ['state', 'scope', 'artifacts'],
@@ -80,7 +82,7 @@ test('legacy selection keeps only matching providers and adapters without adding
   });
   assert.deepEqual(
     selected.entries.map((entry) => entry.id),
-    ['api', 'scope-tools', 'tools', 'scope', 'state'],
+    ['api', 'scope-tools', 'tools', 'access', 'credentials', 'scope', 'state'],
   );
   assert.equal(selected.entries.find((entry) => entry.id === 'api')?.config?.port, 0);
   assert.deepEqual(
@@ -109,7 +111,7 @@ test('default Feed and its adapter are optional so disabling its provider preser
   ) as ApplicationConfig;
   config.plugins.find((entry) => entry.id === 'feed')!.disabled = true;
   const loaded = configuration(config);
-  assert.equal(loaded.entries.length, 16);
+  assert.equal(loaded.entries.length, 18);
   assert.deepEqual(
     loaded.entries.find((entry) => entry.id === 'feed'),
     { id: 'feed', name: '@merv/feed', required: false, disabled: true },
@@ -234,7 +236,7 @@ test('config-file modules resolve beside their JSON file and programmatic module
   });
   assert.equal(
     explicitDefault.entries.length,
-    16,
+    18,
     'Explicit config files must not be implicitly filtered by the legacy API default',
   );
 });

@@ -260,7 +260,9 @@ export class ApiServer {
     const actor = this.authenticate(req);
     if (path === '/tools' && req.method === 'GET') {
       this.scope.require({ actorId: actor.id, projectId: actor.projectId }, 'read');
-      json(res, 200, { tools: this.tools.list().map(describeTool) });
+      json(res, 200, {
+        tools: this.tools.list({ actorId: actor.id, projectId: actor.projectId }).map(describeTool),
+      });
       return;
     }
     if (path.startsWith('/tools/') && req.method === 'POST') {
@@ -305,7 +307,7 @@ export class ApiServer {
         },
       );
       instance.setRequestHandler(ListToolsRequestSchema, async () => ({
-        tools: this.tools.list().map(describeTool),
+        tools: this.tools.list({ actorId: actor.id, projectId: actor.projectId }).map(describeTool),
       }));
       instance.setRequestHandler(CallToolRequestSchema, async (request) => {
         try {

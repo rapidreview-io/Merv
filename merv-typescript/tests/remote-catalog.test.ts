@@ -1,3 +1,4 @@
+import { fixtureAccess } from './fixtures/access.js';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
@@ -46,7 +47,7 @@ async function until(predicate: () => boolean, message: string): Promise<void> {
 async function setup(t: TestContext, options: RemoteFixtureOptions = {}) {
   const fixture = new RemoteFixture(options),
     client = new Client({ name: 'merv-catalog-test', version: '1' }),
-    registry = new ToolRegistry(scope);
+    registry = new ToolRegistry(scope, fixtureAccess);
   const controllers: RemoteCatalog[] = [];
   t.after(async () => {
     await fixture.close();

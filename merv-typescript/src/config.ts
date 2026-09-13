@@ -194,7 +194,11 @@ export function loadConfiguration(options: ConfigurationOptions): {
           )),
       'components must contain known default provider IDs',
     );
-    const selected = new Set(options.components ?? providerIds);
+    const apiSupport = ['access', 'credentials'];
+    const selected = new Set(
+      options.components ?? providerIds.filter((id) => !apiSupport.includes(id)),
+    );
+    if (options.api) for (const id of apiSupport) selected.add(id);
     configured = configured.filter((entry) => {
       if (entry.id === 'api' || entry.id === 'tools') return options.api === true;
       if (entry.id.endsWith('-tools'))

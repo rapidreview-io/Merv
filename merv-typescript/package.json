@@ -19,7 +19,8 @@
     "test:live": "node --import tsx scripts/live-codex.ts",
     "test:feed-unload": "node --import tsx scripts/feed-unload.ts",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:credentials": "node --import tsx --test tests/remote-permissions.test.ts tests/credential-http.test.ts tests/credential-client.test.ts"
   },
   "dependencies": {
     "@cordisjs/plugin-loader": "1.0.0-rc.7",
