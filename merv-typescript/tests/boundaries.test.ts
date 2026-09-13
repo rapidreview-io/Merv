@@ -74,6 +74,7 @@ const capabilities: Record<string, readonly string[]> = {
   credentials: ['scope'],
   tools: ['scope', 'access'],
   api: ['scope', 'tools'],
+  mounts: ['tools', 'credentials', 'access'],
 };
 const sorted = (values: readonly string[]) => [...values].sort();
 const ownerOf = (path: string) => relative(packagesRoot, path).split(sep)[0];
@@ -277,13 +278,13 @@ function assertComponentReferences(
         owner,
         `${path} crosses a component using a relative path`,
       );
-      if (!isAdapter && owner !== 'api')
+      if (!isAdapter && !['api', 'mounts'].includes(owner))
         assert.ok(
           !/(?:^|[/\\])(tools|http|registry)\.[cm]?[jt]s$/.test(specifier),
           `${path} loads a transport adapter from its core entrypoint`,
         );
     }
-    if (owner !== 'api') {
+    if (!['api', 'mounts'].includes(owner)) {
       assert.ok(
         !specifier.startsWith('@modelcontextprotocol/') &&
           !['node:http', 'node:https', 'express', 'fastify'].includes(specifier),

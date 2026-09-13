@@ -9,7 +9,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { EnvironmentCredentials } from '@merv/credentials';
 import { ExactAccessPolicy } from '@merv/access';
 import { createApp } from '../src/app.js';
-import { ScopedRemoteClients } from '../packages/api/src/credential-client.js';
+import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
 import { CredentialServer } from './fixtures/credential-server.js';
 
 function data(result: CallToolResult) {
@@ -21,7 +21,7 @@ function data(result: CallToolResult) {
   };
 }
 
-async function fixture(t: TestContext, timeoutMs = 1500) {
+async function fixture(t: TestContext, timeoutMs = 1500, expectedCleanupFailure = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-credential-client-'));
   const app = await createApp({ directory, components: ['state', 'scope'] });
   const first = app.ctx.scope.bootstrap({ projectName: 'Project A', actorName: 'Actor A' });
@@ -81,11 +81,16 @@ async function fixture(t: TestContext, timeoutMs = 1500) {
   });
   t.after(async () => {
     await upstream.close();
-    await pool.close();
-    await app.stop();
-    delete process.env[envA];
-    delete process.env[envB];
-    rmSync(directory, { recursive: true, force: true });
+    try {
+      if (expectedCleanupFailure)
+        await assert.rejects(pool.close(), { code: 'remote_unavailable' });
+      else await pool.close();
+    } finally {
+      await app.stop();
+      delete process.env[envA];
+      delete process.env[envB];
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
   return { pool, upstream, a, a2, b, credentials, access, grants, bindings, envA, tokens, clients };
 }
@@ -154,6 +159,39 @@ test('credential rotation withdraws the old client but lets an admitted old-iden
   assert.equal(data(await admitted).connectionId, data(initial).connectionId);
   assert.equal(clients[0].closeCalls, 1);
   assert.equal(clients[1].closeCalls, 0);
+});
+
+test('a failed retired-client cleanup remains visible during later shutdown', async (t) => {
+  const { pool, a, envA, tokens, clients } = await fixture(t, 1500, true);
+  const first = await pool.call(a, 'sandbox', 'inspect', {});
+  const originalClose = clients[0].client.close.bind(clients[0].client);
+  let finishRetirement!: () => void;
+  const retirementFinished = new Promise<void>((resolve) => {
+    finishRetirement = resolve;
+  });
+  t.mock.method(clients[0].client, 'close', async () => {
+    await originalClose();
+    finishRetirement();
+    throw new Error(`Retired cleanup contains ${tokens.a}`);
+  });
+  process.env[envA] = tokens.rotated;
+  const replacement = await pool.call(a, 'sandbox', 'inspect', {});
+  assert.notEqual(data(first).connectionId, data(replacement).connectionId);
+  await retirementFinished;
+  // Let the completed retirement leave the live-connection set before shutdown begins.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(clients[0].closeCalls, 1);
+  await assert.rejects(pool.close(), (error: unknown) => {
+    assert.equal((error as { code?: string }).code, 'remote_unavailable');
+    assert.ok(!String(error).includes(tokens.a));
+    assert.ok(!JSON.stringify(error).includes(tokens.a));
+    return true;
+  });
+  assert.equal(
+    clients[1].closeCalls,
+    1,
+    'Shutdown must also attempt the current connection cleanup',
+  );
 });
 
 for (const change of ['grant', 'credential'] as const) {

@@ -1,0 +1,49 @@
+{
+  "status": "passed",
+  "evidence": "controlled authenticated MCP fixture",
+  "realSandboxServiceVerified": false,
+  "cordisVersion": "4.0.0-rc.10",
+  "loaderVersion": "1.0.0-rc.7",
+  "removal": "Disable and re-enable the mounts loader entry",
+  "checkpoints": [
+    {
+      "phase": "mount-active",
+      "pid": 43516,
+      "toolCount": 27,
+      "selectedTools": 1
+    },
+    {
+      "phase": "mount-draining",
+      "pid": 43516,
+      "toolCount": 26,
+      "newRemoteCall": "unknown_tool",
+      "nativeFeedAvailable": true
+    },
+    {
+      "phase": "native-work-completed-without-mount",
+      "pid": 43516,
+      "taskState": "done",
+      "revision": 2,
+      "feedPosts": 3
+    },
+    {
+      "phase": "mount-restored",
+      "pid": 43516,
+      "toolCount": 27,
+      "retainedPosts": 3
+    }
+  ],
+  "checks": {
+    "ungrantedCallerRefused": true,
+    "actualProviderDisposed": true,
+    "newMountedCallsRefused": true,
+    "admittedCallDrained": true,
+    "taskReviewFeedCompletedWhileMountAbsent": true,
+    "noDuplicateTools": true,
+    "durableWorkRetained": true,
+    "sameServerAndClients": true,
+    "unrelatedServicesUnchanged": true,
+    "freshRemoteConnection": true
+  },
+  "completedAt": "2026-09-13T17:51:40.702Z"
+}

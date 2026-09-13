@@ -8,7 +8,7 @@ import {
   type ListToolsResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import { check, MervError } from '@merv/contracts';
-import type { RemoteToolDefinition, ToolCatalog } from './types.js';
+import type { RemoteToolDefinition, ToolCatalog } from '@merv/api/types';
 
 // Validate protocol structure while retaining the original JSON, including extension metadata
 // that the SDK's ordinary object parsing can strip from nested content blocks.

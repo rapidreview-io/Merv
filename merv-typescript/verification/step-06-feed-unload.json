@@ -1,0 +1,72 @@
+{
+  "status": "passed",
+  "cordisVersion": "4.0.0-rc.10",
+  "loaderVersion": "1.0.0-rc.7",
+  "removal": "Disable and re-enable the feed loader entry",
+  "pid": 37649,
+  "url": "http://127.0.0.1:54814",
+  "taskId": "wf_ef7045060dc840beb4909a9c6f10cfa6",
+  "reviewId": "review_dc5f111b98744499ab803c8c288cfd29",
+  "postIds": [
+    "post_e77ab27f58a247039033efa1128cfba5",
+    "post_fc46974f65d84b55a9644caa72927366",
+    "post_7548f3f35766416d9bc99b327383971e"
+  ],
+  "checkpoints": [
+    {
+      "phase": "feed-active",
+      "pid": 37649,
+      "url": "http://127.0.0.1:54814",
+      "toolCount": 26,
+      "taskId": "wf_ef7045060dc840beb4909a9c6f10cfa6",
+      "postId": "post_e77ab27f58a247039033efa1128cfba5"
+    },
+    {
+      "phase": "feed-draining",
+      "pid": 37649,
+      "url": "http://127.0.0.1:54814",
+      "toolCount": 22,
+      "adapterState": "UNLOADING",
+      "newFeedCall": "unknown_tool",
+      "taskStillAvailable": true
+    },
+    {
+      "phase": "feed-removed",
+      "pid": 37649,
+      "url": "http://127.0.0.1:54814",
+      "admittedPostId": "post_fc46974f65d84b55a9644caa72927366",
+      "adapterState": "PENDING"
+    },
+    {
+      "phase": "task-completed-without-feed",
+      "pid": 37649,
+      "url": "http://127.0.0.1:54814",
+      "taskId": "wf_ef7045060dc840beb4909a9c6f10cfa6",
+      "revision": 2
+    },
+    {
+      "phase": "feed-restored",
+      "pid": 37649,
+      "url": "http://127.0.0.1:54814",
+      "toolCount": 26,
+      "adapterState": "ACTIVE",
+      "retainedPosts": 3,
+      "offlineActivityRecovered": true
+    }
+  ],
+  "checks": {
+    "actualProviderDisposed": true,
+    "adapterSuspendedAutomatically": true,
+    "admittedCallDrained": true,
+    "newFeedCallsRejected": true,
+    "taskCompletedWhileFeedAbsent": true,
+    "unrelatedServicesUnchanged": true,
+    "sameServerAndClients": true,
+    "adapterReactivatedAutomatically": true,
+    "postsRetained": true,
+    "activityRecovered": true,
+    "noDuplicateTools": true,
+    "currentProviderHandleUpdated": true
+  },
+  "completedAt": "2026-09-13T17:43:30.842Z"
+}

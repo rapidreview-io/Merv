@@ -1,0 +1,37 @@
+import type { Caller } from '@merv/contracts';
+import type {} from 'cordis';
+
+export interface MountConfig {
+  id: string;
+  url: string;
+  /** Explicit raw upstream names to publish; there is no implicit full-catalog selection. */
+  tools: string[];
+  /** Optional local identity used only for credential-scoped catalog discovery. */
+  discovery?: Caller;
+  timeoutMs?: number;
+  reconnectMs?: number;
+}
+
+export interface MountsConfig {
+  mounts: MountConfig[];
+}
+
+export interface MountStatus {
+  id: string;
+  /** Public endpoint origin only; never credentials, paths, query strings, or headers. */
+  origin: string;
+  state: 'connecting' | 'ready' | 'disconnected' | 'failed' | 'stopped';
+  toolCount: number;
+  errorCode?: string;
+}
+
+export interface Mounts {
+  status(): MountStatus[];
+  reconnect(id: string): Promise<void>;
+}
+
+declare module 'cordis' {
+  interface Context {
+    mounts: Mounts;
+  }
+}

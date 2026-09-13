@@ -7,7 +7,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { MervError, type Caller, type Scope } from '@merv/contracts';
 import { ToolRegistry } from '../packages/api/src/registry.js';
-import { collectRemoteCatalog, RemoteCatalog } from '../packages/api/src/remote-catalog.js';
+import { collectRemoteCatalog, RemoteCatalog } from '../packages/mounts/src/remote-catalog.js';
 import {
   RemoteFixture,
   representativeTools,

@@ -1,0 +1,19 @@
+{
+  "mode": "check",
+  "status": "prepared",
+  "credentialRead": false,
+  "networkRequests": 0,
+  "origin": "https://sandboxes.rapidreview.io",
+  "tool": "mount__sandbox__usage_report",
+  "pluginCount": 19,
+  "liveCommand": [
+    "node",
+    "--import",
+    "tsx",
+    "scripts/live-sandbox-mount.ts",
+    "--use-saved-sandbox-token",
+    "--output-dir",
+    "/Users/guraltoo/Documents/dev/proj/experiments/Merv/merv-typescript/live-runs/sandbox-approved-proof"
+  ],
+  "approvalScope": "Use the saved sandbox token at this origin for consumer identity verification and exactly one usage_report call; a fresh Codex session receives the scoped accounting result through local Merv."
+}

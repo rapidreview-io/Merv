@@ -154,7 +154,7 @@ The API plugin owns its public tool and catalog contracts in `@merv/api/types`. 
 
 Remote schemas retain their original shape. The validator supports JSON Schema 2020-12 (the default) and explicit draft-07, including local references and standard formats. Unsupported dialects, external references, unknown keywords, invalid schemas, and MCP task execution fail before publication. Inputs are validated without coercion, default insertion, or field removal. Structured successful output is checked against its declared output schema.
 
-A catalog replacement validates every tool first, publishes the complete new generation, then waits for admitted calls from the old generation. A rejected refresh leaves the previous catalog available. Catalog disposal withdraws all its tools immediately and waits for admitted calls before its owner closes the client. `RemoteCatalog` collects bounded pages, rejects repeated cursors/names, and serializes explicit refreshes and upstream `tools/list_changed` notifications. Merv's stateless downstream endpoint does not advertise push notifications; clients rediscover with `tools/list`.
+A catalog replacement validates every tool first, publishes the complete new generation, then waits for admitted calls from the old generation. A rejected refresh leaves the previous catalog available. Catalog disposal withdraws all its tools immediately and waits for admitted calls before its owner closes the client. [`RemoteCatalog`](packages/mounts/src/remote-catalog.ts) collects bounded pages, rejects repeated cursors/names, and serializes explicit refreshes and upstream `tools/list_changed` notifications. Merv's stateless downstream endpoint does not advertise push notifications; clients rediscover with `tools/list`.
 
 Remote `content`, `structuredContent`, `isError`, annotations, and metadata survive MCP forwarding. HTTP wraps that complete MCP result in its usual `{ "result": ... }` envelope. Native results retain their existing JSON-text MCP format.
 
@@ -206,7 +206,7 @@ The example tool name is illustrative; select actual names when configuring a mo
 
 `replace(...)` on either provider is trusted in-process configuration administration: it validates the complete replacement before changing state. Removing a grant or binding affects new calls immediately. This initial configuration is in memory; persist changes in the plugin configuration for restart. Neither provider exposes management tools to agents.
 
-`ScopedRemoteClients` supplies the transport consumer for these contracts. It uses a separate upstream bearer and isolates connections by mount, endpoint, actor, project, and resolved credential identity. It rechecks authority after asynchronous connection setup, retires old connections on rotation/revocation, drains admitted calls, bounds connection/call time, and does not retry operations. SDK errors are returned as fixed messages without upstream error text. The actual configurable live mount is the next execution step.
+`ScopedRemoteClients` supplies the transport consumer for these contracts. It uses a separate upstream bearer and isolates connections by mount, endpoint, actor, project, and resolved credential identity. It rechecks authority after asynchronous connection setup, retires old connections on rotation/revocation, drains admitted calls, bounds connection/call time, and does not retry operations. SDK errors are returned as fixed messages without upstream error text. The optional `@merv/mounts` plugin now consumes these contracts; its controlled integration is described below. Authenticated live sandbox verification remains pending.
 
 Run the integrated two-project demonstration and connection regressions:
 
@@ -379,3 +379,37 @@ Each session uses an empty workspace, a read-only filesystem sandbox, disabled s
 The producer creates a brief and arithmetic delivery, enters review, and attempts a forbidden self-review. The server restarts; the reviewer inspects retained evidence and submits a verdict. After another restart, the reader checks the final task and history and attempts a forbidden administrative mutation. The runner checks three distinct session IDs, server permission-denial codes, the exact expected task, and transcript arguments proving the reviewer read every pinned artifact before submitting. It also asserts durable task state, revisions, and identities through the application services.
 
 Results go to a new `live-runs/<timestamp>/` directory by default. Inspect each phase's `.jsonl`, `.stderr.log`, and `.final.txt`; `report.json` is written only after the runner's checks and final shutdown succeed. A runtime failure writes `failure.json`. The directory also retains its synthetic database and credentials and is excluded from Git. See [the recorded verification](VERIFICATION.md) for the automated and live acceptance results.
+
+## Optional upstream mounts
+
+Add a `@merv/mounts` entry to your explicit application config alongside the default entries. No bootstrap implementation changes are needed. The default eighteen-entry config remains local and exposes 26 native tools. For the intended sandbox connection, the additional entry is:
+
+```json
+{
+  "id": "mounts",
+  "name": "@merv/mounts",
+  "required": false,
+  "config": {
+    "mounts": [
+      {
+        "id": "sandbox",
+        "url": "https://sandboxes.rapidreview.io/mcp",
+        "tools": ["usage_report"],
+        "timeoutMs": 5000,
+        "reconnectMs": 5000
+      }
+    ]
+  }
+}
+```
+
+This selects `mount__sandbox__usage_report`; callers still require an exact Access grant and Credentials binding. Public catalog discovery is the default. A service that requires authenticated discovery can configure a separate local `discovery` caller. Its authority never supplies another caller's upstream credential. See the [Mounts contract and lifecycle](packages/mounts/README.md) and [sandbox preparation](docs/READ_ONLY_SANDBOX_MOUNT.md).
+
+The plugin validates only the selected tools before publication. It listens for catalog notifications and polls within configured bounds to detect loss; failure withdraws mounted tools, and bounded backoff attempts discovery again. It never retries tool operations. `app.ctx.mounts.status()` returns sanitized connection status; `reconnect(id)` requests a new discovery connection. `app.setEnabled('mounts', false)` withdraws all mount namespaces, waits for admitted calls, then closes upstream clients. Re-enable the entry to restore its configured mounts.
+
+```sh
+npm run test:mounts
+npm run test:mount-unload
+```
+
+These commands use an independent local MCP server with synthetic credentials. The whole-application scenario verifies 27 → 26 → 27 tools, an actual admitted upstream call during removal, a completed task and independent review with feed posts while the mount is absent, and fresh connections after restoration. This controlled proof does **not** complete the real sandbox-service gate.

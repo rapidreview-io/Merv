@@ -75,6 +75,7 @@ export class ScopedRemoteClients {
   private readonly all = new Set<Connection>();
   private readonly running = new Set<Promise<CallToolResult>>();
   private readonly timeoutMs: number;
+  private cleanupFailed = false;
   private stopping = false;
   private closing?: Promise<void>;
 
@@ -243,6 +244,9 @@ export class ScopedRemoteClients {
   private dispose(connection: Connection): Promise<void> {
     return (connection.closing ??= deadline(connection.client.close(), this.timeoutMs)
       .catch((error: unknown) => {
+        // Retirements can finish before shutdown snapshots the live clients.
+        // Retain their cleanup outcome after removing the connection itself.
+        this.cleanupFailed = true;
         throw transportError(error);
       })
       .finally(() => this.all.delete(connection)));
@@ -258,7 +262,8 @@ export class ScopedRemoteClients {
       );
       this.connections.clear();
       this.current.clear();
-      if (results.some((result) => result.status === 'rejected')) throw unavailable();
+      if (this.cleanupFailed || results.some((result) => result.status === 'rejected'))
+        throw unavailable();
     })();
     return this.closing;
   }
