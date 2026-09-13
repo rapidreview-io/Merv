@@ -10,6 +10,10 @@ Finish one numbered step before starting the next. Every step includes its contr
 
 Keep each completed step as a separately reviewable commit. Run the boundary checks and affected behavioral tests; run the complete task/evidence/review/feed scenario when a shared contract or lifecycle changes. Re-run live agents at integration milestones that affect their transport or workflow, rather than spending live calls on formatting changes.
 
+Consult Claude Fable at critical development checkpoints: after each significant integrated wave and before committing to major architectural changes. Give it the concrete implementation, relevant diff, acceptance criteria, and verification evidence; resolve material findings before advancing. Prioritize these reviews for the external-service boundary, identity and permission changes, asynchronous transactions, alternative storage providers, and runner recovery. Record Fable's actual feedback separately from other reviews; if it cannot be invoked, report that explicitly instead of substituting another reviewer under its name.
+
+UI implementation may be delegated to Claude Fable when step 8 begins. Keep that work within the current step's scope, then integrate and verify it against the actual API, browser states, and optional-plugin removal behavior before moving on. Delegation does not change the ordered acceptance gates below.
+
 For each plugin, verify its smallest useful dependency set. Removing an optional plugin must remove its exposed capabilities, settle admitted calls, and leave unrelated work functioning. Removing a foundational provider is expected to suspend its dependents. Reinstallation must not duplicate registrations or erase durable state. Resource cleanup must also work when initialization fails.
 
 Use server-owned identity and explicit transactions throughout. A remote tool call cannot participate in a local database transaction. Disconnecting a remote service does not imply that its durable jobs or cloud resources have stopped.
