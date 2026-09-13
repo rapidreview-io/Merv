@@ -1,6 +1,6 @@
 # Merv TypeScript execution plan
 
-Status: proposed execution order, 2026-09-13. This document records the plan; implementation of these steps has not begun.
+Status: execution started, 2026-09-13. Follow [EXECUTION_LOG.md](EXECUTION_LOG.md) for completed gates and current evidence. The numbered scope and order below remain the acceptance criteria.
 
 The first milestone is a small, observable Cordis application that can connect to an independent service and survive that connection being removed. The second is the same application running on Postgres. Broader identity, hosted storage, research programs, and autonomous execution follow those proofs.
 

@@ -1,0 +1,134 @@
+{
+  "checkout": "/private/tmp/merv-baseline-CndNdi",
+  "commit": "3bc7d446b0df36b286542782553f581fe43b5ef3",
+  "branchSource": "codex/cordis-stack",
+  "detached": true,
+  "commands": [
+    {
+      "command": "git clone --shared --no-checkout /Users/guraltoo/Documents/dev/proj/experiments/Merv /private/tmp/merv-baseline-CndNdi",
+      "exitCode": 0
+    },
+    {
+      "command": "git sparse-checkout set merv-typescript",
+      "exitCode": 0
+    },
+    {
+      "command": "git checkout --detach 3bc7d446b0df36b286542782553f581fe43b5ef3",
+      "exitCode": 0
+    },
+    {
+      "command": "npm ci --offline --cache /Users/guraltoo/Documents/dev/proj/experiments/Merv/merv-typescript/.npm-cache --no-audit --no-fund",
+      "exitCode": 0,
+      "packagesAdded": 115
+    },
+    {
+      "command": "npm run format:check",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run build",
+      "exitCode": 0
+    },
+    {
+      "command": "npm test",
+      "exitCode": 0,
+      "tests": 56,
+      "passed": 56,
+      "failed": 0,
+      "skipped": 0,
+      "topLevelTests": 48
+    },
+    {
+      "command": "npm run init -- --name 'Baseline smoke' --dir .merv",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run cli -- actor --name Producer --role producer --dir .merv",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run cli -- actor --name Reviewer --role reviewer --dir .merv",
+      "exitCode": 0
+    },
+    {
+      "command": "npm run cli -- actor --name Reader --role reader --dir .merv",
+      "exitCode": 0
+    },
+    {
+      "command": "Terminal Ctrl-C on first npm start session",
+      "exitCode": 1,
+      "note": "npm wrapper was interrupted; server PID and listener separately verified gone."
+    },
+    {
+      "command": "kill -TERM 84593",
+      "exitCode": 0
+    },
+    {
+      "command": "npm start restarted server termination",
+      "exitCode": 0
+    },
+    {
+      "command": "git status --porcelain",
+      "exitCode": 0,
+      "outputEmpty": true
+    }
+  ],
+  "runtime": {
+    "node": "v22.13.1",
+    "npm": "11.1.0"
+  },
+  "phases": [
+    {
+      "phase": "first-start",
+      "command": "npm start -- --dir .merv --host 127.0.0.1 --port 0",
+      "pid": 83380,
+      "readinessReported": true,
+      "url": "http://127.0.0.1:60417",
+      "healthStatus": 200,
+      "unauthenticatedToolsStatus": 401,
+      "rolesVerified": ["operator", "producer", "reader", "reviewer"],
+      "deniedForeignProject": true,
+      "tools": 26,
+      "credentialMode": "0600",
+      "artifactRetained": false
+    },
+    {
+      "phase": "stopped-first",
+      "pid": 83380,
+      "processMissing": true,
+      "listenerConnectionRefused": true
+    },
+    {
+      "phase": "restart",
+      "command": "npm start -- --dir .merv --host 127.0.0.1 --port 0",
+      "pid": 84593,
+      "readinessReported": true,
+      "url": "http://127.0.0.1:60658",
+      "healthStatus": 200,
+      "unauthenticatedToolsStatus": 401,
+      "rolesVerified": ["operator", "producer", "reader", "reviewer"],
+      "deniedForeignProject": true,
+      "tools": 26,
+      "credentialMode": "0600",
+      "artifactRetained": true
+    },
+    {
+      "phase": "stopped-restart",
+      "pid": 84593,
+      "processMissing": true,
+      "listenerConnectionRefused": true
+    }
+  ],
+  "fixture": {
+    "projectId": "project_8eb5e932e44141eba0a90d548d00cf89",
+    "artifactId": "art_e6794ad4f6fe4db0aaf437899372d6ec"
+  },
+  "updatedAt": "2026-09-13T16:31:34.533Z",
+  "checkoutUnchanged": true,
+  "status": "passed",
+  "completedAt": "2026-09-13T16:31:34.650Z"
+}

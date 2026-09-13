@@ -13,7 +13,7 @@ flowchart LR
 
 ## Run locally
 
-Requires Node.js **22.13 or later** and npm. SQLite uses Node's built-in `node:sqlite`; some supported Node versions print an experimental-module warning.
+Requires Node.js **22.13 or later** and npm. The development baseline is Node **22.13.1** (`.nvmrc`) and npm **11.1.0** (`packageManager`). SQLite uses Node's built-in `node:sqlite`; some supported Node versions print an experimental-module warning.
 
 From this directory:
 
@@ -30,6 +30,21 @@ npm start -- --dir .merv --host 127.0.0.1 --port 3081
 `init` creates a project and local operator. It writes `.merv/credentials.json` with mode `0600`. Each `actor` command prints the path to its own credential file under `.merv/credentials/`; its token is stored there, not printed. The server prints its HTTP and MCP URLs when ready. `Ctrl-C` drains admitted calls and shuts down the plugin graph.
 
 The data directory contains `state.sqlite`, immutable blobs, and local credential files. Keep that directory to retain work across restarts. The HTTP server binds to loopback by default; hosted authentication, TLS termination, and public deployment are outside this release.
+
+### Development
+
+This directory is an npm workspace subtree of the Merv repository. Run `npm ci` here to install the exact committed lockfile; the development dependencies are required because the current start command runs TypeScript through `tsx`. Do not use a production-only dependency install for this source checkout.
+
+```sh
+npm run format:check
+npm run typecheck
+npm run build
+npm test
+```
+
+Use `npm run format` before committing. Prettier is version-pinned and uses the shared repository configuration in this directory. Integration tests bind temporary loopback ports; an environment that forbids listening needs that permission for the HTTP/MCP checks.
+
+Dependencies, build output, caches, default runtime directories, SQLite files, and credential files are ignored. Custom `--dir` locations also have `credentials.json` and `credentials/` ignored; keep their artifact bytes private and outside source control. See [the execution plan](EXECUTION_PLAN.md) and [execution evidence](EXECUTION_LOG.md) for the ongoing component integration work.
 
 Roles:
 
