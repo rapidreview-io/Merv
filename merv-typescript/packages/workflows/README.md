@@ -11,8 +11,8 @@ both services are available. The optional `workflowToolsPlugin` also requires
 ## Installing a program
 
 ```ts
-import type { Context } from 'cordis'
-import '@merv/contracts'
+import type { Context } from 'cordis';
+import '@merv/contracts';
 
 export const approvalProgram = {
   name: 'approval-program',
@@ -20,16 +20,20 @@ export const approvalProgram = {
   apply(ctx: Context) {
     ctx.effect(function* () {
       const program = ctx.workflows.register({
-        name: 'approval', version: 1, managed: true,
-        initial: 'draft', states: ['draft', 'done'], terminal: ['done'],
+        name: 'approval',
+        version: 1,
+        managed: true,
+        initial: 'draft',
+        states: ['draft', 'done'],
+        terminal: ['done'],
         edges: [{ from: 'draft', action: 'accept', to: 'done' }],
-      })
-      yield () => program.dispose()
+      });
+      yield () => program.dispose();
       // Register program commands that perform domain checks, then use
       // program.start(caller, input, tx) / program.transition(caller, input, tx).
-    })
+    });
   },
-}
+};
 ```
 
 The registration handle owns exactly one name/version. With `managed: true`, the

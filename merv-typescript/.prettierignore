@@ -2,9 +2,10 @@ node_modules/
 dist/
 .merv/
 .test-data/
-*.sqlite*
-*.log
 .npm-cache/
 live-runs/
 credentials.json
 credentials/
+package-lock.json
+*.sqlite*
+*.log

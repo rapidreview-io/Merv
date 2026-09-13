@@ -33,12 +33,12 @@ The data directory contains `state.sqlite`, immutable blobs, and local credentia
 
 Roles:
 
-| Role | Capability |
-| --- | --- |
+| Role       | Capability                                                         |
+| ---------- | ------------------------------------------------------------------ |
 | `operator` | Manage actor credentials, create work, review another actor's work |
-| `producer` | Create artifacts and tasks; submit their own task deliveries |
-| `reviewer` | Read evidence, claim reviews, submit verdicts |
-| `reader` | Read project work and evidence |
+| `producer` | Create artifacts and tasks; submit their own task deliveries       |
+| `reviewer` | Read evidence, claim reviews, submit verdicts                      |
+| `reader`   | Read project work and evidence                                     |
 
 Operators, producers, and reviewers can publish feed posts; readers can read posts and activity. Posting to the feed does not grant other write permissions.
 
@@ -79,12 +79,12 @@ If a reviewer becomes unavailable or their credential is revoked, the task's pro
 
 ## HTTP and tools
 
-| Endpoint | Behavior |
-| --- | --- |
-| `GET /health` | Unauthenticated readiness response |
-| `GET /tools` | Authenticated tool catalog and JSON schemas |
-| `POST /tools/<name>` | Authenticated tool call with a JSON argument object |
-| `POST /mcp` | Authenticated MCP initialization, discovery, and tool calls |
+| Endpoint             | Behavior                                                    |
+| -------------------- | ----------------------------------------------------------- |
+| `GET /health`        | Unauthenticated readiness response                          |
+| `GET /tools`         | Authenticated tool catalog and JSON schemas                 |
+| `POST /tools/<name>` | Authenticated tool call with a JSON argument object         |
+| `POST /mcp`          | Authenticated MCP initialization, discovery, and tool calls |
 
 All tool endpoints require `Authorization: Bearer <token>`. Arguments may include an optional `projectId`; it defaults to the actor's project, and the server checks access. Caller identity is constructed from the bearer token. A tool argument never substitutes for the authenticated actor.
 
@@ -104,14 +104,14 @@ HTTP successes return `{ "result": ... }`; failures return `{ "error": { "code":
 
 The installed feature adapters contribute **26 tools**:
 
-| Owner | Tools |
-| --- | --- |
-| Scope | `project.get`, `actor.whoami`, `actor.list`, `actor.create`, `actor.revoke` |
-| Artifacts | `artifact.create`, `artifact.get`, `artifact.read`, `artifact.list` |
-| Workflows | `workflow.catalog`, `workflow.list`, `workflow.get`, `workflow.history` |
-| Reviews | `review.list`, `review.get`, `review.start` |
+| Owner        | Tools                                                                                                  |
+| ------------ | ------------------------------------------------------------------------------------------------------ |
+| Scope        | `project.get`, `actor.whoami`, `actor.list`, `actor.create`, `actor.revoke`                            |
+| Artifacts    | `artifact.create`, `artifact.get`, `artifact.read`, `artifact.list`                                    |
+| Workflows    | `workflow.catalog`, `workflow.list`, `workflow.get`, `workflow.history`                                |
+| Reviews      | `review.list`, `review.get`, `review.start`                                                            |
 | Task program | `task.create`, `task.get`, `task.list`, `task.submit_delivery`, `task.reissue_review`, `review.submit` |
-| Feed | `feed.post`, `feed.get`, `feed.list`, `feed.activity` |
+| Feed         | `feed.post`, `feed.get`, `feed.list`, `feed.activity`                                                  |
 
 Tool schemas are strict and runtime-validated. Use `GET /tools` or MCP `tools/list` for the exact required arguments. Workflow mutation tools are owned by the task program so callers cannot bypass its evidence and review gates.
 
@@ -152,17 +152,17 @@ flowchart TB
   Adapters -.-> Feed
 ```
 
-| Package | Owns | Required capabilities |
-| --- | --- | --- |
-| `@merv/state` | Synchronous SQLite transactions, per-component migrations, durable events | None |
-| `@merv/blobs` | Immutable bytes on disk, project namespaces, content hashes | None |
-| `@merv/scope` | Projects, actor identities, bearer credentials, roles and access checks | State |
-| `@merv/artifacts` | Completed immutable documents/files, metadata and authorship | State, scope, blobs |
-| `@merv/workflows` | Versioned graphs, durable instances, transitions, revisions and request deduplication | State, scope |
-| `@merv/reviews` | Pinned evidence/criteria snapshots, independent claims and immutable verdicts | State, scope, artifacts |
-| `@merv/tasks` | Brief/delivery rules, task records, installed task graph and atomic review routing | State, scope, workflows, artifacts, reviews |
-| `@merv/feed` | Immutable project posts, artifact attachments, cursor reads and durable activity | State, scope, artifacts |
-| `@merv/api` | Generic tool registry, runtime argument validation, HTTP/MCP transport and draining | Registry: scope. Transport: scope, registry |
+| Package           | Owns                                                                                  | Required capabilities                       |
+| ----------------- | ------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `@merv/state`     | Synchronous SQLite transactions, per-component migrations, durable events             | None                                        |
+| `@merv/blobs`     | Immutable bytes on disk, project namespaces, content hashes                           | None                                        |
+| `@merv/scope`     | Projects, actor identities, bearer credentials, roles and access checks               | State                                       |
+| `@merv/artifacts` | Completed immutable documents/files, metadata and authorship                          | State, scope, blobs                         |
+| `@merv/workflows` | Versioned graphs, durable instances, transitions, revisions and request deduplication | State, scope                                |
+| `@merv/reviews`   | Pinned evidence/criteria snapshots, independent claims and immutable verdicts         | State, scope, artifacts                     |
+| `@merv/tasks`     | Brief/delivery rules, task records, installed task graph and atomic review routing    | State, scope, workflows, artifacts, reviews |
+| `@merv/feed`      | Immutable project posts, artifact attachments, cursor reads and durable activity      | State, scope, artifacts                     |
+| `@merv/api`       | Generic tool registry, runtime argument validation, HTTP/MCP transport and draining   | Registry: scope. Transport: scope, registry |
 
 `@merv/contracts` is a shared interface package. Domain packages import its interfaces rather than sibling implementations. Each feature's `tools.ts` is an optional adapter depending on the generic registry and its own service. `src/app.ts` is the composition root; services also work through explicit constructor injection without HTTP, MCP, or the task program.
 
@@ -199,15 +199,15 @@ This release includes no model provider, agent scheduler/session manager, sandbo
 The application exposes its initial component and adapter Cordis fibers for direct lifecycle operations:
 
 ```ts
-import { feedPlugin } from '@merv/feed'
+import { feedPlugin } from '@merv/feed';
 
-await app.components.get('feed')!.dispose()
+await app.components.get('feed')!.dispose();
 // Cordis withdraws feed and suspends its existing tool adapter.
 // Tasks, reviews, state, scope, artifacts and HTTP/MCP keep running.
 
-const replacement = await app.ctx.plugin(feedPlugin)
-await replacement.await()
-await app.adapters.get('feed')!.await()
+const replacement = await app.ctx.plugin(feedPlugin);
+await replacement.await();
+await app.adapters.get('feed')!.await();
 // Cordis reactivates the existing adapter; retain replacement for its next disposal.
 ```
 
@@ -231,17 +231,17 @@ npm test
 
 `build` emits JavaScript and declarations under `dist`; the supplied launch commands execute the workspace TypeScript with `tsx`. The tests use temporary data directories and actual SQLite. HTTP/MCP tests bind loopback sockets, so environments that restrict networking must permit local listeners for those tests.
 
-| Test file | Coverage |
-| --- | --- |
-| `tests/foundations.test.ts` | Migration immutability/rollback, durable events, role/project access, revocation, artifact immutability/corruption, real Cordis activation/disposal |
-| `tests/workflows.test.ts` | Exact replay, pinned versions across restart, competing revisions, atomic rollback, managed mutation ownership, graph validation and provider withdrawal |
-| `tests/tasks.test.ts` | Delivery/review loop, revision and replay handling, evidence and UTF-8 gates, verdict rollback, generic reviews, restart recovery, review reissue authority/rollback |
-| `tests/api.test.ts` | Strict schemas, authenticated identity/scope, duplicate registration, awaited disposal, HTTP limits, official MCP client roundtrip, shutdown after disconnection |
-| `tests/boundaries.test.ts` | Package import boundaries, declared Cordis dependencies, feature adapter ownership, exported paths, independent service boot with only its dependency closure |
-| `tests/app.test.ts` | Fully assembled MCP task/review loop across two server restarts, credentials and retained evidence, invalid composition cleanup |
-| `tests/live-evidence.test.ts` | Live acceptance rejects unrelated tasks, missing pinned documents, and evidence read only after a verdict |
-| `tests/feed.test.ts` | Independent feed, reviewer communication, project/attachment permissions, immutable posts, atomic deduplication, cursor reads and persistence |
-| `tests/feed-unload.test.ts` | Real Cordis provider removal during an admitted MCP call, automatic adapter suspension/reactivation, task completion while feed is absent, retained posts and activity |
+| Test file                     | Coverage                                                                                                                                                               |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/foundations.test.ts`   | Migration immutability/rollback, durable events, role/project access, revocation, artifact immutability/corruption, real Cordis activation/disposal                    |
+| `tests/workflows.test.ts`     | Exact replay, pinned versions across restart, competing revisions, atomic rollback, managed mutation ownership, graph validation and provider withdrawal               |
+| `tests/tasks.test.ts`         | Delivery/review loop, revision and replay handling, evidence and UTF-8 gates, verdict rollback, generic reviews, restart recovery, review reissue authority/rollback   |
+| `tests/api.test.ts`           | Strict schemas, authenticated identity/scope, duplicate registration, awaited disposal, HTTP limits, official MCP client roundtrip, shutdown after disconnection       |
+| `tests/boundaries.test.ts`    | Package import boundaries, declared Cordis dependencies, feature adapter ownership, exported paths, independent service boot with only its dependency closure          |
+| `tests/app.test.ts`           | Fully assembled MCP task/review loop across two server restarts, credentials and retained evidence, invalid composition cleanup                                        |
+| `tests/live-evidence.test.ts` | Live acceptance rejects unrelated tasks, missing pinned documents, and evidence read only after a verdict                                                              |
+| `tests/feed.test.ts`          | Independent feed, reviewer communication, project/attachment permissions, immutable posts, atomic deduplication, cursor reads and persistence                          |
+| `tests/feed-unload.test.ts`   | Real Cordis provider removal during an admitted MCP call, automatic adapter suspension/reactivation, task completion while feed is absent, retained posts and activity |
 
 The separate live acceptance runner launches **three new Codex CLI processes** with synthetic data and separate producer, reviewer, and reader credentials:
 

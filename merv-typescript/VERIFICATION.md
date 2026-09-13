@@ -11,11 +11,11 @@ npm test
 
 `npm run test:feed-unload` passed using the official MCP SDK client against the running application. The only removal action was the feed provider's Cordis `Fiber.dispose()`. No tools or dependent plugins were manually removed.
 
-| Phase | Observed result |
-| --- | --- |
-| Feed active | 26 tools; initial post and task created through MCP |
-| Feed draining | Four feed tools disappeared; new feed calls returned `unknown_tool`; disposal waited for an admitted `feed.post` |
-| Feed absent | The admitted post committed; the original feed adapter became `PENDING`; task delivery and independent reviewer routing reached `done` at revision 2 |
+| Phase         | Observed result                                                                                                                                                      |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Feed active   | 26 tools; initial post and task created through MCP                                                                                                                  |
+| Feed draining | Four feed tools disappeared; new feed calls returned `unknown_tool`; disposal waited for an admitted `feed.post`                                                     |
+| Feed absent   | The admitted post committed; the original feed adapter became `PENDING`; task delivery and independent reviewer routing reached `done` at revision 2                 |
 | Feed restored | Installing only the provider reactivated the original adapter; 26 unique tools returned; all three posts were readable; activity recorded during absence was visible |
 
 The process stayed at PID `64235` and used the same loopback listener and MCP clients throughout. Assertions verify unchanged state, scope, artifact, workflow, review, task, registry, and API service instances. A test barrier makes the normally synchronous feed post overlap removal; real Cordis disposal, SQLite writes, and HTTP/MCP calls perform the actual work. This scenario is an MCP integration test; the separate Codex acceptance below records the earlier agent run.
@@ -26,11 +26,11 @@ The process stayed at PID `64235` and used the same loopback listener and MCP cl
 
 Three fresh, authenticated Codex CLI instances completed the synthetic task through MCP. Each had a separate Merv actor and an empty agent workspace. The application restarted between phases.
 
-| Instance | MCP calls | Observed result |
-| --- | ---: | --- |
-| Producer | 10 | Created immutable brief and delivery; task entered `in_review` at revision 1; `review.start` was refused by Merv |
-| Reviewer | 10 | Read both pinned artifacts after restart; independently recomputed sum 20 and mean 5; submitted `pass`; task reached `done` at revision 2; artifact creation was refused |
-| Reader | 6 | Read the retained verdict, delivery, and workflow history after a second restart; creating an operator was refused |
+| Instance | MCP calls | Observed result                                                                                                                                                          |
+| -------- | --------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Producer |        10 | Created immutable brief and delivery; task entered `in_review` at revision 1; `review.start` was refused by Merv                                                         |
+| Reviewer |        10 | Read both pinned artifacts after restart; independently recomputed sum 20 and mean 5; submitted `pass`; task reached `done` at revision 2; artifact creation was refused |
+| Reader   |         6 | Read the retained verdict, delivery, and workflow history after a second restart; creating an operator was refused                                                       |
 
 The **26 calls comprise 23 successes and three expected permission denials**. All three CLI processes exited successfully. Saved transcripts prove the reviewer read the exact pinned brief and delivery before submitting its verdict. An additional database reopen verified the task, review, history, artifact hashes, and clean shutdown against the report.
 

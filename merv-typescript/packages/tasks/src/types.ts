@@ -1,1 +1,8 @@
-export type { Task, TaskCreate, TaskDelivery, TaskReview, TaskReissue, Tasks } from '@merv/contracts'
+export type {
+  Task,
+  TaskCreate,
+  TaskDelivery,
+  TaskReview,
+  TaskReissue,
+  Tasks,
+} from '@merv/contracts';

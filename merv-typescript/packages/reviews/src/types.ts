@@ -1,1 +1,1 @@
-export type { ReviewInput, ReviewRequest, ReviewSubmit, Reviews, Verdict } from '@merv/contracts'
+export type { ReviewInput, ReviewRequest, ReviewSubmit, Reviews, Verdict } from '@merv/contracts';

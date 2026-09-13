@@ -9,7 +9,9 @@ export { ApiError, ToolRegistry } from './registry.js';
 export type { ToolDescription } from './registry.js';
 
 declare module 'cordis' {
-  interface Context { api: ApiServer }
+  interface Context {
+    api: ApiServer;
+  }
 }
 
 export const toolsPlugin = {

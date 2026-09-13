@@ -1,8 +1,19 @@
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { MervError, type Caller, type Scope, type ToolDefinition, type Tools } from '@merv/contracts';
+import {
+  MervError,
+  type Caller,
+  type Scope,
+  type ToolDefinition,
+  type Tools,
+} from '@merv/contracts';
 
 export class ApiError extends MervError {
-  constructor(readonly code: string, message: string, readonly status = 400, readonly details?: unknown) {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status = 400,
+    readonly details?: unknown,
+  ) {
     super(code, message, status);
     this.name = 'ApiError';
   }
@@ -34,9 +45,14 @@ export class ToolRegistry implements Tools {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(definition.name)) {
       throw new ApiError('invalid_tool', 'Invalid tool name');
     }
-    if (this.entries.has(definition.name)) throw new ApiError('duplicate_tool', `Tool already registered: ${definition.name}`, 409);
-    const inputSchema = zodToJsonSchema(definition.inputSchema, { $refStrategy: 'none', target: 'jsonSchema7' });
-    if (!('type' in inputSchema) || inputSchema.type !== 'object') throw new ApiError('invalid_tool', 'Tool input must be an object');
+    if (this.entries.has(definition.name))
+      throw new ApiError('duplicate_tool', `Tool already registered: ${definition.name}`, 409);
+    const inputSchema = zodToJsonSchema(definition.inputSchema, {
+      $refStrategy: 'none',
+      target: 'jsonSchema7',
+    });
+    if (!('type' in inputSchema) || inputSchema.type !== 'object')
+      throw new ApiError('invalid_tool', 'Tool input must be an object');
     const entry: Entry = {
       definition,
       description: {
@@ -55,11 +71,15 @@ export class ToolRegistry implements Tools {
   }
 
   describe(): ToolDescription[] {
-    return [...this.entries.values()].map((entry) => structuredClone(entry.description)).sort((a, b) => a.name.localeCompare(b.name));
+    return [...this.entries.values()]
+      .map((entry) => structuredClone(entry.description))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   list(): ToolDefinition[] {
-    return [...this.entries.values()].map(({ definition }) => definition).sort((a, b) => a.name.localeCompare(b.name));
+    return [...this.entries.values()]
+      .map(({ definition }) => definition)
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async call(name: string, caller: Caller, input: unknown): Promise<unknown> {
@@ -69,7 +89,12 @@ export class ToolRegistry implements Tools {
     this.scope.require(caller, 'read');
     const parsed = entry.definition.inputSchema.safeParse(input);
     if (!parsed.success) {
-      throw new ApiError('invalid_input', 'Tool input failed validation', 400, parsed.error.issues.map(({ path, message }) => ({ path, message })));
+      throw new ApiError(
+        'invalid_input',
+        'Tool input failed validation',
+        400,
+        parsed.error.issues.map(({ path, message }) => ({ path, message })),
+      );
     }
     const operation = Promise.resolve().then(() => entry.definition.handler(caller, parsed.data));
     entry.running.add(operation);
