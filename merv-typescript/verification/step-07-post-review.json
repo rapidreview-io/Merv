@@ -1,0 +1,59 @@
+{
+  "date": "2026-09-13",
+  "step": 7,
+  "status": "local-verification-and-review-passed-real-service-pending",
+  "implementationBaseline": "c5eb79a1",
+  "review": {
+    "requestedModel": "claude-fable-5",
+    "completed": true,
+    "processExitCode": 0,
+    "packetSha256": "252a425f5c6a46e12003521b90ca568e3439866f94a8d4224dcd00f3f04487e7",
+    "packetBytes": 193161,
+    "packetFiles": 24,
+    "approvedInvocations": 1,
+    "supportedHighOrMediumDefects": 0,
+    "recommendedRegressionCasesAdded": 3,
+    "subsequentHarnessCorrectionReviewedByFable": false,
+    "record": "docs/reviews/step-07-fable.md"
+  },
+  "checks": {
+    "typecheck": "passed",
+    "build": "passed",
+    "format": "passed",
+    "tests": 187,
+    "topLevelTests": 177,
+    "componentBootSubtests": 10,
+    "passed": 187,
+    "failed": 0,
+    "skipped": 0,
+    "controlledRemovalIncluded": true
+  },
+  "newCoverage": {
+    "cumulativeChunkedResponseLimitWithoutContentLength": true,
+    "validButMismatchedPaperId": true,
+    "successfulNonJsonMediaType": true,
+    "normalizedRequestBodiesAndInitOverrides": true,
+    "sandboxPublicRouteAndRpcAllowlist": true,
+    "automaticRedirectsRefused": true,
+    "exactSearchAndPaperBudgets": true,
+    "concurrentAdmissionAndFailedDispatchBudgets": true,
+    "independentHarnessRegressionCases": 7
+  },
+  "liveEvidence": {
+    "realNisaServiceVerified": false,
+    "savedOAuthFreshAtReviewStart": false,
+    "newLiveNisaHarnessRequestsDuringReview": 0,
+    "newCliRefreshAttemptsDuringReview": 0,
+    "authenticatedSandboxToolCallsDuringReview": 0,
+    "publicSandboxHeadProbe": {
+      "requests": 1,
+      "status": 405,
+      "redirected": false,
+      "locationHeaderPresent": false,
+      "credentialSent": false,
+      "toolInvoked": false
+    },
+    "remainingGate": "Renew Nisa login or explicitly supply an API key, then complete the bounded real search/paper and independent removal proof."
+  },
+  "step8Started": false
+}

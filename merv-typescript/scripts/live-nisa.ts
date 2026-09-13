@@ -67,6 +67,90 @@ function credential(mode: Exclude<Mode, '--check'>): string {
   return freshSavedToken(JSON.parse(readFileSync(path, 'utf8')));
 }
 
+export interface LiveNisaBoundary {
+  paperId?: string;
+  searchCalls: number;
+  paperCalls: number;
+  attemptedSandboxToolCalls: number;
+  blockedRequests: number;
+}
+
+/** Injected fetch permits offline verification of the live harness's dispatch boundary. */
+export function createLiveNisaFetch(
+  originalFetch: typeof fetch,
+  boundary: LiveNisaBoundary,
+): typeof fetch {
+  return async (input, init) => {
+    let request: Request;
+    try {
+      // Normalize Fetch overloads and init overrides once; inspect the same request we forward.
+      request = new Request(input, init);
+      const url = new URL(request.url);
+      const method = request.method;
+      if (url.origin === origin) {
+        requireValue(request.redirect === 'error', 'nisa_redirects_not_disabled');
+        if (method === 'POST' && url.pathname === '/api/sdk/search' && !url.search && !url.hash) {
+          assert.deepEqual(JSON.parse(await request.clone().text()), search);
+          requireValue(boundary.searchCalls === 0, 'nisa_search_limit');
+          // Admission consumes the budget even if the actual network operation fails.
+          boundary.searchCalls++;
+        } else {
+          requireValue(
+            method === 'GET' &&
+              boundary.paperId &&
+              url.pathname === `/api/sdk/paper/${boundary.paperId}` &&
+              !url.search &&
+              !url.hash &&
+              boundary.paperCalls === 0,
+            'nisa_paper_limit',
+          );
+          boundary.paperCalls++;
+        }
+      } else if (url.origin === sandboxOrigin) {
+        requireValue(
+          url.pathname === '/mcp' &&
+            !url.search &&
+            !url.hash &&
+            ['GET', 'POST', 'DELETE'].includes(method),
+          'sandbox_request_not_authorized',
+        );
+        requireValue(!request.headers.has('authorization'), 'sandbox_credential_not_authorized');
+        if (method === 'POST') {
+          let body: unknown;
+          try {
+            body = JSON.parse(await request.clone().text());
+          } catch {
+            throw new Error('sandbox_request_invalid');
+          }
+          const items = Array.isArray(body) ? body : [body];
+          boundary.attemptedSandboxToolCalls += items.filter(
+            (item) =>
+              item &&
+              typeof item === 'object' &&
+              !Array.isArray(item) &&
+              (item as Record<string, unknown>).method === 'tools/call',
+          ).length;
+          requireValue(
+            body && typeof body === 'object' && !Array.isArray(body),
+            'sandbox_request_invalid',
+          );
+          const rpcMethod = (body as Record<string, unknown>).method;
+          requireValue(
+            typeof rpcMethod === 'string' &&
+              ['initialize', 'notifications/initialized', 'tools/list', 'ping'].includes(rpcMethod),
+            'sandbox_tool_not_authorized',
+          );
+        } else requireValue(request.body === null, 'sandbox_request_invalid');
+      } else requireValue(url.hostname === '127.0.0.1', 'unexpected_live_origin');
+    } catch (error) {
+      boundary.blockedRequests++;
+      throw error;
+    }
+    // Automatic redirect fetches would bypass this guard, so every allowed origin refuses them.
+    return originalFetch(request, { redirect: 'error' });
+  };
+}
+
 export async function runLiveNisa(mode: Mode) {
   requireValue(
     ['--check', '--use-env-nisa-key', '--use-saved-nisa-token'].includes(mode),
@@ -88,51 +172,16 @@ export async function runLiveNisa(mode: Mode) {
   const originalFetch = globalThis.fetch;
   let app: Awaited<ReturnType<typeof createApp>> | undefined;
   let client: Client | undefined;
-  let paperId: string | undefined;
-  let searchCalls = 0,
-    paperCalls = 0,
-    sandboxToolCalls = 0;
+  const boundary: LiveNisaBoundary = {
+    searchCalls: 0,
+    paperCalls: 0,
+    attemptedSandboxToolCalls: 0,
+    blockedRequests: 0,
+  };
   let report: Record<string, unknown> | undefined;
   process.env[variable] = token;
   try {
-    globalThis.fetch = async (input, init) => {
-      const url = new URL(
-        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
-      );
-      const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
-      if (url.origin === origin) {
-        requireValue(init?.redirect === 'error', 'nisa_redirects_not_disabled');
-        if (method === 'POST' && url.pathname === '/api/sdk/search' && !url.search) {
-          requireValue(searchCalls === 0 && typeof init?.body === 'string', 'nisa_search_limit');
-          assert.deepEqual(JSON.parse(init.body), search);
-          searchCalls++;
-        } else {
-          requireValue(
-            method === 'GET' &&
-              paperId &&
-              url.pathname === `/api/sdk/paper/${paperId}` &&
-              !url.search &&
-              paperCalls === 0,
-            'nisa_paper_limit',
-          );
-          paperCalls++;
-        }
-      } else if (url.origin === sandboxOrigin) {
-        const headers = new Headers(
-          init?.headers ?? (input instanceof Request ? input.headers : undefined),
-        );
-        requireValue(!headers.has('authorization'), 'sandbox_credential_not_authorized');
-        if (method === 'POST' && typeof init?.body === 'string') {
-          const body = JSON.parse(init.body);
-          if (body.method === 'tools/call') sandboxToolCalls++;
-          requireValue(
-            ['initialize', 'notifications/initialized', 'tools/list', 'ping'].includes(body.method),
-            'sandbox_tool_not_authorized',
-          );
-        }
-      } else requireValue(url.hostname === '127.0.0.1', 'unexpected_live_origin');
-      return originalFetch(input, init);
-    };
+    globalThis.fetch = createLiveNisaFetch(originalFetch, boundary);
     const config: ApplicationConfig = JSON.parse(
       readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
     );
@@ -200,19 +249,22 @@ export async function runLiveNisa(mode: Mode) {
       );
       assert.ok(typeof paper.url === 'string' && paper.url.length > 0);
     }
-    paperId = structured.data.papers.find((paper) =>
+    boundary.paperId = structured.data.papers.find((paper) =>
       /^\d{2}(?:0[1-9]|1[0-2])\.\d{4,5}$/.test(paper.arxiv_id),
     )?.arxiv_id;
-    requireValue(paperId, 'nisa_search_has_no_retrievable_id');
+    requireValue(boundary.paperId, 'nisa_search_has_no_retrievable_id');
     const paperResult = await client.request(
       {
         method: 'tools/call',
-        params: { name: 'mount__nisa__paper', arguments: { arxiv_id: paperId } },
+        params: { name: 'mount__nisa__paper', arguments: { arxiv_id: boundary.paperId } },
       },
       CallToolResultSchema,
     );
     assert.equal(paperResult.isError, undefined);
-    assert.equal((paperResult.structuredContent?.data as { arxiv_id: string }).arxiv_id, paperId);
+    assert.equal(
+      (paperResult.structuredContent?.data as { arxiv_id: string }).arxiv_id,
+      boundary.paperId,
+    );
     const before = app.ctx.tools.list().length;
     await app.setEnabled('literature', false);
     assert.equal(app.ctx.tools.list().length, before - 2);
@@ -229,19 +281,22 @@ export async function runLiveNisa(mode: Mode) {
     assert.equal(denied.isError, true);
     await app.setEnabled('literature', true);
     assert.equal(app.ctx.tools.list().length, before);
-    assert.equal(searchCalls, 1);
-    assert.equal(paperCalls, 1);
-    assert.equal(sandboxToolCalls, 0);
+    assert.equal(boundary.searchCalls, 1);
+    assert.equal(boundary.paperCalls, 1);
+    assert.equal(boundary.attemptedSandboxToolCalls, 0);
+    assert.equal(boundary.blockedRequests, 0);
     report = {
       status: 'passed',
       origin,
       mode,
       query: search.query,
-      searchCalls,
-      paperCalls,
-      sandboxToolCalls,
+      searchCalls: boundary.searchCalls,
+      paperCalls: boundary.paperCalls,
+      sandboxToolCalls: boundary.attemptedSandboxToolCalls,
+      attemptedSandboxToolCalls: boundary.attemptedSandboxToolCalls,
+      blockedRequests: boundary.blockedRequests,
       returnedPapers: structured.data.papers.length,
-      paperId,
+      paperId: boundary.paperId,
       sources: structured.sources,
       sourceReferencesPreserved: true,
       backgroundEnrichment: false,
@@ -267,6 +322,14 @@ export async function runLiveNisa(mode: Mode) {
     }
   }
   requireValue(report, 'nisa_live_report_missing');
+  // Cleanup also uses fetch; no late request may escape the final evidence checks.
+  requireValue(
+    boundary.searchCalls === 1 &&
+      boundary.paperCalls === 1 &&
+      boundary.attemptedSandboxToolCalls === 0 &&
+      boundary.blockedRequests === 0,
+    'nisa_dispatch_verification_failed',
+  );
   return {
     ...report,
     cleanup: {

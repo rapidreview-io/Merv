@@ -203,6 +203,123 @@ test('Nisa rejects redirects and bounded invalid upstream responses with sanitiz
   assert.ok(s.upstream.requests.every((request) => request.path === '/api/sdk/search'));
 });
 
+test('Nisa enforces the streaming byte cap on a real chunked response without Content-Length', async (t) => {
+  const s = await setup(t, { maxResponseBytes: 1024 });
+  const secretText = 'Bearer synthetic-nisa-a chunked-upstream-secret';
+  const body = {
+    papers: [{ arxiv_id: '1706.03762', title: 'x'.repeat(2048) }],
+    upstreamSecret: secretText,
+  };
+  const expectedBytes = Buffer.from(JSON.stringify(body));
+  assert.ok(expectedBytes.length > 1024);
+  s.upstream.setSearch({
+    body,
+    headers: { 'transfer-encoding': 'chunked' },
+    chunkBytes: 512,
+    chunkDelayMs: 20,
+  });
+  const upstreamHeaders: {
+    status: number;
+    contentLength: string | null;
+    transferEncoding: string | null;
+  }[] = [];
+  const receivedChunks: Buffer[] = [];
+  const originalFetch = globalThis.fetch;
+  // Observe the actual response used by the adapter, without an extra fixture request or a mocked body.
+  globalThis.fetch = async (input, init) => {
+    const response = await originalFetch(input, init);
+    if (response.url === s.upstream.url + '/api/sdk/search') {
+      upstreamHeaders.push({
+        status: response.status,
+        contentLength: response.headers.get('content-length'),
+        transferEncoding: response.headers.get('transfer-encoding'),
+      });
+      assert.ok(response.body);
+      return new Response(
+        response.body.pipeThrough(
+          new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+              receivedChunks.push(Buffer.from(chunk));
+              // Forward each received chunk unchanged; the observer does not split or regroup bytes.
+              controller.enqueue(chunk);
+            },
+          }),
+        ),
+        { status: response.status, statusText: response.statusText, headers: response.headers },
+      );
+    }
+    return response;
+  };
+  let result: Awaited<ReturnType<typeof s.http>>;
+  try {
+    result = await s.http(s.a.token, 'mount__nisa__search', { query: 'test' });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.deepEqual(upstreamHeaders, [
+    { status: 200, contentLength: null, transferEncoding: 'chunked' },
+  ]);
+  assert.ok(receivedChunks.length > 1);
+  assert.ok(receivedChunks.every((chunk) => chunk.length <= 1024));
+  const receivedBytes = Buffer.concat(receivedChunks);
+  assert.ok(receivedBytes.length > 1024);
+  assert.deepEqual(receivedBytes, expectedBytes.subarray(0, receivedBytes.length));
+  assert.equal(result.status, 502);
+  assert.deepEqual(result.data, {
+    error: {
+      code: 'nisa_response_too_large',
+      message: 'Nisa response exceeds the configured byte limit',
+    },
+  });
+  assert.ok(!JSON.stringify(result.data).includes(secretText));
+  assert.ok(!JSON.stringify(result.data).includes('synthetic-nisa-a'));
+  assert.equal(s.upstream.requests.length, 1);
+  assert.equal(s.upstream.requests[0].path, '/api/sdk/search');
+});
+
+test('Nisa rejects a different valid paper ID without exposing the wrong paper', async (t) => {
+  const s = await setup(t);
+  const wrongPaper = {
+    arxiv_id: '1706.03763',
+    title: 'Unexpected paper record',
+    abstract: 'This record must not escape the requested paper boundary.',
+    url: 'https://arxiv.org/abs/1706.03763',
+  };
+  s.upstream.setPaper('1706.03762', { body: wrongPaper });
+  const result = await s.http(s.a.token, 'mount__nisa__paper', { arxiv_id: '1706.03762' });
+  assert.equal(result.status, 502);
+  assert.deepEqual(result.data, {
+    error: { code: 'nisa_invalid_response', message: 'Nisa returned invalid paper data' },
+  });
+  for (const value of Object.values(wrongPaper))
+    assert.ok(!JSON.stringify(result.data).includes(value));
+  assert.equal(s.upstream.requests.length, 1);
+  assert.equal(s.upstream.requests[0].path, '/api/sdk/paper/1706.03762');
+});
+
+test('Nisa rejects a successful non-JSON content type without echoing upstream secrets', async (t) => {
+  const s = await setup(t);
+  const secretText = 'Bearer synthetic-nisa-a non-json-upstream-secret';
+  s.upstream.setSearch({
+    status: 200,
+    contentType: 'text/plain; charset=utf-8',
+    // Valid JSON and paper records ensure this specifically exercises media-type validation.
+    body: {
+      papers: [{ arxiv_id: '1706.03762', title: 'Attention Is All You Need' }],
+      upstreamSecret: secretText,
+    },
+  });
+  const result = await s.http(s.a.token, 'mount__nisa__search', { query: 'test' });
+  assert.equal(result.status, 502);
+  assert.deepEqual(result.data, {
+    error: { code: 'nisa_invalid_response', message: 'Nisa returned an invalid response' },
+  });
+  assert.ok(!JSON.stringify(result.data).includes(secretText));
+  assert.ok(!JSON.stringify(result.data).includes('synthetic-nisa-a'));
+  assert.equal(s.upstream.requests.length, 1);
+  assert.equal(s.upstream.requests[0].path, '/api/sdk/search');
+});
+
 test('Nisa body deadline bounds unload even when an admitted response stalls', async (t) => {
   const s = await setup(t, { timeoutMs: 250 });
   s.upstream.setSearch({ body: '{', stallBody: true });

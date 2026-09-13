@@ -5,6 +5,7 @@ import {
   type Server as HttpServer,
 } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export interface NisaReply {
   /** Strings are sent verbatim, so tests can supply malformed JSON. Other values are JSON encoded. */
@@ -15,6 +16,9 @@ export interface NisaReply {
   redirect?: string;
   /** Flush headers and a partial body, then remain open until fixture shutdown. */
   stallBody?: boolean;
+  /** Send real HTTP body chunks of this size, paced by chunkDelayMs (default 20ms). */
+  chunkBytes?: number;
+  chunkDelayMs?: number;
 }
 export interface NisaRequest {
   identityLabel: string;
@@ -247,6 +251,23 @@ export class NisaServer {
       res.write('{');
       return;
     }
-    res.end(typeof reply.body === 'string' ? reply.body : JSON.stringify(reply.body));
+    const bodyText = typeof reply.body === 'string' ? reply.body : JSON.stringify(reply.body);
+    if (reply.chunkBytes !== undefined) {
+      const chunkDelayMs = reply.chunkDelayMs ?? 20;
+      if (
+        !Number.isSafeInteger(reply.chunkBytes) ||
+        reply.chunkBytes < 1 ||
+        !Number.isSafeInteger(chunkDelayMs) ||
+        chunkDelayMs < 0
+      )
+        throw new Error('Invalid fixture chunk configuration');
+      const bytes = Buffer.from(bodyText);
+      for (let offset = 0; offset < bytes.length; offset += reply.chunkBytes) {
+        if (this.#closing || res.destroyed) return;
+        res.write(bytes.subarray(offset, offset + reply.chunkBytes));
+        if (offset + reply.chunkBytes < bytes.length) await delay(chunkDelayMs);
+      }
+      if (!this.#closing && !res.destroyed) res.end();
+    } else res.end(bodyText);
   }
 }

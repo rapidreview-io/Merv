@@ -1,10 +1,11 @@
 # Nisa literature plugin
 
 Step 7 implementation, checked 2026-09-13. The installed Nisa CLI is
-`0.3.0`; the inspected sibling source is `Nisa@3489d7d`. All 177 local checks
+`0.3.0`; the inspected sibling source is `Nisa@3489d7d`. All 187 local checks
 pass, including the complete Nisa-removal scenario alongside an authenticated
-sandbox fixture. The real Nisa gate requires a renewed login; the prepared
-Fable review requires explicit packet-disclosure approval. Source inspection
+sandbox fixture. The approved Fable review is complete; its response-boundary
+test recommendations and an independently found harness-guard gap are covered.
+The real Nisa gate still requires a renewed login or explicitly supplied API key. Source inspection
 and fixture results do not establish successful deployed integration.
 
 ## Two tools through the existing catalog
@@ -195,7 +196,17 @@ error payload were suppressed, so the refresh failure cause is not claimed.
 The real-service proof remains pending a renewed login or explicitly supplied
 API key. [Preparation record](../verification/step-07-live-nisa-preparation.json).
 
-The prepared [Claude Fable review](reviews/step-07-fable.md) was rejected by
-automatic approval review before launch. No packet was sent. The review and
-real-service proof remain separate open acceptance conditions; Step 8 has not
-started.
+The [Claude Fable review](reviews/step-07-fable.md) completed after the user
+approved the exact packet. It found no supported high- or medium-severity defect
+and recommended three response-boundary tests, which are now covered. The
+initial rejected attempt sent nothing. Fable did not review the later guard
+correction, which has separate offline tests and independent local review.
+
+The live guard now normalizes every Fetch request form, inspects every sandbox
+POST body, rejects unexpected sandbox paths and methods, and disables redirects
+for every forwarded request. Call budgets remain consumed after an upstream
+failure, including concurrent calls. Cleanup cannot produce a success report
+if it makes a late forbidden request. These checks use mock Fetch and synthetic
+data; they do not establish real Nisa service success.
+
+Only the real-service proof remains open; Step 8 has not started.
