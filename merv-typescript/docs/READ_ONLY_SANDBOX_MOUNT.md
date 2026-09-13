@@ -2,8 +2,13 @@
 
 Checked 2026-09-13 for execution-plan step 6. Merv baseline: `3bf8caf7`.
 The independent sandbox source checkout is `merv-sandboxes@c7b9582` beside
-this repository. These notes establish public discovery and source behavior;
-authenticated live invocation remains unverified.
+this repository. Initial preparation established public discovery and source behavior.
+After explicit user authorization, authenticated live invocation passed on 2026-09-13.
+The [sanitized live report](../verification/step-06-live-sandbox.json) records one
+identity check, one upstream `usage_report` dispatch received by a fresh Codex
+agent, matching account/namespace/member scope, and successful cleanup. The
+preparation observations below retain their original scope; no raw accounting
+report or identity value is stored in the verification artifact.
 
 ## Select one tool: `usage_report`
 
@@ -99,8 +104,10 @@ The native CLI documents its saved session under `~/.sandboxes` in
 `control/src/merv_sandboxes/cli/client.py`. The existing file
 `/Users/guraltoo/.sandboxes/token` is nonempty and mode `0600`; its paired `url`
 file is exactly `https://sandboxes.rapidreview.io`. Token values were not printed
-or copied. Its validity, role, namespace, account, member, and application remain
-**unverified**. It is a candidate reference, not a verified consumer connection.
+or copied. At preparation time its validity, role, namespace, account, member, and application
+were unverified. The authorized live harness subsequently verified the selected
+consumer account/namespace/member and matching returned report; it does not
+claim a complete audit of the token grant or its namespace cardinality.
 
 The older Merv deployment's private connection mechanism is
 `MERV_SANDBOXES_CONNECTIONS_FILE`, mounted as
@@ -112,10 +119,9 @@ No remote secret files were accessed for this preparation.
 Automatic approval review rejected a proposed request that would read the native
 CLI token and send it only to `GET https://sandboxes.rapidreview.io/v1/auth/me`.
 The stated reason was that trusted user messages did not specifically authorize
-exporting that credential to that destination. The command did not execute; no
-credential was sent. Do not retry through an indirect route. The full live harness
-and intended data flow should be reviewable before requesting the remaining
-authorization.
+exporting that credential to that destination. That command did not execute and no credential was sent by the rejected attempt.
+The user subsequently approved the concrete live harness, which was then executed
+successfully through the same configured origin. No indirect retry was used.
 
 The rejected identity-only command, shown without any credential value, was:
 
@@ -168,9 +174,9 @@ live command as an argument array. The offline tests at
 [live-sandbox-mount.test.ts](../tests/live-sandbox-mount.test.ts) verify those
 boundaries with credential-read and network sentinels, and exercise the fetch
 guard using synthetic responses only. All eight focused tests and typechecking
-passed on 2026-09-13; no live mode was executed during preparation.
+passed on 2026-09-13; live mode ran only after the separate explicit authorization.
 
-The concrete live command requiring the remaining authorization is:
+The concrete live command explicitly authorized and successfully executed was:
 
 ```sh
 node --import tsx scripts/live-sandbox-mount.ts --use-saved-sandbox-token

@@ -7,13 +7,13 @@ npm run build
 npm test
 ```
 
-## Mounts controlled integration — live gate pending
+## Mounts controlled integration and live sandbox verification
 
 `npm run test:mounts` passes the mounts runtime regressions and the complete configured removal scenario. The application exposes 27 → 26 → 27 tools. An admitted authenticated upstream call drains while new mounted calls are refused; a native task, independent review, and feed posts complete with the mount absent. Restoration uses a new upstream connection and retains the same native providers and durable work. [Controlled mount report](verification/step-06-controlled-mount-unload.json).
 
 Additional fixtures verify unavailable optional mounts, selected schemas, notifications, bounded discovery timeout, physical TCP loss, automatic recovery, explicit reconnection, separate discovery/caller authority, revocation, dependent-consumer draining, and cleanup failure reporting. The [feed removal regression](verification/step-06-feed-unload.json) also passes. All fixture credentials are synthetic.
 
-Public sandbox discovery and source inspection select only `usage_report`. No authenticated live call has been made: automatic approval review rejected the saved credential's proposed use. Step 6 remains in progress until the prepared read-only live command is authorized and successfully verified; this fixture evidence does not complete it. See [sandbox preparation](docs/READ_ONLY_SANDBOX_MOUNT.md).
+After explicit user authorization, the prepared harness verified a consumer identity and one real `usage_report` call at the sandbox origin through Merv. A fresh ephemeral Codex session received the result with matching account, namespace, and member fields. There was exactly one upstream tool dispatch, no blocked request, and successful child/application shutdown, environment restoration, and temporary-state removal. [Sanitized live report](verification/step-06-live-sandbox.json). This proof covers a real permitted read; the separately retained fixture proof controls call overlap during removal and connection faults. The Fable milestone consultation remains in progress.
 
 ## Credential and permission integration
 

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "mode": "live",
+  "status": "passed",
+  "origin": "https://sandboxes.rapidreview.io",
+  "tool": "mount__sandbox__usage_report",
+  "identityRequests": 1,
+  "upstreamToolDispatches": 1,
+  "blockedRequests": 0,
+  "resultScopeVerified": true,
+  "grantNamespaceCardinalityVerified": false,
+  "rawTranscriptsRetained": false,
+  "agent": {
+    "freshSession": true,
+    "exitCode": 0,
+    "toolCalls": 1,
+    "successfulCalls": 1,
+    "processStopped": true
+  },
+  "cleanup": {
+    "appStopped": true,
+    "environmentRestored": true,
+    "temporaryStateRemoved": true
+  },
+  "verifiedAt": "2026-09-13T18:11:48.195968+00:00",
+  "implementationCommit": "43b1bc32",
+  "sourceRun": "live-runs/sandbox-2026-09-13T18-10-53.990Z",
+  "temporaryDirectoryAbsent": true
+}
