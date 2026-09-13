@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { ZodTypeAny } from 'zod';
 import 'cordis';
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -264,18 +263,6 @@ export interface Tasks {
   submitReview(caller: Caller, input: TaskReview): Task;
   reissueReview(caller: Caller, input: TaskReissue): Task;
 }
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  inputSchema: ZodTypeAny;
-  readOnly?: boolean;
-  handler(caller: Caller, input: any): unknown | Promise<unknown>;
-}
-export interface Tools {
-  register(definition: ToolDefinition): () => Promise<void>;
-  list(): ToolDefinition[];
-  call(name: string, caller: Caller, input: unknown): Promise<unknown>;
-}
 declare module 'cordis' {
   interface Context {
     state: State;
@@ -285,6 +272,5 @@ declare module 'cordis' {
     workflows: Workflows;
     reviews: Reviews;
     tasks: Tasks;
-    tools: Tools;
   }
 }

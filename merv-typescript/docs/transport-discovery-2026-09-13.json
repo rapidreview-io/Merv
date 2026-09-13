@@ -1,0 +1,81 @@
+{
+  "observedDate": "2026-09-13",
+  "endpoint": "https://sandboxes.rapidreview.io/mcp",
+  "authorizationSent": false,
+  "resourceToolCalls": 0,
+  "rawTranscriptsRetained": false,
+  "probes": [
+    {
+      "method": "initialize",
+      "requestedVersion": "2025-11-25",
+      "httpStatus": 200,
+      "contentType": "text/event-stream",
+      "negotiatedVersion": "2025-11-25",
+      "serverInfo": {
+        "name": "merv-sandboxes",
+        "version": "1.0.0a0"
+      }
+    },
+    {
+      "method": "server/discover",
+      "requestedHeaderAndEnvelopeVersion": "2026-07-28",
+      "httpStatus": 200,
+      "contentType": "application/json",
+      "resultKeys": [
+        "cacheScope",
+        "capabilities",
+        "instructions",
+        "resultType",
+        "supportedVersions",
+        "ttlMs",
+        "_meta"
+      ],
+      "serverInfo": {
+        "name": "merv-sandboxes",
+        "version": "1.0.0a0"
+      }
+    }
+  ],
+  "officialClient": {
+    "package": "@modelcontextprotocol/sdk",
+    "version": "1.30.0",
+    "status": "connected_and_listed",
+    "offeredVersion": "2025-11-25",
+    "subsequentProtocolHeader": "2025-11-25",
+    "toolCount": 31,
+    "hasNextCursor": false,
+    "closed": true
+  },
+  "installedAgent": {
+    "name": "codex-cli",
+    "version": "0.155.0-alpha.2",
+    "wireVerification": "passed",
+    "evidence": "verification/step-04-live-agents.json",
+    "negotiatedVersions": ["2025-06-18"],
+    "phasesPassed": 3
+  },
+  "officialNpmLatestMetadata": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "@modelcontextprotocol/core": "2.0.0",
+    "@modelcontextprotocol/node": "2.0.0",
+    "nodeEngine": ">=20",
+    "installedForThisCheck": false
+  },
+  "schemaCompatibility": {
+    "toolCount": 31,
+    "inputSchemas": 31,
+    "outputSchemas": 31,
+    "passed": 61,
+    "errors": [
+      {
+        "tool": "workflow_submit",
+        "kind": "input",
+        "code": "invalid_schema",
+        "message": "Unsupported or invalid tool schema: strict mode: unknown keyword: \"discriminator\""
+      }
+    ],
+    "registeredTools": 0,
+    "resourceToolCalls": 0
+  }
+}

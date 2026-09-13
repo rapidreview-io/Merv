@@ -1,0 +1,206 @@
+{
+  "status": "passed",
+  "scenario": "Fresh producer, independent reviewer, and reader through MCP, across two application restarts",
+  "sourceRun": "live-runs/2026-09-13T17-06-02.173Z",
+  "cordisVersion": "4.0.0-rc.10",
+  "loaderVersion": "1.0.0-rc.7",
+  "mcpSdkVersion": "1.30.0",
+  "phases": [
+    {
+      "phase": "producer",
+      "threadId": "01a09bbb-ab16-7c73-9d15-400ed4e0c98a",
+      "exitCode": 0,
+      "toolCalls": 11,
+      "calls": [
+        {
+          "tool": "project.get",
+          "status": "completed"
+        },
+        {
+          "tool": "actor.whoami",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.create",
+          "status": "completed"
+        },
+        {
+          "tool": "task.create",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.create",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "task.submit_delivery",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "review.start",
+          "status": "failed",
+          "errorCode": "forbidden"
+        },
+        {
+          "tool": "review.get",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        }
+      ],
+      "protocol": {
+        "initialization": [
+          {
+            "initializeVersion": "2025-06-18",
+            "clientInfo": {
+              "name": "codex-mcp-client",
+              "version": "0.155.0-alpha.2"
+            },
+            "status": 200,
+            "negotiatedVersion": "2025-06-18"
+          }
+        ],
+        "requestProtocolHeaders": ["2025-06-18"],
+        "toolCallHttpStatuses": [200]
+      }
+    },
+    {
+      "phase": "reviewer",
+      "threadId": "01a09bbc-5d3b-7082-8855-661b310961c3",
+      "exitCode": 0,
+      "toolCalls": 11,
+      "calls": [
+        {
+          "tool": "project.get",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "actor.whoami",
+          "status": "completed"
+        },
+        {
+          "tool": "review.get",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "review.start",
+          "status": "completed"
+        },
+        {
+          "tool": "review.submit",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.create",
+          "status": "failed",
+          "errorCode": "forbidden"
+        },
+        {
+          "tool": "review.get",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        }
+      ],
+      "protocol": {
+        "initialization": [
+          {
+            "initializeVersion": "2025-06-18",
+            "clientInfo": {
+              "name": "codex-mcp-client",
+              "version": "0.155.0-alpha.2"
+            },
+            "status": 200,
+            "negotiatedVersion": "2025-06-18"
+          }
+        ],
+        "requestProtocolHeaders": ["2025-06-18"],
+        "toolCallHttpStatuses": [200]
+      }
+    },
+    {
+      "phase": "observer",
+      "threadId": "01a09bbd-083c-7d43-8156-279dbc1a55eb",
+      "exitCode": 0,
+      "toolCalls": 6,
+      "calls": [
+        {
+          "tool": "review.get",
+          "status": "completed"
+        },
+        {
+          "tool": "actor.whoami",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.history",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "actor.create",
+          "status": "failed",
+          "errorCode": "forbidden"
+        }
+      ],
+      "protocol": {
+        "initialization": [
+          {
+            "initializeVersion": "2025-06-18",
+            "clientInfo": {
+              "name": "codex-mcp-client",
+              "version": "0.155.0-alpha.2"
+            },
+            "status": 200,
+            "negotiatedVersion": "2025-06-18"
+          }
+        ],
+        "requestProtocolHeaders": ["2025-06-18"],
+        "toolCallHttpStatuses": [200]
+      }
+    }
+  ],
+  "evidenceChecks": {
+    "expectedTask": true,
+    "independentReviewer": true,
+    "reviewerReadAllPinnedEvidence": true,
+    "observerReadRetainedDelivery": true
+  },
+  "taskId": "wf_6cfce4f23fbb4915a6dced464466fed3",
+  "reviewId": "review_496b63582d7541af97de4c36b958173c",
+  "finalState": "done",
+  "finalRevision": 2,
+  "verdict": "pass",
+  "cleanShutdownBeforeReport": true
+}

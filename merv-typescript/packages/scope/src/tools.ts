@@ -1,4 +1,5 @@
 import type { Context } from 'cordis';
+import type {} from '@merv/api/types';
 import { z } from 'zod';
 export const scopeToolsPlugin = {
   name: 'merv-scope-tools',

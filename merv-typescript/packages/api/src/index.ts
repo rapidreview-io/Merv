@@ -1,4 +1,5 @@
 import type { Context } from 'cordis';
+import type {} from './types.js';
 import { z } from 'zod';
 import '@merv/contracts';
 import { ApiServer, type HttpOptions } from './http.js';

@@ -112,12 +112,12 @@ If a reviewer becomes unavailable or their credential is revoked, the task's pro
 
 ## HTTP and tools
 
-| Endpoint             | Behavior                                                    |
-| -------------------- | ----------------------------------------------------------- |
-| `GET /health`        | Unauthenticated readiness response                          |
-| `GET /tools`         | Authenticated tool catalog and JSON schemas                 |
-| `POST /tools/<name>` | Authenticated tool call with a JSON argument object         |
-| `POST /mcp`          | Authenticated MCP initialization, discovery, and tool calls |
+| Endpoint             | Behavior                                                  |
+| -------------------- | --------------------------------------------------------- |
+| `GET /health`        | Unauthenticated readiness response                        |
+| `GET /tools`         | Authenticated tool catalog and JSON schemas               |
+| `POST /tools/<name>` | Authenticated tool call with a JSON argument object       |
+| `POST /mcp`          | Authenticated MCP initialization, tool listing, and calls |
 
 All tool endpoints require `Authorization: Bearer <token>`. Arguments may include an optional `projectId`; it defaults to the actor's project, and the server checks access. Caller identity is constructed from the bearer token. A tool argument never substitutes for the authenticated actor.
 
@@ -147,6 +147,20 @@ The installed feature adapters contribute **26 tools**:
 | Feed         | `feed.post`, `feed.get`, `feed.list`, `feed.activity`                                                  |
 
 Tool schemas are strict and runtime-validated. Use `GET /tools` or MCP `tools/list` for the exact required arguments. Workflow mutation tools are owned by the task program so callers cannot bypass its evidence and review gates.
+
+## Remote-tool transport
+
+The API plugin owns its public tool and catalog contracts in `@merv/api/types`. The registry accepts native Zod definitions and remote MCP catalogs. A catalog owns a reserved namespace: `createCatalog('sandboxes')` publishes remote `inspect` as `mount__sandboxes__inspect`. Duplicate mount IDs, duplicate tools, overlong names, and native registrations in that namespace are refused. Remote definitions must be registered through a catalog.
+
+Remote schemas retain their original shape. The validator supports JSON Schema 2020-12 (the default) and explicit draft-07, including local references and standard formats. Unsupported dialects, external references, unknown keywords, invalid schemas, and MCP task execution fail before publication. Inputs are validated without coercion, default insertion, or field removal. Structured successful output is checked against its declared output schema.
+
+A catalog replacement validates every tool first, publishes the complete new generation, then waits for admitted calls from the old generation. A rejected refresh leaves the previous catalog available. Catalog disposal withdraws all its tools immediately and waits for admitted calls before its owner closes the client. `RemoteCatalog` collects bounded pages, rejects repeated cursors/names, and serializes explicit refreshes and upstream `tools/list_changed` notifications. Merv's stateless downstream endpoint does not advertise push notifications; clients rediscover with `tools/list`.
+
+Remote `content`, `structuredContent`, `isError`, annotations, and metadata survive MCP forwarding. HTTP wraps that complete MCP result in its usual `{ "result": ... }` envelope. Native results retain their existing JSON-text MCP format.
+
+A remote tool's arguments are untouched, including its own `projectId`. Select the **Merv** project separately using the HTTP `X-Merv-Project-Id` header or MCP call `params._meta["merv/projectId"]`; selection defaults to the authenticated actor's project and is checked by Scope. Native tools continue to accept their existing `projectId` argument. This transport groundwork does not install a live mount or lend upstream credentials; those are the next integrated steps in the execution plan.
+
+The installed SDK supports the legacy protocol family through `2025-11-25`. Unsupported request versions in the HTTP header or MCP metadata are refused explicitly. A legacy `initialize` request can negotiate a different supported version; Merv does not implement `server/discover` or claim the `2026-07-28` protocol. The intended sandbox endpoint was separately verified to accept the current SDK. See the [tested compatibility matrix](docs/TRANSPORT_COMPATIBILITY.md).
 
 ## Nine plugin packages
 
@@ -274,6 +288,11 @@ npm test
 | `tests/foundations.test.ts`     | Migration immutability/rollback, durable events, role/project access, revocation, artifact immutability/corruption, real Cordis activation/disposal                    |
 | `tests/workflows.test.ts`       | Exact replay, pinned versions across restart, competing revisions, atomic rollback, managed mutation ownership, graph validation and provider withdrawal               |
 | `tests/tasks.test.ts`           | Delivery/review loop, revision and replay handling, evidence and UTF-8 gates, verdict rollback, generic reviews, restart recovery, review reissue authority/rollback   |
+| `tests/remote-registry.test.ts` | Remote schema validation, namespace collisions, atomic replacement, result validation, and draining                                                                    |
+| `tests/remote-catalog.test.ts`  | Independent MCP pagination, catalog refresh notifications, limits, failures, and cleanup                                                                               |
+| `tests/remote-http.test.ts`     | Lossless remote HTTP/MCP results, separate project selection, and withdrawal during a held call                                                                        |
+| `tests/protocol.test.ts`        | Actual legacy negotiation/list/call and explicit unsupported version behavior                                                                                          |
+| `tests/protocol-proxy.test.ts`  | Safe metadata capture and transparent JSON/SSE forwarding for live-agent evidence                                                                                      |
 | `tests/api.test.ts`             | Strict schemas, authenticated identity/scope, duplicate registration, awaited disposal, HTTP limits, official MCP client roundtrip, shutdown after disconnection       |
 | `tests/boundaries.test.ts`      | Package import boundaries, declared Cordis dependencies, feature adapter ownership, exported paths, independent service boot with only its dependency closure          |
 | `tests/app.test.ts`             | Fully assembled MCP task/review loop across two server restarts, credentials and retained evidence, invalid composition cleanup                                        |

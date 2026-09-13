@@ -1,11 +1,19 @@
 # Verification — 13 September 2026
 
-The TypeScript build passes. After lifecycle repairs and loader integration, the automated suite passes **86 checks** (78 top-level tests and eight component-boot subtests), with zero failures or skips. It uses upstream `cordis@4.0.0-rc.10`, native SQLite, real loopback HTTP, and the official MCP SDK client. [Execution evidence](EXECUTION_LOG.md) records clean-checkout verification and the added regressions; historical runs below retain their original results.
+The TypeScript build passes. After lifecycle, loader, and remote-transport integration, the automated suite passes **111 checks** (103 top-level tests and eight component-boot subtests), with zero failures or skips. It uses upstream `cordis@4.0.0-rc.10`, native SQLite, real loopback HTTP, and the official MCP SDK client. [Execution evidence](EXECUTION_LOG.md) records clean-checkout verification and the added regressions; historical runs below retain their original results.
 
 ```sh
 npm run build
 npm test
 ```
+
+## Remote transport and fresh-agent acceptance
+
+Step 4 preserves native tools and adds validated remote catalogs, complete MCP result forwarding, independent project selection, pagination, refresh notifications, and generation draining. The full suite and independent reviews pass. [Compatibility matrix](docs/TRANSPORT_COMPATIBILITY.md) records the actual sandbox endpoint and installed agent versions, including the deliberately unsupported schema/protocol cases.
+
+Three fresh Codex instances completed the native producer/reviewer/reader scenario across two restarts: **28 calls, 25 successes and three expected permission denials**. Each negotiated `2025-06-18`; the reviewer read the pinned evidence before submitting pass, and the final task reached `done` at revision 2. [Sanitized current report](verification/step-04-live-agents.json). This new run is separate from the historical agent acceptance below.
+
+The final feed-removal repeat also passed after the transport changes. [Current feed report](verification/step-04-feed-unload.json).
 
 ## Feed removal through the loader
 

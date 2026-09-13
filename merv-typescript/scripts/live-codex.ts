@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { createApp } from '../src/app.js';
 import type { Caller } from '@merv/contracts';
 import { verifyLiveEvidence } from './live-evidence.js';
+import { startProtocolProxy } from './protocol-proxy.js';
 
 // Real model calls: this is intentionally separate from the deterministic test suite.
 const runDirectory = resolve(
@@ -49,7 +50,26 @@ const phaseWrites: Record<Phase, string[]> = {
   observer: ['actor.create'],
 };
 
+const protocolObservations: {
+  phase: Phase;
+  observations: Awaited<ReturnType<typeof startProtocolProxy>>['observations'];
+}[] = [];
+
 async function codex(phase: Phase, token: string, url: string, prompt: string) {
+  const proxy = await startProtocolProxy(url);
+  try {
+    await codexViaProxy(phase, token, proxy.url, prompt);
+  } finally {
+    await proxy.close();
+    protocolObservations.push({ phase, observations: proxy.observations });
+    writeFileSync(
+      join(runDirectory, 'protocol.json'),
+      JSON.stringify(protocolObservations, null, 2) + '\n',
+    );
+  }
+}
+
+async function codexViaProxy(phase: Phase, token: string, url: string, prompt: string) {
   const output = createWriteStream(join(runDirectory, `${phase}.jsonl`), { mode: 0o600 });
   const errors = createWriteStream(join(runDirectory, `${phase}.stderr.log`), { mode: 0o600 });
   const args = [
@@ -267,6 +287,7 @@ async function run() {
       directory: runDirectory,
       evidenceChecks,
       phases: summary,
+      protocolObservations,
       task: finalTask,
       review: app.ctx.reviews.get(caller, firstReviewId),
       history: app.ctx.workflows.history(caller, firstTaskId),

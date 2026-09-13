@@ -1,6 +1,7 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import type { Caller, ToolDefinition } from '@merv/contracts';
+import type { Caller } from '@merv/contracts';
+import type { ToolDefinition } from '@merv/api/types';
 import type { FeedInput, FeedListInput } from './types.js';
 
 export const feedToolsPlugin = {

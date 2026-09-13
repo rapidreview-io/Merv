@@ -1,6 +1,6 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import type { ToolDefinition } from '@merv/contracts';
+import type { ToolDefinition } from '@merv/api/types';
 
 /** Optional transport adapter; the engine itself never depends on the tool gateway. */
 export const workflowToolsPlugin = {

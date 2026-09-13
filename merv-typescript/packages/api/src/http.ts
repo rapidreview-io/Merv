@@ -7,16 +7,16 @@ import {
 import type { AddressInfo } from 'node:net';
 import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
-  MervError,
-  type Caller,
-  type Scope,
-  type Tools,
-  type ToolDefinition,
-} from '@merv/contracts';
-import { ApiError, type ToolDescription } from './registry.js';
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  type CallToolResult,
+} from '@modelcontextprotocol/sdk/types.js';
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import { MervError, type Caller, type Scope } from '@merv/contracts';
+import type { Tools, AnyToolDefinition, ToolInvocation } from './types.js';
+import { ApiError, isRemoteTool, type ToolDescription } from './registry.js';
+import { protocolError } from './protocol.js';
 
 export interface HttpOptions {
   host?: string;
@@ -25,7 +25,11 @@ export interface HttpOptions {
   allowedOrigins?: string[];
 }
 
-export function describeTool(tool: ToolDefinition): ToolDescription {
+export function describeTool(tool: AnyToolDefinition): ToolDescription {
+  if (isRemoteTool(tool)) {
+    const { handler: _handler, kind: _kind, ...description } = tool;
+    return structuredClone(description);
+  }
   const schema = zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none', target: 'jsonSchema7' });
   if (!('type' in schema) || schema.type !== 'object')
     throw new ApiError('invalid_tool', 'Tool input must be an object');
@@ -198,8 +202,8 @@ export class ApiServer {
     return this.scope.authenticate(authorization.slice(7));
   }
 
-  private async call(name: string, caller: Caller, input: unknown): Promise<unknown> {
-    const operation = this.tools.call(name, caller, input);
+  private async call(name: string, caller: Caller, input: unknown): Promise<ToolInvocation> {
+    const operation = this.tools.invoke(name, caller, input);
     this.calls.add(operation);
     try {
       return await operation;
@@ -211,10 +215,24 @@ export class ApiServer {
   private caller(
     actor: ReturnType<Scope['authenticate']>,
     input: unknown,
+    name: string,
+    selectedProject?: unknown,
   ): { caller: Caller; input: Record<string, unknown> } {
     if (input === null || typeof input !== 'object' || Array.isArray(input))
       throw new ApiError('invalid_input', 'Tool arguments must be an object');
-    const { projectId, ...argumentsOnly } = input as Record<string, unknown>;
+    const argumentsObject = input as Record<string, unknown>;
+    // The reserved namespace determines routing even while a catalog is being withdrawn.
+    const remote = name.startsWith('mount__');
+    const { projectId: argumentProject, ...nativeArguments } = argumentsObject;
+    if (
+      !remote &&
+      selectedProject !== undefined &&
+      argumentProject !== undefined &&
+      selectedProject !== argumentProject
+    )
+      throw new ApiError('invalid_input', 'Conflicting Merv project selections');
+    const projectId =
+      selectedProject !== undefined ? selectedProject : remote ? undefined : argumentProject;
     if (projectId !== undefined && (typeof projectId !== 'string' || !projectId))
       throw new ApiError('invalid_input', 'projectId must be a non-empty string');
     // actorId and other caller-shaped fields are ordinary arguments: strict feature schemas reject them.
@@ -223,7 +241,7 @@ export class ApiServer {
       projectId: (projectId as string | undefined) ?? actor.projectId,
     };
     this.scope.require(caller, 'read');
-    return { caller, input: argumentsOnly };
+    return { caller, input: remote ? argumentsObject : nativeArguments };
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -252,9 +270,14 @@ export class ApiServer {
       } catch {
         throw new ApiError('invalid_tool', 'Malformed tool name');
       }
-      const request = this.caller(actor, await readJson(req, this.maxBodyBytes));
+      const request = this.caller(
+        actor,
+        await readJson(req, this.maxBodyBytes),
+        name,
+        req.headers['x-merv-project-id'],
+      );
       const result = await this.call(name, request.caller, request.input);
-      json(res, 200, { result: result ?? null });
+      json(res, 200, { result: result.value ?? null });
       return;
     }
     if (path === '/mcp') {
@@ -268,6 +291,11 @@ export class ApiServer {
         return;
       }
       const body = await readJson(req, this.maxBodyBytes);
+      const incompatible = protocolError(req.headers['mcp-protocol-version'], body);
+      if (incompatible) {
+        json(res, 400, incompatible);
+        return;
+      }
       const instance = new McpServer(
         { name: 'merv', version: '0.1.0' },
         {
@@ -281,9 +309,16 @@ export class ApiServer {
       }));
       instance.setRequestHandler(CallToolRequestSchema, async (request) => {
         try {
-          const call = this.caller(actor, request.params.arguments ?? {});
+          const call = this.caller(
+            actor,
+            request.params.arguments ?? {},
+            request.params.name,
+            request.params._meta?.['merv/projectId'],
+          );
           const result = await this.call(request.params.name, call.caller, call.input);
-          return { content: [{ type: 'text' as const, text: JSON.stringify(result ?? null) }] };
+          return result.format === 'mcp'
+            ? (result.value as CallToolResult)
+            : { content: [{ type: 'text' as const, text: JSON.stringify(result.value ?? null) }] };
         } catch (error) {
           const body = errorBody(error);
           return {
