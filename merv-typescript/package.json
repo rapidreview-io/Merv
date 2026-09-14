@@ -25,6 +25,7 @@
     "test:mounts": "node --import tsx --test tests/mounts.test.ts tests/mount-config.test.ts tests/mount-unload.test.ts",
     "test:nisa": "node --import tsx --test tests/nisa.test.ts tests/nisa-config.test.ts tests/nisa-unload.test.ts tests/live-nisa.test.ts",
     "test:nisa-unload": "node --import tsx scripts/nisa-unload.ts",
+    "test:nisa-mcp": "node --import tsx scripts/nisa-mcp.ts",
     "test:nisa-live": "node --import tsx scripts/live-nisa.ts"
   },
   "dependencies": {

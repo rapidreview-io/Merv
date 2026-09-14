@@ -418,6 +418,11 @@ These commands use an independent local MCP server with synthetic credentials. T
 
 ## Optional Nisa literature retrieval
 
+The Nisa-owned six-tool MCP integration is also implemented: search, paper,
+excerpts and Q&A ask/get/cancel through generic Mounts, with independent removal
+during an accepted Q&A operation. See [implementation, verification and deployment limits](docs/NISA_PLUGIN_IMPLEMENTATION.md).
+The two-tool REST adapter below remains available for the existing deployment.
+
 Add `@merv/nisa` to an explicit configuration to expose `mount__nisa__search` and `mount__nisa__paper`. The plugin uses Nisa's supported REST API, reuses exact Access grants and scoped Credentials, and has no task/experiment dependency. It preserves upstream records and arXiv references while bounding requests and disabling background enrichment. See [configuration, supported interface, and verification](docs/NISA_PLUGIN.md).
 
 `npm run test:nisa` exercises the permission, response, timeout, and lifecycle boundaries. `npm run test:nisa-unload` runs the whole application with independent REST/MCP fixtures: 29 → 27 → 29 tools, admitted search drain, retained sandbox connection, and completed task/review/feed work during absence. `npm run test:nisa-live -- --check` prepares the bounded real-service proof without reading credentials or making requests. Fable consultation is complete; the real-service gate is pending a renewed Nisa login or explicitly supplied API key. See [the execution ledger](EXECUTION_LOG.md).

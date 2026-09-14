@@ -6,7 +6,9 @@ The root README still calls the umbrella product Papyrus. Papyrus-named sibling
 folders are older worktrees; at least the search-staging worktree still points
 to the former Papyrus Git directory. No worktree repair was needed for this review.
 
-This is a proposal, not an implemented migration. The two approved Fable debate
+The initial six-tool implementation now exists; see
+[current implementation and remaining deployment limits](NISA_PLUGIN_IMPLEMENTATION.md).
+The assessment below records the approved design. The two approved Fable debate
 rounds are complete; [the actual exchange and disposition](reviews/nisa-plugin-design-fable.md)
 record agreement and remaining disagreement. The user subsequently specified
 shared authentication/accounts and agentic Q&A with Nisa-owned quota. That

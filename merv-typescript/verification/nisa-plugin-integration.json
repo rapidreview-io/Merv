@@ -1,0 +1,30 @@
+{
+  "status": "passed",
+  "evidence": "actual Nisa Python operation service and Nisa-owned MCP through generic Merv Mounts with synthetic providers",
+  "realNisaServiceVerified": false,
+  "realSandboxServiceVerified": false,
+  "modelInvoked": false,
+  "toolCounts": [33, 27, 33],
+  "runnerDispatches": 2,
+  "nativeTaskState": "done",
+  "retainedFeedPosts": 2,
+  "checks": {
+    "actualNisaOwnedMcpCatalog": true,
+    "genericMountSchemaParity": true,
+    "callerGrantsFilterCatalog": true,
+    "threeRetrievalToolsFullResultParity": true,
+    "otherAccountCannotObserveOrCancel": true,
+    "nativeTaskReviewFeedCompletedWhileNisaAbsent": true,
+    "nativeAndSandboxRemainAvailable": true,
+    "acceptedOperationSurvivesLocalUnmount": true,
+    "finiteQuotaDeniesNewOperation": true,
+    "requestIdReplayDoesNotRerun": true,
+    "reattachReturnsSameCompleteEvidence": true,
+    "operationScopedCancellation": true,
+    "nativeTaskEvidenceAndFeedRetained": true,
+    "runnerDispatchCountProvesNoReplay": true,
+    "unrelatedProvidersAndConnectionsUnchanged": true,
+    "resourcesClosed": true
+  },
+  "completedAt": "2026-09-14T02:04:40.878Z"
+}

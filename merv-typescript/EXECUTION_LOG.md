@@ -111,3 +111,76 @@ Independent clean-checkout verification passed at exact commit `3bc7d446b0df36b2
 - Final post-review verification passes typecheck, build, formatting, and all **187 checks** (177 top-level plus ten component-boot subtests), with no failures or skips. This includes the complete controlled removal scenario and the ten additional response/harness regressions. [Post-review checkpoint](verification/step-07-post-review.json).
 
 Step 8 has not begun. Step 7 closes only after the real Nisa verification succeeds with a renewed login or explicitly supplied API key.
+
+## Approved Nisa-owned plugin extension — incomplete checkpoint
+
+- The user approved building search, paper, excerpts, Q&A ask/get/cancel. Work is
+  isolated in Nisa's `codex/nisa-mcp-plugin` worktree at
+  `/private/tmp/nisa-mcp-plugin`, based on `3489d7d`; canonical Nisa main remains
+  unchanged. Merv changes remain on `codex/cordis-stack`.
+- Implemented Nisa retrieval composition, authenticated plugin API, durable
+  same-host operation admission/results, fixed research-tool authority and
+  operation-scoped cancellation. Recovery never replays uncertain work. Available
+  evidence and usage survive failed/cancelled runs. Actual fork tests reject
+  inherited operation ownership while preserving the parent worker.
+- Merv now supports trusted per-mount `setEnabled(id, boolean)`. Five new tests
+  verify targeted withdrawal/drain/restoration, preservation of independent
+  sandbox clients, ordered toggles, shutdown races and cleanup failure handling.
+- The final combined Nisa backend run passed **82 tests** (new tests plus 41
+  existing retrieval/schema regressions). The six-tool MCP catalog passed **3
+  tests** and typecheck. Merv passed **192 checks**, typecheck and build; one
+  cross-repository integration test explicitly skips because its actual MCP host
+  has not been implemented. That scenario is prepared, not verified.
+- Automatic approval review rejected the draft MCP bearer-forwarding code even
+  after pinning its production destination to `https://api.rapidreview.io`. The
+  exact forwarding behavior is awaiting user authorization; no server/CLI was
+  written after rejection and no credential was read or sent. Automatic review
+  separately rejected sending a frozen five-file backend packet to Claude Fable;
+  exact-packet approval is pending, and no Fable response exists for this wave.
+  Later local PID/partial-result fixes are newer than that frozen review packet.
+- Changes remain uncommitted pending the required review and integration. No
+  full plugin completion, shared-login rollout, product-wide finite quota or
+  real-service/model proof is claimed. See [implementation checkpoint](docs/NISA_PLUGIN_IMPLEMENTATION.md)
+  and [verification record](verification/nisa-plugin-checkpoint.json).
+
+## Nisa-owned six-tool plugin — implemented and locally verified
+
+- The user explicitly approved both pending actions. The MCP server was then
+  implemented with a pinned Nisa destination, fresh bearer verification for each
+  request, expected-account checks, strict six-tool schemas, sanitized errors,
+  redirect refusal and bounded body/response lifetimes. No saved credential or
+  production call was used for the tests.
+- The exact approved packet reached **Claude Fable 5** once and its review
+  completed successfully. Supported findings were fixed: read-first targeted
+  recovery, storage-monitor retry without false cancellation, outcome-preserving
+  settlement retries, bounded research evidence/results, source provenance from
+  known fields, provider response validation, strict new-plugin inputs, and deep
+  pagination within the actual Tantivy 500-row cap. Literal sentinel answers and
+  failed acquisition cleanup have regressions. Independent local reviews covered
+  the final patches; no second Fable review of the final source is claimed.
+- Separate local review found DNS/calendar gaps. DNS now resolves in a bounded,
+  reaped startup helper; numeric snapshots keep the original HTTP Host/TLS name
+  and one connect/TLS/header/body deadline. Impossible days are rejected at the
+  new plugin boundary while legacy date helpers stay compatible. Actual local
+  JWT tests verify account identity, expiry, audience and anonymous denial.
+- Final combined checks passed: **174 Python**, **13 Nisa MCP**, and **193 Merv**,
+  with no failures or skips. Typechecks, Merv build, formatting and architectural
+  boundaries pass. The post-review saved integration proves **33 → 27 → 33** tools,
+  exactly two runner entries (one completed Alice operation and one cancelled Bob
+  operation), a completed native task/delivery/review, two retained feed posts,
+  unchanged sandbox clients and complete resource cleanup. Retry/get/reattach
+  never ran Alice's question again.
+- Nisa source is committed as `0d1ab17` on `codex/nisa-mcp-plugin` in its isolated
+  worktree. The canonical main checkout is unchanged. Merv uses its existing
+  generic Mounts, extended with per-mount trusted enable/disable; the old REST
+  adapter is retained for the current deployment. No further stack wave started.
+- Remaining limits are deployment and product scope: shared-login rollout is
+  separate, storage is one persistent local host, configured finite quota covers
+  only this plugin channel, and real Nisa/model/sandbox proof was not attempted.
+  This completes the approved local plugin implementation and controlled
+  integration; it does not close the original Step 7 live-service gate.
+
+[Integration evidence](verification/nisa-plugin-integration.json),
+[final verification](verification/nisa-plugin-checkpoint.json),
+[Fable findings and dispositions](docs/reviews/nisa-plugin-fable-2026-09-13.md), and
+[setup and limits](docs/NISA_PLUGIN_IMPLEMENTATION.md) retain the final state.

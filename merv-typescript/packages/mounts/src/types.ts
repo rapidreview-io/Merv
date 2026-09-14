@@ -27,6 +27,8 @@ export interface MountStatus {
 
 export interface Mounts {
   status(): MountStatus[];
+  /** Trusted host control: withdraw/drain one mount, or restore its retained configuration. */
+  setEnabled(id: string, enabled: boolean): Promise<void>;
   /** Wait for a new forced discovery attempt, queued after any active refresh. */
   reconnect(id: string): Promise<void>;
 }

@@ -49,20 +49,26 @@ const configuration = z
 /** Optional connections own their catalogs and never alter native component admission. */
 export class MountManager implements Mounts {
   private readonly runtimes = new Map<string, MountRuntime>();
+  private readonly configs = new Map<string, MountConfig>();
+  private readonly enabled = new Map<string, boolean>();
+  private readonly toggles = new Map<string, Promise<void>>();
   private stopping = false;
   private closing?: Promise<void>;
 
   constructor(
-    tools: Tools,
-    credentials: CredentialProvider,
-    access: AccessPolicy,
+    private readonly tools: Tools,
+    private readonly credentials: CredentialProvider,
+    private readonly access: AccessPolicy,
     config: MountsConfig = { mounts: [] },
   ) {
     const parsed = configuration.safeParse(config);
     check(parsed.success, 'invalid_mount_config', 'Mount configuration is invalid');
     try {
-      for (const mount of parsed.data.mounts)
+      for (const mount of parsed.data.mounts) {
+        this.configs.set(mount.id, mount);
+        this.enabled.set(mount.id, true);
         this.runtimes.set(mount.id, new MountRuntime(tools, credentials, access, mount));
+      }
     } catch {
       // Constructor allocations contain no admitted calls, but release every acquired namespace.
       for (const runtime of this.runtimes.values()) void runtime.stop().catch(() => undefined);
@@ -84,14 +90,60 @@ export class MountManager implements Mounts {
     const runtime = this.runtimes.get(id);
     if (!runtime)
       return Promise.reject(new MervError('mount_not_found', 'Mount is not configured', 404));
+    if (!this.enabled.get(id))
+      return Promise.reject(new MervError('mount_disabled', 'Mount is disabled', 409));
     return runtime.refresh(true);
+  }
+  setEnabled(id: string, enabled: boolean): Promise<void> {
+    if (this.stopping)
+      return Promise.reject(new MervError('mounts_stopped', 'Mounts are stopped', 503));
+    if (!this.configs.has(id))
+      return Promise.reject(new MervError('mount_not_found', 'Mount is not configured', 404));
+    if (typeof enabled !== 'boolean')
+      return Promise.reject(new MervError('invalid_mount_config', 'Enabled must be a boolean'));
+    const toggle = async () => {
+      check(!this.stopping, 'mounts_stopped', 'Mounts are stopped', 503);
+      const previous = this.runtimes.get(id)!;
+      if (this.enabled.get(id) === enabled) {
+        if (!enabled) await previous.stop();
+        return;
+      }
+      if (!enabled) {
+        this.enabled.set(id, false);
+        // With no earlier toggle, stop() withdraws this catalog in the caller's turn.
+        await previous.stop();
+        return;
+      }
+      // A failed prior cleanup must not be hidden by creating another resource owner.
+      await previous.stop();
+      check(!this.stopping, 'mounts_stopped', 'Mounts are stopped', 503);
+      const runtime = new MountRuntime(
+        this.tools,
+        this.credentials,
+        this.access,
+        this.configs.get(id)!,
+      );
+      this.runtimes.set(id, runtime);
+      this.enabled.set(id, true);
+      await runtime.refresh(true);
+    };
+    const previous = this.toggles.get(id);
+    const pending = previous ? previous.catch(() => undefined).then(toggle) : toggle();
+    this.toggles.set(id, pending);
+    const settled = () => {
+      if (this.toggles.get(id) === pending) this.toggles.delete(id);
+    };
+    void pending.then(settled, settled);
+    return pending;
   }
   close(): Promise<void> {
     if (this.closing) return this.closing;
     this.stopping = true;
     // Each stop performs withdrawal synchronously before its first await. Start all of them now.
     const stopped = [...this.runtimes.values()].map((runtime) => runtime.stop());
-    this.closing = Promise.allSettled(stopped).then((results) => {
+    const toggles = Promise.allSettled([...this.toggles.values()]);
+    this.closing = Promise.allSettled(stopped).then(async (results) => {
+      await toggles;
       if (results.some((result) => result.status === 'rejected'))
         throw new MervError('mount_cleanup_failed', 'Mount resource cleanup failed', 503);
     });

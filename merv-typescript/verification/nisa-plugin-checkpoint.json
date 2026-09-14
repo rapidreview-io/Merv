@@ -1,0 +1,42 @@
+{
+  "status": "implemented_and_verified_locally",
+  "date": "2026-09-13",
+  "nisaBase": "3489d7d",
+  "nisaWorktree": "/private/tmp/nisa-mcp-plugin",
+  "nisaBranch": "codex/nisa-mcp-plugin",
+  "mervTests": {
+    "passed": 193,
+    "failed": 0,
+    "skipped": 0
+  },
+  "nisaBackendTests": {
+    "passed": 174,
+    "failed": 0
+  },
+  "mervTypecheck": "passed",
+  "mervBuild": "passed",
+  "nisaMcpTypecheck": "passed",
+  "crossRepositoryMcpScenario": "passed",
+  "fableReview": "completed_frozen_packet_findings_addressed_and_verified_locally",
+  "fablePacketSha256": "78285b23050ca3fec77117e70969761e2988ed167a75f41cd61b67b6606e2569",
+  "realNisaServiceVerified": false,
+  "realModelCalled": false,
+  "realSandboxOperationCalled": false,
+  "savedCredentialReadOrSent": false,
+  "sharedLoginImplemented": false,
+  "finiteQuotaScope": "plugin_channel_only",
+  "defaultSignedInQuota": "unlimited_matching_existing_Nisa_policy",
+  "operationStorageScope": "persistent_local_filesystem_on_one_host",
+  "nisaCommit": "0d1ab17",
+  "mervBranch": "codex/cordis-stack",
+  "nisaMcpTests": {
+    "passed": 13,
+    "failed": 0
+  },
+  "fableModel": "claude-fable-5",
+  "fableDurationMs": 438191,
+  "fableTurns": 1,
+  "nisaChangesCommitted": true,
+  "mervChangesIncludedInThisCommit": true,
+  "formatting": "passed"
+}

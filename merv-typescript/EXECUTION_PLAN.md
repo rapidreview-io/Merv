@@ -2,6 +2,12 @@
 
 Status: execution started, 2026-09-13. Follow [EXECUTION_LOG.md](EXECUTION_LOG.md) for completed gates and current evidence. The numbered scope and order below remain the acceptance criteria.
 
+The user subsequently approved a Nisa-owned six-tool plugin before further stack
+expansion. Its implementation and controlled integration are complete; remaining
+deployment gates are in [NISA_PLUGIN_IMPLEMENTATION.md](docs/NISA_PLUGIN_IMPLEMENTATION.md).
+This extension does not close the original Step 7 real-service proof or claim
+that shared login is already deployed.
+
 The first milestone is a small, observable Cordis application that can connect to an independent service and survive that connection being removed. The second is the same application running on Postgres. Broader identity, hosted storage, research programs, and autonomous execution follow those proofs.
 
 ## Working rule
