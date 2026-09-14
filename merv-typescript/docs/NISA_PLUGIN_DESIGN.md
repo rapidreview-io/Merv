@@ -33,6 +33,22 @@ every singleton or introduce one plugin per function. Put the common Nisa tool
 interface in the plan because the user wants a shared plugin mechanism. Prove
 parity before replacing Merv's working REST adapter.
 
+## Proposed tool catalog
+
+The user narrowed the catalog to three independently enabled groups. Names below
+are proposals, not a claim that the tools are already registered.
+
+| Group           | Tools                                  |
+| --------------- | -------------------------------------- |
+| Discover papers | `search`, `semantic_search`, `related` |
+| Read and cite   | `paper`, `excerpts`, `pdf`, `cite`     |
+| Agentic Q&A     | `qa.ask`, `qa.get`, `qa.cancel`        |
+
+The initial set is six tools: `search`, `paper`, `excerpts`, `qa.ask`, `qa.get`,
+and `qa.cancel`. Account/quota inspection and saved-collection tools are out of
+scope for now. Nisa still enforces quota internally when accepting Q&A; removing
+the inspection tools does not remove admission or usage accounting.
+
 ## What the source establishes
 
 | Existing seam or coupling                                                                                                                                            | Consequence for composition                                                                                                                                                            | Source                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -135,7 +151,7 @@ conflicts. Nisa decides the unit, limit, reservation and settlement policy; no
 numeric quota or billing model is inferred here. For a hard limit, an unavailable
 quota store must not silently authorize unlimited work. Crashes and uncertain
 starts need reconciliation of the existing operation, not automatic replay.
-A separate quota display is useful but cannot replace this admission check.
+This admission check is internal to Nisa and needs no exposed quota tool.
 
 The smallest proposed Q&A tools are:
 
@@ -145,8 +161,7 @@ The smallest proposed Q&A tools are:
 | `qa.get(operationId)`                     | Return status, partial/final answer, structured source/context-paper records, usage and session/run references. Recheck access; observation must not start another turn.                        |
 | `qa.cancel(operationId, requestId)`       | Request cancellation of that operation. Report requested versus terminal state accurately; never let a stale request cancel a later turn.                                                       |
 
-An optional `quota.get` can expose Nisa's current policy for display. Tool names
-above are proposals, not currently registered tools. A session-wide best-effort
+Tool names above are proposals, not currently registered tools. A session-wide best-effort
 interrupt is not yet an operation-scoped cancellation guarantee. The adapter
 must retain complete answer/source evidence, rather than copying the CLI's
 regex-only modern arXiv IDs or its default deletion of successful sessions.
